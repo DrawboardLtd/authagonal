@@ -1,0 +1,98 @@
+using Authagonal.Core.Stores;
+using Authagonal.Server.Services;
+using Microsoft.IdentityModel.JsonWebTokens;
+using Microsoft.IdentityModel.Tokens;
+
+namespace Authagonal.Server.Endpoints;
+
+public static class UserinfoEndpoint
+{
+    public static IEndpointRouteBuilder MapUserinfoEndpoint(this IEndpointRouteBuilder app)
+    {
+        app.MapGet("/connect/userinfo", async (
+            HttpContext httpContext,
+            KeyManager keyManager,
+            IUserStore userStore,
+            IConfiguration config,
+            CancellationToken ct) =>
+        {
+            // Extract Bearer token
+            var authHeader = httpContext.Request.Headers.Authorization.FirstOrDefault();
+            if (string.IsNullOrWhiteSpace(authHeader) || !authHeader.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
+                return Results.Unauthorized();
+
+            var token = authHeader["Bearer ".Length..].Trim();
+            if (string.IsNullOrWhiteSpace(token))
+                return Results.Unauthorized();
+
+            // Validate the JWT
+            var issuer = config["Issuer"]!;
+            var keys = keyManager.GetSecurityKeys()
+                .Select(jwk =>
+                {
+                    var rsaKey = new RsaSecurityKey(new System.Security.Cryptography.RSAParameters
+                    {
+                        Modulus = Base64UrlEncoder.DecodeBytes(jwk.N),
+                        Exponent = Base64UrlEncoder.DecodeBytes(jwk.E)
+                    })
+                    { KeyId = jwk.Kid };
+                    return (SecurityKey)rsaKey;
+                })
+                .ToList();
+
+            var validationParams = new TokenValidationParameters
+            {
+                ValidIssuer = issuer,
+                ValidateIssuer = true,
+                ValidateAudience = false,
+                ValidateLifetime = true,
+                IssuerSigningKeys = keys,
+                ValidateIssuerSigningKey = true,
+                ClockSkew = TimeSpan.FromMinutes(2)
+            };
+
+            var handler = new JsonWebTokenHandler();
+            var result = await handler.ValidateTokenAsync(token, validationParams);
+
+            if (!result.IsValid)
+                return Results.Unauthorized();
+
+            var subjectId = result.Claims.TryGetValue("sub", out var sub) ? sub?.ToString() : null;
+            if (string.IsNullOrWhiteSpace(subjectId))
+                return Results.Unauthorized();
+
+            var user = await userStore.FindByIdAsync(subjectId, ct);
+            if (user is null)
+                return Results.Unauthorized();
+
+            var claims = new Dictionary<string, object?>
+            {
+                ["sub"] = user.Id,
+                ["email"] = user.Email,
+                ["email_verified"] = user.EmailConfirmed
+            };
+
+            if (!string.IsNullOrWhiteSpace(user.FirstName))
+                claims["given_name"] = user.FirstName;
+
+            if (!string.IsNullOrWhiteSpace(user.LastName))
+                claims["family_name"] = user.LastName;
+
+            var fullName = $"{user.FirstName} {user.LastName}".Trim();
+            if (!string.IsNullOrWhiteSpace(fullName))
+                claims["name"] = fullName;
+
+            if (!string.IsNullOrWhiteSpace(user.Phone))
+                claims["phone_number"] = user.Phone;
+
+            if (!string.IsNullOrWhiteSpace(user.OrganizationId))
+                claims["org_id"] = user.OrganizationId;
+
+            return Results.Ok(claims);
+        })
+        .AllowAnonymous()
+        .WithTags("OAuth");
+
+        return app;
+    }
+}

@@ -1,0 +1,47 @@
+using Authagonal.Core.Stores;
+using Authagonal.Storage.Stores;
+using Azure.Data.Tables;
+
+namespace Authagonal.Migration;
+
+internal sealed class StoreFactory
+{
+    public required IUserStore UserStore { get; init; }
+    public required IClientStore ClientStore { get; init; }
+    public required IGrantStore GrantStore { get; init; }
+    public required ISsoDomainStore SsoDomainStore { get; init; }
+    public required ISamlProviderStore SamlProviderStore { get; init; }
+    public required IOidcProviderStore OidcProviderStore { get; init; }
+
+    public static StoreFactory Create(string connectionString)
+    {
+        var serviceClient = new TableServiceClient(connectionString);
+
+        var users = EnsureTable(serviceClient, "Users");
+        var userEmails = EnsureTable(serviceClient, "UserEmails");
+        var userLogins = EnsureTable(serviceClient, "UserLogins");
+        var clients = EnsureTable(serviceClient, "Clients");
+        var grants = EnsureTable(serviceClient, "Grants");
+        var grantsBySubject = EnsureTable(serviceClient, "GrantsBySubject");
+        var ssoDomains = EnsureTable(serviceClient, "SsoDomains");
+        var samlProviders = EnsureTable(serviceClient, "SamlProviders");
+        var oidcProviders = EnsureTable(serviceClient, "OidcProviders");
+
+        return new StoreFactory
+        {
+            UserStore = new TableUserStore(users, userEmails, userLogins),
+            ClientStore = new TableClientStore(clients),
+            GrantStore = new TableGrantStore(grants, grantsBySubject),
+            SsoDomainStore = new TableSsoDomainStore(ssoDomains),
+            SamlProviderStore = new TableSamlProviderStore(samlProviders),
+            OidcProviderStore = new TableOidcProviderStore(oidcProviders)
+        };
+    }
+
+    private static TableClient EnsureTable(TableServiceClient serviceClient, string tableName)
+    {
+        var tableClient = serviceClient.GetTableClient(tableName);
+        tableClient.CreateIfNotExists();
+        return tableClient;
+    }
+}
