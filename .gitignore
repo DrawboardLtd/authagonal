@@ -1,0 +1,54 @@
+# .NET
+bin/
+obj/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+*.userprefs
+project.lock.json
+.vs/
+
+# NuGet
+*.nupkg
+**/[Pp]ackages/*
+!**/[Pp]ackages/build/
+
+# Build results
+[Dd]ebug/
+[Rr]elease/
+x64/
+x86/
+[Ww][Ii][Nn]32/
+bld/
+[Bb]uild[Ll]og.*
+*.dll
+*.exe
+*.pdb
+!dotnet-install.ps1
+
+# Node / React
+node_modules/
+login-app/dist/
+
+# IDE
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+.DS_Store
+
+# Environment / secrets
+.env
+.env.*
+appsettings.*.json
+!appsettings.json
+!appsettings.Development.json
+
+# Claude
+.claude/
