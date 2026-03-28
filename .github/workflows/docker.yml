@@ -10,6 +10,9 @@ on:
 env:
   DOCKERHUB_SERVER: drawboardci/authagonal
   DOCKERHUB_MIGRATION: drawboardci/authagonal-migration
+  DOCKERHUB_DEMO_SERVER: drawboardci/authagonal-demo-server
+  DOCKERHUB_DEMO_SAMPLE_API: drawboardci/authagonal-demo-sample-api
+  DOCKERHUB_DEMO_FRONTEND: drawboardci/authagonal-demo-frontend
 
 jobs:
   build:
@@ -69,3 +72,101 @@ jobs:
           labels: ${{ steps.meta-migration.outputs.labels }}
           cache-from: type=gha,scope=migration
           cache-to: type=gha,mode=max,scope=migration
+
+      - name: Extract metadata (demo-server)
+        id: meta-demo-server
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.DOCKERHUB_DEMO_SERVER }}
+          tags: |
+            type=ref,event=branch
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha,prefix=
+
+      - name: Extract metadata (demo-sample-api)
+        id: meta-demo-sample-api
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.DOCKERHUB_DEMO_SAMPLE_API }}
+          tags: |
+            type=ref,event=branch
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha,prefix=
+
+      - name: Build and push demo server image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: demos/custom-server/Dockerfile
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta-demo-server.outputs.tags }}
+          labels: ${{ steps.meta-demo-server.outputs.labels }}
+          cache-from: type=gha,scope=demo-server
+          cache-to: type=gha,mode=max,scope=demo-server
+
+      - name: Build and push demo sample API image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: demos/sample-app/SampleApp.Api/Dockerfile
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta-demo-sample-api.outputs.tags }}
+          labels: ${{ steps.meta-demo-sample-api.outputs.labels }}
+          cache-from: type=gha,scope=demo-sample-api
+          cache-to: type=gha,mode=max,scope=demo-sample-api
+
+      - name: Extract metadata (demo-frontend)
+        id: meta-demo-frontend
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.DOCKERHUB_DEMO_FRONTEND }}
+          tags: |
+            type=ref,event=branch
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha,prefix=
+
+      - name: Build and push demo frontend image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: demos/sample-app/frontend/Dockerfile
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta-demo-frontend.outputs.tags }}
+          labels: ${{ steps.meta-demo-frontend.outputs.labels }}
+          cache-from: type=gha,scope=demo-frontend
+          cache-to: type=gha,mode=max,scope=demo-frontend
+
+  deploy-demo:
+    needs: build
+    if: github.ref == 'refs/heads/master' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Deploy auth server
+        uses: azure/container-apps-deploy@v2
+        with:
+          resourceGroup: authagonal-demo
+          containerAppName: authagonal-auth
+          imageToDeploy: drawboardci/authagonal-demo-server:${{ github.sha }}
+
+      - name: Deploy sample API
+        uses: azure/container-apps-deploy@v2
+        with:
+          resourceGroup: authagonal-demo
+          containerAppName: authagonal-api
+          imageToDeploy: drawboardci/authagonal-demo-sample-api:${{ github.sha }}
+
+      - name: Deploy frontend
+        uses: azure/container-apps-deploy@v2
+        with:
+          resourceGroup: authagonal-demo
+          containerAppName: authagonal-frontend
+          imageToDeploy: drawboardci/authagonal-demo-frontend:${{ github.sha }}
