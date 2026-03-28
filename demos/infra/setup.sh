@@ -49,7 +49,7 @@ az storage account create \
 STORAGE_CONN=$(az storage account show-connection-string \
   --name "$STORAGE_ACCOUNT" \
   --resource-group "$RG" \
-  --query connectionString -o tsv)
+  --query connectionString -o tsv | tr -d '\r')
 
 echo "==> Creating Container Apps environment (no Log Analytics)"
 az containerapp env create \
@@ -62,12 +62,12 @@ az containerapp env create \
 ACA_ENV_ID=$(az containerapp env show \
   --name "$ACA_ENV" \
   --resource-group "$RG" \
-  --query id -o tsv)
+  --query id -o tsv | tr -d '\r')
 
 ENV_DOMAIN=$(az containerapp env show \
   --name "$ACA_ENV" \
   --resource-group "$RG" \
-  --query properties.defaultDomain -o tsv)
+  --query properties.defaultDomain -o tsv | tr -d '\r')
 
 AUTH_URL="https://authagonal-auth.${ENV_DOMAIN}"
 FRONTEND_URL="https://authagonal-frontend.${ENV_DOMAIN}"
