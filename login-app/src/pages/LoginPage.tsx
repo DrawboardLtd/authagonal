@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useSearchParams, Link } from 'react-router-dom';
 import { login, ssoCheck, ApiRequestError } from '../api';
+import { useBranding } from '../branding';
 
 const API_URL = import.meta.env.VITE_API_URL || '';
 
@@ -16,6 +17,7 @@ function isSafeReturnUrl(url: string): boolean {
 }
 
 export default function LoginPage() {
+  const branding = useBranding();
   const [searchParams] = useSearchParams();
   const returnUrl = searchParams.get('returnUrl') || '';
   const loginHint = searchParams.get('login_hint') || '';
@@ -223,11 +225,13 @@ export default function LoginPage() {
               )}
             </button>
 
-            <div className="form-footer">
-              <Link to={forgotPasswordLink} className="link">
-                Forgot password?
-              </Link>
-            </div>
+            {branding.showForgotPassword && (
+              <div className="form-footer">
+                <Link to={forgotPasswordLink} className="link">
+                  Forgot password?
+                </Link>
+              </div>
+            )}
           </>
         )}
       </form>

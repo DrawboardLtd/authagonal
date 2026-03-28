@@ -1,59 +1,64 @@
 # Authagonal
 
-Replacement for Duende IdentityServer + Sustainsys.Saml2, backed by Azure Table Storage.
+OAuth 2.0 / OpenID Connect / SAML 2.0 authentication server backed by Azure Table Storage.
 
-Architecture: API-only .NET server + React login SPA.
+Architecture: API-only ASP.NET Core server + React login SPA, packaged as a single Docker image.
+
+**[Documentation](https://drawboardltd.github.io/authagonal/)**
+
+## Quick Start
+
+```bash
+docker compose up
+```
+
+This starts the auth server on `http://localhost:8080` with an Azurite storage emulator.
 
 ## Projects
 
 | Project | Description |
 |---|---|
-| `src/Authagonal.Core` | Domain models, interfaces, token service, password hashing, SAML/OIDC logic |
+| `src/Authagonal.Core` | Domain models, interfaces, shared logic |
 | `src/Authagonal.Storage` | Azure Table Storage implementations |
-| `src/Authagonal.Server` | ASP.NET Core host — OIDC endpoints, auth API, admin API, SAML endpoints |
+| `src/Authagonal.Server` | ASP.NET Core host — OIDC, SAML, auth API, admin API |
 | `login-app` | React/TypeScript login SPA (Vite) |
 | `tools/Authagonal.Migration` | SQL Server → Table Storage migration tool |
-| `tests/Authagonal.Tests` | Integration and unit tests |
-
-## Auth Flow
-
-```
-/connect/authorize → 302 to login app → POST /api/auth/login → cookie set → redirect back → 302 with auth code
-```
+| `tests/Authagonal.Tests` | Unit tests |
 
 ## Features
 
-- **OIDC Provider**: authorization_code + PKCE, client_credentials, refresh_token grants
-- **SAML SP**: Homebrew implementation, full Azure AD support (signed response/assertion/both)
-- **Dynamic OIDC Federation**: Google, Apple, Azure AD
-- **User Provisioning**: Webhook-based approve/reject for all user creation paths
-- **Session Invalidation**: SecurityStamp rotation on org change, password reset
-- **Admin APIs**: User CRUD, SAML/OIDC provider management, token impersonation
+- **OIDC Provider** — authorization_code + PKCE, client_credentials, refresh_token grants
+- **SAML 2.0 SP** — homebrew implementation, full Azure AD support
+- **Dynamic OIDC Federation** — Google, Apple, Azure AD
+- **TCC Provisioning** — Try-Confirm-Cancel provisioning into downstream apps at authorize time
+- **Session Invalidation** — SecurityStamp rotation on org change, password reset
+- **Admin APIs** — user CRUD, SAML/OIDC provider management, token impersonation
+- **Brandable Login UI** — runtime-configurable branding via `branding.json`
 
-## Prerequisites
-
-- .NET 9 SDK
-- Node.js 20+
-- Azure Storage account (or Azurite for local dev)
-
-## Getting Started
+## Docker
 
 ```bash
-# Server
-dotnet build
+# Build server image
+docker build -t authagonal .
+
+# Build migration tool
+docker build -f Dockerfile.migration -t authagonal-migration .
+```
+
+## Development
+
+```bash
+# Server (requires .NET 10 SDK)
 dotnet run --project src/Authagonal.Server
 
 # Login app
-cd login-app
-npm install
-npm run dev
+cd login-app && npm install && npm run dev
 ```
 
-## Migration
+## Configuration
 
-```bash
-dotnet run --project tools/Authagonal.Migration -- \
-  --Source:ConnectionString "Server=...;Database=...;" \
-  --Target:ConnectionString "DefaultEndpointsProtocol=https;..." \
-  [--DryRun true] [--MigrateRefreshTokens true]
-```
+See the [full documentation](https://drawboardltd.github.io/authagonal/) for configuration reference.
+
+## License
+
+Proprietary — Drawboard Ltd.
