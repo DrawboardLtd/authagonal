@@ -151,21 +151,21 @@ jobs:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
 
       - name: Deploy auth server
-        uses: azure/container-apps-deploy@v2
+        uses: azure/container-apps-deploy-action@v2
         with:
           resourceGroup: authagonal-demo
           containerAppName: authagonal-auth
           imageToDeploy: drawboardci/authagonal-demo-server:${{ github.sha }}
 
       - name: Deploy sample API
-        uses: azure/container-apps-deploy@v2
+        uses: azure/container-apps-deploy-action@v2
         with:
           resourceGroup: authagonal-demo
           containerAppName: authagonal-api
           imageToDeploy: drawboardci/authagonal-demo-sample-api:${{ github.sha }}
 
       - name: Deploy frontend
-        uses: azure/container-apps-deploy@v2
+        uses: azure/container-apps-deploy-action@v2
         with:
           resourceGroup: authagonal-demo
           containerAppName: authagonal-frontend
