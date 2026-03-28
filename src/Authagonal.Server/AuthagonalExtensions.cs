@@ -9,16 +9,17 @@ using Authagonal.Server.Services.Oidc;
 using Authagonal.Server.Services.Saml;
 using Authagonal.Storage;
 using Azure.Data.Tables;
+using Azure.Storage.Blobs;
 using System.Globalization;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Cors.Infrastructure;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
 using System.Security.Claims;
-using System.Threading.RateLimiting;
 
 namespace Authagonal.Server;
 
@@ -50,6 +51,29 @@ public static class AuthagonalExtensions
             ?? throw new InvalidOperationException("Storage:ConnectionString is not configured");
 
         services.AddTableStorage(storageConnectionString);
+
+        // ---------------------------------------------------------------------------
+        // Data protection — shared key storage for multi-instance deployments
+        // ---------------------------------------------------------------------------
+        var dataProtection = services.AddDataProtection()
+            .SetApplicationName("Authagonal");
+
+        var dpBlobUri = configuration["DataProtection:BlobUri"];
+        if (!string.IsNullOrWhiteSpace(dpBlobUri))
+        {
+            // Explicit blob URI: "https://<account>.blob.core.windows.net/<container>/keys.xml"
+            dataProtection.PersistKeysToAzureBlobStorage(new Uri(dpBlobUri), new Azure.Identity.DefaultAzureCredential());
+        }
+        else if (!storageConnectionString.Contains("devstoreaccount1", StringComparison.OrdinalIgnoreCase))
+        {
+            // Production storage — auto-create a blob container for data protection keys
+            var blobServiceClient = new BlobServiceClient(storageConnectionString);
+            var container = blobServiceClient.GetBlobContainerClient("dataprotection");
+            container.CreateIfNotExists();
+            var blobClient = container.GetBlobClient("keys.xml");
+            dataProtection.PersistKeysToAzureBlobStorage(blobClient);
+        }
+        // else: local dev with Azurite — use default file-based keys
 
         // ---------------------------------------------------------------------------
         // Password policy
@@ -215,34 +239,6 @@ public static class AuthagonalExtensions
         services.AddSingleton<ICorsPolicyProvider, DynamicCorsPolicyProvider>();
 
         // ---------------------------------------------------------------------------
-        // Rate Limiting
-        // ---------------------------------------------------------------------------
-        services.AddRateLimiter(options =>
-        {
-            options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
-
-            options.AddPolicy("auth", context =>
-                RateLimitPartition.GetFixedWindowLimiter(
-                    context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
-                    _ => new FixedWindowRateLimiterOptions
-                    {
-                        PermitLimit = 20,
-                        Window = TimeSpan.FromMinutes(1),
-                        QueueLimit = 0
-                    }));
-
-            options.AddPolicy("token", context =>
-                RateLimitPartition.GetFixedWindowLimiter(
-                    context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
-                    _ => new FixedWindowRateLimiterOptions
-                    {
-                        PermitLimit = 30,
-                        Window = TimeSpan.FromMinutes(1),
-                        QueueLimit = 0
-                    }));
-        });
-
-        // ---------------------------------------------------------------------------
         // Health Checks
         // ---------------------------------------------------------------------------
         services.AddHealthChecks()
@@ -285,7 +281,6 @@ public static class AuthagonalExtensions
         });
 
         app.UseCors();
-        app.UseRateLimiter();
         app.UseAuthentication();
         app.UseAuthorization();
 
@@ -311,9 +306,12 @@ public static class AuthagonalExtensions
         app.MapEndSessionEndpoint();
         app.MapUserinfoEndpoint();
 
-        app.MapUserAdminEndpoints();
-        app.MapSsoAdminEndpoints();
-        app.MapTokenAdminEndpoints();
+        if (app.Configuration.GetValue("AdminApi:Enabled", true))
+        {
+            app.MapUserAdminEndpoints();
+            app.MapSsoAdminEndpoints();
+            app.MapTokenAdminEndpoints();
+        }
 
         app.MapAuthEndpoints();
         app.MapSamlEndpoints();

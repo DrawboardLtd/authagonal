@@ -16,7 +16,7 @@ public static class SamlEndpoints
     public static IEndpointRouteBuilder MapSamlEndpoints(this IEndpointRouteBuilder app)
     {
         app.MapGet("/saml/{connectionId}/login", LoginAsync).AllowAnonymous();
-        app.MapPost("/saml/{connectionId}/acs", AcsAsync).AllowAnonymous().DisableAntiforgery().RequireRateLimiting("auth");
+        app.MapPost("/saml/{connectionId}/acs", AcsAsync).AllowAnonymous().DisableAntiforgery();
         app.MapGet("/saml/{connectionId}/metadata", MetadataAsync).AllowAnonymous();
 
         return app;

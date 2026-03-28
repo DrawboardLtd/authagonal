@@ -78,7 +78,6 @@ public static class TokenEndpoint
         })
         .AllowAnonymous()
         .DisableAntiforgery()
-        .RequireRateLimiting("token")
         .WithTags("OAuth");
 
         return app;
