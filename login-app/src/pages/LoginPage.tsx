@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useSearchParams, Link } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 import { login, ssoCheck, ApiRequestError } from '../api';
 import { useBranding } from '../branding';
 
@@ -17,6 +18,7 @@ function isSafeReturnUrl(url: string): boolean {
 }
 
 export default function LoginPage() {
+  const { t } = useTranslation();
   const branding = useBranding();
   const [searchParams] = useSearchParams();
   const returnUrl = searchParams.get('returnUrl') || '';
@@ -111,13 +113,13 @@ export default function LoginPage() {
       if (err instanceof ApiRequestError) {
         switch (err.error) {
           case 'invalid_credentials':
-            setError('Invalid email or password');
+            setError(t('errorInvalidCredentials'));
             break;
           case 'locked_out':
-            setError(`Account locked. Try again in ${err.retryAfter ?? '?'} seconds`);
+            setError(t('errorLockedOut', { seconds: err.retryAfter ?? '?' }));
             break;
           case 'email_not_confirmed':
-            setError('Please check your email to verify your account');
+            setError(t('errorEmailNotConfirmed'));
             break;
           case 'sso_required':
             if (err.redirectUrl) {
@@ -128,19 +130,19 @@ export default function LoginPage() {
               window.location.href = ssoUrl.toString();
               return;
             }
-            setError('Single sign-on is required for this account');
+            setError(t('errorSsoRequired'));
             break;
           case 'email_required':
-            setError('Email is required');
+            setError(t('errorEmailRequired'));
             break;
           case 'password_required':
-            setError('Password is required');
+            setError(t('errorPasswordRequired'));
             break;
           default:
-            setError(err.message || 'An unexpected error occurred');
+            setError(err.message || t('errorUnexpected'));
         }
       } else {
-        setError('An unexpected error occurred. Please try again.');
+        setError(t('errorUnexpected'));
       }
     } finally {
       setLoading(false);
@@ -155,20 +157,20 @@ export default function LoginPage() {
 
   return (
     <div>
-      <h2 className="auth-title">Sign in</h2>
+      <h2 className="auth-title">{t('signIn')}</h2>
 
       {error && <div className="alert-error">{error}</div>}
 
       <form onSubmit={handleSubmit}>
         <div className="form-group">
-          <label htmlFor="email">Email</label>
+          <label htmlFor="email">{t('email')}</label>
           <input
             id="email"
             type="email"
             value={email}
             onChange={(e) => handleEmailChange(e.target.value)}
             onBlur={handleEmailBlur}
-            placeholder="you@example.com"
+            placeholder={t('emailPlaceholder')}
             autoComplete="email"
             autoFocus={!loginHint}
             maxLength={256}
@@ -177,18 +179,18 @@ export default function LoginPage() {
         </div>
 
         {ssoChecking && (
-          <div className="sso-checking">Checking sign-in options...</div>
+          <div className="sso-checking">{t('ssoChecking')}</div>
         )}
 
         {ssoInfo && (
           <div className="sso-notice">
-            <p>Your organization uses single sign-on</p>
+            <p>{t('ssoNotice')}</p>
             <button
               type="button"
               className="btn-secondary"
               onClick={handleSsoRedirect}
             >
-              Continue with SSO
+              {t('continueWithSso')}
             </button>
           </div>
         )}
@@ -196,13 +198,13 @@ export default function LoginPage() {
         {showPasswordField && (
           <>
             <div className="form-group">
-              <label htmlFor="password">Password</label>
+              <label htmlFor="password">{t('password')}</label>
               <input
                 id="password"
                 type="password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                placeholder="Enter your password"
+                placeholder={t('passwordPlaceholder')}
                 autoComplete="current-password"
                 autoFocus
                 maxLength={256}
@@ -218,17 +220,17 @@ export default function LoginPage() {
               {loading ? (
                 <span className="btn-loading">
                   <span className="spinner" />
-                  Signing in...
+                  {t('signingIn')}
                 </span>
               ) : (
-                'Sign in'
+                t('signIn')
               )}
             </button>
 
             {branding.showForgotPassword && (
               <div className="form-footer">
                 <Link to={forgotPasswordLink} className="link">
-                  Forgot password?
+                  {t('forgotPassword')}
                 </Link>
               </div>
             )}

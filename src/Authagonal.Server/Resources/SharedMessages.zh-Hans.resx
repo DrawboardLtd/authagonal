@@ -1,0 +1,85 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <xsd:schema id="root" xmlns="" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:msdata="urn:schemas-microsoft-com:xml-msdata">
+    <xsd:element name="root" msdata:IsDataSet="true">
+      <xsd:complexType>
+        <xsd:choice maxOccurs="unbounded">
+          <xsd:element name="data">
+            <xsd:complexType>
+              <xsd:sequence>
+                <xsd:element name="value" type="xsd:string" minOccurs="0" msdata:Ordinal="1" />
+                <xsd:element name="comment" type="xsd:string" minOccurs="0" msdata:Ordinal="2" />
+              </xsd:sequence>
+              <xsd:attribute name="name" type="xsd:string" msdata:Ordinal="0" />
+              <xsd:attribute name="type" type="xsd:string" />
+              <xsd:attribute name="mimetype" type="xsd:string" />
+              <xsd:attribute ref="xml:space" />
+            </xsd:complexType>
+          </xsd:element>
+          <xsd:element name="resheader">
+            <xsd:complexType>
+              <xsd:sequence>
+                <xsd:element name="value" type="xsd:string" minOccurs="0" msdata:Ordinal="1" />
+              </xsd:sequence>
+              <xsd:attribute name="name" type="xsd:string" use="required" />
+            </xsd:complexType>
+          </xsd:element>
+        </xsd:choice>
+      </xsd:complexType>
+    </xsd:element>
+  </xsd:schema>
+  <resheader name="resmimetype"><value>text/microsoft-resx</value></resheader>
+  <resheader name="version"><value>1.3</value></resheader>
+  <resheader name="reader"><value>System.Resources.ResXResourceReader, System.Windows.Forms, Version=2.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value></resheader>
+  <resheader name="writer"><value>System.Resources.ResXResourceWriter, System.Windows.Forms, Version=2.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value></resheader>
+
+  <!-- Authentication messages -->
+  <data name="Auth_ResetTokenRequired" xml:space="preserve"><value>重置令牌是必需的。</value></data>
+  <data name="Auth_PasswordRequired" xml:space="preserve"><value>密码是必需的。</value></data>
+  <data name="Auth_WeakPassword" xml:space="preserve"><value>密码不符合强度要求。</value></data>
+  <data name="Auth_InvalidTokenFormat" xml:space="preserve"><value>重置令牌格式无效。</value></data>
+  <data name="Auth_TokenExpired" xml:space="preserve"><value>此重置链接已过期。</value></data>
+  <data name="Auth_TokenUsedOrExpired" xml:space="preserve"><value>此重置链接已被使用或已过期。</value></data>
+  <data name="Auth_InvalidToken" xml:space="preserve"><value>重置令牌无效。</value></data>
+  <data name="Auth_EmailConfirmed" xml:space="preserve"><value>电子邮件已成功确认</value></data>
+  <data name="Auth_VerificationSent" xml:space="preserve"><value>验证电子邮件已发送</value></data>
+
+  <!-- Password validation -->
+  <data name="Password_Required" xml:space="preserve"><value>密码是必需的。</value></data>
+  <data name="Password_MinLength" xml:space="preserve"><value>密码必须至少包含 {0} 个字符。</value></data>
+  <data name="Password_RequireUppercase" xml:space="preserve"><value>密码必须包含至少一个大写字母。</value></data>
+  <data name="Password_RequireLowercase" xml:space="preserve"><value>密码必须包含至少一个小写字母。</value></data>
+  <data name="Password_RequireDigit" xml:space="preserve"><value>密码必须包含至少一个数字。</value></data>
+  <data name="Password_RequireSpecialChar" xml:space="preserve"><value>密码必须包含至少一个非字母数字字符。</value></data>
+  <data name="Password_MinUniqueChars" xml:space="preserve"><value>密码必须包含至少 {0} 个不同的字符。</value></data>
+
+  <!-- Password policy labels -->
+  <data name="PasswordPolicy_MinLength" xml:space="preserve"><value>至少 {0} 个字符</value></data>
+  <data name="PasswordPolicy_Uppercase" xml:space="preserve"><value>大写字母</value></data>
+  <data name="PasswordPolicy_Lowercase" xml:space="preserve"><value>小写字母</value></data>
+  <data name="PasswordPolicy_Digit" xml:space="preserve"><value>数字</value></data>
+  <data name="PasswordPolicy_SpecialChar" xml:space="preserve"><value>特殊字符</value></data>
+
+  <!-- Error messages -->
+  <data name="Error_BadRequest" xml:space="preserve"><value>请求无效。</value></data>
+  <data name="Error_Unauthorized" xml:space="preserve"><value>需要进行身份验证。</value></data>
+  <data name="Error_NotFound" xml:space="preserve"><value>未找到请求的资源。</value></data>
+  <data name="Error_ServerError" xml:space="preserve"><value>发生了意外错误。</value></data>
+
+  <!-- End session -->
+  <data name="EndSession_SignedOut" xml:space="preserve"><value>您已退出登录。</value></data>
+
+  <!-- Admin user endpoint messages -->
+  <data name="Admin_UserNotFound" xml:space="preserve"><value>未找到用户"{0}"</value></data>
+  <data name="Admin_EmailRequired" xml:space="preserve"><value>电子邮件是必需的</value></data>
+  <data name="Admin_PasswordRequired" xml:space="preserve"><value>密码是必需的</value></data>
+  <data name="Admin_UserExists" xml:space="preserve"><value>使用此电子邮件的用户已存在</value></data>
+  <data name="Admin_UserIdRequired" xml:space="preserve"><value>用户ID是必需的</value></data>
+  <data name="Admin_TokenRequired" xml:space="preserve"><value>令牌是必需的</value></data>
+  <data name="Admin_InvalidTokenFormat" xml:space="preserve"><value>令牌格式无效</value></data>
+  <data name="Admin_VerificationExpired" xml:space="preserve"><value>此验证链接已过期</value></data>
+  <data name="Admin_UserNotFoundSimple" xml:space="preserve"><value>未找到用户</value></data>
+  <data name="Admin_TokenInvalidOrExpired" xml:space="preserve"><value>令牌无效或已过期</value></data>
+  <data name="Admin_EmailAlreadyConfirmed" xml:space="preserve"><value>电子邮件已确认</value></data>
+  <data name="Admin_ProviderAndKeyRequired" xml:space="preserve"><value>提供者和提供者密钥是必需的</value></data>
+</root>

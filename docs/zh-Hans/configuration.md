@@ -1,0 +1,286 @@
+---
+layout: default
+title: 配置
+locale: zh-Hans
+---
+
+# 配置
+
+Authagonal 通过 `appsettings.json` 或环境变量进行配置。环境变量使用 `__` 作为节分隔符（例如 `Storage__ConnectionString`）。
+
+## 必需设置
+
+| 设置 | 环境变量 | 描述 |
+|---|---|---|
+| `Storage:ConnectionString` | `Storage__ConnectionString` | Azure Table Storage 连接字符串 |
+| `Issuer` | `Issuer` | 此服务器的公共基础 URL（例如 `https://auth.example.com`） |
+
+## 认证
+
+| 设置 | 默认值 | 描述 |
+|---|---|---|
+| `Authentication:CookieLifetimeHours` | `48` | Cookie 会话生命周期（滑动过期） |
+
+## 客户端
+
+客户端在 `Clients` 数组中定义，并在启动时播种。每个客户端可以包含：
+
+```json
+{
+  "Clients": [
+    {
+      "ClientId": "my-app",
+      "ClientName": "My Application",
+      "ClientSecretHashes": ["sha256-hash-here"],
+      "AllowedGrantTypes": ["authorization_code"],
+      "RedirectUris": ["https://app.example.com/callback"],
+      "PostLogoutRedirectUris": ["https://app.example.com"],
+      "AllowedScopes": ["openid", "profile", "email", "custom-scope"],
+      "AllowedCorsOrigins": ["https://app.example.com"],
+      "RequirePkce": true,
+      "RequireClientSecret": false,
+      "AllowOfflineAccess": true,
+      "AlwaysIncludeUserClaimsInIdToken": false,
+      "AccessTokenLifetimeSeconds": 1800,
+      "IdentityTokenLifetimeSeconds": 300,
+      "AuthorizationCodeLifetimeSeconds": 300,
+      "AbsoluteRefreshTokenLifetimeSeconds": 2592000,
+      "SlidingRefreshTokenLifetimeSeconds": 1296000,
+      "RefreshTokenUsage": "OneTime",
+      "ProvisioningApps": ["my-backend"]
+    }
+  ]
+}
+```
+
+### 授权类型
+
+| 授权类型 | 使用场景 |
+|---|---|
+| `authorization_code` | 交互式用户登录（Web 应用、SPA、移动端） |
+| `client_credentials` | 服务间通信 |
+| `refresh_token` | 令牌续期（需要 `AllowOfflineAccess: true`） |
+
+### 刷新令牌用法
+
+| 值 | 行为 |
+|---|---|
+| `OneTime`（默认） | 每次刷新都会签发新的刷新令牌。旧令牌失效，但有 60 秒的宽限窗口以支持并发请求。宽限窗口过后的重放将撤销该用户+客户端的所有令牌。 |
+| `ReUse` | 同一刷新令牌在过期前可重复使用。 |
+
+### 预配应用
+
+`ProvisioningApps` 数组引用在 `ProvisioningApps` 配置节中定义的应用 ID。当用户通过此客户端授权时，他们将通过 TCC 被预配到这些应用中。详情请参阅[预配](provisioning)。
+
+## 预配应用
+
+定义用户应被预配到的下游应用程序：
+
+```json
+{
+  "ProvisioningApps": {
+    "my-backend": {
+      "CallbackUrl": "https://api.example.com/provisioning",
+      "ApiKey": "secret-api-key"
+    },
+    "analytics": {
+      "CallbackUrl": "https://analytics.example.com/provisioning",
+      "ApiKey": "another-key"
+    }
+  }
+}
+```
+
+完整的 TCC 协议规范请参阅[预配](provisioning)。
+
+## 密码策略
+
+自定义密码强度要求：
+
+```json
+{
+  "PasswordPolicy": {
+    "MinLength": 10,
+    "MinUniqueChars": 3,
+    "RequireUppercase": true,
+    "RequireLowercase": true,
+    "RequireDigit": true,
+    "RequireSpecialChar": false
+  }
+}
+```
+
+| 属性 | 默认值 | 描述 |
+|---|---|---|
+| `MinLength` | `8` | 最小密码长度 |
+| `MinUniqueChars` | `2` | 最少不同字符数 |
+| `RequireUppercase` | `true` | 要求至少一个大写字母 |
+| `RequireLowercase` | `true` | 要求至少一个小写字母 |
+| `RequireDigit` | `true` | 要求至少一个数字 |
+| `RequireSpecialChar` | `true` | 要求至少一个非字母数字字符 |
+
+该策略在密码重置和管理员用户注册时强制执行。登录界面从 `GET /api/auth/password-policy` 获取当前策略，以动态显示要求。
+
+## SAML 提供者
+
+在配置中定义 SAML 身份提供者。这些在启动时播种：
+
+```json
+{
+  "SamlProviders": [
+    {
+      "ConnectionId": "azure-ad",
+      "ConnectionName": "Azure AD",
+      "EntityId": "https://auth.example.com",
+      "MetadataLocation": "https://login.microsoftonline.com/{tenant}/FederationMetadata/2007-06/FederationMetadata.xml",
+      "AllowedDomains": ["example.com", "example.org"]
+    }
+  ]
+}
+```
+
+| 属性 | 必需 | 描述 |
+|---|---|---|
+| `ConnectionId` | 是 | 稳定标识符（用于 `/saml/{connectionId}/login` 等 URL） |
+| `ConnectionName` | 否 | 显示名称（默认为 ConnectionId） |
+| `EntityId` | 是 | SAML 服务提供者实体 ID |
+| `MetadataLocation` | 是 | IdP 的 SAML 元数据 XML 的 URL |
+| `AllowedDomains` | 否 | 通过 SSO 路由到此提供者的电子邮件域 |
+
+## OIDC 提供者
+
+在配置中定义 OIDC 身份提供者。这些在启动时播种：
+
+```json
+{
+  "OidcProviders": [
+    {
+      "ConnectionId": "google",
+      "ConnectionName": "Google",
+      "MetadataLocation": "https://accounts.google.com/.well-known/openid-configuration",
+      "ClientId": "your-client-id",
+      "ClientSecret": "your-client-secret",
+      "RedirectUrl": "https://auth.example.com/oidc/callback",
+      "AllowedDomains": ["example.com"]
+    }
+  ]
+}
+```
+
+| 属性 | 必需 | 描述 |
+|---|---|---|
+| `ConnectionId` | 是 | 稳定标识符（用于 `/oidc/{connectionId}/login` 等 URL） |
+| `ConnectionName` | 否 | 显示名称（默认为 ConnectionId） |
+| `MetadataLocation` | 是 | IdP 的 OpenID Connect 发现文档的 URL |
+| `ClientId` | 是 | 在 IdP 注册的 OAuth2 客户端 ID |
+| `ClientSecret` | 是 | OAuth2 客户端密钥（启动时通过 `ISecretProvider` 保护） |
+| `RedirectUrl` | 是 | 在 IdP 注册的 OAuth2 重定向 URI |
+| `AllowedDomains` | 否 | 通过 SSO 路由到此提供者的电子邮件域 |
+
+> **注意：** 提供者也可以通过[管理 API](admin-api) 在运行时管理。配置播种的提供者在每次启动时执行 upsert，因此配置更改在重启后生效。
+
+## 密钥提供者
+
+客户端密钥和 OIDC 提供者密钥可以选择存储在 Azure Key Vault 中：
+
+| 设置 | 描述 |
+|---|---|
+| `SecretProvider:VaultUri` | Key Vault URI（例如 `https://my-vault.vault.azure.net/`）。如未设置，密钥将被视为纯文本。 |
+
+配置后，看起来像 Key Vault 引用的密钥值会在运行时解析。使用 `DefaultAzureCredential` 进行认证。
+
+## 电子邮件
+
+默认邮件服务使用 SendGrid。如需使用其他提供商，请实现 `IEmailService` 并在 `AddAuthagonal()` 之前注册 -- 参阅[扩展性](extensibility)。
+
+| 设置 | 描述 |
+|---|---|
+| `Email:SendGridApiKey` | 用于发送邮件的 SendGrid API 密钥 |
+| `Email:FromAddress` | 发件人电子邮件地址 |
+| `Email:FromName` | 发件人显示名称 |
+| `Email:VerificationTemplateId` | 用于邮箱验证的 SendGrid 动态模板 ID |
+| `Email:PasswordResetTemplateId` | 用于密码重置的 SendGrid 动态模板 ID |
+
+发送到 `@example.com` 地址的邮件会被静默跳过（便于测试）。
+
+## 速率限制
+
+内置的按 IP 速率限制：
+
+| 端点组 | 限制 | 时间窗口 |
+|---|---|---|
+| 认证端点（登录、SSO） | 20 个请求 | 1 分钟 |
+| 令牌端点 | 30 个请求 | 1 分钟 |
+
+## CORS
+
+CORS 动态配置。所有已注册客户端的 `AllowedCorsOrigins` 中的来源自动被允许，缓存 60 分钟。
+
+## 完整示例
+
+```json
+{
+  "Storage": {
+    "ConnectionString": "DefaultEndpointsProtocol=https;AccountName=...;AccountKey=...;TableEndpoint=https://..."
+  },
+  "Issuer": "https://auth.example.com",
+  "Authentication": {
+    "CookieLifetimeHours": 48
+  },
+  "PasswordPolicy": {
+    "MinLength": 8,
+    "RequireUppercase": true,
+    "RequireLowercase": true,
+    "RequireDigit": true,
+    "RequireSpecialChar": true
+  },
+  "Email": {
+    "SendGridApiKey": "SG.xxx",
+    "FromAddress": "noreply@example.com",
+    "FromName": "Example Auth",
+    "VerificationTemplateId": "d-xxx",
+    "PasswordResetTemplateId": "d-yyy"
+  },
+  "SamlProviders": [
+    {
+      "ConnectionId": "azure-ad",
+      "ConnectionName": "Azure AD",
+      "EntityId": "https://auth.example.com",
+      "MetadataLocation": "https://login.microsoftonline.com/{tenant}/FederationMetadata/2007-06/FederationMetadata.xml",
+      "AllowedDomains": ["example.com"]
+    }
+  ],
+  "OidcProviders": [
+    {
+      "ConnectionId": "google",
+      "ConnectionName": "Google",
+      "MetadataLocation": "https://accounts.google.com/.well-known/openid-configuration",
+      "ClientId": "...",
+      "ClientSecret": "...",
+      "RedirectUrl": "https://auth.example.com/oidc/callback",
+      "AllowedDomains": ["gmail.com"]
+    }
+  ],
+  "ProvisioningApps": {
+    "backend": {
+      "CallbackUrl": "https://api.example.com/provisioning",
+      "ApiKey": "secret"
+    }
+  },
+  "Clients": [
+    {
+      "ClientId": "web",
+      "ClientName": "Web App",
+      "AllowedGrantTypes": ["authorization_code"],
+      "RedirectUris": ["https://app.example.com/callback"],
+      "PostLogoutRedirectUris": ["https://app.example.com"],
+      "AllowedScopes": ["openid", "profile", "email"],
+      "AllowedCorsOrigins": ["https://app.example.com"],
+      "RequirePkce": true,
+      "RequireClientSecret": false,
+      "AllowOfflineAccess": true,
+      "ProvisioningApps": ["backend"]
+    }
+  ]
+}
+```

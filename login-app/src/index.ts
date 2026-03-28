@@ -21,4 +21,7 @@ export { login, logout, forgotPassword, resetPassword, getSession, ssoCheck, get
 // Types
 export type { LoginResponse, ApiError, SessionResponse, SsoCheckResponse, PasswordPolicyRule, PasswordPolicyResponse } from './types';
 
+// i18n
+export { default as i18n } from './i18n';
+
 // Styles — import '@drawboard/authagonal-login/src/styles.css' in your entry point

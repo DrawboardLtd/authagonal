@@ -1,8 +1,10 @@
 import { useState } from 'react';
 import { useSearchParams, Link } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 import { forgotPassword } from '../api';
 
 export default function ForgotPasswordPage() {
+  const { t } = useTranslation();
   const [searchParams] = useSearchParams();
   const returnUrl = searchParams.get('returnUrl') || '';
 
@@ -25,7 +27,7 @@ export default function ForgotPasswordPage() {
       setSubmitted(true);
     } catch {
       // The API always returns 200 for anti-enumeration, but handle errors just in case
-      setError('An unexpected error occurred. Please try again.');
+      setError(t('errorUnexpected'));
     } finally {
       setLoading(false);
     }
@@ -34,13 +36,13 @@ export default function ForgotPasswordPage() {
   if (submitted) {
     return (
       <div>
-        <h2 className="auth-title">Check your email</h2>
+        <h2 className="auth-title">{t('checkYourEmail')}</h2>
         <div className="alert-success">
-          If an account exists with that email, you'll receive a reset link shortly.
+          {t('resetEmailSent')}
         </div>
         <div className="form-footer">
           <Link to={loginLink} className="link">
-            Back to sign in
+            {t('backToSignIn')}
           </Link>
         </div>
       </div>
@@ -49,22 +51,22 @@ export default function ForgotPasswordPage() {
 
   return (
     <div>
-      <h2 className="auth-title">Reset your password</h2>
+      <h2 className="auth-title">{t('resetYourPassword')}</h2>
       <p className="auth-subtitle">
-        Enter your email address and we'll send you a link to reset your password.
+        {t('resetSubtitle')}
       </p>
 
       {error && <div className="alert-error">{error}</div>}
 
       <form onSubmit={handleSubmit}>
         <div className="form-group">
-          <label htmlFor="email">Email</label>
+          <label htmlFor="email">{t('email')}</label>
           <input
             id="email"
             type="email"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
-            placeholder="you@example.com"
+            placeholder={t('emailPlaceholder')}
             autoComplete="email"
             autoFocus
             maxLength={256}
@@ -80,16 +82,16 @@ export default function ForgotPasswordPage() {
           {loading ? (
             <span className="btn-loading">
               <span className="spinner" />
-              Sending...
+              {t('sending')}
             </span>
           ) : (
-            'Send reset link'
+            t('sendResetLink')
           )}
         </button>
 
         <div className="form-footer">
           <Link to={loginLink} className="link">
-            Back to sign in
+            {t('backToSignIn')}
           </Link>
         </div>
       </form>

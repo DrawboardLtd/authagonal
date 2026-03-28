@@ -1,0 +1,85 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <xsd:schema id="root" xmlns="" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:msdata="urn:schemas-microsoft-com:xml-msdata">
+    <xsd:element name="root" msdata:IsDataSet="true">
+      <xsd:complexType>
+        <xsd:choice maxOccurs="unbounded">
+          <xsd:element name="data">
+            <xsd:complexType>
+              <xsd:sequence>
+                <xsd:element name="value" type="xsd:string" minOccurs="0" msdata:Ordinal="1" />
+                <xsd:element name="comment" type="xsd:string" minOccurs="0" msdata:Ordinal="2" />
+              </xsd:sequence>
+              <xsd:attribute name="name" type="xsd:string" msdata:Ordinal="0" />
+              <xsd:attribute name="type" type="xsd:string" />
+              <xsd:attribute name="mimetype" type="xsd:string" />
+              <xsd:attribute ref="xml:space" />
+            </xsd:complexType>
+          </xsd:element>
+          <xsd:element name="resheader">
+            <xsd:complexType>
+              <xsd:sequence>
+                <xsd:element name="value" type="xsd:string" minOccurs="0" msdata:Ordinal="1" />
+              </xsd:sequence>
+              <xsd:attribute name="name" type="xsd:string" use="required" />
+            </xsd:complexType>
+          </xsd:element>
+        </xsd:choice>
+      </xsd:complexType>
+    </xsd:element>
+  </xsd:schema>
+  <resheader name="resmimetype"><value>text/microsoft-resx</value></resheader>
+  <resheader name="version"><value>1.3</value></resheader>
+  <resheader name="reader"><value>System.Resources.ResXResourceReader, System.Windows.Forms, Version=2.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value></resheader>
+  <resheader name="writer"><value>System.Resources.ResXResourceWriter, System.Windows.Forms, Version=2.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value></resheader>
+
+  <!-- Authentication messages -->
+  <data name="Auth_ResetTokenRequired" xml:space="preserve"><value>Zurücksetzungs-Token ist erforderlich.</value></data>
+  <data name="Auth_PasswordRequired" xml:space="preserve"><value>Passwort ist erforderlich.</value></data>
+  <data name="Auth_WeakPassword" xml:space="preserve"><value>Das Passwort erfüllt nicht die Stärkeanforderungen.</value></data>
+  <data name="Auth_InvalidTokenFormat" xml:space="preserve"><value>Ungültiges Format des Zurücksetzungs-Tokens.</value></data>
+  <data name="Auth_TokenExpired" xml:space="preserve"><value>Dieser Zurücksetzungslink ist abgelaufen.</value></data>
+  <data name="Auth_TokenUsedOrExpired" xml:space="preserve"><value>Dieser Zurücksetzungslink wurde bereits verwendet oder ist abgelaufen.</value></data>
+  <data name="Auth_InvalidToken" xml:space="preserve"><value>Ungültiges Zurücksetzungs-Token.</value></data>
+  <data name="Auth_EmailConfirmed" xml:space="preserve"><value>E-Mail erfolgreich bestätigt</value></data>
+  <data name="Auth_VerificationSent" xml:space="preserve"><value>Bestätigungs-E-Mail gesendet</value></data>
+
+  <!-- Password validation -->
+  <data name="Password_Required" xml:space="preserve"><value>Passwort ist erforderlich.</value></data>
+  <data name="Password_MinLength" xml:space="preserve"><value>Das Passwort muss mindestens {0} Zeichen lang sein.</value></data>
+  <data name="Password_RequireUppercase" xml:space="preserve"><value>Das Passwort muss mindestens einen Großbuchstaben enthalten.</value></data>
+  <data name="Password_RequireLowercase" xml:space="preserve"><value>Das Passwort muss mindestens einen Kleinbuchstaben enthalten.</value></data>
+  <data name="Password_RequireDigit" xml:space="preserve"><value>Das Passwort muss mindestens eine Ziffer enthalten.</value></data>
+  <data name="Password_RequireSpecialChar" xml:space="preserve"><value>Das Passwort muss mindestens ein nicht-alphanumerisches Zeichen enthalten.</value></data>
+  <data name="Password_MinUniqueChars" xml:space="preserve"><value>Das Passwort muss mindestens {0} unterschiedliche Zeichen enthalten.</value></data>
+
+  <!-- Password policy labels -->
+  <data name="PasswordPolicy_MinLength" xml:space="preserve"><value>Mindestens {0} Zeichen</value></data>
+  <data name="PasswordPolicy_Uppercase" xml:space="preserve"><value>Großbuchstabe</value></data>
+  <data name="PasswordPolicy_Lowercase" xml:space="preserve"><value>Kleinbuchstabe</value></data>
+  <data name="PasswordPolicy_Digit" xml:space="preserve"><value>Zahl</value></data>
+  <data name="PasswordPolicy_SpecialChar" xml:space="preserve"><value>Sonderzeichen</value></data>
+
+  <!-- Error messages -->
+  <data name="Error_BadRequest" xml:space="preserve"><value>Die Anfrage war ungültig.</value></data>
+  <data name="Error_Unauthorized" xml:space="preserve"><value>Authentifizierung ist erforderlich.</value></data>
+  <data name="Error_NotFound" xml:space="preserve"><value>Die angeforderte Ressource wurde nicht gefunden.</value></data>
+  <data name="Error_ServerError" xml:space="preserve"><value>Ein unerwarteter Fehler ist aufgetreten.</value></data>
+
+  <!-- End session -->
+  <data name="EndSession_SignedOut" xml:space="preserve"><value>Sie wurden abgemeldet.</value></data>
+
+  <!-- Admin user endpoint messages -->
+  <data name="Admin_UserNotFound" xml:space="preserve"><value>Benutzer „{0}" nicht gefunden</value></data>
+  <data name="Admin_EmailRequired" xml:space="preserve"><value>E-Mail ist erforderlich</value></data>
+  <data name="Admin_PasswordRequired" xml:space="preserve"><value>Passwort ist erforderlich</value></data>
+  <data name="Admin_UserExists" xml:space="preserve"><value>Ein Benutzer mit dieser E-Mail-Adresse existiert bereits</value></data>
+  <data name="Admin_UserIdRequired" xml:space="preserve"><value>Benutzer-ID ist erforderlich</value></data>
+  <data name="Admin_TokenRequired" xml:space="preserve"><value>Token ist erforderlich</value></data>
+  <data name="Admin_InvalidTokenFormat" xml:space="preserve"><value>Ungültiges Token-Format</value></data>
+  <data name="Admin_VerificationExpired" xml:space="preserve"><value>Dieser Bestätigungslink ist abgelaufen</value></data>
+  <data name="Admin_UserNotFoundSimple" xml:space="preserve"><value>Benutzer nicht gefunden</value></data>
+  <data name="Admin_TokenInvalidOrExpired" xml:space="preserve"><value>Token ist ungültig oder abgelaufen</value></data>
+  <data name="Admin_EmailAlreadyConfirmed" xml:space="preserve"><value>E-Mail ist bereits bestätigt</value></data>
+  <data name="Admin_ProviderAndKeyRequired" xml:space="preserve"><value>Anbieter und Anbieterschlüssel sind erforderlich</value></data>
+</root>

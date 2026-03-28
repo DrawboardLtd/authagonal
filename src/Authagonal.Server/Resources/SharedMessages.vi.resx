@@ -1,0 +1,85 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <xsd:schema id="root" xmlns="" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:msdata="urn:schemas-microsoft-com:xml-msdata">
+    <xsd:element name="root" msdata:IsDataSet="true">
+      <xsd:complexType>
+        <xsd:choice maxOccurs="unbounded">
+          <xsd:element name="data">
+            <xsd:complexType>
+              <xsd:sequence>
+                <xsd:element name="value" type="xsd:string" minOccurs="0" msdata:Ordinal="1" />
+                <xsd:element name="comment" type="xsd:string" minOccurs="0" msdata:Ordinal="2" />
+              </xsd:sequence>
+              <xsd:attribute name="name" type="xsd:string" msdata:Ordinal="0" />
+              <xsd:attribute name="type" type="xsd:string" />
+              <xsd:attribute name="mimetype" type="xsd:string" />
+              <xsd:attribute ref="xml:space" />
+            </xsd:complexType>
+          </xsd:element>
+          <xsd:element name="resheader">
+            <xsd:complexType>
+              <xsd:sequence>
+                <xsd:element name="value" type="xsd:string" minOccurs="0" msdata:Ordinal="1" />
+              </xsd:sequence>
+              <xsd:attribute name="name" type="xsd:string" use="required" />
+            </xsd:complexType>
+          </xsd:element>
+        </xsd:choice>
+      </xsd:complexType>
+    </xsd:element>
+  </xsd:schema>
+  <resheader name="resmimetype"><value>text/microsoft-resx</value></resheader>
+  <resheader name="version"><value>1.3</value></resheader>
+  <resheader name="reader"><value>System.Resources.ResXResourceReader, System.Windows.Forms, Version=2.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value></resheader>
+  <resheader name="writer"><value>System.Resources.ResXResourceWriter, System.Windows.Forms, Version=2.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value></resheader>
+
+  <!-- Authentication messages -->
+  <data name="Auth_ResetTokenRequired" xml:space="preserve"><value>Mã đặt lại là bắt buộc.</value></data>
+  <data name="Auth_PasswordRequired" xml:space="preserve"><value>Mật khẩu là bắt buộc.</value></data>
+  <data name="Auth_WeakPassword" xml:space="preserve"><value>Mật khẩu không đáp ứng yêu cầu về độ mạnh.</value></data>
+  <data name="Auth_InvalidTokenFormat" xml:space="preserve"><value>Định dạng mã đặt lại không hợp lệ.</value></data>
+  <data name="Auth_TokenExpired" xml:space="preserve"><value>Liên kết đặt lại này đã hết hạn.</value></data>
+  <data name="Auth_TokenUsedOrExpired" xml:space="preserve"><value>Liên kết đặt lại này đã được sử dụng hoặc đã hết hạn.</value></data>
+  <data name="Auth_InvalidToken" xml:space="preserve"><value>Mã đặt lại không hợp lệ.</value></data>
+  <data name="Auth_EmailConfirmed" xml:space="preserve"><value>Xác nhận email thành công</value></data>
+  <data name="Auth_VerificationSent" xml:space="preserve"><value>Email xác minh đã được gửi</value></data>
+
+  <!-- Password validation -->
+  <data name="Password_Required" xml:space="preserve"><value>Mật khẩu là bắt buộc.</value></data>
+  <data name="Password_MinLength" xml:space="preserve"><value>Mật khẩu phải có ít nhất {0} ký tự.</value></data>
+  <data name="Password_RequireUppercase" xml:space="preserve"><value>Mật khẩu phải chứa ít nhất một chữ cái viết hoa.</value></data>
+  <data name="Password_RequireLowercase" xml:space="preserve"><value>Mật khẩu phải chứa ít nhất một chữ cái viết thường.</value></data>
+  <data name="Password_RequireDigit" xml:space="preserve"><value>Mật khẩu phải chứa ít nhất một chữ số.</value></data>
+  <data name="Password_RequireSpecialChar" xml:space="preserve"><value>Mật khẩu phải chứa ít nhất một ký tự đặc biệt.</value></data>
+  <data name="Password_MinUniqueChars" xml:space="preserve"><value>Mật khẩu phải chứa ít nhất {0} ký tự không trùng lặp.</value></data>
+
+  <!-- Password policy labels -->
+  <data name="PasswordPolicy_MinLength" xml:space="preserve"><value>Ít nhất {0} ký tự</value></data>
+  <data name="PasswordPolicy_Uppercase" xml:space="preserve"><value>Chữ cái viết hoa</value></data>
+  <data name="PasswordPolicy_Lowercase" xml:space="preserve"><value>Chữ cái viết thường</value></data>
+  <data name="PasswordPolicy_Digit" xml:space="preserve"><value>Chữ số</value></data>
+  <data name="PasswordPolicy_SpecialChar" xml:space="preserve"><value>Ký tự đặc biệt</value></data>
+
+  <!-- Error messages -->
+  <data name="Error_BadRequest" xml:space="preserve"><value>Yêu cầu không hợp lệ.</value></data>
+  <data name="Error_Unauthorized" xml:space="preserve"><value>Yêu cầu xác thực.</value></data>
+  <data name="Error_NotFound" xml:space="preserve"><value>Không tìm thấy tài nguyên được yêu cầu.</value></data>
+  <data name="Error_ServerError" xml:space="preserve"><value>Đã xảy ra lỗi không mong muốn.</value></data>
+
+  <!-- End session -->
+  <data name="EndSession_SignedOut" xml:space="preserve"><value>Bạn đã đăng xuất.</value></data>
+
+  <!-- Admin user endpoint messages -->
+  <data name="Admin_UserNotFound" xml:space="preserve"><value>Không tìm thấy người dùng '{0}'</value></data>
+  <data name="Admin_EmailRequired" xml:space="preserve"><value>Email là bắt buộc</value></data>
+  <data name="Admin_PasswordRequired" xml:space="preserve"><value>Mật khẩu là bắt buộc</value></data>
+  <data name="Admin_UserExists" xml:space="preserve"><value>Người dùng với email này đã tồn tại</value></data>
+  <data name="Admin_UserIdRequired" xml:space="preserve"><value>UserId là bắt buộc</value></data>
+  <data name="Admin_TokenRequired" xml:space="preserve"><value>Mã xác thực là bắt buộc</value></data>
+  <data name="Admin_InvalidTokenFormat" xml:space="preserve"><value>Định dạng mã xác thực không hợp lệ</value></data>
+  <data name="Admin_VerificationExpired" xml:space="preserve"><value>Liên kết xác minh này đã hết hạn</value></data>
+  <data name="Admin_UserNotFoundSimple" xml:space="preserve"><value>Không tìm thấy người dùng</value></data>
+  <data name="Admin_TokenInvalidOrExpired" xml:space="preserve"><value>Mã xác thực không hợp lệ hoặc đã hết hạn</value></data>
+  <data name="Admin_EmailAlreadyConfirmed" xml:space="preserve"><value>Email đã được xác nhận</value></data>
+  <data name="Admin_ProviderAndKeyRequired" xml:space="preserve"><value>Provider và ProviderKey là bắt buộc</value></data>
+</root>

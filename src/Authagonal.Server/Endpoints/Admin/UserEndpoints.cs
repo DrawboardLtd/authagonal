@@ -3,6 +3,7 @@ using Authagonal.Core.Models;
 using Authagonal.Core.Services;
 using Authagonal.Core.Stores;
 using Authagonal.Server.Services;
+using Microsoft.Extensions.Localization;
 
 namespace Authagonal.Server.Endpoints.Admin;
 
@@ -29,11 +30,12 @@ public static class UserEndpoints
     private static async Task<IResult> GetUser(
         string userId,
         IUserStore userStore,
+        IStringLocalizer<SharedMessages> localizer,
         CancellationToken ct)
     {
         var user = await userStore.GetAsync(userId, ct);
         if (user is null)
-            return Results.NotFound(new { error = "user_not_found", error_description = $"User '{userId}' not found" });
+            return Results.NotFound(new { error = "user_not_found", error_description = string.Format(localizer["Admin_UserNotFound"].Value, userId) });
 
         var logins = await userStore.GetLoginsAsync(userId, ct);
 
@@ -65,24 +67,26 @@ public static class UserEndpoints
         IUserStore userStore,
         IAuthHook authHook,
         PasswordHasher passwordHasher,
+        PasswordValidator passwordValidator,
         PasswordPolicy passwordPolicy,
         IEmailService emailService,
         IConfiguration config,
+        IStringLocalizer<SharedMessages> localizer,
         CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(request.Email))
-            return Results.BadRequest(new { error = "invalid_request", error_description = "Email is required" });
+            return Results.BadRequest(new { error = "invalid_request", error_description = localizer["Admin_EmailRequired"].Value });
 
         if (string.IsNullOrWhiteSpace(request.Password))
-            return Results.BadRequest(new { error = "invalid_request", error_description = "Password is required" });
+            return Results.BadRequest(new { error = "invalid_request", error_description = localizer["Admin_PasswordRequired"].Value });
 
-        var (isValid, validationError) = PasswordValidator.Validate(request.Password, passwordPolicy);
+        var (isValid, validationError) = passwordValidator.Validate(request.Password, passwordPolicy);
         if (!isValid)
             return Results.BadRequest(new { error = "weak_password", error_description = validationError });
 
         var existing = await userStore.FindByEmailAsync(request.Email, ct);
         if (existing is not null)
-            return Results.Conflict(new { error = "user_exists", error_description = "A user with this email already exists" });
+            return Results.Conflict(new { error = "user_exists", error_description = localizer["Admin_UserExists"].Value });
 
         var userId = Guid.NewGuid().ToString("N");
         var now = DateTimeOffset.UtcNow;
@@ -136,14 +140,15 @@ public static class UserEndpoints
         UpdateUserRequest request,
         IUserStore userStore,
         IGrantStore grantStore,
+        IStringLocalizer<SharedMessages> localizer,
         CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(request.UserId))
-            return Results.BadRequest(new { error = "invalid_request", error_description = "UserId is required" });
+            return Results.BadRequest(new { error = "invalid_request", error_description = localizer["Admin_UserIdRequired"].Value });
 
         var user = await userStore.GetAsync(request.UserId, ct);
         if (user is null)
-            return Results.NotFound(new { error = "user_not_found", error_description = $"User '{request.UserId}' not found" });
+            return Results.NotFound(new { error = "user_not_found", error_description = string.Format(localizer["Admin_UserNotFound"].Value, request.UserId) });
 
         var orgChanged = request.OrganizationId is not null &&
             !string.Equals(user.OrganizationId, request.OrganizationId, StringComparison.Ordinal);
@@ -183,11 +188,12 @@ public static class UserEndpoints
         IUserStore userStore,
         IGrantStore grantStore,
         IProvisioningOrchestrator provisioningOrchestrator,
+        IStringLocalizer<SharedMessages> localizer,
         CancellationToken ct)
     {
         var user = await userStore.GetAsync(userId, ct);
         if (user is null)
-            return Results.NotFound(new { error = "user_not_found", error_description = $"User '{userId}' not found" });
+            return Results.NotFound(new { error = "user_not_found", error_description = string.Format(localizer["Admin_UserNotFound"].Value, userId) });
 
         // Remove all grants for this user
         await grantStore.RemoveAllBySubjectAsync(userId, ct);
@@ -203,6 +209,7 @@ public static class UserEndpoints
     private static async Task<IResult> ConfirmEmail(
         HttpContext httpContext,
         IUserStore userStore,
+        IStringLocalizer<SharedMessages> localizer,
         CancellationToken ct)
     {
         var token = httpContext.Request.Query["token"].FirstOrDefault();
@@ -217,7 +224,7 @@ public static class UserEndpoints
         }
 
         if (string.IsNullOrWhiteSpace(token))
-            return Results.BadRequest(new { error = "invalid_request", error_description = "Token is required" });
+            return Results.BadRequest(new { error = "invalid_request", error_description = localizer["Admin_TokenRequired"].Value });
 
         string decoded;
         try
@@ -226,12 +233,12 @@ public static class UserEndpoints
         }
         catch
         {
-            return Results.BadRequest(new { error = "invalid_token", error_description = "Invalid token format" });
+            return Results.BadRequest(new { error = "invalid_token", error_description = localizer["Admin_InvalidTokenFormat"].Value });
         }
 
         var parts = decoded.Split("||");
         if (parts.Length < 2)
-            return Results.BadRequest(new { error = "invalid_token", error_description = "Invalid token format" });
+            return Results.BadRequest(new { error = "invalid_token", error_description = localizer["Admin_InvalidTokenFormat"].Value });
 
         var securityStamp = parts[0];
         var email = parts[1];
@@ -242,20 +249,20 @@ public static class UserEndpoints
             if (!long.TryParse(parts[2], out var expiresAtUnix) ||
                 DateTimeOffset.UtcNow.ToUnixTimeSeconds() > expiresAtUnix)
             {
-                return Results.BadRequest(new { error = "token_expired", error_description = "This verification link has expired" });
+                return Results.BadRequest(new { error = "token_expired", error_description = localizer["Admin_VerificationExpired"].Value });
             }
         }
         else
         {
-            return Results.BadRequest(new { error = "invalid_token", error_description = "Invalid token format" });
+            return Results.BadRequest(new { error = "invalid_token", error_description = localizer["Admin_InvalidTokenFormat"].Value });
         }
 
         var user = await userStore.FindByEmailAsync(email, ct);
         if (user is null)
-            return Results.NotFound(new { error = "user_not_found", error_description = "User not found" });
+            return Results.NotFound(new { error = "user_not_found", error_description = localizer["Admin_UserNotFoundSimple"].Value });
 
         if (user.SecurityStamp != securityStamp)
-            return Results.BadRequest(new { error = "invalid_token", error_description = "Token is invalid or expired" });
+            return Results.BadRequest(new { error = "invalid_token", error_description = localizer["Admin_TokenInvalidOrExpired"].Value });
 
         user.EmailConfirmed = true;
         user.SecurityStamp = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
@@ -263,7 +270,7 @@ public static class UserEndpoints
 
         await userStore.UpdateAsync(user, ct);
 
-        return Results.Ok(new { message = "Email confirmed successfully" });
+        return Results.Ok(new { message = localizer["Auth_EmailConfirmed"].Value });
     }
 
     private static async Task<IResult> SendVerificationEmail(
@@ -271,14 +278,15 @@ public static class UserEndpoints
         IUserStore userStore,
         IEmailService emailService,
         IConfiguration config,
+        IStringLocalizer<SharedMessages> localizer,
         CancellationToken ct)
     {
         var user = await userStore.GetAsync(userId, ct);
         if (user is null)
-            return Results.NotFound(new { error = "user_not_found", error_description = $"User '{userId}' not found" });
+            return Results.NotFound(new { error = "user_not_found", error_description = string.Format(localizer["Admin_UserNotFound"].Value, userId) });
 
         if (user.EmailConfirmed)
-            return Results.BadRequest(new { error = "already_confirmed", error_description = "Email is already confirmed" });
+            return Results.BadRequest(new { error = "already_confirmed", error_description = localizer["Admin_EmailAlreadyConfirmed"].Value });
 
         // Rotate security stamp for new token
         user.SecurityStamp = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
@@ -293,21 +301,22 @@ public static class UserEndpoints
 
         await emailService.SendVerificationEmailAsync(user.Email, callbackUrl, ct);
 
-        return Results.Ok(new { message = "Verification email sent" });
+        return Results.Ok(new { message = localizer["Auth_VerificationSent"].Value });
     }
 
     private static async Task<IResult> LinkExternalIdentity(
         string userId,
         LinkExternalIdentityRequest request,
         IUserStore userStore,
+        IStringLocalizer<SharedMessages> localizer,
         CancellationToken ct)
     {
         var user = await userStore.GetAsync(userId, ct);
         if (user is null)
-            return Results.NotFound(new { error = "user_not_found", error_description = $"User '{userId}' not found" });
+            return Results.NotFound(new { error = "user_not_found", error_description = string.Format(localizer["Admin_UserNotFound"].Value, userId) });
 
         if (string.IsNullOrWhiteSpace(request.Provider) || string.IsNullOrWhiteSpace(request.ProviderKey))
-            return Results.BadRequest(new { error = "invalid_request", error_description = "Provider and ProviderKey are required" });
+            return Results.BadRequest(new { error = "invalid_request", error_description = localizer["Admin_ProviderAndKeyRequired"].Value });
 
         var login = new ExternalLoginInfo
         {
@@ -332,11 +341,12 @@ public static class UserEndpoints
         string provider,
         string externalUserId,
         IUserStore userStore,
+        IStringLocalizer<SharedMessages> localizer,
         CancellationToken ct)
     {
         var user = await userStore.GetAsync(userId, ct);
         if (user is null)
-            return Results.NotFound(new { error = "user_not_found", error_description = $"User '{userId}' not found" });
+            return Results.NotFound(new { error = "user_not_found", error_description = string.Format(localizer["Admin_UserNotFound"].Value, userId) });
 
         await userStore.RemoveLoginAsync(userId, provider, externalUserId, ct);
 

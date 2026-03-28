@@ -7,6 +7,7 @@ using Authagonal.Core.Stores;
 using Authagonal.Server.Services;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
+using Microsoft.Extensions.Localization;
 
 namespace Authagonal.Server.Endpoints;
 
@@ -198,18 +199,20 @@ public static class AuthEndpoints
         IUserStore userStore,
         IGrantStore grantStore,
         PasswordHasher passwordHasher,
+        PasswordValidator passwordValidator,
         PasswordPolicy passwordPolicy,
+        IStringLocalizer<SharedMessages> localizer,
         ILogger<Program> logger,
         CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(request.Token))
-            return Results.Json(new { error = "invalid_token", message = "Reset token is required." }, statusCode: 400);
+            return Results.Json(new { error = "invalid_token", message = localizer["Auth_ResetTokenRequired"].Value }, statusCode: 400);
 
         if (string.IsNullOrWhiteSpace(request.NewPassword))
-            return Results.Json(new { error = "password_required", message = "Password is required." }, statusCode: 400);
+            return Results.Json(new { error = "password_required", message = localizer["Auth_PasswordRequired"].Value }, statusCode: 400);
 
         // Validate password strength
-        var (isValid, validationError) = PasswordValidator.Validate(request.NewPassword, passwordPolicy);
+        var (isValid, validationError) = passwordValidator.Validate(request.NewPassword, passwordPolicy);
         if (!isValid)
             return Results.Json(new { error = "weak_password", message = validationError }, statusCode: 400);
 
@@ -221,12 +224,12 @@ public static class AuthEndpoints
         }
         catch
         {
-            return Results.Json(new { error = "invalid_token", message = "Invalid reset token format." }, statusCode: 400);
+            return Results.Json(new { error = "invalid_token", message = localizer["Auth_InvalidTokenFormat"].Value }, statusCode: 400);
         }
 
         var parts = decoded.Split("||");
         if (parts.Length < 2)
-            return Results.Json(new { error = "invalid_token", message = "Invalid reset token format." }, statusCode: 400);
+            return Results.Json(new { error = "invalid_token", message = localizer["Auth_InvalidTokenFormat"].Value }, statusCode: 400);
 
         var resetToken = parts[0];
         var email = parts[1];
@@ -237,21 +240,21 @@ public static class AuthEndpoints
             if (!long.TryParse(parts[2], out var expiresAtUnix) ||
                 DateTimeOffset.UtcNow.ToUnixTimeSeconds() > expiresAtUnix)
             {
-                return Results.Json(new { error = "token_expired", message = "This reset link has expired." }, statusCode: 400);
+                return Results.Json(new { error = "token_expired", message = localizer["Auth_TokenExpired"].Value }, statusCode: 400);
             }
         }
         else
         {
-            return Results.Json(new { error = "invalid_token", message = "Invalid reset token format." }, statusCode: 400);
+            return Results.Json(new { error = "invalid_token", message = localizer["Auth_InvalidTokenFormat"].Value }, statusCode: 400);
         }
 
         var user = await userStore.FindByEmailAsync(email, ct);
         if (user is null)
-            return Results.Json(new { error = "invalid_token", message = "Invalid reset token." }, statusCode: 400);
+            return Results.Json(new { error = "invalid_token", message = localizer["Auth_InvalidToken"].Value }, statusCode: 400);
 
         // Validate token matches security stamp
         if (user.SecurityStamp != resetToken)
-            return Results.Json(new { error = "token_expired", message = "This reset link has already been used or has expired." }, statusCode: 400);
+            return Results.Json(new { error = "token_expired", message = localizer["Auth_TokenUsedOrExpired"].Value }, statusCode: 400);
 
         // Reset password
         user.PasswordHash = passwordHasher.HashPassword(request.NewPassword);
@@ -285,23 +288,25 @@ public static class AuthEndpoints
         });
     }
 
-    private static IResult GetPasswordPolicy(PasswordPolicy policy)
+    private static IResult GetPasswordPolicy(
+        PasswordPolicy policy,
+        IStringLocalizer<SharedMessages> localizer)
     {
         var rules = new List<object>();
 
-        rules.Add(new { rule = "minLength", value = policy.MinLength, label = $"At least {policy.MinLength} characters" });
+        rules.Add(new { rule = "minLength", value = policy.MinLength, label = string.Format(localizer["PasswordPolicy_MinLength"].Value, policy.MinLength) });
 
         if (policy.RequireUppercase)
-            rules.Add(new { rule = "uppercase", value = (object?)null, label = "Uppercase letter" });
+            rules.Add(new { rule = "uppercase", value = (object?)null, label = localizer["PasswordPolicy_Uppercase"].Value });
 
         if (policy.RequireLowercase)
-            rules.Add(new { rule = "lowercase", value = (object?)null, label = "Lowercase letter" });
+            rules.Add(new { rule = "lowercase", value = (object?)null, label = localizer["PasswordPolicy_Lowercase"].Value });
 
         if (policy.RequireDigit)
-            rules.Add(new { rule = "digit", value = (object?)null, label = "Number" });
+            rules.Add(new { rule = "digit", value = (object?)null, label = localizer["PasswordPolicy_Digit"].Value });
 
         if (policy.RequireSpecialChar)
-            rules.Add(new { rule = "specialChar", value = (object?)null, label = "Special character" });
+            rules.Add(new { rule = "specialChar", value = (object?)null, label = localizer["PasswordPolicy_SpecialChar"].Value });
 
         return Results.Ok(new { rules });
     }

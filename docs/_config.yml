@@ -1,2 +1,32 @@
 title: Authagonal
 description: OAuth 2.0 / OpenID Connect / SAML 2.0 authentication server
+
+defaults:
+  - scope:
+      path: "zh-Hans"
+    values:
+      locale: "zh-Hans"
+  - scope:
+      path: "de"
+    values:
+      locale: "de"
+  - scope:
+      path: "fr"
+    values:
+      locale: "fr"
+  - scope:
+      path: "es"
+    values:
+      locale: "es"
+  - scope:
+      path: "vi"
+    values:
+      locale: "vi"
+  - scope:
+      path: "pt"
+    values:
+      locale: "pt"
+  - scope:
+      path: ""
+    values:
+      locale: "en"

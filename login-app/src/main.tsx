@@ -3,9 +3,11 @@ import { createRoot } from 'react-dom/client';
 import './styles.css';
 import App from './App';
 import { loadBranding, BrandingContext } from './branding';
+import './i18n';
+import i18n from './i18n';
 
 loadBranding().then((config) => {
-  document.title = `Sign In — ${config.appName}`;
+  document.title = i18n.t('signInTitle', { appName: config.appName });
 
   createRoot(document.getElementById('root')!).render(
     <StrictMode>

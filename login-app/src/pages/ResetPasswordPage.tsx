@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useSearchParams, Link } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 import { resetPassword, ApiRequestError } from '../api';
 
 interface PasswordRule {
@@ -39,6 +40,7 @@ function evaluateRequirements(password: string, rules: PasswordRule[]): Password
 }
 
 export default function ResetPasswordPage() {
+  const { t } = useTranslation();
   const [searchParams] = useSearchParams();
   const token = searchParams.get('p') || '';
 
@@ -57,7 +59,23 @@ export default function ResetPasswordPage() {
       .catch(() => { /* use defaults */ });
   }, []);
 
-  const requirements = evaluateRequirements(newPassword, rules);
+  function getRuleLabel(rule: PasswordRule): string {
+    switch (rule.rule) {
+      case 'minLength': return t('ruleMinLength', { count: rule.value ?? 8 });
+      case 'uppercase': return t('ruleUppercase');
+      case 'lowercase': return t('ruleLowercase');
+      case 'digit': return t('ruleDigit');
+      case 'specialChar': return t('ruleSpecialChar');
+      default: return rule.label;
+    }
+  }
+
+  const localizedRules: PasswordRule[] = rules.map(r => ({
+    ...r,
+    label: getRuleLabel(r),
+  }));
+
+  const requirements = evaluateRequirements(newPassword, localizedRules);
   const allRequirementsMet = requirements.every((r) => r.met);
 
   async function handleSubmit(e: React.FormEvent) {
@@ -66,12 +84,12 @@ export default function ResetPasswordPage() {
     setValidationError('');
 
     if (!allRequirementsMet) {
-      setValidationError('Password does not meet the requirements');
+      setValidationError(t('passwordNotMeetRequirements'));
       return;
     }
 
     if (newPassword !== confirmPassword) {
-      setValidationError('Passwords do not match');
+      setValidationError(t('passwordsDoNotMatch'));
       return;
     }
 
@@ -84,20 +102,20 @@ export default function ResetPasswordPage() {
       if (err instanceof ApiRequestError) {
         switch (err.error) {
           case 'weak_password':
-            setError(err.message || 'Password does not meet strength requirements');
+            setError(err.message || t('passwordWeakError'));
             break;
           case 'invalid_token':
           case 'token_expired':
-            setError('This reset link is invalid or has expired');
+            setError(t('invalidOrExpiredLink'));
             break;
           case 'password_required':
-            setError('Password is required');
+            setError(t('errorPasswordRequired'));
             break;
           default:
-            setError(err.message || 'An unexpected error occurred');
+            setError(err.message || t('errorUnexpected'));
         }
       } else {
-        setError('An unexpected error occurred. Please try again.');
+        setError(t('errorUnexpected'));
       }
     } finally {
       setLoading(false);
@@ -107,13 +125,13 @@ export default function ResetPasswordPage() {
   if (success) {
     return (
       <div>
-        <h2 className="auth-title">Password reset successfully</h2>
+        <h2 className="auth-title">{t('passwordResetSuccess')}</h2>
         <div className="alert-success">
-          Your password has been reset. You can now sign in with your new password.
+          {t('passwordResetSuccessMessage')}
         </div>
         <div className="form-footer">
           <Link to="/login" className="link">
-            Sign in
+            {t('signIn')}
           </Link>
         </div>
       </div>
@@ -123,13 +141,13 @@ export default function ResetPasswordPage() {
   if (!token) {
     return (
       <div>
-        <h2 className="auth-title">Invalid link</h2>
+        <h2 className="auth-title">{t('invalidLink')}</h2>
         <div className="alert-error">
-          This reset link is invalid or has expired.
+          {t('invalidOrExpiredLink')}
         </div>
         <div className="form-footer">
           <Link to="/forgot-password" className="link">
-            Request a new reset link
+            {t('requestNewResetLink')}
           </Link>
         </div>
       </div>
@@ -138,20 +156,20 @@ export default function ResetPasswordPage() {
 
   return (
     <div>
-      <h2 className="auth-title">Set new password</h2>
+      <h2 className="auth-title">{t('setNewPassword')}</h2>
 
       {error && <div className="alert-error">{error}</div>}
       {validationError && <div className="alert-error">{validationError}</div>}
 
       <form onSubmit={handleSubmit}>
         <div className="form-group">
-          <label htmlFor="newPassword">New password</label>
+          <label htmlFor="newPassword">{t('newPassword')}</label>
           <input
             id="newPassword"
             type="password"
             value={newPassword}
             onChange={(e) => setNewPassword(e.target.value)}
-            placeholder="Enter new password"
+            placeholder={t('newPasswordPlaceholder')}
             autoComplete="new-password"
             autoFocus
             maxLength={256}
@@ -171,13 +189,13 @@ export default function ResetPasswordPage() {
         )}
 
         <div className="form-group">
-          <label htmlFor="confirmPassword">Confirm password</label>
+          <label htmlFor="confirmPassword">{t('confirmPassword')}</label>
           <input
             id="confirmPassword"
             type="password"
             value={confirmPassword}
             onChange={(e) => setConfirmPassword(e.target.value)}
-            placeholder="Confirm new password"
+            placeholder={t('confirmPasswordPlaceholder')}
             autoComplete="new-password"
             maxLength={256}
             required
@@ -192,16 +210,16 @@ export default function ResetPasswordPage() {
           {loading ? (
             <span className="btn-loading">
               <span className="spinner" />
-              Resetting...
+              {t('resetting')}
             </span>
           ) : (
-            'Reset password'
+            t('resetPassword')
           )}
         </button>
 
         <div className="form-footer">
           <Link to="/login" className="link">
-            Back to sign in
+            {t('backToSignIn')}
           </Link>
         </div>
       </form>

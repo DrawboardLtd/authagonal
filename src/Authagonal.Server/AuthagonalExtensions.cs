@@ -9,6 +9,7 @@ using Authagonal.Server.Services.Oidc;
 using Authagonal.Server.Services.Saml;
 using Authagonal.Storage;
 using Azure.Data.Tables;
+using System.Globalization;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
@@ -38,6 +39,11 @@ public static class AuthagonalExtensions
     public static IServiceCollection AddAuthagonal(this IServiceCollection services, IConfiguration configuration)
     {
         // ---------------------------------------------------------------------------
+        // Localization
+        // ---------------------------------------------------------------------------
+        services.AddLocalization();
+
+        // ---------------------------------------------------------------------------
         // Storage
         // ---------------------------------------------------------------------------
         var storageConnectionString = configuration["Storage:ConnectionString"]
@@ -56,6 +62,7 @@ public static class AuthagonalExtensions
         // Application services
         // ---------------------------------------------------------------------------
         services.AddSingleton<PasswordHasher>();
+        services.AddSingleton<PasswordValidator>();
         services.AddSingleton<KeyManager>();
         services.AddHostedService(sp => sp.GetRequiredService<KeyManager>());
         services.AddScoped<AuthorizationCodeService>();
@@ -252,6 +259,16 @@ public static class AuthagonalExtensions
     public static WebApplication UseAuthagonal(this WebApplication app)
     {
         app.UseExceptionHandlingMiddleware();
+
+        // Request localization
+        var supportedCultures = new[] { "en", "zh-Hans", "de", "fr", "es", "vi", "pt" };
+        app.UseRequestLocalization(options =>
+        {
+            options.SetDefaultCulture("en");
+            options.AddSupportedCultures(supportedCultures);
+            options.AddSupportedUICultures(supportedCultures);
+            options.ApplyCurrentCultureToResponseHeaders = true;
+        });
 
         // Security headers
         app.Use(async (context, next) =>

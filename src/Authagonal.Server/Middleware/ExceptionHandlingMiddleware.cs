@@ -1,11 +1,13 @@
 using System.Diagnostics;
 using System.Text.Json;
+using Microsoft.Extensions.Localization;
 
 namespace Authagonal.Server.Middleware;
 
 public sealed class ExceptionHandlingMiddleware(
     RequestDelegate next,
-    ILogger<ExceptionHandlingMiddleware> logger)
+    ILogger<ExceptionHandlingMiddleware> logger,
+    IStringLocalizer<SharedMessages> localizer)
 {
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -42,10 +44,10 @@ public sealed class ExceptionHandlingMiddleware(
 
             var errorDescription = context.Response.StatusCode switch
             {
-                StatusCodes.Status400BadRequest => "The request was invalid.",
-                StatusCodes.Status401Unauthorized => "Authentication is required.",
-                StatusCodes.Status404NotFound => "The requested resource was not found.",
-                _ => "An unexpected error occurred."
+                StatusCodes.Status400BadRequest => localizer["Error_BadRequest"].Value,
+                StatusCodes.Status401Unauthorized => localizer["Error_Unauthorized"].Value,
+                StatusCodes.Status404NotFound => localizer["Error_NotFound"].Value,
+                _ => localizer["Error_ServerError"].Value
             };
 
             var errorResponse = new

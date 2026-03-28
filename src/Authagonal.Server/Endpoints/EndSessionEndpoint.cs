@@ -2,6 +2,7 @@ using Authagonal.Core.Stores;
 using Authagonal.Server.Services;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
+using Microsoft.Extensions.Localization;
 using Microsoft.IdentityModel.JsonWebTokens;
 using Microsoft.IdentityModel.Tokens;
 
@@ -21,6 +22,7 @@ public static class EndSessionEndpoint
         IClientStore clientStore,
         KeyManager keyManager,
         IConfiguration config,
+        IStringLocalizer<SharedMessages> localizer,
         CancellationToken ct)
     {
         var request = httpContext.Request;
@@ -34,7 +36,7 @@ public static class EndSessionEndpoint
         await httpContext.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
 
         if (string.IsNullOrWhiteSpace(postLogoutRedirectUri))
-            return Results.Ok(new { message = "You have been signed out." });
+            return Results.Ok(new { message = localizer["EndSession_SignedOut"].Value });
 
         // Validate post_logout_redirect_uri against the client from id_token_hint
         if (!string.IsNullOrWhiteSpace(idTokenHint))
@@ -55,7 +57,7 @@ public static class EndSessionEndpoint
         }
 
         // If we can't validate the redirect, don't redirect — just confirm logout
-        return Results.Ok(new { message = "You have been signed out." });
+        return Results.Ok(new { message = localizer["EndSession_SignedOut"].Value });
     }
 
     private static string? ExtractClientId(string idToken, KeyManager keyManager, string issuer)
