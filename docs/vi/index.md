@@ -4,6 +4,10 @@ title: Trang chủ
 locale: vi
 ---
 
+<p align="center">
+  <img src="{{ 'assets/logo.svg' | relative_url }}" width="120" alt="Authagonal logo">
+</p>
+
 # Authagonal
 
 Máy chủ xác thực OAuth 2.0 / OpenID Connect / SAML 2.0 được hỗ trợ bởi Azure Table Storage.

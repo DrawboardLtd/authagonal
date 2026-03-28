@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="none">
+  <defs>
+    <linearGradient id="shieldGrad" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#0ea5e9"/>
+      <stop offset="100%" stop-color="#0d9488"/>
+    </linearGradient>
+    <linearGradient id="lockGrad" x1="0.5" y1="0" x2="0.5" y2="1">
+      <stop offset="0%" stop-color="#ffffff"/>
+      <stop offset="100%" stop-color="#e0f2fe"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Hexagonal shield -->
+  <path d="M256 28 L462 130 L462 310 L256 484 L50 310 L50 130 Z"
+        fill="url(#shieldGrad)" stroke="none"/>
+
+  <!-- Inner hexagon border accent -->
+  <path d="M256 60 L438 148 L438 300 L256 452 L74 300 L74 148 Z"
+        fill="none" stroke="rgba(255,255,255,0.2)" stroke-width="3"/>
+
+  <!-- Lock body -->
+  <rect x="196" y="240" width="120" height="100" rx="12" fill="url(#lockGrad)"/>
+
+  <!-- Lock shackle -->
+  <path d="M216 240 L216 195 C216 160 256 130 256 130 C256 130 296 160 296 195 L296 240"
+        fill="none" stroke="url(#lockGrad)" stroke-width="18" stroke-linecap="round"/>
+
+  <!-- Keyhole -->
+  <circle cx="256" cy="280" r="14" fill="#0d9488"/>
+  <rect x="252" y="290" width="8" height="24" rx="4" fill="#0d9488"/>
+</svg>

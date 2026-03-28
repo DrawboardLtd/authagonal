@@ -4,6 +4,10 @@ title: 首页
 locale: zh-Hans
 ---
 
+<p align="center">
+  <img src="{{ 'assets/logo.svg' | relative_url }}" width="120" alt="Authagonal logo">
+</p>
+
 # Authagonal
 
 基于 Azure Table Storage 的 OAuth 2.0 / OpenID Connect / SAML 2.0 认证服务器。

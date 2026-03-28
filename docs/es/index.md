@@ -4,6 +4,10 @@ title: Inicio
 locale: es
 ---
 
+<p align="center">
+  <img src="{{ 'assets/logo.svg' | relative_url }}" width="120" alt="Authagonal logo">
+</p>
+
 # Authagonal
 
 Servidor de autenticacion OAuth 2.0 / OpenID Connect / SAML 2.0 respaldado por Azure Table Storage.

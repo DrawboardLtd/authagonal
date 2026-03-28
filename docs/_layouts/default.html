@@ -183,7 +183,7 @@
 <body>
   <div class="layout">
     <aside class="sidebar">
-      <div class="sidebar-title"><a href="{{ '.' | relative_url }}">Authagonal</a></div>
+      <div class="sidebar-title"><a href="{{ '.' | relative_url }}"><img src="{{ 'assets/logo.svg' | relative_url }}" alt="Authagonal" width="32" height="32" style="vertical-align: middle; margin-right: 8px;">Authagonal</a></div>
       <div class="lang-switcher">
         <select onchange="switchLang(this.value)">
           <option value="en" {% if page.locale == nil or page.locale == 'en' %}selected{% endif %}>English</option>

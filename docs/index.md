@@ -3,6 +3,10 @@ layout: default
 title: Home
 ---
 
+<p align="center">
+  <img src="{{ 'assets/logo.svg' | relative_url }}" width="120" alt="Authagonal logo">
+</p>
+
 # Authagonal
 
 OAuth 2.0 / OpenID Connect / SAML 2.0 authentication server backed by Azure Table Storage.

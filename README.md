@@ -1,6 +1,10 @@
-# Authagonal
+<p align="center">
+  <img src="docs/assets/logo.svg" width="120" alt="Authagonal logo">
+</p>
 
-OAuth 2.0 / OpenID Connect / SAML 2.0 authentication server backed by Azure Table Storage.
+<h1 align="center">Authagonal</h1>
+
+<p align="center">OAuth 2.0 / OpenID Connect / SAML 2.0 authentication server backed by Azure Table Storage.</p>
 
 Architecture: API-only ASP.NET Core server + React login SPA, packaged as a single Docker image. Can also be embedded as a library in your own ASP.NET project.
 
