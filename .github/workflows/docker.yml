@@ -160,18 +160,18 @@ jobs:
         with:
           resourceGroup: authagonal-demo
           containerAppName: authagonal-auth
-          imageToDeploy: drawboardci/authagonal-demo-server:${{ github.sha }}
+          imageToDeploy: drawboardci/authagonal-demo-server:master
 
       - name: Deploy sample API
         uses: azure/container-apps-deploy-action@v2
         with:
           resourceGroup: authagonal-demo
           containerAppName: authagonal-api
-          imageToDeploy: drawboardci/authagonal-demo-sample-api:${{ github.sha }}
+          imageToDeploy: drawboardci/authagonal-demo-sample-api:master
 
       - name: Deploy frontend
         uses: azure/container-apps-deploy-action@v2
         with:
           resourceGroup: authagonal-demo
           containerAppName: authagonal-frontend
-          imageToDeploy: drawboardci/authagonal-demo-frontend:${{ github.sha }}
+          imageToDeploy: drawboardci/authagonal-demo-frontend:master
