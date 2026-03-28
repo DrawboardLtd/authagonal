@@ -102,5 +102,3 @@ Azure AD claims (full URI format) are mapped to simple names:
 - **Clock skew:** 5-minute tolerance on NotBefore/NotOnOrAfter
 - **Wrapping attack prevention:** Signature validation uses the correct reference resolution
 - **Open redirect prevention:** RelayState (returnUrl) must be a relative path starting with `/`
-
-[← Back to home](.)

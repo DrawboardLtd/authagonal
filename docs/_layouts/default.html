@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ page.title }} — {{ site.title }}</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+      color: #1f2937;
+      line-height: 1.6;
+      background: #f9fafb;
+    }
+
+    .layout {
+      display: flex;
+      min-height: 100vh;
+    }
+
+    /* Sidebar */
+    .sidebar {
+      width: 260px;
+      flex-shrink: 0;
+      background: #ffffff;
+      border-right: 1px solid #e5e7eb;
+      padding: 24px 0;
+      position: sticky;
+      top: 0;
+      height: 100vh;
+      overflow-y: auto;
+    }
+
+    .sidebar-title {
+      font-size: 18px;
+      font-weight: 700;
+      color: #111827;
+      padding: 0 20px 16px;
+      border-bottom: 1px solid #e5e7eb;
+      margin-bottom: 12px;
+    }
+
+    .sidebar-title a {
+      color: inherit;
+      text-decoration: none;
+    }
+
+    .sidebar nav a {
+      display: block;
+      padding: 6px 20px;
+      font-size: 14px;
+      color: #4b5563;
+      text-decoration: none;
+      border-left: 3px solid transparent;
+    }
+
+    .sidebar nav a:hover {
+      color: #111827;
+      background: #f3f4f6;
+    }
+
+    .sidebar nav a.active {
+      color: #2563eb;
+      border-left-color: #2563eb;
+      background: #eff6ff;
+      font-weight: 500;
+    }
+
+    .sidebar nav .nav-section {
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: #9ca3af;
+      padding: 16px 20px 4px;
+    }
+
+    /* Content */
+    .content {
+      flex: 1;
+      max-width: 800px;
+      padding: 40px 48px;
+    }
+
+    .content h1 { font-size: 28px; font-weight: 700; margin-bottom: 16px; color: #111827; }
+    .content h2 { font-size: 22px; font-weight: 600; margin-top: 32px; margin-bottom: 12px; color: #111827; border-bottom: 1px solid #e5e7eb; padding-bottom: 6px; }
+    .content h3 { font-size: 17px; font-weight: 600; margin-top: 24px; margin-bottom: 8px; color: #1f2937; }
+    .content p { margin-bottom: 12px; }
+    .content ul, .content ol { margin-bottom: 12px; padding-left: 24px; }
+    .content li { margin-bottom: 4px; }
+
+    .content a { color: #2563eb; text-decoration: none; }
+    .content a:hover { text-decoration: underline; }
+
+    .content code {
+      background: #f3f4f6;
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-size: 14px;
+      font-family: 'SF Mono', 'Fira Code', 'Fira Mono', Menlo, Consolas, monospace;
+    }
+
+    .content pre {
+      background: #1f2937;
+      color: #e5e7eb;
+      padding: 16px;
+      border-radius: 8px;
+      overflow-x: auto;
+      margin-bottom: 16px;
+      font-size: 13px;
+      line-height: 1.5;
+    }
+
+    .content pre code {
+      background: none;
+      padding: 0;
+      color: inherit;
+      font-size: inherit;
+    }
+
+    .content table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-bottom: 16px;
+      font-size: 14px;
+    }
+
+    .content th, .content td {
+      text-align: left;
+      padding: 8px 12px;
+      border: 1px solid #e5e7eb;
+    }
+
+    .content th {
+      background: #f9fafb;
+      font-weight: 600;
+    }
+
+    .content blockquote {
+      border-left: 3px solid #d1d5db;
+      padding-left: 16px;
+      color: #6b7280;
+      margin-bottom: 12px;
+    }
+
+    .content strong { font-weight: 600; }
+
+    /* Mobile */
+    @media (max-width: 768px) {
+      .layout { flex-direction: column; }
+      .sidebar {
+        width: 100%;
+        height: auto;
+        position: static;
+        border-right: none;
+        border-bottom: 1px solid #e5e7eb;
+        padding: 16px 0;
+      }
+      .sidebar nav a { display: inline-block; padding: 4px 12px; }
+      .sidebar nav .nav-section { display: none; }
+      .content { padding: 24px 16px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="layout">
+    <aside class="sidebar">
+      <div class="sidebar-title"><a href="{{ '.' | relative_url }}">Authagonal</a></div>
+      <nav>
+        <div class="nav-section">Getting Started</div>
+        <a href="{{ '.' | relative_url }}" {% if page.title == 'Home' %}class="active"{% endif %}>Overview</a>
+        <a href="{{ 'installation' | relative_url }}" {% if page.title == 'Installation' %}class="active"{% endif %}>Installation</a>
+        <a href="{{ 'quickstart' | relative_url }}" {% if page.title == 'Quick Start' %}class="active"{% endif %}>Quick Start</a>
+
+        <div class="nav-section">Configuration</div>
+        <a href="{{ 'configuration' | relative_url }}" {% if page.title == 'Configuration' %}class="active"{% endif %}>Server Config</a>
+        <a href="{{ 'branding' | relative_url }}" {% if page.title == 'Branding' %}class="active"{% endif %}>Branding</a>
+        <a href="{{ 'provisioning' | relative_url }}" {% if page.title == 'Provisioning' %}class="active"{% endif %}>Provisioning</a>
+
+        <div class="nav-section">Identity Providers</div>
+        <a href="{{ 'saml' | relative_url }}" {% if page.title == 'SAML' %}class="active"{% endif %}>SAML 2.0</a>
+        <a href="{{ 'oidc-federation' | relative_url }}" {% if page.title == 'OIDC Federation' %}class="active"{% endif %}>OIDC Federation</a>
+
+        <div class="nav-section">API Reference</div>
+        <a href="{{ 'auth-api' | relative_url }}" {% if page.title == 'Auth API' %}class="active"{% endif %}>Auth API</a>
+        <a href="{{ 'admin-api' | relative_url }}" {% if page.title == 'Admin API' %}class="active"{% endif %}>Admin API</a>
+
+        <div class="nav-section">Operations</div>
+        <a href="{{ 'migration' | relative_url }}" {% if page.title == 'Migration' %}class="active"{% endif %}>Migration</a>
+      </nav>
+    </aside>
+    <main class="content">
+      {{ content }}
+    </main>
+  </div>
+</body>
+</html>

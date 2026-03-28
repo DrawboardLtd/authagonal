@@ -139,5 +139,3 @@ Content-Type: application/json
 ```
 
 Issues tokens on behalf of a user without requiring their credentials. Useful for testing and support.
-
-[← Back to home](.)

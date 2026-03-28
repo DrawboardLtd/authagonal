@@ -82,5 +82,3 @@ Tested with:
 - Apple
 - Azure AD / Entra ID
 - Azure AD B2C
-
-[← Back to home](.)

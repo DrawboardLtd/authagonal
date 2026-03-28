@@ -89,5 +89,3 @@ docker run authagonal-migration -- \
 ```
 
 See [Migration](migration) for details.
-
-[← Back to home](.)

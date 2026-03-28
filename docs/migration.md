@@ -72,5 +72,3 @@ Not yet automated. To keep existing tokens valid across the cutover:
 8. DNS switch (set TTL to 60s beforehand)
 9. Monitor 30 minutes
 10. If issues: switch DNS back (shared signing key means tokens work on both systems)
-
-[← Back to home](.)

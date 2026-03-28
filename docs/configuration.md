@@ -168,5 +168,3 @@ CORS is configured dynamically. Origins from all registered clients' `AllowedCor
   ]
 }
 ```
-
-[← Back to home](.)

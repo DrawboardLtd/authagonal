@@ -40,15 +40,4 @@ Client App                    Authagonal                         IdP (Azure AD, 
     │ ◄─ { access_token, ... } ──┤                                    │
 ```
 
-## Pages
-
-- [Installation](installation) — Docker, docker-compose, building from source
-- [Quick Start](quickstart) — get running in 5 minutes
-- [Configuration](configuration) — server settings, clients, storage, provisioning apps
-- [Branding](branding) — customize the login UI
-- [Provisioning](provisioning) — TCC provisioning into downstream apps
-- [SAML](saml) — SAML SP setup and Azure AD integration
-- [OIDC Federation](oidc-federation) — connecting external OIDC identity providers
-- [Admin API](admin-api) — user, SSO, and token management endpoints
-- [Auth API](auth-api) — login, logout, password reset, session endpoints
-- [Migration](migration) — migrating from Duende IdentityServer
+Get started with the [Installation](installation) guide or jump straight to the [Quick Start](quickstart).

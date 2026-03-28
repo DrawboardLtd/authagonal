@@ -151,5 +151,3 @@ Your UI must be served from the **same origin** as the API because:
 - Cookie auth uses `SameSite=Lax` + `HttpOnly`
 - The authorize endpoint redirects to `/login` (relative)
 - Reset links use `{Issuer}/reset-password`
-
-[← Back to home](.)

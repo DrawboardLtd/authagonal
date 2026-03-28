@@ -97,5 +97,3 @@ Response:
 - [Branding](branding) — customize the login UI
 - [SAML](saml) — add SAML SSO providers
 - [Provisioning](provisioning) — provision users into downstream apps
-
-[← Back to home](.)

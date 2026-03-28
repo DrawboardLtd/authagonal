@@ -137,5 +137,3 @@ body {
 | **Config + CSS** | Add `customCssUrl` with style overrides | Same — CSS classes are stable |
 | **Fork the SPA** | Clone `login-app/`, modify source, build your own | You own the UI — server updates are independent |
 | **Write your own** | Build a completely custom frontend against the auth API | Full control — see [Auth API](auth-api) for the contract |
-
-[← Back to home](.)

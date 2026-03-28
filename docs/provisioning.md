@@ -198,5 +198,3 @@ setInterval(() => {
   }
 }, 600000);
 ```
-
-[← Back to home](.)
