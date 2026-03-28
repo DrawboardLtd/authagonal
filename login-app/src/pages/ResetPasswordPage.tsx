@@ -1,20 +1,41 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useSearchParams, Link } from 'react-router-dom';
 import { resetPassword, ApiRequestError } from '../api';
+
+interface PasswordRule {
+  rule: string;
+  value: number | null;
+  label: string;
+}
 
 interface PasswordRequirement {
   label: string;
   met: boolean;
 }
 
-function getPasswordRequirements(password: string): PasswordRequirement[] {
-  return [
-    { label: 'At least 8 characters', met: password.length >= 8 },
-    { label: 'Uppercase letter', met: /[A-Z]/.test(password) },
-    { label: 'Lowercase letter', met: /[a-z]/.test(password) },
-    { label: 'Number', met: /[0-9]/.test(password) },
-    { label: 'Special character', met: /[^A-Za-z0-9]/.test(password) },
-  ];
+const API_URL = import.meta.env.VITE_API_URL || '';
+
+const defaultRules: PasswordRule[] = [
+  { rule: 'minLength', value: 8, label: 'At least 8 characters' },
+  { rule: 'uppercase', value: null, label: 'Uppercase letter' },
+  { rule: 'lowercase', value: null, label: 'Lowercase letter' },
+  { rule: 'digit', value: null, label: 'Number' },
+  { rule: 'specialChar', value: null, label: 'Special character' },
+];
+
+function evaluateRequirements(password: string, rules: PasswordRule[]): PasswordRequirement[] {
+  return rules.map((r) => {
+    let met = false;
+    switch (r.rule) {
+      case 'minLength': met = password.length >= (r.value ?? 8); break;
+      case 'uppercase': met = /[A-Z]/.test(password); break;
+      case 'lowercase': met = /[a-z]/.test(password); break;
+      case 'digit': met = /[0-9]/.test(password); break;
+      case 'specialChar': met = /[^A-Za-z0-9]/.test(password); break;
+      default: met = true;
+    }
+    return { label: r.label, met };
+  });
 }
 
 export default function ResetPasswordPage() {
@@ -27,8 +48,16 @@ export default function ResetPasswordPage() {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState(false);
   const [validationError, setValidationError] = useState('');
+  const [rules, setRules] = useState<PasswordRule[]>(defaultRules);
 
-  const requirements = getPasswordRequirements(newPassword);
+  useEffect(() => {
+    fetch(`${API_URL}/api/auth/password-policy`)
+      .then((r) => r.ok ? r.json() : null)
+      .then((data) => { if (data?.rules) setRules(data.rules); })
+      .catch(() => { /* use defaults */ });
+  }, []);
+
+  const requirements = evaluateRequirements(newPassword, rules);
   const allRequirementsMet = requirements.every((r) => r.met);
 
   async function handleSubmit(e: React.FormEvent) {
@@ -36,8 +65,8 @@ export default function ResetPasswordPage() {
     setError('');
     setValidationError('');
 
-    if (newPassword.length < 8) {
-      setValidationError('Password must be at least 8 characters');
+    if (!allRequirementsMet) {
+      setValidationError('Password does not meet the requirements');
       return;
     }
 

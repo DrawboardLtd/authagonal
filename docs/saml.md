@@ -23,17 +23,39 @@ Authagonal includes a homebrew SAML 2.0 Service Provider implementation. No thir
 
 ## Azure AD Setup
 
-### 1. Create a SAML Provider via Admin API
+### 1. Create a SAML Provider
+
+**Option A — Configuration (recommended for static setups):**
+
+Add to `appsettings.json`:
+
+```json
+{
+  "SamlProviders": [
+    {
+      "ConnectionId": "acme-azure",
+      "ConnectionName": "Acme Corp Azure AD",
+      "EntityId": "https://auth.example.com/saml/acme-azure",
+      "MetadataLocation": "https://login.microsoftonline.com/{tenant-id}/federationmetadata/2007-06/federationmetadata.xml?appid={app-id}",
+      "AllowedDomains": ["acme.com"]
+    }
+  ]
+}
+```
+
+Providers are seeded on startup. SSO domain mappings are registered automatically from `AllowedDomains`.
+
+**Option B — Admin API (for runtime management):**
 
 ```bash
-curl -X POST https://auth.example.com/api/v1/sso/saml \
+curl -X POST https://auth.example.com/api/v1/saml/connections \
   -H "Authorization: Bearer {admin-token}" \
   -H "Content-Type: application/json" \
   -d '{
-    "connectionId": "acme-azure",
     "connectionName": "Acme Corp Azure AD",
     "entityId": "https://auth.example.com/saml/acme-azure",
-    "metadataLocation": "https://login.microsoftonline.com/{tenant-id}/federationmetadata/2007-06/federationmetadata.xml?appid={app-id}"
+    "metadataLocation": "https://login.microsoftonline.com/{tenant-id}/federationmetadata/2007-06/federationmetadata.xml?appid={app-id}",
+    "allowedDomains": ["acme.com"]
   }'
 ```
 
@@ -45,22 +67,11 @@ curl -X POST https://auth.example.com/api/v1/sso/saml \
 4. **Reply URL (ACS):** `https://auth.example.com/saml/acme-azure/acs`
 5. **Sign on URL:** `https://auth.example.com/saml/acme-azure/login`
 
-### 3. Add SSO Domains
+### 3. SSO Domain Routing
 
-Route users to this SAML provider based on their email domain:
+When `AllowedDomains` is specified (in config or via the create API), SSO domain mappings are registered automatically. When a user enters `user@acme.com` on the login page, the SPA detects SSO is required and shows "Continue with SSO".
 
-```bash
-curl -X POST https://auth.example.com/api/v1/sso/domains \
-  -H "Authorization: Bearer {admin-token}" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "domain": "acme.com",
-    "providerType": "saml",
-    "connectionId": "acme-azure"
-  }'
-```
-
-Now when a user enters `user@acme.com` on the login page, the SPA detects SSO is required and shows "Continue with SSO".
+You can also manage domains at runtime via the Admin API — see [Admin API](admin-api).
 
 ## Endpoints
 

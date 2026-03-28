@@ -1,32 +1,31 @@
+using Authagonal.Core.Models;
+
 namespace Authagonal.Server.Services;
 
 public static class PasswordValidator
 {
-    private const int MinLength = 8;
-    private const int MinUniqueChars = 2;
-
-    public static (bool IsValid, string? Error) Validate(string password)
+    public static (bool IsValid, string? Error) Validate(string password, PasswordPolicy policy)
     {
         if (string.IsNullOrWhiteSpace(password))
             return (false, "Password is required.");
 
-        if (password.Length < MinLength)
-            return (false, $"Password must be at least {MinLength} characters.");
+        if (password.Length < policy.MinLength)
+            return (false, $"Password must be at least {policy.MinLength} characters.");
 
-        if (!password.Any(char.IsUpper))
+        if (policy.RequireUppercase && !password.Any(char.IsUpper))
             return (false, "Password must contain at least one uppercase letter.");
 
-        if (!password.Any(char.IsLower))
+        if (policy.RequireLowercase && !password.Any(char.IsLower))
             return (false, "Password must contain at least one lowercase letter.");
 
-        if (!password.Any(char.IsDigit))
+        if (policy.RequireDigit && !password.Any(char.IsDigit))
             return (false, "Password must contain at least one digit.");
 
-        if (!password.Any(c => !char.IsLetterOrDigit(c)))
+        if (policy.RequireSpecialChar && !password.Any(c => !char.IsLetterOrDigit(c)))
             return (false, "Password must contain at least one non-alphanumeric character.");
 
-        if (password.Distinct().Count() < MinUniqueChars)
-            return (false, $"Password must contain at least {MinUniqueChars} unique characters.");
+        if (password.Distinct().Count() < policy.MinUniqueChars)
+            return (false, $"Password must contain at least {policy.MinUniqueChars} unique characters.");
 
         return (true, null);
     }

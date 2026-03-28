@@ -1,6 +1,7 @@
 using System.Security.Claims;
 using System.Security.Cryptography;
 using System.Text;
+using Authagonal.Core.Models;
 using Authagonal.Core.Services;
 using Authagonal.Core.Stores;
 using Authagonal.Server.Services;
@@ -24,6 +25,7 @@ public static class AuthEndpoints
         group.MapPost("/reset-password", ResetPasswordAsync).AllowAnonymous().RequireRateLimiting("auth");
         group.MapGet("/session", GetSessionAsync).RequireAuthorization();
         group.MapGet("/sso-check", SsoCheckAsync).AllowAnonymous();
+        group.MapGet("/password-policy", GetPasswordPolicy).AllowAnonymous();
 
         return app;
     }
@@ -196,6 +198,7 @@ public static class AuthEndpoints
         IUserStore userStore,
         IGrantStore grantStore,
         PasswordHasher passwordHasher,
+        PasswordPolicy passwordPolicy,
         ILogger<Program> logger,
         CancellationToken ct)
     {
@@ -206,7 +209,7 @@ public static class AuthEndpoints
             return Results.Json(new { error = "password_required", message = "Password is required." }, statusCode: 400);
 
         // Validate password strength
-        var (isValid, validationError) = PasswordValidator.Validate(request.NewPassword);
+        var (isValid, validationError) = PasswordValidator.Validate(request.NewPassword, passwordPolicy);
         if (!isValid)
             return Results.Json(new { error = "weak_password", message = validationError }, statusCode: 400);
 
@@ -280,6 +283,27 @@ public static class AuthEndpoints
             email,
             name
         });
+    }
+
+    private static IResult GetPasswordPolicy(PasswordPolicy policy)
+    {
+        var rules = new List<object>();
+
+        rules.Add(new { rule = "minLength", value = policy.MinLength, label = $"At least {policy.MinLength} characters" });
+
+        if (policy.RequireUppercase)
+            rules.Add(new { rule = "uppercase", value = (object?)null, label = "Uppercase letter" });
+
+        if (policy.RequireLowercase)
+            rules.Add(new { rule = "lowercase", value = (object?)null, label = "Lowercase letter" });
+
+        if (policy.RequireDigit)
+            rules.Add(new { rule = "digit", value = (object?)null, label = "Number" });
+
+        if (policy.RequireSpecialChar)
+            rules.Add(new { rule = "specialChar", value = (object?)null, label = "Special character" });
+
+        return Results.Ok(new { rules });
     }
 
     private static async Task<IResult> SsoCheckAsync(

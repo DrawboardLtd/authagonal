@@ -15,16 +15,13 @@
     <ProjectReference Include="..\..\src\Authagonal.Server\Authagonal.Server.csproj" />
   </ItemGroup>
 
-  <!-- Build the login SPA and copy into wwwroot.
-       In production, you'd instead:
-         npm install @drawboard/authagonal-login
-         cd node_modules/@drawboard/authagonal-login && npx vite build
-         copy dist/* wwwroot/ -->
+  <!-- Build the custom login SPA (which imports @drawboard/authagonal-login
+       as an npm dependency) and copy into wwwroot. -->
   <Target Name="BuildLoginApp" BeforeTargets="Build" Condition="!Exists('wwwroot/index.html')">
-    <Exec Command="npm ci" WorkingDirectory="../../login-app" />
-    <Exec Command="npm run build" WorkingDirectory="../../login-app" />
+    <Exec Command="npm ci" WorkingDirectory="login-app" />
+    <Exec Command="npm run build" WorkingDirectory="login-app" />
     <ItemGroup>
-      <LoginAppFiles Include="../../login-app/dist/**/*" />
+      <LoginAppFiles Include="login-app/dist/**/*" />
     </ItemGroup>
     <Copy SourceFiles="@(LoginAppFiles)" DestinationFolder="wwwroot/%(RecursiveDir)" />
   </Target>

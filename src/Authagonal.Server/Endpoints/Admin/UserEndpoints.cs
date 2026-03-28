@@ -65,6 +65,7 @@ public static class UserEndpoints
         IUserStore userStore,
         IAuthHook authHook,
         PasswordHasher passwordHasher,
+        PasswordPolicy passwordPolicy,
         IEmailService emailService,
         IConfiguration config,
         CancellationToken ct)
@@ -74,6 +75,10 @@ public static class UserEndpoints
 
         if (string.IsNullOrWhiteSpace(request.Password))
             return Results.BadRequest(new { error = "invalid_request", error_description = "Password is required" });
+
+        var (isValid, validationError) = PasswordValidator.Validate(request.Password, passwordPolicy);
+        if (!isValid)
+            return Results.BadRequest(new { error = "weak_password", error_description = validationError });
 
         var existing = await userStore.FindByEmailAsync(request.Email, ct);
         if (existing is not null)

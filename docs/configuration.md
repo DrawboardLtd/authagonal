@@ -92,6 +92,92 @@ Define downstream applications that users should be provisioned into:
 
 See [Provisioning](provisioning) for the full TCC protocol specification.
 
+## Password Policy
+
+Customize password strength requirements:
+
+```json
+{
+  "PasswordPolicy": {
+    "MinLength": 10,
+    "MinUniqueChars": 3,
+    "RequireUppercase": true,
+    "RequireLowercase": true,
+    "RequireDigit": true,
+    "RequireSpecialChar": false
+  }
+}
+```
+
+| Property | Default | Description |
+|---|---|---|
+| `MinLength` | `8` | Minimum password length |
+| `MinUniqueChars` | `2` | Minimum number of distinct characters |
+| `RequireUppercase` | `true` | Require at least one uppercase letter |
+| `RequireLowercase` | `true` | Require at least one lowercase letter |
+| `RequireDigit` | `true` | Require at least one digit |
+| `RequireSpecialChar` | `true` | Require at least one non-alphanumeric character |
+
+The policy is enforced on password reset and admin user registration. The login UI fetches the active policy from `GET /api/auth/password-policy` to display requirements dynamically.
+
+## SAML Providers
+
+Define SAML identity providers in configuration. These are seeded on startup:
+
+```json
+{
+  "SamlProviders": [
+    {
+      "ConnectionId": "azure-ad",
+      "ConnectionName": "Azure AD",
+      "EntityId": "https://auth.example.com",
+      "MetadataLocation": "https://login.microsoftonline.com/{tenant}/FederationMetadata/2007-06/FederationMetadata.xml",
+      "AllowedDomains": ["example.com", "example.org"]
+    }
+  ]
+}
+```
+
+| Property | Required | Description |
+|---|---|---|
+| `ConnectionId` | Yes | Stable identifier (used in URLs like `/saml/{connectionId}/login`) |
+| `ConnectionName` | No | Display name (defaults to ConnectionId) |
+| `EntityId` | Yes | SAML Service Provider entity ID |
+| `MetadataLocation` | Yes | URL to the IdP's SAML metadata XML |
+| `AllowedDomains` | No | Email domains routed to this provider via SSO |
+
+## OIDC Providers
+
+Define OIDC identity providers in configuration. These are seeded on startup:
+
+```json
+{
+  "OidcProviders": [
+    {
+      "ConnectionId": "google",
+      "ConnectionName": "Google",
+      "MetadataLocation": "https://accounts.google.com/.well-known/openid-configuration",
+      "ClientId": "your-client-id",
+      "ClientSecret": "your-client-secret",
+      "RedirectUrl": "https://auth.example.com/oidc/callback",
+      "AllowedDomains": ["example.com"]
+    }
+  ]
+}
+```
+
+| Property | Required | Description |
+|---|---|---|
+| `ConnectionId` | Yes | Stable identifier (used in URLs like `/oidc/{connectionId}/login`) |
+| `ConnectionName` | No | Display name (defaults to ConnectionId) |
+| `MetadataLocation` | Yes | URL to the IdP's OpenID Connect discovery document |
+| `ClientId` | Yes | OAuth2 client ID registered with the IdP |
+| `ClientSecret` | Yes | OAuth2 client secret (protected via `ISecretProvider` at startup) |
+| `RedirectUrl` | Yes | OAuth2 redirect URI registered with the IdP |
+| `AllowedDomains` | No | Email domains routed to this provider via SSO |
+
+> **Note:** Providers can also be managed at runtime via the [Admin API](admin-api). Config-seeded providers are upserted on every startup, so config changes take effect on restart.
+
 ## Secret Provider
 
 Client secrets and OIDC provider secrets can optionally be stored in Azure Key Vault:
@@ -140,6 +226,13 @@ CORS is configured dynamically. Origins from all registered clients' `AllowedCor
   "Authentication": {
     "CookieLifetimeHours": 48
   },
+  "PasswordPolicy": {
+    "MinLength": 8,
+    "RequireUppercase": true,
+    "RequireLowercase": true,
+    "RequireDigit": true,
+    "RequireSpecialChar": true
+  },
   "Email": {
     "SendGridApiKey": "SG.xxx",
     "FromAddress": "noreply@example.com",
@@ -147,6 +240,26 @@ CORS is configured dynamically. Origins from all registered clients' `AllowedCor
     "VerificationTemplateId": "d-xxx",
     "PasswordResetTemplateId": "d-yyy"
   },
+  "SamlProviders": [
+    {
+      "ConnectionId": "azure-ad",
+      "ConnectionName": "Azure AD",
+      "EntityId": "https://auth.example.com",
+      "MetadataLocation": "https://login.microsoftonline.com/{tenant}/FederationMetadata/2007-06/FederationMetadata.xml",
+      "AllowedDomains": ["example.com"]
+    }
+  ],
+  "OidcProviders": [
+    {
+      "ConnectionId": "google",
+      "ConnectionName": "Google",
+      "MetadataLocation": "https://accounts.google.com/.well-known/openid-configuration",
+      "ClientId": "...",
+      "ClientSecret": "...",
+      "RedirectUrl": "https://auth.example.com/oidc/callback",
+      "AllowedDomains": ["gmail.com"]
+    }
+  ],
   "ProvisioningApps": {
     "backend": {
       "CallbackUrl": "https://api.example.com/provisioning",

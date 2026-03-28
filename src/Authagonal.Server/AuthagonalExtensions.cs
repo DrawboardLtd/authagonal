@@ -1,3 +1,4 @@
+using Authagonal.Core.Models;
 using Authagonal.Core.Services;
 using Authagonal.Core.Stores;
 using Authagonal.Server.Endpoints;
@@ -45,6 +46,13 @@ public static class AuthagonalExtensions
         services.AddTableStorage(storageConnectionString);
 
         // ---------------------------------------------------------------------------
+        // Password policy
+        // ---------------------------------------------------------------------------
+        var passwordPolicy = new PasswordPolicy();
+        configuration.GetSection("PasswordPolicy").Bind(passwordPolicy);
+        services.AddSingleton(passwordPolicy);
+
+        // ---------------------------------------------------------------------------
         // Application services
         // ---------------------------------------------------------------------------
         services.AddSingleton<PasswordHasher>();
@@ -56,6 +64,7 @@ public static class AuthagonalExtensions
         services.AddHostedService<GrantReconciliationService>();
         services.AddHttpClient("Provisioning");
         services.AddHostedService<ClientSeedService>();
+        services.AddHostedService<ProviderSeedService>();
 
         // Extensibility points — TryAdd so custom registrations take precedence
         services.TryAddSingleton<IEmailService, EmailService>();

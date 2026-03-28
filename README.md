@@ -31,13 +31,15 @@ This starts the auth server on `http://localhost:8080` with an Azurite storage e
 
 - **OIDC Provider** — authorization_code + PKCE, client_credentials, refresh_token grants
 - **SAML 2.0 SP** — homebrew implementation, full Azure AD support
-- **Dynamic OIDC Federation** — Google, Apple, Azure AD
+- **Dynamic OIDC Federation** — Google, Apple, Azure AD — configure via API or `appsettings.json`
+- **SAML/OIDC from Config** — define identity providers in configuration, seeded on startup
+- **Configurable Password Policy** — min length, character requirements, exposed via API for dynamic frontend validation
 - **TCC Provisioning** — Try-Confirm-Cancel provisioning into downstream apps at authorize time
 - **Auth Hooks** — `IAuthHook` extensibility point for audit logging, custom validation, webhooks
 - **Composable Library** — `AddAuthagonal()` / `UseAuthagonal()` extension methods to host in your own project
 - **Session Invalidation** — SecurityStamp rotation on org change, password reset
 - **Admin APIs** — user CRUD, SAML/OIDC provider management, token impersonation
-- **Brandable Login UI** — runtime-configurable branding via `branding.json`
+- **Brandable Login UI** — runtime-configurable branding via `branding.json`, or install the npm package and override individual components
 
 ## Deployment Options
 
@@ -45,7 +47,7 @@ This starts the auth server on `http://localhost:8080` with an Azurite storage e
 |---|---|
 | **Docker image** | `drawboardci/authagonal` — pre-built, configure via env vars and branding.json |
 | **NuGet library** | Reference `Authagonal.Server` + `Authagonal.Storage`, call `AddAuthagonal()`, override services |
-| **npm package** | `@drawboard/authagonal-login` — the login SPA, customizable via branding.json |
+| **npm package** | `@drawboard/authagonal-login` — the login SPA as a component library; import base components, override what you need |
 
 ## Docker
 

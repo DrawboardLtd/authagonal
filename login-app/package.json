@@ -9,6 +9,10 @@
     "url": "https://github.com/DrawboardLtd/authagonal.git",
     "directory": "login-app"
   },
+  "exports": {
+    ".": "./src/index.ts",
+    "./styles.css": "./src/styles.css"
+  },
   "files": [
     "dist",
     "src",

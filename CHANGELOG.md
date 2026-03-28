@@ -38,6 +38,11 @@
 - **Composable extension methods** — `AddAuthagonal()`, `UseAuthagonal()`, `MapAuthagonalEndpoints()` allow hosting Authagonal as a library in any ASP.NET Core application. Override `IEmailService`, `IAuthHook`, `IProvisioningOrchestrator`, or `ISecretProvider` by registering before `AddAuthagonal()`.
 - **Demo: custom-server** — shows hosting Authagonal with custom `IAuthHook` (audit logging), custom `IEmailService` (console output), custom branding, and custom endpoints.
 - **Demo: sample-app** — shows a client application (ASP.NET API + React SPA) authenticating via Authagonal using OIDC authorization code + PKCE, with protected API calls using JWT bearer tokens.
+- **Demo: custom-server frontend** — custom login-app that installs `@drawboard/authagonal-login` as an npm dependency and overrides `LoginPage` (adds Terms of Service checkbox) and `AuthLayout` (adds branded footer), while reusing base `ForgotPasswordPage` and `ResetPasswordPage` as-is.
+- **Configurable password policy** — `PasswordPolicy` configuration section controls min length, character requirements. `GET /api/auth/password-policy` endpoint exposes rules dynamically. Frontend fetches policy instead of hardcoding. Password validation now enforced on admin user registration too.
+- **SAML/OIDC providers from configuration** — `SamlProviders` and `OidcProviders` config sections seed identity providers on startup (same pattern as `Clients`). SSO domain mappings are registered automatically from `AllowedDomains`.
+- **`ProviderSeedService`** — `IHostedService` that seeds SAML and OIDC providers from configuration, with secret protection via `ISecretProvider`.
+- **Login-app component library exports** — `@drawboard/authagonal-login` now exports all components, pages, branding hooks, API client, and types via `src/index.ts` with proper `exports` field in package.json. Consumers can `npm install` and import individual pieces.
 - **CI/CD** — GitHub Actions workflows for Docker Hub publishing (`drawboardci/authagonal`, `drawboardci/authagonal-migration`) and npm publishing (`@drawboard/authagonal-login`).
 
 ### Changed
@@ -53,7 +58,9 @@
 - **Token endpoint** — fires `IAuthHook.OnTokenIssuedAsync` on successful token issuance.
 - **Auth endpoints** — fire `IAuthHook.OnUserAuthenticatedAsync` / `OnLoginFailedAsync`.
 - **SAML/OIDC endpoints** — fire `IAuthHook.OnUserCreatedAsync` and `OnUserAuthenticatedAsync`.
-- **Admin user endpoint** — fires `IAuthHook.OnUserCreatedAsync` on user registration.
+- **Admin user endpoint** — fires `IAuthHook.OnUserCreatedAsync` on user registration; now validates password strength.
+- **`PasswordValidator`** — refactored from hardcoded constants to accept a `PasswordPolicy` parameter.
+- **`ResetPasswordPage`** — fetches password requirements from `GET /api/auth/password-policy` instead of hardcoding rules.
 - **Scope rename** — `projects-identity-admin` renamed to `authagonal-admin`.
 
 ### Removed

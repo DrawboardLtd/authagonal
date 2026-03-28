@@ -19,37 +19,47 @@ Authagonal can federate authentication to external OIDC identity providers (Goog
 
 ### 1. Create an OIDC Provider
 
+**Option A — Configuration (recommended for static setups):**
+
+Add to `appsettings.json`:
+
+```json
+{
+  "OidcProviders": [
+    {
+      "ConnectionId": "google",
+      "ConnectionName": "Google",
+      "MetadataLocation": "https://accounts.google.com/.well-known/openid-configuration",
+      "ClientId": "your-google-client-id",
+      "ClientSecret": "your-google-client-secret",
+      "RedirectUrl": "https://auth.example.com/oidc/callback",
+      "AllowedDomains": ["example.com"]
+    }
+  ]
+}
+```
+
+Providers are seeded on startup. The `ClientSecret` is protected via `ISecretProvider` (Key Vault when configured, plaintext otherwise). SSO domain mappings are registered automatically from `AllowedDomains`.
+
+**Option B — Admin API (for runtime management):**
+
 ```bash
-curl -X POST https://auth.example.com/api/v1/sso/oidc \
+curl -X POST https://auth.example.com/api/v1/oidc/connections \
   -H "Authorization: Bearer {admin-token}" \
   -H "Content-Type: application/json" \
   -d '{
-    "connectionId": "google",
     "connectionName": "Google",
     "metadataLocation": "https://accounts.google.com/.well-known/openid-configuration",
     "clientId": "your-google-client-id",
-    "clientSecret": "your-google-client-secret"
+    "clientSecret": "your-google-client-secret",
+    "redirectUrl": "https://auth.example.com/oidc/callback",
+    "allowedDomains": ["example.com"]
   }'
 ```
 
-The `clientSecret` can be a plaintext value or a Key Vault reference (when `SecretProvider:VaultUri` is configured).
+### 2. SSO Domain Routing
 
-### 2. Add SSO Domains (Optional)
-
-To require Google SSO for specific email domains:
-
-```bash
-curl -X POST https://auth.example.com/api/v1/sso/domains \
-  -H "Authorization: Bearer {admin-token}" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "domain": "example.com",
-    "providerType": "oidc",
-    "connectionId": "google"
-  }'
-```
-
-Without domain routing, users can still be directed to the OIDC login via `/oidc/{connectionId}/login`.
+When `AllowedDomains` is specified (in config or via the create API), SSO domain mappings are registered automatically. Without domain routing, users can still be directed to the OIDC login via `/oidc/{connectionId}/login`.
 
 ## Endpoints
 

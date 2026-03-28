@@ -1,4 +1,4 @@
-import type { LoginResponse, ApiError, SessionResponse, SsoCheckResponse } from './types';
+import type { LoginResponse, ApiError, SessionResponse, SsoCheckResponse, PasswordPolicyResponse } from './types';
 
 const API_URL = import.meta.env.VITE_API_URL || '';
 
@@ -74,6 +74,10 @@ export function getSession(): Promise<SessionResponse> {
 
 export function ssoCheck(email: string): Promise<SsoCheckResponse> {
   return api<SsoCheckResponse>(`/api/auth/sso-check?email=${encodeURIComponent(email)}`);
+}
+
+export function getPasswordPolicy(): Promise<PasswordPolicyResponse> {
+  return api<PasswordPolicyResponse>('/api/auth/password-policy');
 }
 
 export { ApiRequestError };

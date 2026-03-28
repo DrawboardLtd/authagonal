@@ -127,9 +127,31 @@ If SSO is not required:
 }
 ```
 
-## Password Requirements
+### Password Policy
 
-Passwords must meet all of these:
+```
+GET /api/auth/password-policy
+```
+
+Returns the server's password requirements (configured via `PasswordPolicy` in settings):
+
+```json
+{
+  "rules": [
+    { "rule": "minLength", "value": 8, "label": "At least 8 characters" },
+    { "rule": "uppercase", "value": null, "label": "Uppercase letter" },
+    { "rule": "lowercase", "value": null, "label": "Lowercase letter" },
+    { "rule": "digit", "value": null, "label": "Number" },
+    { "rule": "specialChar", "value": null, "label": "Special character" }
+  ]
+}
+```
+
+The default login UI fetches this endpoint on the reset-password page to display requirements dynamically.
+
+## Default Password Requirements
+
+With default configuration, passwords must meet all of these:
 
 - At least 8 characters
 - At least one uppercase letter
@@ -137,6 +159,8 @@ Passwords must meet all of these:
 - At least one digit
 - At least one non-alphanumeric character
 - At least 2 unique characters
+
+These can be customized via the `PasswordPolicy` configuration section — see [Configuration](configuration).
 
 ## Building a Custom Login UI
 

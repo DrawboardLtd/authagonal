@@ -24,3 +24,13 @@ export interface SsoCheckResponse {
   connectionId?: string;
   redirectUrl?: string;
 }
+
+export interface PasswordPolicyRule {
+  rule: string;
+  value: number | null;
+  label: string;
+}
+
+export interface PasswordPolicyResponse {
+  rules: PasswordPolicyRule[];
+}
