@@ -39,7 +39,7 @@ jobs:
             type=ref,event=branch
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
-            type=sha,prefix=
+            type=sha,format=long
 
       - name: Extract metadata (migration)
         id: meta-migration
@@ -50,7 +50,7 @@ jobs:
             type=ref,event=branch
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
-            type=sha,prefix=
+            type=sha,format=long
 
       - name: Build and push server image
         uses: docker/build-push-action@v6
@@ -82,7 +82,7 @@ jobs:
             type=ref,event=branch
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
-            type=sha,prefix=
+            type=sha,format=long
 
       - name: Extract metadata (demo-sample-api)
         id: meta-demo-sample-api
@@ -93,7 +93,7 @@ jobs:
             type=ref,event=branch
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
-            type=sha,prefix=
+            type=sha,format=long
 
       - name: Build and push demo server image
         uses: docker/build-push-action@v6
@@ -126,7 +126,7 @@ jobs:
             type=ref,event=branch
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
-            type=sha,prefix=
+            type=sha,format=long
 
       - name: Build and push demo frontend image
         uses: docker/build-push-action@v6
@@ -160,18 +160,18 @@ jobs:
         with:
           resourceGroup: authagonal-demo
           containerAppName: authagonal-auth
-          imageToDeploy: drawboardci/authagonal-demo-server:master
+          imageToDeploy: drawboardci/authagonal-demo-server:sha-${{ github.sha }}
 
       - name: Deploy sample API
         uses: azure/container-apps-deploy-action@v2
         with:
           resourceGroup: authagonal-demo
           containerAppName: authagonal-api
-          imageToDeploy: drawboardci/authagonal-demo-sample-api:master
+          imageToDeploy: drawboardci/authagonal-demo-sample-api:sha-${{ github.sha }}
 
       - name: Deploy frontend
         uses: azure/container-apps-deploy-action@v2
         with:
           resourceGroup: authagonal-demo
           containerAppName: authagonal-frontend
-          imageToDeploy: drawboardci/authagonal-demo-frontend:master
+          imageToDeploy: drawboardci/authagonal-demo-frontend:sha-${{ github.sha }}
