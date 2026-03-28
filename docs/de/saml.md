@@ -113,4 +113,4 @@ Azure AD-Claims (vollstaendiges URI-Format) werden auf einfache Namen abgebildet
 - **Wiederholungsschutz:** InResponseTo wird gegen eine gespeicherte Anfrage-ID validiert. Jede ID ist einmalig verwendbar.
 - **Taktabweichung:** 5-Minuten-Toleranz bei NotBefore/NotOnOrAfter
 - **Wrapping-Angriff-Schutz:** Signaturvalidierung verwendet die korrekte Referenzaufloesung
-- **Offene Weiterleitungs-Schutz:** RelayState (returnUrl) muss ein relativer Pfad sein, der mit `/` beginnt
+- **Offene Weiterleitungs-Schutz:** RelayState (returnUrl) muss ein wurzel-relativer Pfad sein (beginnt mit `/`, ohne Schema oder Host)

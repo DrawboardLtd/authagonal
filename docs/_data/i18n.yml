@@ -3,6 +3,7 @@ en:
   overview: "Overview"
   installation: "Installation"
   quick_start: "Quick Start"
+  custom_server: "Custom Server"
   configuration_section: "Configuration"
   server_config: "Server Config"
   branding: "Branding"
@@ -16,6 +17,7 @@ en:
   auth_api: "Auth API"
   admin_api: "Admin API"
   operations: "Operations"
+  scaling: "Scaling"
   migration: "Migration"
 
 zh-Hans:
@@ -23,6 +25,7 @@ zh-Hans:
   overview: "概述"
   installation: "安装"
   quick_start: "快速入门"
+  custom_server: "自定义服务器"
   configuration_section: "配置"
   server_config: "服务器配置"
   branding: "品牌定制"
@@ -36,6 +39,7 @@ zh-Hans:
   auth_api: "认证 API"
   admin_api: "管理 API"
   operations: "运维"
+  scaling: "扩展"
   migration: "迁移"
 
 de:
@@ -43,6 +47,7 @@ de:
   overview: "Übersicht"
   installation: "Installation"
   quick_start: "Schnellstart"
+  custom_server: "Eigener Server"
   configuration_section: "Konfiguration"
   server_config: "Serverkonfiguration"
   branding: "Branding"
@@ -56,6 +61,7 @@ de:
   auth_api: "Auth-API"
   admin_api: "Admin-API"
   operations: "Betrieb"
+  scaling: "Skalierung"
   migration: "Migration"
 
 fr:
@@ -63,6 +69,7 @@ fr:
   overview: "Aperçu"
   installation: "Installation"
   quick_start: "Démarrage rapide"
+  custom_server: "Serveur personnalisé"
   configuration_section: "Configuration"
   server_config: "Configuration serveur"
   branding: "Personnalisation"
@@ -76,6 +83,7 @@ fr:
   auth_api: "API Auth"
   admin_api: "API Admin"
   operations: "Opérations"
+  scaling: "Mise à l'échelle"
   migration: "Migration"
 
 es:
@@ -83,6 +91,7 @@ es:
   overview: "Descripción general"
   installation: "Instalación"
   quick_start: "Inicio rápido"
+  custom_server: "Servidor personalizado"
   configuration_section: "Configuración"
   server_config: "Configuración del servidor"
   branding: "Personalización"
@@ -96,6 +105,7 @@ es:
   auth_api: "API de Auth"
   admin_api: "API de Admin"
   operations: "Operaciones"
+  scaling: "Escalabilidad"
   migration: "Migración"
 
 vi:
@@ -103,6 +113,7 @@ vi:
   overview: "Tổng quan"
   installation: "Cài đặt"
   quick_start: "Bắt đầu nhanh"
+  custom_server: "Máy chủ tùy chỉnh"
   configuration_section: "Cấu hình"
   server_config: "Cấu hình máy chủ"
   branding: "Tùy chỉnh giao diện"
@@ -116,6 +127,7 @@ vi:
   auth_api: "API Xác thực"
   admin_api: "API Quản trị"
   operations: "Vận hành"
+  scaling: "Mở rộng"
   migration: "Di chuyển"
 
 pt:
@@ -123,6 +135,7 @@ pt:
   overview: "Visão geral"
   installation: "Instalação"
   quick_start: "Início rápido"
+  custom_server: "Servidor personalizado"
   configuration_section: "Configuração"
   server_config: "Configuração do servidor"
   branding: "Personalização visual"
@@ -136,4 +149,5 @@ pt:
   auth_api: "API de Auth"
   admin_api: "API de Admin"
   operations: "Operações"
+  scaling: "Escalabilidade"
   migration: "Migração"

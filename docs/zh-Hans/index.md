@@ -12,7 +12,7 @@ locale: zh-Hans
 
 基于 Azure Table Storage 的 OAuth 2.0 / OpenID Connect / SAML 2.0 认证服务器。
 
-Authagonal 以单一、自包含的部署方式取代了 Duende IdentityServer + Sustainsys.Saml2。服务器和登录界面作为一个 Docker 镜像发布 -- SPA 与 API 从同一来源提供服务，因此 Cookie 认证、重定向和 CSP 均无需处理跨域复杂性。
+单一、自包含的部署。服务器和登录界面作为一个 Docker 镜像发布 -- SPA 与 API 从同一来源提供服务，因此 Cookie 认证、重定向和 CSP 均无需处理跨域复杂性。
 
 ## 核心功能
 

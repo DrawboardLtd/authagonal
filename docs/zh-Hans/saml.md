@@ -113,4 +113,4 @@ Azure AD 声明（完整 URI 格式）映射为简单名称：
 - **重放防护：** InResponseTo 根据存储的请求 ID 进行验证。每个 ID 只能使用一次。
 - **时钟偏差：** NotBefore/NotOnOrAfter 有 5 分钟容差
 - **包装攻击防护：** 签名验证使用正确的引用解析
-- **开放重定向防护：** RelayState（returnUrl）必须是以 `/` 开头的相对路径
+- **开放重定向防护：** RelayState（returnUrl）必须是根相对路径（以 `/` 开头，不含协议或主机名）

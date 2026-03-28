@@ -112,4 +112,4 @@ Azure AD claims (full URI format) are mapped to simple names:
 - **Replay prevention:** InResponseTo is validated against a stored request ID. Each ID is single-use.
 - **Clock skew:** 5-minute tolerance on NotBefore/NotOnOrAfter
 - **Wrapping attack prevention:** Signature validation uses the correct reference resolution
-- **Open redirect prevention:** RelayState (returnUrl) must be a relative path starting with `/`
+- **Open redirect prevention:** RelayState (returnUrl) must be a root-relative path (starting with `/`, no scheme or host)

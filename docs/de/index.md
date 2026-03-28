@@ -12,7 +12,7 @@ locale: de
 
 OAuth 2.0 / OpenID Connect / SAML 2.0 Authentifizierungsserver mit Azure Table Storage als Backend.
 
-Authagonal ersetzt Duende IdentityServer + Sustainsys.Saml2 durch eine einzelne, eigenstaendige Bereitstellung. Server und Login-Oberflaeche werden als ein Docker-Image ausgeliefert -- die SPA wird vom selben Ursprung wie die API bereitgestellt, sodass Cookie-Authentifizierung, Weiterleitungen und CSP ohne Cross-Origin-Komplexitaet funktionieren.
+Eine einzelne, eigenstaendige Bereitstellung. Server und Login-Oberflaeche werden als ein Docker-Image ausgeliefert -- die SPA wird vom selben Ursprung wie die API bereitgestellt, sodass Cookie-Authentifizierung, Weiterleitungen und CSP ohne Cross-Origin-Komplexitaet funktionieren.
 
 ## Hauptfunktionen
 

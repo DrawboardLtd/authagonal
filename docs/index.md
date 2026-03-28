@@ -11,7 +11,7 @@ title: Home
 
 OAuth 2.0 / OpenID Connect / SAML 2.0 authentication server backed by Azure Table Storage.
 
-Authagonal replaces Duende IdentityServer + Sustainsys.Saml2 with a single, self-contained deployment. The server and login UI ship as one Docker image — the SPA is served from the same origin as the API, so cookie auth, redirects, and CSP all work without cross-origin complexity.
+A single, self-contained deployment. The server and login UI ship as one Docker image — the SPA is served from the same origin as the API, so cookie auth, redirects, and CSP all work without cross-origin complexity.
 
 ## Key Features
 

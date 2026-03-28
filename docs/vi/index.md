@@ -12,7 +12,7 @@ locale: vi
 
 Máy chủ xác thực OAuth 2.0 / OpenID Connect / SAML 2.0 được hỗ trợ bởi Azure Table Storage.
 
-Authagonal thay thế Duende IdentityServer + Sustainsys.Saml2 bằng một triển khai duy nhất, khép kín. Máy chủ và giao diện đăng nhập được đóng gói thành một Docker image duy nhất — SPA được phục vụ từ cùng origin với API, nên xác thực cookie, chuyển hướng và CSP đều hoạt động mà không cần xử lý phức tạp cross-origin.
+Một triển khai duy nhất, khép kín. Máy chủ và giao diện đăng nhập được đóng gói thành một Docker image duy nhất — SPA được phục vụ từ cùng origin với API, nên xác thực cookie, chuyển hướng và CSP đều hoạt động mà không cần xử lý phức tạp cross-origin.
 
 ## Tính năng chính
 

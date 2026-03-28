@@ -113,4 +113,4 @@ As claims do Azure AD (formato URI completo) são mapeadas para nomes simples:
 - **Prevenção de replay:** InResponseTo é validado contra um ID de pedido armazenado. Cada ID é de uso único.
 - **Desvio de relógio:** Tolerância de 5 minutos em NotBefore/NotOnOrAfter
 - **Prevenção de ataque de wrapping:** A validação de assinatura usa a resolução de referência correta
-- **Prevenção de redirecionamento aberto:** O RelayState (returnUrl) deve ser um caminho relativo começando com `/`
+- **Prevenção de redirecionamento aberto:** O RelayState (returnUrl) deve ser um caminho relativo à raiz (começando com `/`, sem esquema ou host)

@@ -12,7 +12,7 @@ locale: pt
 
 Servidor de autenticação OAuth 2.0 / OpenID Connect / SAML 2.0 com armazenamento em Azure Table Storage.
 
-O Authagonal substitui o Duende IdentityServer + Sustainsys.Saml2 por uma implantação única e autossuficiente. O servidor e a interface de login são entregues como uma única imagem Docker — o SPA é servido a partir da mesma origem que a API, portanto autenticação por cookie, redirecionamentos e CSP funcionam sem complexidade de origens cruzadas.
+Uma implantação única e autossuficiente. O servidor e a interface de login são entregues como uma única imagem Docker — o SPA é servido a partir da mesma origem que a API, portanto autenticação por cookie, redirecionamentos e CSP funcionam sem complexidade de origens cruzadas.
 
 ## Funcionalidades Principais
 

@@ -208,6 +208,7 @@
         <a href="{{ locale_prefix | append: '.' | relative_url }}" {% if pg == 'index' %}class="active"{% endif %}>{{ t.overview }}</a>
         <a href="{{ locale_prefix | append: 'installation' | relative_url }}" {% if pg == 'installation' %}class="active"{% endif %}>{{ t.installation }}</a>
         <a href="{{ locale_prefix | append: 'quickstart' | relative_url }}" {% if pg == 'quickstart' %}class="active"{% endif %}>{{ t.quick_start }}</a>
+        <a href="{{ locale_prefix | append: 'custom-server' | relative_url }}" {% if pg == 'custom-server' %}class="active"{% endif %}>{{ t.custom_server }}</a>
 
         <div class="nav-section">{{ t.configuration_section }}</div>
         <a href="{{ locale_prefix | append: 'configuration' | relative_url }}" {% if pg == 'configuration' %}class="active"{% endif %}>{{ t.server_config }}</a>
@@ -225,6 +226,7 @@
         <a href="{{ locale_prefix | append: 'admin-api' | relative_url }}" {% if pg == 'admin-api' %}class="active"{% endif %}>{{ t.admin_api }}</a>
 
         <div class="nav-section">{{ t.operations }}</div>
+        <a href="{{ locale_prefix | append: 'scaling' | relative_url }}" {% if pg == 'scaling' %}class="active"{% endif %}>{{ t.scaling }}</a>
         <a href="{{ locale_prefix | append: 'migration' | relative_url }}" {% if pg == 'migration' %}class="active"{% endif %}>{{ t.migration }}</a>
       </nav>
     </aside>

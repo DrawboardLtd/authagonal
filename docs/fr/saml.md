@@ -113,4 +113,4 @@ Les claims Azure AD (format URI complet) sont mappes vers des noms simples :
 - **Prevention de la reutilisation :** InResponseTo est valide par rapport a un identifiant de requete stocke. Chaque identifiant est a usage unique.
 - **Tolerance d'horloge :** Tolerance de 5 minutes sur NotBefore/NotOnOrAfter
 - **Prevention des attaques par encapsulation :** La validation de signature utilise la resolution de reference correcte
-- **Prevention de redirection ouverte :** RelayState (returnUrl) doit etre un chemin relatif commencant par `/`
+- **Prevention de redirection ouverte :** RelayState (returnUrl) doit etre un chemin racine-relatif (commencant par `/`, sans scheme ni hote)
