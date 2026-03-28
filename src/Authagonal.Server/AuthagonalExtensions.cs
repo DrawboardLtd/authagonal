@@ -254,6 +254,14 @@ public static class AuthagonalExtensions
     /// </summary>
     public static WebApplication UseAuthagonal(this WebApplication app)
     {
+        app.UseForwardedHeaders(new ForwardedHeadersOptions
+        {
+            ForwardedHeaders = Microsoft.AspNetCore.HttpOverrides.ForwardedHeaders.XForwardedFor
+                             | Microsoft.AspNetCore.HttpOverrides.ForwardedHeaders.XForwardedProto,
+            // Trust all proxies in container environments (Azure Container Apps, k8s, etc.)
+            KnownNetworks = { new Microsoft.AspNetCore.HttpOverrides.IPNetwork(System.Net.IPAddress.Any, 0) },
+        });
+
         app.UseExceptionHandlingMiddleware();
 
         // Request localization
