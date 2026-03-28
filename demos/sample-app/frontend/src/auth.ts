@@ -1,9 +1,40 @@
 // Minimal OIDC client — authorization code + PKCE, no external libraries.
 
-const AUTH_SERVER = 'http://localhost:8080';
-const CLIENT_ID = 'sample-app';
-const REDIRECT_URI = 'http://localhost:3000/callback';
-const SCOPES = 'openid profile email offline_access';
+interface AppConfig {
+  authServer: string;
+  redirectUri: string;
+  clientId: string;
+  scopes: string;
+}
+
+const DEFAULT_CONFIG: AppConfig = {
+  authServer: 'http://localhost:8080',
+  redirectUri: `${window.location.origin}/callback`,
+  clientId: 'sample-app',
+  scopes: 'openid profile email offline_access',
+};
+
+let _config: AppConfig | null = null;
+
+async function getConfig(): Promise<AppConfig> {
+  if (_config) return _config;
+  try {
+    const res = await fetch('/config.json');
+    if (res.ok) {
+      const json = await res.json();
+      _config = {
+        authServer: json.AUTH_SERVER || DEFAULT_CONFIG.authServer,
+        redirectUri: json.REDIRECT_URI || DEFAULT_CONFIG.redirectUri,
+        clientId: json.CLIENT_ID || DEFAULT_CONFIG.clientId,
+        scopes: json.SCOPES || DEFAULT_CONFIG.scopes,
+      };
+    }
+  } catch {
+    // config.json not available (local dev) — use defaults
+  }
+  if (!_config) _config = DEFAULT_CONFIG;
+  return _config;
+}
 
 interface TokenResponse {
   access_token: string;
@@ -49,6 +80,7 @@ async function generateCodeChallenge(verifier: string): Promise<string> {
 
 /** Redirect the user to Authagonal's authorize endpoint. */
 export async function login(): Promise<void> {
+  const config = await getConfig();
   const codeVerifier = await generateCodeVerifier();
   const codeChallenge = await generateCodeChallenge(codeVerifier);
   const state = base64UrlEncode(crypto.getRandomValues(new Uint8Array(16)).buffer);
@@ -58,16 +90,16 @@ export async function login(): Promise<void> {
   sessionStorage.setItem('oauth_state', state);
 
   const params = new URLSearchParams({
-    client_id: CLIENT_ID,
-    redirect_uri: REDIRECT_URI,
+    client_id: config.clientId,
+    redirect_uri: config.redirectUri,
     response_type: 'code',
-    scope: SCOPES,
+    scope: config.scopes,
     state,
     code_challenge: codeChallenge,
     code_challenge_method: 'S256',
   });
 
-  window.location.href = `${AUTH_SERVER}/connect/authorize?${params}`;
+  window.location.href = `${config.authServer}/connect/authorize?${params}`;
 }
 
 /** Handle the callback — exchange the authorization code for tokens. */
@@ -99,15 +131,16 @@ export async function handleCallback(): Promise<AuthState | null> {
   sessionStorage.removeItem('pkce_verifier');
 
   // Exchange code for tokens
+  const config = await getConfig();
   const body = new URLSearchParams({
     grant_type: 'authorization_code',
     code,
-    redirect_uri: REDIRECT_URI,
-    client_id: CLIENT_ID,
+    redirect_uri: config.redirectUri,
+    client_id: config.clientId,
     code_verifier: codeVerifier,
   });
 
-  const response = await fetch(`${AUTH_SERVER}/connect/token`, {
+  const response = await fetch(`${config.authServer}/connect/token`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body,
