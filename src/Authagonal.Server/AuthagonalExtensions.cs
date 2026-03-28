@@ -179,7 +179,7 @@ public static class AuthagonalExtensions
                 var userStore = context.HttpContext.RequestServices.GetRequiredService<IUserStore>();
                 var user = await userStore.GetAsync(userId);
 
-                if (user is null || !string.Equals(user.SecurityStamp, stampClaim, StringComparison.Ordinal))
+                if (user is null || !string.Equals(user.SecurityStamp ?? "", stampClaim ?? "", StringComparison.Ordinal))
                 {
                     context.RejectPrincipal();
                     await context.HttpContext.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);

@@ -20,10 +20,10 @@ public static class AuthEndpoints
     {
         var group = app.MapGroup("/api/auth");
 
-        group.MapPost("/login", LoginAsync).AllowAnonymous();
-        group.MapPost("/logout", LogoutAsync).RequireAuthorization();
-        group.MapPost("/forgot-password", ForgotPasswordAsync).AllowAnonymous();
-        group.MapPost("/reset-password", ResetPasswordAsync).AllowAnonymous();
+        group.MapPost("/login", LoginAsync).AllowAnonymous().DisableAntiforgery();
+        group.MapPost("/logout", LogoutAsync).RequireAuthorization().DisableAntiforgery();
+        group.MapPost("/forgot-password", ForgotPasswordAsync).AllowAnonymous().DisableAntiforgery();
+        group.MapPost("/reset-password", ResetPasswordAsync).AllowAnonymous().DisableAntiforgery();
         group.MapGet("/session", GetSessionAsync).RequireAuthorization();
         group.MapGet("/sso-check", SsoCheckAsync).AllowAnonymous();
         group.MapGet("/password-policy", GetPasswordPolicy).AllowAnonymous();
