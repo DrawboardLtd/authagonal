@@ -195,33 +195,37 @@
           <option value="pt" {% if page.locale == 'pt' %}selected{% endif %}>Português</option>
         </select>
       </div>
+      {% assign locale = page.locale | default: 'en' %}
+      {% assign t = site.data.i18n[locale] %}
+      {% unless t %}{% assign t = site.data.i18n['en'] %}{% endunless %}
       {% assign locale_prefix = '' %}
-      {% if page.locale and page.locale != 'en' %}
-        {% assign locale_prefix = page.locale | append: '/' %}
+      {% if locale != 'en' %}
+        {% assign locale_prefix = locale | append: '/' %}
       {% endif %}
+      {% assign pg = page.name | remove: '.md' | remove: '.html' %}
       <nav>
-        <div class="nav-section">Getting Started</div>
-        <a href="{{ locale_prefix | append: '.' | relative_url }}" {% if page.title == 'Home' or page.title == 'Accueil' or page.title == 'Inicio' %}class="active"{% endif %}>Overview</a>
-        <a href="{{ locale_prefix | append: 'installation' | relative_url }}" {% if page.title == 'Installation' or page.title == 'Instalacion' %}class="active"{% endif %}>Installation</a>
-        <a href="{{ locale_prefix | append: 'quickstart' | relative_url }}" {% if page.title == 'Quick Start' or page.title == 'Demarrage rapide' or page.title == 'Inicio rapido' %}class="active"{% endif %}>Quick Start</a>
+        <div class="nav-section">{{ t.getting_started }}</div>
+        <a href="{{ locale_prefix | append: '.' | relative_url }}" {% if pg == 'index' %}class="active"{% endif %}>{{ t.overview }}</a>
+        <a href="{{ locale_prefix | append: 'installation' | relative_url }}" {% if pg == 'installation' %}class="active"{% endif %}>{{ t.installation }}</a>
+        <a href="{{ locale_prefix | append: 'quickstart' | relative_url }}" {% if pg == 'quickstart' %}class="active"{% endif %}>{{ t.quick_start }}</a>
 
-        <div class="nav-section">Configuration</div>
-        <a href="{{ locale_prefix | append: 'configuration' | relative_url }}" {% if page.title == 'Configuration' or page.title == 'Configuracion' %}class="active"{% endif %}>Server Config</a>
-        <a href="{{ locale_prefix | append: 'branding' | relative_url }}" {% if page.title == 'Branding' or page.title == 'Personnalisation visuelle' or page.title == 'Personalizacion visual' %}class="active"{% endif %}>Branding</a>
-        <a href="{{ locale_prefix | append: 'extensibility' | relative_url }}" {% if page.title == 'Extensibility' or page.title == 'Extensibilite' or page.title == 'Extensibilidad' %}class="active"{% endif %}>Extensibility</a>
-        <a href="{{ locale_prefix | append: 'localization' | relative_url }}" {% if page.title == 'Localization' or page.title == 'Localisation' or page.title == 'Lokalisierung' or page.title == 'Localización' %}class="active"{% endif %}>Localization</a>
-        <a href="{{ locale_prefix | append: 'provisioning' | relative_url }}" {% if page.title == 'Provisioning' or page.title == 'Provisionnement' or page.title == 'Aprovisionamiento' %}class="active"{% endif %}>Provisioning</a>
+        <div class="nav-section">{{ t.configuration_section }}</div>
+        <a href="{{ locale_prefix | append: 'configuration' | relative_url }}" {% if pg == 'configuration' %}class="active"{% endif %}>{{ t.server_config }}</a>
+        <a href="{{ locale_prefix | append: 'branding' | relative_url }}" {% if pg == 'branding' %}class="active"{% endif %}>{{ t.branding }}</a>
+        <a href="{{ locale_prefix | append: 'extensibility' | relative_url }}" {% if pg == 'extensibility' %}class="active"{% endif %}>{{ t.extensibility }}</a>
+        <a href="{{ locale_prefix | append: 'localization' | relative_url }}" {% if pg == 'localization' %}class="active"{% endif %}>{{ t.localization }}</a>
+        <a href="{{ locale_prefix | append: 'provisioning' | relative_url }}" {% if pg == 'provisioning' %}class="active"{% endif %}>{{ t.provisioning }}</a>
 
-        <div class="nav-section">Identity Providers</div>
-        <a href="{{ locale_prefix | append: 'saml' | relative_url }}" {% if page.title == 'SAML' %}class="active"{% endif %}>SAML 2.0</a>
-        <a href="{{ locale_prefix | append: 'oidc-federation' | relative_url }}" {% if page.title == 'OIDC Federation' or page.title == 'Federation OIDC' or page.title == 'Federacion OIDC' %}class="active"{% endif %}>OIDC Federation</a>
+        <div class="nav-section">{{ t.identity_providers }}</div>
+        <a href="{{ locale_prefix | append: 'saml' | relative_url }}" {% if pg == 'saml' %}class="active"{% endif %}>{{ t.saml }}</a>
+        <a href="{{ locale_prefix | append: 'oidc-federation' | relative_url }}" {% if pg == 'oidc-federation' %}class="active"{% endif %}>{{ t.oidc_federation }}</a>
 
-        <div class="nav-section">API Reference</div>
-        <a href="{{ locale_prefix | append: 'auth-api' | relative_url }}" {% if page.title == 'Auth API' or page.title == "API d'authentification" or page.title == 'API de autenticacion' %}class="active"{% endif %}>Auth API</a>
-        <a href="{{ locale_prefix | append: 'admin-api' | relative_url }}" {% if page.title == 'Admin API' or page.title == "API d'administration" or page.title == 'API de administracion' %}class="active"{% endif %}>Admin API</a>
+        <div class="nav-section">{{ t.api_reference }}</div>
+        <a href="{{ locale_prefix | append: 'auth-api' | relative_url }}" {% if pg == 'auth-api' %}class="active"{% endif %}>{{ t.auth_api }}</a>
+        <a href="{{ locale_prefix | append: 'admin-api' | relative_url }}" {% if pg == 'admin-api' %}class="active"{% endif %}>{{ t.admin_api }}</a>
 
-        <div class="nav-section">Operations</div>
-        <a href="{{ locale_prefix | append: 'migration' | relative_url }}" {% if page.title == 'Migration' or page.title == 'Migracion' %}class="active"{% endif %}>Migration</a>
+        <div class="nav-section">{{ t.operations }}</div>
+        <a href="{{ locale_prefix | append: 'migration' | relative_url }}" {% if pg == 'migration' %}class="active"{% endif %}>{{ t.migration }}</a>
       </nav>
     </aside>
     <main class="content">
