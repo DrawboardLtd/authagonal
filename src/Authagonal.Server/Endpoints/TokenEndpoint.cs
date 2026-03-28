@@ -1,7 +1,9 @@
+using System.Diagnostics;
 using System.Text;
 using Authagonal.Core.Constants;
 using Authagonal.Core.Services;
 using Authagonal.Core.Stores;
+using Authagonal.Server.Services;
 
 namespace Authagonal.Server.Endpoints;
 
@@ -13,7 +15,8 @@ public static class TokenEndpoint
             HttpContext httpContext,
             ITokenService tokenService,
             IClientStore clientStore,
-            Services.PasswordHasher passwordHasher,
+            IAuthHook authHook,
+            PasswordHasher passwordHasher,
             CancellationToken ct) =>
         {
             var form = await httpContext.Request.ReadFormAsync(ct);
@@ -37,7 +40,7 @@ public static class TokenEndpoint
                 var secretValid = client.ClientSecretHashes.Any(hash =>
                 {
                     var result = passwordHasher.VerifyPassword(clientSecret, hash);
-                    return result is Services.PasswordVerifyResult.Success or Services.PasswordVerifyResult.SuccessRehashNeeded;
+                    return result is PasswordVerifyResult.Success or PasswordVerifyResult.SuccessRehashNeeded;
                 });
 
                 if (!secretValid)
@@ -51,15 +54,22 @@ public static class TokenEndpoint
             if (!client.AllowedGrantTypes.Contains(grantType, StringComparer.OrdinalIgnoreCase))
                 return TokenError("unauthorized_client", "Grant type not allowed for this client");
 
+            if (grantType is not (GrantTypes.AuthorizationCode or GrantTypes.RefreshToken or GrantTypes.ClientCredentials))
+                return TokenError("unsupported_grant_type", $"Grant type '{grantType}' is not supported");
+
             try
             {
-                return grantType switch
+                var result = grantType switch
                 {
                     GrantTypes.AuthorizationCode => await HandleAuthorizationCode(form, tokenService, clientId, ct),
                     GrantTypes.RefreshToken => await HandleRefreshToken(form, tokenService, clientId, ct),
                     GrantTypes.ClientCredentials => await HandleClientCredentials(form, tokenService, clientId, ct),
-                    _ => TokenError("unsupported_grant_type", $"Grant type '{grantType}' is not supported")
+                    _ => throw new UnreachableException()
                 };
+
+                await authHook.OnTokenIssuedAsync(null, clientId, grantType, ct);
+
+                return result;
             }
             catch (InvalidOperationException ex)
             {

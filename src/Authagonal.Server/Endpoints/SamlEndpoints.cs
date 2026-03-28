@@ -1,5 +1,6 @@
 using System.Security.Claims;
 using Authagonal.Core.Models;
+using Authagonal.Core.Services;
 using Authagonal.Core.Stores;
 using Authagonal.Server.Services.Saml;
 using Microsoft.AspNetCore.Authentication;
@@ -69,6 +70,7 @@ public static class SamlEndpoints
         HttpContext httpContext,
         ISamlProviderStore samlStore,
         IUserStore userStore,
+        IAuthHook authHook,
         SamlMetadataParser metadataParser,
         SamlResponseParser responseParser,
         SamlReplayCache replayCache,
@@ -179,6 +181,7 @@ public static class SamlEndpoints
 
             await userStore.CreateAsync(user, ct);
             logger.LogInformation("Created new user {UserId} ({Email}) via SAML SSO", user.Id, email);
+            await authHook.OnUserCreatedAsync(user.Id, email, "saml", ct);
         }
         else
         {
@@ -240,6 +243,8 @@ public static class SamlEndpoints
 
         logger.LogInformation("User {UserId} ({Email}) signed in via SAML connection {ConnectionId}",
             user.Id, email, connectionId);
+
+        await authHook.OnUserAuthenticatedAsync(user.Id, email, "saml", ct: ct);
 
         // Redirect to RelayState (already sanitized)
         return Results.Redirect(relayState);

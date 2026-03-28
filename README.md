@@ -2,7 +2,7 @@
 
 OAuth 2.0 / OpenID Connect / SAML 2.0 authentication server backed by Azure Table Storage.
 
-Architecture: API-only ASP.NET Core server + React login SPA, packaged as a single Docker image.
+Architecture: API-only ASP.NET Core server + React login SPA, packaged as a single Docker image. Can also be embedded as a library in your own ASP.NET project.
 
 **[Documentation](https://drawboardltd.github.io/authagonal/)**
 
@@ -18,12 +18,14 @@ This starts the auth server on `http://localhost:8080` with an Azurite storage e
 
 | Project | Description |
 |---|---|
-| `src/Authagonal.Core` | Domain models, interfaces, shared logic |
+| `src/Authagonal.Core` | Domain models, interfaces, extensibility contracts |
 | `src/Authagonal.Storage` | Azure Table Storage implementations |
 | `src/Authagonal.Server` | ASP.NET Core host — OIDC, SAML, auth API, admin API |
-| `login-app` | React/TypeScript login SPA (Vite) |
-| `tools/Authagonal.Migration` | SQL Server → Table Storage migration tool |
+| `login-app` | React/TypeScript login SPA (Vite), published as `@drawboard/authagonal-login` |
+| `tools/Authagonal.Migration` | Duende IdentityServer → Table Storage migration tool |
 | `tests/Authagonal.Tests` | Unit tests |
+| `demos/custom-server` | Demo: host Authagonal as a library with custom extensions |
+| `demos/sample-app` | Demo: client app (API + React SPA) authenticating via Authagonal |
 
 ## Features
 
@@ -31,9 +33,19 @@ This starts the auth server on `http://localhost:8080` with an Azurite storage e
 - **SAML 2.0 SP** — homebrew implementation, full Azure AD support
 - **Dynamic OIDC Federation** — Google, Apple, Azure AD
 - **TCC Provisioning** — Try-Confirm-Cancel provisioning into downstream apps at authorize time
+- **Auth Hooks** — `IAuthHook` extensibility point for audit logging, custom validation, webhooks
+- **Composable Library** — `AddAuthagonal()` / `UseAuthagonal()` extension methods to host in your own project
 - **Session Invalidation** — SecurityStamp rotation on org change, password reset
 - **Admin APIs** — user CRUD, SAML/OIDC provider management, token impersonation
 - **Brandable Login UI** — runtime-configurable branding via `branding.json`
+
+## Deployment Options
+
+| Option | Description |
+|---|---|
+| **Docker image** | `drawboardci/authagonal` — pre-built, configure via env vars and branding.json |
+| **NuGet library** | Reference `Authagonal.Server` + `Authagonal.Storage`, call `AddAuthagonal()`, override services |
+| **npm package** | `@drawboard/authagonal-login` — the login SPA, customizable via branding.json |
 
 ## Docker
 
@@ -54,6 +66,26 @@ dotnet run --project src/Authagonal.Server
 # Login app
 cd login-app && npm install && npm run dev
 ```
+
+## Hosting as a Library
+
+```csharp
+var builder = WebApplication.CreateBuilder(args);
+
+// Override extensibility points before AddAuthagonal
+builder.Services.AddSingleton<IAuthHook, MyAuditHook>();
+builder.Services.AddSingleton<IEmailService, MyEmailService>();
+
+builder.Services.AddAuthagonal(builder.Configuration);
+
+var app = builder.Build();
+app.UseAuthagonal();
+app.MapAuthagonalEndpoints();
+app.MapFallbackToFile("index.html");
+app.Run();
+```
+
+See `demos/custom-server/` for a complete example.
 
 ## Configuration
 

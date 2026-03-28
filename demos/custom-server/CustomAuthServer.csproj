@@ -1,0 +1,32 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+
+  <!-- In production, replace these with NuGet PackageReferences:
+       <PackageReference Include="Authagonal.Server" Version="x.y.z" />
+       <PackageReference Include="Authagonal.Storage" Version="x.y.z" /> -->
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Authagonal.Core\Authagonal.Core.csproj" />
+    <ProjectReference Include="..\..\src\Authagonal.Storage\Authagonal.Storage.csproj" />
+    <ProjectReference Include="..\..\src\Authagonal.Server\Authagonal.Server.csproj" />
+  </ItemGroup>
+
+  <!-- Build the login SPA and copy into wwwroot.
+       In production, you'd instead:
+         npm install @drawboard/authagonal-login
+         cd node_modules/@drawboard/authagonal-login && npx vite build
+         copy dist/* wwwroot/ -->
+  <Target Name="BuildLoginApp" BeforeTargets="Build" Condition="!Exists('wwwroot/index.html')">
+    <Exec Command="npm ci" WorkingDirectory="../../login-app" />
+    <Exec Command="npm run build" WorkingDirectory="../../login-app" />
+    <ItemGroup>
+      <LoginAppFiles Include="../../login-app/dist/**/*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(LoginAppFiles)" DestinationFolder="wwwroot/%(RecursiveDir)" />
+  </Target>
+
+</Project>

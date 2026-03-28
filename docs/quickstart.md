@@ -91,9 +91,14 @@ Response:
 }
 ```
 
+## Working Demo
+
+The `demos/sample-app/` directory contains a complete React SPA + API that implements the full OIDC flow above. See the [demos README](https://github.com/DrawboardLtd/authagonal/tree/master/demos) for instructions.
+
 ## Next Steps
 
 - [Configuration](configuration) — full reference for all settings
+- [Extensibility](extensibility) — host as a library, add custom hooks
 - [Branding](branding) — customize the login UI
 - [SAML](saml) — add SAML SSO providers
 - [Provisioning](provisioning) — provision users into downstream apps

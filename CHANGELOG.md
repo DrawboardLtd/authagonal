@@ -30,6 +30,15 @@
   - `customCssUrl` — load additional CSS for deeper styling.
 - **CSS custom properties** — primary color exposed as `--color-primary`, used throughout styles via `color-mix()` for hover/focus variants.
 - **GitHub Pages documentation site** — overview, installation, quickstart, configuration, branding, provisioning, SAML, OIDC federation, admin API, auth API, and migration guides.
+- **`IAuthHook` extensibility point** — lifecycle hooks for authentication events. Implementations are called on login success/failure, user creation, and token issuance. Throw from a hook to abort the operation (e.g., reject a login). Default implementation is a no-op (`NullAuthHook`).
+  - `OnUserAuthenticatedAsync` — after password, SAML, or OIDC login.
+  - `OnUserCreatedAsync` — after user creation via SSO or admin API.
+  - `OnLoginFailedAsync` — on invalid credentials or lockout.
+  - `OnTokenIssuedAsync` — when tokens are issued via the token endpoint.
+- **Composable extension methods** — `AddAuthagonal()`, `UseAuthagonal()`, `MapAuthagonalEndpoints()` allow hosting Authagonal as a library in any ASP.NET Core application. Override `IEmailService`, `IAuthHook`, `IProvisioningOrchestrator`, or `ISecretProvider` by registering before `AddAuthagonal()`.
+- **Demo: custom-server** — shows hosting Authagonal with custom `IAuthHook` (audit logging), custom `IEmailService` (console output), custom branding, and custom endpoints.
+- **Demo: sample-app** — shows a client application (ASP.NET API + React SPA) authenticating via Authagonal using OIDC authorization code + PKCE, with protected API calls using JWT bearer tokens.
+- **CI/CD** — GitHub Actions workflows for Docker Hub publishing (`drawboardci/authagonal`, `drawboardci/authagonal-migration`) and npm publishing (`@drawboard/authagonal-login`).
 
 ### Changed
 
@@ -40,6 +49,12 @@
 - **Authorize endpoint** — now injects `IUserStore` and `IProvisioningOrchestrator`, runs TCC provisioning between auth check and code issuance.
 - **Admin `RegisterUser`** — no longer calls provisioning webhook; creates users with a generated GUID. Provisioning happens at authorize time.
 - **Admin `DeleteUser`** — calls `IProvisioningOrchestrator.DeprovisionAllAsync` instead of `NotifyUserDeletedAsync`.
+- **`Program.cs`** — refactored from inline setup to composable extension methods (`AddAuthagonal`, `UseAuthagonal`, `MapAuthagonalEndpoints`). Now 13 lines.
+- **Token endpoint** — fires `IAuthHook.OnTokenIssuedAsync` on successful token issuance.
+- **Auth endpoints** — fire `IAuthHook.OnUserAuthenticatedAsync` / `OnLoginFailedAsync`.
+- **SAML/OIDC endpoints** — fire `IAuthHook.OnUserCreatedAsync` and `OnUserAuthenticatedAsync`.
+- **Admin user endpoint** — fires `IAuthHook.OnUserCreatedAsync` on user registration.
+- **Scope rename** — `projects-identity-admin` renamed to `authagonal-admin`.
 
 ### Removed
 

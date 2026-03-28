@@ -34,6 +34,7 @@ public static class AuthEndpoints
         IUserStore userStore,
         ISsoDomainStore ssoDomainStore,
         PasswordHasher passwordHasher,
+        IAuthHook authHook,
         ILogger<Program> logger,
         CancellationToken ct)
     {
@@ -89,6 +90,8 @@ public static class AuthEndpoints
             user.UpdatedAt = DateTimeOffset.UtcNow;
             await userStore.UpdateAsync(user, ct);
 
+            await authHook.OnLoginFailedAsync(request.Email!, "invalid_password", ct);
+
             return Results.Json(new { error = "invalid_credentials" }, statusCode: 401);
         }
 
@@ -126,6 +129,8 @@ public static class AuthEndpoints
         await httpContext.SignInAsync(CookieAuthenticationDefaults.AuthenticationScheme, principal);
 
         logger.LogInformation("User {UserId} ({Email}) signed in", user.Id, user.Email);
+
+        await authHook.OnUserAuthenticatedAsync(user.Id, user.Email, "password", ct: ct);
 
         return Results.Ok(new { userId = user.Id, email = user.Email, name });
     }

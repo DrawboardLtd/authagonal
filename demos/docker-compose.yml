@@ -1,0 +1,33 @@
+services:
+  azurite:
+    image: mcr.microsoft.com/azure-storage/azurite
+    ports:
+      - "10002:10002"
+    command: azurite-table --tableHost 0.0.0.0
+
+  authagonal:
+    build:
+      context: ..
+      dockerfile: demos/custom-server/Dockerfile
+    ports:
+      - "8080:8080"
+    environment:
+      - Storage__ConnectionString=DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;TableEndpoint=http://azurite:10002/devstoreaccount1;
+      - Issuer=http://localhost:8080
+      - Oidc__Issuer=http://localhost:8080
+    depends_on:
+      - azurite
+
+  sample-api:
+    build:
+      context: ..
+      dockerfile: demos/sample-app/SampleApp.Api/Dockerfile
+    ports:
+      - "5001:8080"
+    environment:
+      - Auth__Authority=http://authagonal:8080
+      - Auth__Audience=sample-app
+      - Auth__AllowHttp=true
+      - Cors__Origins__0=http://localhost:3000
+    depends_on:
+      - authagonal

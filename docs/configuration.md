@@ -104,6 +104,8 @@ When configured, secret values that look like Key Vault references are resolved 
 
 ## Email
 
+The default email service uses SendGrid. To use a different provider, implement `IEmailService` and register it before `AddAuthagonal()` — see [Extensibility](extensibility).
+
 | Setting | Description |
 |---|---|
 | `Email:SendGridApiKey` | SendGrid API key for sending emails |

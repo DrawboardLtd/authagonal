@@ -16,6 +16,8 @@ Authagonal replaces Duende IdentityServer + Sustainsys.Saml2 with a single, self
 - **Dynamic OIDC Federation** — connect to Google, Apple, Azure AD, or any OIDC-compliant IdP
 - **TCC Provisioning** — Try-Confirm-Cancel provisioning into downstream apps at authorize time
 - **Brandable Login UI** — runtime-configurable via a JSON file — logo, colors, custom CSS — no rebuild needed
+- **Auth Hooks** — `IAuthHook` extensibility for audit logging, custom validation, webhooks
+- **Composable Library** — `AddAuthagonal()` / `UseAuthagonal()` to host in your own project with custom service overrides
 - **Azure Table Storage** — low-cost, serverless-friendly storage backend
 - **Admin APIs** — user CRUD, SAML/OIDC provider management, SSO domain routing, token impersonation
 
@@ -40,4 +42,4 @@ Client App                    Authagonal                         IdP (Azure AD, 
     │ ◄─ { access_token, ... } ──┤                                    │
 ```
 
-Get started with the [Installation](installation) guide or jump straight to the [Quick Start](quickstart).
+Get started with the [Installation](installation) guide or jump straight to the [Quick Start](quickstart). To host Authagonal in your own project, see [Extensibility](extensibility).

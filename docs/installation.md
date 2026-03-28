@@ -76,6 +76,47 @@ docker build -t authagonal .
 docker build -f Dockerfile.migration -t authagonal-migration .
 ```
 
+## As a Library (NuGet)
+
+Reference the Authagonal packages in your own ASP.NET Core project:
+
+```xml
+<PackageReference Include="Authagonal.Server" Version="x.y.z" />
+<PackageReference Include="Authagonal.Storage" Version="x.y.z" />
+```
+
+Then compose it into your `Program.cs`:
+
+```csharp
+builder.Services.AddSingleton<IAuthHook, MyAuditHook>();   // Custom hook
+builder.Services.AddSingleton<IEmailService, MyEmailService>(); // Custom email
+builder.Services.AddAuthagonal(builder.Configuration);
+
+var app = builder.Build();
+app.UseAuthagonal();
+app.MapAuthagonalEndpoints();
+app.MapFallbackToFile("index.html");
+app.Run();
+```
+
+See [Extensibility](extensibility) for all override points and [demos/custom-server/](https://github.com/DrawboardLtd/authagonal/tree/master/demos/custom-server) for a complete example.
+
+## Login SPA (npm)
+
+The login UI is published as an npm package for customization:
+
+```bash
+npm install @drawboard/authagonal-login
+```
+
+Customize via `branding.json` (see [Branding](branding)) and build the SPA into your server's `wwwroot/`:
+
+```bash
+cd node_modules/@drawboard/authagonal-login
+npx vite build
+cp -r dist/* /path/to/wwwroot/
+```
+
 ## Migration Tool
 
 For migrating from Duende IdentityServer + SQL Server:

@@ -1,0 +1,8 @@
+{
+  "appName": "Acme Corp",
+  "logoUrl": null,
+  "primaryColor": "#059669",
+  "supportEmail": "support@acme.example.com",
+  "showForgotPassword": true,
+  "customCssUrl": null
+}

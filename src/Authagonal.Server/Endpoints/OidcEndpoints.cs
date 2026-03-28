@@ -4,6 +4,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using Authagonal.Core.Models;
+using Authagonal.Core.Services;
 using Authagonal.Core.Stores;
 using Authagonal.Server.Services.Oidc;
 using Microsoft.AspNetCore.Authentication;
@@ -79,6 +80,7 @@ public static class OidcEndpoints
         HttpContext httpContext,
         IOidcProviderStore oidcStore,
         IUserStore userStore,
+        IAuthHook authHook,
         OidcDiscoveryClient discoveryClient,
         OidcStateStore stateStore,
         IHttpClientFactory httpClientFactory,
@@ -259,6 +261,7 @@ public static class OidcEndpoints
 
             await userStore.CreateAsync(user, ct);
             logger.LogInformation("Created new user {UserId} ({Email}) via OIDC SSO", user.Id, email);
+            await authHook.OnUserCreatedAsync(user.Id, email, "oidc", ct);
         }
         else
         {
@@ -320,6 +323,8 @@ public static class OidcEndpoints
 
         logger.LogInformation("User {UserId} ({Email}) signed in via OIDC connection {ConnectionId}",
             user.Id, email, stateData.ConnectionId);
+
+        await authHook.OnUserAuthenticatedAsync(user.Id, email, "oidc", ct: ct);
 
         return Results.Redirect(returnUrl);
     }

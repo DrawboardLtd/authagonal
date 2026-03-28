@@ -63,6 +63,7 @@ public static class UserEndpoints
     private static async Task<IResult> RegisterUser(
         RegisterUserRequest request,
         IUserStore userStore,
+        IAuthHook authHook,
         PasswordHasher passwordHasher,
         IEmailService emailService,
         IConfiguration config,
@@ -97,6 +98,7 @@ public static class UserEndpoints
         };
 
         await userStore.CreateAsync(user, ct);
+        await authHook.OnUserCreatedAsync(userId, request.Email, "admin", ct);
 
         // Send verification email (token valid for 24 hours)
         var issuer = config["Issuer"]!;
