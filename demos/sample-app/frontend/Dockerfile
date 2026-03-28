@@ -10,7 +10,7 @@ RUN npm run build
 FROM nginx:alpine
 RUN apk add --no-cache gettext
 COPY --from=build /app/dist /usr/share/nginx/html
-COPY demos/sample-app/frontend/nginx.conf /etc/nginx/templates/default.conf.template
+RUN rm -rf /etc/nginx/templates
 COPY demos/sample-app/frontend/docker-entrypoint.sh /docker-entrypoint.sh
 RUN chmod +x /docker-entrypoint.sh
 EXPOSE 8080
