@@ -5,7 +5,7 @@ title: Admin API
 
 # Admin API
 
-Admin endpoints require a JWT access token with the `projects-identity-admin` scope.
+Admin endpoints require a JWT access token with the `authagonal-admin` scope.
 
 All endpoints are under `/api/v1/`.
 

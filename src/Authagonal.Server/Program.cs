@@ -168,7 +168,7 @@ builder.Services.AddAuthorization(options =>
         policy.RequireAuthenticatedUser();
         policy.RequireAssertion(context =>
         {
-            // Check for scope claim containing "projects-identity-admin"
+            // Check for scope claim containing "authagonal-admin"
             var scopeClaim = context.User.FindFirst("scope")
                 ?? context.User.FindFirst("scp");
 
@@ -176,7 +176,7 @@ builder.Services.AddAuthorization(options =>
                 return false;
 
             var scopes = scopeClaim.Value.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-            return scopes.Contains("projects-identity-admin", StringComparer.OrdinalIgnoreCase);
+            return scopes.Contains("authagonal-admin", StringComparer.OrdinalIgnoreCase);
         });
     });
 });
