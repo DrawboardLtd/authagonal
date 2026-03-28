@@ -103,7 +103,7 @@ public sealed class KeyManager : IHostedService, IDisposable
                 }
 
                 activeKey = GenerateNewKey(now);
-                await keyStore.StoreKeyAsync(activeKey, ct);
+                await keyStore.StoreAsync(activeKey, ct);
             }
 
             // Load the active key into memory
@@ -116,7 +116,7 @@ public sealed class KeyManager : IHostedService, IDisposable
             _signingCredentials = new SigningCredentials(securityKey, Algorithm);
 
             // Build JWKS: include all non-expired keys (active + rotated-but-still-valid)
-            var allKeys = await keyStore.GetAllKeysAsync(ct);
+            var allKeys = await keyStore.GetAllAsync(ct);
             var validKeys = new List<JsonWebKey>();
 
             foreach (var keyInfo in allKeys)

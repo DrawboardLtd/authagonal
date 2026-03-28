@@ -8,7 +8,7 @@ namespace Authagonal.Storage.Stores;
 
 public sealed class TableClientStore(TableClient clientsTable) : IClientStore
 {
-    public async Task<OAuthClient?> FindByIdAsync(string clientId, CancellationToken ct = default)
+    public async Task<OAuthClient?> GetAsync(string clientId, CancellationToken ct = default)
     {
         try
         {

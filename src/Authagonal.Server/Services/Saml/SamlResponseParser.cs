@@ -41,7 +41,7 @@ public sealed class SamlResponseParser(ILogger<SamlResponseParser> logger)
         }
 
         // 2. Load into XmlDocument (PreserveWhitespace = true is critical for signature validation)
-        var doc = new XmlDocument { PreserveWhitespace = true };
+        var doc = new XmlDocument { PreserveWhitespace = true, XmlResolver = null };
         try
         {
             doc.LoadXml(System.Text.Encoding.UTF8.GetString(responseBytes));
@@ -311,10 +311,16 @@ public sealed class SamlResponseParser(ILogger<SamlResponseParser> logger)
                     return true;
                 }
             }
+            catch (System.Security.Cryptography.CryptographicException ex)
+            {
+                // Certificate algorithm mismatch or inapplicable cert — try next
+                logger.LogDebug(ex, "Signature check inapplicable for certificate {Thumbprint}",
+                    cert.Thumbprint);
+            }
             catch (Exception ex)
             {
-                // Some certs may not be applicable (different algorithm, etc.)
-                logger.LogDebug(ex, "Signature check failed with certificate {Thumbprint}",
+                // Unexpected error — log as warning since it may indicate a real problem
+                logger.LogWarning(ex, "Unexpected error during signature check with certificate {Thumbprint}",
                     cert.Thumbprint);
             }
         }

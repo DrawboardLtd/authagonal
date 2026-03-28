@@ -1,6 +1,5 @@
 using System.Security.Claims;
 using Authagonal.Core.Models;
-using Authagonal.Core.Services;
 using Authagonal.Core.Stores;
 using Authagonal.Server.Services.Saml;
 using Microsoft.AspNetCore.Authentication;
@@ -16,7 +15,7 @@ public static class SamlEndpoints
     public static IEndpointRouteBuilder MapSamlEndpoints(this IEndpointRouteBuilder app)
     {
         app.MapGet("/saml/{connectionId}/login", LoginAsync).AllowAnonymous();
-        app.MapPost("/saml/{connectionId}/acs", AcsAsync).AllowAnonymous().DisableAntiforgery();
+        app.MapPost("/saml/{connectionId}/acs", AcsAsync).AllowAnonymous().DisableAntiforgery().RequireRateLimiting("auth");
         app.MapGet("/saml/{connectionId}/metadata", MetadataAsync).AllowAnonymous();
 
         return app;
@@ -55,8 +54,8 @@ public static class SamlEndpoints
         var url = SamlRequestBuilder.BuildAuthnRequestUrl(
             requestId, issuer, acsUrl, metadata.SingleSignOnServiceUrl);
 
-        // Append RelayState if returnUrl is provided
-        var relayState = returnUrl ?? "/";
+        // Append RelayState if returnUrl is provided (validated to prevent open redirect)
+        var relayState = SanitizeReturnUrl(returnUrl);
         url += $"&RelayState={Uri.EscapeDataString(relayState)}";
 
         logger.LogInformation("SAML login initiated for connection {ConnectionId}, RequestId={RequestId}",
@@ -70,7 +69,6 @@ public static class SamlEndpoints
         HttpContext httpContext,
         ISamlProviderStore samlStore,
         IUserStore userStore,
-        IUserProvisioningService provisioningService,
         SamlMetadataParser metadataParser,
         SamlResponseParser responseParser,
         SamlReplayCache replayCache,
@@ -82,7 +80,7 @@ public static class SamlEndpoints
         // Read form data
         var form = await httpContext.Request.ReadFormAsync(ct);
         var samlResponse = form["SAMLResponse"].ToString();
-        var relayState = form["RelayState"].ToString();
+        var relayState = SanitizeReturnUrl(form["RelayState"].ToString());
 
         if (string.IsNullOrEmpty(samlResponse))
             return Results.BadRequest(new { error = "missing_saml_response" });
@@ -105,7 +103,7 @@ public static class SamlEndpoints
             // Quick parse to find InResponseTo without full validation
             var responseBytes = Convert.FromBase64String(samlResponse);
             var responseXml = System.Text.Encoding.UTF8.GetString(responseBytes);
-            var quickDoc = new System.Xml.XmlDocument();
+            var quickDoc = new System.Xml.XmlDocument { XmlResolver = null };
             quickDoc.LoadXml(responseXml);
             expectedInResponseTo = quickDoc.DocumentElement?.Attributes?["InResponseTo"]?.Value;
         }
@@ -115,15 +113,16 @@ public static class SamlEndpoints
             logger.LogWarning("Could not extract InResponseTo from SAML response for replay validation");
         }
 
-        // Validate replay cache if we have an InResponseTo
+        // Validate replay cache if we have an InResponseTo.
+        // IdP-initiated flows have no InResponseTo and skip this block entirely.
+        // If InResponseTo IS present, replay validation must pass — reject otherwise.
         if (expectedInResponseTo is not null)
         {
             var cachedConnectionId = await replayCache.ValidateAndConsumeAsync(expectedInResponseTo, ct);
             if (cachedConnectionId is null)
             {
-                logger.LogWarning("SAML replay check failed for InResponseTo={InResponseTo}", expectedInResponseTo);
-                // Don't hard-fail here — some IdP-initiated flows won't have InResponseTo
-                expectedInResponseTo = null;
+                logger.LogWarning("SAML replay detected or unknown request ID: InResponseTo={InResponseTo}", expectedInResponseTo);
+                return Results.BadRequest(new { error = "saml_replay", error_description = "SAML response replay detected or unknown request ID." });
             }
             else if (!string.Equals(cachedConnectionId, connectionId, StringComparison.OrdinalIgnoreCase))
             {
@@ -145,8 +144,7 @@ public static class SamlEndpoints
         if (!parseResult.Success)
         {
             logger.LogWarning("SAML response validation failed: {Error}", parseResult.Error);
-            var errorRedirect = string.IsNullOrEmpty(relayState) ? "/" : relayState;
-            return Results.Redirect($"{errorRedirect}?error=saml_error&error_description={Uri.EscapeDataString(parseResult.Error ?? "Unknown error")}");
+            return Results.Redirect($"{relayState}?error=saml_error&error_description={Uri.EscapeDataString(parseResult.Error ?? "Unknown error")}");
         }
 
         // Map claims
@@ -156,8 +154,7 @@ public static class SamlEndpoints
         if (string.IsNullOrEmpty(userInfo.Email))
         {
             logger.LogWarning("No email address found in SAML response for connection {ConnectionId}", connectionId);
-            var errorRedirect = string.IsNullOrEmpty(relayState) ? "/" : relayState;
-            return Results.Redirect($"{errorRedirect}?error=saml_error&error_description={Uri.EscapeDataString("No email address found in SAML assertion.")}");
+            return Results.Redirect($"{relayState}?error=saml_error&error_description={Uri.EscapeDataString("No email address found in SAML assertion.")}");
         }
 
         var email = userInfo.Email.ToLowerInvariant();
@@ -166,32 +163,14 @@ public static class SamlEndpoints
         var user = await userStore.FindByEmailAsync(email, ct);
         if (user is null)
         {
-            // Check with provisioning service before creating
-            var provisioningResult = await provisioningService.ProvisionUserAsync(new ProvisioningRequest
-            {
-                Email = email,
-                FirstName = userInfo.FirstName,
-                LastName = userInfo.LastName,
-                Provider = $"saml:{connectionId}",
-                ProviderKey = parseResult.NameId!
-            }, ct);
-
-            if (!provisioningResult.Approved)
-            {
-                logger.LogWarning("Provisioning rejected SAML user {Email}: {Reason}", email, provisioningResult.Reason);
-                var errorRedirect = string.IsNullOrEmpty(relayState) ? "/" : relayState;
-                return Results.Redirect($"{errorRedirect}?error=provisioning_rejected&error_description={Uri.EscapeDataString(provisioningResult.Reason ?? "Account creation not permitted.")}");
-            }
-
             user = new AuthUser
             {
-                Id = provisioningResult.UserId ?? Guid.NewGuid().ToString("N"),
+                Id = Guid.NewGuid().ToString("N"),
                 Email = email,
                 NormalizedEmail = email.ToUpperInvariant(),
                 EmailConfirmed = true,
                 FirstName = userInfo.FirstName,
                 LastName = userInfo.LastName,
-                OrganizationId = provisioningResult.OrganizationId,
                 CreatedAt = DateTimeOffset.UtcNow,
                 LockoutEnabled = true,
                 SecurityStamp = Convert.ToBase64String(
@@ -262,9 +241,8 @@ public static class SamlEndpoints
         logger.LogInformation("User {UserId} ({Email}) signed in via SAML connection {ConnectionId}",
             user.Id, email, connectionId);
 
-        // Redirect to RelayState
-        var redirectUrl = string.IsNullOrEmpty(relayState) ? "/" : relayState;
-        return Results.Redirect(redirectUrl);
+        // Redirect to RelayState (already sanitized)
+        return Results.Redirect(relayState);
     }
 
     private static async Task<IResult> MetadataAsync(
@@ -300,6 +278,18 @@ public static class SamlEndpoints
             """;
 
         return Results.Content(xml, "application/xml");
+    }
+
+    private static string SanitizeReturnUrl(string? url)
+    {
+        if (string.IsNullOrWhiteSpace(url))
+            return "/";
+
+        // Only allow relative paths to prevent open redirect
+        if (!url.StartsWith('/') || url.StartsWith("//"))
+            return "/";
+
+        return url;
     }
 
     private static async Task<SamlIdpMetadata> GetCachedMetadataAsync(

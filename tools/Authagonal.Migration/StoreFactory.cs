@@ -1,6 +1,7 @@
 using Authagonal.Core.Stores;
 using Authagonal.Storage.Stores;
 using Azure.Data.Tables;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Authagonal.Migration;
 
@@ -23,6 +24,7 @@ internal sealed class StoreFactory
         var clients = EnsureTable(serviceClient, "Clients");
         var grants = EnsureTable(serviceClient, "Grants");
         var grantsBySubject = EnsureTable(serviceClient, "GrantsBySubject");
+        var grantsByExpiry = EnsureTable(serviceClient, "GrantsByExpiry");
         var ssoDomains = EnsureTable(serviceClient, "SsoDomains");
         var samlProviders = EnsureTable(serviceClient, "SamlProviders");
         var oidcProviders = EnsureTable(serviceClient, "OidcProviders");
@@ -31,7 +33,7 @@ internal sealed class StoreFactory
         {
             UserStore = new TableUserStore(users, userEmails, userLogins),
             ClientStore = new TableClientStore(clients),
-            GrantStore = new TableGrantStore(grants, grantsBySubject),
+            GrantStore = new TableGrantStore(grants, grantsBySubject, grantsByExpiry, NullLogger<TableGrantStore>.Instance),
             SsoDomainStore = new TableSsoDomainStore(ssoDomains),
             SamlProviderStore = new TableSamlProviderStore(samlProviders),
             OidcProviderStore = new TableOidcProviderStore(oidcProviders)

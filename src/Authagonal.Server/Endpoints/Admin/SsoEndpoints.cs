@@ -1,4 +1,5 @@
 using Authagonal.Core.Models;
+using Authagonal.Core.Services;
 using Authagonal.Core.Stores;
 
 namespace Authagonal.Server.Endpoints.Admin;
@@ -146,6 +147,7 @@ public static class SsoEndpoints
         CreateOidcRequest request,
         IOidcProviderStore oidcStore,
         ISsoDomainStore ssoDomainStore,
+        ISecretProvider secretProvider,
         CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(request.ConnectionName))
@@ -166,13 +168,17 @@ public static class SsoEndpoints
         var connectionId = Guid.NewGuid().ToString("N");
         var now = DateTimeOffset.UtcNow;
 
+        // Protect the client secret (stores in vault if configured, otherwise plaintext)
+        var protectedSecret = await secretProvider.ProtectAsync(
+            $"oidc-{connectionId}-client-secret", request.ClientSecret, ct);
+
         var config = new OidcProviderConfig
         {
             ConnectionId = connectionId,
             ConnectionName = request.ConnectionName,
             MetadataLocation = request.MetadataLocation,
             ClientId = request.ClientId,
-            ClientSecret = request.ClientSecret,
+            ClientSecret = protectedSecret,
             RedirectUrl = request.RedirectUrl,
             AllowedDomains = request.AllowedDomains ?? [],
             CreatedAt = now

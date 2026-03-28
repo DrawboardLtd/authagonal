@@ -4,6 +4,17 @@ import { login, ssoCheck, ApiRequestError } from '../api';
 
 const API_URL = import.meta.env.VITE_API_URL || '';
 
+function isSafeReturnUrl(url: string): boolean {
+  if (!url) return false;
+  // Only allow relative paths (starting with /) that don't escape to another host
+  try {
+    const parsed = new URL(url, window.location.origin);
+    return parsed.origin === window.location.origin && url.startsWith('/');
+  } catch {
+    return false;
+  }
+}
+
 export default function LoginPage() {
   const [searchParams] = useSearchParams();
   const returnUrl = searchParams.get('returnUrl') || '';
@@ -74,7 +85,7 @@ export default function LoginPage() {
   function handleSsoRedirect() {
     if (ssoInfo) {
       const ssoUrl = new URL(`${API_URL}${ssoInfo.redirectUrl}`, window.location.origin);
-      if (returnUrl) {
+      if (returnUrl && isSafeReturnUrl(returnUrl)) {
         ssoUrl.searchParams.set('returnUrl', returnUrl);
       }
       window.location.href = ssoUrl.toString();
@@ -88,8 +99,8 @@ export default function LoginPage() {
 
     try {
       await login(email, password);
-      // On success, redirect to returnUrl using window.location.href
-      if (returnUrl) {
+      // On success, redirect to returnUrl (validated) using window.location.href
+      if (returnUrl && isSafeReturnUrl(returnUrl)) {
         window.location.href = returnUrl;
       } else {
         window.location.href = '/';
@@ -109,7 +120,7 @@ export default function LoginPage() {
           case 'sso_required':
             if (err.redirectUrl) {
               const ssoUrl = new URL(`${API_URL}${err.redirectUrl}`, window.location.origin);
-              if (returnUrl) {
+              if (returnUrl && isSafeReturnUrl(returnUrl)) {
                 ssoUrl.searchParams.set('returnUrl', returnUrl);
               }
               window.location.href = ssoUrl.toString();
@@ -134,7 +145,7 @@ export default function LoginPage() {
     }
   }
 
-  const forgotPasswordLink = returnUrl
+  const forgotPasswordLink = returnUrl && isSafeReturnUrl(returnUrl)
     ? `/forgot-password?returnUrl=${encodeURIComponent(returnUrl)}`
     : '/forgot-password';
 
@@ -158,6 +169,7 @@ export default function LoginPage() {
             placeholder="you@example.com"
             autoComplete="email"
             autoFocus={!loginHint}
+            maxLength={256}
             required
           />
         </div>
@@ -191,6 +203,7 @@ export default function LoginPage() {
                 placeholder="Enter your password"
                 autoComplete="current-password"
                 autoFocus
+                maxLength={256}
                 required
               />
             </div>

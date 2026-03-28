@@ -4,7 +4,7 @@ namespace Authagonal.Core.Stores;
 
 public interface IUserStore
 {
-    Task<AuthUser?> FindByIdAsync(string userId, CancellationToken ct = default);
+    Task<AuthUser?> GetAsync(string userId, CancellationToken ct = default);
     Task<AuthUser?> FindByEmailAsync(string email, CancellationToken ct = default);
     Task CreateAsync(AuthUser user, CancellationToken ct = default);
     Task UpdateAsync(AuthUser user, CancellationToken ct = default);

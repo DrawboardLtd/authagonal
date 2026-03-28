@@ -31,6 +31,7 @@ public sealed class ClientEntity : ITableEntity
     public int AbsoluteRefreshTokenLifetimeSeconds { get; set; }
     public int SlidingRefreshTokenLifetimeSeconds { get; set; }
     public int RefreshTokenUsage { get; set; }
+    public string ProvisioningAppsJson { get; set; } = "[]";
 
     public static ClientEntity FromModel(OAuthClient client) => new()
     {
@@ -53,6 +54,7 @@ public sealed class ClientEntity : ITableEntity
         AbsoluteRefreshTokenLifetimeSeconds = client.AbsoluteRefreshTokenLifetimeSeconds,
         SlidingRefreshTokenLifetimeSeconds = client.SlidingRefreshTokenLifetimeSeconds,
         RefreshTokenUsage = (int)client.RefreshTokenUsage,
+        ProvisioningAppsJson = JsonSerializer.Serialize(client.ProvisioningApps),
     };
 
     public OAuthClient ToModel() => new()
@@ -75,5 +77,6 @@ public sealed class ClientEntity : ITableEntity
         AbsoluteRefreshTokenLifetimeSeconds = AbsoluteRefreshTokenLifetimeSeconds,
         SlidingRefreshTokenLifetimeSeconds = SlidingRefreshTokenLifetimeSeconds,
         RefreshTokenUsage = (RefreshTokenUsage)RefreshTokenUsage,
+        ProvisioningApps = JsonSerializer.Deserialize<List<string>>(ProvisioningAppsJson) ?? [],
     };
 }

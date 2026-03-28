@@ -31,7 +31,7 @@ public static class UserEndpoints
         IUserStore userStore,
         CancellationToken ct)
     {
-        var user = await userStore.FindByIdAsync(userId, ct);
+        var user = await userStore.GetAsync(userId, ct);
         if (user is null)
             return Results.NotFound(new { error = "user_not_found", error_description = $"User '{userId}' not found" });
 
@@ -63,7 +63,6 @@ public static class UserEndpoints
     private static async Task<IResult> RegisterUser(
         RegisterUserRequest request,
         IUserStore userStore,
-        IUserProvisioningService provisioningService,
         PasswordHasher passwordHasher,
         IEmailService emailService,
         IConfiguration config,
@@ -79,18 +78,7 @@ public static class UserEndpoints
         if (existing is not null)
             return Results.Conflict(new { error = "user_exists", error_description = "A user with this email already exists" });
 
-        // Check with provisioning service
-        var provisioningResult = await provisioningService.ProvisionUserAsync(new ProvisioningRequest
-        {
-            Email = request.Email,
-            FirstName = request.FirstName,
-            LastName = request.LastName
-        }, ct);
-
-        if (!provisioningResult.Approved)
-            return Results.BadRequest(new { error = "provisioning_rejected", error_description = provisioningResult.Reason ?? "Account creation not permitted." });
-
-        var userId = provisioningResult.UserId ?? Guid.NewGuid().ToString("N");
+        var userId = Guid.NewGuid().ToString("N");
         var now = DateTimeOffset.UtcNow;
         var securityStamp = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
 
@@ -103,7 +91,6 @@ public static class UserEndpoints
             EmailConfirmed = false,
             FirstName = request.FirstName,
             LastName = request.LastName,
-            OrganizationId = provisioningResult.OrganizationId,
             LockoutEnabled = true,
             SecurityStamp = securityStamp,
             CreatedAt = now
@@ -111,9 +98,10 @@ public static class UserEndpoints
 
         await userStore.CreateAsync(user, ct);
 
-        // Send verification email
+        // Send verification email (token valid for 24 hours)
         var issuer = config["Issuer"]!;
-        var tokenData = $"{securityStamp}||{user.Email}";
+        var expiresAt = DateTimeOffset.UtcNow.AddHours(24).ToUnixTimeSeconds();
+        var tokenData = $"{securityStamp}||{user.Email}||{expiresAt}";
         var encodedToken = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(tokenData));
         var callbackUrl = $"{issuer}/api/v1/profile/confirm-email?token={Uri.EscapeDataString(encodedToken)}";
 
@@ -146,7 +134,7 @@ public static class UserEndpoints
         if (string.IsNullOrWhiteSpace(request.UserId))
             return Results.BadRequest(new { error = "invalid_request", error_description = "UserId is required" });
 
-        var user = await userStore.FindByIdAsync(request.UserId, ct);
+        var user = await userStore.GetAsync(request.UserId, ct);
         if (user is null)
             return Results.NotFound(new { error = "user_not_found", error_description = $"User '{request.UserId}' not found" });
 
@@ -187,19 +175,20 @@ public static class UserEndpoints
         string userId,
         IUserStore userStore,
         IGrantStore grantStore,
-        IUserProvisioningService provisioningService,
+        IProvisioningOrchestrator provisioningOrchestrator,
         CancellationToken ct)
     {
-        var user = await userStore.FindByIdAsync(userId, ct);
+        var user = await userStore.GetAsync(userId, ct);
         if (user is null)
             return Results.NotFound(new { error = "user_not_found", error_description = $"User '{userId}' not found" });
 
         // Remove all grants for this user
         await grantStore.RemoveAllBySubjectAsync(userId, ct);
-        await userStore.DeleteAsync(userId, ct);
 
-        // Notify provisioning service (best-effort, don't fail the delete)
-        await provisioningService.NotifyUserDeletedAsync(userId, user.Email, ct);
+        // Deprovision from all downstream apps (best-effort)
+        await provisioningOrchestrator.DeprovisionAllAsync(userId, ct);
+
+        await userStore.DeleteAsync(userId, ct);
 
         return Results.NoContent();
     }
@@ -234,11 +223,25 @@ public static class UserEndpoints
         }
 
         var parts = decoded.Split("||");
-        if (parts.Length != 2)
+        if (parts.Length < 2)
             return Results.BadRequest(new { error = "invalid_token", error_description = "Invalid token format" });
 
         var securityStamp = parts[0];
         var email = parts[1];
+
+        // Validate expiration
+        if (parts.Length >= 3)
+        {
+            if (!long.TryParse(parts[2], out var expiresAtUnix) ||
+                DateTimeOffset.UtcNow.ToUnixTimeSeconds() > expiresAtUnix)
+            {
+                return Results.BadRequest(new { error = "token_expired", error_description = "This verification link has expired" });
+            }
+        }
+        else
+        {
+            return Results.BadRequest(new { error = "invalid_token", error_description = "Invalid token format" });
+        }
 
         var user = await userStore.FindByEmailAsync(email, ct);
         if (user is null)
@@ -263,7 +266,7 @@ public static class UserEndpoints
         IConfiguration config,
         CancellationToken ct)
     {
-        var user = await userStore.FindByIdAsync(userId, ct);
+        var user = await userStore.GetAsync(userId, ct);
         if (user is null)
             return Results.NotFound(new { error = "user_not_found", error_description = $"User '{userId}' not found" });
 
@@ -276,7 +279,8 @@ public static class UserEndpoints
         await userStore.UpdateAsync(user, ct);
 
         var issuer = config["Issuer"]!;
-        var tokenData = $"{user.SecurityStamp}||{user.Email}";
+        var expiresAt = DateTimeOffset.UtcNow.AddHours(24).ToUnixTimeSeconds();
+        var tokenData = $"{user.SecurityStamp}||{user.Email}||{expiresAt}";
         var encodedToken = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(tokenData));
         var callbackUrl = $"{issuer}/api/v1/profile/confirm-email?token={Uri.EscapeDataString(encodedToken)}";
 
@@ -291,7 +295,7 @@ public static class UserEndpoints
         IUserStore userStore,
         CancellationToken ct)
     {
-        var user = await userStore.FindByIdAsync(userId, ct);
+        var user = await userStore.GetAsync(userId, ct);
         if (user is null)
             return Results.NotFound(new { error = "user_not_found", error_description = $"User '{userId}' not found" });
 
@@ -323,7 +327,7 @@ public static class UserEndpoints
         IUserStore userStore,
         CancellationToken ct)
     {
-        var user = await userStore.FindByIdAsync(userId, ct);
+        var user = await userStore.GetAsync(userId, ct);
         if (user is null)
             return Results.NotFound(new { error = "user_not_found", error_description = $"User '{userId}' not found" });
 

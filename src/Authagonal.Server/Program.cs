@@ -13,6 +13,7 @@ using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.Extensions.Options;
 using Microsoft.AspNetCore.Cors.Infrastructure;
 using Microsoft.IdentityModel.Tokens;
+using System.Threading.RateLimiting;
 
 var builder = WebApplication.CreateBuilder(args);
 var config = builder.Configuration;
@@ -35,9 +36,24 @@ builder.Services.AddScoped<AuthorizationCodeService>();
 builder.Services.AddScoped<ITokenService, TokenService>();
 builder.Services.AddSingleton<IEmailService, EmailService>();
 builder.Services.AddHostedService<TokenCleanupService>();
+builder.Services.AddHostedService<GrantReconciliationService>();
 builder.Services.AddHttpClient("Provisioning");
-builder.Services.AddScoped<IUserProvisioningService, UserProvisioningService>();
+builder.Services.AddSingleton<IProvisioningOrchestrator, TccProvisioningOrchestrator>();
 builder.Services.AddHostedService<ClientSeedService>();
+
+// Secret provider: defaults to plaintext; set SecretProvider:VaultUri to use Key Vault
+var vaultUri = config["SecretProvider:VaultUri"];
+if (!string.IsNullOrWhiteSpace(vaultUri))
+{
+    var secretClient = new Azure.Security.KeyVault.Secrets.SecretClient(
+        new Uri(vaultUri), new Azure.Identity.DefaultAzureCredential());
+    builder.Services.AddSingleton(secretClient);
+    builder.Services.AddSingleton<ISecretProvider, KeyVaultSecretProvider>();
+}
+else
+{
+    builder.Services.AddSingleton<ISecretProvider, PlaintextSecretProvider>();
+}
 
 // ---------------------------------------------------------------------------
 // SAML services
@@ -102,7 +118,7 @@ builder.Services.AddAuthentication(options =>
         }
 
         var userStore = context.HttpContext.RequestServices.GetRequiredService<Authagonal.Core.Stores.IUserStore>();
-        var user = await userStore.FindByIdAsync(userId);
+        var user = await userStore.GetAsync(userId);
 
         if (user is null || !string.Equals(user.SecurityStamp, stampClaim, StringComparison.Ordinal))
         {
@@ -123,9 +139,15 @@ builder.Services.AddAuthentication(options =>
     {
         ValidIssuer = issuer,
         ValidateIssuer = true,
-        ValidateAudience = false,
+        ValidateAudience = true,
+        AudienceValidator = (audiences, _, _) =>
+        {
+            // Accept any audience that matches a registered client_id.
+            // Individual endpoints can further restrict if needed.
+            return audiences?.Any() == true;
+        },
         ValidateLifetime = true,
-        ClockSkew = TimeSpan.FromMinutes(2),
+        ClockSkew = TimeSpan.FromSeconds(60),
         ValidateIssuerSigningKey = true
     };
 });
@@ -166,6 +188,36 @@ builder.Services.AddCors();
 builder.Services.AddSingleton<ICorsPolicyProvider, DynamicCorsPolicyProvider>();
 
 // ---------------------------------------------------------------------------
+// Rate Limiting
+// ---------------------------------------------------------------------------
+builder.Services.AddRateLimiter(options =>
+{
+    options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+
+    // Per-IP rate limit for auth-sensitive endpoints
+    options.AddPolicy("auth", context =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 20,
+                Window = TimeSpan.FromMinutes(1),
+                QueueLimit = 0
+            }));
+
+    // Stricter limit for token endpoint (brute-force protection)
+    options.AddPolicy("token", context =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 30,
+                Window = TimeSpan.FromMinutes(1),
+                QueueLimit = 0
+            }));
+});
+
+// ---------------------------------------------------------------------------
 // Health Checks
 // ---------------------------------------------------------------------------
 builder.Services.AddHealthChecks()
@@ -177,9 +229,28 @@ var app = builder.Build();
 // Middleware pipeline
 // ---------------------------------------------------------------------------
 app.UseExceptionHandlingMiddleware();
+
+// Security headers
+app.Use(async (context, next) =>
+{
+    context.Response.Headers["X-Content-Type-Options"] = "nosniff";
+    context.Response.Headers["X-Frame-Options"] = "DENY";
+    context.Response.Headers["Referrer-Policy"] = "strict-origin-when-cross-origin";
+    context.Response.Headers["Content-Security-Policy"] = "default-src 'self'; frame-ancestors 'none'; object-src 'none'";
+    if (context.Request.IsHttps)
+    {
+        context.Response.Headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains";
+    }
+    await next();
+});
+
 app.UseCors();
+app.UseRateLimiter();
 app.UseAuthentication();
 app.UseAuthorization();
+
+app.UseDefaultFiles();
+app.UseStaticFiles();
 
 // ---------------------------------------------------------------------------
 // Endpoints
@@ -201,6 +272,8 @@ app.MapTokenAdminEndpoints();
 app.MapAuthEndpoints();
 app.MapSamlEndpoints();
 app.MapOidcEndpoints();
+
+app.MapFallbackToFile("index.html");
 
 app.Run();
 

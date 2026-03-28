@@ -11,7 +11,7 @@ public sealed class TableUserStore(
     TableClient userEmailsTable,
     TableClient userLoginsTable) : IUserStore
 {
-    public async Task<AuthUser?> FindByIdAsync(string userId, CancellationToken ct = default)
+    public async Task<AuthUser?> GetAsync(string userId, CancellationToken ct = default)
     {
         try
         {
@@ -32,7 +32,7 @@ public sealed class TableUserStore(
         {
             var emailEntity = await userEmailsTable.GetEntityAsync<UserEmailEntity>(
                 normalizedEmail, UserEmailEntity.LookupRowKey, cancellationToken: ct);
-            return await FindByIdAsync(emailEntity.Value.UserId, ct);
+            return await GetAsync(emailEntity.Value.UserId, ct);
         }
         catch (RequestFailedException ex) when (ex.Status == 404)
         {

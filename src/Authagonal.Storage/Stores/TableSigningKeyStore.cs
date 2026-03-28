@@ -22,7 +22,7 @@ public sealed class TableSigningKeyStore(TableClient signingKeysTable) : ISignin
         return null;
     }
 
-    public async Task<IReadOnlyList<SigningKeyInfo>> GetAllKeysAsync(CancellationToken ct = default)
+    public async Task<IReadOnlyList<SigningKeyInfo>> GetAllAsync(CancellationToken ct = default)
     {
         var results = new List<SigningKeyInfo>();
         var query = signingKeysTable.QueryAsync<SigningKeyEntity>(
@@ -37,7 +37,7 @@ public sealed class TableSigningKeyStore(TableClient signingKeysTable) : ISignin
         return results;
     }
 
-    public async Task StoreKeyAsync(SigningKeyInfo key, CancellationToken ct = default)
+    public async Task StoreAsync(SigningKeyInfo key, CancellationToken ct = default)
     {
         var entity = SigningKeyEntity.FromModel(key);
         await signingKeysTable.UpsertEntityAsync(entity, TableUpdateMode.Replace, ct);
@@ -57,7 +57,7 @@ public sealed class TableSigningKeyStore(TableClient signingKeysTable) : ISignin
         catch (RequestFailedException ex) when (ex.Status == 404) { }
     }
 
-    public async Task DeleteKeyAsync(string keyId, CancellationToken ct = default)
+    public async Task DeleteAsync(string keyId, CancellationToken ct = default)
     {
         try
         {

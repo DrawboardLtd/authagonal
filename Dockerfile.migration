@@ -1,0 +1,15 @@
+FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
+WORKDIR /src
+COPY *.slnx ./
+COPY src/Authagonal.Core/*.csproj src/Authagonal.Core/
+COPY src/Authagonal.Storage/*.csproj src/Authagonal.Storage/
+COPY tools/Authagonal.Migration/*.csproj tools/Authagonal.Migration/
+RUN dotnet restore tools/Authagonal.Migration/
+COPY src/ src/
+COPY tools/ tools/
+RUN dotnet publish tools/Authagonal.Migration/ -c Release -o /app/publish --no-restore
+
+FROM mcr.microsoft.com/dotnet/runtime:10.0
+WORKDIR /app
+COPY --from=build /app/publish .
+ENTRYPOINT ["dotnet", "Authagonal.Migration.dll"]

@@ -13,6 +13,7 @@ public static class TokenEndpoint
             HttpContext httpContext,
             ITokenService tokenService,
             IClientStore clientStore,
+            Services.PasswordHasher passwordHasher,
             CancellationToken ct) =>
         {
             var form = await httpContext.Request.ReadFormAsync(ct);
@@ -23,7 +24,7 @@ public static class TokenEndpoint
             if (string.IsNullOrWhiteSpace(clientId))
                 return TokenError("invalid_client", "client_id is required");
 
-            var client = await clientStore.FindByIdAsync(clientId, ct);
+            var client = await clientStore.GetAsync(clientId, ct);
             if (client is null)
                 return TokenError("invalid_client", "Unknown client");
 
@@ -35,8 +36,7 @@ public static class TokenEndpoint
 
                 var secretValid = client.ClientSecretHashes.Any(hash =>
                 {
-                    var hasher = new Services.PasswordHasher();
-                    var result = hasher.VerifyPassword(clientSecret, hash);
+                    var result = passwordHasher.VerifyPassword(clientSecret, hash);
                     return result is Services.PasswordVerifyResult.Success or Services.PasswordVerifyResult.SuccessRehashNeeded;
                 });
 
@@ -68,6 +68,7 @@ public static class TokenEndpoint
         })
         .AllowAnonymous()
         .DisableAntiforgery()
+        .RequireRateLimiting("token")
         .WithTags("OAuth");
 
         return app;

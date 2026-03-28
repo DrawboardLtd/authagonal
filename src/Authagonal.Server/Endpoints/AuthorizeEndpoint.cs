@@ -2,6 +2,7 @@ using System.Security.Claims;
 using System.Security.Cryptography;
 using System.Text.Json;
 using System.Web;
+using Authagonal.Core.Services;
 using Authagonal.Core.Stores;
 using Authagonal.Server.Services;
 
@@ -14,6 +15,8 @@ public static class AuthorizeEndpoint
         app.MapGet("/connect/authorize", async (
             HttpContext httpContext,
             IClientStore clientStore,
+            IUserStore userStore,
+            IProvisioningOrchestrator provisioningOrchestrator,
             IConfiguration configuration,
             AuthorizationCodeService authCodeService,
             CancellationToken ct) =>
@@ -33,14 +36,14 @@ public static class AuthorizeEndpoint
             if (string.IsNullOrWhiteSpace(clientId))
                 return BuildErrorRedirect(redirectUri, "invalid_request", "client_id is required", state);
 
-            var client = await clientStore.FindByIdAsync(clientId, ct);
+            var client = await clientStore.GetAsync(clientId, ct);
             if (client is null)
                 return BuildErrorRedirect(redirectUri, "unauthorized_client", "Unknown client_id", state);
 
             if (string.IsNullOrWhiteSpace(redirectUri))
                 return BuildErrorRedirect(null, "invalid_request", "redirect_uri is required", state);
 
-            if (!client.RedirectUris.Contains(redirectUri, StringComparer.OrdinalIgnoreCase))
+            if (!IsRedirectUriRegistered(redirectUri, client.RedirectUris))
                 return BuildErrorRedirect(null, "invalid_request", "redirect_uri is not registered for this client", state);
 
             if (string.IsNullOrWhiteSpace(responseType) || responseType != "code")
@@ -84,6 +87,24 @@ public static class AuthorizeEndpoint
             if (string.IsNullOrWhiteSpace(subjectId))
                 return BuildErrorRedirect(redirectUri, "server_error", "Unable to determine user identity", state);
 
+            // Provision user into required downstream apps (TCC)
+            if (client.ProvisioningApps.Count > 0)
+            {
+                var user = await userStore.GetAsync(subjectId, ct);
+                if (user is null)
+                    return BuildErrorRedirect(redirectUri, "server_error", "User not found", state);
+
+                try
+                {
+                    await provisioningOrchestrator.ProvisionAsync(user, client.ProvisioningApps, ct);
+                }
+                catch (ProvisioningException ex)
+                {
+                    return BuildErrorRedirect(redirectUri, "access_denied",
+                        ex.Reason ?? "User provisioning failed", state);
+                }
+            }
+
             // Create authorization code
             var code = await authCodeService.CreateCodeAsync(
                 clientId,
@@ -109,6 +130,38 @@ public static class AuthorizeEndpoint
         .WithTags("OAuth");
 
         return app;
+    }
+
+    /// <summary>
+    /// Compares redirect URIs using normalized form (scheme, host, port, path) to prevent bypass via
+    /// implicit ports, trailing slashes, or encoding differences.
+    /// </summary>
+    private static bool IsRedirectUriRegistered(string redirectUri, IReadOnlyList<string> registeredUris)
+    {
+        if (!Uri.TryCreate(redirectUri, UriKind.Absolute, out var requestedUri))
+            return false;
+
+        // Reject URIs with fragments (per OAuth spec)
+        if (!string.IsNullOrEmpty(requestedUri.Fragment))
+            return false;
+
+        foreach (var registered in registeredUris)
+        {
+            if (!Uri.TryCreate(registered, UriKind.Absolute, out var registeredUri))
+                continue;
+
+            // Compare normalized components: scheme, host (case-insensitive), port, path (exact), query (exact)
+            if (string.Equals(requestedUri.Scheme, registeredUri.Scheme, StringComparison.OrdinalIgnoreCase) &&
+                string.Equals(requestedUri.Host, registeredUri.Host, StringComparison.OrdinalIgnoreCase) &&
+                requestedUri.Port == registeredUri.Port &&
+                string.Equals(requestedUri.AbsolutePath, registeredUri.AbsolutePath, StringComparison.Ordinal) &&
+                string.Equals(requestedUri.Query, registeredUri.Query, StringComparison.Ordinal))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private static IResult BuildErrorRedirect(string? redirectUri, string error, string errorDescription, string? state)

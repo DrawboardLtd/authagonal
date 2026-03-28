@@ -18,10 +18,10 @@ public static class AuthEndpoints
     {
         var group = app.MapGroup("/api/auth");
 
-        group.MapPost("/login", LoginAsync).AllowAnonymous();
+        group.MapPost("/login", LoginAsync).AllowAnonymous().RequireRateLimiting("auth");
         group.MapPost("/logout", LogoutAsync).RequireAuthorization();
-        group.MapPost("/forgot-password", ForgotPasswordAsync).AllowAnonymous();
-        group.MapPost("/reset-password", ResetPasswordAsync).AllowAnonymous();
+        group.MapPost("/forgot-password", ForgotPasswordAsync).AllowAnonymous().RequireRateLimiting("auth");
+        group.MapPost("/reset-password", ResetPasswordAsync).AllowAnonymous().RequireRateLimiting("auth");
         group.MapGet("/session", GetSessionAsync).RequireAuthorization();
         group.MapGet("/sso-check", SsoCheckAsync).AllowAnonymous();
 
@@ -47,7 +47,7 @@ public static class AuthEndpoints
         var domain = request.Email.Split('@', 2).LastOrDefault()?.ToLowerInvariant();
         if (!string.IsNullOrWhiteSpace(domain))
         {
-            var ssoDomain = await ssoDomainStore.FindByDomainAsync(domain, ct);
+            var ssoDomain = await ssoDomainStore.GetAsync(domain, ct);
             if (ssoDomain is not null)
             {
                 var ssoRedirectUrl = ssoDomain.ProviderType.Equals("oidc", StringComparison.OrdinalIgnoreCase)
@@ -152,6 +152,8 @@ public static class AuthEndpoints
         if (user is null)
         {
             logger.LogInformation("Password reset requested for non-existent email: {Email}", request.Email);
+            // Artificial delay to prevent timing-based email enumeration
+            await Task.Delay(TimeSpan.FromMilliseconds(100 + RandomNumberGenerator.GetInt32(200)), ct);
             return Results.Ok(new { success = true });
         }
 
@@ -163,8 +165,9 @@ public static class AuthEndpoints
         user.UpdatedAt = DateTimeOffset.UtcNow;
         await userStore.UpdateAsync(user, ct);
 
-        // Encode: token||email
-        var payload = $"{resetToken}||{user.Email}";
+        // Encode: token||email||expiresAtUnixSeconds (1 hour expiry)
+        var expiresAt = DateTimeOffset.UtcNow.AddHours(1).ToUnixTimeSeconds();
+        var payload = $"{resetToken}||{user.Email}||{expiresAt}";
         var encodedPayload = Convert.ToBase64String(Encoding.UTF8.GetBytes(payload));
 
         var issuer = configuration["Issuer"]!;
@@ -214,11 +217,25 @@ public static class AuthEndpoints
         }
 
         var parts = decoded.Split("||");
-        if (parts.Length != 2)
+        if (parts.Length < 2)
             return Results.Json(new { error = "invalid_token", message = "Invalid reset token format." }, statusCode: 400);
 
         var resetToken = parts[0];
         var email = parts[1];
+
+        // Validate expiration if present (tokens without expiry are legacy — reject them)
+        if (parts.Length >= 3)
+        {
+            if (!long.TryParse(parts[2], out var expiresAtUnix) ||
+                DateTimeOffset.UtcNow.ToUnixTimeSeconds() > expiresAtUnix)
+            {
+                return Results.Json(new { error = "token_expired", message = "This reset link has expired." }, statusCode: 400);
+            }
+        }
+        else
+        {
+            return Results.Json(new { error = "invalid_token", message = "Invalid reset token format." }, statusCode: 400);
+        }
 
         var user = await userStore.FindByEmailAsync(email, ct);
         if (user is null)
@@ -272,7 +289,7 @@ public static class AuthEndpoints
         if (string.IsNullOrWhiteSpace(domain))
             return Results.Ok(new { ssoRequired = false });
 
-        var ssoDomain = await ssoDomainStore.FindByDomainAsync(domain, ct);
+        var ssoDomain = await ssoDomainStore.GetAsync(domain, ct);
         if (ssoDomain is null)
             return Results.Ok(new { ssoRequired = false });
 

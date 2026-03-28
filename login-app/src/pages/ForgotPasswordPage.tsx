@@ -67,6 +67,7 @@ export default function ForgotPasswordPage() {
             placeholder="you@example.com"
             autoComplete="email"
             autoFocus
+            maxLength={256}
             required
           />
         </div>

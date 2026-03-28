@@ -8,7 +8,7 @@ namespace Authagonal.Storage.Stores;
 
 public sealed class TableSsoDomainStore(TableClient ssoDomainsTable) : ISsoDomainStore
 {
-    public async Task<SsoDomain?> FindByDomainAsync(string domain, CancellationToken ct = default)
+    public async Task<SsoDomain?> GetAsync(string domain, CancellationToken ct = default)
     {
         var normalizedDomain = domain.ToLowerInvariant();
         try

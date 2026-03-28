@@ -5,12 +5,15 @@ using Azure.Data.Tables;
 using Authagonal.Core.Models;
 using Authagonal.Core.Stores;
 using Authagonal.Storage.Entities;
+using Microsoft.Extensions.Logging;
 
 namespace Authagonal.Storage.Stores;
 
 public sealed class TableGrantStore(
     TableClient grantsTable,
-    TableClient grantsBySubjectTable) : IGrantStore
+    TableClient grantsBySubjectTable,
+    TableClient grantsByExpiryTable,
+    ILogger<TableGrantStore> logger) : IGrantStore
 {
     public async Task StoreAsync(PersistedGrant grant, CancellationToken ct = default)
     {
@@ -22,7 +25,47 @@ public sealed class TableGrantStore(
         if (!string.IsNullOrEmpty(grant.SubjectId))
         {
             var subjectEntity = GrantBySubjectEntity.FromModel(grant, hashedKey);
-            await grantsBySubjectTable.UpsertEntityAsync(subjectEntity, TableUpdateMode.Replace, ct);
+            try
+            {
+                await grantsBySubjectTable.UpsertEntityAsync(subjectEntity, TableUpdateMode.Replace, ct);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                logger.LogError(ex, "Failed to write subject index for grant {HashedKey}, subject {SubjectId}. Compensating by deleting primary grant",
+                    hashedKey, grant.SubjectId);
+
+                try
+                {
+                    await grantsTable.DeleteEntityAsync(hashedKey, GrantEntity.GrantRowKey, cancellationToken: ct);
+                }
+                catch (Exception compensateEx) when (compensateEx is not OperationCanceledException)
+                {
+                    logger.LogCritical(compensateEx,
+                        "CRITICAL: Failed to compensate-delete primary grant {HashedKey} after subject index write failure. Orphaned grant requires manual reconciliation",
+                        hashedKey);
+                }
+
+                throw;
+            }
+        }
+
+        // Write expiry index for efficient cleanup queries
+        var expiryEntity = new GrantByExpiryEntity
+        {
+            PartitionKey = GrantByExpiryEntity.GetDateBucket(grant.ExpiresAt),
+            RowKey = hashedKey,
+            SubjectId = grant.SubjectId,
+            Type = grant.Type,
+            ExpiresAt = grant.ExpiresAt
+        };
+
+        try
+        {
+            await grantsByExpiryTable.UpsertEntityAsync(expiryEntity, TableUpdateMode.Replace, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            logger.LogWarning(ex, "Failed to write expiry index for grant {HashedKey}. Grant will still be cleaned up by reconciliation", hashedKey);
         }
     }
 
@@ -66,7 +109,11 @@ public sealed class TableGrantStore(
                     subjectEntity.ConsumedAt = entity.ConsumedAt;
                     await grantsBySubjectTable.UpsertEntityAsync(subjectEntity, TableUpdateMode.Replace, ct);
                 }
-                catch (RequestFailedException ex) when (ex.Status == 404) { }
+                catch (RequestFailedException ex) when (ex.Status == 404)
+                {
+                    logger.LogWarning("Subject index entry missing during consume for subject {SubjectId}, key {HashedKey}",
+                        entity.SubjectId, hashedKey);
+                }
             }
         }
         catch (RequestFailedException ex) when (ex.Status == 404) { }
@@ -86,6 +133,14 @@ public sealed class TableGrantStore(
 
             // Delete from primary table
             await grantsTable.DeleteEntityAsync(hashedKey, GrantEntity.GrantRowKey, cancellationToken: ct);
+
+            // Delete from expiry index
+            var expiryBucket = GrantByExpiryEntity.GetDateBucket(entity.ExpiresAt);
+            try
+            {
+                await grantsByExpiryTable.DeleteEntityAsync(expiryBucket, hashedKey, cancellationToken: ct);
+            }
+            catch (RequestFailedException ex) when (ex.Status == 404) { }
 
             // Delete from subject index
             if (!string.IsNullOrEmpty(entity.SubjectId))
@@ -122,6 +177,14 @@ public sealed class TableGrantStore(
             }
             catch (RequestFailedException ex) when (ex.Status == 404) { }
 
+            // Delete from expiry index
+            var expiryBucket = GrantByExpiryEntity.GetDateBucket(entity.ExpiresAt);
+            try
+            {
+                await grantsByExpiryTable.DeleteEntityAsync(expiryBucket, entity.HashedKey, cancellationToken: ct);
+            }
+            catch (RequestFailedException ex) when (ex.Status == 404) { }
+
             // Delete from subject index
             try
             {
@@ -152,6 +215,14 @@ public sealed class TableGrantStore(
             }
             catch (RequestFailedException ex) when (ex.Status == 404) { }
 
+            // Delete from expiry index
+            var expiryBucket = GrantByExpiryEntity.GetDateBucket(entity.ExpiresAt);
+            try
+            {
+                await grantsByExpiryTable.DeleteEntityAsync(expiryBucket, entity.HashedKey, cancellationToken: ct);
+            }
+            catch (RequestFailedException ex) when (ex.Status == 404) { }
+
             // Delete from subject index
             try
             {
@@ -178,56 +249,64 @@ public sealed class TableGrantStore(
 
     public async Task RemoveExpiredAsync(DateTimeOffset cutoff, CancellationToken ct = default)
     {
-        // Query all grants from the primary table that have expired
-        var expiredEntities = new List<GrantEntity>();
-        var query = grantsTable.QueryAsync<GrantEntity>(
-            e => e.ExpiresAt <= cutoff,
+        // Query expiry index for entries in date buckets up to the cutoff.
+        // This is a partition key range query — much faster than a full table scan.
+        var cutoffBucket = GrantByExpiryEntity.GetDateBucket(cutoff);
+        var expiredEntries = new List<GrantByExpiryEntity>();
+
+        var query = grantsByExpiryTable.QueryAsync<GrantByExpiryEntity>(
+            filter: $"PartitionKey le '{cutoffBucket}'",
             cancellationToken: ct);
 
         await foreach (var entity in query)
         {
-            expiredEntities.Add(entity);
+            // Entries in the cutoff-day bucket may not all be expired yet
+            if (entity.ExpiresAt <= cutoff)
+                expiredEntries.Add(entity);
         }
 
-        // Batch delete by partition key for efficiency
-        var grantsByPartition = expiredEntities.GroupBy(e => e.PartitionKey);
-        foreach (var group in grantsByPartition)
+        // Delete primary grants and subject index entries
+        foreach (var entry in expiredEntries)
+        {
+            try
+            {
+                await grantsTable.DeleteEntityAsync(entry.RowKey, GrantEntity.GrantRowKey, cancellationToken: ct);
+            }
+            catch (RequestFailedException ex) when (ex.Status == 404) { }
+
+            if (!string.IsNullOrEmpty(entry.SubjectId))
+            {
+                var subjectRk = $"{entry.Type}|{entry.RowKey}";
+                try
+                {
+                    await grantsBySubjectTable.DeleteEntityAsync(entry.SubjectId, subjectRk, cancellationToken: ct);
+                }
+                catch (RequestFailedException ex) when (ex.Status == 404) { }
+            }
+        }
+
+        // Batch delete expiry index entries by date bucket
+        var byBucket = expiredEntries.GroupBy(e => e.PartitionKey);
+        foreach (var group in byBucket)
         {
             var batch = new List<TableTransactionAction>();
             foreach (var entity in group)
             {
                 batch.Add(new TableTransactionAction(TableTransactionActionType.Delete, entity));
 
-                // Submit batch in chunks of 100 (Azure Table Storage limit)
                 if (batch.Count >= 100)
                 {
-                    await grantsTable.SubmitTransactionAsync(batch, ct);
+                    await grantsByExpiryTable.SubmitTransactionAsync(batch, ct);
                     batch.Clear();
                 }
             }
 
             if (batch.Count > 0)
-            {
-                await grantsTable.SubmitTransactionAsync(batch, ct);
-            }
-        }
-
-        // Clean up subject index entries
-        foreach (var entity in expiredEntities)
-        {
-            if (!string.IsNullOrEmpty(entity.SubjectId))
-            {
-                var subjectRk = $"{entity.Type}|{entity.PartitionKey}";
-                try
-                {
-                    await grantsBySubjectTable.DeleteEntityAsync(entity.SubjectId, subjectRk, cancellationToken: ct);
-                }
-                catch (RequestFailedException ex) when (ex.Status == 404) { }
-            }
+                await grantsByExpiryTable.SubmitTransactionAsync(batch, ct);
         }
     }
 
-    internal static string HashKey(string key)
+    public static string HashKey(string key)
     {
         var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(key));
         return Convert.ToHexStringLower(bytes);

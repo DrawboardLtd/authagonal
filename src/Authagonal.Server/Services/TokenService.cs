@@ -203,10 +203,10 @@ public sealed class TokenService(
                 throw new InvalidOperationException("PKCE validation failed");
         }
 
-        var client = await clientStore.FindByIdAsync(clientId, ct)
+        var client = await clientStore.GetAsync(clientId, ct)
             ?? throw new InvalidOperationException($"Client '{clientId}' not found");
 
-        var user = await userStore.FindByIdAsync(authCode.SubjectId, ct)
+        var user = await userStore.GetAsync(authCode.SubjectId, ct)
             ?? throw new InvalidOperationException($"User '{authCode.SubjectId}' not found");
 
         // Issue tokens
@@ -260,38 +260,28 @@ public sealed class TokenService(
         // Check if token has been consumed (one-time rotation)
         if (grant.ConsumedAt.HasValue)
         {
-            // Grace window: allow reuse within 60 seconds of consumption (clock skew / retry)
-            if (now - grant.ConsumedAt.Value <= RefreshTokenReuseGraceWindow)
-            {
-                logger.LogWarning(
-                    "Refresh token reused within grace window. Client: {ClientId}, Subject: {SubjectId}",
-                    clientId, grant.SubjectId);
-                // Allow it through -- return the same tokens as the original rotation
-            }
-            else
-            {
-                // Token replay attack -- consumed beyond grace window
-                logger.LogError(
-                    "Refresh token replay detected! Revoking all tokens for subject. Client: {ClientId}, Subject: {SubjectId}",
-                    clientId, grant.SubjectId);
+            // Token replay attack — consumed token is being reused.
+            // Even within a grace window, issuing new tokens is unsafe (both attacker
+            // and client get valid tokens). Revoke everything for this subject+client.
+            logger.LogError(
+                "Refresh token replay detected! Revoking all tokens for subject. Client: {ClientId}, Subject: {SubjectId}",
+                clientId, grant.SubjectId);
 
-                // Revoke all grants for this subject+client as a security measure
-                if (grant.SubjectId is not null)
-                {
-                    await grantStore.RemoveAllBySubjectAndClientAsync(grant.SubjectId, clientId, ct);
-                }
-
-                throw new InvalidOperationException("Refresh token has been revoked (replay detected)");
+            if (grant.SubjectId is not null)
+            {
+                await grantStore.RemoveAllBySubjectAndClientAsync(grant.SubjectId, clientId, ct);
             }
+
+            throw new InvalidOperationException("Refresh token has been revoked (replay detected)");
         }
 
         var data = JsonSerializer.Deserialize<RefreshTokenData>(grant.Data)
             ?? throw new InvalidOperationException("Failed to deserialize refresh token data");
 
-        var client = await clientStore.FindByIdAsync(clientId, ct)
+        var client = await clientStore.GetAsync(clientId, ct)
             ?? throw new InvalidOperationException($"Client '{clientId}' not found");
 
-        var user = await userStore.FindByIdAsync(data.SubjectId, ct)
+        var user = await userStore.GetAsync(data.SubjectId, ct)
             ?? throw new InvalidOperationException($"User '{data.SubjectId}' not found");
 
         // Consume the old token (mark as used)
@@ -332,7 +322,7 @@ public sealed class TokenService(
         IEnumerable<string> scopes,
         CancellationToken ct = default)
     {
-        var client = await clientStore.FindByIdAsync(clientId, ct)
+        var client = await clientStore.GetAsync(clientId, ct)
             ?? throw new InvalidOperationException($"Client '{clientId}' not found");
 
         if (!client.AllowedGrantTypes.Contains(GrantTypes.ClientCredentials))

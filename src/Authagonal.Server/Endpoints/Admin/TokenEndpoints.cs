@@ -35,11 +35,11 @@ public static class TokenEndpoints
         if (string.IsNullOrWhiteSpace(userId))
             return Results.BadRequest(new { error = "invalid_request", error_description = "userId query parameter is required" });
 
-        var client = await clientStore.FindByIdAsync(clientId, ct);
+        var client = await clientStore.GetAsync(clientId, ct);
         if (client is null)
             return Results.NotFound(new { error = "client_not_found", error_description = $"Client '{clientId}' not found" });
 
-        var user = await userStore.FindByIdAsync(userId, ct);
+        var user = await userStore.GetAsync(userId, ct);
         if (user is null)
             return Results.NotFound(new { error = "user_not_found", error_description = $"User '{userId}' not found" });
 

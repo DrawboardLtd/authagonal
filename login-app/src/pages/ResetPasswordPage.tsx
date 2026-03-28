@@ -125,6 +125,7 @@ export default function ResetPasswordPage() {
             placeholder="Enter new password"
             autoComplete="new-password"
             autoFocus
+            maxLength={256}
             required
           />
         </div>
@@ -149,6 +150,7 @@ export default function ResetPasswordPage() {
             onChange={(e) => setConfirmPassword(e.target.value)}
             placeholder="Confirm new password"
             autoComplete="new-password"
+            maxLength={256}
             required
           />
         </div>

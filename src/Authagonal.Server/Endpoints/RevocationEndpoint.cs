@@ -22,7 +22,7 @@ public static class RevocationEndpoint
             if (string.IsNullOrWhiteSpace(clientId))
                 return Results.Json(new { error = "invalid_client", error_description = "client_id is required" }, statusCode: 401);
 
-            var client = await clientStore.FindByIdAsync(clientId, ct);
+            var client = await clientStore.GetAsync(clientId, ct);
             if (client is null)
                 return Results.Json(new { error = "invalid_client", error_description = "Unknown client" }, statusCode: 401);
 

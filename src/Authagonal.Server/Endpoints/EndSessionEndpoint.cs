@@ -42,7 +42,7 @@ public static class EndSessionEndpoint
             var clientId = ExtractClientId(idTokenHint, keyManager, config["Issuer"]!);
             if (clientId is not null)
             {
-                var client = await clientStore.FindByIdAsync(clientId, ct);
+                var client = await clientStore.GetAsync(clientId, ct);
                 if (client is not null &&
                     client.PostLogoutRedirectUris.Contains(postLogoutRedirectUri, StringComparer.OrdinalIgnoreCase))
                 {

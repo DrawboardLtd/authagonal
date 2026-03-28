@@ -44,11 +44,12 @@ public static class UserinfoEndpoint
             {
                 ValidIssuer = issuer,
                 ValidateIssuer = true,
-                ValidateAudience = false,
+                ValidateAudience = true,
+                AudienceValidator = (audiences, _, _) => audiences?.Any() == true,
                 ValidateLifetime = true,
                 IssuerSigningKeys = keys,
                 ValidateIssuerSigningKey = true,
-                ClockSkew = TimeSpan.FromMinutes(2)
+                ClockSkew = TimeSpan.FromSeconds(60)
             };
 
             var handler = new JsonWebTokenHandler();
@@ -61,7 +62,7 @@ public static class UserinfoEndpoint
             if (string.IsNullOrWhiteSpace(subjectId))
                 return Results.Unauthorized();
 
-            var user = await userStore.FindByIdAsync(subjectId, ct);
+            var user = await userStore.GetAsync(subjectId, ct);
             if (user is null)
                 return Results.Unauthorized();
 

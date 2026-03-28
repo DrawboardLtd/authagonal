@@ -1,0 +1,15 @@
+**/.git
+**/.vs
+**/.idea
+**/.claude
+**/bin
+**/obj
+**/node_modules
+login-app/dist
+**/*.md
+**/*.user
+**/*.suo
+.env*
+appsettings.*.json
+!appsettings.json
+!appsettings.Development.json

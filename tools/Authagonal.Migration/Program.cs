@@ -135,6 +135,7 @@ await using (var cmd = sql.CreateCommand())
             }
             catch (Azure.RequestFailedException ex) when (ex.Status == 409)
             {
+                Console.WriteLine($"  [SKIP] Login already exists: {login.Provider}:{login.ProviderKey} for user {login.UserId}");
                 stats.LoginsSkipped++;
             }
         }
@@ -345,6 +346,7 @@ if (migrateRefreshTokens)
             }
             catch (Azure.RequestFailedException ex) when (ex.Status == 409)
             {
+                Console.WriteLine($"  [SKIP] Refresh token already exists for client {grant.ClientId}, subject {grant.SubjectId}");
                 stats.RefreshTokensSkipped++;
             }
         }

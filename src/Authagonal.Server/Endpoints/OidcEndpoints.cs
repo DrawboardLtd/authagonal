@@ -4,7 +4,6 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using Authagonal.Core.Models;
-using Authagonal.Core.Services;
 using Authagonal.Core.Stores;
 using Authagonal.Server.Services.Oidc;
 using Microsoft.AspNetCore.Authentication;
@@ -53,8 +52,8 @@ public static class OidcEndpoints
 
         var codeChallenge = Base64UrlEncode(SHA256.HashData(Encoding.ASCII.GetBytes(codeVerifier)));
 
-        // Store state
-        var effectiveReturnUrl = returnUrl ?? "/";
+        // Store state (validate returnUrl to prevent open redirect)
+        var effectiveReturnUrl = SanitizeReturnUrl(returnUrl);
         await stateStore.StoreAsync(state, connectionId, effectiveReturnUrl, codeVerifier, nonce, ct);
 
         // Build authorization URL
@@ -80,10 +79,10 @@ public static class OidcEndpoints
         HttpContext httpContext,
         IOidcProviderStore oidcStore,
         IUserStore userStore,
-        IUserProvisioningService provisioningService,
         OidcDiscoveryClient discoveryClient,
         OidcStateStore stateStore,
         IHttpClientFactory httpClientFactory,
+        ISecretProvider secretProvider,
         IConfiguration configuration,
         ILogger<Program> logger,
         CancellationToken ct)
@@ -140,13 +139,16 @@ public static class OidcEndpoints
         var baseUrl = configuration["Issuer"]!;
         var redirectUri = $"{baseUrl}/oidc/callback";
 
+        // Resolve the client secret (may be a Key Vault reference)
+        var clientSecret = await secretProvider.ResolveAsync(config.ClientSecret, ct);
+
         string idToken;
         string? accessToken;
         try
         {
             (idToken, accessToken) = await ExchangeCodeForTokensAsync(
                 httpClientFactory, discovery.TokenEndpoint, code, redirectUri,
-                config.ClientId, config.ClientSecret, stateData.CodeVerifier, ct);
+                config.ClientId, clientSecret, stateData.CodeVerifier, ct);
         }
         catch (Exception ex)
         {
@@ -182,11 +184,12 @@ public static class OidcEndpoints
             return Results.Redirect($"{returnUrl}?error=oidc_error&error_description={Uri.EscapeDataString("ID token validation failed")}");
         }
 
-        // Verify nonce
+        // Verify nonce — must be present and match the stored value
         var nonceClaim = Claim(validationResult.Claims, "nonce");
-        if (!string.Equals(nonceClaim, stateData.Nonce, StringComparison.Ordinal))
+        if (string.IsNullOrEmpty(nonceClaim) ||
+            !string.Equals(nonceClaim, stateData.Nonce, StringComparison.Ordinal))
         {
-            logger.LogWarning("OIDC nonce mismatch for connection {ConnectionId}", stateData.ConnectionId);
+            logger.LogWarning("OIDC nonce missing or mismatch for connection {ConnectionId}", stateData.ConnectionId);
             return Results.Redirect($"{returnUrl}?error=oidc_error&error_description={Uri.EscapeDataString("Nonce validation failed")}");
         }
 
@@ -241,31 +244,14 @@ public static class OidcEndpoints
         var user = await userStore.FindByEmailAsync(email, ct);
         if (user is null)
         {
-            // Check with provisioning service before creating
-            var provisioningResult = await provisioningService.ProvisionUserAsync(new ProvisioningRequest
-            {
-                Email = email,
-                FirstName = givenName,
-                LastName = familyName,
-                Provider = $"oidc:{stateData.ConnectionId}",
-                ProviderKey = sub
-            }, ct);
-
-            if (!provisioningResult.Approved)
-            {
-                logger.LogWarning("Provisioning rejected OIDC user {Email}: {Reason}", email, provisioningResult.Reason);
-                return Results.Redirect($"{returnUrl}?error=provisioning_rejected&error_description={Uri.EscapeDataString(provisioningResult.Reason ?? "Account creation not permitted.")}");
-            }
-
             user = new AuthUser
             {
-                Id = provisioningResult.UserId ?? Guid.NewGuid().ToString("N"),
+                Id = Guid.NewGuid().ToString("N"),
                 Email = email,
                 NormalizedEmail = email.ToUpperInvariant(),
                 EmailConfirmed = true,
                 FirstName = givenName,
                 LastName = familyName,
-                OrganizationId = provisioningResult.OrganizationId,
                 CreatedAt = DateTimeOffset.UtcNow,
                 LockoutEnabled = true,
                 SecurityStamp = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32))
@@ -477,6 +463,18 @@ public static class OidcEndpoints
         }
 
         return null;
+    }
+
+    private static string SanitizeReturnUrl(string? url)
+    {
+        if (string.IsNullOrWhiteSpace(url))
+            return "/";
+
+        // Only allow relative paths to prevent open redirect
+        if (!url.StartsWith('/') || url.StartsWith("//"))
+            return "/";
+
+        return url;
     }
 
     private static string Base64UrlEncode(byte[] bytes)

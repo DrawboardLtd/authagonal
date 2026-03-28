@@ -40,12 +40,18 @@ public sealed class ExceptionHandlingMiddleware(
 
             context.Response.ContentType = "application/json";
 
+            var errorDescription = context.Response.StatusCode switch
+            {
+                StatusCodes.Status400BadRequest => "The request was invalid.",
+                StatusCodes.Status401Unauthorized => "Authentication is required.",
+                StatusCodes.Status404NotFound => "The requested resource was not found.",
+                _ => "An unexpected error occurred."
+            };
+
             var errorResponse = new
             {
                 error = "server_error",
-                error_description = context.Response.StatusCode == StatusCodes.Status500InternalServerError
-                    ? "An unexpected error occurred"
-                    : ex.Message,
+                error_description = errorDescription,
                 correlation_id = correlationId
             };
 

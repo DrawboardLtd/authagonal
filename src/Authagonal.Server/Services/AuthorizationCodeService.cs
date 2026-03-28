@@ -29,7 +29,7 @@ public sealed class AuthorizationCodeService(
         ArgumentException.ThrowIfNullOrWhiteSpace(subjectId);
         ArgumentException.ThrowIfNullOrWhiteSpace(redirectUri);
 
-        var client = await clientStore.FindByIdAsync(clientId, ct)
+        var client = await clientStore.GetAsync(clientId, ct)
             ?? throw new InvalidOperationException($"Client '{clientId}' not found");
 
         var now = DateTimeOffset.UtcNow;
