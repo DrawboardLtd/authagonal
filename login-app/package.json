@@ -1,8 +1,23 @@
 {
-  "name": "login-app",
-  "private": true,
-  "version": "0.0.0",
+  "name": "@drawboard/authagonal-login",
+  "version": "0.1.0",
+  "description": "Default login UI for Authagonal — runtime-configurable via branding.json",
   "type": "module",
+  "license": "UNLICENSED",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/DrawboardLtd/authagonal.git",
+    "directory": "login-app"
+  },
+  "files": [
+    "dist",
+    "src",
+    "public",
+    "index.html",
+    "vite.config.ts",
+    "tsconfig.json",
+    "tsconfig.app.json"
+  ],
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
