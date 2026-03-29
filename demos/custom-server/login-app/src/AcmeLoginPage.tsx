@@ -287,13 +287,13 @@ export default function AcmeLoginPage() {
               />
             </div>
 
-            <label htmlFor="terms" style={{ display: 'flex', alignItems: 'baseline', gap: '8px', fontSize: '13px', color: '#4b5563', cursor: 'pointer', margin: '12px 0' }}>
+            <label htmlFor="terms" style={{ display: 'flex', alignItems: 'flex-start', gap: '8px', fontSize: '13px', color: '#4b5563', cursor: 'pointer', margin: '12px 0' }}>
               <input
                 id="terms"
                 type="checkbox"
                 checked={agreedToTerms}
                 onChange={(e) => setAgreedToTerms(e.target.checked)}
-                style={{ flexShrink: 0, accentColor: 'var(--color-primary)' }}
+                style={{ flexShrink: 0, marginTop: '2px', accentColor: 'var(--color-primary)' }}
               />
               <span>
                 I agree to the Acme Corp{' '}
