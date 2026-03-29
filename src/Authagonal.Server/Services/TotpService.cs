@@ -64,7 +64,7 @@ public sealed class TotpService
         return DateTimeOffset.UtcNow.ToUnixTimeSeconds() / TimeStepSeconds;
     }
 
-    private static string Base32Encode(byte[] data)
+    public static string Base32Encode(byte[] data)
     {
         const string alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
         var result = new char[(data.Length * 8 + 4) / 5];

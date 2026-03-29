@@ -119,16 +119,18 @@ public static class MfaSetupEndpoints
         var issuer = configuration["Issuer"] ?? "Authagonal";
         var otpAuthUri = totpService.GetOtpAuthUri(email, secret, issuer);
 
-        // Generate QR code as data URI
+        // Generate QR code as PNG data URI
         string qrCodeDataUri;
         using (var qrGenerator = new QRCodeGenerator())
         {
             var qrData = qrGenerator.CreateQrCode(otpAuthUri, QRCodeGenerator.ECCLevel.M);
-            var svgQr = new SvgQRCode(qrData);
-            var svg = svgQr.GetGraphic(4);
-            var svgBase64 = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(svg));
-            qrCodeDataUri = $"data:image/svg+xml;base64,{svgBase64}";
+            var pngQr = new PngByteQRCode(qrData);
+            var pngBytes = pngQr.GetGraphic(8);
+            qrCodeDataUri = $"data:image/png;base64,{Convert.ToBase64String(pngBytes)}";
         }
+
+        // Base32 key for manual entry
+        var manualKey = TotpService.Base32Encode(secret);
 
         // Protect secret for storage
         var secretBase64 = Convert.ToBase64String(secret);
@@ -149,7 +151,7 @@ public static class MfaSetupEndpoints
         };
         await mfaStore.CreateCredentialAsync(setupCred, ct);
 
-        return Results.Ok(new { setupToken, qrCodeDataUri });
+        return Results.Ok(new { setupToken, qrCodeDataUri, manualKey });
     }
 
     private static async Task<IResult> TotpConfirmAsync(

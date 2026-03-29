@@ -89,6 +89,7 @@ export interface MfaMethod {
 export interface MfaTotpSetupResponse {
   setupToken: string;
   qrCodeDataUri: string;
+  manualKey: string;
 }
 
 export interface MfaRecoveryGenerateResponse {

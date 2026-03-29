@@ -272,8 +272,24 @@ export default function MfaSetupPage() {
         <div style={{ marginBottom: '24px' }}>
           <p style={{ textAlign: 'center', marginBottom: '16px' }}>{t('mfaScanQrCode')}</p>
           <div style={{ textAlign: 'center', marginBottom: '16px' }}>
-            <img src={totpSetup.qrCodeDataUri} alt="QR Code" style={{ width: '200px', height: '200px' }} />
+            <img src={totpSetup.qrCodeDataUri} alt="QR Code" style={{ width: '200px', height: '200px', imageRendering: 'pixelated' }} />
           </div>
+          {totpSetup.manualKey && (
+            <div style={{ textAlign: 'center', marginBottom: '16px' }}>
+              <p style={{ fontSize: '13px', color: '#6b7280', marginBottom: '4px' }}>{t('mfaManualKeyLabel')}</p>
+              <code
+                style={{
+                  display: 'inline-block', padding: '8px 12px', background: '#f3f4f6',
+                  borderRadius: '6px', fontSize: '14px', letterSpacing: '2px', userSelect: 'all',
+                  wordBreak: 'break-all', cursor: 'pointer',
+                }}
+                title={t('mfaCopyKey')}
+                onClick={() => navigator.clipboard?.writeText(totpSetup.manualKey)}
+              >
+                {totpSetup.manualKey}
+              </code>
+            </div>
+          )}
           <div className="form-group">
             <label htmlFor="totp-confirm">{t('mfaEnterCode')}</label>
             <input
@@ -361,6 +377,23 @@ export default function MfaSetupPage() {
         >
           {t('mfaRegenerateRecoveryCodes')}
         </button>
+      )}
+
+      {/* Skip button — only when not in forced setup mode (user has cookie session) */}
+      {!mfaSetupToken && (
+        <div className="form-footer" style={{ marginTop: '16px' }}>
+          <button
+            type="button"
+            className="link"
+            style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '13px', color: '#6b7280' }}
+            onClick={() => {
+              const dest = returnUrl && isSafeReturnUrl(returnUrl) ? returnUrl : '/';
+              window.location.href = dest;
+            }}
+          >
+            {t('mfaSkipSetup')}
+          </button>
+        </div>
       )}
     </div>
   );
