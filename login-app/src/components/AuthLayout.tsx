@@ -1,12 +1,24 @@
 import { useEffect, type ReactNode } from 'react';
+import { useTranslation } from 'react-i18next';
 import { useBranding } from '../branding';
 
 interface AuthLayoutProps {
   children: ReactNode;
 }
 
+const LANGUAGES: { code: string; label: string }[] = [
+  { code: 'en', label: 'English' },
+  { code: 'zh-Hans', label: '中文' },
+  { code: 'de', label: 'Deutsch' },
+  { code: 'fr', label: 'Français' },
+  { code: 'es', label: 'Español' },
+  { code: 'vi', label: 'Tiếng Việt' },
+  { code: 'pt', label: 'Português' },
+];
+
 export default function AuthLayout({ children }: AuthLayoutProps) {
   const branding = useBranding();
+  const { i18n } = useTranslation();
 
   useEffect(() => {
     document.documentElement.style.setProperty('--color-primary', branding.primaryColor);
@@ -32,6 +44,18 @@ export default function AuthLayout({ children }: AuthLayoutProps) {
           )}
         </div>
         {children}
+        <div className="language-picker">
+          {LANGUAGES.map((lang) => (
+            <button
+              key={lang.code}
+              type="button"
+              className={`language-btn${i18n.language === lang.code || i18n.language?.startsWith(lang.code) ? ' active' : ''}`}
+              onClick={() => i18n.changeLanguage(lang.code)}
+            >
+              {lang.label}
+            </button>
+          ))}
+        </div>
       </div>
     </div>
   );
