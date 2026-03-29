@@ -1,4 +1,3 @@
-using System.Globalization;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Security.Claims;
@@ -41,6 +40,7 @@ public sealed class AuthagonalTestFactory : IAsyncDisposable
     public const string TestClientSecret = "test-secret-123";
     public const string AdminClientId = "admin-client";
     public const string AdminClientSecret = "admin-secret-456";
+    public const string AdminScope = "authagonal-admin";
 
     public InMemoryUserStore UserStore { get; } = new();
     public InMemoryClientStore ClientStore { get; } = new();
@@ -104,7 +104,7 @@ public sealed class AuthagonalTestFactory : IAsyncDisposable
             RequirePkce = false,
             ClientSecretHashes = [passwordHasher.HashPassword(AdminClientSecret)],
             AllowedGrantTypes = ["client_credentials"],
-            AllowedScopes = ["openid", "authagonal-admin"],
+            AllowedScopes = ["openid", AdminScope],
             AccessTokenLifetimeSeconds = 3600,
         });
     }
@@ -141,7 +141,7 @@ public sealed class AuthagonalTestFactory : IAsyncDisposable
         var form = new FormUrlEncodedContent(new Dictionary<string, string>
         {
             ["grant_type"] = "client_credentials",
-            ["scope"] = "authagonal-admin"
+            ["scope"] = AdminScope
         });
         var basicAuth = Convert.ToBase64String(Encoding.UTF8.GetBytes($"{AdminClientId}:{AdminClientSecret}"));
         var request = new HttpRequestMessage(HttpMethod.Post, "/connect/token") { Content = form };

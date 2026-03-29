@@ -24,8 +24,7 @@ public sealed class PasswordHasher
 
     private static readonly string[] BcryptPrefixes = ["$2a$", "$2b$", "$2x$", "$2y$"];
 
-    // ASP.NET Identity format markers
-    private const byte IdentityV2Marker = 0x00;
+    // ASP.NET Identity V3 format marker
     private const byte IdentityV3Marker = 0x01;
 
     /// <summary>

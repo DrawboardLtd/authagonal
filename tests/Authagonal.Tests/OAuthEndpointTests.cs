@@ -32,7 +32,7 @@ public sealed class OAuthEndpointTests : IAsyncLifetime
         var form = new FormUrlEncodedContent(new Dictionary<string, string>
         {
             ["grant_type"] = "client_credentials",
-            ["scope"] = "authagonal-admin"
+            ["scope"] = AuthagonalTestFactory.AdminScope
         });
 
         var request = new HttpRequestMessage(HttpMethod.Post, "/connect/token") { Content = form };
@@ -53,7 +53,7 @@ public sealed class OAuthEndpointTests : IAsyncLifetime
         var form = new FormUrlEncodedContent(new Dictionary<string, string>
         {
             ["grant_type"] = "client_credentials",
-            ["scope"] = "authagonal-admin"
+            ["scope"] = AuthagonalTestFactory.AdminScope
         });
 
         var request = new HttpRequestMessage(HttpMethod.Post, "/connect/token") { Content = form };
@@ -137,7 +137,7 @@ public sealed class OAuthEndpointTests : IAsyncLifetime
         var form = new FormUrlEncodedContent(new Dictionary<string, string>
         {
             ["grant_type"] = "client_credentials",
-            ["scope"] = "authagonal-admin",
+            ["scope"] = AuthagonalTestFactory.AdminScope,
             ["client_id"] = AuthagonalTestFactory.AdminClientId,
             ["client_secret"] = AuthagonalTestFactory.AdminClientSecret
         });
@@ -155,7 +155,7 @@ public sealed class OAuthEndpointTests : IAsyncLifetime
         var form = new FormUrlEncodedContent(new Dictionary<string, string>
         {
             ["grant_type"] = "client_credentials",
-            ["scope"] = "authagonal-admin"
+            ["scope"] = AuthagonalTestFactory.AdminScope
         });
 
         var request = new HttpRequestMessage(HttpMethod.Post, "/connect/token") { Content = form };
@@ -417,7 +417,7 @@ public sealed class OAuthEndpointTests : IAsyncLifetime
         var form = new FormUrlEncodedContent(new Dictionary<string, string>
         {
             ["grant_type"] = "client_credentials",
-            ["scope"] = "authagonal-admin"
+            ["scope"] = AuthagonalTestFactory.AdminScope
         });
 
         var request = new HttpRequestMessage(HttpMethod.Post, "/connect/token") { Content = form };
