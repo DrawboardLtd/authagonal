@@ -4,5 +4,15 @@
   "primaryColor": "#059669",
   "supportEmail": "support@acme.example.com",
   "showForgotPassword": true,
-  "customCssUrl": null
+  "customCssUrl": null,
+  "languages": [
+    { "code": "en", "label": "English" },
+    { "code": "zh-Hans", "label": "中文" },
+    { "code": "de", "label": "Deutsch" },
+    { "code": "fr", "label": "Français" },
+    { "code": "es", "label": "Español" },
+    { "code": "vi", "label": "Tiếng Việt" },
+    { "code": "pt", "label": "Português" },
+    { "code": "tlh", "label": "tlhIngan" }
+  ]
 }

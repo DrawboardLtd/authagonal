@@ -9,7 +9,7 @@ interface AuthLayoutProps {
   children: ReactNode;
 }
 
-const LANGUAGES: { code: string; label: string }[] = [
+const ALL_LANGUAGES: { code: string; label: string }[] = [
   { code: 'en', label: 'English' },
   { code: 'zh-Hans', label: '中文' },
   { code: 'de', label: 'Deutsch' },
@@ -17,6 +17,7 @@ const LANGUAGES: { code: string; label: string }[] = [
   { code: 'es', label: 'Español' },
   { code: 'vi', label: 'Tiếng Việt' },
   { code: 'pt', label: 'Português' },
+  { code: 'tlh', label: 'tlhIngan' },
 ];
 
 export default function AuthLayout({ children }: AuthLayoutProps) {
@@ -48,7 +49,7 @@ export default function AuthLayout({ children }: AuthLayoutProps) {
         </div>
         {children}
         <div className="language-picker">
-          {LANGUAGES.map((lang) => (
+          {(branding.languages ?? ALL_LANGUAGES.filter(l => l.code !== 'tlh')).map((lang) => (
             <button
               key={lang.code}
               type="button"

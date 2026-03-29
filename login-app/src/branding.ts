@@ -12,6 +12,7 @@ export interface BrandingConfig {
   customCssUrl: string | null;
   welcomeTitle: LocalizedString;
   welcomeSubtitle: LocalizedString;
+  languages: { code: string; label: string }[] | null;
 }
 
 const defaults: BrandingConfig = {
@@ -23,6 +24,7 @@ const defaults: BrandingConfig = {
   customCssUrl: null,
   welcomeTitle: null,
   welcomeSubtitle: null,
+  languages: null,
 };
 
 export async function loadBranding(): Promise<BrandingConfig> {

@@ -9,6 +9,7 @@ import fr from './fr.json';
 import es from './es.json';
 import vi from './vi.json';
 import pt from './pt.json';
+import tlh from './tlh.json';
 
 i18n
   .use(LanguageDetector)
@@ -22,6 +23,7 @@ i18n
       es: { translation: es },
       vi: { translation: vi },
       pt: { translation: pt },
+      tlh: { translation: tlh },
     },
     fallbackLng: 'en',
     interpolation: {
