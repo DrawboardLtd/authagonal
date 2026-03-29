@@ -82,7 +82,7 @@ body {
   margin-bottom: 6px;
 }
 
-input {
+input:not([type="checkbox"]):not([type="radio"]) {
   width: 100%;
   padding: 12px;
   border: 1px solid #d1d5db;
@@ -93,11 +93,11 @@ input {
   transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
 
-input::placeholder {
+input:not([type="checkbox"]):not([type="radio"])::placeholder {
   color: #9ca3af;
 }
 
-input:focus {
+input:not([type="checkbox"]):not([type="radio"]):focus {
   outline: none;
   border-color: var(--color-primary);
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-primary) 15%, transparent);
