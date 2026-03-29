@@ -11,6 +11,8 @@ cat > /usr/share/nginx/html/config.json <<EOF
 EOF
 
 API_BASE="${API_BASE:-http://localhost:5001}"
+# Extract hostname from API_BASE for the Host header (Container Apps routes by Host)
+API_HOST=$(echo "$API_BASE" | sed 's|https\?://||' | sed 's|/.*||' | sed 's|:.*||')
 
 # Write nginx config with API_BASE substituted
 cat > /etc/nginx/conf.d/default.conf <<NGINX
@@ -21,7 +23,7 @@ server {
 
     location /api/ {
         proxy_pass ${API_BASE}/api/;
-        proxy_set_header Host \$host;
+        proxy_set_header Host ${API_HOST};
         proxy_set_header X-Real-IP \$remote_addr;
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto \$scheme;
