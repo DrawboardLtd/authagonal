@@ -180,8 +180,7 @@ jobs:
           push: true
           tags: ${{ steps.meta-demo-server.outputs.tags }}
           labels: ${{ steps.meta-demo-server.outputs.labels }}
-          cache-from: type=gha,scope=demo-server
-          cache-to: type=gha,mode=max,scope=demo-server
+          no-cache: true
 
       - name: Build and push demo sample API image
         uses: docker/build-push-action@v6
