@@ -16,16 +16,11 @@ RUN npm ci
 COPY demos/custom-server/login-app/ ./
 RUN npm run build
 
-# Stage 3: Build .NET
+# Stage 3: Build .NET (packages come from nuget.org)
 FROM mcr.microsoft.com/dotnet/sdk:10.0 AS backend
 WORKDIR /src
-COPY *.slnx ./
-COPY src/Authagonal.Core/*.csproj src/Authagonal.Core/
-COPY src/Authagonal.Storage/*.csproj src/Authagonal.Storage/
-COPY src/Authagonal.Server/*.csproj src/Authagonal.Server/
 COPY demos/custom-server/CustomAuthServer.csproj demos/custom-server/
 RUN dotnet restore demos/custom-server/
-COPY src/ src/
 COPY demos/custom-server/*.cs demos/custom-server/
 COPY demos/custom-server/Services/ demos/custom-server/Services/
 COPY demos/custom-server/appsettings.json demos/custom-server/

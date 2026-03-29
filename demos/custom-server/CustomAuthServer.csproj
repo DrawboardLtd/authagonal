@@ -7,13 +7,9 @@
     <ErrorOnDuplicatePublishOutputFiles>false</ErrorOnDuplicatePublishOutputFiles>
   </PropertyGroup>
 
-  <!-- In production, replace these with NuGet PackageReferences:
-       <PackageReference Include="Authagonal.Server" Version="x.y.z" />
-       <PackageReference Include="Authagonal.Storage" Version="x.y.z" /> -->
   <ItemGroup>
-    <ProjectReference Include="..\..\src\Authagonal.Core\Authagonal.Core.csproj" />
-    <ProjectReference Include="..\..\src\Authagonal.Storage\Authagonal.Storage.csproj" />
-    <ProjectReference Include="..\..\src\Authagonal.Server\Authagonal.Server.csproj" />
+    <PackageReference Include="Authagonal.Server" Version="0.1.0" />
+    <PackageReference Include="Authagonal.Storage" Version="0.1.0" />
   </ItemGroup>
 
   <!-- Build the custom login SPA (which imports @drawboard/authagonal-login
