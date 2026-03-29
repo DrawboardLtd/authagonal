@@ -26,12 +26,13 @@ public static class EndSessionEndpoint
         CancellationToken ct)
     {
         var request = httpContext.Request;
+        var hasForm = request.HasFormContentType;
         var idTokenHint = request.Query["id_token_hint"].FirstOrDefault()
-            ?? request.Form["id_token_hint"].FirstOrDefault();
+            ?? (hasForm ? request.Form["id_token_hint"].FirstOrDefault() : null);
         var postLogoutRedirectUri = request.Query["post_logout_redirect_uri"].FirstOrDefault()
-            ?? request.Form["post_logout_redirect_uri"].FirstOrDefault();
+            ?? (hasForm ? request.Form["post_logout_redirect_uri"].FirstOrDefault() : null);
         var state = request.Query["state"].FirstOrDefault()
-            ?? request.Form["state"].FirstOrDefault();
+            ?? (hasForm ? request.Form["state"].FirstOrDefault() : null);
 
         await httpContext.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
 
