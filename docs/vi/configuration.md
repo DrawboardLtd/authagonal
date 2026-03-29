@@ -191,7 +191,7 @@ Khi được cấu hình, các giá trị bí mật trông giống tham chiếu 
 
 ## Email
 
-Dịch vụ email mặc định sử dụng SendGrid. Để sử dụng nhà cung cấp khác, triển khai `IEmailService` và đăng ký trước `AddAuthagonal()` — xem [Khả năng mở rộng](extensibility).
+Mặc định, Authagonal sử dụng dịch vụ email no-op bỏ qua tất cả email. Để bật gửi email, đăng ký triển khai `IEmailService` trước khi gọi `AddAuthagonal()`. Dịch vụ tích hợp `EmailService` sử dụng SendGrid.
 
 | Cài đặt | Mô tả |
 |---|---|

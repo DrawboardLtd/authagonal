@@ -6,7 +6,7 @@ locale: fr
 
 # API d'administration
 
-Les points d'acces d'administration necessitent un jeton d'acces JWT avec le scope `authagonal-admin`.
+Les points d'acces d'administration necessitent un jeton d'acces JWT avec le scope `authagonal-admin` (configurable via `AdminApi:Scope`).
 
 Tous les points d'acces sont sous `/api/v1/`.
 

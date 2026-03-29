@@ -191,7 +191,7 @@ Cuando esta configurado, los valores de secretos que parecen referencias de Key 
 
 ## Correo electronico
 
-El servicio de correo electronico predeterminado usa SendGrid. Para usar otro proveedor, implemente `IEmailService` y registrelo antes de `AddAuthagonal()` -- ver [Extensibilidad](extensibility).
+Por defecto, Authagonal usa un servicio de email no-op que descarta silenciosamente todos los emails. Para habilitar el envio de emails, registre una implementacion de `IEmailService` antes de llamar a `AddAuthagonal()`. El servicio integrado `EmailService` usa SendGrid.
 
 | Ajuste | Descripcion |
 |---|---|

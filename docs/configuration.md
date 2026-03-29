@@ -188,15 +188,29 @@ Client secrets and OIDC provider secrets can optionally be stored in Azure Key V
 
 When configured, secret values that look like Key Vault references are resolved at runtime. Uses `DefaultAzureCredential` for authentication.
 
+## Admin API
+
+| Setting | Default | Description |
+|---|---|---|
+| `AdminApi:Enabled` | `true` | Set to `false` to disable all admin endpoints (they won't be registered) |
+| `AdminApi:Scope` | `authagonal-admin` | JWT scope required to access admin endpoints. Change this to match your existing scope name (e.g., `projects-identity-admin` for IdentityServer migrations). |
+
 ## Email
 
-The default email service uses SendGrid. To use a different provider, implement `IEmailService` and register it before `AddAuthagonal()` — see [Extensibility](extensibility).
+By default, Authagonal uses a no-op email service that silently discards all emails. To enable email delivery, register an `IEmailService` implementation before calling `AddAuthagonal()`.
+
+The built-in `EmailService` uses SendGrid. To use it, register it explicitly:
+
+```csharp
+services.AddSingleton<IEmailService, EmailService>();
+services.AddAuthagonal(configuration);
+```
 
 | Setting | Description |
 |---|---|
 | `Email:SendGridApiKey` | SendGrid API key for sending emails |
-| `Email:FromAddress` | Sender email address |
-| `Email:FromName` | Sender display name |
+| `Email:SenderEmail` | Sender email address |
+| `Email:SenderName` | Sender display name |
 | `Email:VerificationTemplateId` | SendGrid dynamic template ID for email verification |
 | `Email:PasswordResetTemplateId` | SendGrid dynamic template ID for password reset |
 
@@ -223,6 +237,10 @@ CORS is configured dynamically. Origins from all registered clients' `AllowedCor
     "ConnectionString": "DefaultEndpointsProtocol=https;AccountName=...;AccountKey=...;TableEndpoint=https://..."
   },
   "Issuer": "https://auth.example.com",
+  "AdminApi": {
+    "Enabled": true,
+    "Scope": "authagonal-admin"
+  },
   "Authentication": {
     "CookieLifetimeHours": 48
   },

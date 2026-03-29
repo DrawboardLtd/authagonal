@@ -6,7 +6,7 @@ locale: zh-Hans
 
 # 管理 API
 
-管理端点需要包含 `authagonal-admin` 作用域的 JWT 访问令牌。
+管理端点需要包含 `authagonal-admin` 作用域的 JWT 访问令牌（可通过 `AdminApi:Scope` 配置）。
 
 所有端点都在 `/api/v1/` 下。
 

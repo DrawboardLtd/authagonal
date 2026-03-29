@@ -6,7 +6,7 @@ locale: vi
 
 # API Quản trị
 
-Các endpoint quản trị yêu cầu JWT access token với scope `authagonal-admin`.
+Các endpoint quản trị yêu cầu JWT access token với scope `authagonal-admin` (cấu hình qua `AdminApi:Scope`).
 
 Tất cả endpoint nằm dưới `/api/v1/`.
 

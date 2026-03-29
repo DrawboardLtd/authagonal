@@ -191,7 +191,7 @@ Bei Konfiguration werden Geheimniswerte, die wie Key Vault-Referenzen aussehen, 
 
 ## E-Mail
 
-Der Standard-E-Mail-Dienst verwendet SendGrid. Um einen anderen Anbieter zu verwenden, implementieren Sie `IEmailService` und registrieren Sie es vor `AddAuthagonal()` -- siehe [Erweiterbarkeit](extensibility).
+Standardmäßig verwendet Authagonal einen No-Op-E-Mail-Dienst, der alle E-Mails stillschweigend verwirft. Um den E-Mail-Versand zu aktivieren, registrieren Sie eine `IEmailService`-Implementierung vor dem Aufruf von `AddAuthagonal()`. Der integrierte `EmailService` verwendet SendGrid.
 
 | Einstellung | Beschreibung |
 |---|---|

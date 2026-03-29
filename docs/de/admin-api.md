@@ -6,7 +6,7 @@ locale: de
 
 # Admin-API
 
-Admin-Endpunkte erfordern ein JWT-Zugriffstoken mit dem Bereich `authagonal-admin`.
+Admin-Endpunkte erfordern ein JWT-Zugriffstoken mit dem Bereich `authagonal-admin` (konfigurierbar über `AdminApi:Scope`).
 
 Alle Endpunkte befinden sich unter `/api/v1/`.
 

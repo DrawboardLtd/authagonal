@@ -6,7 +6,7 @@ locale: es
 
 # API de administracion
 
-Los endpoints de administracion requieren un token de acceso JWT con el scope `authagonal-admin`.
+Los endpoints de administracion requieren un token de acceso JWT con el scope `authagonal-admin` (configurable via `AdminApi:Scope`).
 
 Todos los endpoints estan bajo `/api/v1/`.
 

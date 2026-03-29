@@ -98,7 +98,7 @@ public static class AuthagonalExtensions
         services.AddHostedService<ProviderSeedService>();
 
         // Extensibility points — TryAdd so custom registrations take precedence
-        services.TryAddSingleton<IEmailService, EmailService>();
+        services.TryAddSingleton<IEmailService, NullEmailService>();
         services.TryAddSingleton<IProvisioningOrchestrator, TccProvisioningOrchestrator>();
         services.TryAddSingleton<IAuthHook, NullAuthHook>();
 
@@ -212,6 +212,8 @@ public static class AuthagonalExtensions
         // ---------------------------------------------------------------------------
         // Authorization
         // ---------------------------------------------------------------------------
+        var adminScope = configuration["AdminApi:Scope"] ?? "authagonal-admin";
+
         services.AddAuthorization(options =>
         {
             options.AddPolicy("IdentityAdmin", policy =>
@@ -227,7 +229,7 @@ public static class AuthagonalExtensions
                         return false;
 
                     var scopes = scopeClaim.Value.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-                    return scopes.Contains("authagonal-admin", StringComparer.OrdinalIgnoreCase);
+                    return scopes.Contains(adminScope, StringComparer.OrdinalIgnoreCase);
                 });
             });
         });

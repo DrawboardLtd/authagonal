@@ -191,7 +191,7 @@ Quando configurado, os valores de segredo que se assemelham a referências do Ke
 
 ## E-mail
 
-O serviço de e-mail padrão usa o SendGrid. Para usar um provedor diferente, implemente `IEmailService` e registe-o antes de `AddAuthagonal()` — consulte [Extensibilidade](extensibility).
+Por padrão, o Authagonal usa um serviço de e-mail no-op que descarta silenciosamente todos os e-mails. Para habilitar o envio de e-mails, registre uma implementação de `IEmailService` antes de chamar `AddAuthagonal()`. O serviço integrado `EmailService` usa o SendGrid.
 
 | Definição | Descrição |
 |---|---|

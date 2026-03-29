@@ -191,7 +191,7 @@ Lorsqu'il est configure, les valeurs de secrets qui ressemblent a des references
 
 ## Email
 
-Le service d'email par defaut utilise SendGrid. Pour utiliser un autre fournisseur, implementez `IEmailService` et enregistrez-le avant `AddAuthagonal()` -- voir [Extensibilite](extensibility).
+Par defaut, Authagonal utilise un service d'email no-op qui ignore silencieusement tous les emails. Pour activer l'envoi d'emails, enregistrez une implementation de `IEmailService` avant d'appeler `AddAuthagonal()`. Le service integre `EmailService` utilise SendGrid.
 
 | Parametre | Description |
 |---|---|
