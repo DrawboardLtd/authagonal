@@ -133,6 +133,15 @@ export default function App() {
           <div className="card">
             <h2>Access Token</h2>
             <pre>{auth.accessToken}</pre>
+            <h3 style={{ marginTop: '1rem' }}>Decoded Payload</h3>
+            <pre>{(() => {
+              try {
+                const payload = auth.accessToken.split('.')[1];
+                return JSON.stringify(JSON.parse(atob(payload.replace(/-/g, '+').replace(/_/g, '/'))), null, 2);
+              } catch {
+                return 'Unable to decode token';
+              }
+            })()}</pre>
           </div>
         </>
       )}

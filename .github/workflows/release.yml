@@ -15,7 +15,7 @@ jobs:
   publish-nuget:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - uses: actions/setup-dotnet@v4
         with:
@@ -55,7 +55,7 @@ jobs:
       run:
         working-directory: login-app
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - uses: actions/setup-node@v4
         with:
@@ -91,19 +91,19 @@ jobs:
     needs: [publish-nuget, publish-npm]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@v4
 
       - name: Log in to Docker Hub
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           username: drawboardci
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Extract metadata (server)
         id: meta-server
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@v6
         with:
           images: ${{ env.DOCKERHUB_SERVER }}
           tags: |
@@ -113,7 +113,7 @@ jobs:
 
       - name: Extract metadata (migration)
         id: meta-migration
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@v6
         with:
           images: ${{ env.DOCKERHUB_MIGRATION }}
           tags: |
@@ -122,7 +122,7 @@ jobs:
             type=sha,format=long
 
       - name: Build and push server image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           push: true
@@ -132,7 +132,7 @@ jobs:
           cache-to: type=gha,mode=max
 
       - name: Build and push migration image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: Dockerfile.migration
@@ -144,7 +144,7 @@ jobs:
 
       - name: Extract metadata (demo-server)
         id: meta-demo-server
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@v6
         with:
           images: ${{ env.DOCKERHUB_DEMO_SERVER }}
           tags: |
@@ -154,7 +154,7 @@ jobs:
 
       - name: Extract metadata (demo-sample-api)
         id: meta-demo-sample-api
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@v6
         with:
           images: ${{ env.DOCKERHUB_DEMO_SAMPLE_API }}
           tags: |
@@ -164,7 +164,7 @@ jobs:
 
       - name: Extract metadata (demo-frontend)
         id: meta-demo-frontend
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@v6
         with:
           images: ${{ env.DOCKERHUB_DEMO_FRONTEND }}
           tags: |
@@ -173,7 +173,7 @@ jobs:
             type=sha,format=long
 
       - name: Build and push demo server image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: demos/custom-server/Dockerfile
@@ -183,7 +183,7 @@ jobs:
           no-cache: true
 
       - name: Build and push demo sample API image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: demos/sample-app/SampleApp.Api/Dockerfile
@@ -194,7 +194,7 @@ jobs:
           cache-to: type=gha,mode=max,scope=demo-sample-api
 
       - name: Build and push demo frontend image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: demos/sample-app/frontend/Dockerfile
@@ -213,7 +213,7 @@ jobs:
 
     steps:
       - name: Azure Login
-        uses: azure/login@v2
+        uses: azure/login@v3
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
