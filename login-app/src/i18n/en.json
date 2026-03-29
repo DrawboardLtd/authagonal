@@ -45,5 +45,7 @@
   "ruleDigit": "Number",
   "ruleSpecialChar": "Special character",
   "continueWith": "Continue with {{provider}}",
-  "or": "or"
+  "or": "or",
+  "signedInAs": "Signed in as {{name}}",
+  "signedInMessage": "You are already authenticated."
 }

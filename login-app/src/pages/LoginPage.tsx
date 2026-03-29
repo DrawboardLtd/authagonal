@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useSearchParams, Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { login, ssoCheck, getProviders, ApiRequestError } from '../api';
+import { login, ssoCheck, getProviders, getSession, ApiRequestError } from '../api';
 import { useBranding } from '../branding';
 import type { ExternalProvider } from '../types';
 
@@ -24,15 +24,17 @@ export default function LoginPage() {
   const [searchParams] = useSearchParams();
   const returnUrl = searchParams.get('returnUrl') || '';
   const loginHint = searchParams.get('login_hint') || '';
+  const oidcError = searchParams.get('error_description') || searchParams.get('error') || '';
 
   const [email, setEmail] = useState(loginHint);
   const [password, setPassword] = useState('');
-  const [error, setError] = useState('');
+  const [error, setError] = useState(oidcError);
   const [loading, setLoading] = useState(false);
   const [ssoInfo, setSsoInfo] = useState<{ redirectUrl: string } | null>(null);
   const [ssoChecked, setSsoChecked] = useState(false);
   const [ssoChecking, setSsoChecking] = useState(false);
   const [providers, setProviders] = useState<ExternalProvider[]>([]);
+  const [session, setSession] = useState<{ name: string; email: string } | null>(null);
 
   const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastCheckedEmailRef = useRef('');
@@ -62,6 +64,18 @@ export default function LoginPage() {
       setSsoChecking(false);
     }
   }, []);
+
+  // Check for existing session (e.g. after OIDC callback with no returnUrl)
+  useEffect(() => {
+    if (returnUrl && isSafeReturnUrl(returnUrl)) return; // OAuth flow — don't check session
+    getSession()
+      .then((s) => {
+        if (s.authenticated) {
+          setSession({ name: s.name, email: s.email });
+        }
+      })
+      .catch(() => {});
+  }, [returnUrl]);
 
   // Fetch available external providers
   useEffect(() => {
@@ -171,6 +185,15 @@ export default function LoginPage() {
     : '/forgot-password';
 
   const showPasswordField = ssoChecked && !ssoInfo;
+
+  if (session) {
+    return (
+      <div>
+        <h2 className="auth-title">{t('signedInAs', { name: session.name || session.email })}</h2>
+        <p style={{ textAlign: 'center', color: '#6b7280' }}>{t('signedInMessage')}</p>
+      </div>
+    );
+  }
 
   return (
     <div>

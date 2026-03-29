@@ -45,5 +45,7 @@
   "ruleDigit": "Chữ số",
   "ruleSpecialChar": "Ký tự đặc biệt",
   "continueWith": "Tiếp tục với {{provider}}",
-  "or": "hoặc"
+  "or": "hoặc",
+  "signedInAs": "Đã đăng nhập với tên {{name}}",
+  "signedInMessage": "Bạn đã được xác thực."
 }

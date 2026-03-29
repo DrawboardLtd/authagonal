@@ -28,8 +28,9 @@ i18n
       escapeValue: false,
     },
     detection: {
-      order: ['querystring', 'navigator'],
+      order: ['localStorage', 'querystring', 'navigator'],
       lookupQuerystring: 'lng',
+      caches: ['localStorage'],
     },
   });
 

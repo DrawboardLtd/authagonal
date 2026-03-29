@@ -45,5 +45,7 @@
   "ruleDigit": "数字",
   "ruleSpecialChar": "特殊字符",
   "continueWith": "使用 {{provider}} 继续",
-  "or": "或"
+  "or": "或",
+  "signedInAs": "已登录为 {{name}}",
+  "signedInMessage": "您已通过身份验证。"
 }

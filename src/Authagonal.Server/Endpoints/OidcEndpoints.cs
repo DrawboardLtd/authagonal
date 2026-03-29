@@ -100,8 +100,8 @@ public static class OidcEndpoints
             var idpErrorDescription = query["error_description"].ToString();
             logger.LogWarning("OIDC IdP returned error: {Error} - {Description}", idpError, idpErrorDescription);
 
-            // We don't have returnUrl without valid state, redirect to root
-            return Results.Redirect($"/?error=oidc_error&error_description={Uri.EscapeDataString(idpErrorDescription ?? idpError)}");
+            // We don't have returnUrl without valid state, redirect to login with error
+            return Results.Redirect($"/login?error=oidc_error&error_description={Uri.EscapeDataString(idpErrorDescription ?? idpError)}");
         }
 
         if (string.IsNullOrEmpty(code) || string.IsNullOrEmpty(state))
@@ -473,11 +473,11 @@ public static class OidcEndpoints
     private static string SanitizeReturnUrl(string? url)
     {
         if (string.IsNullOrWhiteSpace(url))
-            return "/";
+            return "/login";
 
         // Only allow relative paths to prevent open redirect
         if (!url.StartsWith('/') || url.StartsWith("//"))
-            return "/";
+            return "/login";
 
         return url;
     }

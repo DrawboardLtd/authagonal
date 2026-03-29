@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useSearchParams, Link } from 'react-router-dom';
-import { login, ssoCheck, getProviders, ApiRequestError, useBranding } from '@drawboard/authagonal-login';
+import { useTranslation } from 'react-i18next';
+import { login, ssoCheck, getProviders, getSession, ApiRequestError, useBranding } from '@drawboard/authagonal-login';
 import type { ExternalProvider } from '@drawboard/authagonal-login';
 
 // Custom login page that adds a Terms of Service checkbox.
@@ -20,20 +21,23 @@ function isSafeReturnUrl(url: string): boolean {
 }
 
 export default function AcmeLoginPage() {
+  const { t } = useTranslation();
   const branding = useBranding();
   const [searchParams] = useSearchParams();
   const returnUrl = searchParams.get('returnUrl') || '';
   const loginHint = searchParams.get('login_hint') || '';
+  const oidcError = searchParams.get('error_description') || searchParams.get('error') || '';
 
   const [email, setEmail] = useState(loginHint);
   const [password, setPassword] = useState('');
-  const [error, setError] = useState('');
+  const [error, setError] = useState(oidcError);
   const [loading, setLoading] = useState(false);
   const [agreedToTerms, setAgreedToTerms] = useState(false);
   const [ssoInfo, setSsoInfo] = useState<{ redirectUrl: string } | null>(null);
   const [ssoChecked, setSsoChecked] = useState(false);
   const [ssoChecking, setSsoChecking] = useState(false);
   const [providers, setProviders] = useState<ExternalProvider[]>([]);
+  const [session, setSession] = useState<{ name: string; email: string } | null>(null);
 
   const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastCheckedEmailRef = useRef('');
@@ -54,6 +58,15 @@ export default function AcmeLoginPage() {
       setSsoChecking(false);
     }
   }, []);
+
+  useEffect(() => {
+    if (returnUrl && isSafeReturnUrl(returnUrl)) return;
+    getSession()
+      .then((s) => {
+        if (s.authenticated) setSession({ name: s.name, email: s.email });
+      })
+      .catch(() => {});
+  }, [returnUrl]);
 
   useEffect(() => {
     getProviders()
@@ -133,6 +146,15 @@ export default function AcmeLoginPage() {
 
   const showPasswordField = ssoChecked && !ssoInfo;
 
+  if (session) {
+    return (
+      <div>
+        <h2 className="auth-title">{t('signedInAs', { name: session.name || session.email })}</h2>
+        <p style={{ textAlign: 'center', color: '#6b7280' }}>{t('signedInMessage')}</p>
+      </div>
+    );
+  }
+
   return (
     <div>
       <h2 className="auth-title">Welcome to Acme Corp</h2>
@@ -155,10 +177,10 @@ export default function AcmeLoginPage() {
                   <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/>
                 </svg>
               )}
-              Continue with {p.name}
+              {t('continueWith', { provider: p.name })}
             </button>
           ))}
-          <div className="divider"><span>or</span></div>
+          <div className="divider"><span>{t('or')}</span></div>
         </div>
       )}
 
@@ -166,14 +188,14 @@ export default function AcmeLoginPage() {
 
       <form onSubmit={handleSubmit}>
         <div className="form-group">
-          <label htmlFor="email">Email</label>
+          <label htmlFor="email">{t('email')}</label>
           <input
             id="email"
             type="email"
             value={email}
             onChange={(e) => handleEmailChange(e.target.value)}
             onBlur={handleEmailBlur}
-            placeholder="you@acme.com"
+            placeholder={t('emailPlaceholder')}
             autoComplete="email"
             autoFocus={!loginHint}
             maxLength={256}
@@ -181,13 +203,13 @@ export default function AcmeLoginPage() {
           />
         </div>
 
-        {ssoChecking && <div className="sso-checking">Checking sign-in options...</div>}
+        {ssoChecking && <div className="sso-checking">{t('ssoChecking')}</div>}
 
         {ssoInfo && (
           <div className="sso-notice">
-            <p>Your organization uses single sign-on</p>
+            <p>{t('ssoNotice')}</p>
             <button type="button" className="btn-secondary" onClick={handleSsoRedirect}>
-              Continue with SSO
+              {t('continueWithSso')}
             </button>
           </div>
         )}
@@ -195,13 +217,13 @@ export default function AcmeLoginPage() {
         {showPasswordField && (
           <>
             <div className="form-group">
-              <label htmlFor="password">Password</label>
+              <label htmlFor="password">{t('password')}</label>
               <input
                 id="password"
                 type="password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                placeholder="Enter your password"
+                placeholder={t('passwordPlaceholder')}
                 autoComplete="current-password"
                 autoFocus
                 maxLength={256}
@@ -231,15 +253,15 @@ export default function AcmeLoginPage() {
 
             <button type="submit" className="btn-primary" disabled={loading}>
               {loading ? (
-                <span className="btn-loading"><span className="spinner" />Signing in...</span>
+                <span className="btn-loading"><span className="spinner" />{t('signingIn')}</span>
               ) : (
-                'Sign in'
+                t('signIn')
               )}
             </button>
 
             {branding.showForgotPassword && (
               <div className="form-footer">
-                <Link to={forgotPasswordLink} className="link">Forgot password?</Link>
+                <Link to={forgotPasswordLink} className="link">{t('forgotPassword')}</Link>
               </div>
             )}
           </>

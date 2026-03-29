@@ -2,6 +2,9 @@ import { useEffect, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useBranding } from '../branding';
 
+// Ensure i18n is initialized when AuthLayout is used (including by npm consumers)
+import '../i18n';
+
 interface AuthLayoutProps {
   children: ReactNode;
 }

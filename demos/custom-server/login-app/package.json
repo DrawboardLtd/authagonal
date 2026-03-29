@@ -10,6 +10,7 @@
     "@drawboard/authagonal-login": "file:../../../login-app",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
+    "react-i18next": "^15.5.2",
     "react-router-dom": "^7.13.2"
   },
   "devDependencies": {
