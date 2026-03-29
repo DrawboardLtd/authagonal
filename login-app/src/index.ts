@@ -21,7 +21,8 @@ export { login, logout, forgotPassword, resetPassword, getSession, ssoCheck, get
 // Types
 export type { LoginResponse, ApiError, SessionResponse, SsoCheckResponse, ExternalProvider, ProvidersResponse, PasswordPolicyRule, PasswordPolicyResponse } from './types';
 
-// i18n
+// i18n — re-export so consumers use the same react-i18next instance
 export { default as i18n } from './i18n';
+export { useTranslation } from 'react-i18next';
 
 // Styles — import '@drawboard/authagonal-login/src/styles.css' in your entry point

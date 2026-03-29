@@ -1,7 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useSearchParams, Link } from 'react-router-dom';
-import { useTranslation } from 'react-i18next';
-import { login, ssoCheck, getProviders, getSession, ApiRequestError, useBranding } from '@drawboard/authagonal-login';
+import { login, ssoCheck, getProviders, getSession, ApiRequestError, useBranding, useTranslation } from '@drawboard/authagonal-login';
 import type { ExternalProvider } from '@drawboard/authagonal-login';
 
 // Custom login page that adds a Terms of Service checkbox.

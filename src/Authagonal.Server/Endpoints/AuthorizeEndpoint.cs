@@ -71,8 +71,8 @@ public static class AuthorizeEndpoint
             if (httpContext.User.Identity?.IsAuthenticated != true)
             {
                 var loginAppUrl = configuration["LoginAppUrl"] ?? "/login";
-                var fullAuthorizeUrl = $"{httpContext.Request.Scheme}://{httpContext.Request.Host}{httpContext.Request.Path}{httpContext.Request.QueryString}";
-                var loginUrl = $"{loginAppUrl}?returnUrl={Uri.EscapeDataString(fullAuthorizeUrl)}";
+                var authorizeRelativeUrl = $"{httpContext.Request.Path}{httpContext.Request.QueryString}";
+                var loginUrl = $"{loginAppUrl}?returnUrl={Uri.EscapeDataString(authorizeRelativeUrl)}";
 
                 var loginHint = query["login_hint"].FirstOrDefault();
                 if (!string.IsNullOrWhiteSpace(loginHint))
