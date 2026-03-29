@@ -43,5 +43,7 @@
   "ruleUppercase": "Großbuchstabe",
   "ruleLowercase": "Kleinbuchstabe",
   "ruleDigit": "Zahl",
-  "ruleSpecialChar": "Sonderzeichen"
+  "ruleSpecialChar": "Sonderzeichen",
+  "continueWith": "Weiter mit {{provider}}",
+  "or": "oder"
 }

@@ -43,5 +43,7 @@
   "ruleUppercase": "大写字母",
   "ruleLowercase": "小写字母",
   "ruleDigit": "数字",
-  "ruleSpecialChar": "特殊字符"
+  "ruleSpecialChar": "特殊字符",
+  "continueWith": "使用 {{provider}} 继续",
+  "or": "或"
 }

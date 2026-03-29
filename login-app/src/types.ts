@@ -25,6 +25,16 @@ export interface SsoCheckResponse {
   redirectUrl?: string;
 }
 
+export interface ExternalProvider {
+  connectionId: string;
+  name: string;
+  loginUrl: string;
+}
+
+export interface ProvidersResponse {
+  providers: ExternalProvider[];
+}
+
 export interface PasswordPolicyRule {
   rule: string;
   value: number | null;

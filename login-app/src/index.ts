@@ -16,10 +16,10 @@ export { loadBranding, BrandingContext, useBranding } from './branding';
 export type { BrandingConfig } from './branding';
 
 // API client
-export { login, logout, forgotPassword, resetPassword, getSession, ssoCheck, getPasswordPolicy, ApiRequestError } from './api';
+export { login, logout, forgotPassword, resetPassword, getSession, ssoCheck, getProviders, getPasswordPolicy, ApiRequestError } from './api';
 
 // Types
-export type { LoginResponse, ApiError, SessionResponse, SsoCheckResponse, PasswordPolicyRule, PasswordPolicyResponse } from './types';
+export type { LoginResponse, ApiError, SessionResponse, SsoCheckResponse, ExternalProvider, ProvidersResponse, PasswordPolicyRule, PasswordPolicyResponse } from './types';
 
 // i18n
 export { default as i18n } from './i18n';

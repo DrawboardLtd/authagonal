@@ -26,6 +26,7 @@ public static class AuthEndpoints
         group.MapPost("/reset-password", ResetPasswordAsync).AllowAnonymous().DisableAntiforgery();
         group.MapGet("/session", GetSessionAsync).RequireAuthorization();
         group.MapGet("/sso-check", SsoCheckAsync).AllowAnonymous();
+        group.MapGet("/providers", GetProvidersAsync).AllowAnonymous();
         group.MapGet("/password-policy", GetPasswordPolicy).AllowAnonymous();
 
         return app;
@@ -309,6 +310,20 @@ public static class AuthEndpoints
             rules.Add(new { rule = "specialChar", value = (object?)null, label = localizer["PasswordPolicy_SpecialChar"].Value });
 
         return Results.Ok(new { rules });
+    }
+
+    private static async Task<IResult> GetProvidersAsync(
+        IOidcProviderStore oidcStore,
+        CancellationToken ct)
+    {
+        var providers = await oidcStore.GetAllAsync(ct);
+        var result = providers.Select(p => new
+        {
+            connectionId = p.ConnectionId,
+            name = p.ConnectionName,
+            loginUrl = $"/oidc/{p.ConnectionId}/login"
+        });
+        return Results.Ok(new { providers = result });
     }
 
     private static async Task<IResult> SsoCheckAsync(

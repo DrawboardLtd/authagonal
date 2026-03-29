@@ -87,7 +87,7 @@ az containerapp create \
   --image mcr.microsoft.com/k8se/quickstart:latest \
   --target-port 8080 \
   --ingress external \
-  --min-replicas 0 \
+  --min-replicas 1 \
   --max-replicas 1 \
   --cpu 0.5 \
   --memory 1Gi \
@@ -125,6 +125,21 @@ az containerapp update \
     "Clients__0__AllowOfflineAccess=true" \
   --output none
 
+echo "==> Configuring Google OIDC provider seed"
+echo "    NOTE: Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET env vars before running,"
+echo "    or update the container app env vars afterwards."
+az containerapp update \
+  --name authagonal-auth \
+  --resource-group "$RG" \
+  --set-env-vars \
+    "OidcProviders__0__ConnectionId=google" \
+    "OidcProviders__0__ConnectionName=Google" \
+    "OidcProviders__0__MetadataLocation=https://accounts.google.com/.well-known/openid-configuration" \
+    "OidcProviders__0__ClientId=${GOOGLE_CLIENT_ID:-REPLACE_ME}" \
+    "OidcProviders__0__ClientSecret=${GOOGLE_CLIENT_SECRET:-REPLACE_ME}" \
+    "OidcProviders__0__RedirectUrl=${AUTH_URL}/oidc/callback" \
+  --output none
+
 echo "==> Creating sample API container app (internal ingress)"
 az containerapp create \
   --name authagonal-api \
@@ -133,7 +148,7 @@ az containerapp create \
   --image mcr.microsoft.com/k8se/quickstart:latest \
   --target-port 8080 \
   --ingress internal \
-  --min-replicas 0 \
+  --min-replicas 1 \
   --max-replicas 1 \
   --cpu 0.25 \
   --memory 0.5Gi \
@@ -158,7 +173,7 @@ az containerapp create \
   --image mcr.microsoft.com/k8se/quickstart:latest \
   --target-port 8080 \
   --ingress external \
-  --min-replicas 0 \
+  --min-replicas 1 \
   --max-replicas 1 \
   --cpu 0.25 \
   --memory 0.5Gi \
@@ -171,7 +186,7 @@ az containerapp update \
   --set-env-vars \
     "AUTH_SERVER=${AUTH_URL}" \
     "REDIRECT_URI=${FRONTEND_URL}/callback" \
-    "API_BASE=http://authagonal-api.internal.${ENV_DOMAIN}:8080" \
+    "API_BASE=http://authagonal-api.internal.${ENV_DOMAIN}" \
   --output none
 
 # ---------------------------------------------------------------------------

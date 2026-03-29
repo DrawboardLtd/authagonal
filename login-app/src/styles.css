@@ -226,6 +226,55 @@ input:focus {
   margin-bottom: 16px;
 }
 
+/* External providers */
+.external-providers {
+  margin-bottom: 8px;
+}
+
+.btn-provider {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  width: 100%;
+  padding: 12px;
+  background-color: #ffffff;
+  color: #374151;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  font-size: 16px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background-color 0.15s ease, border-color 0.15s ease;
+  margin-bottom: 8px;
+}
+
+.btn-provider:hover {
+  background-color: #f9fafb;
+  border-color: #9ca3af;
+}
+
+.provider-icon {
+  flex-shrink: 0;
+}
+
+.divider {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 16px 0;
+  color: #9ca3af;
+  font-size: 13px;
+}
+
+.divider::before,
+.divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background-color: #e5e7eb;
+}
+
 /* Password requirements */
 .password-requirements {
   list-style: none;

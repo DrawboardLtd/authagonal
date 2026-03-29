@@ -163,20 +163,69 @@ export async function handleCallback(): Promise<AuthState | null> {
   return authState;
 }
 
-/** Get the current auth state from storage. */
+/** Get the current auth state from storage. Returns null if expired and no refresh token. */
 export function getStoredAuth(): AuthState | null {
   const raw = localStorage.getItem('auth');
   if (!raw) return null;
 
   const state: AuthState = JSON.parse(raw);
 
-  // Check expiry (with 60s buffer)
-  if (Date.now() > state.expiresAt - 60_000) {
+  // If not expired (with 60s buffer), return as-is
+  if (Date.now() <= state.expiresAt - 60_000) {
+    return state;
+  }
+
+  // Expired but has refresh token — return it so the caller can refresh
+  if (state.refreshToken) {
+    return state;
+  }
+
+  localStorage.removeItem('auth');
+  return null;
+}
+
+/** Check if the auth state needs a token refresh. */
+export function needsRefresh(state: AuthState): boolean {
+  return Date.now() > state.expiresAt - 60_000;
+}
+
+/** Refresh the access token using a stored refresh token. */
+export async function refreshAccessToken(current: AuthState): Promise<AuthState | null> {
+  if (!current.refreshToken) return null;
+
+  const config = await getConfig();
+  const body = new URLSearchParams({
+    grant_type: 'refresh_token',
+    refresh_token: current.refreshToken,
+    client_id: config.clientId,
+  });
+
+  try {
+    const response = await fetch(`${config.authServer}/connect/token`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body,
+    });
+
+    if (!response.ok) {
+      localStorage.removeItem('auth');
+      return null;
+    }
+
+    const tokens: TokenResponse = await response.json();
+    const authState = tokensToState(tokens);
+
+    // Preserve the refresh token if the server didn't issue a new one
+    if (!authState.refreshToken && current.refreshToken) {
+      authState.refreshToken = current.refreshToken;
+    }
+
+    localStorage.setItem('auth', JSON.stringify(authState));
+    return authState;
+  } catch {
     localStorage.removeItem('auth');
     return null;
   }
-
-  return state;
 }
 
 /** Log out — clear local state. */

@@ -43,5 +43,7 @@
   "ruleUppercase": "Chữ cái viết hoa",
   "ruleLowercase": "Chữ cái viết thường",
   "ruleDigit": "Chữ số",
-  "ruleSpecialChar": "Ký tự đặc biệt"
+  "ruleSpecialChar": "Ký tự đặc biệt",
+  "continueWith": "Tiếp tục với {{provider}}",
+  "or": "hoặc"
 }

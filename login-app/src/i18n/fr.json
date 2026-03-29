@@ -43,5 +43,7 @@
   "ruleUppercase": "Lettre majuscule",
   "ruleLowercase": "Lettre minuscule",
   "ruleDigit": "Chiffre",
-  "ruleSpecialChar": "Caractère spécial"
+  "ruleSpecialChar": "Caractère spécial",
+  "continueWith": "Continuer avec {{provider}}",
+  "or": "ou"
 }

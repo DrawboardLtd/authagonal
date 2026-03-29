@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { login, logout, handleCallback, getStoredAuth, type AuthState } from './auth';
+import { login, logout, handleCallback, getStoredAuth, refreshAccessToken, needsRefresh, type AuthState } from './auth';
 
 export default function App() {
   const [auth, setAuth] = useState<AuthState | null>(null);
@@ -20,8 +20,11 @@ export default function App() {
           }
         }
 
-        // Check for stored auth
-        const stored = getStoredAuth();
+        // Check for stored auth, refresh if expired
+        let stored = getStoredAuth();
+        if (stored && needsRefresh(stored)) {
+          stored = await refreshAccessToken(stored);
+        }
         setAuth(stored);
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Authentication failed');
@@ -43,9 +46,23 @@ export default function App() {
     if (!auth) return;
     setApiResult(null);
 
+    // Refresh token if needed before calling the API
+    let current = auth;
+    if (needsRefresh(current)) {
+      const refreshed = await refreshAccessToken(current);
+      if (refreshed) {
+        current = refreshed;
+        setAuth(refreshed);
+      } else {
+        setAuth(null);
+        setApiResult('Session expired. Please sign in again.');
+        return;
+      }
+    }
+
     try {
       const res = await fetch(endpoint, {
-        headers: { Authorization: `Bearer ${auth.accessToken}` },
+        headers: { Authorization: `Bearer ${current.accessToken}` },
       });
       const data = await res.json();
       setApiResult(JSON.stringify(data, null, 2));
