@@ -23,6 +23,7 @@ dotnet run --project tools/Authagonal.Backup -- \
 | `--output <dir>` | Repertoire de sortie (par defaut : `./backups`) |
 | `--incremental` | Sauvegarder uniquement les entites modifiees depuis la derniere sauvegarde |
 | `--tables <t1,t2,...>` | Liste de tables separees par des virgules (par defaut : toutes les tables Authagonal) |
+| `--gzip` | Compresser les fichiers de sauvegarde avec gzip (`.jsonl.gz`) |
 | `--dry-run` | Afficher ce qui serait sauvegarde sans ecrire |
 
 ### Format de sortie
@@ -37,12 +38,12 @@ backups/
     Grants.jsonl
     ...
     _manifest.json
-  20260329-180000-incr/     (incremental backup)
-    Users.jsonl
+  20260329-180000-incr/     (incremental, compressed)
+    Users.jsonl.gz
     _manifest.json
 ```
 
-Chaque fichier `.jsonl` contient un objet JSON par ligne (un par entite de table). Le fichier `_manifest.json` enregistre l'horodatage de la sauvegarde, le mode et le nombre d'entites.
+Chaque fichier `.jsonl` contient un objet JSON par ligne (un par entite de table). Avec `--gzip`, les fichiers sont compresses en `.jsonl.gz`. Le fichier `_manifest.json` enregistre l'horodatage de la sauvegarde, le mode, la compression et le nombre d'entites.
 
 ### Sauvegardes incrementales
 
@@ -73,7 +74,7 @@ dotnet run --project tools/Authagonal.Restore -- \
 | `--connection-string <conn>` | Chaine de connexion Azure Table Storage (ou definir la variable d'environnement `STORAGE_CONNECTION_STRING`) |
 | `--input <dir>` | Repertoire de sauvegarde a partir duquel restaurer |
 | `--mode <mode>` | Mode de restauration : `upsert` (par defaut), `merge` ou `clean` |
-| `--tables <t1,t2,...>` | Liste de tables a restaurer separees par des virgules (par defaut : tous les fichiers `.jsonl` dans la sauvegarde) |
+| `--tables <t1,t2,...>` | Liste de tables a restaurer separees par des virgules (par defaut : tous les fichiers `.jsonl`/`.jsonl.gz` dans la sauvegarde) |
 | `--dry-run` | Afficher ce qui serait restaure sans ecrire |
 
 ### Modes de restauration
@@ -83,6 +84,8 @@ dotnet run --project tools/Authagonal.Restore -- \
 | `upsert` | Inserer ou remplacer chaque entite. Les donnees existantes sont ecrasees. |
 | `merge` | Inserer ou fusionner. Les proprietes existantes absentes de la sauvegarde sont conservees. |
 | `clean` | Supprimer toutes les donnees existantes dans chaque table avant la restauration. |
+
+Les fichiers de sauvegarde compresses avec gzip (`.jsonl.gz`) sont detectes et decompresses automatiquement — aucun indicateur supplementaire n'est necessaire.
 
 ### Codes de sortie
 
@@ -113,9 +116,9 @@ docker run --rm -v $(pwd)/backups:/backups \
 Pour une utilisation en production, executez l'outil de sauvegarde selon un calendrier (par exemple, sauvegarde complete quotidienne + incrementale toutes les heures) :
 
 ```bash
-# Daily full backup
-0 2 * * * authagonal-backup --connection-string "$CONN" --output /backups
+# Daily full backup (compressed)
+0 2 * * * authagonal-backup --connection-string "$CONN" --output /backups --gzip
 
-# Hourly incremental
-0 * * * * authagonal-backup --connection-string "$CONN" --output /backups --incremental
+# Hourly incremental (compressed)
+0 * * * * authagonal-backup --connection-string "$CONN" --output /backups --incremental --gzip
 ```

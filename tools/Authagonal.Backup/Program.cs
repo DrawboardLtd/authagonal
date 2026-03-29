@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.IO.Compression;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Azure;
@@ -12,6 +13,7 @@ using Azure.Data.Tables;
 //   authagonal-backup --connection-string "..." --output ./backups
 //   authagonal-backup --connection-string "..." --output ./backups --incremental
 //   authagonal-backup --connection-string "..." --output ./backups --tables Users,Clients
+//   authagonal-backup --connection-string "..." --output ./backups --gzip
 //
 // Environment variable:
 //   STORAGE_CONNECTION_STRING — fallback when --connection-string is not given
@@ -24,7 +26,8 @@ using Azure.Data.Tables;
 // Output:
 //   <output>/<timestamp>/           (full backup)
 //   <output>/<timestamp>-incr/      (incremental backup)
-//     <TableName>.jsonl             (one JSON object per line)
+//     <TableName>.jsonl             (uncompressed, default)
+//     <TableName>.jsonl.gz          (gzip compressed, with --gzip)
 //     _manifest.json                (metadata about the backup)
 // ---------------------------------------------------------------------------
 
@@ -35,6 +38,7 @@ var outputRoot = GetArg(cliArgs, "--output") ?? "./backups";
 var incremental = HasFlag(cliArgs, "--incremental");
 var tableFilter = GetArg(cliArgs, "--tables")?.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 var dryRun = HasFlag(cliArgs, "--dry-run");
+var useGzip = HasFlag(cliArgs, "--gzip");
 
 if (connectionString is null || HasFlag(cliArgs, "--help"))
 {
@@ -50,6 +54,7 @@ if (connectionString is null || HasFlag(cliArgs, "--help"))
       --output <dir>               Output directory (default: ./backups)
       --incremental                Only back up entities changed since last backup
       --tables <t1,t2,...>         Comma-separated list of tables to back up
+      --gzip                       Compress backup files with gzip (.jsonl.gz)
       --dry-run                    Show what would be backed up without writing
       --help                       Show this help
 
@@ -122,7 +127,7 @@ if (!dryRun)
 
 Console.WriteLine($"Backup directory: {backupDir}");
 Console.WriteLine($"Tables: {string.Join(", ", tablesToBackup)}");
-Console.WriteLine($"Mode: {(watermark.HasValue ? "incremental" : "full")}");
+Console.WriteLine($"Mode: {(watermark.HasValue ? "incremental" : "full")}{(useGzip ? ", gzip" : "")}");
 if (dryRun) Console.WriteLine("DRY RUN — no files will be written");
 Console.WriteLine();
 
@@ -144,6 +149,8 @@ foreach (var tableName in tablesToBackup)
 
     long count = 0;
     StreamWriter? writer = null;
+    Stream? fileStream = null;
+    Stream? gzipStream = null;
 
     try
     {
@@ -154,8 +161,18 @@ foreach (var tableName in tablesToBackup)
         {
             if (writer is null && !dryRun)
             {
-                var filePath = Path.Combine(backupDir, $"{tableName}.jsonl");
-                writer = new StreamWriter(filePath, append: false, encoding: System.Text.Encoding.UTF8);
+                var ext = useGzip ? ".jsonl.gz" : ".jsonl";
+                var filePath = Path.Combine(backupDir, $"{tableName}{ext}");
+                fileStream = new FileStream(filePath, FileMode.Create, FileAccess.Write);
+                if (useGzip)
+                {
+                    gzipStream = new GZipStream(fileStream, CompressionLevel.Optimal);
+                    writer = new StreamWriter(gzipStream, System.Text.Encoding.UTF8);
+                }
+                else
+                {
+                    writer = new StreamWriter(fileStream, System.Text.Encoding.UTF8);
+                }
             }
 
             if (!dryRun)
@@ -188,6 +205,8 @@ foreach (var tableName in tablesToBackup)
     finally
     {
         writer?.Dispose();
+        gzipStream?.Dispose();
+        fileStream?.Dispose();
     }
 
     tableStart.Stop();
@@ -206,6 +225,7 @@ if (!dryRun)
     {
         BackupTimestamp = backupStart,
         Mode = watermark.HasValue ? "incremental" : "full",
+        Compressed = useGzip,
         Watermark = watermark,
         Tables = manifest,
         TotalEntities = totalEntities,

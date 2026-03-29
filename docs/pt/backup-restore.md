@@ -23,6 +23,7 @@ dotnet run --project tools/Authagonal.Backup -- \
 | `--output <dir>` | Diretorio de saida (padrao: `./backups`) |
 | `--incremental` | Fazer backup apenas das entidades alteradas desde o ultimo backup |
 | `--tables <t1,t2,...>` | Lista de tabelas separadas por virgulas (padrao: todas as tabelas do Authagonal) |
+| `--gzip` | Compactar arquivos de backup com gzip (`.jsonl.gz`) |
 | `--dry-run` | Mostrar o que seria feito backup sem gravar |
 
 ### Formato de saida
@@ -37,12 +38,12 @@ backups/
     Grants.jsonl
     ...
     _manifest.json
-  20260329-180000-incr/     (incremental backup)
-    Users.jsonl
+  20260329-180000-incr/     (incremental, compressed)
+    Users.jsonl.gz
     _manifest.json
 ```
 
-Cada arquivo `.jsonl` contem um objeto JSON por linha (um por entidade de tabela). O arquivo `_manifest.json` registra o carimbo de data/hora do backup, o modo e a contagem de entidades.
+Cada arquivo `.jsonl` contem um objeto JSON por linha (um por entidade de tabela). Com `--gzip`, os arquivos sao compactados como `.jsonl.gz`. O arquivo `_manifest.json` registra o carimbo de data/hora do backup, o modo, a compressao e a contagem de entidades.
 
 ### Backups incrementais
 
@@ -73,7 +74,7 @@ dotnet run --project tools/Authagonal.Restore -- \
 | `--connection-string <conn>` | String de conexao do Azure Table Storage (ou definir a variavel de ambiente `STORAGE_CONNECTION_STRING`) |
 | `--input <dir>` | Diretorio de backup a partir do qual restaurar |
 | `--mode <mode>` | Modo de restauracao: `upsert` (padrao), `merge` ou `clean` |
-| `--tables <t1,t2,...>` | Lista de tabelas a restaurar separadas por virgulas (padrao: todos os arquivos `.jsonl` no backup) |
+| `--tables <t1,t2,...>` | Lista de tabelas a restaurar separadas por virgulas (padrao: todos os arquivos `.jsonl`/`.jsonl.gz` no backup) |
 | `--dry-run` | Mostrar o que seria restaurado sem gravar |
 
 ### Modos de restauracao
@@ -83,6 +84,8 @@ dotnet run --project tools/Authagonal.Restore -- \
 | `upsert` | Inserir ou substituir cada entidade. Os dados existentes sao sobrescritos. |
 | `merge` | Inserir ou mesclar. Propriedades existentes que nao estao no backup sao preservadas. |
 | `clean` | Excluir todos os dados existentes em cada tabela antes de restaurar. |
+
+Arquivos de backup compactados com gzip (`.jsonl.gz`) sao detectados e descompactados automaticamente — nenhuma flag adicional e necessaria.
 
 ### Codigos de saida
 
@@ -113,9 +116,9 @@ docker run --rm -v $(pwd)/backups:/backups \
 Para uso em producao, execute a ferramenta de backup em um agendamento (por exemplo, backup completo diario + incremental a cada hora):
 
 ```bash
-# Daily full backup
-0 2 * * * authagonal-backup --connection-string "$CONN" --output /backups
+# Daily full backup (compressed)
+0 2 * * * authagonal-backup --connection-string "$CONN" --output /backups --gzip
 
-# Hourly incremental
-0 * * * * authagonal-backup --connection-string "$CONN" --output /backups --incremental
+# Hourly incremental (compressed)
+0 * * * * authagonal-backup --connection-string "$CONN" --output /backups --incremental --gzip
 ```

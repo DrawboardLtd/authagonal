@@ -23,6 +23,7 @@ dotnet run --project tools/Authagonal.Backup -- \
 | `--output <dir>` | Directorio de salida (predeterminado: `./backups`) |
 | `--incremental` | Solo respaldar entidades modificadas desde la ultima copia de seguridad |
 | `--tables <t1,t2,...>` | Lista de tablas separadas por comas (predeterminado: todas las tablas de Authagonal) |
+| `--gzip` | Comprimir archivos de copia de seguridad con gzip (`.jsonl.gz`) |
 | `--dry-run` | Mostrar lo que se respaldaria sin escribir |
 
 ### Formato de salida
@@ -37,12 +38,12 @@ backups/
     Grants.jsonl
     ...
     _manifest.json
-  20260329-180000-incr/     (incremental backup)
-    Users.jsonl
+  20260329-180000-incr/     (incremental, compressed)
+    Users.jsonl.gz
     _manifest.json
 ```
 
-Cada archivo `.jsonl` contiene un objeto JSON por linea (uno por entidad de tabla). El archivo `_manifest.json` registra la marca de tiempo de la copia de seguridad, el modo y el recuento de entidades.
+Cada archivo `.jsonl` contiene un objeto JSON por linea (uno por entidad de tabla). Con `--gzip`, los archivos se comprimen como `.jsonl.gz`. El archivo `_manifest.json` registra la marca de tiempo de la copia de seguridad, el modo, la compresion y el recuento de entidades.
 
 ### Copias de seguridad incrementales
 
@@ -73,7 +74,7 @@ dotnet run --project tools/Authagonal.Restore -- \
 | `--connection-string <conn>` | Cadena de conexion de Azure Table Storage (o establecer la variable de entorno `STORAGE_CONNECTION_STRING`) |
 | `--input <dir>` | Directorio de copia de seguridad desde el cual restaurar |
 | `--mode <mode>` | Modo de restauracion: `upsert` (predeterminado), `merge` o `clean` |
-| `--tables <t1,t2,...>` | Lista de tablas a restaurar separadas por comas (predeterminado: todos los archivos `.jsonl` en la copia de seguridad) |
+| `--tables <t1,t2,...>` | Lista de tablas a restaurar separadas por comas (predeterminado: todos los archivos `.jsonl`/`.jsonl.gz` en la copia de seguridad) |
 | `--dry-run` | Mostrar lo que se restauraria sin escribir |
 
 ### Modos de restauracion
@@ -83,6 +84,8 @@ dotnet run --project tools/Authagonal.Restore -- \
 | `upsert` | Insertar o reemplazar cada entidad. Los datos existentes se sobrescriben. |
 | `merge` | Insertar o fusionar. Las propiedades existentes que no estan en la copia de seguridad se conservan. |
 | `clean` | Eliminar todos los datos existentes en cada tabla antes de restaurar. |
+
+Los archivos de copia de seguridad comprimidos con gzip (`.jsonl.gz`) se detectan y descomprimen automaticamente — no se necesitan indicadores adicionales.
 
 ### Codigos de salida
 
@@ -113,9 +116,9 @@ docker run --rm -v $(pwd)/backups:/backups \
 Para uso en produccion, ejecute la herramienta de copia de seguridad de forma programada (por ejemplo, completa diaria + incremental cada hora):
 
 ```bash
-# Daily full backup
-0 2 * * * authagonal-backup --connection-string "$CONN" --output /backups
+# Daily full backup (compressed)
+0 2 * * * authagonal-backup --connection-string "$CONN" --output /backups --gzip
 
-# Hourly incremental
-0 * * * * authagonal-backup --connection-string "$CONN" --output /backups --incremental
+# Hourly incremental (compressed)
+0 * * * * authagonal-backup --connection-string "$CONN" --output /backups --incremental --gzip
 ```

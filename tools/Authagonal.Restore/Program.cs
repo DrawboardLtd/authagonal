@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.IO.Compression;
 using System.Text.Json;
 using Azure;
 using Azure.Core;
@@ -23,8 +24,9 @@ using Azure.Data.Tables;
 //
 // Input:
 //   A backup directory produced by authagonal-backup, containing:
-//     <TableName>.jsonl    (one JSON object per line)
-//     _manifest.json       (optional, metadata)
+//     <TableName>.jsonl       (uncompressed, one JSON object per line)
+//     <TableName>.jsonl.gz    (gzip compressed — auto-detected)
+//     _manifest.json          (optional, metadata)
 // ---------------------------------------------------------------------------
 
 var cliArgs = Environment.GetCommandLineArgs().Skip(1).ToArray();
@@ -47,10 +49,12 @@ if (connectionString is null || inputDir is null || HasFlag(cliArgs, "--help"))
       --connection-string <conn>   Azure Table Storage connection string
                                    (or set STORAGE_CONNECTION_STRING env var)
       --input <dir>                Backup directory to restore from
-      --tables <t1,t2,...>         Comma-separated list of tables to restore (default: all .jsonl files)
+      --tables <t1,t2,...>         Comma-separated list of tables to restore (default: all .jsonl/.jsonl.gz files)
       --mode <mode>                Restore mode: upsert (default), merge, or clean
       --dry-run                    Show what would be restored without writing
       --help                       Show this help
+
+    Gzip-compressed backup files (.jsonl.gz) are detected and decompressed automatically.
 
     Modes:
       upsert   Insert or replace each entity (default)
@@ -72,19 +76,31 @@ if (mode is not ("upsert" or "merge" or "clean"))
     return 1;
 }
 
-// Discover .jsonl files in the input directory
-var jsonlFiles = Directory.GetFiles(inputDir, "*.jsonl")
+// Discover .jsonl and .jsonl.gz files in the input directory
+var jsonlFiles = Directory.GetFiles(inputDir)
     .Where(f => !Path.GetFileName(f).StartsWith("_"))
+    .Where(f => f.EndsWith(".jsonl", StringComparison.OrdinalIgnoreCase)
+             || f.EndsWith(".jsonl.gz", StringComparison.OrdinalIgnoreCase))
     .ToArray();
 
 if (jsonlFiles.Length == 0)
 {
-    Console.Error.WriteLine($"Error: no .jsonl files found in {inputDir}");
+    Console.Error.WriteLine($"Error: no .jsonl or .jsonl.gz files found in {inputDir}");
     return 1;
 }
 
-// Determine which tables to restore
-var availableTables = jsonlFiles.Select(f => Path.GetFileNameWithoutExtension(f)).ToArray();
+// Build table name → file path mapping (prefer .jsonl.gz if both exist)
+var tableFileMap = new Dictionary<string, string>();
+foreach (var f in jsonlFiles)
+{
+    var name = Path.GetFileName(f);
+    var tableName = name.EndsWith(".jsonl.gz", StringComparison.OrdinalIgnoreCase)
+        ? name[..^".jsonl.gz".Length]
+        : name[..^".jsonl".Length];
+    tableFileMap[tableName] = f; // .gz overwrites .jsonl if both present (sorted naturally)
+}
+
+var availableTables = tableFileMap.Keys.ToArray();
 var tablesToRestore = tableFilter ?? availableTables;
 
 // Validate requested tables exist in backup
@@ -136,12 +152,13 @@ long totalErrors = 0;
 
 foreach (var tableName in tablesToRestore)
 {
-    var filePath = Path.Combine(inputDir, $"{tableName}.jsonl");
-    if (!File.Exists(filePath))
+    if (!tableFileMap.TryGetValue(tableName, out var filePath))
     {
         Console.WriteLine($"  {tableName}: file not found (skipped)");
         continue;
     }
+
+    var isCompressed = filePath.EndsWith(".gz", StringComparison.OrdinalIgnoreCase);
 
     var tableClient = serviceClient.GetTableClient(tableName);
     var tableStart = Stopwatch.StartNew();
@@ -176,7 +193,7 @@ foreach (var tableName in tablesToRestore)
     long count = 0;
     long errors = 0;
 
-    await foreach (var line in ReadLinesAsync(filePath))
+    await foreach (var line in ReadLinesAsync(filePath, isCompressed))
     {
         if (string.IsNullOrWhiteSpace(line)) continue;
 
@@ -264,11 +281,21 @@ static string? GetArg(string[] args, string name)
 static bool HasFlag(string[] args, string name)
     => args.Contains(name);
 
-static async IAsyncEnumerable<string> ReadLinesAsync(string path)
+static async IAsyncEnumerable<string> ReadLinesAsync(string path, bool isCompressed)
 {
-    using var reader = new StreamReader(path, System.Text.Encoding.UTF8);
-    while (await reader.ReadLineAsync() is { } line)
-        yield return line;
+    Stream fileStream = new FileStream(path, FileMode.Open, FileAccess.Read);
+    Stream readStream = isCompressed ? new GZipStream(fileStream, CompressionMode.Decompress) : fileStream;
+    using var reader = new StreamReader(readStream, System.Text.Encoding.UTF8);
+    try
+    {
+        while (await reader.ReadLineAsync() is { } line)
+            yield return line;
+    }
+    finally
+    {
+        if (isCompressed) readStream.Dispose();
+        fileStream.Dispose();
+    }
 }
 
 /// <summary>

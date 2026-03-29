@@ -23,6 +23,7 @@ dotnet run --project tools/Authagonal.Backup -- \
 | `--output <dir>` | Output directory (default: `./backups`) |
 | `--incremental` | Only back up entities changed since last backup |
 | `--tables <t1,t2,...>` | Comma-separated list of tables (default: all Authagonal tables) |
+| `--gzip` | Compress backup files with gzip (`.jsonl.gz`) |
 | `--dry-run` | Show what would be backed up without writing |
 
 ### Output format
@@ -37,12 +38,12 @@ backups/
     Grants.jsonl
     ...
     _manifest.json
-  20260329-180000-incr/     (incremental backup)
-    Users.jsonl
+  20260329-180000-incr/     (incremental, compressed)
+    Users.jsonl.gz
     _manifest.json
 ```
 
-Each `.jsonl` file contains one JSON object per line (one per table entity). The `_manifest.json` records the backup timestamp, mode, and entity counts.
+Each `.jsonl` file contains one JSON object per line (one per table entity). With `--gzip`, files are compressed as `.jsonl.gz`. The `_manifest.json` records the backup timestamp, mode, compression, and entity counts.
 
 ### Incremental backups
 
@@ -73,7 +74,7 @@ dotnet run --project tools/Authagonal.Restore -- \
 | `--connection-string <conn>` | Azure Table Storage connection string (or set `STORAGE_CONNECTION_STRING` env var) |
 | `--input <dir>` | Backup directory to restore from |
 | `--mode <mode>` | Restore mode: `upsert` (default), `merge`, or `clean` |
-| `--tables <t1,t2,...>` | Comma-separated list of tables to restore (default: all `.jsonl` files in backup) |
+| `--tables <t1,t2,...>` | Comma-separated list of tables to restore (default: all `.jsonl`/`.jsonl.gz` files in backup) |
 | `--dry-run` | Show what would be restored without writing |
 
 ### Restore modes
@@ -83,6 +84,8 @@ dotnet run --project tools/Authagonal.Restore -- \
 | `upsert` | Insert or replace each entity. Existing data is overwritten. |
 | `merge` | Insert or merge. Existing properties not in the backup are preserved. |
 | `clean` | Delete all existing data in each table before restoring. |
+
+Gzip-compressed backup files (`.jsonl.gz`) are detected and decompressed automatically — no extra flags needed.
 
 ### Exit codes
 
@@ -113,9 +116,9 @@ docker run --rm -v $(pwd)/backups:/backups \
 For production use, run the backup tool on a schedule (e.g. daily full + hourly incremental):
 
 ```bash
-# Daily full backup
-0 2 * * * authagonal-backup --connection-string "$CONN" --output /backups
+# Daily full backup (compressed)
+0 2 * * * authagonal-backup --connection-string "$CONN" --output /backups --gzip
 
-# Hourly incremental
-0 * * * * authagonal-backup --connection-string "$CONN" --output /backups --incremental
+# Hourly incremental (compressed)
+0 * * * * authagonal-backup --connection-string "$CONN" --output /backups --incremental --gzip
 ```

@@ -23,6 +23,7 @@ dotnet run --project tools/Authagonal.Backup -- \
 | `--output <dir>` | Ausgabeverzeichnis (Standard: `./backups`) |
 | `--incremental` | Nur Entitaeten sichern, die seit der letzten Sicherung geaendert wurden |
 | `--tables <t1,t2,...>` | Kommagetrennte Liste von Tabellen (Standard: alle Authagonal-Tabellen) |
+| `--gzip` | Sicherungsdateien mit gzip komprimieren (`.jsonl.gz`) |
 | `--dry-run` | Zeigt an, was gesichert wuerde, ohne zu schreiben |
 
 ### Ausgabeformat
@@ -37,12 +38,12 @@ backups/
     Grants.jsonl
     ...
     _manifest.json
-  20260329-180000-incr/     (incremental backup)
-    Users.jsonl
+  20260329-180000-incr/     (incremental, compressed)
+    Users.jsonl.gz
     _manifest.json
 ```
 
-Jede `.jsonl`-Datei enthaelt ein JSON-Objekt pro Zeile (eines pro Tabellenentitaet). Die Datei `_manifest.json` zeichnet den Sicherungszeitstempel, den Modus und die Anzahl der Entitaeten auf.
+Jede `.jsonl`-Datei enthaelt ein JSON-Objekt pro Zeile (eines pro Tabellenentitaet). Mit `--gzip` werden Dateien als `.jsonl.gz` komprimiert. Die Datei `_manifest.json` zeichnet den Sicherungszeitstempel, den Modus, die Komprimierung und die Anzahl der Entitaeten auf.
 
 ### Inkrementelle Sicherungen
 
@@ -73,7 +74,7 @@ dotnet run --project tools/Authagonal.Restore -- \
 | `--connection-string <conn>` | Azure Table Storage-Verbindungszeichenfolge (oder die Umgebungsvariable `STORAGE_CONNECTION_STRING` setzen) |
 | `--input <dir>` | Sicherungsverzeichnis, aus dem wiederhergestellt werden soll |
 | `--mode <mode>` | Wiederherstellungsmodus: `upsert` (Standard), `merge` oder `clean` |
-| `--tables <t1,t2,...>` | Kommagetrennte Liste der wiederherzustellenden Tabellen (Standard: alle `.jsonl`-Dateien in der Sicherung) |
+| `--tables <t1,t2,...>` | Kommagetrennte Liste der wiederherzustellenden Tabellen (Standard: alle `.jsonl`/`.jsonl.gz`-Dateien in der Sicherung) |
 | `--dry-run` | Zeigt an, was wiederhergestellt wuerde, ohne zu schreiben |
 
 ### Wiederherstellungsmodi
@@ -83,6 +84,8 @@ dotnet run --project tools/Authagonal.Restore -- \
 | `upsert` | Jede Entitaet einfuegen oder ersetzen. Vorhandene Daten werden ueberschrieben. |
 | `merge` | Einfuegen oder zusammenfuehren. Vorhandene Eigenschaften, die nicht in der Sicherung enthalten sind, bleiben erhalten. |
 | `clean` | Alle vorhandenen Daten in jeder Tabelle vor der Wiederherstellung loeschen. |
+
+Mit gzip komprimierte Sicherungsdateien (`.jsonl.gz`) werden automatisch erkannt und dekomprimiert — keine zusaetzlichen Flags erforderlich.
 
 ### Exit-Codes
 
@@ -113,9 +116,9 @@ docker run --rm -v $(pwd)/backups:/backups \
 Fuer den Produktionseinsatz fuehren Sie das Sicherungstool nach einem Zeitplan aus (z. B. taeglich vollstaendig + stuendlich inkrementell):
 
 ```bash
-# Daily full backup
-0 2 * * * authagonal-backup --connection-string "$CONN" --output /backups
+# Daily full backup (compressed)
+0 2 * * * authagonal-backup --connection-string "$CONN" --output /backups --gzip
 
-# Hourly incremental
-0 * * * * authagonal-backup --connection-string "$CONN" --output /backups --incremental
+# Hourly incremental (compressed)
+0 * * * * authagonal-backup --connection-string "$CONN" --output /backups --incremental --gzip
 ```
