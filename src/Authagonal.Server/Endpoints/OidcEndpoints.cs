@@ -71,7 +71,7 @@ public static class OidcEndpoints
             $"&code_challenge={Uri.EscapeDataString(codeChallenge)}" +
             $"&code_challenge_method=S256";
 
-        logger.LogInformation("OIDC login initiated for connection {ConnectionId}", connectionId);
+        logger.LogInformation("OIDC login initiated for connection {ConnectionId}, returnUrl={ReturnUrl}", connectionId, effectiveReturnUrl);
 
         return Results.Redirect(authorizationUrl);
     }

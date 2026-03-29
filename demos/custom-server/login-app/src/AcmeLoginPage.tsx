@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useSearchParams, Link } from 'react-router-dom';
-import { login, ssoCheck, getProviders, getSession, ApiRequestError, useBranding, useTranslation } from '@drawboard/authagonal-login';
+import { login, logout, ssoCheck, getProviders, getSession, ApiRequestError, useBranding, useTranslation, resolveLocalized } from '@drawboard/authagonal-login';
 import type { ExternalProvider } from '@drawboard/authagonal-login';
 
 // Custom login page that adds a Terms of Service checkbox.
@@ -20,7 +20,7 @@ function isSafeReturnUrl(url: string): boolean {
 }
 
 export default function AcmeLoginPage() {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const branding = useBranding();
   const [searchParams] = useSearchParams();
   const returnUrl = searchParams.get('returnUrl') || '';
@@ -150,14 +150,25 @@ export default function AcmeLoginPage() {
       <div>
         <h2 className="auth-title">{t('signedInAs', { name: session.name || session.email })}</h2>
         <p style={{ textAlign: 'center', color: '#6b7280' }}>{t('signedInMessage')}</p>
+        <div className="form-footer" style={{ marginTop: '16px' }}>
+          <button
+            type="button"
+            className="btn-secondary"
+            onClick={() => {
+              logout().then(() => setSession(null)).catch(() => setSession(null));
+            }}
+          >
+            {t('signOut')}
+          </button>
+        </div>
       </div>
     );
   }
 
   return (
     <div>
-      <h2 className="auth-title">{t('welcomeTitle', { appName: branding.appName })}</h2>
-      <p className="auth-subtitle">{t('welcomeSubtitle')}</p>
+      <h2 className="auth-title">{resolveLocalized(branding.welcomeTitle, i18n.language) ?? t('welcomeTitle', { appName: branding.appName })}</h2>
+      <p className="auth-subtitle">{resolveLocalized(branding.welcomeSubtitle, i18n.language) ?? t('welcomeSubtitle')}</p>
 
       {providers.length > 0 && (
         <div className="external-providers">

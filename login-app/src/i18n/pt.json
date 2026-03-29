@@ -49,5 +49,6 @@
   "signedInAs": "Conectado como {{name}}",
   "signedInMessage": "Você já está autenticado.",
   "welcomeTitle": "Bem-vindo ao {{appName}}",
-  "welcomeSubtitle": "Entre para acessar sua conta"
+  "welcomeSubtitle": "Entre para acessar sua conta",
+  "signOut": "Sair"
 }

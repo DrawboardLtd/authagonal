@@ -49,5 +49,6 @@
   "signedInAs": "已登录为 {{name}}",
   "signedInMessage": "您已通过身份验证。",
   "welcomeTitle": "欢迎使用 {{appName}}",
-  "welcomeSubtitle": "登录以访问您的帐户"
+  "welcomeSubtitle": "登录以访问您的帐户",
+  "signOut": "退出登录"
 }

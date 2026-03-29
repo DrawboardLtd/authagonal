@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useSearchParams, Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { login, ssoCheck, getProviders, getSession, ApiRequestError } from '../api';
+import { login, logout, ssoCheck, getProviders, getSession, ApiRequestError } from '../api';
 import { useBranding } from '../branding';
 import type { ExternalProvider } from '../types';
 
@@ -191,6 +191,21 @@ export default function LoginPage() {
       <div>
         <h2 className="auth-title">{t('signedInAs', { name: session.name || session.email })}</h2>
         <p style={{ textAlign: 'center', color: '#6b7280' }}>{t('signedInMessage')}</p>
+        <div className="form-footer" style={{ marginTop: '16px' }}>
+          <button
+            type="button"
+            className="btn-secondary"
+            onClick={() => {
+              logout().then(() => {
+                setSession(null);
+              }).catch(() => {
+                setSession(null);
+              });
+            }}
+          >
+            {t('signOut')}
+          </button>
+        </div>
       </div>
     );
   }

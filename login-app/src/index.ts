@@ -12,8 +12,8 @@ export { default as ForgotPasswordPage } from './pages/ForgotPasswordPage';
 export { default as ResetPasswordPage } from './pages/ResetPasswordPage';
 
 // Branding
-export { loadBranding, BrandingContext, useBranding } from './branding';
-export type { BrandingConfig } from './branding';
+export { loadBranding, BrandingContext, useBranding, resolveLocalized } from './branding';
+export type { BrandingConfig, LocalizedString } from './branding';
 
 // API client
 export { login, logout, forgotPassword, resetPassword, getSession, ssoCheck, getProviders, getPasswordPolicy, ApiRequestError } from './api';
