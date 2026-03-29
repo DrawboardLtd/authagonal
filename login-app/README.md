@@ -1,73 +1,87 @@
-# React + TypeScript + Vite
+# @drawboard/authagonal-login
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+Default login UI for [Authagonal](https://github.com/DrawboardLtd/authagonal) — an OAuth 2.0 / OpenID Connect authentication server backed by Azure Table Storage.
 
-Currently, two official plugins are available:
+## Usage
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+### As a standalone app
 
-## React Compiler
+The login SPA is built into the Authagonal Docker image and served from `wwwroot/`. Configure it at runtime via `branding.json`.
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+### As an npm package
 
-## Expanding the ESLint configuration
+Install the package to build a custom login experience while reusing the API client, branding, i18n, and base components:
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
-
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
-
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```bash
+npm install @drawboard/authagonal-login
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+```tsx
+import {
+  // API client
+  login, logout, ssoCheck, getProviders, getSession, forgotPassword, resetPassword,
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
+  // Branding
+  useBranding, loadBranding, resolveLocalized,
 
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+  // i18n (re-exported to avoid module duplication)
+  useTranslation,
+
+  // Components & pages
+  AuthLayout, LoginPage, ForgotPasswordPage, ResetPasswordPage,
+
+  // Types
+  type BrandingConfig, type LocalizedString, type ExternalProvider,
+} from '@drawboard/authagonal-login';
+import '@drawboard/authagonal-login/styles.css';
 ```
+
+Override individual pages while reusing the rest:
+
+```tsx
+// Custom login page with Terms of Service checkbox
+import { AuthLayout, ForgotPasswordPage, ResetPasswordPage, useTranslation } from '@drawboard/authagonal-login';
+import '@drawboard/authagonal-login/styles.css';
+import MyLoginPage from './MyLoginPage';
+
+function App() {
+  return (
+    <BrowserRouter>
+      <Routes>
+        <Route element={<AuthLayout />}>
+          <Route path="/login" element={<MyLoginPage />} />
+          <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+          <Route path="/reset-password" element={<ResetPasswordPage />} />
+        </Route>
+      </Routes>
+    </BrowserRouter>
+  );
+}
+```
+
+See [`demos/custom-server/login-app`](https://github.com/DrawboardLtd/authagonal/tree/master/demos/custom-server/login-app) for a complete example.
+
+## Branding
+
+Place a `branding.json` in your public directory:
+
+```json
+{
+  "appName": "My App",
+  "logoUrl": "/logo.png",
+  "primaryColor": "#2563eb",
+  "showForgotPassword": true,
+  "welcomeTitle": { "en": "Welcome", "es": "Bienvenido" },
+  "welcomeSubtitle": { "en": "Sign in to continue", "es": "Inicia sesion para continuar" }
+}
+```
+
+String fields like `welcomeTitle` accept either a plain string or a `{ lang: text }` object for per-language overrides.
+
+## i18n
+
+Built-in support for 7 languages: English, Chinese (Simplified), German, French, Spanish, Vietnamese, Portuguese. Language is auto-detected from the browser and persisted to localStorage. Add `?lng=es` to force a language.
+
+## License
+
+Proprietary — Drawboard Ltd.

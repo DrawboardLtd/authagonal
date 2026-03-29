@@ -1,5 +1,7 @@
 # Authagonal Demos
 
+**Live demo: [demo.authagonal.drawboard.com](https://demo.authagonal.drawboard.com)** (auth server: [sso.demo.authagonal.drawboard.com](https://sso.demo.authagonal.drawboard.com))
+
 Two demo projects showing how to use Authagonal:
 
 ## 1. Custom Server (`custom-server/`)

@@ -8,7 +8,7 @@
 
 Architecture: API-only ASP.NET Core server + React login SPA, packaged as a single Docker image. Can also be embedded as a library in your own ASP.NET project.
 
-**[Documentation](https://drawboardltd.github.io/authagonal/)**
+**[Documentation](https://drawboardltd.github.io/authagonal/)** · **[Live Demo](https://demo.authagonal.drawboard.com)**
 
 ## Quick Start
 

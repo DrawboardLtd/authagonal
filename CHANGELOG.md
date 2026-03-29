@@ -1,13 +1,36 @@
 # Changelog
 
-## [Unreleased] — 2026-03-28
+## [0.1.3] — 2026-03-29
+
+### Changed
+
+- **Demo consumes published packages** — demo `CustomAuthServer` now references NuGet packages from nuget.org and `@drawboard/authagonal-login` from npm, instead of building from source. The Docker build no longer needs the login-app source tree.
+- **CI release workflow** — consolidated `nuget.yml`, `npm.yml`, and tag-triggered Docker builds into a single `release.yml` with proper job ordering: publish NuGet → wait for indexing → publish npm → wait for indexing → build Docker images → deploy. Eliminates the race condition where Docker builds could start before packages were available on registries.
+- **Docker workflow** — `docker.yml` now only triggers on `master` branch pushes (tag builds handled by `release.yml`).
+
+## [0.1.1] — 2026-03-29
+
+### Fixed
+
+- **i18n module duplication** — consumers importing `useTranslation` from their own `react-i18next` copy got a different instance than the one initialized by the base package. Fixed by re-exporting `useTranslation` from `@drawboard/authagonal-login`.
+- **OAuth returnUrl dropped on SSO redirect** — the authorize endpoint generated a full URL as the returnUrl, which was rejected by both client-side `isSafeReturnUrl()` and server-side `SanitizeReturnUrl()` (both require relative paths). Fixed by using a relative path.
+- **Language detection not persisting** — added `localStorage` to `i18next-browser-languagedetector` order and caches arrays.
+- **OIDC error display** — login page now reads `error` / `error_description` from URL params and displays them.
+
+### Added
+
+- **Localizable branding strings** — `welcomeTitle` and `welcomeSubtitle` in `branding.json` now accept `LocalizedString` (a plain string or a `{ "en": "...", "es": "..." }` object). New `resolveLocalized()` helper resolves the best match for the current language.
+- **Sign-out button** — login page detects existing sessions and shows a "Signed in as" view with a sign-out button, instead of showing the login form.
+- **NuGet package READMEs** — `Authagonal.Server`, `Authagonal.Core`, and `Authagonal.Storage` now include README files displayed on nuget.org.
+- **i18n keys** — added `signedInAs`, `signedInMessage`, `signOut`, `welcomeTitle`, `welcomeSubtitle`, `continueWith`, `or` to all 7 language files.
+
+## [0.1.0] — 2026-03-29
 
 ### Added
 
 - **Docker packaging** — multi-stage `Dockerfile` builds the React SPA and .NET server into a single image. SPA served as static files from `wwwroot/` on the same origin as the API.
 - **`Dockerfile.migration`** — separate image for the SQL Server → Table Storage migration tool.
 - **`docker-compose.yml`** — local development setup with Azurite storage emulator.
-- **`.dockerignore`** — excludes build artifacts, node_modules, .git, IDE files.
 - **Static file serving** — `UseDefaultFiles()`, `UseStaticFiles()`, and `MapFallbackToFile("index.html")` added to `Program.cs` for SPA hosting.
 - **TCC provisioning system** — replaces the single-webhook provisioning with a Try-Confirm-Cancel pattern:
   - N provisioning apps defined in configuration (`ProvisioningApps` section) with callback URLs and API keys.
@@ -44,6 +67,8 @@
 - **`ProviderSeedService`** — `IHostedService` that seeds SAML and OIDC providers from configuration, with secret protection via `ISecretProvider`.
 - **Login-app component library exports** — `@drawboard/authagonal-login` now exports all components, pages, branding hooks, API client, and types via `src/index.ts` with proper `exports` field in package.json. Consumers can `npm install` and import individual pieces.
 - **CI/CD** — GitHub Actions workflows for Docker Hub publishing (`drawboardci/authagonal`, `drawboardci/authagonal-migration`) and npm publishing (`@drawboard/authagonal-login`).
+- **i18n** — login SPA supports 7 languages (English, Chinese Simplified, German, French, Spanish, Vietnamese, Portuguese) with browser detection and language selector.
+- **NuGet packaging** — `Authagonal.Server`, `Authagonal.Core`, `Authagonal.Storage` published to nuget.org.
 
 ### Changed
 
