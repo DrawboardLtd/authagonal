@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.4] — 2026-03-29
+
+### Added
+
+- **npm package README** — `@drawboard/authagonal-login` now includes a comprehensive README covering installation, quick start, page customization, full API client reference, branding, i18n, and exports.
+- **Docs favicon** — documentation site now uses the Authagonal logo as its browser tab icon.
+
 ## [0.1.3] — 2026-03-29
 
 ### Changed
