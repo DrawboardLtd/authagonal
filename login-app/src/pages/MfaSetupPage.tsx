@@ -43,7 +43,7 @@ export default function MfaSetupPage() {
   const [loading, setLoading] = useState(true);
 
   // TOTP setup state
-  const [totpSetup, setTotpSetup] = useState<{ setupToken: string; qrCodeDataUri: string } | null>(null);
+  const [totpSetup, setTotpSetup] = useState<{ setupToken: string; qrCodeDataUri: string; manualKey: string } | null>(null);
   const [totpCode, setTotpCode] = useState('');
   const [totpLoading, setTotpLoading] = useState(false);
 
