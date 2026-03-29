@@ -101,9 +101,17 @@ public static class MfaSetupEndpoints
             email = u?.Email ?? "";
         }
 
-        // Check if TOTP already enrolled
+        // Check if TOTP already enrolled (exclude pending setups)
         var credentials = await mfaStore.GetCredentialsAsync(userId, ct);
-        if (credentials.Any(c => c.Type == MfaCredentialType.Totp))
+
+        // Clean up any orphaned pending TOTP setup credentials
+        var pendingTotp = credentials
+            .Where(c => c.Type == MfaCredentialType.Totp && c.Name == "TOTP (pending)")
+            .ToList();
+        foreach (var pending in pendingTotp)
+            await mfaStore.DeleteCredentialAsync(userId, pending.Id, ct);
+
+        if (credentials.Any(c => c.Type == MfaCredentialType.Totp && c.Name != "TOTP (pending)"))
             return Results.Json(new { error = "totp_already_enrolled" }, statusCode: 409);
 
         // Generate secret
@@ -210,6 +218,18 @@ public static class MfaSetupEndpoints
         if (user is null) return Results.Unauthorized();
 
         var existingCredentials = await mfaStore.GetCredentialsAsync(userId, ct);
+
+        // Clean up any orphaned pending WebAuthn setup credentials (from cancelled attempts)
+        var pendingWebAuthn = existingCredentials
+            .Where(c => c.Type == MfaCredentialType.WebAuthn && c.Name == "WebAuthn (pending)")
+            .ToList();
+        foreach (var pending in pendingWebAuthn)
+            await mfaStore.DeleteCredentialAsync(userId, pending.Id, ct);
+
+        // Re-fetch if we cleaned up any
+        if (pendingWebAuthn.Count > 0)
+            existingCredentials = await mfaStore.GetCredentialsAsync(userId, ct);
+
         var (options, setupToken) = webAuthnService.CreateAttestationOptions(user, existingCredentials);
 
         // Store the options JSON temporarily in a credential so we can verify later
