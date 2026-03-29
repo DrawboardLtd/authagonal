@@ -1,3 +1,4 @@
+using Authagonal.Core.Models;
 using Authagonal.Core.Services;
 
 namespace Authagonal.Server.Services;
@@ -11,4 +12,6 @@ public sealed class NullAuthHook : IAuthHook
     public Task OnUserCreatedAsync(string userId, string email, string createdVia, CancellationToken ct) => Task.CompletedTask;
     public Task OnLoginFailedAsync(string email, string reason, CancellationToken ct) => Task.CompletedTask;
     public Task OnTokenIssuedAsync(string? subjectId, string clientId, string grantType, CancellationToken ct) => Task.CompletedTask;
+    public Task<MfaPolicy> ResolveMfaPolicyAsync(string userId, string email, MfaPolicy clientPolicy, string clientId, CancellationToken ct) => Task.FromResult(clientPolicy);
+    public Task OnMfaVerifiedAsync(string userId, string email, string mfaMethod, CancellationToken ct) => Task.CompletedTask;
 }

@@ -26,6 +26,7 @@ public sealed class UserEntity : ITableEntity
     public bool LockoutEnabled { get; set; }
     public DateTimeOffset? LockoutEnd { get; set; }
     public string? SecurityStamp { get; set; }
+    public bool MfaEnabled { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset? UpdatedAt { get; set; }
 
@@ -46,6 +47,7 @@ public sealed class UserEntity : ITableEntity
         LockoutEnabled = user.LockoutEnabled,
         LockoutEnd = user.LockoutEnd,
         SecurityStamp = user.SecurityStamp,
+        MfaEnabled = user.MfaEnabled,
         CreatedAt = user.CreatedAt,
         UpdatedAt = user.UpdatedAt,
     };
@@ -66,6 +68,7 @@ public sealed class UserEntity : ITableEntity
         LockoutEnabled = LockoutEnabled,
         LockoutEnd = LockoutEnd,
         SecurityStamp = SecurityStamp,
+        MfaEnabled = MfaEnabled,
         CreatedAt = CreatedAt,
         UpdatedAt = UpdatedAt,
     };

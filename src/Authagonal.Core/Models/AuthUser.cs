@@ -16,6 +16,7 @@ public sealed class AuthUser
     public bool LockoutEnabled { get; set; }
     public DateTimeOffset? LockoutEnd { get; set; }
     public string? SecurityStamp { get; set; }
+    public bool MfaEnabled { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset? UpdatedAt { get; set; }
 }

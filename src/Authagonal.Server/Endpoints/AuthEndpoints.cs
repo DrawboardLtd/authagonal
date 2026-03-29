@@ -1,12 +1,15 @@
 using System.Security.Claims;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 using Authagonal.Core.Models;
 using Authagonal.Core.Services;
 using Authagonal.Core.Stores;
 using Authagonal.Server.Services;
+using Fido2NetLib;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
+using Microsoft.AspNetCore.Http.Extensions;
 using Microsoft.Extensions.Localization;
 
 namespace Authagonal.Server.Endpoints;
@@ -37,7 +40,10 @@ public static class AuthEndpoints
         HttpContext httpContext,
         IUserStore userStore,
         ISsoDomainStore ssoDomainStore,
+        IClientStore clientStore,
+        IMfaStore mfaStore,
         PasswordHasher passwordHasher,
+        WebAuthnService webAuthnService,
         IAuthHook authHook,
         ILogger<Program> logger,
         CancellationToken ct)
@@ -113,30 +119,127 @@ public static class AuthEndpoints
 
         await userStore.UpdateAsync(user, ct);
 
-        // Create claims and sign in
-        var name = $"{user.FirstName} {user.LastName}".Trim();
-        var claims = new List<Claim>
+        // --- MFA check ---
+        // Resolve client from returnUrl (OAuth authorize context carries client_id)
+        var returnUrl = httpContext.Request.Query["returnUrl"].FirstOrDefault() ?? "";
+        var clientId = ExtractClientIdFromReturnUrl(returnUrl);
+        OAuthClient? client = null;
+        if (!string.IsNullOrEmpty(clientId))
+            client = await clientStore.GetAsync(clientId, ct);
+
+        var clientPolicy = client?.MfaPolicy ?? MfaPolicy.Disabled;
+        var effectivePolicy = await authHook.ResolveMfaPolicyAsync(user.Id, user.Email, clientPolicy, clientId ?? "", ct);
+
+        if (effectivePolicy != MfaPolicy.Disabled)
         {
-            new(ClaimTypes.NameIdentifier, user.Id),
-            new("sub", user.Id),
-            new(ClaimTypes.Email, user.Email),
-            new(ClaimTypes.Name, name),
-            new("security_stamp", user.SecurityStamp ?? "")
-        };
+            if (effectivePolicy == MfaPolicy.Required && !user.MfaEnabled)
+            {
+                // User must set up MFA — issue a setup token (reuses MfaChallenge with longer TTL)
+                var setupChallenge = new MfaChallenge
+                {
+                    ChallengeId = Convert.ToHexString(RandomNumberGenerator.GetBytes(32)).ToLowerInvariant(),
+                    UserId = user.Id,
+                    ClientId = clientId,
+                    ReturnUrl = returnUrl,
+                    CreatedAt = DateTimeOffset.UtcNow,
+                    ExpiresAt = DateTimeOffset.UtcNow.AddMinutes(15),
+                };
+                await mfaStore.StoreChallengeAsync(setupChallenge, ct);
 
-        if (!string.IsNullOrWhiteSpace(user.OrganizationId))
-            claims.Add(new Claim("org_id", user.OrganizationId));
+                return Results.Ok(new { mfaSetupRequired = true, setupToken = setupChallenge.ChallengeId });
+            }
 
-        var identity = new ClaimsIdentity(claims, CookieAuthenticationDefaults.AuthenticationScheme);
-        var principal = new ClaimsPrincipal(identity);
+            if (user.MfaEnabled)
+            {
+                // Create MFA challenge
+                var credentials = await mfaStore.GetCredentialsAsync(user.Id, ct);
+                var methods = credentials
+                    .Where(c => !c.IsConsumed)
+                    .Select(c => c.Type)
+                    .Distinct()
+                    .Select(t => t.ToString().ToLowerInvariant())
+                    .ToList();
 
-        await httpContext.SignInAsync(CookieAuthenticationDefaults.AuthenticationScheme, principal);
+                var challenge = new MfaChallenge
+                {
+                    ChallengeId = Convert.ToHexString(RandomNumberGenerator.GetBytes(32)).ToLowerInvariant(),
+                    UserId = user.Id,
+                    ClientId = clientId,
+                    ReturnUrl = returnUrl,
+                    CreatedAt = DateTimeOffset.UtcNow,
+                    ExpiresAt = DateTimeOffset.UtcNow.AddMinutes(5),
+                };
 
+                // Generate WebAuthn assertion options if the user has passkeys
+                object? webAuthnOptions = null;
+                var webAuthnCreds = credentials.Where(c => c.Type == MfaCredentialType.WebAuthn).ToList();
+                if (webAuthnCreds.Count > 0)
+                {
+                    var assertionOptions = webAuthnService.CreateAssertionOptions(webAuthnCreds);
+                    challenge.WebAuthnChallenge = assertionOptions.ToJson();
+                    webAuthnOptions = assertionOptions;
+                }
+
+                await mfaStore.StoreChallengeAsync(challenge, ct);
+
+                logger.LogInformation("MFA challenge created for user {UserId}", user.Id);
+
+                return Results.Ok(new
+                {
+                    mfaRequired = true,
+                    challengeId = challenge.ChallengeId,
+                    methods,
+                    webAuthn = webAuthnOptions,
+                });
+            }
+        }
+
+        // No MFA — sign cookie directly
+        await CookieSignInHelper.SignInAsync(httpContext, user);
+
+        var name = CookieSignInHelper.GetDisplayName(user);
         logger.LogInformation("User {UserId} ({Email}) signed in", user.Id, user.Email);
 
         await authHook.OnUserAuthenticatedAsync(user.Id, user.Email, "password", ct: ct);
 
         return Results.Ok(new { userId = user.Id, email = user.Email, name });
+    }
+
+    internal static string? ExtractClientIdFromReturnUrl(string? returnUrl)
+    {
+        if (string.IsNullOrWhiteSpace(returnUrl))
+            return null;
+
+        try
+        {
+            // returnUrl is typically a relative path like /connect/authorize?client_id=foo&...
+            var uri = new Uri(returnUrl, UriKind.RelativeOrAbsolute);
+            string? query;
+
+            if (uri.IsAbsoluteUri)
+            {
+                query = uri.Query;
+            }
+            else
+            {
+                // Parse as relative URI
+                var qIndex = returnUrl.IndexOf('?');
+                query = qIndex >= 0 ? returnUrl[qIndex..] : null;
+            }
+
+            if (query is null)
+                return null;
+
+            var parsed = Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(query);
+            if (parsed.TryGetValue("client_id", out var clientIdValues))
+                return clientIdValues.FirstOrDefault();
+
+            return null;
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     private static async Task<IResult> LogoutAsync(HttpContext httpContext, CancellationToken ct)

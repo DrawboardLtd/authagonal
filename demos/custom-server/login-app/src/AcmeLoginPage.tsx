@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { useSearchParams, Link } from 'react-router-dom';
+import { useSearchParams, Link, useNavigate } from 'react-router-dom';
 import { login, logout, ssoCheck, getProviders, getSession, ApiRequestError, useBranding, useTranslation, resolveLocalized } from '@drawboard/authagonal-login';
 import type { ExternalProvider } from '@drawboard/authagonal-login';
 
@@ -22,6 +22,7 @@ function isSafeReturnUrl(url: string): boolean {
 export default function AcmeLoginPage() {
   const { t, i18n } = useTranslation();
   const branding = useBranding();
+  const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const returnUrl = searchParams.get('returnUrl') || '';
   const loginHint = searchParams.get('login_hint') || '';
@@ -112,7 +113,28 @@ export default function AcmeLoginPage() {
     setError('');
     setLoading(true);
     try {
-      await login(email, password);
+      const result = await login(email, password, returnUrl || undefined);
+
+      if (result.mfaRequired && result.challengeId) {
+        const params = new URLSearchParams({
+          challengeId: result.challengeId,
+          ...(returnUrl ? { returnUrl } : {}),
+          ...(result.methods ? { methods: result.methods.join(',') } : {}),
+          ...(result.webAuthn ? { webAuthn: JSON.stringify(result.webAuthn) } : {}),
+        });
+        navigate(`/mfa-challenge?${params.toString()}`);
+        return;
+      }
+
+      if (result.mfaSetupRequired) {
+        const params = new URLSearchParams({
+          ...(returnUrl ? { returnUrl } : {}),
+          ...(result.setupToken ? { setupToken: result.setupToken } : {}),
+        });
+        navigate(`/mfa-setup?${params.toString()}`);
+        return;
+      }
+
       window.location.href = returnUrl && isSafeReturnUrl(returnUrl) ? returnUrl : '/';
     } catch (err) {
       if (err instanceof ApiRequestError) {
@@ -274,6 +296,15 @@ export default function AcmeLoginPage() {
                 <Link to={forgotPasswordLink} className="link">{t('forgotPassword')}</Link>
               </div>
             )}
+
+            <div className="form-footer">
+              <span style={{ color: '#6b7280', fontSize: '14px' }}>
+                Don't have an account?{' '}
+                <Link to={returnUrl ? `/register?returnUrl=${encodeURIComponent(returnUrl)}` : '/register'} className="link">
+                  Create one
+                </Link>
+              </span>
+            </div>
           </>
         )}
       </form>

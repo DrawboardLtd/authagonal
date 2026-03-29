@@ -10,16 +10,18 @@ export { default as AuthLayout } from './components/AuthLayout';
 export { default as LoginPage } from './pages/LoginPage';
 export { default as ForgotPasswordPage } from './pages/ForgotPasswordPage';
 export { default as ResetPasswordPage } from './pages/ResetPasswordPage';
+export { default as MfaChallengePage } from './pages/MfaChallengePage';
+export { default as MfaSetupPage } from './pages/MfaSetupPage';
 
 // Branding
 export { loadBranding, BrandingContext, useBranding, resolveLocalized } from './branding';
 export type { BrandingConfig, LocalizedString } from './branding';
 
 // API client
-export { login, logout, forgotPassword, resetPassword, getSession, ssoCheck, getProviders, getPasswordPolicy, ApiRequestError } from './api';
+export { login, logout, forgotPassword, resetPassword, getSession, ssoCheck, getProviders, getPasswordPolicy, mfaVerify, mfaStatus, mfaTotpSetup, mfaTotpConfirm, mfaWebAuthnSetup, mfaWebAuthnConfirm, mfaRecoveryGenerate, mfaDeleteCredential, ApiRequestError } from './api';
 
 // Types
-export type { LoginResponse, ApiError, SessionResponse, SsoCheckResponse, ExternalProvider, ProvidersResponse, PasswordPolicyRule, PasswordPolicyResponse } from './types';
+export type { LoginResponse, ApiError, SessionResponse, SsoCheckResponse, ExternalProvider, ProvidersResponse, PasswordPolicyRule, PasswordPolicyResponse, MfaLoginResponse, MfaVerifyResponse, MfaStatusResponse, MfaMethod, MfaTotpSetupResponse, MfaRecoveryGenerateResponse, MfaWebAuthnSetupResponse, MfaWebAuthnConfirmResponse } from './types';
 
 // i18n — re-export so consumers use the same react-i18next instance
 export { default as i18n } from './i18n';

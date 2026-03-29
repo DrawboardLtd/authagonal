@@ -1,3 +1,4 @@
+using Authagonal.Core.Models;
 using Authagonal.Core.Services;
 
 namespace CustomAuthServer.Services;
@@ -49,6 +50,18 @@ public sealed class AuditAuthHook(ILogger<AuditAuthHook> logger) : IAuthHook
         logger.LogInformation(
             "[AUDIT] Token issued: subjectId={SubjectId}, clientId={ClientId}, grantType={GrantType}",
             subjectId ?? "(client-credentials)", clientId, grantType);
+
+        return Task.CompletedTask;
+    }
+
+    public Task<MfaPolicy> ResolveMfaPolicyAsync(string userId, string email, MfaPolicy clientPolicy, string clientId, CancellationToken ct)
+        => Task.FromResult(clientPolicy);
+
+    public Task OnMfaVerifiedAsync(string userId, string email, string mfaMethod, CancellationToken ct)
+    {
+        logger.LogInformation(
+            "[AUDIT] MFA verified: userId={UserId}, email={Email}, method={MfaMethod}",
+            userId, email, mfaMethod);
 
         return Task.CompletedTask;
     }

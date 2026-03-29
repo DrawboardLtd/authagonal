@@ -10,6 +10,7 @@ using Authagonal.Server.Services.Saml;
 using Authagonal.Storage;
 using Azure.Data.Tables;
 using Azure.Storage.Blobs;
+using Fido2NetLib;
 using System.Globalization;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
@@ -96,6 +97,19 @@ public static class AuthagonalExtensions
         services.AddHttpClient("Provisioning");
         services.AddHostedService<ClientSeedService>();
         services.AddHostedService<ProviderSeedService>();
+        services.AddSingleton<TotpService>();
+        services.AddSingleton<RecoveryCodeService>();
+        services.AddSingleton<WebAuthnService>();
+
+        // WebAuthn (FIDO2)
+        var issuer = configuration["Issuer"] ?? "https://localhost";
+        var issuerUri = new Uri(issuer);
+        services.AddFido2(options =>
+        {
+            options.ServerDomain = issuerUri.Host;
+            options.ServerName = "Authagonal";
+            options.Origins = new HashSet<string> { issuer.TrimEnd('/') };
+        });
 
         // Extensibility points — TryAdd so custom registrations take precedence
         services.TryAddSingleton<IEmailService, NullEmailService>();
@@ -321,9 +335,12 @@ public static class AuthagonalExtensions
             app.MapUserAdminEndpoints();
             app.MapSsoAdminEndpoints();
             app.MapTokenAdminEndpoints();
+            app.MapMfaAdminEndpoints();
         }
 
         app.MapAuthEndpoints();
+        app.MapMfaEndpoints();
+        app.MapMfaSetupEndpoints();
         app.MapSamlEndpoints();
         app.MapOidcEndpoints();
 

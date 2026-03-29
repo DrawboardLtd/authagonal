@@ -23,6 +23,9 @@ public static class ServiceCollectionExtensions
     private const string SamlReplayCacheTableName = "SamlReplayCache";
     private const string OidcStateStoreTableName = "OidcStateStore";
     private const string UserProvisionsTableName = "UserProvisions";
+    private const string MfaCredentialsTableName = "MfaCredentials";
+    private const string MfaChallengesTableName = "MfaChallenges";
+    private const string MfaWebAuthnIndexTableName = "MfaWebAuthnIndex";
 
     public static IServiceCollection AddTableStorage(this IServiceCollection services, string connectionString)
     {
@@ -49,6 +52,9 @@ public static class ServiceCollectionExtensions
         var samlReplayCache = EnsureTable(serviceClient, SamlReplayCacheTableName);
         var oidcStateStore = EnsureTable(serviceClient, OidcStateStoreTableName);
         var userProvisions = EnsureTable(serviceClient, UserProvisionsTableName);
+        var mfaCredentials = EnsureTable(serviceClient, MfaCredentialsTableName);
+        var mfaChallenges = EnsureTable(serviceClient, MfaChallengesTableName);
+        var mfaWebAuthnIndex = EnsureTable(serviceClient, MfaWebAuthnIndexTableName);
 
         // Register store implementations as singletons.
         services.AddSingleton<IUserStore>(new TableUserStore(users, userEmails, userLogins));
@@ -60,6 +66,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<ISamlProviderStore>(new TableSamlProviderStore(samlProviders));
         services.AddSingleton<IOidcProviderStore>(new TableOidcProviderStore(oidcProviders));
         services.AddSingleton<IUserProvisionStore>(new TableUserProvisionStore(userProvisions));
+        services.AddSingleton<IMfaStore>(new TableMfaStore(mfaCredentials, mfaChallenges, mfaWebAuthnIndex));
 
         // Register grant table clients as keyed singletons for the reconciliation service.
         services.AddKeyedSingleton("Grants", grants);

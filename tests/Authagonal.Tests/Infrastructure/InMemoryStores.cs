@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Security.Cryptography;
 using Authagonal.Core.Models;
 using Authagonal.Core.Stores;
 
@@ -275,5 +276,102 @@ public sealed class InMemoryUserProvisionStore : IUserProvisionStore
         foreach (var key in _provisions.Where(kvp => kvp.Value.UserId == userId).Select(kvp => kvp.Key))
             _provisions.TryRemove(key, out _);
         return Task.CompletedTask;
+    }
+}
+
+public sealed class InMemoryMfaStore : IMfaStore
+{
+    private readonly ConcurrentDictionary<string, MfaCredential> _credentials = new(); // key: userId|credentialId
+    private readonly ConcurrentDictionary<string, MfaChallenge> _challenges = new();    // key: challengeId
+    private readonly ConcurrentDictionary<string, (string UserId, string CredentialId)> _webAuthnIndex = new(); // key: sha256(webAuthnCredId) hex
+
+    public Task<IReadOnlyList<MfaCredential>> GetCredentialsAsync(string userId, CancellationToken ct = default)
+    {
+        var creds = _credentials.Values.Where(c => c.UserId == userId).ToList();
+        return Task.FromResult<IReadOnlyList<MfaCredential>>(creds);
+    }
+
+    public Task<MfaCredential?> GetCredentialAsync(string userId, string credentialId, CancellationToken ct = default)
+        => Task.FromResult(_credentials.GetValueOrDefault($"{userId}|{credentialId}"));
+
+    public Task CreateCredentialAsync(MfaCredential credential, CancellationToken ct = default)
+    {
+        _credentials[$"{credential.UserId}|{credential.Id}"] = credential;
+        return Task.CompletedTask;
+    }
+
+    public Task UpdateCredentialAsync(MfaCredential credential, CancellationToken ct = default)
+    {
+        _credentials[$"{credential.UserId}|{credential.Id}"] = credential;
+        return Task.CompletedTask;
+    }
+
+    public Task DeleteCredentialAsync(string userId, string credentialId, CancellationToken ct = default)
+    {
+        _credentials.TryRemove($"{userId}|{credentialId}", out _);
+        return Task.CompletedTask;
+    }
+
+    public Task DeleteAllCredentialsAsync(string userId, CancellationToken ct = default)
+    {
+        foreach (var key in _credentials.Where(kvp => kvp.Value.UserId == userId).Select(kvp => kvp.Key))
+            _credentials.TryRemove(key, out _);
+        return Task.CompletedTask;
+    }
+
+    public Task<(string UserId, string CredentialId)?> FindByWebAuthnCredentialIdAsync(byte[] webAuthnCredentialId, CancellationToken ct = default)
+    {
+        var hash = HashWebAuthnCredentialId(webAuthnCredentialId);
+        if (_webAuthnIndex.TryGetValue(hash, out var mapping))
+            return Task.FromResult<(string, string)?>(mapping);
+        return Task.FromResult<(string UserId, string CredentialId)?>(null);
+    }
+
+    public Task StoreWebAuthnCredentialIdMappingAsync(byte[] webAuthnCredentialId, string userId, string credentialId, CancellationToken ct = default)
+    {
+        var hash = HashWebAuthnCredentialId(webAuthnCredentialId);
+        _webAuthnIndex[hash] = (userId, credentialId);
+        return Task.CompletedTask;
+    }
+
+    public Task DeleteWebAuthnCredentialIdMappingAsync(byte[] webAuthnCredentialId, CancellationToken ct = default)
+    {
+        var hash = HashWebAuthnCredentialId(webAuthnCredentialId);
+        _webAuthnIndex.TryRemove(hash, out _);
+        return Task.CompletedTask;
+    }
+
+    public Task StoreChallengeAsync(MfaChallenge challenge, CancellationToken ct = default)
+    {
+        _challenges[challenge.ChallengeId] = challenge;
+        return Task.CompletedTask;
+    }
+
+    public Task<MfaChallenge?> GetChallengeAsync(string challengeId, CancellationToken ct = default)
+    {
+        if (!_challenges.TryGetValue(challengeId, out var challenge))
+            return Task.FromResult<MfaChallenge?>(null);
+
+        if (challenge.IsConsumed || challenge.ExpiresAt <= DateTimeOffset.UtcNow)
+            return Task.FromResult<MfaChallenge?>(null);
+
+        return Task.FromResult<MfaChallenge?>(challenge);
+    }
+
+    public Task<MfaChallenge?> ConsumeChallengeAsync(string challengeId, CancellationToken ct = default)
+    {
+        if (!_challenges.TryRemove(challengeId, out var challenge))
+            return Task.FromResult<MfaChallenge?>(null);
+
+        if (challenge.IsConsumed || challenge.ExpiresAt <= DateTimeOffset.UtcNow)
+            return Task.FromResult<MfaChallenge?>(null);
+
+        return Task.FromResult<MfaChallenge?>(challenge);
+    }
+
+    private static string HashWebAuthnCredentialId(byte[] credentialId)
+    {
+        var hash = SHA256.HashData(credentialId);
+        return Convert.ToHexString(hash).ToLowerInvariant();
     }
 }

@@ -13,6 +13,7 @@ using Authagonal.Server.Services;
 using Authagonal.Server.Services.Oidc;
 using Authagonal.Server.Services.Saml;
 using Azure.Data.Tables;
+using Fido2NetLib;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
@@ -50,6 +51,7 @@ public sealed class AuthagonalTestFactory : IAsyncDisposable
     public InMemorySamlProviderStore SamlProviderStore { get; } = new();
     public InMemoryOidcProviderStore OidcProviderStore { get; } = new();
     public InMemoryUserProvisionStore UserProvisionStore { get; } = new();
+    public InMemoryMfaStore MfaStore { get; } = new();
     public TestEmailService EmailService { get; } = new();
     public TestAuthHook AuthHook { get; } = new();
 
@@ -184,6 +186,7 @@ public sealed class AuthagonalTestFactory : IAsyncDisposable
         services.AddSingleton<ISamlProviderStore>(SamlProviderStore);
         services.AddSingleton<IOidcProviderStore>(OidcProviderStore);
         services.AddSingleton<IUserProvisionStore>(UserProvisionStore);
+        services.AddSingleton<IMfaStore>(MfaStore);
 
         // Extensibility test doubles
         services.AddSingleton<IEmailService>(EmailService);
@@ -201,6 +204,15 @@ public sealed class AuthagonalTestFactory : IAsyncDisposable
         services.AddHostedService(sp => sp.GetRequiredService<KeyManager>());
         services.AddScoped<AuthorizationCodeService>();
         services.AddScoped<ITokenService, TokenService>();
+        services.AddSingleton<TotpService>();
+        services.AddSingleton<RecoveryCodeService>();
+        services.AddSingleton<WebAuthnService>();
+        services.AddFido2(options =>
+        {
+            options.ServerDomain = "test.authagonal.local";
+            options.ServerName = "Authagonal Test";
+            options.Origins = new HashSet<string> { TestIssuer };
+        });
         services.AddHttpClient("Provisioning");
         services.AddHttpClient("SamlMetadata");
         services.AddHttpClient("OidcDiscovery");

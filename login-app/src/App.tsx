@@ -3,6 +3,8 @@ import AuthLayout from './components/AuthLayout';
 import LoginPage from './pages/LoginPage';
 import ForgotPasswordPage from './pages/ForgotPasswordPage';
 import ResetPasswordPage from './pages/ResetPasswordPage';
+import MfaChallengePage from './pages/MfaChallengePage';
+import MfaSetupPage from './pages/MfaSetupPage';
 
 export default function App() {
   return (
@@ -12,6 +14,8 @@ export default function App() {
           <Route path="/login" element={<LoginPage />} />
           <Route path="/forgot-password" element={<ForgotPasswordPage />} />
           <Route path="/reset-password" element={<ResetPasswordPage />} />
+          <Route path="/mfa-challenge" element={<MfaChallengePage />} />
+          <Route path="/mfa-setup" element={<MfaSetupPage />} />
           <Route path="*" element={<Navigate to="/login" replace />} />
         </Routes>
       </AuthLayout>

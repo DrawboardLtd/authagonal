@@ -30,6 +30,8 @@ bld/
 # Node / React
 node_modules/
 login-app/dist/
+demos/**/dist/
+demos/**/wwwroot/
 
 # IDE
 .idea/

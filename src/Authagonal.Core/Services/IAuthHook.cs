@@ -1,3 +1,5 @@
+using Authagonal.Core.Models;
+
 namespace Authagonal.Core.Services;
 
 /// <summary>
@@ -23,4 +25,15 @@ public interface IAuthHook
     /// <summary>Called when tokens are issued via the token endpoint.
     /// Throw to reject the token issuance.</summary>
     Task OnTokenIssuedAsync(string? subjectId, string clientId, string grantType, CancellationToken ct = default);
+
+    /// <summary>
+    /// Called after password verification to resolve the effective MFA policy for the user.
+    /// Override to enforce MFA per-user/org regardless of client setting, or to exempt service accounts.
+    /// Default: returns clientPolicy unchanged.
+    /// </summary>
+    Task<MfaPolicy> ResolveMfaPolicyAsync(string userId, string email, MfaPolicy clientPolicy, string clientId, CancellationToken ct = default);
+
+    /// <summary>Called after a user successfully completes MFA verification.</summary>
+    /// <param name="mfaMethod">One of "totp", "webauthn", or "recovery".</param>
+    Task OnMfaVerifiedAsync(string userId, string email, string mfaMethod, CancellationToken ct = default);
 }

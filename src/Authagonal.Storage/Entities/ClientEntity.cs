@@ -32,6 +32,7 @@ public sealed class ClientEntity : ITableEntity
     public int SlidingRefreshTokenLifetimeSeconds { get; set; }
     public int RefreshTokenUsage { get; set; }
     public string ProvisioningAppsJson { get; set; } = "[]";
+    public int MfaPolicy { get; set; }
 
     public static ClientEntity FromModel(OAuthClient client) => new()
     {
@@ -55,6 +56,7 @@ public sealed class ClientEntity : ITableEntity
         SlidingRefreshTokenLifetimeSeconds = client.SlidingRefreshTokenLifetimeSeconds,
         RefreshTokenUsage = (int)client.RefreshTokenUsage,
         ProvisioningAppsJson = JsonSerializer.Serialize(client.ProvisioningApps),
+        MfaPolicy = (int)client.MfaPolicy,
     };
 
     public OAuthClient ToModel() => new()
@@ -78,5 +80,6 @@ public sealed class ClientEntity : ITableEntity
         SlidingRefreshTokenLifetimeSeconds = SlidingRefreshTokenLifetimeSeconds,
         RefreshTokenUsage = (RefreshTokenUsage)RefreshTokenUsage,
         ProvisioningApps = JsonSerializer.Deserialize<List<string>>(ProvisioningAppsJson) ?? [],
+        MfaPolicy = (MfaPolicy)MfaPolicy,
     };
 }

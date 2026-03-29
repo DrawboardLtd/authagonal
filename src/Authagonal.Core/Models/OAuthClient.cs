@@ -21,10 +21,18 @@ public sealed class OAuthClient
     public int SlidingRefreshTokenLifetimeSeconds { get; set; } = 1296000;
     public RefreshTokenUsage RefreshTokenUsage { get; set; } = RefreshTokenUsage.OneTime;
     public List<string> ProvisioningApps { get; set; } = [];
+    public MfaPolicy MfaPolicy { get; set; } = MfaPolicy.Disabled;
 }
 
 public enum RefreshTokenUsage
 {
     ReUse = 0,
     OneTime = 1
+}
+
+public enum MfaPolicy
+{
+    Disabled = 0,
+    Enabled = 1,
+    Required = 2
 }
