@@ -1,9 +1,9 @@
 {
   "name": "@drawboard/authagonal-login",
-  "version": "0.1.15",
+  "version": "0.1.16",
   "description": "Default login UI for Authagonal — runtime-configurable via branding.json",
   "type": "module",
-  "license": "UNLICENSED",
+  "license": "MIT",
   "repository": {
     "type": "git",
     "url": "https://github.com/DrawboardLtd/authagonal.git",
