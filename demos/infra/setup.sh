@@ -204,16 +204,18 @@ az role assignment create \
   --scope "/subscriptions/${SUBSCRIPTION}/resourceGroups/${RG}" \
   --output none
 
-echo "==> Adding federated credential for GitHub Actions (master branch)"
+echo "==> Adding federated credential for GitHub Actions (azure-demo environment)"
 az ad app federated-credential create \
   --id "$APP_ID" \
   --parameters "{
-    \"name\": \"github-master\",
+    \"name\": \"github-azure-demo\",
     \"issuer\": \"https://token.actions.githubusercontent.com\",
-    \"subject\": \"repo:DrawboardLtd/authagonal:ref:refs/heads/master\",
+    \"subject\": \"repo:DrawboardLtd/authagonal:environment:azure-demo\",
     \"audiences\": [\"api://AzureADTokenExchange\"]
   }" \
   --output none
+
+echo "    NOTE: Create a GitHub environment named 'azure-demo' in repo settings."
 
 TENANT_ID=$(az account show --query tenantId -o tsv | tr -d '\r')
 

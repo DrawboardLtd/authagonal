@@ -204,6 +204,39 @@ jobs:
           cache-from: type=gha,scope=demo-frontend
           cache-to: type=gha,mode=max,scope=demo-frontend
 
-  # Demo deployment is handled by docker.yml on master push (same commit).
-  # No need to deploy again on tag — avoids requiring a separate federated
-  # identity credential for refs/tags/*.
+  deploy-demo:
+    needs: docker
+    runs-on: ubuntu-latest
+    environment: azure-demo
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - name: Azure Login
+        uses: azure/login@v3
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Deploy auth server
+        uses: azure/container-apps-deploy-action@v2
+        with:
+          resourceGroup: authagonal-demo
+          containerAppName: authagonal-auth
+          imageToDeploy: drawboardci/authagonal-demo-server:sha-${{ github.sha }}
+
+      - name: Deploy sample API
+        uses: azure/container-apps-deploy-action@v2
+        with:
+          resourceGroup: authagonal-demo
+          containerAppName: authagonal-api
+          imageToDeploy: drawboardci/authagonal-demo-sample-api:sha-${{ github.sha }}
+
+      - name: Deploy frontend
+        uses: azure/container-apps-deploy-action@v2
+        with:
+          resourceGroup: authagonal-demo
+          containerAppName: authagonal-frontend
+          imageToDeploy: drawboardci/authagonal-demo-frontend:sha-${{ github.sha }}

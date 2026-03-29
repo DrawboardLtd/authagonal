@@ -131,6 +131,7 @@ jobs:
     needs: build
     if: github.ref == 'refs/heads/master' && github.event_name != 'pull_request'
     runs-on: ubuntu-latest
+    environment: azure-demo
     permissions:
       id-token: write
       contents: read
