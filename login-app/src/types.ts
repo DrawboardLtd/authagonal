@@ -49,6 +49,8 @@ export interface PasswordPolicyResponse {
 export interface MfaLoginResponse {
   mfaRequired?: boolean;
   mfaSetupRequired?: boolean;
+  mfaAvailable?: boolean;
+  clientId?: string;
   challengeId?: string;
   setupToken?: string;
   methods?: string[];

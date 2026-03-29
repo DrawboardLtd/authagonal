@@ -202,7 +202,10 @@ public static class AuthEndpoints
 
         await authHook.OnUserAuthenticatedAsync(user.Id, user.Email, "password", ct: ct);
 
-        return Results.Ok(new { userId = user.Id, email = user.Email, name });
+        // If Enabled but user hasn't enrolled, hint that MFA is available
+        var mfaAvailable = effectivePolicy == MfaPolicy.Enabled && !user.MfaEnabled;
+
+        return Results.Ok(new { userId = user.Id, email = user.Email, name, mfaAvailable, clientId = mfaAvailable ? clientId : null });
     }
 
     internal static string? ExtractClientIdFromReturnUrl(string? returnUrl)

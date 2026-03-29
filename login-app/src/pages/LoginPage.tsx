@@ -36,6 +36,7 @@ export default function LoginPage() {
   const [ssoChecking, setSsoChecking] = useState(false);
   const [providers, setProviders] = useState<ExternalProvider[]>([]);
   const [session, setSession] = useState<{ name: string; email: string } | null>(null);
+  const [mfaPrompt, setMfaPrompt] = useState<{ returnUrl: string; userId: string; clientId: string } | null>(null);
 
   const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastCheckedEmailRef = useRef('');
@@ -158,6 +159,15 @@ export default function LoginPage() {
         return;
       }
 
+      // If MFA is available but not enrolled, offer to set it up (once per client)
+      if (result.mfaAvailable && result.userId) {
+        const dismissKey = `mfa-prompt-dismissed:${result.userId}:${result.clientId || 'default'}`;
+        if (!localStorage.getItem(dismissKey)) {
+          setMfaPrompt({ returnUrl, userId: result.userId, clientId: result.clientId || 'default' });
+          return;
+        }
+      }
+
       // On success, redirect to returnUrl (validated) using window.location.href
       if (returnUrl && isSafeReturnUrl(returnUrl)) {
         window.location.href = returnUrl;
@@ -209,6 +219,41 @@ export default function LoginPage() {
     : '/forgot-password';
 
   const showPasswordField = ssoChecked && !ssoInfo;
+
+  if (mfaPrompt) {
+    const skipMfa = () => {
+      localStorage.setItem(`mfa-prompt-dismissed:${mfaPrompt.userId}:${mfaPrompt.clientId}`, '1');
+      const dest = mfaPrompt.returnUrl && isSafeReturnUrl(mfaPrompt.returnUrl)
+        ? mfaPrompt.returnUrl
+        : '/';
+      window.location.href = dest;
+    };
+
+    return (
+      <div>
+        <h2 className="auth-title">{t('mfaPromptTitle')}</h2>
+        <p style={{ textAlign: 'center', color: '#6b7280', marginBottom: '24px' }}>
+          {t('mfaPromptMessage')}
+        </p>
+        <button
+          type="button"
+          className="btn-primary"
+          style={{ width: '100%', marginBottom: '12px' }}
+          onClick={() => navigate(`/mfa-setup?returnUrl=${encodeURIComponent(mfaPrompt.returnUrl || '/')}`)}
+        >
+          {t('mfaPromptSetup')}
+        </button>
+        <button
+          type="button"
+          className="btn-secondary"
+          style={{ width: '100%' }}
+          onClick={skipMfa}
+        >
+          {t('mfaPromptSkip')}
+        </button>
+      </div>
+    );
+  }
 
   if (session) {
     return (
