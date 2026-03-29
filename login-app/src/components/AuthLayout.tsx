@@ -49,7 +49,7 @@ export default function AuthLayout({ children }: AuthLayoutProps) {
         </div>
         {children}
         <div className="language-picker">
-          {(branding.languages ?? ALL_LANGUAGES.filter(l => l.code !== 'tlh')).map((lang) => (
+          {(branding.languages ?? ALL_LANGUAGES).map((lang) => (
             <button
               key={lang.code}
               type="button"
