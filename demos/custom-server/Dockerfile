@@ -1,5 +1,5 @@
 # Stage 1: Build the custom login SPA (packages come from npm)
-FROM node:22-alpine AS frontend
+FROM node:24-alpine AS frontend
 WORKDIR /app
 COPY demos/custom-server/login-app/package.json ./
 RUN npm install

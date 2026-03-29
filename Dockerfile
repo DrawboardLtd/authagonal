@@ -1,5 +1,5 @@
 # Stage 1: Build SPA
-FROM node:22-alpine AS frontend
+FROM node:24-alpine AS frontend
 WORKDIR /app/login-app
 COPY login-app/package*.json ./
 RUN npm ci

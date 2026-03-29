@@ -275,7 +275,7 @@ public static class AuthagonalExtensions
             ForwardedHeaders = Microsoft.AspNetCore.HttpOverrides.ForwardedHeaders.XForwardedFor
                              | Microsoft.AspNetCore.HttpOverrides.ForwardedHeaders.XForwardedProto,
             // Trust all proxies in container environments (Azure Container Apps, k8s, etc.)
-            KnownNetworks = { new Microsoft.AspNetCore.HttpOverrides.IPNetwork(System.Net.IPAddress.Any, 0) },
+            KnownIPNetworks = { new System.Net.IPNetwork(System.Net.IPAddress.Any, 0) },
         });
 
         app.UseExceptionHandlingMiddleware();
