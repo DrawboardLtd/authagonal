@@ -37,9 +37,7 @@ export default function App() {
   }, []);
 
   const handleLogout = () => {
-    logout();
-    setAuth(null);
-    setApiResult(null);
+    logout(); // redirects to auth server endsession, then back here
   };
 
   const callApi = async (endpoint: string) => {

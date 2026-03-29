@@ -228,9 +228,26 @@ export async function refreshAccessToken(current: AuthState): Promise<AuthState 
   }
 }
 
-/** Log out — clear local state. */
-export function logout(): void {
+/** Log out — clear local state and end the SSO session on the auth server. */
+export async function logout(): Promise<void> {
+  const stored = localStorage.getItem('auth');
   localStorage.removeItem('auth');
+
+  const config = await getConfig();
+  const params = new URLSearchParams({
+    post_logout_redirect_uri: window.location.origin,
+  });
+
+  if (stored) {
+    try {
+      const state: AuthState = JSON.parse(stored);
+      if (state.idToken) {
+        params.set('id_token_hint', state.idToken);
+      }
+    } catch { /* ignore */ }
+  }
+
+  window.location.href = `${config.authServer}/connect/endsession?${params}`;
 }
 
 // ---------------------------------------------------------------------------
