@@ -47,6 +47,7 @@ Clients werden im `Clients`-Array definiert und beim Start initialisiert. Jeder 
       "AbsoluteRefreshTokenLifetimeSeconds": 2592000,
       "SlidingRefreshTokenLifetimeSeconds": 1296000,
       "RefreshTokenUsage": "OneTime",
+      "MfaPolicy": "Enabled",
       "ProvisioningApps": ["my-backend"]
     }
   ]
@@ -92,6 +93,48 @@ Definieren Sie nachgelagerte Anwendungen, in die Benutzer bereitgestellt werden 
 ```
 
 Die vollstaendige TCC-Protokollspezifikation finden Sie unter [Bereitstellung](provisioning).
+
+## MFA-Richtlinie
+
+Multi-Faktor-Authentifizierung wird pro Client ueber die Eigenschaft `MfaPolicy` durchgesetzt:
+
+| Wert | Verhalten |
+|---|---|
+| `Disabled` (Standard) | Keine MFA-Abfrage, auch wenn der Benutzer MFA registriert hat |
+| `Enabled` | Benutzer mit registrierter MFA werden abgefragt; keine erzwungene Registrierung |
+| `Required` | Registrierte Benutzer werden abgefragt; Benutzer ohne MFA werden zur Registrierung gezwungen |
+
+```json
+{
+  "Clients": [
+    {
+      "ClientId": "secure-app",
+      "MfaPolicy": "Required"
+    }
+  ]
+}
+```
+
+Wenn `MfaPolicy` auf `Required` gesetzt ist und der Benutzer keine MFA registriert hat, gibt die Anmeldung `{ mfaSetupRequired: true, setupToken: "..." }` zurueck. Das Setup-Token authentifiziert den Benutzer bei den MFA-Setup-Endpunkten (ueber den `X-MFA-Setup-Token`-Header), damit er sich registrieren kann, bevor eine Cookie-Sitzung erstellt wird.
+
+Foederierte Anmeldungen (SAML/OIDC) ueberspringen MFA -- der externe Identitaetsanbieter uebernimmt dies.
+
+### IAuthHook-Ueberschreibung
+
+Die Methode `IAuthHook.ResolveMfaPolicyAsync` kann die Client-Richtlinie pro Benutzer ueberschreiben:
+
+```csharp
+public Task<MfaPolicy> ResolveMfaPolicyAsync(
+    string userId, string email, MfaPolicy clientPolicy,
+    string clientId, CancellationToken ct)
+{
+    // MFA fuer Admin-Benutzer erzwingen, unabhaengig von der Client-Einstellung
+    if (email.EndsWith("@admin.example.com"))
+        return Task.FromResult(MfaPolicy.Required);
+
+    return Task.FromResult(clientPolicy);
+}
+```
 
 ## Passwortrichtlinie
 
@@ -279,6 +322,7 @@ CORS wird dynamisch konfiguriert. Urspruenge aus den `AllowedCorsOrigins` aller 
       "RequirePkce": true,
       "RequireClientSecret": false,
       "AllowOfflineAccess": true,
+      "MfaPolicy": "Enabled",
       "ProvisioningApps": ["backend"]
     }
   ]

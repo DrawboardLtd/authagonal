@@ -93,6 +93,32 @@ Content-Type: application/json
 DELETE /api/v1/profile/{userId}/identities/{provider}/{externalUserId}
 ```
 
+## Gestão de MFA
+
+### Obter Estado do MFA
+
+```
+GET /api/v1/profile/{userId}/mfa
+```
+
+Retorna o estado do MFA e os métodos inscritos de um utilizador.
+
+### Redefinir Todo o MFA
+
+```
+DELETE /api/v1/profile/{userId}/mfa
+```
+
+Remove todas as credenciais MFA e define `MfaEnabled=false`. O utilizador precisará inscrever-se novamente se for obrigatório.
+
+### Remover Credencial MFA Específica
+
+```
+DELETE /api/v1/profile/{userId}/mfa/{credentialId}
+```
+
+Remove uma credencial MFA específica (por exemplo, um autenticador perdido). Se o último método primário for removido, o MFA é desativado.
+
 ## Provedores SSO
 
 ### Provedores SAML

@@ -46,6 +46,7 @@ Clients are defined in the `Clients` array and seeded on startup. Each client ca
       "AbsoluteRefreshTokenLifetimeSeconds": 2592000,
       "SlidingRefreshTokenLifetimeSeconds": 1296000,
       "RefreshTokenUsage": "OneTime",
+      "MfaPolicy": "Enabled",
       "ProvisioningApps": ["my-backend"]
     }
   ]
@@ -91,6 +92,48 @@ Define downstream applications that users should be provisioned into:
 ```
 
 See [Provisioning](provisioning) for the full TCC protocol specification.
+
+## MFA Policy
+
+Multi-factor authentication is enforced per-client via the `MfaPolicy` property:
+
+| Value | Behavior |
+|---|---|
+| `Disabled` (default) | No MFA challenge, even if the user has MFA enrolled |
+| `Enabled` | Challenge users who have MFA enrolled; don't force enrollment |
+| `Required` | Challenge enrolled users; force enrollment for users without MFA |
+
+```json
+{
+  "Clients": [
+    {
+      "ClientId": "secure-app",
+      "MfaPolicy": "Required"
+    }
+  ]
+}
+```
+
+When `MfaPolicy` is `Required` and the user hasn't enrolled MFA, login returns `{ mfaSetupRequired: true, setupToken: "..." }`. The setup token authenticates the user to the MFA setup endpoints (via `X-MFA-Setup-Token` header) so they can enroll before getting a cookie session.
+
+Federated logins (SAML/OIDC) skip MFA — the external identity provider handles it.
+
+### IAuthHook Override
+
+The `IAuthHook.ResolveMfaPolicyAsync` method can override the client policy per-user:
+
+```csharp
+public Task<MfaPolicy> ResolveMfaPolicyAsync(
+    string userId, string email, MfaPolicy clientPolicy,
+    string clientId, CancellationToken ct)
+{
+    // Force MFA for admin users regardless of client setting
+    if (email.EndsWith("@admin.example.com"))
+        return Task.FromResult(MfaPolicy.Required);
+
+    return Task.FromResult(clientPolicy);
+}
+```
 
 ## Password Policy
 
@@ -296,6 +339,7 @@ CORS is configured dynamically. Origins from all registered clients' `AllowedCor
       "RequirePkce": true,
       "RequireClientSecret": false,
       "AllowOfflineAccess": true,
+      "MfaPolicy": "Enabled",
       "ProvisioningApps": ["backend"]
     }
   ]

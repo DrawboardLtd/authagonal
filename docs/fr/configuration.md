@@ -47,6 +47,7 @@ Les clients sont definis dans le tableau `Clients` et injectes au demarrage. Cha
       "AbsoluteRefreshTokenLifetimeSeconds": 2592000,
       "SlidingRefreshTokenLifetimeSeconds": 1296000,
       "RefreshTokenUsage": "OneTime",
+      "MfaPolicy": "Enabled",
       "ProvisioningApps": ["my-backend"]
     }
   ]
@@ -92,6 +93,48 @@ Definissez les applications en aval dans lesquelles les utilisateurs doivent etr
 ```
 
 Voir [Provisionnement](provisioning) pour la specification complete du protocole TCC.
+
+## Politique MFA
+
+L'authentification multifacteur est appliquee par client via la propriete `MfaPolicy` :
+
+| Valeur | Comportement |
+|---|---|
+| `Disabled` (par defaut) | Pas de verification MFA, meme si l'utilisateur a inscrit le MFA |
+| `Enabled` | Verifie les utilisateurs ayant inscrit le MFA ; ne force pas l'inscription |
+| `Required` | Verifie les utilisateurs inscrits ; force l'inscription pour les utilisateurs sans MFA |
+
+```json
+{
+  "Clients": [
+    {
+      "ClientId": "secure-app",
+      "MfaPolicy": "Required"
+    }
+  ]
+}
+```
+
+Lorsque `MfaPolicy` est `Required` et que l'utilisateur n'a pas inscrit le MFA, la connexion renvoie `{ mfaSetupRequired: true, setupToken: "..." }`. Le jeton de configuration authentifie l'utilisateur aupres des points d'acces de configuration MFA (via l'en-tete `X-MFA-Setup-Token`) afin qu'il puisse s'inscrire avant d'obtenir une session par cookie.
+
+Les connexions federees (SAML/OIDC) ignorent le MFA -- le fournisseur d'identite externe le gere.
+
+### Surcharge IAuthHook
+
+La methode `IAuthHook.ResolveMfaPolicyAsync` peut surcharger la politique du client par utilisateur :
+
+```csharp
+public Task<MfaPolicy> ResolveMfaPolicyAsync(
+    string userId, string email, MfaPolicy clientPolicy,
+    string clientId, CancellationToken ct)
+{
+    // Forcer le MFA pour les administrateurs independamment du parametre client
+    if (email.EndsWith("@admin.example.com"))
+        return Task.FromResult(MfaPolicy.Required);
+
+    return Task.FromResult(clientPolicy);
+}
+```
 
 ## Politique de mot de passe
 
@@ -279,6 +322,7 @@ CORS est configure dynamiquement. Les origines de tous les `AllowedCorsOrigins` 
       "RequirePkce": true,
       "RequireClientSecret": false,
       "AllowOfflineAccess": true,
+      "MfaPolicy": "Enabled",
       "ProvisioningApps": ["backend"]
     }
   ]

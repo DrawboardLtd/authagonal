@@ -60,6 +60,10 @@ public interface IAuthHook
         CancellationToken ct = default);
     Task OnTokenIssuedAsync(string? subjectId, string clientId, string grantType,
         CancellationToken ct = default);
+    Task<MfaPolicy> ResolveMfaPolicyAsync(string userId, string email,
+        MfaPolicy clientPolicy, string clientId, CancellationToken ct = default);
+    Task OnMfaVerifiedAsync(string userId, string email, string mfaMethod,
+        CancellationToken ct = default);
 }
 ```
 
@@ -71,6 +75,8 @@ public interface IAuthHook
 | `OnUserCreatedAsync` | `"admin"`, `"saml"`, `"oidc"` |
 | `OnLoginFailedAsync` | `"invalid_password"`, `"locked_out"`, etc. |
 | `OnTokenIssuedAsync` | Grant types: `"authorization_code"`, `"refresh_token"`, `"client_credentials"` |
+| `ResolveMfaPolicyAsync` | Returns the effective MFA policy for a user. Default: return `clientPolicy` unchanged. |
+| `OnMfaVerifiedAsync` | `"totp"`, `"webauthn"`, `"recovery"` |
 
 ### Example: Audit Logger
 

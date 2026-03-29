@@ -47,6 +47,7 @@ Os clientes são definidos no array `Clients` e semeados na inicialização. Cad
       "AbsoluteRefreshTokenLifetimeSeconds": 2592000,
       "SlidingRefreshTokenLifetimeSeconds": 1296000,
       "RefreshTokenUsage": "OneTime",
+      "MfaPolicy": "Enabled",
       "ProvisioningApps": ["my-backend"]
     }
   ]
@@ -92,6 +93,48 @@ Defina as aplicações downstream nas quais os utilizadores devem ser provisiona
 ```
 
 Consulte [Provisionamento](provisioning) para a especificação completa do protocolo TCC.
+
+## Política de MFA
+
+A autenticação multifator é aplicada por cliente através da propriedade `MfaPolicy`:
+
+| Valor | Comportamento |
+|---|---|
+| `Disabled` (padrão) | Sem desafio MFA, mesmo que o utilizador tenha MFA inscrito |
+| `Enabled` | Desafia utilizadores que têm MFA inscrito; não força a inscrição |
+| `Required` | Desafia utilizadores inscritos; força a inscrição para utilizadores sem MFA |
+
+```json
+{
+  "Clients": [
+    {
+      "ClientId": "secure-app",
+      "MfaPolicy": "Required"
+    }
+  ]
+}
+```
+
+Quando `MfaPolicy` é `Required` e o utilizador não tem MFA inscrito, o login retorna `{ mfaSetupRequired: true, setupToken: "..." }`. O token de configuração autentica o utilizador nos endpoints de configuração de MFA (via cabeçalho `X-MFA-Setup-Token`) para que possam inscrever-se antes de obter uma sessão de cookie.
+
+Logins federados (SAML/OIDC) ignoram o MFA — o provedor de identidade externo trata disso.
+
+### Substituição via IAuthHook
+
+O método `IAuthHook.ResolveMfaPolicyAsync` pode substituir a política do cliente por utilizador:
+
+```csharp
+public Task<MfaPolicy> ResolveMfaPolicyAsync(
+    string userId, string email, MfaPolicy clientPolicy,
+    string clientId, CancellationToken ct)
+{
+    // Forçar MFA para utilizadores admin independentemente da definição do cliente
+    if (email.EndsWith("@admin.example.com"))
+        return Task.FromResult(MfaPolicy.Required);
+
+    return Task.FromResult(clientPolicy);
+}
+```
 
 ## Política de Senhas
 
@@ -279,6 +322,7 @@ O CORS é configurado dinamicamente. As origens de todos os `AllowedCorsOrigins`
       "RequirePkce": true,
       "RequireClientSecret": false,
       "AllowOfflineAccess": true,
+      "MfaPolicy": "Enabled",
       "ProvisioningApps": ["backend"]
     }
   ]

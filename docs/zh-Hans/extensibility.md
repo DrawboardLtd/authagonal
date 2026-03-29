@@ -61,6 +61,10 @@ public interface IAuthHook
         CancellationToken ct = default);
     Task OnTokenIssuedAsync(string? subjectId, string clientId, string grantType,
         CancellationToken ct = default);
+    Task<MfaPolicy> ResolveMfaPolicyAsync(string userId, string email,
+        MfaPolicy clientPolicy, string clientId, CancellationToken ct = default);
+    Task OnMfaVerifiedAsync(string userId, string email, string mfaMethod,
+        CancellationToken ct = default);
 }
 ```
 
@@ -72,6 +76,8 @@ public interface IAuthHook
 | `OnUserCreatedAsync` | `"admin"`, `"saml"`, `"oidc"` |
 | `OnLoginFailedAsync` | `"invalid_password"`, `"locked_out"` 等 |
 | `OnTokenIssuedAsync` | 授权类型：`"authorization_code"`, `"refresh_token"`, `"client_credentials"` |
+| `ResolveMfaPolicyAsync` | 返回用户的有效 MFA 策略。默认：原样返回 `clientPolicy`。 |
+| `OnMfaVerifiedAsync` | `"totp"`, `"webauthn"`, `"recovery"` |
 
 ### 示例：审计日志记录器
 

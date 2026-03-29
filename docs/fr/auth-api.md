@@ -34,6 +34,30 @@ Content-Type: application/json
 }
 ```
 
+**MFA requis (200) :** Si l'utilisateur a inscrit le MFA et que la `MfaPolicy` du client est `Enabled` ou `Required` :
+
+```json
+{
+  "mfaRequired": true,
+  "challengeId": "a1b2c3...",
+  "methods": ["totp", "webauthn", "recoverycode"],
+  "webAuthn": { /* PublicKeyCredentialRequestOptions */ }
+}
+```
+
+Le client doit rediriger vers une page de verification MFA et appeler `POST /api/auth/mfa/verify`.
+
+**Configuration MFA requise (200) :** Si `MfaPolicy` est `Required` et que l'utilisateur n'a pas de MFA inscrit :
+
+```json
+{
+  "mfaSetupRequired": true,
+  "setupToken": "abc123..."
+}
+```
+
+Le client doit rediriger vers une page de configuration MFA. Le jeton de configuration authentifie l'utilisateur aupres des points d'acces de configuration MFA via l'en-tete `X-MFA-Setup-Token`.
+
 **Reponses d'erreur :**
 
 | `error` | Statut | Description |
@@ -162,6 +186,88 @@ Avec la configuration par defaut, les mots de passe doivent satisfaire toutes ce
 - Au moins 2 caracteres distincts
 
 Celles-ci peuvent etre personnalisees via la section de configuration `PasswordPolicy` -- voir [Configuration](configuration).
+
+## Points d'acces MFA
+
+### Verification MFA
+
+```
+POST /api/auth/mfa/verify
+Content-Type: application/json
+
+{
+  "challengeId": "a1b2c3...",
+  "method": "totp",
+  "code": "123456"
+}
+```
+
+Verifie un defi MFA. En cas de succes, definit le cookie d'authentification et renvoie les informations de l'utilisateur.
+
+**Methodes :**
+
+| `method` | Champs requis | Description |
+|---|---|---|
+| `totp` | `code` (6 chiffres) | Mot de passe a usage unique base sur le temps depuis une application d'authentification |
+| `webauthn` | `assertion` (chaine JSON) | Reponse d'assertion WebAuthn depuis `navigator.credentials.get()` |
+| `recovery` | `code` (`XXXX-XXXX`) | Code de recuperation a usage unique (consomme lors de l'utilisation) |
+
+### Statut MFA
+
+```
+GET /api/auth/mfa/status
+```
+
+Renvoie les methodes MFA inscrites de l'utilisateur. Necessite l'authentification par cookie ou l'en-tete `X-MFA-Setup-Token`.
+
+```json
+{
+  "enabled": true,
+  "methods": [
+    { "id": "cred-id", "type": "totp", "name": "Authenticator app", "createdAt": "...", "lastUsedAt": "..." }
+  ]
+}
+```
+
+### Configuration TOTP
+
+```
+POST /api/auth/mfa/totp/setup
+→ { "setupToken": "...", "qrCodeDataUri": "data:image/svg+xml;base64,..." }
+
+POST /api/auth/mfa/totp/confirm
+{ "setupToken": "...", "code": "123456" }
+→ { "success": true }
+```
+
+### Configuration WebAuthn / Passkey
+
+```
+POST /api/auth/mfa/webauthn/setup
+→ { "setupToken": "...", "options": { /* PublicKeyCredentialCreationOptions */ } }
+
+POST /api/auth/mfa/webauthn/confirm
+{ "setupToken": "...", "attestationResponse": "..." }
+→ { "success": true, "credentialId": "..." }
+```
+
+### Codes de recuperation
+
+```
+POST /api/auth/mfa/recovery/generate
+→ { "codes": ["ABCD-1234", "EFGH-5678", ...] }
+```
+
+Genere 10 codes de recuperation a usage unique. Necessite qu'au moins une methode principale (TOTP ou WebAuthn) soit inscrite. La regeneration remplace tous les codes de recuperation existants.
+
+### Supprimer un identifiant MFA
+
+```
+DELETE /api/auth/mfa/credentials/{credentialId}
+→ { "success": true }
+```
+
+Supprime un identifiant MFA specifique. Si la derniere methode principale est supprimee, le MFA est desactive pour l'utilisateur.
 
 ## Construire une interface de connexion personnalisee
 

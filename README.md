@@ -27,6 +27,8 @@ This starts the auth server on `http://localhost:8080` with an Azurite storage e
 | `src/Authagonal.Server` | ASP.NET Core host — OIDC, SAML, auth API, admin API |
 | `login-app` | React/TypeScript login SPA (Vite), published as `@drawboard/authagonal-login` |
 | `tools/Authagonal.Migration` | Duende IdentityServer → Table Storage migration tool |
+| `tools/Authagonal.Backup` | Azure Table Storage backup tool (incremental support) |
+| `tools/Authagonal.Restore` | Azure Table Storage restore tool (upsert, merge, clean modes) |
 | `tests/Authagonal.Tests` | Unit tests |
 | `demos/custom-server` | Demo: host Authagonal as a library with custom extensions |
 | `demos/sample-app` | Demo: client app (API + React SPA) authenticating via Authagonal |
@@ -37,6 +39,7 @@ This starts the auth server on `http://localhost:8080` with an Azurite storage e
 - **SAML 2.0 SP** — homebrew implementation, full Azure AD support
 - **Dynamic OIDC Federation** — Google, Apple, Azure AD — configure via API or `appsettings.json`
 - **SAML/OIDC from Config** — define identity providers in configuration, seeded on startup
+- **Multi-Factor Authentication** — TOTP (authenticator apps), WebAuthn/passkeys, recovery codes. Per-client MFA policy (`Disabled`, `Enabled`, `Required`) with `IAuthHook` override for per-user control.
 - **Configurable Password Policy** — min length, character requirements, exposed via API for dynamic frontend validation
 - **TCC Provisioning** — Try-Confirm-Cancel provisioning into downstream apps at authorize time
 - **Auth Hooks** — `IAuthHook` extensibility point for audit logging, custom validation, webhooks

@@ -34,6 +34,30 @@ Content-Type: application/json
 }
 ```
 
+**需要 MFA (200)：** 如果用户已注册 MFA 且客户端的 `MfaPolicy` 为 `Enabled` 或 `Required`：
+
+```json
+{
+  "mfaRequired": true,
+  "challengeId": "a1b2c3...",
+  "methods": ["totp", "webauthn", "recoverycode"],
+  "webAuthn": { /* PublicKeyCredentialRequestOptions */ }
+}
+```
+
+客户端应重定向到 MFA 验证页面并调用 `POST /api/auth/mfa/verify`。
+
+**需要 MFA 设置 (200)：** 如果 `MfaPolicy` 为 `Required` 且用户尚未注册 MFA：
+
+```json
+{
+  "mfaSetupRequired": true,
+  "setupToken": "abc123..."
+}
+```
+
+客户端应重定向到 MFA 设置页面。设置令牌通过 `X-MFA-Setup-Token` 请求头对用户进行认证，以访问 MFA 设置端点。
+
 **错误响应：**
 
 | `error` | 状态码 | 描述 |
@@ -162,6 +186,88 @@ GET /api/auth/password-policy
 - 至少 2 个不同字符
 
 这些可以通过 `PasswordPolicy` 配置节进行自定义 -- 参阅[配置](configuration)。
+
+## MFA 端点
+
+### MFA 验证
+
+```
+POST /api/auth/mfa/verify
+Content-Type: application/json
+
+{
+  "challengeId": "a1b2c3...",
+  "method": "totp",
+  "code": "123456"
+}
+```
+
+验证 MFA 质询。成功后设置认证 Cookie 并返回用户信息。
+
+**验证方法：**
+
+| `method` | 必需字段 | 描述 |
+|---|---|---|
+| `totp` | `code`（6 位数字） | 来自认证器应用的基于时间的一次性密码 |
+| `webauthn` | `assertion`（JSON 字符串） | 来自 `navigator.credentials.get()` 的 WebAuthn 断言响应 |
+| `recovery` | `code`（`XXXX-XXXX`） | 一次性恢复码（使用后即失效） |
+
+### MFA 状态
+
+```
+GET /api/auth/mfa/status
+```
+
+返回用户已注册的 MFA 方法。需要 Cookie 认证或 `X-MFA-Setup-Token` 请求头。
+
+```json
+{
+  "enabled": true,
+  "methods": [
+    { "id": "cred-id", "type": "totp", "name": "Authenticator app", "createdAt": "...", "lastUsedAt": "..." }
+  ]
+}
+```
+
+### TOTP 设置
+
+```
+POST /api/auth/mfa/totp/setup
+-> { "setupToken": "...", "qrCodeDataUri": "data:image/svg+xml;base64,..." }
+
+POST /api/auth/mfa/totp/confirm
+{ "setupToken": "...", "code": "123456" }
+-> { "success": true }
+```
+
+### WebAuthn / 通行密钥设置
+
+```
+POST /api/auth/mfa/webauthn/setup
+-> { "setupToken": "...", "options": { /* PublicKeyCredentialCreationOptions */ } }
+
+POST /api/auth/mfa/webauthn/confirm
+{ "setupToken": "...", "attestationResponse": "..." }
+-> { "success": true, "credentialId": "..." }
+```
+
+### 恢复码
+
+```
+POST /api/auth/mfa/recovery/generate
+-> { "codes": ["ABCD-1234", "EFGH-5678", ...] }
+```
+
+生成 10 个一次性恢复码。需要至少注册一个主要方法（TOTP 或 WebAuthn）。重新生成将替换所有现有恢复码。
+
+### 删除 MFA 凭据
+
+```
+DELETE /api/auth/mfa/credentials/{credentialId}
+-> { "success": true }
+```
+
+删除特定的 MFA 凭据。如果最后一个主要方法被删除，则该用户的 MFA 将被禁用。
 
 ## 构建自定义登录界面
 

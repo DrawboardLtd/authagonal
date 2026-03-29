@@ -93,6 +93,32 @@ Content-Type: application/json
 DELETE /api/v1/profile/{userId}/identities/{provider}/{externalUserId}
 ```
 
+## Quản lý MFA
+
+### Lấy trạng thái MFA
+
+```
+GET /api/v1/profile/{userId}/mfa
+```
+
+Trả về trạng thái MFA và các phương thức đã đăng ký của người dùng.
+
+### Đặt lại toàn bộ MFA
+
+```
+DELETE /api/v1/profile/{userId}/mfa
+```
+
+Xóa tất cả thông tin xác thực MFA và đặt `MfaEnabled=false`. Người dùng sẽ cần đăng ký lại nếu được yêu cầu.
+
+### Xóa thông tin xác thực MFA cụ thể
+
+```
+DELETE /api/v1/profile/{userId}/mfa/{credentialId}
+```
+
+Xóa một thông tin xác thực MFA cụ thể (ví dụ: ứng dụng xác thực bị mất). Nếu phương thức chính cuối cùng bị xóa, MFA sẽ bị vô hiệu hóa.
+
 ## Nhà cung cấp SSO
 
 ### Nhà cung cấp SAML

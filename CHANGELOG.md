@@ -1,5 +1,30 @@
 # Changelog
 
+## [0.1.8] — 2026-03-29
+
+### Added
+
+- **Multi-factor authentication** — TOTP (authenticator apps), WebAuthn/passkeys, and recovery codes. MFA is enforced per-client via `MfaPolicy` on the client configuration (`Disabled`, `Enabled`, `Required`).
+  - `POST /api/auth/mfa/verify` — challenge verification (TOTP code, WebAuthn assertion, or recovery code)
+  - `GET /api/auth/mfa/status` — enrolled methods for the current user
+  - `POST /api/auth/mfa/totp/setup` + `POST /api/auth/mfa/totp/confirm` — TOTP enrollment with QR code
+  - `POST /api/auth/mfa/webauthn/setup` + `POST /api/auth/mfa/webauthn/confirm` — passkey enrollment
+  - `POST /api/auth/mfa/recovery/generate` — generate 10 one-time recovery codes
+  - `DELETE /api/auth/mfa/credentials/{id}` — remove an enrolled method
+- **MFA admin endpoints** — `GET /api/v1/profile/{userId}/mfa`, `DELETE /api/v1/profile/{userId}/mfa`, `DELETE /api/v1/profile/{userId}/mfa/{id}` for admin MFA management.
+- **MFA policy hook** — `IAuthHook.ResolveMfaPolicyAsync` allows per-user/org override of the client's MFA policy. `IAuthHook.OnMfaVerifiedAsync` fires after successful MFA verification.
+- **Setup token flow** — when `MfaPolicy=Required` and the user has no MFA enrolled, login returns a setup token. The MFA setup endpoints accept this token via `X-MFA-Setup-Token` header, allowing enrollment before cookie authentication.
+- **MFA frontend** — `MfaChallengePage` (TOTP/passkey/recovery code entry) and `MfaSetupPage` (QR code scanning, passkey registration, recovery code generation) added to the login SPA.
+- **Demo: self-service registration** — `POST /api/auth/register` endpoint for the demo server, plus a registration page in the demo login app.
+- **Demo: user purge** — background service deletes demo users older than 24 hours.
+- **Table Storage restore tool** — `tools/Authagonal.Restore/` reads `.jsonl` backups produced by `authagonal-backup` and restores to Table Storage. Supports `upsert`, `merge`, and `clean` modes.
+
+### Changed
+
+- **Login response** — `POST /api/auth/login` may now return `{ mfaRequired, challengeId, methods, webAuthn }` or `{ mfaSetupRequired, setupToken }` instead of setting a cookie directly.
+- **Fido2.AspNet** dependency added for WebAuthn credential verification.
+- **QRCoder** dependency added for server-side QR code generation.
+
 ## [0.1.5] — 2026-03-29
 
 ### Added

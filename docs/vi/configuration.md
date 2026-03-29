@@ -47,6 +47,7 @@ Các client được định nghĩa trong mảng `Clients` và được khởi t
       "AbsoluteRefreshTokenLifetimeSeconds": 2592000,
       "SlidingRefreshTokenLifetimeSeconds": 1296000,
       "RefreshTokenUsage": "OneTime",
+      "MfaPolicy": "Enabled",
       "ProvisioningApps": ["my-backend"]
     }
   ]
@@ -92,6 +93,48 @@ Mảng `ProvisioningApps` tham chiếu các ID ứng dụng được định ngh
 ```
 
 Xem [Cấp phát](provisioning) để biết đặc tả đầy đủ giao thức TCC.
+
+## Chính sách MFA
+
+Xác thực đa yếu tố được áp dụng theo từng client thông qua thuộc tính `MfaPolicy`:
+
+| Giá trị | Hành vi |
+|---|---|
+| `Disabled` (mặc định) | Không yêu cầu xác thực MFA, ngay cả khi người dùng đã đăng ký MFA |
+| `Enabled` | Yêu cầu xác thực MFA cho người dùng đã đăng ký; không bắt buộc đăng ký |
+| `Required` | Yêu cầu xác thực cho người dùng đã đăng ký; bắt buộc đăng ký cho người dùng chưa có MFA |
+
+```json
+{
+  "Clients": [
+    {
+      "ClientId": "secure-app",
+      "MfaPolicy": "Required"
+    }
+  ]
+}
+```
+
+Khi `MfaPolicy` là `Required` và người dùng chưa đăng ký MFA, đăng nhập trả về `{ mfaSetupRequired: true, setupToken: "..." }`. Token thiết lập xác thực người dùng đến các endpoint thiết lập MFA (qua header `X-MFA-Setup-Token`) để họ có thể đăng ký trước khi nhận phiên cookie.
+
+Đăng nhập liên kết (SAML/OIDC) bỏ qua MFA — nhà cung cấp danh tính bên ngoài xử lý việc này.
+
+### Ghi đè IAuthHook
+
+Phương thức `IAuthHook.ResolveMfaPolicyAsync` có thể ghi đè chính sách client cho từng người dùng:
+
+```csharp
+public Task<MfaPolicy> ResolveMfaPolicyAsync(
+    string userId, string email, MfaPolicy clientPolicy,
+    string clientId, CancellationToken ct)
+{
+    // Bắt buộc MFA cho người dùng quản trị bất kể cài đặt client
+    if (email.EndsWith("@admin.example.com"))
+        return Task.FromResult(MfaPolicy.Required);
+
+    return Task.FromResult(clientPolicy);
+}
+```
 
 ## Chính sách mật khẩu
 
@@ -279,6 +322,7 @@ CORS được cấu hình động. Các origin từ `AllowedCorsOrigins` của t
       "RequirePkce": true,
       "RequireClientSecret": false,
       "AllowOfflineAccess": true,
+      "MfaPolicy": "Enabled",
       "ProvisioningApps": ["backend"]
     }
   ]

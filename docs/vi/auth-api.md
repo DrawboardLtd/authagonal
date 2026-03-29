@@ -34,6 +34,30 @@ Content-Type: application/json
 }
 ```
 
+**Yêu cầu MFA (200):** Nếu người dùng đã đăng ký MFA và `MfaPolicy` của client là `Enabled` hoặc `Required`:
+
+```json
+{
+  "mfaRequired": true,
+  "challengeId": "a1b2c3...",
+  "methods": ["totp", "webauthn", "recoverycode"],
+  "webAuthn": { /* PublicKeyCredentialRequestOptions */ }
+}
+```
+
+Client nên chuyển hướng đến trang xác thực MFA và gọi `POST /api/auth/mfa/verify`.
+
+**Yêu cầu thiết lập MFA (200):** Nếu `MfaPolicy` là `Required` và người dùng chưa đăng ký MFA:
+
+```json
+{
+  "mfaSetupRequired": true,
+  "setupToken": "abc123..."
+}
+```
+
+Client nên chuyển hướng đến trang thiết lập MFA. Token thiết lập xác thực người dùng đến các endpoint thiết lập MFA qua header `X-MFA-Setup-Token`.
+
 **Phản hồi lỗi:**
 
 | `error` | Trạng thái | Mô tả |
@@ -162,6 +186,88 @@ Với cấu hình mặc định, mật khẩu phải đáp ứng tất cả các
 - Ít nhất 2 ký tự khác nhau
 
 Các yêu cầu này có thể được tùy chỉnh qua phần cấu hình `PasswordPolicy` — xem [Cấu hình](configuration).
+
+## Endpoint MFA
+
+### Xác minh MFA
+
+```
+POST /api/auth/mfa/verify
+Content-Type: application/json
+
+{
+  "challengeId": "a1b2c3...",
+  "method": "totp",
+  "code": "123456"
+}
+```
+
+Xác minh thử thách MFA. Khi thành công, đặt cookie xác thực và trả về thông tin người dùng.
+
+**Các phương thức:**
+
+| `method` | Trường bắt buộc | Mô tả |
+|---|---|---|
+| `totp` | `code` (6 chữ số) | Mật khẩu một lần dựa trên thời gian từ ứng dụng xác thực |
+| `webauthn` | `assertion` (chuỗi JSON) | Phản hồi xác nhận WebAuthn từ `navigator.credentials.get()` |
+| `recovery` | `code` (`XXXX-XXXX`) | Mã khôi phục một lần (được tiêu thụ khi sử dụng) |
+
+### Trạng thái MFA
+
+```
+GET /api/auth/mfa/status
+```
+
+Trả về các phương thức MFA đã đăng ký của người dùng. Yêu cầu xác thực cookie hoặc header `X-MFA-Setup-Token`.
+
+```json
+{
+  "enabled": true,
+  "methods": [
+    { "id": "cred-id", "type": "totp", "name": "Authenticator app", "createdAt": "...", "lastUsedAt": "..." }
+  ]
+}
+```
+
+### Thiết lập TOTP
+
+```
+POST /api/auth/mfa/totp/setup
+→ { "setupToken": "...", "qrCodeDataUri": "data:image/svg+xml;base64,..." }
+
+POST /api/auth/mfa/totp/confirm
+{ "setupToken": "...", "code": "123456" }
+→ { "success": true }
+```
+
+### Thiết lập WebAuthn / Passkey
+
+```
+POST /api/auth/mfa/webauthn/setup
+→ { "setupToken": "...", "options": { /* PublicKeyCredentialCreationOptions */ } }
+
+POST /api/auth/mfa/webauthn/confirm
+{ "setupToken": "...", "attestationResponse": "..." }
+→ { "success": true, "credentialId": "..." }
+```
+
+### Mã khôi phục
+
+```
+POST /api/auth/mfa/recovery/generate
+→ { "codes": ["ABCD-1234", "EFGH-5678", ...] }
+```
+
+Tạo 10 mã khôi phục một lần. Yêu cầu ít nhất một phương thức chính (TOTP hoặc WebAuthn) đã được đăng ký. Tạo lại sẽ thay thế tất cả mã khôi phục hiện có.
+
+### Xóa thông tin xác thực MFA
+
+```
+DELETE /api/auth/mfa/credentials/{credentialId}
+→ { "success": true }
+```
+
+Xóa một thông tin xác thực MFA cụ thể. Nếu phương thức chính cuối cùng bị xóa, MFA sẽ bị vô hiệu hóa cho người dùng.
 
 ## Xây dựng giao diện đăng nhập tùy chỉnh
 

@@ -33,6 +33,30 @@ Content-Type: application/json
 }
 ```
 
+**MFA required (200):** If the user has MFA enrolled and the client's `MfaPolicy` is `Enabled` or `Required`:
+
+```json
+{
+  "mfaRequired": true,
+  "challengeId": "a1b2c3...",
+  "methods": ["totp", "webauthn", "recoverycode"],
+  "webAuthn": { /* PublicKeyCredentialRequestOptions */ }
+}
+```
+
+The client should redirect to an MFA challenge page and call `POST /api/auth/mfa/verify`.
+
+**MFA setup required (200):** If `MfaPolicy` is `Required` and the user has no MFA enrolled:
+
+```json
+{
+  "mfaSetupRequired": true,
+  "setupToken": "abc123..."
+}
+```
+
+The client should redirect to an MFA setup page. The setup token authenticates the user to the MFA setup endpoints via the `X-MFA-Setup-Token` header.
+
 **Error responses:**
 
 | `error` | Status | Description |
@@ -161,6 +185,88 @@ With default configuration, passwords must meet all of these:
 - At least 2 unique characters
 
 These can be customized via the `PasswordPolicy` configuration section — see [Configuration](configuration).
+
+## MFA Endpoints
+
+### MFA Verify
+
+```
+POST /api/auth/mfa/verify
+Content-Type: application/json
+
+{
+  "challengeId": "a1b2c3...",
+  "method": "totp",
+  "code": "123456"
+}
+```
+
+Verifies an MFA challenge. On success, sets the auth cookie and returns user info.
+
+**Methods:**
+
+| `method` | Required fields | Description |
+|---|---|---|
+| `totp` | `code` (6 digits) | Time-based one-time password from authenticator app |
+| `webauthn` | `assertion` (JSON string) | WebAuthn assertion response from `navigator.credentials.get()` |
+| `recovery` | `code` (`XXXX-XXXX`) | One-time recovery code (consumed on use) |
+
+### MFA Status
+
+```
+GET /api/auth/mfa/status
+```
+
+Returns the user's enrolled MFA methods. Requires cookie auth or `X-MFA-Setup-Token` header.
+
+```json
+{
+  "enabled": true,
+  "methods": [
+    { "id": "cred-id", "type": "totp", "name": "Authenticator app", "createdAt": "...", "lastUsedAt": "..." }
+  ]
+}
+```
+
+### TOTP Setup
+
+```
+POST /api/auth/mfa/totp/setup
+→ { "setupToken": "...", "qrCodeDataUri": "data:image/svg+xml;base64,..." }
+
+POST /api/auth/mfa/totp/confirm
+{ "setupToken": "...", "code": "123456" }
+→ { "success": true }
+```
+
+### WebAuthn / Passkey Setup
+
+```
+POST /api/auth/mfa/webauthn/setup
+→ { "setupToken": "...", "options": { /* PublicKeyCredentialCreationOptions */ } }
+
+POST /api/auth/mfa/webauthn/confirm
+{ "setupToken": "...", "attestationResponse": "..." }
+→ { "success": true, "credentialId": "..." }
+```
+
+### Recovery Codes
+
+```
+POST /api/auth/mfa/recovery/generate
+→ { "codes": ["ABCD-1234", "EFGH-5678", ...] }
+```
+
+Generates 10 one-time recovery codes. Requires at least one primary method (TOTP or WebAuthn) to be enrolled. Regenerating replaces all existing recovery codes.
+
+### Remove MFA Credential
+
+```
+DELETE /api/auth/mfa/credentials/{credentialId}
+→ { "success": true }
+```
+
+Removes a specific MFA credential. If the last primary method is removed, MFA is disabled for the user.
 
 ## Building a Custom Login UI
 

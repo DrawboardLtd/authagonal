@@ -93,6 +93,32 @@ Content-Type: application/json
 DELETE /api/v1/profile/{userId}/identities/{provider}/{externalUserId}
 ```
 
+## MFA 管理
+
+### 获取 MFA 状态
+
+```
+GET /api/v1/profile/{userId}/mfa
+```
+
+返回用户的 MFA 状态和已注册的方法。
+
+### 重置所有 MFA
+
+```
+DELETE /api/v1/profile/{userId}/mfa
+```
+
+删除所有 MFA 凭据并设置 `MfaEnabled=false`。如果需要，用户将需要重新注册。
+
+### 删除特定 MFA 凭据
+
+```
+DELETE /api/v1/profile/{userId}/mfa/{credentialId}
+```
+
+删除特定的 MFA 凭据（例如丢失的认证器）。如果最后一个主要方法被删除，则 MFA 将被禁用。
+
 ## SSO 提供者
 
 ### SAML 提供者

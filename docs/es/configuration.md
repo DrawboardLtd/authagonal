@@ -47,6 +47,7 @@ Los clientes se definen en el arreglo `Clients` y se inyectan al inicio. Cada cl
       "AbsoluteRefreshTokenLifetimeSeconds": 2592000,
       "SlidingRefreshTokenLifetimeSeconds": 1296000,
       "RefreshTokenUsage": "OneTime",
+      "MfaPolicy": "Enabled",
       "ProvisioningApps": ["my-backend"]
     }
   ]
@@ -92,6 +93,48 @@ Defina las aplicaciones posteriores en las que los usuarios deben ser aprovision
 ```
 
 Ver [Aprovisionamiento](provisioning) para la especificacion completa del protocolo TCC.
+
+## Politica de MFA
+
+La autenticacion multifactor se aplica por cliente mediante la propiedad `MfaPolicy`:
+
+| Valor | Comportamiento |
+|---|---|
+| `Disabled` (predeterminado) | Sin desafio MFA, incluso si el usuario tiene MFA inscrito |
+| `Enabled` | Desafia a los usuarios que tienen MFA inscrito; no fuerza la inscripcion |
+| `Required` | Desafia a los usuarios inscritos; fuerza la inscripcion para los usuarios sin MFA |
+
+```json
+{
+  "Clients": [
+    {
+      "ClientId": "secure-app",
+      "MfaPolicy": "Required"
+    }
+  ]
+}
+```
+
+Cuando `MfaPolicy` es `Required` y el usuario no ha inscrito MFA, el inicio de sesion devuelve `{ mfaSetupRequired: true, setupToken: "..." }`. El token de configuracion autentica al usuario en los endpoints de configuracion de MFA (mediante el encabezado `X-MFA-Setup-Token`) para que pueda inscribirse antes de obtener una sesion por cookie.
+
+Los inicios de sesion federados (SAML/OIDC) omiten MFA -- el proveedor de identidad externo lo gestiona.
+
+### Anulacion mediante IAuthHook
+
+El metodo `IAuthHook.ResolveMfaPolicyAsync` puede anular la politica del cliente por usuario:
+
+```csharp
+public Task<MfaPolicy> ResolveMfaPolicyAsync(
+    string userId, string email, MfaPolicy clientPolicy,
+    string clientId, CancellationToken ct)
+{
+    // Forzar MFA para usuarios administradores independientemente de la configuracion del cliente
+    if (email.EndsWith("@admin.example.com"))
+        return Task.FromResult(MfaPolicy.Required);
+
+    return Task.FromResult(clientPolicy);
+}
+```
 
 ## Politica de contrasenas
 
@@ -279,6 +322,7 @@ CORS se configura dinamicamente. Los origenes de todos los `AllowedCorsOrigins` 
       "RequirePkce": true,
       "RequireClientSecret": false,
       "AllowOfflineAccess": true,
+      "MfaPolicy": "Enabled",
       "ProvisioningApps": ["backend"]
     }
   ]
