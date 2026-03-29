@@ -287,15 +287,15 @@ export default function AcmeLoginPage() {
               />
             </div>
 
-            <div className="form-group" style={{ display: 'flex', alignItems: 'flex-start', gap: '8px' }}>
+            <label htmlFor="terms" style={{ display: 'flex', alignItems: 'baseline', gap: '8px', fontSize: '13px', color: '#4b5563', cursor: 'pointer', margin: '12px 0' }}>
               <input
                 id="terms"
                 type="checkbox"
                 checked={agreedToTerms}
                 onChange={(e) => setAgreedToTerms(e.target.checked)}
-                style={{ marginTop: '3px', accentColor: 'var(--color-primary)' }}
+                style={{ flexShrink: 0, accentColor: 'var(--color-primary)' }}
               />
-              <label htmlFor="terms" style={{ fontSize: '13px', color: '#4b5563', cursor: 'pointer' }}>
+              <span>
                 I agree to the Acme Corp{' '}
                 <a href="https://acme.example.com/terms" target="_blank" rel="noopener noreferrer" className="link">
                   Terms of Service
@@ -304,8 +304,8 @@ export default function AcmeLoginPage() {
                 <a href="https://acme.example.com/privacy" target="_blank" rel="noopener noreferrer" className="link">
                   Privacy Policy
                 </a>
-              </label>
-            </div>
+              </span>
+            </label>
 
             <button type="submit" className="btn-primary" disabled={loading}>
               {loading ? (
