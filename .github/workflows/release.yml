@@ -1,10 +1,8 @@
-name: Docker
+name: Release
 
 on:
   push:
-    branches: [master]
-  pull_request:
-    branches: [master]
+    tags: ['v*']
 
 env:
   DOCKERHUB_SERVER: drawboardci/authagonal
@@ -14,16 +12,90 @@ env:
   DOCKERHUB_DEMO_FRONTEND: drawboardci/authagonal-demo-frontend
 
 jobs:
-  build:
+  publish-nuget:
     runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
 
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Set version from tag
+        id: version
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Pack
+        run: |
+          dotnet pack src/Authagonal.Core/Authagonal.Core.csproj -c Release -p:Version=${{ steps.version.outputs.version }} -o nupkgs
+          dotnet pack src/Authagonal.Storage/Authagonal.Storage.csproj -c Release -p:Version=${{ steps.version.outputs.version }} -o nupkgs
+          dotnet pack src/Authagonal.Server/Authagonal.Server.csproj -c Release -p:Version=${{ steps.version.outputs.version }} -o nupkgs
+
+      - name: Push to NuGet
+        run: dotnet nuget push nupkgs/*.nupkg --api-key ${{ secrets.NUGET_API_KEY }} --source https://api.nuget.org/v3/index.json --skip-duplicate
+
+      - name: Wait for NuGet indexing
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          echo "Waiting for Authagonal.Server $VERSION to appear on NuGet..."
+          for i in $(seq 1 30); do
+            if curl -sf "https://api.nuget.org/v3-flatcontainer/authagonal.server/index.json" | grep -q "\"$VERSION\""; then
+              echo "Package indexed after ~$(( i * 10 )) seconds"
+              exit 0
+            fi
+            echo "  attempt $i/30 — not yet indexed, waiting 10s..."
+            sleep 10
+          done
+          echo "::error::Timed out waiting for NuGet indexing (5 minutes)"
+          exit 1
+
+  publish-npm:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: login-app
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+
+      - run: npm ci
+      - run: npm run build
+
+      - name: Set version from tag
+        run: npm version "${GITHUB_REF_NAME#v}" --no-git-tag-version --allow-same-version
+
+      - run: npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Wait for npm indexing
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          echo "Waiting for @drawboard/authagonal-login@$VERSION on npm..."
+          for i in $(seq 1 20); do
+            if npm view "@drawboard/authagonal-login@$VERSION" version 2>/dev/null | grep -q "$VERSION"; then
+              echo "Package indexed after ~$(( i * 5 )) seconds"
+              exit 0
+            fi
+            echo "  attempt $i/20 — not yet indexed, waiting 5s..."
+            sleep 5
+          done
+          echo "::error::Timed out waiting for npm indexing"
+          exit 1
+
+  docker:
+    needs: [publish-nuget, publish-npm]
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
       - uses: docker/setup-buildx-action@v3
 
       - name: Log in to Docker Hub
-        if: github.event_name != 'pull_request'
         uses: docker/login-action@v3
         with:
           username: drawboardci
@@ -35,7 +107,8 @@ jobs:
         with:
           images: ${{ env.DOCKERHUB_SERVER }}
           tags: |
-            type=ref,event=branch
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
             type=sha,format=long
 
       - name: Extract metadata (migration)
@@ -44,14 +117,15 @@ jobs:
         with:
           images: ${{ env.DOCKERHUB_MIGRATION }}
           tags: |
-            type=ref,event=branch
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
             type=sha,format=long
 
       - name: Build and push server image
         uses: docker/build-push-action@v6
         with:
           context: .
-          push: ${{ github.event_name != 'pull_request' }}
+          push: true
           tags: ${{ steps.meta-server.outputs.tags }}
           labels: ${{ steps.meta-server.outputs.labels }}
           cache-from: type=gha
@@ -62,7 +136,7 @@ jobs:
         with:
           context: .
           file: Dockerfile.migration
-          push: ${{ github.event_name != 'pull_request' }}
+          push: true
           tags: ${{ steps.meta-migration.outputs.tags }}
           labels: ${{ steps.meta-migration.outputs.labels }}
           cache-from: type=gha,scope=migration
@@ -74,7 +148,8 @@ jobs:
         with:
           images: ${{ env.DOCKERHUB_DEMO_SERVER }}
           tags: |
-            type=ref,event=branch
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
             type=sha,format=long
 
       - name: Extract metadata (demo-sample-api)
@@ -83,7 +158,8 @@ jobs:
         with:
           images: ${{ env.DOCKERHUB_DEMO_SAMPLE_API }}
           tags: |
-            type=ref,event=branch
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
             type=sha,format=long
 
       - name: Extract metadata (demo-frontend)
@@ -92,7 +168,8 @@ jobs:
         with:
           images: ${{ env.DOCKERHUB_DEMO_FRONTEND }}
           tags: |
-            type=ref,event=branch
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
             type=sha,format=long
 
       - name: Build and push demo server image
@@ -100,7 +177,7 @@ jobs:
         with:
           context: .
           file: demos/custom-server/Dockerfile
-          push: ${{ github.event_name != 'pull_request' }}
+          push: true
           tags: ${{ steps.meta-demo-server.outputs.tags }}
           labels: ${{ steps.meta-demo-server.outputs.labels }}
           cache-from: type=gha,scope=demo-server
@@ -111,7 +188,7 @@ jobs:
         with:
           context: .
           file: demos/sample-app/SampleApp.Api/Dockerfile
-          push: ${{ github.event_name != 'pull_request' }}
+          push: true
           tags: ${{ steps.meta-demo-sample-api.outputs.tags }}
           labels: ${{ steps.meta-demo-sample-api.outputs.labels }}
           cache-from: type=gha,scope=demo-sample-api
@@ -122,15 +199,14 @@ jobs:
         with:
           context: .
           file: demos/sample-app/frontend/Dockerfile
-          push: ${{ github.event_name != 'pull_request' }}
+          push: true
           tags: ${{ steps.meta-demo-frontend.outputs.tags }}
           labels: ${{ steps.meta-demo-frontend.outputs.labels }}
           cache-from: type=gha,scope=demo-frontend
           cache-to: type=gha,mode=max,scope=demo-frontend
 
   deploy-demo:
-    needs: build
-    if: github.ref == 'refs/heads/master' && github.event_name != 'pull_request'
+    needs: docker
     runs-on: ubuntu-latest
     permissions:
       id-token: write
