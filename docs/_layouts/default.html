@@ -218,6 +218,9 @@
         <a href="{{ locale_prefix | append: 'localization' | relative_url }}" {% if pg == 'localization' %}class="active"{% endif %}>{{ t.localization }}</a>
         <a href="{{ locale_prefix | append: 'provisioning' | relative_url }}" {% if pg == 'provisioning' %}class="active"{% endif %}>{{ t.provisioning }}</a>
 
+        <div class="nav-section">{{ t.security }}</div>
+        <a href="{{ locale_prefix | append: 'mfa' | relative_url }}" {% if pg == 'mfa' %}class="active"{% endif %}>{{ t.mfa }}</a>
+
         <div class="nav-section">{{ t.identity_providers }}</div>
         <a href="{{ locale_prefix | append: 'saml' | relative_url }}" {% if pg == 'saml' %}class="active"{% endif %}>{{ t.saml }}</a>
         <a href="{{ locale_prefix | append: 'oidc-federation' | relative_url }}" {% if pg == 'oidc-federation' %}class="active"{% endif %}>{{ t.oidc_federation }}</a>
