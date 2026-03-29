@@ -26,7 +26,8 @@ grep 'authagonal-login' demos/custom-server/login-app/package.json
 grep 'Version=' demos/custom-server/CustomAuthServer.csproj
 echo ""
 
-# Commit and tag
+# Commit and tag (unset CLAUDECODE to allow nested claude invocation from git aicc)
+unset CLAUDECODE 2>/dev/null || true
 git aicc
 git tag "$next"
 echo ""
