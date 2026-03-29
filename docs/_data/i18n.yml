@@ -19,6 +19,7 @@ en:
   operations: "Operations"
   scaling: "Scaling"
   migration: "Migration"
+  backup_restore: "Backup & Restore"
 
 zh-Hans:
   getting_started: "入门指南"
@@ -41,6 +42,7 @@ zh-Hans:
   operations: "运维"
   scaling: "扩展"
   migration: "迁移"
+  backup_restore: "备份与恢复"
 
 de:
   getting_started: "Erste Schritte"
@@ -63,6 +65,7 @@ de:
   operations: "Betrieb"
   scaling: "Skalierung"
   migration: "Migration"
+  backup_restore: "Backup & Wiederherstellung"
 
 fr:
   getting_started: "Premiers pas"
@@ -85,6 +88,7 @@ fr:
   operations: "Opérations"
   scaling: "Mise à l'échelle"
   migration: "Migration"
+  backup_restore: "Sauvegarde & Restauration"
 
 es:
   getting_started: "Primeros pasos"
@@ -107,6 +111,7 @@ es:
   operations: "Operaciones"
   scaling: "Escalabilidad"
   migration: "Migración"
+  backup_restore: "Copia de seguridad y restauración"
 
 vi:
   getting_started: "Bắt đầu"
@@ -129,6 +134,7 @@ vi:
   operations: "Vận hành"
   scaling: "Mở rộng"
   migration: "Di chuyển"
+  backup_restore: "Sao lưu & Khôi phục"
 
 pt:
   getting_started: "Primeiros passos"
@@ -151,3 +157,4 @@ pt:
   operations: "Operações"
   scaling: "Escalabilidade"
   migration: "Migração"
+  backup_restore: "Backup e Restauração"

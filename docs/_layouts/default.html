@@ -229,6 +229,7 @@
         <div class="nav-section">{{ t.operations }}</div>
         <a href="{{ locale_prefix | append: 'scaling' | relative_url }}" {% if pg == 'scaling' %}class="active"{% endif %}>{{ t.scaling }}</a>
         <a href="{{ locale_prefix | append: 'migration' | relative_url }}" {% if pg == 'migration' %}class="active"{% endif %}>{{ t.migration }}</a>
+        <a href="{{ locale_prefix | append: 'backup-restore' | relative_url }}" {% if pg == 'backup-restore' %}class="active"{% endif %}>{{ t.backup_restore }}</a>
       </nav>
     </aside>
     <main class="content">
