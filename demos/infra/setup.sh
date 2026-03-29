@@ -193,18 +193,36 @@ az containerapp update \
 # Service principal for GitHub Actions
 # ---------------------------------------------------------------------------
 
-echo "==> Creating service principal for GitHub Actions"
-echo "    Add the JSON output below as the AZURE_CREDENTIALS secret in GitHub."
-echo ""
-az ad sp create-for-rbac \
-  --name "github-authagonal-demo" \
+echo "==> Creating app registration for GitHub Actions OIDC"
+APP_ID=$(az ad app create --display-name "github-authagonal-demo" --query appId -o tsv | tr -d '\r')
+SP_ID=$(az ad sp create --id "$APP_ID" --query id -o tsv | tr -d '\r')
+
+echo "==> Assigning Contributor role on resource group"
+az role assignment create \
+  --assignee "$SP_ID" \
   --role Contributor \
-  --scopes "/subscriptions/${SUBSCRIPTION}/resourceGroups/${RG}" \
-  --sdk-auth
+  --scope "/subscriptions/${SUBSCRIPTION}/resourceGroups/${RG}" \
+  --output none
+
+echo "==> Adding federated credential for GitHub Actions (master branch)"
+az ad app federated-credential create \
+  --id "$APP_ID" \
+  --parameters "{
+    \"name\": \"github-master\",
+    \"issuer\": \"https://token.actions.githubusercontent.com\",
+    \"subject\": \"repo:DrawboardLtd/authagonal:ref:refs/heads/master\",
+    \"audiences\": [\"api://AzureADTokenExchange\"]
+  }" \
+  --output none
+
+TENANT_ID=$(az account show --query tenantId -o tsv | tr -d '\r')
 
 echo ""
 echo "==> Done! Container Apps deployed."
 echo "    Auth server:  $AUTH_URL"
 echo "    Frontend:     $FRONTEND_URL"
 echo ""
-echo "    Next: add the service principal JSON above as AZURE_CREDENTIALS in GitHub repo secrets."
+echo "    Add these GitHub repo secrets:"
+echo "      AZURE_CLIENT_ID:       $APP_ID"
+echo "      AZURE_TENANT_ID:       $TENANT_ID"
+echo "      AZURE_SUBSCRIPTION_ID: $SUBSCRIPTION"
