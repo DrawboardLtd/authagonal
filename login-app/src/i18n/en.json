@@ -82,5 +82,9 @@
   "mfaSetupPasskey": "Set up passkey",
   "mfaWebAuthnCancelled": "Passkey authentication was cancelled.",
   "mfaDone": "Done",
-  "mfaLoading": "Loading..."
+  "mfaLoading": "Loading...",
+  "noAccount": "Don't have an account?",
+  "createAccount": "Create one",
+  "continue": "Continue",
+  "orSignInWith": "Or sign in with {{provider}}"
 }

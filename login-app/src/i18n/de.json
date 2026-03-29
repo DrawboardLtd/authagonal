@@ -82,5 +82,9 @@
   "mfaSetupPasskey": "Passkey einrichten",
   "mfaWebAuthnCancelled": "Passkey-Authentifizierung wurde abgebrochen.",
   "mfaDone": "Fertig",
-  "mfaLoading": "Wird geladen..."
+  "mfaLoading": "Wird geladen...",
+  "noAccount": "Noch kein Konto?",
+  "createAccount": "Konto erstellen",
+  "continue": "Weiter",
+  "orSignInWith": "Oder anmelden mit {{provider}}"
 }

@@ -82,5 +82,9 @@
   "mfaSetupPasskey": "ngaSchu'wI' chen",
   "mfaWebAuthnCancelled": "ngaSchu'wI' toblu'pu' 'ej mevlu'.",
   "mfaDone": "pItlh",
-  "mfaLoading": "loDlu'..."
+  "mfaLoading": "loDlu'...",
+  "noAccount": "De'wI' ghajbe'?",
+  "createAccount": "yIchenmoH",
+  "continue": "yItaH",
+  "orSignInWith": "pagh {{provider}} yIlo' yI'el"
 }

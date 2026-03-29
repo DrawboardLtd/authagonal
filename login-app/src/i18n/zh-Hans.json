@@ -82,5 +82,9 @@
   "mfaSetupPasskey": "设置通行密钥",
   "mfaWebAuthnCancelled": "通行密钥验证已取消。",
   "mfaDone": "完成",
-  "mfaLoading": "加载中..."
+  "mfaLoading": "加载中...",
+  "noAccount": "还没有账户？",
+  "createAccount": "创建账户",
+  "continue": "继续",
+  "orSignInWith": "或使用 {{provider}} 登录"
 }

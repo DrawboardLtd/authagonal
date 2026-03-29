@@ -238,7 +238,7 @@ export default function LoginPage() {
     <div>
       <h2 className="auth-title">{t('signIn')}</h2>
 
-      {providers.length > 0 && (
+      {providers.length > 0 && !showPasswordField && (
         <div className="external-providers">
           {providers.map((p) => (
             <button
@@ -264,6 +264,19 @@ export default function LoginPage() {
         </div>
       )}
 
+      {providers.length > 0 && showPasswordField && (
+        <div className="divider" style={{ marginBottom: '16px' }}>
+          <button
+            type="button"
+            onClick={() => { setSsoChecked(false); setSsoInfo(null); lastCheckedEmailRef.current = ''; }}
+            className="link"
+            style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '13px' }}
+          >
+            {t('orSignInWith', { provider: providers.map(p => p.name).join(', ') })}
+          </button>
+        </div>
+      )}
+
       {error && <div className="alert-error">{error}</div>}
 
       <form onSubmit={handleSubmit}>
@@ -282,6 +295,17 @@ export default function LoginPage() {
             required
           />
         </div>
+
+        {!ssoChecked && !ssoChecking && (
+          <button
+            type="button"
+            className="btn-primary"
+            onClick={() => performSsoCheck(email)}
+            disabled={!email.includes('@')}
+          >
+            {t('continue')}
+          </button>
+        )}
 
         {ssoChecking && (
           <div className="sso-checking">{t('ssoChecking')}</div>

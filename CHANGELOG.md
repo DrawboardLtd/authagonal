@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.9] — 2026-03-29
+
+### Improved
+
+- **Login UX** — added a "Continue" button after the email field instead of relying on a hidden blur-triggered SSO check. External provider buttons (e.g. Google) now collapse into a compact "Or sign in with..." link once the password field is shown, and can be expanded again by clicking the link.
+- **Registration link always visible** — "Don't have an account? Create one" link is now shown below the form at all times, not just after the password field appears.
+- **i18n completeness** — added `continue`, `noAccount`, `createAccount`, and `orSignInWith` translation keys across all 8 languages (en, de, es, fr, pt, vi, zh-Hans, tlh).
+
 ## [0.1.8] — 2026-03-29
 
 ### Added
