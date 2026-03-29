@@ -156,8 +156,8 @@ export default function AcmeLoginPage() {
 
   return (
     <div>
-      <h2 className="auth-title">Welcome to Acme Corp</h2>
-      <p className="auth-subtitle">Sign in to access your account</p>
+      <h2 className="auth-title">{t('welcomeTitle', { appName: branding.appName })}</h2>
+      <p className="auth-subtitle">{t('welcomeSubtitle')}</p>
 
       {providers.length > 0 && (
         <div className="external-providers">

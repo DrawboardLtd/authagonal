@@ -47,5 +47,7 @@
   "continueWith": "Continue with {{provider}}",
   "or": "or",
   "signedInAs": "Signed in as {{name}}",
-  "signedInMessage": "You are already authenticated."
+  "signedInMessage": "You are already authenticated.",
+  "welcomeTitle": "Welcome to {{appName}}",
+  "welcomeSubtitle": "Sign in to access your account"
 }
