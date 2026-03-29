@@ -66,7 +66,12 @@ public static class MfaSetupEndpoints
 
         var credentials = await mfaStore.GetCredentialsAsync(userId, ct);
 
-        var methods = credentials.Select(c => new
+        // Exclude pending setup credentials from status
+        var confirmed = credentials
+            .Where(c => c.Name is not "TOTP (pending)" and not "WebAuthn (pending)")
+            .ToList();
+
+        var methods = confirmed.Select(c => new
         {
             id = c.Id,
             type = c.Type.ToString().ToLowerInvariant(),
@@ -76,7 +81,7 @@ public static class MfaSetupEndpoints
             isConsumed = c.Type == MfaCredentialType.RecoveryCode ? c.IsConsumed : (bool?)null,
         }).ToList();
 
-        var enabled = credentials.Any(c => c.Type != MfaCredentialType.RecoveryCode);
+        var enabled = confirmed.Any(c => c.Type != MfaCredentialType.RecoveryCode);
 
         return Results.Ok(new { enabled, methods });
     }
