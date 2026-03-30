@@ -125,6 +125,9 @@ export default function LoginPage() {
       if (returnUrl && isSafeReturnUrl(returnUrl)) {
         ssoUrl.searchParams.set('returnUrl', returnUrl);
       }
+      if (email) {
+        ssoUrl.searchParams.set('loginHint', email);
+      }
       window.location.href = ssoUrl.toString();
     }
   }

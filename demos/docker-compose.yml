@@ -17,7 +17,7 @@ services:
       - Oidc__Issuer=http://localhost:8080
       - SamlProviders__0__ConnectionId=entra
       - SamlProviders__0__ConnectionName=Drawboard Entra ID
-      - SamlProviders__0__EntityId=https://sso.authagonal.drawboard.com
+      - SamlProviders__0__EntityId=https://sso.demo.authagonal.drawboard.com
       - SamlProviders__0__MetadataLocation=https://login.microsoftonline.com/4901e942-075f-4600-bfda-4c66954606cc/federationmetadata/2007-06/federationmetadata.xml?appid=68b150fb-11df-436e-b1f3-405a99262401
       - SamlProviders__0__AllowedDomains__0=drawboard.com
     depends_on:

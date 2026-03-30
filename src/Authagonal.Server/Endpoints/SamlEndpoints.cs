@@ -25,6 +25,7 @@ public static class SamlEndpoints
     private static async Task<IResult> LoginAsync(
         string connectionId,
         string? returnUrl,
+        string? loginHint,
         ISamlProviderStore samlStore,
         SamlMetadataParser metadataParser,
         SamlReplayCache replayCache,
@@ -53,7 +54,7 @@ public static class SamlEndpoints
 
         // Build redirect URL
         var url = SamlRequestBuilder.BuildAuthnRequestUrl(
-            requestId, issuer, acsUrl, metadata.SingleSignOnServiceUrl);
+            requestId, issuer, acsUrl, metadata.SingleSignOnServiceUrl, loginHint);
 
         // Append RelayState if returnUrl is provided (validated to prevent open redirect)
         var relayState = SanitizeReturnUrl(returnUrl);
