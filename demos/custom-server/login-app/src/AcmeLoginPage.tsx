@@ -32,7 +32,6 @@ export default function AcmeLoginPage() {
   const [password, setPassword] = useState('');
   const [error, setError] = useState(oidcError);
   const [loading, setLoading] = useState(false);
-  const [agreedToTerms, setAgreedToTerms] = useState(false);
   const [ssoInfo, setSsoInfo] = useState<{ redirectUrl: string } | null>(null);
   const [ssoChecked, setSsoChecked] = useState(false);
   const [ssoChecking, setSsoChecking] = useState(false);
@@ -107,10 +106,6 @@ export default function AcmeLoginPage() {
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!agreedToTerms) {
-      setError('You must agree to the Terms of Service to continue.');
-      return;
-    }
     setError('');
     setLoading(true);
     try {
@@ -329,26 +324,6 @@ export default function AcmeLoginPage() {
                 required
               />
             </div>
-
-            <label htmlFor="terms" style={{ display: 'flex', alignItems: 'flex-start', gap: '8px', fontSize: '13px', color: '#4b5563', cursor: 'pointer', margin: '12px 0' }}>
-              <input
-                id="terms"
-                type="checkbox"
-                checked={agreedToTerms}
-                onChange={(e) => setAgreedToTerms(e.target.checked)}
-                style={{ flexShrink: 0, marginTop: '2px', accentColor: 'var(--color-primary)' }}
-              />
-              <span>
-                I agree to the Acme Corp{' '}
-                <a href="https://acme.example.com/terms" target="_blank" rel="noopener noreferrer" className="link">
-                  Terms of Service
-                </a>{' '}
-                and{' '}
-                <a href="https://acme.example.com/privacy" target="_blank" rel="noopener noreferrer" className="link">
-                  Privacy Policy
-                </a>
-              </span>
-            </label>
 
             <button type="submit" className="btn-primary" disabled={loading}>
               {loading ? (
