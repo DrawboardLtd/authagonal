@@ -289,6 +289,35 @@ public static class AuthagonalExtensions
 
         app.UseExceptionHandlingMiddleware();
 
+        // SCIM request logging — temporary diagnostic to trace Entra provisioning requests
+        app.Use(async (context, next) =>
+        {
+            if (context.Request.Path.StartsWithSegments("/scim"))
+            {
+                var logger = context.RequestServices.GetRequiredService<ILoggerFactory>().CreateLogger("ScimRequestLog");
+                var hasAuth = context.Request.Headers.Authorization.Count > 0;
+                logger.LogWarning("SCIM request: {Method} {Path}{Query} | Auth={HasAuth} | Host={Host} | UA={UserAgent}",
+                    context.Request.Method,
+                    context.Request.Path,
+                    context.Request.QueryString,
+                    hasAuth,
+                    context.Request.Host,
+                    context.Request.Headers.UserAgent.ToString());
+
+                await next();
+
+                logger.LogWarning("SCIM response: {Method} {Path} => {StatusCode} | ContentType={ContentType}",
+                    context.Request.Method,
+                    context.Request.Path,
+                    context.Response.StatusCode,
+                    context.Response.ContentType);
+            }
+            else
+            {
+                await next();
+            }
+        });
+
         // Request localization
         var supportedCultures = new[] { "en", "zh-Hans", "de", "fr", "es", "vi", "pt" };
         app.UseRequestLocalization(options =>
