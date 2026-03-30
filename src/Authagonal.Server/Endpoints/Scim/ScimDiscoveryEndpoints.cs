@@ -5,7 +5,6 @@ public static class ScimDiscoveryEndpoints
     public static IEndpointRouteBuilder MapScimDiscoveryEndpoints(this IEndpointRouteBuilder app)
     {
         // Base URL handler — Entra ID hits this during SCIM credential validation
-        app.MapGet("/scim/v2", GetServiceProviderConfig).AllowAnonymous();
         app.MapGet("/scim/v2/", GetServiceProviderConfig).AllowAnonymous();
 
         app.MapGet("/scim/v2/ServiceProviderConfig", GetServiceProviderConfig).AllowAnonymous();
