@@ -84,6 +84,7 @@
   "mfaManualKeyLabel": "Or enter this key manually:",
   "mfaCopyKey": "Click to copy",
   "mfaSkipSetup": "Skip for now",
+  "mfaBackToApp": "Back to application",
   "mfaDone": "Done",
   "mfaLoading": "Loading...",
   "mfaPromptTitle": "Secure your account",

@@ -37,6 +37,7 @@ export default function MfaSetupPage() {
   const [searchParams] = useSearchParams();
   const mfaSetupToken = searchParams.get('setupToken') || undefined;
   const returnUrl = searchParams.get('returnUrl') || '';
+  const backUrl = searchParams.get('backUrl') || '';
   const [enabled, setEnabled] = useState(false);
   const [methods, setMethods] = useState<MfaMethod[]>([]);
   const [error, setError] = useState('');
@@ -393,6 +394,18 @@ export default function MfaSetupPage() {
           >
             {t('mfaSkipSetup')}
           </button>
+        </div>
+      )}
+
+      {/* Back to app link — shown when navigating from an external app */}
+      {backUrl && (
+        <div style={{ marginTop: '24px', textAlign: 'center', paddingTop: '16px', borderTop: '1px solid #e5e7eb' }}>
+          <a
+            href={backUrl}
+            style={{ fontSize: '14px', color: '#2563eb', textDecoration: 'none' }}
+          >
+            &larr; {t('mfaBackToApp')}
+          </a>
         </div>
       )}
     </div>

@@ -16,7 +16,7 @@ const DEFAULT_CONFIG: AppConfig = {
 
 let _config: AppConfig | null = null;
 
-async function getConfig(): Promise<AppConfig> {
+export async function getConfig(): Promise<AppConfig> {
   if (_config) return _config;
   try {
     const res = await fetch('/config.json');

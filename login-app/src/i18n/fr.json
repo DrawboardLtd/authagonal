@@ -84,6 +84,7 @@
   "mfaManualKeyLabel": "Ou entrez cette clé manuellement :",
   "mfaCopyKey": "Cliquer pour copier",
   "mfaSkipSetup": "Passer pour l'instant",
+  "mfaBackToApp": "Retour à l'application",
   "mfaDone": "Terminé",
   "mfaLoading": "Chargement...",
   "mfaPromptTitle": "Sécurisez votre compte",

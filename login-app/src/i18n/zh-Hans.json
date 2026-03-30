@@ -84,6 +84,7 @@
   "mfaManualKeyLabel": "或手动输入此密钥：",
   "mfaCopyKey": "点击复制",
   "mfaSkipSetup": "暂时跳过",
+  "mfaBackToApp": "返回应用",
   "mfaDone": "完成",
   "mfaLoading": "加载中...",
   "mfaPromptTitle": "保护您的账户",

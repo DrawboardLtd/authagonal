@@ -27,6 +27,41 @@ h1 {
   margin-bottom: 2rem;
 }
 
+/* Tabs */
+.tabs {
+  display: flex;
+  border-bottom: 2px solid #e2e8f0;
+  margin-bottom: 0;
+  gap: 0;
+}
+
+.tab {
+  padding: 0.625rem 1.25rem;
+  border: none;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -2px;
+  background: none;
+  color: #64748b;
+  font-size: 0.875rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+}
+
+.tab:hover {
+  color: #334155;
+}
+
+.tab.active {
+  color: #2563eb;
+  border-bottom-color: #2563eb;
+}
+
+.tab-content {
+  padding-top: 1rem;
+}
+
+/* Cards */
 .card {
   background: white;
   border: 1px solid #e2e8f0;
@@ -57,7 +92,8 @@ h1 {
   font-size: 0.8125rem;
 }
 
-button {
+/* Buttons */
+button, .btn-link {
   display: inline-flex;
   align-items: center;
   padding: 0.5rem 1rem;
@@ -67,6 +103,7 @@ button {
   font-weight: 500;
   cursor: pointer;
   transition: background 0.15s;
+  text-decoration: none;
 }
 
 .btn-primary {
