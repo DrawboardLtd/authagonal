@@ -220,6 +220,7 @@
 
         <div class="nav-section">{{ t.security }}</div>
         <a href="{{ locale_prefix | append: 'mfa' | relative_url }}" {% if pg == 'mfa' %}class="active"{% endif %}>{{ t.mfa }}</a>
+        <a href="{{ locale_prefix | append: 'scim' | relative_url }}" {% if pg == 'scim' %}class="active"{% endif %}>{{ t.scim }}</a>
 
         <div class="nav-section">{{ t.identity_providers }}</div>
         <a href="{{ locale_prefix | append: 'saml' | relative_url }}" {% if pg == 'saml' %}class="active"{% endif %}>{{ t.saml }}</a>

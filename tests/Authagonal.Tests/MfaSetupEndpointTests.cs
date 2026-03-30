@@ -40,7 +40,7 @@ public class MfaSetupEndpointTests : IAsyncDisposable
         var json = await response.Content.ReadFromJsonAsync<JsonElement>();
         Assert.True(json.TryGetProperty("setupToken", out _));
         Assert.True(json.TryGetProperty("qrCodeDataUri", out var qr));
-        Assert.StartsWith("data:image/svg+xml;base64,", qr.GetString());
+        Assert.StartsWith("data:image/png;base64,", qr.GetString());
     }
 
     [Fact]

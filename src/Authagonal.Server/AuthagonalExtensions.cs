@@ -3,6 +3,7 @@ using Authagonal.Core.Services;
 using Authagonal.Core.Stores;
 using Authagonal.Server.Endpoints;
 using Authagonal.Server.Endpoints.Admin;
+using Authagonal.Server.Endpoints.Scim;
 using Authagonal.Server.Middleware;
 using Authagonal.Server.Services;
 using Authagonal.Server.Services.Oidc;
@@ -193,7 +194,7 @@ public static class AuthagonalExtensions
                 var userStore = context.HttpContext.RequestServices.GetRequiredService<IUserStore>();
                 var user = await userStore.GetAsync(userId);
 
-                if (user is null || !string.Equals(user.SecurityStamp ?? "", stampClaim ?? "", StringComparison.Ordinal))
+                if (user is null || !user.IsActive || !string.Equals(user.SecurityStamp ?? "", stampClaim ?? "", StringComparison.Ordinal))
                 {
                     context.RejectPrincipal();
                     await context.HttpContext.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
@@ -218,7 +219,8 @@ public static class AuthagonalExtensions
                 ClockSkew = TimeSpan.FromSeconds(60),
                 ValidateIssuerSigningKey = true
             };
-        });
+        })
+        .AddScheme<AuthenticationSchemeOptions, ScimBearerAuthenticationHandler>("ScimBearer", null);
 
         services.AddSingleton<IPostConfigureOptions<JwtBearerOptions>>(sp =>
             new JwtBearerKeyResolverPostConfigure(sp.GetRequiredService<KeyManager>()));
@@ -245,6 +247,13 @@ public static class AuthagonalExtensions
                     var scopes = scopeClaim.Value.Split(' ', StringSplitOptions.RemoveEmptyEntries);
                     return scopes.Contains(adminScope, StringComparer.OrdinalIgnoreCase);
                 });
+            });
+
+            options.AddPolicy("ScimProvisioning", policy =>
+            {
+                policy.AuthenticationSchemes.Add("ScimBearer");
+                policy.RequireAuthenticatedUser();
+                policy.RequireClaim("client_id");
             });
         });
 
@@ -336,7 +345,12 @@ public static class AuthagonalExtensions
             app.MapSsoAdminEndpoints();
             app.MapTokenAdminEndpoints();
             app.MapMfaAdminEndpoints();
+            app.MapScimTokenAdminEndpoints();
         }
+
+        app.MapScimUserEndpoints();
+        app.MapScimGroupEndpoints();
+        app.MapScimDiscoveryEndpoints();
 
         app.MapAuthEndpoints();
         app.MapMfaEndpoints();

@@ -204,6 +204,13 @@ public static class SamlEndpoints
             }
         }
 
+        // Check if account is active
+        if (!user.IsActive)
+        {
+            logger.LogWarning("SAML login denied for deactivated user {UserId} ({Email})", user.Id, email);
+            return Results.Redirect($"{relayState}?error=account_disabled&error_description={Uri.EscapeDataString("Account has been deactivated.")}");
+        }
+
         // Ensure external login link
         var provider = $"saml:{connectionId}";
         var providerKey = parseResult.NameId!;

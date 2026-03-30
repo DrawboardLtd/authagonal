@@ -9,7 +9,8 @@ namespace Authagonal.Storage.Stores;
 public sealed class TableUserStore(
     TableClient usersTable,
     TableClient userEmailsTable,
-    TableClient userLoginsTable) : IUserStore
+    TableClient userLoginsTable,
+    TableClient userExternalIdsTable) : IUserStore
 {
     public async Task<AuthUser?> GetAsync(string userId, CancellationToken ct = default)
     {
@@ -127,6 +128,63 @@ public sealed class TableUserStore(
         {
             return false;
         }
+    }
+
+    public async Task<AuthUser?> FindByExternalIdAsync(string clientId, string externalId, CancellationToken ct = default)
+    {
+        try
+        {
+            var indexEntity = await userExternalIdsTable.GetEntityAsync<UserExternalIdEntity>(
+                $"{clientId}|{externalId}", UserExternalIdEntity.LookupRowKey, cancellationToken: ct);
+            return await GetAsync(indexEntity.Value.UserId, ct);
+        }
+        catch (RequestFailedException ex) when (ex.Status == 404)
+        {
+            return null;
+        }
+    }
+
+    public async Task<(IReadOnlyList<AuthUser> Users, int TotalCount)> ListAsync(
+        string? organizationId, int startIndex, int count, CancellationToken ct = default)
+    {
+        var allUsers = new List<AuthUser>();
+        var query = usersTable.QueryAsync<UserEntity>(
+            e => e.RowKey == UserEntity.ProfileRowKey,
+            cancellationToken: ct);
+
+        await foreach (var entity in query)
+        {
+            var user = entity.ToModel();
+            if (organizationId is null || string.Equals(user.OrganizationId, organizationId, StringComparison.Ordinal))
+            {
+                allUsers.Add(user);
+            }
+        }
+
+        var totalCount = allUsers.Count;
+        var paged = allUsers
+            .OrderBy(u => u.CreatedAt)
+            .Skip(startIndex - 1)
+            .Take(count)
+            .ToList();
+
+        return (paged, totalCount);
+    }
+
+    public async Task SetExternalIdAsync(string userId, string clientId, string externalId, CancellationToken ct = default)
+    {
+        var entity = UserExternalIdEntity.Create(clientId, externalId, userId);
+        await userExternalIdsTable.UpsertEntityAsync(entity, TableUpdateMode.Replace, ct);
+    }
+
+    public async Task RemoveExternalIdAsync(string userId, string clientId, string externalId, CancellationToken ct = default)
+    {
+        try
+        {
+            await userExternalIdsTable.DeleteEntityAsync(
+                $"{clientId}|{externalId}", UserExternalIdEntity.LookupRowKey, cancellationToken: ct);
+        }
+        catch (RequestFailedException ex) when (ex.Status == 404) { }
     }
 
     public async Task AddLoginAsync(ExternalLoginInfo login, CancellationToken ct = default)

@@ -1,5 +1,39 @@
 # Changelog
 
+## [0.1.24] — 2026-03-30
+
+### Added
+
+- **SCIM 2.0 provisioning** — full inbound user and group provisioning from enterprise identity providers (Microsoft Entra ID, Okta, OneLogin).
+  - `POST /scim/v2/Users`, `GET /scim/v2/Users`, `GET /scim/v2/Users/{id}`, `PUT /scim/v2/Users/{id}`, `PATCH /scim/v2/Users/{id}`, `DELETE /scim/v2/Users/{id}` — user CRUD with soft-delete deactivation.
+  - `POST /scim/v2/Groups`, `GET /scim/v2/Groups`, `GET /scim/v2/Groups/{id}`, `PUT /scim/v2/Groups/{id}`, `PATCH /scim/v2/Groups/{id}`, `DELETE /scim/v2/Groups/{id}` — group CRUD with member add/remove via PATCH.
+  - `GET /scim/v2/ServiceProviderConfig`, `GET /scim/v2/Schemas`, `GET /scim/v2/ResourceTypes` — SCIM discovery endpoints.
+  - SCIM filter support: `eq` on `userName`/`externalId`/`displayName`, `co` on `displayName`.
+  - Paginated list responses with `startIndex` and `count`.
+- **SCIM token authentication** — per-client static Bearer tokens (stored SHA-256 hashed). Custom `ScimBearer` authentication scheme and `ScimProvisioning` authorization policy.
+  - `POST /api/v1/scim/tokens` — generate a SCIM token for a client (returns raw token once).
+  - `GET /api/v1/scim/tokens?clientId={id}` — list tokens (metadata only).
+  - `DELETE /api/v1/scim/tokens/{tokenId}?clientId={id}` — revoke a token.
+- **SCIM group model** — `ScimGroup` with `DisplayName`, `ExternalId`, `OrganizationId`, and `MemberUserIds`. `IScimGroupStore` interface and `TableScimGroupStore` Azure Table Storage implementation.
+- **User externalId** — `AuthUser.ExternalId` property for IdP-assigned identifiers. `UserExternalIds` table provides O(1) lookup by `(clientId, externalId)`.
+- **IsActive guard** — deactivated users (`IsActive = false`) are rejected at password login, SAML SSO, OIDC SSO, refresh token exchange, and cookie validation.
+- **SCIM-triggered TCC provisioning** — SCIM user creation triggers downstream TCC provisioning if the client has `ProvisioningApps` configured.
+- **SCIM documentation** — `docs/scim.md` with IdP setup guides (Entra ID, Okta, OneLogin), endpoint reference, and attribute mapping. Localized stubs for de, es, fr, pt, vi, zh-Hans.
+
+### Changed
+
+- **`AuthUser` model** — added `ExternalId`, `IsActive` (default `true`), `ScimProvisionedByClientId` properties.
+- **`IUserStore`** — added `FindByExternalIdAsync`, `ListAsync`, `SetExternalIdAsync`, `RemoveExternalIdAsync` methods.
+- **`TableUserStore`** — now accepts a `userExternalIdsTable` parameter; implements new `IUserStore` methods.
+- **`ServiceCollectionExtensions`** — registers 4 new tables (`UserExternalIds`, `ScimTokens`, `ScimGroups`, `ScimGroupExternalIds`) and 2 new stores (`IScimTokenStore`, `IScimGroupStore`).
+- **`AuthagonalExtensions`** — adds `ScimBearer` auth scheme, `ScimProvisioning` policy, wires SCIM endpoints.
+- **Cookie validation** — `OnValidatePrincipal` now rejects inactive users.
+- **Token refresh** — `HandleRefreshTokenAsync` now rejects deactivated users.
+
+### Fixed
+
+- **QR code test** — `TotpSetup_ReturnsQrCodeAndSetupToken` test assertion updated from SVG to PNG to match actual QR code output format.
+
 ## [0.1.9] — 2026-03-29
 
 ### Improved

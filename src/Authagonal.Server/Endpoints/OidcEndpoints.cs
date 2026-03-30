@@ -284,6 +284,13 @@ public static class OidcEndpoints
             }
         }
 
+        // Check if account is active
+        if (!user.IsActive)
+        {
+            logger.LogWarning("OIDC login denied for deactivated user {UserId} ({Email})", user.Id, email);
+            return Results.Redirect($"{returnUrl}?error=account_disabled&error_description={Uri.EscapeDataString("Account has been deactivated.")}");
+        }
+
         // Ensure external login link
         var provider = $"oidc:{stateData.ConnectionId}";
         var providerKey = sub;

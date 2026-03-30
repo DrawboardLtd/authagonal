@@ -9,6 +9,7 @@ public sealed class InMemoryUserStore : IUserStore
 {
     private readonly ConcurrentDictionary<string, AuthUser> _users = new();
     private readonly ConcurrentDictionary<string, ExternalLoginInfo> _logins = new(); // key: provider|providerKey
+    private readonly ConcurrentDictionary<string, string> _externalIds = new(); // key: clientId|externalId -> userId
 
     public Task<AuthUser?> GetAsync(string userId, CancellationToken ct = default)
         => Task.FromResult(_users.GetValueOrDefault(userId));
@@ -40,6 +41,36 @@ public sealed class InMemoryUserStore : IUserStore
 
     public Task<bool> ExistsAsync(string userId, CancellationToken ct = default)
         => Task.FromResult(_users.ContainsKey(userId));
+
+    public Task<AuthUser?> FindByExternalIdAsync(string clientId, string externalId, CancellationToken ct = default)
+    {
+        if (_externalIds.TryGetValue($"{clientId}|{externalId}", out var userId))
+            return Task.FromResult(_users.GetValueOrDefault(userId));
+        return Task.FromResult<AuthUser?>(null);
+    }
+
+    public Task<(IReadOnlyList<AuthUser> Users, int TotalCount)> ListAsync(string? organizationId, int startIndex, int count, CancellationToken ct = default)
+    {
+        var all = _users.Values.AsEnumerable();
+        if (organizationId is not null)
+            all = all.Where(u => u.OrganizationId == organizationId);
+
+        var list = all.OrderBy(u => u.CreatedAt).ToList();
+        var paged = list.Skip(startIndex - 1).Take(count).ToList();
+        return Task.FromResult<(IReadOnlyList<AuthUser>, int)>((paged, list.Count));
+    }
+
+    public Task SetExternalIdAsync(string userId, string clientId, string externalId, CancellationToken ct = default)
+    {
+        _externalIds[$"{clientId}|{externalId}"] = userId;
+        return Task.CompletedTask;
+    }
+
+    public Task RemoveExternalIdAsync(string userId, string clientId, string externalId, CancellationToken ct = default)
+    {
+        _externalIds.TryRemove($"{clientId}|{externalId}", out _);
+        return Task.CompletedTask;
+    }
 
     public Task AddLoginAsync(ExternalLoginInfo login, CancellationToken ct = default)
     {
@@ -373,5 +404,89 @@ public sealed class InMemoryMfaStore : IMfaStore
     {
         var hash = SHA256.HashData(credentialId);
         return Convert.ToHexString(hash).ToLowerInvariant();
+    }
+}
+
+public sealed class InMemoryScimTokenStore : IScimTokenStore
+{
+    private readonly ConcurrentDictionary<string, ScimToken> _byHash = new(); // key: tokenHash
+    private readonly ConcurrentDictionary<string, ScimToken> _byId = new();   // key: clientId|tokenId
+
+    public Task<ScimToken?> FindByHashAsync(string tokenHash, CancellationToken ct = default)
+        => Task.FromResult(_byHash.GetValueOrDefault(tokenHash));
+
+    public Task<IReadOnlyList<ScimToken>> GetByClientAsync(string clientId, CancellationToken ct = default)
+    {
+        var tokens = _byId.Values.Where(t => t.ClientId == clientId).ToList();
+        return Task.FromResult<IReadOnlyList<ScimToken>>(tokens);
+    }
+
+    public Task StoreAsync(ScimToken token, CancellationToken ct = default)
+    {
+        _byHash[token.TokenHash] = token;
+        _byId[$"{token.ClientId}|{token.TokenId}"] = token;
+        return Task.CompletedTask;
+    }
+
+    public Task RevokeAsync(string tokenId, string clientId, CancellationToken ct = default)
+    {
+        if (_byId.TryGetValue($"{clientId}|{tokenId}", out var token))
+        {
+            token.IsRevoked = true;
+        }
+        return Task.CompletedTask;
+    }
+
+    public Task DeleteAsync(string tokenId, string clientId, CancellationToken ct = default)
+    {
+        if (_byId.TryRemove($"{clientId}|{tokenId}", out var token))
+        {
+            _byHash.TryRemove(token.TokenHash, out _);
+        }
+        return Task.CompletedTask;
+    }
+}
+
+public sealed class InMemoryScimGroupStore : IScimGroupStore
+{
+    private readonly ConcurrentDictionary<string, ScimGroup> _groups = new();
+
+    public Task<ScimGroup?> GetAsync(string groupId, CancellationToken ct = default)
+        => Task.FromResult(_groups.GetValueOrDefault(groupId));
+
+    public Task<ScimGroup?> FindByExternalIdAsync(string organizationId, string externalId, CancellationToken ct = default)
+    {
+        var group = _groups.Values.FirstOrDefault(g =>
+            g.OrganizationId == organizationId && g.ExternalId == externalId);
+        return Task.FromResult(group);
+    }
+
+    public Task<(IReadOnlyList<ScimGroup> Groups, int TotalCount)> ListAsync(string? organizationId, int startIndex, int count, CancellationToken ct = default)
+    {
+        var all = _groups.Values.AsEnumerable();
+        if (organizationId is not null)
+            all = all.Where(g => g.OrganizationId == organizationId);
+
+        var list = all.OrderBy(g => g.CreatedAt).ToList();
+        var paged = list.Skip(startIndex - 1).Take(count).ToList();
+        return Task.FromResult<(IReadOnlyList<ScimGroup>, int)>((paged, list.Count));
+    }
+
+    public Task CreateAsync(ScimGroup group, CancellationToken ct = default)
+    {
+        _groups[group.Id] = group;
+        return Task.CompletedTask;
+    }
+
+    public Task UpdateAsync(ScimGroup group, CancellationToken ct = default)
+    {
+        _groups[group.Id] = group;
+        return Task.CompletedTask;
+    }
+
+    public Task DeleteAsync(string groupId, CancellationToken ct = default)
+    {
+        _groups.TryRemove(groupId, out _);
+        return Task.CompletedTask;
     }
 }

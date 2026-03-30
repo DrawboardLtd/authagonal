@@ -28,10 +28,11 @@ internal sealed class StoreFactory
         var ssoDomains = EnsureTable(serviceClient, "SsoDomains");
         var samlProviders = EnsureTable(serviceClient, "SamlProviders");
         var oidcProviders = EnsureTable(serviceClient, "OidcProviders");
+        var userExternalIds = EnsureTable(serviceClient, "UserExternalIds");
 
         return new StoreFactory
         {
-            UserStore = new TableUserStore(users, userEmails, userLogins),
+            UserStore = new TableUserStore(users, userEmails, userLogins, userExternalIds),
             ClientStore = new TableClientStore(clients),
             GrantStore = new TableGrantStore(grants, grantsBySubject, grantsByExpiry, NullLogger<TableGrantStore>.Instance),
             SsoDomainStore = new TableSsoDomainStore(ssoDomains),

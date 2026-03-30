@@ -45,7 +45,8 @@ This starts the auth server on `http://localhost:8080` with an Azurite storage e
 - **Auth Hooks** — `IAuthHook` extensibility point for audit logging, custom validation, webhooks
 - **Composable Library** — `AddAuthagonal()` / `UseAuthagonal()` extension methods to host in your own project
 - **Session Invalidation** — SecurityStamp rotation on org change, password reset
-- **Admin APIs** — user CRUD, SAML/OIDC provider management, token impersonation
+- **SCIM 2.0 Provisioning** — inbound user/group provisioning from Entra ID, Okta, OneLogin. Per-client static Bearer tokens, soft-delete deactivation, TCC downstream triggers
+- **Admin APIs** — user CRUD, SAML/OIDC provider management, token impersonation, SCIM token management
 - **Brandable Login UI** — runtime-configurable branding via `branding.json`, or install the npm package and override individual components
 
 ## Deployment Options

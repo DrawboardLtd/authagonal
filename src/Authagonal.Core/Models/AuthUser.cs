@@ -17,6 +17,9 @@ public sealed class AuthUser
     public DateTimeOffset? LockoutEnd { get; set; }
     public string? SecurityStamp { get; set; }
     public bool MfaEnabled { get; set; }
+    public string? ExternalId { get; set; }
+    public bool IsActive { get; set; } = true;
+    public string? ScimProvisionedByClientId { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset? UpdatedAt { get; set; }
 }

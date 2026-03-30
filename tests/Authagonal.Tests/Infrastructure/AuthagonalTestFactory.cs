@@ -9,6 +9,7 @@ using Authagonal.Core.Services;
 using Authagonal.Core.Stores;
 using Authagonal.Server;
 using Authagonal.Server.Endpoints;
+using Authagonal.Server.Endpoints.Scim;
 using Authagonal.Server.Services;
 using Authagonal.Server.Services.Oidc;
 using Authagonal.Server.Services.Saml;
@@ -52,6 +53,8 @@ public sealed class AuthagonalTestFactory : IAsyncDisposable
     public InMemoryOidcProviderStore OidcProviderStore { get; } = new();
     public InMemoryUserProvisionStore UserProvisionStore { get; } = new();
     public InMemoryMfaStore MfaStore { get; } = new();
+    public InMemoryScimTokenStore ScimTokenStore { get; } = new();
+    public InMemoryScimGroupStore ScimGroupStore { get; } = new();
     public TestEmailService EmailService { get; } = new();
     public TestAuthHook AuthHook { get; } = new();
 
@@ -136,6 +139,43 @@ public sealed class AuthagonalTestFactory : IAsyncDisposable
         return user;
     }
 
+    /// <summary>Seed a SCIM client and return the raw Bearer token.</summary>
+    public async Task<(string ClientId, string RawToken)> SeedScimClientAsync(
+        string clientId = "scim-client",
+        string? orgId = null)
+    {
+        EnsureStarted();
+
+        // Create the client
+        await ClientStore.UpsertAsync(new OAuthClient
+        {
+            ClientId = clientId,
+            ClientName = "SCIM Client",
+            RequireClientSecret = false,
+            AllowedGrantTypes = [],
+            AllowedScopes = [],
+        });
+
+        // Generate and store a SCIM token
+        var rawTokenBytes = RandomNumberGenerator.GetBytes(32);
+        var rawToken = Convert.ToBase64String(rawTokenBytes);
+        var tokenHash = Convert.ToHexString(
+            System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(rawToken))).ToLowerInvariant();
+
+        var scimToken = new ScimToken
+        {
+            TokenId = Guid.NewGuid().ToString("N"),
+            ClientId = clientId,
+            TokenHash = tokenHash,
+            Description = "Test SCIM token",
+            CreatedAt = DateTimeOffset.UtcNow,
+        };
+
+        await ScimTokenStore.StoreAsync(scimToken);
+
+        return (clientId, rawToken);
+    }
+
     /// <summary>Get an admin bearer token via client_credentials grant.</summary>
     public async Task<string> GetAdminTokenAsync(HttpClient? client = null)
     {
@@ -187,6 +227,8 @@ public sealed class AuthagonalTestFactory : IAsyncDisposable
         services.AddSingleton<IOidcProviderStore>(OidcProviderStore);
         services.AddSingleton<IUserProvisionStore>(UserProvisionStore);
         services.AddSingleton<IMfaStore>(MfaStore);
+        services.AddSingleton<IScimTokenStore>(ScimTokenStore);
+        services.AddSingleton<IScimGroupStore>(ScimGroupStore);
 
         // Extensibility test doubles
         services.AddSingleton<IEmailService>(EmailService);
@@ -260,7 +302,7 @@ public sealed class AuthagonalTestFactory : IAsyncDisposable
 
                 var userStore = context.HttpContext.RequestServices.GetRequiredService<IUserStore>();
                 var user = await userStore.GetAsync(userId);
-                if (user is null || !string.Equals(user.SecurityStamp ?? "", stampClaim ?? "", StringComparison.Ordinal))
+                if (user is null || !user.IsActive || !string.Equals(user.SecurityStamp ?? "", stampClaim ?? "", StringComparison.Ordinal))
                 {
                     context.RejectPrincipal();
                     await context.HttpContext.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
@@ -283,7 +325,8 @@ public sealed class AuthagonalTestFactory : IAsyncDisposable
                 ClockSkew = TimeSpan.FromSeconds(60),
                 ValidateIssuerSigningKey = true
             };
-        });
+        })
+        .AddScheme<AuthenticationSchemeOptions, Authagonal.Server.Services.ScimBearerAuthenticationHandler>("ScimBearer", null);
 
         services.AddSingleton<IPostConfigureOptions<JwtBearerOptions>>(sp =>
             new JwtBearerKeyResolverPostConfigure(sp.GetRequiredService<KeyManager>()));
@@ -304,6 +347,13 @@ public sealed class AuthagonalTestFactory : IAsyncDisposable
                     return scopes.Contains(adminScope, StringComparer.OrdinalIgnoreCase);
                 });
             });
+
+            options.AddPolicy("ScimProvisioning", policy =>
+            {
+                policy.AuthenticationSchemes.Add("ScimBearer");
+                policy.RequireAuthenticatedUser();
+                policy.RequireClaim("client_id");
+            });
         });
 
         services.AddCors();
@@ -315,6 +365,8 @@ public sealed class AuthagonalTestFactory : IAsyncDisposable
         // Pipeline (mirrors UseAuthagonal + MapAuthagonalEndpoints)
         _app.UseAuthagonal();
         _app.MapAuthagonalEndpoints();
+
+        // SCIM endpoints are wired via MapAuthagonalEndpoints already
 
         _app.StartAsync().GetAwaiter().GetResult();
         _started = true;

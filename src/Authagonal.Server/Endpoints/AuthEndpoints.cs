@@ -73,6 +73,10 @@ public static class AuthEndpoints
         if (user is null)
             return Results.Json(new { error = "invalid_credentials" }, statusCode: 401);
 
+        // Check if account is active
+        if (!user.IsActive)
+            return Results.Json(new { error = "account_disabled" }, statusCode: 403);
+
         // Check lockout
         if (user.LockoutEnabled && user.LockoutEnd.HasValue && user.LockoutEnd > DateTimeOffset.UtcNow)
         {

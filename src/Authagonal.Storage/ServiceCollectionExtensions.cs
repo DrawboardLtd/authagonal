@@ -26,6 +26,10 @@ public static class ServiceCollectionExtensions
     private const string MfaCredentialsTableName = "MfaCredentials";
     private const string MfaChallengesTableName = "MfaChallenges";
     private const string MfaWebAuthnIndexTableName = "MfaWebAuthnIndex";
+    private const string UserExternalIdsTableName = "UserExternalIds";
+    private const string ScimTokensTableName = "ScimTokens";
+    private const string ScimGroupsTableName = "ScimGroups";
+    private const string ScimGroupExternalIdsTableName = "ScimGroupExternalIds";
 
     public static IServiceCollection AddTableStorage(this IServiceCollection services, string connectionString)
     {
@@ -55,9 +59,13 @@ public static class ServiceCollectionExtensions
         var mfaCredentials = EnsureTable(serviceClient, MfaCredentialsTableName);
         var mfaChallenges = EnsureTable(serviceClient, MfaChallengesTableName);
         var mfaWebAuthnIndex = EnsureTable(serviceClient, MfaWebAuthnIndexTableName);
+        var userExternalIds = EnsureTable(serviceClient, UserExternalIdsTableName);
+        var scimTokens = EnsureTable(serviceClient, ScimTokensTableName);
+        var scimGroups = EnsureTable(serviceClient, ScimGroupsTableName);
+        var scimGroupExternalIds = EnsureTable(serviceClient, ScimGroupExternalIdsTableName);
 
         // Register store implementations as singletons.
-        services.AddSingleton<IUserStore>(new TableUserStore(users, userEmails, userLogins));
+        services.AddSingleton<IUserStore>(new TableUserStore(users, userEmails, userLogins, userExternalIds));
         services.AddSingleton<IClientStore>(new TableClientStore(clients));
         services.AddSingleton<IGrantStore>(sp =>
             new TableGrantStore(grants, grantsBySubject, grantsByExpiry, sp.GetRequiredService<ILoggerFactory>().CreateLogger<TableGrantStore>()));
@@ -67,6 +75,8 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IOidcProviderStore>(new TableOidcProviderStore(oidcProviders));
         services.AddSingleton<IUserProvisionStore>(new TableUserProvisionStore(userProvisions));
         services.AddSingleton<IMfaStore>(new TableMfaStore(mfaCredentials, mfaChallenges, mfaWebAuthnIndex));
+        services.AddSingleton<IScimTokenStore>(new TableScimTokenStore(scimTokens));
+        services.AddSingleton<IScimGroupStore>(new TableScimGroupStore(scimGroups, scimGroupExternalIds));
 
         // Register grant table clients as keyed singletons for the reconciliation service.
         services.AddKeyedSingleton("Grants", grants);

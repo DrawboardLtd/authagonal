@@ -284,6 +284,9 @@ public sealed class TokenService(
         var user = await userStore.GetAsync(data.SubjectId, ct)
             ?? throw new InvalidOperationException($"User '{data.SubjectId}' not found");
 
+        if (!user.IsActive)
+            throw new InvalidOperationException("User account has been deactivated");
+
         // Consume the old token (mark as used)
         if (!grant.ConsumedAt.HasValue)
         {
