@@ -10,15 +10,18 @@ public static class ScimUserEndpoints
 {
     public static IEndpointRouteBuilder MapScimUserEndpoints(this IEndpointRouteBuilder app)
     {
-        var group = app.MapGroup("/scim/v2/Users")
-            .RequireAuthorization("ScimProvisioning");
+        foreach (var prefix in new[] { "/scim/v2/Users", "/scim/Users" })
+        {
+            var group = app.MapGroup(prefix)
+                .RequireAuthorization("ScimProvisioning");
 
-        group.MapGet("/", ListUsersAsync);
-        group.MapGet("/{id}", GetUserAsync);
-        group.MapPost("/", CreateUserAsync).DisableAntiforgery();
-        group.MapPut("/{id}", ReplaceUserAsync).DisableAntiforgery();
-        group.MapPatch("/{id}", PatchUserAsync).DisableAntiforgery();
-        group.MapDelete("/{id}", DeleteUserAsync);
+            group.MapGet("/", ListUsersAsync);
+            group.MapGet("/{id}", GetUserAsync);
+            group.MapPost("/", CreateUserAsync).DisableAntiforgery();
+            group.MapPut("/{id}", ReplaceUserAsync).DisableAntiforgery();
+            group.MapPatch("/{id}", PatchUserAsync).DisableAntiforgery();
+            group.MapDelete("/{id}", DeleteUserAsync);
+        }
 
         return app;
     }

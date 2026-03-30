@@ -8,15 +8,18 @@ public static class ScimGroupEndpoints
 {
     public static IEndpointRouteBuilder MapScimGroupEndpoints(this IEndpointRouteBuilder app)
     {
-        var group = app.MapGroup("/scim/v2/Groups")
-            .RequireAuthorization("ScimProvisioning");
+        foreach (var prefix in new[] { "/scim/v2/Groups", "/scim/Groups" })
+        {
+            var group = app.MapGroup(prefix)
+                .RequireAuthorization("ScimProvisioning");
 
-        group.MapGet("/", ListGroupsAsync);
-        group.MapGet("/{id}", GetGroupAsync);
-        group.MapPost("/", CreateGroupAsync).DisableAntiforgery();
-        group.MapPut("/{id}", ReplaceGroupAsync).DisableAntiforgery();
-        group.MapPatch("/{id}", PatchGroupAsync).DisableAntiforgery();
-        group.MapDelete("/{id}", DeleteGroupAsync);
+            group.MapGet("/", ListGroupsAsync);
+            group.MapGet("/{id}", GetGroupAsync);
+            group.MapPost("/", CreateGroupAsync).DisableAntiforgery();
+            group.MapPut("/{id}", ReplaceGroupAsync).DisableAntiforgery();
+            group.MapPatch("/{id}", PatchGroupAsync).DisableAntiforgery();
+            group.MapDelete("/{id}", DeleteGroupAsync);
+        }
 
         return app;
     }
