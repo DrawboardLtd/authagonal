@@ -34,9 +34,13 @@ public sealed class ScimBearerAuthenticationHandler(
         // Hash the token for lookup
         var tokenHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(rawToken))).ToLowerInvariant();
 
+        Logger.LogInformation("SCIM auth attempt: token length={Length}, hash prefix={HashPrefix}",
+            rawToken.Length, tokenHash[..12]);
+
         var scimToken = await scimTokenStore.FindByHashAsync(tokenHash);
         if (scimToken is null)
         {
+            Logger.LogWarning("SCIM token not found for hash prefix {HashPrefix}", tokenHash[..12]);
             return AuthenticateResult.Fail("Invalid SCIM token");
         }
 
