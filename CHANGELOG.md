@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.1.26] — 2026-03-30
+
+### Fixed
+
+- **SCIM base URL handler** — Entra ID hits `/scim/v2` directly during credential validation. Added a handler that returns `ServiceProviderConfig` instead of falling through to the SPA catch-all.
+
+## [0.1.25] — 2026-03-30
+
+### Added
+
+- **Entra SAML integration** — configured Entra ID enterprise app for SAML SSO in the demo environment.
+- **SAML login hint passthrough** — email entered on the login page is now passed to the SAML IdP via both the `Subject/NameID` element in the AuthnRequest and the `login_hint` query parameter.
+- **MFA back navigation** — MFA setup page accepts a `backUrl` parameter, allowing users to return to the originating app after managing MFA settings.
+- **Sample app tab UI** — logged-in view now uses horizontal tabs (Profile, API Explorer, Token) with an MFA Settings link.
+
 ## [0.1.24] — 2026-03-30
 
 ### Added
