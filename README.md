@@ -103,4 +103,4 @@ See the [full documentation](https://drawboardltd.github.io/authagonal/) for con
 
 ## License
 
-Proprietary — Drawboard Ltd.
+[MIT](LICENSE)
