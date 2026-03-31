@@ -1,4 +1,4 @@
-using Authagonal.Server.Services;
+using Authagonal.Core.Services;
 
 namespace Authagonal.Server.Endpoints;
 
@@ -6,7 +6,7 @@ public static class JwksEndpoint
 {
     public static IEndpointRouteBuilder MapJwksEndpoint(this IEndpointRouteBuilder app)
     {
-        app.MapGet("/.well-known/openid-configuration/jwks", (KeyManager keyManager) =>
+        app.MapGet("/.well-known/openid-configuration/jwks", (IKeyManager keyManager) =>
         {
             var keys = keyManager.GetSecurityKeys();
 

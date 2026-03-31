@@ -49,15 +49,29 @@ public static class AuthagonalExtensions
         services.AddLocalization();
 
         // ---------------------------------------------------------------------------
-        // Storage
+        // Tenant context — default single-tenant reads from IConfiguration.
+        // Multi-tenant hosts (e.g. Cloud) register their own scoped ITenantContext
+        // before calling AddAuthagonal; TryAdd ensures it is not overwritten.
         // ---------------------------------------------------------------------------
-        var storageConnectionString = configuration["Storage:ConnectionString"]
-            ?? throw new InvalidOperationException("Storage:ConnectionString is not configured");
-
-        services.AddTableStorage(storageConnectionString);
+        services.TryAddSingleton<Authagonal.Core.Services.ITenantContext>(
+            sp => new DefaultTenantContext(sp.GetRequiredService<IConfiguration>()));
 
         // ---------------------------------------------------------------------------
-        // Data protection — shared key storage for multi-instance deployments
+        // Storage — skip if stores are already registered (e.g. by a multi-tenant host)
+        // ---------------------------------------------------------------------------
+        var storageConnectionString = configuration["Storage:ConnectionString"];
+
+        if (!services.Any(d => d.ServiceType == typeof(Authagonal.Core.Stores.IUserStore)))
+        {
+            if (string.IsNullOrWhiteSpace(storageConnectionString))
+                throw new InvalidOperationException("Storage:ConnectionString is not configured");
+
+            services.AddTableStorage(storageConnectionString);
+        }
+
+        // ---------------------------------------------------------------------------
+        // Data protection — shared key storage for multi-instance deployments.
+        // Multi-tenant hosts configure per-tenant data protection separately.
         // ---------------------------------------------------------------------------
         var dataProtection = services.AddDataProtection()
             .SetApplicationName("Authagonal");
@@ -68,7 +82,8 @@ public static class AuthagonalExtensions
             // Explicit blob URI: "https://<account>.blob.core.windows.net/<container>/keys.xml"
             dataProtection.PersistKeysToAzureBlobStorage(new Uri(dpBlobUri), new Azure.Identity.DefaultAzureCredential());
         }
-        else if (!storageConnectionString.Contains("devstoreaccount1", StringComparison.OrdinalIgnoreCase))
+        else if (!string.IsNullOrWhiteSpace(storageConnectionString) &&
+                 !storageConnectionString.Contains("devstoreaccount1", StringComparison.OrdinalIgnoreCase))
         {
             // Production storage — auto-create a blob container for data protection keys
             var blobServiceClient = new BlobServiceClient(storageConnectionString);
@@ -77,7 +92,7 @@ public static class AuthagonalExtensions
             var blobClient = container.GetBlobClient("keys.xml");
             dataProtection.PersistKeysToAzureBlobStorage(blobClient);
         }
-        // else: local dev with Azurite — use default file-based keys
+        // else: local dev with Azurite or multi-tenant host — use default file-based keys
 
         // ---------------------------------------------------------------------------
         // Password policy
@@ -99,6 +114,7 @@ public static class AuthagonalExtensions
         services.AddSingleton<PasswordHasher>();
         services.AddSingleton<PasswordValidator>();
         services.AddSingleton<KeyManager>();
+        services.TryAddSingleton<Authagonal.Core.Services.IKeyManager>(sp => sp.GetRequiredService<KeyManager>());
         services.AddHostedService(sp => sp.GetRequiredService<KeyManager>());
         services.AddScoped<AuthorizationCodeService>();
         services.AddScoped<ITokenService, TokenService>();
@@ -233,7 +249,7 @@ public static class AuthagonalExtensions
         .AddScheme<AuthenticationSchemeOptions, ScimBearerAuthenticationHandler>("ScimBearer", null);
 
         services.AddSingleton<IPostConfigureOptions<JwtBearerOptions>>(sp =>
-            new JwtBearerKeyResolverPostConfigure(sp.GetRequiredService<KeyManager>()));
+            new JwtBearerKeyResolverPostConfigure(sp.GetRequiredService<Authagonal.Core.Services.IKeyManager>()));
 
         // ---------------------------------------------------------------------------
         // Authorization
@@ -429,9 +445,9 @@ public static class AuthagonalExtensions
 }
 
 /// <summary>
-/// Wires KeyManager into JWT bearer token validation at runtime.
+/// Wires IKeyManager into JWT bearer token validation at runtime.
 /// </summary>
-sealed class JwtBearerKeyResolverPostConfigure(KeyManager keyManager) : IPostConfigureOptions<JwtBearerOptions>
+sealed class JwtBearerKeyResolverPostConfigure(Authagonal.Core.Services.IKeyManager keyManager) : IPostConfigureOptions<JwtBearerOptions>
 {
     public void PostConfigure(string? name, JwtBearerOptions options)
     {

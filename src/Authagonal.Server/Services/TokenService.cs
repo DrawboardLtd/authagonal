@@ -14,16 +14,15 @@ public sealed class TokenService(
     IGrantStore grantStore,
     IClientStore clientStore,
     IUserStore userStore,
-    KeyManager keyManager,
-    IConfiguration configuration,
+    IKeyManager keyManager,
+    ITenantContext tenantContext,
     IOptions<AuthOptions> authOptions,
     ILogger<TokenService> logger) : ITokenService
 {
     private const int RefreshTokenSizeBytes = 64;
     private TimeSpan RefreshTokenReuseGraceWindow => TimeSpan.FromSeconds(authOptions.Value.RefreshTokenReuseGraceSeconds);
 
-    private string Issuer => configuration["Oidc:Issuer"]
-        ?? throw new InvalidOperationException("Oidc:Issuer is not configured");
+    private string Issuer => tenantContext.Issuer;
 
     public async Task<string> CreateAccessTokenAsync(
         AuthUser? user,

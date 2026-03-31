@@ -31,7 +31,7 @@ public static class SamlEndpoints
         SamlMetadataParser metadataParser,
         SamlReplayCache replayCache,
         IMemoryCache memoryCache,
-        IConfiguration configuration,
+        Authagonal.Core.Services.ITenantContext tenantContext,
         IOptions<CacheOptions> cacheOptions,
         ILogger<Program> logger,
         CancellationToken ct)
@@ -51,7 +51,7 @@ public static class SamlEndpoints
 
         // Build the issuer (our entity ID)
         var issuer = config.EntityId;
-        var baseUrl = configuration["Issuer"]!;
+        var baseUrl = tenantContext.Issuer;
         var acsUrl = $"{baseUrl}/saml/{connectionId}/acs";
 
         // Build redirect URL
@@ -78,7 +78,7 @@ public static class SamlEndpoints
         SamlResponseParser responseParser,
         SamlReplayCache replayCache,
         IMemoryCache memoryCache,
-        IConfiguration configuration,
+        Authagonal.Core.Services.ITenantContext tenantContext,
         IOptions<CacheOptions> cacheOptions,
         ILogger<Program> logger,
         CancellationToken ct)
@@ -99,7 +99,7 @@ public static class SamlEndpoints
         // Parse IdP metadata (cached)
         var metadata = await GetCachedMetadataAsync(config, metadataParser, memoryCache, cacheOptions.Value, ct);
 
-        var baseUrl = configuration["Issuer"]!;
+        var baseUrl = tenantContext.Issuer;
         var acsUrl = $"{baseUrl}/saml/{connectionId}/acs";
 
         // Try to extract InResponseTo for replay validation
@@ -264,14 +264,14 @@ public static class SamlEndpoints
     private static async Task<IResult> MetadataAsync(
         string connectionId,
         ISamlProviderStore samlStore,
-        IConfiguration configuration,
+        Authagonal.Core.Services.ITenantContext tenantContext,
         CancellationToken ct)
     {
         var config = await samlStore.GetAsync(connectionId, ct);
         if (config is null)
             return Results.NotFound(new { error = "not_found", error_description = $"SAML connection '{connectionId}' not found" });
 
-        var baseUrl = configuration["Issuer"]!;
+        var baseUrl = tenantContext.Issuer;
         var acsUrl = $"{baseUrl}/saml/{connectionId}/acs";
         var issuer = config.EntityId;
 

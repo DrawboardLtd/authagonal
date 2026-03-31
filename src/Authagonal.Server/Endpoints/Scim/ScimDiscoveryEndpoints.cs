@@ -18,9 +18,9 @@ public static class ScimDiscoveryEndpoints
         return app;
     }
 
-    private static IResult GetServiceProviderConfig(IConfiguration configuration)
+    private static IResult GetServiceProviderConfig(Authagonal.Core.Services.ITenantContext tenantContext)
     {
-        var baseUrl = configuration["Issuer"] ?? "https://localhost";
+        var baseUrl = tenantContext.Issuer;
 
         var config = new
         {
@@ -51,9 +51,9 @@ public static class ScimDiscoveryEndpoints
         return ScimResults.Success(config);
     }
 
-    private static IResult GetSchemas(IConfiguration configuration)
+    private static IResult GetSchemas(Authagonal.Core.Services.ITenantContext tenantContext)
     {
-        var baseUrl = configuration["Issuer"] ?? "https://localhost";
+        var baseUrl = tenantContext.Issuer;
 
         var schemas = new object[]
         {
@@ -113,9 +113,9 @@ public static class ScimDiscoveryEndpoints
         return ScimResults.Success(response);
     }
 
-    private static IResult GetResourceTypes(IConfiguration configuration)
+    private static IResult GetResourceTypes(Authagonal.Core.Services.ITenantContext tenantContext)
     {
-        var baseUrl = configuration["Issuer"] ?? "https://localhost";
+        var baseUrl = tenantContext.Issuer;
 
         var resourceTypes = new object[]
         {

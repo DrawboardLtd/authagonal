@@ -260,7 +260,7 @@ public static class AuthEndpoints
         PasswordHasher passwordHasher,
         PasswordValidator passwordValidator,
         PasswordPolicy passwordPolicy,
-        IConfiguration configuration,
+        ITenantContext tenantContext,
         IRateLimiter rateLimiter,
         IOptions<AuthOptions> authOptions,
         ILogger<Program> logger,
@@ -311,7 +311,7 @@ public static class AuthEndpoints
         var expiresAt = DateTimeOffset.UtcNow.AddHours(ao.EmailVerificationExpiryHours).ToUnixTimeSeconds();
         var payload = $"{user.SecurityStamp}||{user.Email}||{expiresAt}";
         var encodedPayload = Convert.ToBase64String(Encoding.UTF8.GetBytes(payload));
-        var issuer = configuration["Issuer"]!;
+        var issuer = tenantContext.Issuer;
         var callbackUrl = $"{issuer}/api/auth/confirm-email?token={Uri.EscapeDataString(encodedPayload)}";
 
         try
@@ -395,7 +395,7 @@ public static class AuthEndpoints
         ForgotPasswordRequest request,
         IUserStore userStore,
         IEmailService emailService,
-        IConfiguration configuration,
+        ITenantContext tenantContext,
         IOptions<AuthOptions> authOptions,
         ILogger<Program> logger,
         CancellationToken ct)
@@ -426,7 +426,7 @@ public static class AuthEndpoints
         var payload = $"{resetToken}||{user.Email}||{expiresAt}";
         var encodedPayload = Convert.ToBase64String(Encoding.UTF8.GetBytes(payload));
 
-        var issuer = configuration["Issuer"]!;
+        var issuer = tenantContext.Issuer;
         var callbackUrl = $"{issuer}/reset-password?p={Uri.EscapeDataString(encodedPayload)}";
 
         try

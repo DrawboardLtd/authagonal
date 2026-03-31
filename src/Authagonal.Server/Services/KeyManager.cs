@@ -1,13 +1,14 @@
 using System.Security.Cryptography;
 using System.Text.Json;
 using Authagonal.Core.Models;
+using Authagonal.Core.Services;
 using Authagonal.Core.Stores;
 using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
 
 namespace Authagonal.Server.Services;
 
-public sealed class KeyManager : IHostedService, IDisposable
+public sealed class KeyManager : IKeyManager, IHostedService, IDisposable
 {
     private const int RsaKeySizeInBits = 2048;
     private const string Algorithm = SecurityAlgorithms.RsaSha256;

@@ -4,9 +4,9 @@ public static class DiscoveryEndpoint
 {
     public static IEndpointRouteBuilder MapDiscoveryEndpoints(this IEndpointRouteBuilder app)
     {
-        app.MapGet("/.well-known/openid-configuration", (IConfiguration config) =>
+        app.MapGet("/.well-known/openid-configuration", (Authagonal.Core.Services.ITenantContext tenantContext) =>
         {
-            var issuer = config["Issuer"]!;
+            var issuer = tenantContext.Issuer;
 
             return Results.Ok(new
             {

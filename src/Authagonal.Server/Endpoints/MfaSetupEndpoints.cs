@@ -92,7 +92,7 @@ public static class MfaSetupEndpoints
         IUserStore userStore,
         TotpService totpService,
         ISecretProvider secretProvider,
-        IConfiguration configuration,
+        Authagonal.Core.Services.ITenantContext tenantContext,
         CancellationToken ct)
     {
         var (userId, _) = await ResolveUserIdAsync(httpContext, mfaStore, ct);
@@ -121,7 +121,7 @@ public static class MfaSetupEndpoints
 
         // Generate secret
         var secret = totpService.GenerateSecret();
-        var issuer = configuration["Issuer"] ?? "Authagonal";
+        var issuer = tenantContext.Issuer;
         var otpAuthUri = totpService.GetOtpAuthUri(email, secret, issuer);
 
         // Generate QR code as PNG data URI

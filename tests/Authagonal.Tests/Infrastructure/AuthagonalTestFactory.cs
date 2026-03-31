@@ -232,6 +232,10 @@ public sealed class AuthagonalTestFactory : IAsyncDisposable
         services.AddSingleton<IScimTokenStore>(ScimTokenStore);
         services.AddSingleton<IScimGroupStore>(ScimGroupStore);
 
+        // Tenant context
+        services.AddSingleton<Authagonal.Core.Services.ITenantContext>(
+            new TestTenantContext(TestIssuer));
+
         // Rate limiter (in-memory, local-only for tests)
         services.AddSingleton<IRateLimiter>(new DistributedRateLimiter("test-node"));
 
@@ -253,6 +257,7 @@ public sealed class AuthagonalTestFactory : IAsyncDisposable
         services.AddSingleton<PasswordHasher>();
         services.AddSingleton<PasswordValidator>();
         services.AddSingleton<KeyManager>();
+        services.AddSingleton<Authagonal.Core.Services.IKeyManager>(sp => sp.GetRequiredService<KeyManager>());
         services.AddHostedService(sp => sp.GetRequiredService<KeyManager>());
         services.AddScoped<AuthorizationCodeService>();
         services.AddScoped<ITokenService, TokenService>();
@@ -339,7 +344,7 @@ public sealed class AuthagonalTestFactory : IAsyncDisposable
         .AddScheme<AuthenticationSchemeOptions, Authagonal.Server.Services.ScimBearerAuthenticationHandler>("ScimBearer", null);
 
         services.AddSingleton<IPostConfigureOptions<JwtBearerOptions>>(sp =>
-            new JwtBearerKeyResolverPostConfigure(sp.GetRequiredService<KeyManager>()));
+            new JwtBearerKeyResolverPostConfigure(sp.GetRequiredService<Authagonal.Core.Services.IKeyManager>()));
 
         // Authorization
         var adminScope = builder.Configuration["AdminApi:Scope"] ?? "authagonal-admin";

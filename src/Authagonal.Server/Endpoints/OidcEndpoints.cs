@@ -30,7 +30,7 @@ public static class OidcEndpoints
         IOidcProviderStore oidcStore,
         OidcDiscoveryClient discoveryClient,
         OidcStateStore stateStore,
-        IConfiguration configuration,
+        Authagonal.Core.Services.ITenantContext tenantContext,
         ILogger<Program> logger,
         CancellationToken ct)
     {
@@ -58,7 +58,7 @@ public static class OidcEndpoints
         await stateStore.StoreAsync(state, connectionId, effectiveReturnUrl, codeVerifier, nonce, ct);
 
         // Build authorization URL
-        var baseUrl = configuration["Issuer"]!;
+        var baseUrl = tenantContext.Issuer;
         var redirectUri = $"{baseUrl}/oidc/callback";
 
         var authorizationUrl = $"{discovery.AuthorizationEndpoint}" +
@@ -85,7 +85,7 @@ public static class OidcEndpoints
         OidcStateStore stateStore,
         IHttpClientFactory httpClientFactory,
         ISecretProvider secretProvider,
-        IConfiguration configuration,
+        Authagonal.Core.Services.ITenantContext tenantContext,
         ILogger<Program> logger,
         CancellationToken ct)
     {
@@ -138,7 +138,7 @@ public static class OidcEndpoints
         }
 
         // Exchange code for tokens
-        var baseUrl = configuration["Issuer"]!;
+        var baseUrl = tenantContext.Issuer;
         var redirectUri = $"{baseUrl}/oidc/callback";
 
         // Resolve the client secret (may be a Key Vault reference)

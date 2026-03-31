@@ -20,8 +20,8 @@ public static class EndSessionEndpoint
     private static async Task<IResult> HandleAsync(
         HttpContext httpContext,
         IClientStore clientStore,
-        KeyManager keyManager,
-        IConfiguration config,
+        Authagonal.Core.Services.IKeyManager keyManager,
+        Authagonal.Core.Services.ITenantContext tenantContext,
         IStringLocalizer<SharedMessages> localizer,
         CancellationToken ct)
     {
@@ -42,7 +42,7 @@ public static class EndSessionEndpoint
         // Validate post_logout_redirect_uri against the client from id_token_hint
         if (!string.IsNullOrWhiteSpace(idTokenHint))
         {
-            var clientId = ExtractClientId(idTokenHint, keyManager, config["Issuer"]!);
+            var clientId = ExtractClientId(idTokenHint, keyManager, tenantContext.Issuer);
             if (clientId is not null)
             {
                 var client = await clientStore.GetAsync(clientId, ct);
@@ -61,7 +61,7 @@ public static class EndSessionEndpoint
         return Results.Ok(new { message = localizer["EndSession_SignedOut"].Value });
     }
 
-    private static string? ExtractClientId(string idToken, KeyManager keyManager, string issuer)
+    private static string? ExtractClientId(string idToken, Authagonal.Core.Services.IKeyManager keyManager, string issuer)
     {
         try
         {

@@ -24,19 +24,19 @@ public static class ScimGroupEndpoints
         return app;
     }
 
-    private static string GetBaseUrl(IConfiguration config) =>
-        config["Issuer"] ?? "https://localhost";
+    private static string GetBaseUrl(Authagonal.Core.Services.ITenantContext tenantContext) =>
+        tenantContext.Issuer;
 
     private static async Task<IResult> ListGroupsAsync(
         HttpContext httpContext,
         IScimGroupStore groupStore,
-        IConfiguration configuration,
+        Authagonal.Core.Services.ITenantContext tenantContext,
         int? startIndex,
         int? count,
         string? filter,
         CancellationToken ct)
     {
-        var baseUrl = GetBaseUrl(configuration);
+        var baseUrl = GetBaseUrl(tenantContext);
         var start = startIndex ?? 1;
         var pageSize = Math.Min(count ?? 100, 200);
 
@@ -73,14 +73,14 @@ public static class ScimGroupEndpoints
     private static async Task<IResult> GetGroupAsync(
         string id,
         IScimGroupStore groupStore,
-        IConfiguration configuration,
+        Authagonal.Core.Services.ITenantContext tenantContext,
         CancellationToken ct)
     {
         var group = await groupStore.GetAsync(id, ct);
         if (group is null)
             return ScimResults.NotFound($"Group '{id}' not found");
 
-        var baseUrl = GetBaseUrl(configuration);
+        var baseUrl = GetBaseUrl(tenantContext);
         return ScimResults.Success(ScimGroupResource.FromGroup(group, baseUrl));
     }
 
@@ -88,11 +88,11 @@ public static class ScimGroupEndpoints
         ScimCreateGroupRequest request,
         HttpContext httpContext,
         IScimGroupStore groupStore,
-        IConfiguration configuration,
+        Authagonal.Core.Services.ITenantContext tenantContext,
         ILogger<Program> logger,
         CancellationToken ct)
     {
-        var baseUrl = GetBaseUrl(configuration);
+        var baseUrl = GetBaseUrl(tenantContext);
 
         if (string.IsNullOrWhiteSpace(request.DisplayName))
             return ScimResults.BadRequest("displayName is required");
@@ -122,10 +122,10 @@ public static class ScimGroupEndpoints
         string id,
         ScimCreateGroupRequest request,
         IScimGroupStore groupStore,
-        IConfiguration configuration,
+        Authagonal.Core.Services.ITenantContext tenantContext,
         CancellationToken ct)
     {
-        var baseUrl = GetBaseUrl(configuration);
+        var baseUrl = GetBaseUrl(tenantContext);
 
         var group = await groupStore.GetAsync(id, ct);
         if (group is null)
@@ -151,11 +151,11 @@ public static class ScimGroupEndpoints
         string id,
         ScimPatchRequest request,
         IScimGroupStore groupStore,
-        IConfiguration configuration,
+        Authagonal.Core.Services.ITenantContext tenantContext,
         ILogger<Program> logger,
         CancellationToken ct)
     {
-        var baseUrl = GetBaseUrl(configuration);
+        var baseUrl = GetBaseUrl(tenantContext);
 
         var group = await groupStore.GetAsync(id, ct);
         if (group is null)

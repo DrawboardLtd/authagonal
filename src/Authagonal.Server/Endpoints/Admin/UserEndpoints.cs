@@ -71,7 +71,7 @@ public static class UserEndpoints
         PasswordValidator passwordValidator,
         PasswordPolicy passwordPolicy,
         IEmailService emailService,
-        IConfiguration config,
+        Authagonal.Core.Services.ITenantContext tenantContext,
         IOptions<AuthOptions> authOptions,
         IStringLocalizer<SharedMessages> localizer,
         CancellationToken ct)
@@ -112,7 +112,7 @@ public static class UserEndpoints
         await authHook.OnUserCreatedAsync(userId, request.Email, "admin", ct);
 
         // Send verification email
-        var issuer = config["Issuer"]!;
+        var issuer = tenantContext.Issuer;
         var expiresAt = DateTimeOffset.UtcNow.AddHours(authOptions.Value.EmailVerificationExpiryHours).ToUnixTimeSeconds();
         var tokenData = $"{securityStamp}||{user.Email}||{expiresAt}";
         var encodedToken = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(tokenData));
@@ -279,7 +279,7 @@ public static class UserEndpoints
         string userId,
         IUserStore userStore,
         IEmailService emailService,
-        IConfiguration config,
+        Authagonal.Core.Services.ITenantContext tenantContext,
         IOptions<AuthOptions> authOptions,
         IStringLocalizer<SharedMessages> localizer,
         CancellationToken ct)
@@ -296,7 +296,7 @@ public static class UserEndpoints
         user.UpdatedAt = DateTimeOffset.UtcNow;
         await userStore.UpdateAsync(user, ct);
 
-        var issuer = config["Issuer"]!;
+        var issuer = tenantContext.Issuer;
         var expiresAt = DateTimeOffset.UtcNow.AddHours(authOptions.Value.EmailVerificationExpiryHours).ToUnixTimeSeconds();
         var tokenData = $"{user.SecurityStamp}||{user.Email}||{expiresAt}";
         var encodedToken = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(tokenData));

@@ -11,9 +11,9 @@ public static class UserinfoEndpoint
     {
         app.MapGet("/connect/userinfo", async (
             HttpContext httpContext,
-            KeyManager keyManager,
+            Authagonal.Core.Services.IKeyManager keyManager,
             IUserStore userStore,
-            IConfiguration config,
+            Authagonal.Core.Services.ITenantContext tenantContext,
             CancellationToken ct) =>
         {
             // Extract Bearer token
@@ -26,7 +26,7 @@ public static class UserinfoEndpoint
                 return Results.Unauthorized();
 
             // Validate the JWT
-            var issuer = config["Issuer"]!;
+            var issuer = tenantContext.Issuer;
             var keys = keyManager.GetSecurityKeys()
                 .Select(jwk =>
                 {

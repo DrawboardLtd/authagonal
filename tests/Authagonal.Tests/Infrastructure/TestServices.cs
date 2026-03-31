@@ -3,6 +3,13 @@ using Authagonal.Core.Services;
 
 namespace Authagonal.Tests.Infrastructure;
 
+public sealed class TestTenantContext(string issuer) : ITenantContext
+{
+    public string TenantId => "test";
+    public string Issuer => issuer;
+}
+
+
 public sealed class TestEmailService : IEmailService
 {
     public List<(string Email, string CallbackUrl, string Type)> SentEmails { get; } = [];

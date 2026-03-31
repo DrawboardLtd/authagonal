@@ -29,21 +29,21 @@ public static class ScimUserEndpoints
     private static string GetClientId(HttpContext ctx) =>
         ctx.User.FindFirst("client_id")?.Value ?? "";
 
-    private static string GetBaseUrl(IConfiguration config) =>
-        config["Issuer"] ?? "https://localhost";
+    private static string GetBaseUrl(Authagonal.Core.Services.ITenantContext tenantContext) =>
+        tenantContext.Issuer;
 
     private static async Task<IResult> ListUsersAsync(
         HttpContext httpContext,
         IUserStore userStore,
         IClientStore clientStore,
-        IConfiguration configuration,
+        Authagonal.Core.Services.ITenantContext tenantContext,
         int? startIndex,
         int? count,
         string? filter,
         CancellationToken ct)
     {
         var clientId = GetClientId(httpContext);
-        var baseUrl = GetBaseUrl(configuration);
+        var baseUrl = GetBaseUrl(tenantContext);
         var start = startIndex ?? 1;
         var pageSize = Math.Min(count ?? 100, 200);
 
@@ -89,14 +89,14 @@ public static class ScimUserEndpoints
     private static async Task<IResult> GetUserAsync(
         string id,
         IUserStore userStore,
-        IConfiguration configuration,
+        Authagonal.Core.Services.ITenantContext tenantContext,
         CancellationToken ct)
     {
         var user = await userStore.GetAsync(id, ct);
         if (user is null)
             return ScimResults.NotFound($"User '{id}' not found");
 
-        var baseUrl = GetBaseUrl(configuration);
+        var baseUrl = GetBaseUrl(tenantContext);
         return ScimResults.Success(ScimUserResource.FromUser(user, baseUrl));
     }
 
@@ -106,12 +106,12 @@ public static class ScimUserEndpoints
         IUserStore userStore,
         IClientStore clientStore,
         IProvisioningOrchestrator provisioning,
-        IConfiguration configuration,
+        Authagonal.Core.Services.ITenantContext tenantContext,
         ILogger<Program> logger,
         CancellationToken ct)
     {
         var clientId = GetClientId(httpContext);
-        var baseUrl = GetBaseUrl(configuration);
+        var baseUrl = GetBaseUrl(tenantContext);
 
         // Extract email from userName or emails array
         var email = request.UserName;
@@ -196,11 +196,11 @@ public static class ScimUserEndpoints
         ScimCreateUserRequest request,
         HttpContext httpContext,
         IUserStore userStore,
-        IConfiguration configuration,
+        Authagonal.Core.Services.ITenantContext tenantContext,
         CancellationToken ct)
     {
         var clientId = GetClientId(httpContext);
-        var baseUrl = GetBaseUrl(configuration);
+        var baseUrl = GetBaseUrl(tenantContext);
 
         var user = await userStore.GetAsync(id, ct);
         if (user is null)
@@ -246,12 +246,12 @@ public static class ScimUserEndpoints
         HttpContext httpContext,
         IUserStore userStore,
         IGrantStore grantStore,
-        IConfiguration configuration,
+        Authagonal.Core.Services.ITenantContext tenantContext,
         ILogger<Program> logger,
         CancellationToken ct)
     {
         var clientId = GetClientId(httpContext);
-        var baseUrl = GetBaseUrl(configuration);
+        var baseUrl = GetBaseUrl(tenantContext);
 
         var user = await userStore.GetAsync(id, ct);
         if (user is null)
