@@ -1,6 +1,7 @@
 using Azure;
 using Azure.Data.Tables;
 using Authagonal.Storage.Entities;
+using Microsoft.Extensions.Options;
 
 namespace Authagonal.Server.Services;
 
@@ -8,23 +9,21 @@ public sealed class GrantReconciliationService(
     [FromKeyedServices("Grants")] TableClient grantsTable,
     [FromKeyedServices("GrantsBySubject")] TableClient grantsBySubjectTable,
     [FromKeyedServices("GrantsByExpiry")] TableClient grantsByExpiryTable,
+    IOptions<BackgroundServiceOptions> bgOptions,
     ILogger<GrantReconciliationService> logger) : BackgroundService
 {
-    private static readonly TimeSpan InitialDelay = TimeSpan.FromMinutes(10);
-    private static readonly TimeSpan Interval = TimeSpan.FromMinutes(30);
-
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         try
         {
-            await Task.Delay(InitialDelay, stoppingToken);
+            await Task.Delay(TimeSpan.FromMinutes(bgOptions.Value.GrantReconciliationDelayMinutes), stoppingToken);
         }
         catch (OperationCanceledException)
         {
             return;
         }
 
-        using var timer = new PeriodicTimer(Interval);
+        using var timer = new PeriodicTimer(TimeSpan.FromMinutes(bgOptions.Value.GrantReconciliationIntervalMinutes));
 
         do
         {

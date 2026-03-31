@@ -94,5 +94,18 @@
   "noAccount": "Don't have an account?",
   "createAccount": "Create one",
   "continue": "Continue",
-  "orSignInWith": "Or sign in with {{provider}}"
+  "orSignInWith": "Or sign in with {{provider}}",
+  "registerTitle": "Create account",
+  "firstName": "First name",
+  "firstNamePlaceholder": "Jane",
+  "lastName": "Last name",
+  "lastNamePlaceholder": "Doe",
+  "registering": "Creating account...",
+  "registerButton": "Create account",
+  "alreadyHaveAccount": "Already have an account?",
+  "registrationSuccess": "Registration successful! Please check your email to verify your account, then sign in.",
+  "errorEmailAlreadyRegistered": "An account with this email already exists.",
+  "errorWeakPassword": "Password does not meet strength requirements.",
+  "errorEmailAndPasswordRequired": "Email and password are required.",
+  "errorRegistrationFailed": "Registration failed. Please try again."
 }

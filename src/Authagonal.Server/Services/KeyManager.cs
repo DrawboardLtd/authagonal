@@ -2,19 +2,19 @@ using System.Security.Cryptography;
 using System.Text.Json;
 using Authagonal.Core.Models;
 using Authagonal.Core.Stores;
+using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
 
 namespace Authagonal.Server.Services;
 
 public sealed class KeyManager : IHostedService, IDisposable
 {
-    private static readonly TimeSpan KeyLifetime = TimeSpan.FromDays(90);
-    private static readonly TimeSpan CacheRefreshInterval = TimeSpan.FromMinutes(60);
     private const int RsaKeySizeInBits = 2048;
     private const string Algorithm = SecurityAlgorithms.RsaSha256;
 
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILogger<KeyManager> _logger;
+    private readonly AuthOptions _authOptions;
     private readonly SemaphoreSlim _lock = new(1, 1);
     private Timer? _refreshTimer;
 
@@ -22,21 +22,23 @@ public sealed class KeyManager : IHostedService, IDisposable
     private RsaSecurityKey? _activeSecurityKey;
     private List<JsonWebKey> _allJsonWebKeys = [];
 
-    public KeyManager(IServiceScopeFactory scopeFactory, ILogger<KeyManager> logger)
+    public KeyManager(IServiceScopeFactory scopeFactory, ILogger<KeyManager> logger, IOptions<AuthOptions> authOptions)
     {
         _scopeFactory = scopeFactory;
         _logger = logger;
+        _authOptions = authOptions.Value;
     }
 
     public async Task StartAsync(CancellationToken cancellationToken)
     {
         await RefreshKeysAsync(cancellationToken);
 
+        var cacheRefreshInterval = TimeSpan.FromMinutes(_authOptions.SigningKeyCacheRefreshMinutes);
         _refreshTimer = new Timer(
             _ => _ = RefreshKeysInBackgroundAsync(),
             null,
-            CacheRefreshInterval,
-            CacheRefreshInterval);
+            cacheRefreshInterval,
+            cacheRefreshInterval);
     }
 
     public Task StopAsync(CancellationToken cancellationToken)
@@ -147,7 +149,7 @@ public sealed class KeyManager : IHostedService, IDisposable
         }
     }
 
-    private static SigningKeyInfo GenerateNewKey(DateTimeOffset now)
+    private SigningKeyInfo GenerateNewKey(DateTimeOffset now)
     {
         using var rsa = RSA.Create(RsaKeySizeInBits);
         var rsaParams = rsa.ExportParameters(includePrivateParameters: true);
@@ -159,7 +161,7 @@ public sealed class KeyManager : IHostedService, IDisposable
             RsaParametersJson = SerializeRsaParameters(rsaParams),
             IsActive = true,
             CreatedAt = now,
-            ExpiresAt = now.Add(KeyLifetime)
+            ExpiresAt = now.AddDays(_authOptions.SigningKeyLifetimeDays)
         };
     }
 

@@ -48,7 +48,46 @@ Estos caches son aceptables para uso en produccion. Si necesita propagacion inme
 
 ## Limitacion de velocidad
 
-Authagonal no incluye limitacion de velocidad integrada. La limitacion de velocidad debe aplicarse en la capa de infraestructura (balanceador de carga, puerta de enlace API o proxy inverso) donde tiene una vista unificada de todo el trafico entre instancias.
+Los endpoints de registro estan protegidos por un limitador de velocidad distribuido integrado (5 registros por IP por hora). Al ejecutar multiples instancias, los conteos de limite de velocidad se comparten automaticamente entre todas las instancias a traves de un protocolo de difusion (gossip) — no se requiere coordinacion externa.
+
+### Como funciona
+
+Cada instancia mantiene sus propios contadores en memoria utilizando un CRDT G-Counter. Las instancias se descubren entre si a traves de UDP multicast e intercambian estado por HTTP cada pocos segundos. El conteo consolidado de todas las instancias se utiliza para tomar decisiones de limitacion de velocidad.
+
+Esto significa que los limites de velocidad se aplican globalmente: si un cliente accede a 3 instancias diferentes, las 3 saben que el total es 3, no 1 cada una.
+
+### Configuracion del cluster
+
+El clustering esta **habilitado por defecto** sin necesidad de configuracion. Las instancias en la misma red se descubren automaticamente a traves de UDP multicast (`239.42.42.42:19847`).
+
+Para entornos donde el multicast no esta disponible (algunas VPCs en la nube), configure una URL interna con balanceo de carga como alternativa:
+
+```json
+{
+  "Cluster": {
+    "InternalUrl": "http://authagonal-auth.svc.cluster.local:8080",
+    "Secret": "shared-secret-here"
+  }
+}
+```
+
+Para deshabilitar el clustering por completo (limitacion de velocidad solo local):
+
+```json
+{
+  "Cluster": {
+    "Enabled": false
+  }
+}
+```
+
+Consulte la pagina de [Configuracion](configuration) para todas las opciones del cluster.
+
+### Degradacion elegante
+
+- **Sin pares encontrados** — funciona como un limitador de velocidad solo local (cada instancia aplica su propio limite)
+- **Par inaccesible** — el ultimo estado conocido de ese par se sigue utilizando; los pares obsoletos se eliminan despues de 30 segundos
+- **Multicast no disponible** — el descubrimiento falla silenciosamente; el protocolo de difusion recurre a `InternalUrl` si esta configurado
 
 ## Recomendaciones de escalabilidad
 

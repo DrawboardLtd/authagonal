@@ -105,3 +105,8 @@ export interface MfaWebAuthnConfirmResponse {
   success: boolean;
   credentialId: string;
 }
+
+export interface RegisterResponse {
+  success: boolean;
+  userId: string;
+}

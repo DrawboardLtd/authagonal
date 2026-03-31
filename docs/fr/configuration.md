@@ -20,6 +20,39 @@ Authagonal est configure via `appsettings.json` ou des variables d'environnement
 | Parametre | Defaut | Description |
 |---|---|---|
 | `Authentication:CookieLifetimeHours` | `48` | Duree de vie de la session par cookie (glissante) |
+| `Auth:MaxFailedAttempts` | `5` | Tentatives de connexion echouees avant le verrouillage du compte |
+| `Auth:LockoutDurationMinutes` | `10` | Duree du verrouillage du compte apres le nombre maximal de tentatives echouees |
+| `Auth:MaxRegistrationsPerIp` | `5` | Nombre maximal d'inscriptions par adresse IP dans la fenetre |
+| `Auth:RegistrationWindowMinutes` | `60` | Fenetre de limitation du debit d'inscription |
+| `Auth:EmailVerificationExpiryHours` | `24` | Duree de vie du lien de verification d'email |
+| `Auth:PasswordResetExpiryMinutes` | `60` | Duree de vie du lien de reinitialisation du mot de passe |
+| `Auth:MfaChallengeExpiryMinutes` | `5` | Duree de vie du jeton de verification MFA |
+| `Auth:MfaSetupTokenExpiryMinutes` | `15` | Duree de vie du jeton de configuration MFA (pour l'inscription forcee) |
+| `Auth:Pbkdf2Iterations` | `100000` | Nombre d'iterations PBKDF2 pour le hachage du mot de passe |
+| `Auth:RefreshTokenReuseGraceSeconds` | `60` | Fenetre de grace pour la reutilisation concurrente du jeton de rafraichissement |
+| `Auth:SigningKeyLifetimeDays` | `90` | Duree de vie de la cle de signature RSA avant rotation automatique |
+| `Auth:SigningKeyCacheRefreshMinutes` | `60` | Frequence de rechargement des cles de signature depuis le stockage |
+| `Auth:SecurityStampRevalidationMinutes` | `30` | Intervalle entre les verifications du tampon de securite du cookie |
+
+## Cache et delais d'attente
+
+| Parametre | Defaut | Description |
+|---|---|---|
+| `Cache:CorsCacheMinutes` | `60` | Duree de mise en cache des origines CORS autorisees |
+| `Cache:OidcDiscoveryCacheMinutes` | `60` | Duree de mise en cache du document de decouverte OIDC |
+| `Cache:SamlMetadataCacheMinutes` | `60` | Duree de mise en cache des metadonnees SAML de l'IdP |
+| `Cache:OidcStateLifetimeMinutes` | `10` | Duree de vie du parametre state d'autorisation OIDC |
+| `Cache:SamlReplayLifetimeMinutes` | `10` | Duree de vie de l'ID AuthnRequest SAML (prevention de rejeu) |
+| `Cache:HealthCheckTimeoutSeconds` | `5` | Delai d'attente de la verification de sante de Table Storage |
+
+## Services d'arriere-plan
+
+| Parametre | Defaut | Description |
+|---|---|---|
+| `BackgroundServices:TokenCleanupDelayMinutes` | `5` | Delai initial avant le premier nettoyage des jetons expires |
+| `BackgroundServices:TokenCleanupIntervalMinutes` | `60` | Intervalle de nettoyage des jetons expires |
+| `BackgroundServices:GrantReconciliationDelayMinutes` | `10` | Delai initial avant la premiere reconciliation des autorisations |
+| `BackgroundServices:GrantReconciliationIntervalMinutes` | `30` | Intervalle de reconciliation des autorisations |
 
 ## Clients
 
@@ -246,14 +279,55 @@ Par defaut, Authagonal utilise un service d'email no-op qui ignore silencieuseme
 
 Les emails aux adresses `@example.com` sont ignores silencieusement (utile pour les tests).
 
+## Cluster
+
+Les instances Authagonal forment automatiquement un cluster pour partager l'etat de limitation de debit. Le clustering est active par defaut sans aucune configuration.
+
+| Parametre | Variable d'env | Defaut | Description |
+|---|---|---|---|
+| `Cluster:Enabled` | `Cluster__Enabled` | `true` | Interrupteur principal du clustering. Definir a `false` pour une limitation de debit locale uniquement. |
+| `Cluster:MulticastGroup` | `Cluster__MulticastGroup` | `239.42.42.42` | Groupe multicast UDP pour la decouverte des pairs |
+| `Cluster:MulticastPort` | `Cluster__MulticastPort` | `19847` | Port multicast UDP pour la decouverte des pairs |
+| `Cluster:InternalUrl` | `Cluster__InternalUrl` | *(aucun)* | URL de repli avec repartition de charge pour le gossip lorsque le multicast est indisponible |
+| `Cluster:Secret` | `Cluster__Secret` | *(aucun)* | Secret partage pour l'authentification du point d'acces gossip (recommande lorsque `InternalUrl` est defini) |
+| `Cluster:GossipIntervalSeconds` | `Cluster__GossipIntervalSeconds` | `5` | Frequence d'echange de l'etat de limitation de debit entre les instances |
+| `Cluster:DiscoveryIntervalSeconds` | `Cluster__DiscoveryIntervalSeconds` | `10` | Frequence a laquelle les instances s'annoncent via multicast |
+| `Cluster:PeerStaleAfterSeconds` | `Cluster__PeerStaleAfterSeconds` | `30` | Supprimer les pairs dont on n'a pas eu de nouvelles apres ce nombre de secondes |
+
+**Zero-config (par defaut) :** Les instances se decouvrent mutuellement via multicast UDP. Fonctionne dans Kubernetes, Docker Compose ou tout reseau partage.
+
+**Multicast desactive (par exemple, certains VPC cloud) :**
+
+```json
+{
+  "Cluster": {
+    "InternalUrl": "http://authagonal-auth.svc.cluster.local:8080",
+    "Secret": "shared-secret-here"
+  }
+}
+```
+
+**Clustering entierement desactive :**
+
+```json
+{
+  "Cluster": {
+    "Enabled": false
+  }
+}
+```
+
+Voir [Mise a l'echelle](scaling) pour plus de details sur le fonctionnement de la limitation de debit distribuee.
+
 ## Limitation de debit
 
-Limites de debit integrees par IP :
+Limites de debit integrees par IP appliquees a toutes les instances via le protocole de gossip du cluster :
 
-| Groupe de points d'acces | Limite | Fenetre |
+| Point d'acces | Limite | Fenetre |
 |---|---|---|
-| Points d'acces d'authentification (connexion, SSO) | 20 requetes | 1 minute |
-| Point d'acces de jeton | 30 requetes | 1 minute |
+| `POST /api/auth/register` | 5 inscriptions | 1 heure |
+
+Lorsque le clustering est active, ces limites sont consolidees sur toutes les instances. Lorsqu'il est desactive, chaque instance applique sa propre limite independamment.
 
 ## CORS
 
@@ -267,6 +341,23 @@ CORS est configure dynamiquement. Les origines de tous les `AllowedCorsOrigins` 
     "ConnectionString": "DefaultEndpointsProtocol=https;AccountName=...;AccountKey=...;TableEndpoint=https://..."
   },
   "Issuer": "https://auth.example.com",
+  "Auth": {
+    "MaxFailedAttempts": 5,
+    "LockoutDurationMinutes": 10,
+    "MaxRegistrationsPerIp": 5,
+    "RegistrationWindowMinutes": 60,
+    "EmailVerificationExpiryHours": 24,
+    "PasswordResetExpiryMinutes": 60,
+    "Pbkdf2Iterations": 100000,
+    "SigningKeyLifetimeDays": 90
+  },
+  "Cluster": {
+    "Enabled": true
+  },
+  "AdminApi": {
+    "Enabled": true,
+    "Scope": "authagonal-admin"
+  },
   "Authentication": {
     "CookieLifetimeHours": 48
   },

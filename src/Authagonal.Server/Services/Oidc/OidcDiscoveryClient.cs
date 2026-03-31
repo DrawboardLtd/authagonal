@@ -1,5 +1,7 @@
 using System.Text.Json;
+using Authagonal.Server.Services;
 using Microsoft.Extensions.Caching.Memory;
+using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
 
 namespace Authagonal.Server.Services.Oidc;
@@ -12,9 +14,8 @@ public sealed record OidcDiscoveryDocument(
     string? UserinfoEndpoint,
     List<JsonWebKey> SigningKeys);
 
-public sealed class OidcDiscoveryClient(IHttpClientFactory httpClientFactory, IMemoryCache memoryCache)
+public sealed class OidcDiscoveryClient(IHttpClientFactory httpClientFactory, IMemoryCache memoryCache, IOptions<CacheOptions> cacheOptions)
 {
-    private static readonly TimeSpan CacheDuration = TimeSpan.FromMinutes(60);
 
     public async Task<OidcDiscoveryDocument> GetDiscoveryAsync(string metadataUrl, CancellationToken ct = default)
     {
@@ -57,7 +58,7 @@ public sealed class OidcDiscoveryClient(IHttpClientFactory httpClientFactory, IM
             userinfoEndpoint,
             [.. jwks.Keys]);
 
-        memoryCache.Set(cacheKey, document, CacheDuration);
+        memoryCache.Set(cacheKey, document, TimeSpan.FromMinutes(cacheOptions.Value.OidcDiscoveryCacheMinutes));
         return document;
     }
 }

@@ -6,6 +6,7 @@ using Authagonal.Server.Endpoints.Admin;
 using Authagonal.Server.Endpoints.Scim;
 using Authagonal.Server.Middleware;
 using Authagonal.Server.Services;
+using Authagonal.Server.Services.Cluster;
 using Authagonal.Server.Services.Oidc;
 using Authagonal.Server.Services.Saml;
 using Authagonal.Storage;
@@ -13,6 +14,7 @@ using Azure.Data.Tables;
 using Azure.Storage.Blobs;
 using Fido2NetLib;
 using System.Globalization;
+using System.Security.Cryptography;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
@@ -85,6 +87,13 @@ public static class AuthagonalExtensions
         services.AddSingleton(passwordPolicy);
 
         // ---------------------------------------------------------------------------
+        // Auth / Cache / BackgroundService options
+        // ---------------------------------------------------------------------------
+        services.Configure<AuthOptions>(configuration.GetSection("Auth"));
+        services.Configure<CacheOptions>(configuration.GetSection("Cache"));
+        services.Configure<BackgroundServiceOptions>(configuration.GetSection("BackgroundServices"));
+
+        // ---------------------------------------------------------------------------
         // Application services
         // ---------------------------------------------------------------------------
         services.AddSingleton<PasswordHasher>();
@@ -141,7 +150,7 @@ public static class AuthagonalExtensions
         services.AddSingleton<SamlReplayCache>(sp =>
         {
             var tableClient = sp.GetRequiredKeyedService<TableClient>("SamlReplayCache");
-            return new SamlReplayCache(tableClient);
+            return new SamlReplayCache(tableClient, sp.GetRequiredService<IOptions<CacheOptions>>());
         });
 
         // ---------------------------------------------------------------------------
@@ -152,7 +161,7 @@ public static class AuthagonalExtensions
         services.AddSingleton<OidcStateStore>(sp =>
         {
             var tableClient = sp.GetRequiredKeyedService<TableClient>("OidcStateStore");
-            return new OidcStateStore(tableClient);
+            return new OidcStateStore(tableClient, sp.GetRequiredService<IOptions<CacheOptions>>());
         });
 
         // ---------------------------------------------------------------------------
@@ -183,10 +192,11 @@ public static class AuthagonalExtensions
                 if (userId is null || stampClaim is null)
                     return;
 
+                var authOpts = context.HttpContext.RequestServices.GetRequiredService<IOptions<AuthOptions>>().Value;
                 var lastValidated = context.Properties.GetString("stamp_validated");
                 if (lastValidated is not null &&
                     DateTimeOffset.TryParse(lastValidated, out var lastTime) &&
-                    DateTimeOffset.UtcNow - lastTime < TimeSpan.FromMinutes(30))
+                    DateTimeOffset.UtcNow - lastTime < TimeSpan.FromMinutes(authOpts.SecurityStampRevalidationMinutes))
                 {
                     return;
                 }
@@ -262,6 +272,28 @@ public static class AuthagonalExtensions
         // ---------------------------------------------------------------------------
         services.AddCors();
         services.AddSingleton<ICorsPolicyProvider, DynamicCorsPolicyProvider>();
+
+        // ---------------------------------------------------------------------------
+        // Cluster — gossip-based distributed rate limiting
+        // ---------------------------------------------------------------------------
+        services.Configure<ClusterOptions>(configuration.GetSection("Cluster"));
+
+        var nodeId = Convert.ToHexString(RandomNumberGenerator.GetBytes(6)).ToLowerInvariant();
+        var rateLimiter = new DistributedRateLimiter(nodeId);
+        services.AddSingleton(rateLimiter);
+        services.AddSingleton<IRateLimiter>(rateLimiter);
+        services.AddSingleton<PeerRegistry>();
+
+        var clusterEnabled = configuration.GetValue("Cluster:Enabled", true);
+        if (clusterEnabled)
+        {
+            services.AddHostedService<ClusterDiscoveryService>();
+            services.AddHostedService<ClusterGossipService>();
+            services.AddHttpClient("ClusterGossip", client =>
+            {
+                client.Timeout = TimeSpan.FromSeconds(3);
+            });
+        }
 
         // ---------------------------------------------------------------------------
         // Health Checks
@@ -386,6 +418,11 @@ public static class AuthagonalExtensions
         app.MapMfaSetupEndpoints();
         app.MapSamlEndpoints();
         app.MapOidcEndpoints();
+
+        if (app.Configuration.GetValue("Cluster:Enabled", true))
+        {
+            app.MapClusterEndpoints();
+        }
 
         return app;
     }

@@ -4,6 +4,7 @@ using Authagonal.Core.Services;
 using Authagonal.Core.Stores;
 using Authagonal.Server.Services;
 using Microsoft.Extensions.Localization;
+using Microsoft.Extensions.Options;
 
 namespace Authagonal.Server.Endpoints.Admin;
 
@@ -71,6 +72,7 @@ public static class UserEndpoints
         PasswordPolicy passwordPolicy,
         IEmailService emailService,
         IConfiguration config,
+        IOptions<AuthOptions> authOptions,
         IStringLocalizer<SharedMessages> localizer,
         CancellationToken ct)
     {
@@ -109,9 +111,9 @@ public static class UserEndpoints
         await userStore.CreateAsync(user, ct);
         await authHook.OnUserCreatedAsync(userId, request.Email, "admin", ct);
 
-        // Send verification email (token valid for 24 hours)
+        // Send verification email
         var issuer = config["Issuer"]!;
-        var expiresAt = DateTimeOffset.UtcNow.AddHours(24).ToUnixTimeSeconds();
+        var expiresAt = DateTimeOffset.UtcNow.AddHours(authOptions.Value.EmailVerificationExpiryHours).ToUnixTimeSeconds();
         var tokenData = $"{securityStamp}||{user.Email}||{expiresAt}";
         var encodedToken = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(tokenData));
         var callbackUrl = $"{issuer}/api/v1/profile/confirm-email?token={Uri.EscapeDataString(encodedToken)}";
@@ -278,6 +280,7 @@ public static class UserEndpoints
         IUserStore userStore,
         IEmailService emailService,
         IConfiguration config,
+        IOptions<AuthOptions> authOptions,
         IStringLocalizer<SharedMessages> localizer,
         CancellationToken ct)
     {
@@ -294,7 +297,7 @@ public static class UserEndpoints
         await userStore.UpdateAsync(user, ct);
 
         var issuer = config["Issuer"]!;
-        var expiresAt = DateTimeOffset.UtcNow.AddHours(24).ToUnixTimeSeconds();
+        var expiresAt = DateTimeOffset.UtcNow.AddHours(authOptions.Value.EmailVerificationExpiryHours).ToUnixTimeSeconds();
         var tokenData = $"{user.SecurityStamp}||{user.Email}||{expiresAt}";
         var encodedToken = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(tokenData));
         var callbackUrl = $"{issuer}/api/v1/profile/confirm-email?token={Uri.EscapeDataString(encodedToken)}";

@@ -1,4 +1,4 @@
-import type { ApiError, SessionResponse, SsoCheckResponse, ProvidersResponse, PasswordPolicyResponse, MfaLoginResponse, MfaVerifyResponse, MfaStatusResponse, MfaTotpSetupResponse, MfaRecoveryGenerateResponse, MfaWebAuthnSetupResponse, MfaWebAuthnConfirmResponse } from './types';
+import type { ApiError, SessionResponse, SsoCheckResponse, ProvidersResponse, PasswordPolicyResponse, MfaLoginResponse, MfaVerifyResponse, MfaStatusResponse, MfaTotpSetupResponse, MfaRecoveryGenerateResponse, MfaWebAuthnSetupResponse, MfaWebAuthnConfirmResponse, RegisterResponse } from './types';
 
 const API_URL = import.meta.env.VITE_API_URL || '';
 
@@ -50,6 +50,13 @@ export function login(email: string, password: string, returnUrl?: string): Prom
   return api<MfaLoginResponse>(url, {
     method: 'POST',
     body: JSON.stringify({ email, password }),
+  });
+}
+
+export function register(email: string, password: string, firstName?: string, lastName?: string): Promise<RegisterResponse> {
+  return api<RegisterResponse>('/api/auth/register', {
+    method: 'POST',
+    body: JSON.stringify({ email, password, firstName, lastName }),
   });
 }
 

@@ -94,5 +94,18 @@
   "noAccount": "Chưa có tài khoản?",
   "createAccount": "Tạo tài khoản",
   "continue": "Tiếp tục",
-  "orSignInWith": "Hoặc đăng nhập với {{provider}}"
+  "orSignInWith": "Hoặc đăng nhập với {{provider}}",
+  "registerTitle": "Tạo tài khoản",
+  "firstName": "Tên",
+  "firstNamePlaceholder": "Minh",
+  "lastName": "Họ",
+  "lastNamePlaceholder": "Nguyễn",
+  "registering": "Đang tạo tài khoản...",
+  "registerButton": "Tạo tài khoản",
+  "alreadyHaveAccount": "Đã có tài khoản?",
+  "registrationSuccess": "Đăng ký thành công! Vui lòng kiểm tra email để xác minh tài khoản, sau đó đăng nhập.",
+  "errorEmailAlreadyRegistered": "Tài khoản với email này đã tồn tại.",
+  "errorWeakPassword": "Mật khẩu không đáp ứng yêu cầu.",
+  "errorEmailAndPasswordRequired": "Email và mật khẩu là bắt buộc.",
+  "errorRegistrationFailed": "Đăng ký thất bại. Vui lòng thử lại."
 }

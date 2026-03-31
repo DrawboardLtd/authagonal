@@ -2,16 +2,17 @@ using System.Security.Claims;
 using Authagonal.Core.Models;
 using Authagonal.Core.Services;
 using Authagonal.Core.Stores;
+using Authagonal.Server.Services;
 using Authagonal.Server.Services.Saml;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.Extensions.Caching.Memory;
+using Microsoft.Extensions.Options;
 
 namespace Authagonal.Server.Endpoints;
 
 public static class SamlEndpoints
 {
-    private static readonly TimeSpan MetadataCacheDuration = TimeSpan.FromHours(1);
 
     public static IEndpointRouteBuilder MapSamlEndpoints(this IEndpointRouteBuilder app)
     {
@@ -31,6 +32,7 @@ public static class SamlEndpoints
         SamlReplayCache replayCache,
         IMemoryCache memoryCache,
         IConfiguration configuration,
+        IOptions<CacheOptions> cacheOptions,
         ILogger<Program> logger,
         CancellationToken ct)
     {
@@ -39,7 +41,7 @@ public static class SamlEndpoints
             return Results.NotFound(new { error = "not_found", error_description = $"SAML connection '{connectionId}' not found" });
 
         // Parse IdP metadata (cached)
-        var metadata = await GetCachedMetadataAsync(config, metadataParser, memoryCache, ct);
+        var metadata = await GetCachedMetadataAsync(config, metadataParser, memoryCache, cacheOptions.Value, ct);
 
         // Generate request ID
         var requestId = "_" + Guid.NewGuid().ToString("N");
@@ -77,6 +79,7 @@ public static class SamlEndpoints
         SamlReplayCache replayCache,
         IMemoryCache memoryCache,
         IConfiguration configuration,
+        IOptions<CacheOptions> cacheOptions,
         ILogger<Program> logger,
         CancellationToken ct)
     {
@@ -94,7 +97,7 @@ public static class SamlEndpoints
             return Results.NotFound(new { error = "not_found", error_description = $"SAML connection '{connectionId}' not found" });
 
         // Parse IdP metadata (cached)
-        var metadata = await GetCachedMetadataAsync(config, metadataParser, memoryCache, ct);
+        var metadata = await GetCachedMetadataAsync(config, metadataParser, memoryCache, cacheOptions.Value, ct);
 
         var baseUrl = configuration["Issuer"]!;
         var acsUrl = $"{baseUrl}/saml/{connectionId}/acs";
@@ -309,6 +312,7 @@ public static class SamlEndpoints
         SamlProviderConfig config,
         SamlMetadataParser metadataParser,
         IMemoryCache memoryCache,
+        CacheOptions cacheOpts,
         CancellationToken ct)
     {
         var cacheKey = $"saml-metadata:{config.ConnectionId}";
@@ -316,7 +320,7 @@ public static class SamlEndpoints
             return cached;
 
         var metadata = await metadataParser.ParseFromUrlAsync(config.MetadataLocation, ct);
-        memoryCache.Set(cacheKey, metadata, MetadataCacheDuration);
+        memoryCache.Set(cacheKey, metadata, TimeSpan.FromMinutes(cacheOpts.SamlMetadataCacheMinutes));
         return metadata;
     }
 }

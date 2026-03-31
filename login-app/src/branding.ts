@@ -9,6 +9,7 @@ export interface BrandingConfig {
   primaryColor: string;
   supportEmail: string | null;
   showForgotPassword: boolean;
+  showRegistration: boolean;
   customCssUrl: string | null;
   welcomeTitle: LocalizedString;
   welcomeSubtitle: LocalizedString;
@@ -21,6 +22,7 @@ const defaults: BrandingConfig = {
   primaryColor: '#2563eb',
   supportEmail: null,
   showForgotPassword: true,
+  showRegistration: false,
   customCssUrl: null,
   welcomeTitle: null,
   welcomeSubtitle: null,

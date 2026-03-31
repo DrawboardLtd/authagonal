@@ -48,7 +48,46 @@ Các bộ nhớ đệm này phù hợp cho môi trường production. Nếu bạ
 
 ## Giới hạn tốc độ
 
-Authagonal không bao gồm giới hạn tốc độ tích hợp sẵn. Giới hạn tốc độ nên được áp dụng ở tầng hạ tầng (bộ cân bằng tải, API gateway hoặc reverse proxy) nơi có cái nhìn thống nhất về toàn bộ lưu lượng truy cập qua các instance.
+Các endpoint đăng ký được bảo vệ bởi bộ giới hạn tốc độ phân tán tích hợp sẵn (5 lượt đăng ký mỗi IP mỗi giờ). Khi chạy nhiều instance, số lượt giới hạn tốc độ được tự động chia sẻ giữa tất cả các instance thông qua giao thức gossip — không cần phối hợp bên ngoài.
+
+### Cách hoạt động
+
+Mỗi instance duy trì bộ đếm riêng trong bộ nhớ bằng CRDT G-Counter. Các instance phát hiện lẫn nhau qua UDP multicast và trao đổi trạng thái qua HTTP mỗi vài giây. Tổng số hợp nhất trên tất cả các instance được sử dụng để đưa ra quyết định giới hạn tốc độ.
+
+Điều này có nghĩa là giới hạn tốc độ được thực thi trên toàn cục: nếu một client truy cập 3 instance khác nhau, cả 3 đều biết tổng số là 3, không phải mỗi instance là 1.
+
+### Cấu hình cluster
+
+Clustering được **bật mặc định** mà không cần cấu hình. Các instance trên cùng mạng tự động phát hiện lẫn nhau qua UDP multicast (`239.42.42.42:19847`).
+
+Đối với các môi trường không hỗ trợ multicast (một số cloud VPC), hãy cấu hình một URL nội bộ có cân bằng tải làm phương án dự phòng:
+
+```json
+{
+  "Cluster": {
+    "InternalUrl": "http://authagonal-auth.svc.cluster.local:8080",
+    "Secret": "shared-secret-here"
+  }
+}
+```
+
+Để tắt hoàn toàn clustering (giới hạn tốc độ chỉ trên local):
+
+```json
+{
+  "Cluster": {
+    "Enabled": false
+  }
+}
+```
+
+Xem trang [Cấu hình](configuration) để biết tất cả các thiết lập cluster.
+
+### Suy giảm mềm
+
+- **Không tìm thấy peer** — hoạt động như bộ giới hạn tốc độ chỉ trên local (mỗi instance thực thi giới hạn riêng)
+- **Peer không thể truy cập** — trạng thái được biết cuối cùng của peer đó vẫn được sử dụng; các peer cũ được loại bỏ sau 30 giây
+- **Multicast không khả dụng** — phát hiện thất bại trong im lặng; gossip chuyển sang sử dụng `InternalUrl` nếu đã được cấu hình
 
 ## Khuyến nghị mở rộng quy mô
 

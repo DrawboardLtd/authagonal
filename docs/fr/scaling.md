@@ -48,7 +48,46 @@ Ces caches sont acceptables pour une utilisation en production. Si vous avez bes
 
 ## Limitation du debit
 
-Authagonal n'inclut pas de limitation de debit integree. La limitation du debit doit etre appliquee au niveau de l'infrastructure (equilibreur de charge, passerelle API ou proxy inverse) ou elle dispose d'une vue unifiee de tout le trafic entre les instances.
+Les points de terminaison d'inscription sont proteges par un limiteur de debit distribue integre (5 inscriptions par IP par heure). Lors de l'execution de plusieurs instances, les compteurs de limitation du debit sont automatiquement partages entre toutes les instances via un protocole gossip — aucune coordination externe requise.
+
+### Fonctionnement
+
+Chaque instance maintient ses propres compteurs en memoire en utilisant un CRDT G-Counter. Les instances se decouvrent mutuellement via UDP multicast et echangent leur etat par HTTP toutes les quelques secondes. Le compteur consolide de toutes les instances est utilise pour prendre les decisions de limitation du debit.
+
+Cela signifie que les limites de debit sont appliquees globalement : si un client atteint 3 instances differentes, les 3 savent que le total est de 3, et non 1 chacune.
+
+### Configuration du cluster
+
+Le clustering est **active par defaut** sans aucune configuration. Les instances sur le meme reseau se decouvrent automatiquement via UDP multicast (`239.42.42.42:19847`).
+
+Pour les environnements ou le multicast n'est pas disponible (certains VPC cloud), configurez une URL interne avec equilibrage de charge comme solution de repli :
+
+```json
+{
+  "Cluster": {
+    "InternalUrl": "http://authagonal-auth.svc.cluster.local:8080",
+    "Secret": "shared-secret-here"
+  }
+}
+```
+
+Pour desactiver entierement le clustering (limitation du debit locale uniquement) :
+
+```json
+{
+  "Cluster": {
+    "Enabled": false
+  }
+}
+```
+
+Consultez la page [Configuration](configuration) pour tous les parametres du cluster.
+
+### Degradation gracieuse
+
+- **Aucun pair trouve** — fonctionne comme un limiteur de debit local uniquement (chaque instance applique sa propre limite)
+- **Pair injoignable** — le dernier etat connu de ce pair est toujours utilise ; les pairs obsoletes sont supprimes apres 30 secondes
+- **Multicast indisponible** — la decouverte echoue silencieusement ; le gossip se replie sur `InternalUrl` si configure
 
 ## Recommandations de mise a l'echelle
 

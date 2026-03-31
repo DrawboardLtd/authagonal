@@ -94,5 +94,18 @@
   "noAccount": "Não tem conta?",
   "createAccount": "Criar uma",
   "continue": "Continuar",
-  "orSignInWith": "Ou entrar com {{provider}}"
+  "orSignInWith": "Ou entrar com {{provider}}",
+  "registerTitle": "Criar conta",
+  "firstName": "Nome",
+  "firstNamePlaceholder": "João",
+  "lastName": "Apelido",
+  "lastNamePlaceholder": "Silva",
+  "registering": "A criar conta...",
+  "registerButton": "Criar conta",
+  "alreadyHaveAccount": "Já tem conta?",
+  "registrationSuccess": "Registo efetuado com sucesso! Verifique o seu e-mail para confirmar a conta e depois inicie sessão.",
+  "errorEmailAlreadyRegistered": "Já existe uma conta com este e-mail.",
+  "errorWeakPassword": "A palavra-passe não cumpre os requisitos.",
+  "errorEmailAndPasswordRequired": "E-mail e palavra-passe são obrigatórios.",
+  "errorRegistrationFailed": "O registo falhou. Tente novamente."
 }

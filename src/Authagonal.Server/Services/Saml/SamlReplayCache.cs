@@ -1,10 +1,10 @@
 using Azure.Data.Tables;
+using Microsoft.Extensions.Options;
 
 namespace Authagonal.Server.Services.Saml;
 
-public sealed class SamlReplayCache(TableClient tableClient)
+public sealed class SamlReplayCache(TableClient tableClient, IOptions<CacheOptions> cacheOptions)
 {
-    private static readonly TimeSpan RequestLifetime = TimeSpan.FromMinutes(10);
 
     /// <summary>
     /// Stores a SAML AuthnRequest ID associated with a connection ID for later validation.
@@ -41,7 +41,7 @@ public sealed class SamlReplayCache(TableClient tableClient)
             if (entity.TryGetValue("CreatedAt", out var createdAtObj) &&
                 createdAtObj is DateTimeOffset createdAt)
             {
-                if (DateTimeOffset.UtcNow - createdAt > RequestLifetime)
+                if (DateTimeOffset.UtcNow - createdAt > TimeSpan.FromMinutes(cacheOptions.Value.SamlReplayLifetimeMinutes))
                     return null; // Expired
             }
             else

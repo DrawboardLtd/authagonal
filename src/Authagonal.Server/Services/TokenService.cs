@@ -4,6 +4,7 @@ using Authagonal.Core.Constants;
 using Authagonal.Core.Models;
 using Authagonal.Core.Services;
 using Authagonal.Core.Stores;
+using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.JsonWebTokens;
 using Microsoft.IdentityModel.Tokens;
 
@@ -15,10 +16,11 @@ public sealed class TokenService(
     IUserStore userStore,
     KeyManager keyManager,
     IConfiguration configuration,
+    IOptions<AuthOptions> authOptions,
     ILogger<TokenService> logger) : ITokenService
 {
     private const int RefreshTokenSizeBytes = 64;
-    private static readonly TimeSpan RefreshTokenReuseGraceWindow = TimeSpan.FromSeconds(60);
+    private TimeSpan RefreshTokenReuseGraceWindow => TimeSpan.FromSeconds(authOptions.Value.RefreshTokenReuseGraceSeconds);
 
     private string Issuer => configuration["Oidc:Issuer"]
         ?? throw new InvalidOperationException("Oidc:Issuer is not configured");

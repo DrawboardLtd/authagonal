@@ -94,5 +94,18 @@
   "noAccount": "Pas encore de compte ?",
   "createAccount": "Créer un compte",
   "continue": "Continuer",
-  "orSignInWith": "Ou se connecter avec {{provider}}"
+  "orSignInWith": "Ou se connecter avec {{provider}}",
+  "registerTitle": "Créer un compte",
+  "firstName": "Prénom",
+  "firstNamePlaceholder": "Jean",
+  "lastName": "Nom",
+  "lastNamePlaceholder": "Dupont",
+  "registering": "Création du compte...",
+  "registerButton": "Créer un compte",
+  "alreadyHaveAccount": "Déjà un compte ?",
+  "registrationSuccess": "Inscription réussie ! Veuillez vérifier votre e-mail pour confirmer votre compte, puis connectez-vous.",
+  "errorEmailAlreadyRegistered": "Un compte avec cet e-mail existe déjà.",
+  "errorWeakPassword": "Le mot de passe ne respecte pas les exigences.",
+  "errorEmailAndPasswordRequired": "L'e-mail et le mot de passe sont requis.",
+  "errorRegistrationFailed": "L'inscription a échoué. Veuillez réessayer."
 }

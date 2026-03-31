@@ -11,19 +11,20 @@ using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Http.Extensions;
 using Microsoft.Extensions.Localization;
+using Microsoft.Extensions.Options;
 
 namespace Authagonal.Server.Endpoints;
 
 public static class AuthEndpoints
 {
-    private const int MaxFailedAttempts = 5;
-    private static readonly TimeSpan LockoutDuration = TimeSpan.FromMinutes(10);
 
     public static IEndpointRouteBuilder MapAuthEndpoints(this IEndpointRouteBuilder app)
     {
         var group = app.MapGroup("/api/auth");
 
         group.MapPost("/login", LoginAsync).AllowAnonymous().DisableAntiforgery();
+        group.MapPost("/register", RegisterAsync).AllowAnonymous().DisableAntiforgery();
+        group.MapPost("/confirm-email", ConfirmEmailAsync).AllowAnonymous().DisableAntiforgery();
         group.MapPost("/logout", LogoutAsync).RequireAuthorization().DisableAntiforgery();
         group.MapPost("/forgot-password", ForgotPasswordAsync).AllowAnonymous().DisableAntiforgery();
         group.MapPost("/reset-password", ResetPasswordAsync).AllowAnonymous().DisableAntiforgery();
@@ -45,6 +46,7 @@ public static class AuthEndpoints
         PasswordHasher passwordHasher,
         WebAuthnService webAuthnService,
         IAuthHook authHook,
+        IOptions<AuthOptions> authOptions,
         ILogger<Program> logger,
         CancellationToken ct)
     {
@@ -94,9 +96,10 @@ public static class AuthEndpoints
         {
             user.AccessFailedCount++;
 
-            if (user.LockoutEnabled && user.AccessFailedCount >= MaxFailedAttempts)
+            var opts = authOptions.Value;
+            if (user.LockoutEnabled && user.AccessFailedCount >= opts.MaxFailedAttempts)
             {
-                user.LockoutEnd = DateTimeOffset.UtcNow.Add(LockoutDuration);
+                user.LockoutEnd = DateTimeOffset.UtcNow.AddMinutes(opts.LockoutDurationMinutes);
                 user.AccessFailedCount = 0;
                 logger.LogWarning("Account locked out for user {UserId} ({Email})", user.Id, user.Email);
             }
@@ -146,7 +149,7 @@ public static class AuthEndpoints
                     ClientId = clientId,
                     ReturnUrl = returnUrl,
                     CreatedAt = DateTimeOffset.UtcNow,
-                    ExpiresAt = DateTimeOffset.UtcNow.AddMinutes(15),
+                    ExpiresAt = DateTimeOffset.UtcNow.AddMinutes(authOptions.Value.MfaSetupTokenExpiryMinutes),
                 };
                 await mfaStore.StoreChallengeAsync(setupChallenge, ct);
 
@@ -171,7 +174,7 @@ public static class AuthEndpoints
                     ClientId = clientId,
                     ReturnUrl = returnUrl,
                     CreatedAt = DateTimeOffset.UtcNow,
-                    ExpiresAt = DateTimeOffset.UtcNow.AddMinutes(5),
+                    ExpiresAt = DateTimeOffset.UtcNow.AddMinutes(authOptions.Value.MfaChallengeExpiryMinutes),
                 };
 
                 // Generate WebAuthn assertion options if the user has passkeys
@@ -249,6 +252,139 @@ public static class AuthEndpoints
         }
     }
 
+    private static async Task<IResult> RegisterAsync(
+        RegisterRequest request,
+        HttpContext httpContext,
+        IUserStore userStore,
+        IEmailService emailService,
+        PasswordHasher passwordHasher,
+        PasswordValidator passwordValidator,
+        PasswordPolicy passwordPolicy,
+        IConfiguration configuration,
+        IRateLimiter rateLimiter,
+        IOptions<AuthOptions> authOptions,
+        ILogger<Program> logger,
+        CancellationToken ct)
+    {
+        // Rate limit by IP (distributed via gossip-based CRDT)
+        var ip = httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+        var ao = authOptions.Value;
+        var rateLimited = await rateLimiter.IsRateLimitedAsync($"register|{ip}", ao.MaxRegistrationsPerIp, TimeSpan.FromMinutes(ao.RegistrationWindowMinutes), ct);
+        if (rateLimited)
+            return Results.Json(new { error = "rate_limited", message = "Too many registration attempts. Please try again later." }, statusCode: 429);
+
+        if (string.IsNullOrWhiteSpace(request.Email) || string.IsNullOrWhiteSpace(request.Password))
+            return Results.Json(new { error = "email_and_password_required" }, statusCode: 400);
+
+        // Basic email format validation
+        var emailTrimmed = request.Email.Trim();
+        if (!emailTrimmed.Contains('@') || emailTrimmed.Length < 5 ||
+            emailTrimmed.StartsWith('@') || emailTrimmed.EndsWith('@') || emailTrimmed.EndsWith('.'))
+            return Results.Json(new { error = "invalid_email", message = "Please enter a valid email address." }, statusCode: 400);
+
+        var (isValid, validationError) = passwordValidator.Validate(request.Password, passwordPolicy);
+        if (!isValid)
+            return Results.Json(new { error = "weak_password", message = validationError }, statusCode: 400);
+
+        var email = emailTrimmed.ToLowerInvariant();
+
+        var existing = await userStore.FindByEmailAsync(email, ct);
+        if (existing is not null)
+            return Results.Json(new { error = "email_already_registered" }, statusCode: 409);
+        var user = new AuthUser
+        {
+            Id = Guid.NewGuid().ToString("D"),
+            Email = email,
+            NormalizedEmail = email.ToUpperInvariant(),
+            PasswordHash = passwordHasher.HashPassword(request.Password),
+            FirstName = request.FirstName?.Trim(),
+            LastName = request.LastName?.Trim(),
+            EmailConfirmed = false,
+            LockoutEnabled = true,
+            SecurityStamp = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32)),
+            CreatedAt = DateTimeOffset.UtcNow,
+        };
+
+        await userStore.CreateAsync(user, ct);
+
+        // Send verification email
+        var expiresAt = DateTimeOffset.UtcNow.AddHours(ao.EmailVerificationExpiryHours).ToUnixTimeSeconds();
+        var payload = $"{user.SecurityStamp}||{user.Email}||{expiresAt}";
+        var encodedPayload = Convert.ToBase64String(Encoding.UTF8.GetBytes(payload));
+        var issuer = configuration["Issuer"]!;
+        var callbackUrl = $"{issuer}/api/auth/confirm-email?token={Uri.EscapeDataString(encodedPayload)}";
+
+        try
+        {
+            await emailService.SendVerificationEmailAsync(user.Email, callbackUrl, ct);
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "Failed to send verification email to {Email}", user.Email);
+        }
+
+        logger.LogInformation("User registered: {UserId} ({Email})", user.Id, user.Email);
+
+        return Results.Json(new { success = true, userId = user.Id }, statusCode: 201);
+    }
+
+    private static async Task<IResult> ConfirmEmailAsync(
+        HttpContext httpContext,
+        IUserStore userStore,
+        ILogger<Program> logger,
+        CancellationToken ct)
+    {
+        // Accept token from query string (email link click) or JSON body
+        var token = httpContext.Request.Query["token"].FirstOrDefault();
+        if (string.IsNullOrWhiteSpace(token) && httpContext.Request.HasJsonContentType())
+        {
+            var body = await httpContext.Request.ReadFromJsonAsync<ConfirmEmailRequest>(ct);
+            token = body?.Token;
+        }
+
+        if (string.IsNullOrWhiteSpace(token))
+            return Results.Json(new { error = "invalid_request", message = "Token is required." }, statusCode: 400);
+
+        string decoded;
+        try
+        {
+            decoded = Encoding.UTF8.GetString(Convert.FromBase64String(token));
+        }
+        catch
+        {
+            return Results.Json(new { error = "invalid_token", message = "Invalid token format." }, statusCode: 400);
+        }
+
+        var parts = decoded.Split("||");
+        if (parts.Length < 3)
+            return Results.Json(new { error = "invalid_token", message = "Invalid token format." }, statusCode: 400);
+
+        var securityStamp = parts[0];
+        var email = parts[1];
+
+        if (!long.TryParse(parts[2], out var expiresAtUnix) ||
+            DateTimeOffset.UtcNow.ToUnixTimeSeconds() > expiresAtUnix)
+        {
+            return Results.Json(new { error = "token_expired", message = "This verification link has expired." }, statusCode: 400);
+        }
+
+        var user = await userStore.FindByEmailAsync(email, ct);
+        if (user is null)
+            return Results.Json(new { error = "invalid_token", message = "Invalid or expired verification link." }, statusCode: 400);
+
+        if (user.SecurityStamp != securityStamp)
+            return Results.Json(new { error = "invalid_token", message = "This verification link has already been used or has expired." }, statusCode: 400);
+
+        user.EmailConfirmed = true;
+        user.SecurityStamp = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
+        user.UpdatedAt = DateTimeOffset.UtcNow;
+        await userStore.UpdateAsync(user, ct);
+
+        logger.LogInformation("Email confirmed for user {UserId} ({Email})", user.Id, user.Email);
+
+        return Results.Ok(new { success = true, message = "Email confirmed successfully." });
+    }
+
     private static async Task<IResult> LogoutAsync(HttpContext httpContext, CancellationToken ct)
     {
         await httpContext.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
@@ -260,6 +396,7 @@ public static class AuthEndpoints
         IUserStore userStore,
         IEmailService emailService,
         IConfiguration configuration,
+        IOptions<AuthOptions> authOptions,
         ILogger<Program> logger,
         CancellationToken ct)
     {
@@ -284,8 +421,8 @@ public static class AuthEndpoints
         user.UpdatedAt = DateTimeOffset.UtcNow;
         await userStore.UpdateAsync(user, ct);
 
-        // Encode: token||email||expiresAtUnixSeconds (1 hour expiry)
-        var expiresAt = DateTimeOffset.UtcNow.AddHours(1).ToUnixTimeSeconds();
+        // Encode: token||email||expiresAtUnixSeconds
+        var expiresAt = DateTimeOffset.UtcNow.AddMinutes(authOptions.Value.PasswordResetExpiryMinutes).ToUnixTimeSeconds();
         var payload = $"{resetToken}||{user.Email}||{expiresAt}";
         var encodedPayload = Convert.ToBase64String(Encoding.UTF8.GetBytes(payload));
 
@@ -464,8 +601,11 @@ public static class AuthEndpoints
             redirectUrl
         });
     }
+
 }
 
 public sealed record LoginRequest(string? Email, string? Password);
+public sealed record RegisterRequest(string? Email, string? Password, string? FirstName, string? LastName);
+public sealed record ConfirmEmailRequest(string? Token);
 public sealed record ForgotPasswordRequest(string? Email);
 public sealed record ResetPasswordRequest(string? Token, string? NewPassword);

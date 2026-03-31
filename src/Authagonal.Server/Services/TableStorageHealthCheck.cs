@@ -1,11 +1,11 @@
 using Authagonal.Core.Stores;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
+using Microsoft.Extensions.Options;
 
 namespace Authagonal.Server.Services;
 
-public sealed class TableStorageHealthCheck(ISigningKeyStore signingKeyStore) : IHealthCheck
+public sealed class TableStorageHealthCheck(ISigningKeyStore signingKeyStore, IOptions<CacheOptions> cacheOptions) : IHealthCheck
 {
-    private static readonly TimeSpan Timeout = TimeSpan.FromSeconds(5);
 
     public async Task<HealthCheckResult> CheckHealthAsync(
         HealthCheckContext context,
@@ -14,7 +14,7 @@ public sealed class TableStorageHealthCheck(ISigningKeyStore signingKeyStore) : 
         try
         {
             using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            cts.CancelAfter(Timeout);
+            cts.CancelAfter(TimeSpan.FromSeconds(cacheOptions.Value.HealthCheckTimeoutSeconds));
 
             await signingKeyStore.GetActiveKeyAsync(cts.Token);
 

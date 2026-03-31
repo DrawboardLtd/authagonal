@@ -48,7 +48,46 @@ Esses caches são aceitáveis para uso em produção. Se você precisar de propa
 
 ## Limitação de taxa
 
-Authagonal não inclui limitação de taxa integrada. A limitação de taxa deve ser aplicada na camada de infraestrutura (balanceador de carga, API gateway ou proxy reverso) onde há uma visão unificada de todo o tráfego entre as instâncias.
+Os endpoints de registro são protegidos por um limitador de taxa distribuído integrado (5 registros por IP por hora). Ao executar múltiplas instâncias, as contagens de limitação de taxa são automaticamente compartilhadas entre todas as instâncias via um protocolo gossip — sem necessidade de coordenação externa.
+
+### Como funciona
+
+Cada instância mantém seus próprios contadores em memória usando um CRDT G-Counter. As instâncias se descobrem mutuamente via UDP multicast e trocam estado via HTTP a cada poucos segundos. A contagem consolidada entre todas as instâncias é usada para tomar decisões de limitação de taxa.
+
+Isso significa que os limites de taxa são aplicados globalmente: se um cliente atinge 3 instâncias diferentes, todas as 3 sabem que o total é 3, e não 1 cada.
+
+### Configuração do cluster
+
+O clustering é **habilitado por padrão** com zero configuração. Instâncias na mesma rede se descobrem automaticamente via UDP multicast (`239.42.42.42:19847`).
+
+Para ambientes onde multicast não está disponível (algumas VPCs em nuvem), configure uma URL interna com balanceamento de carga como fallback:
+
+```json
+{
+  "Cluster": {
+    "InternalUrl": "http://authagonal-auth.svc.cluster.local:8080",
+    "Secret": "shared-secret-here"
+  }
+}
+```
+
+Para desabilitar o clustering completamente (limitação de taxa apenas local):
+
+```json
+{
+  "Cluster": {
+    "Enabled": false
+  }
+}
+```
+
+Consulte a página de [Configuração](configuration) para todas as configurações de cluster.
+
+### Degradação graciosa
+
+- **Nenhum par encontrado** — funciona como um limitador de taxa apenas local (cada instância aplica seu próprio limite)
+- **Par inacessível** — o último estado conhecido daquele par ainda é utilizado; pares obsoletos são removidos após 30 segundos
+- **Multicast indisponível** — a descoberta falha silenciosamente; o gossip recorre ao `InternalUrl` se configurado
 
 ## Recomendações de escalabilidade
 

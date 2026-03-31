@@ -1,4 +1,5 @@
 using Azure.Data.Tables;
+using Microsoft.Extensions.Options;
 
 namespace Authagonal.Server.Services.Oidc;
 
@@ -8,9 +9,8 @@ public sealed record OidcStateData(
     string CodeVerifier,
     string Nonce);
 
-public sealed class OidcStateStore(TableClient tableClient)
+public sealed class OidcStateStore(TableClient tableClient, IOptions<CacheOptions> cacheOptions)
 {
-    private static readonly TimeSpan StateLifetime = TimeSpan.FromMinutes(10);
 
     /// <summary>
     /// Stores OIDC authorization state keyed by the state parameter for later validation during callback.
@@ -54,7 +54,7 @@ public sealed class OidcStateStore(TableClient tableClient)
             if (entity.TryGetValue("CreatedAt", out var createdAtObj) &&
                 createdAtObj is DateTimeOffset createdAt)
             {
-                if (DateTimeOffset.UtcNow - createdAt > StateLifetime)
+                if (DateTimeOffset.UtcNow - createdAt > TimeSpan.FromMinutes(cacheOptions.Value.OidcStateLifetimeMinutes))
                     return null; // Expired
             }
             else

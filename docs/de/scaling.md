@@ -48,7 +48,46 @@ Diese Caches sind fuer den Produktionseinsatz akzeptabel. Wenn Sie eine sofortig
 
 ## Ratenbegrenzung
 
-Authagonal enthaelt keine integrierte Ratenbegrenzung. Die Ratenbegrenzung sollte auf der Infrastrukturebene (Load Balancer, API-Gateway oder Reverse Proxy) angewendet werden, wo eine einheitliche Sicht auf den gesamten Datenverkehr aller Instanzen besteht.
+Registrierungsendpunkte werden durch einen integrierten verteilten Rate Limiter geschuetzt (5 Registrierungen pro IP pro Stunde). Beim Betrieb mehrerer Instanzen werden die Zaehler der Ratenbegrenzung automatisch ueber ein Gossip-Protokoll zwischen allen Instanzen geteilt — keine externe Koordination erforderlich.
+
+### Funktionsweise
+
+Jede Instanz pflegt ihre eigenen Zaehler im Speicher mithilfe eines CRDT G-Counter. Instanzen entdecken sich gegenseitig ueber UDP Multicast und tauschen ihren Zustand alle paar Sekunden ueber HTTP aus. Der konsolidierte Zaehlerstand aller Instanzen wird fuer Ratenbegrenzungsentscheidungen verwendet.
+
+Das bedeutet, dass Ratenbegrenzungen global durchgesetzt werden: Wenn ein Client 3 verschiedene Instanzen anspricht, wissen alle 3, dass die Gesamtzahl 3 betraegt, nicht jeweils 1.
+
+### Cluster-Konfiguration
+
+Clustering ist **standardmaessig aktiviert** ohne jegliche Konfiguration. Instanzen im selben Netzwerk entdecken sich automatisch ueber UDP Multicast (`239.42.42.42:19847`).
+
+Fuer Umgebungen, in denen Multicast nicht verfuegbar ist (einige Cloud-VPCs), konfigurieren Sie eine lastverteilte interne URL als Fallback:
+
+```json
+{
+  "Cluster": {
+    "InternalUrl": "http://authagonal-auth.svc.cluster.local:8080",
+    "Secret": "shared-secret-here"
+  }
+}
+```
+
+Um Clustering vollstaendig zu deaktivieren (nur lokale Ratenbegrenzung):
+
+```json
+{
+  "Cluster": {
+    "Enabled": false
+  }
+}
+```
+
+Siehe die Seite [Konfiguration](configuration) fuer alle Cluster-Einstellungen.
+
+### Graceful Degradation
+
+- **Keine Peers gefunden** — funktioniert als lokaler Rate Limiter (jede Instanz setzt ihr eigenes Limit durch)
+- **Peer nicht erreichbar** — der letzte bekannte Zustand dieses Peers wird weiterhin verwendet; veraltete Peers werden nach 30 Sekunden entfernt
+- **Multicast nicht verfuegbar** — Discovery schlaegt stillschweigend fehl; Gossip faellt auf `InternalUrl` zurueck, falls konfiguriert
 
 ## Skalierungsempfehlungen
 

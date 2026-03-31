@@ -1,14 +1,15 @@
 using Authagonal.Core.Stores;
 using Microsoft.AspNetCore.Cors.Infrastructure;
+using Microsoft.Extensions.Options;
 
 namespace Authagonal.Server.Services;
 
 public sealed class DynamicCorsPolicyProvider(
     IClientStore clientStore,
     IConfiguration configuration,
+    IOptions<CacheOptions> cacheOptions,
     ILogger<DynamicCorsPolicyProvider> logger) : ICorsPolicyProvider
 {
-    private static readonly TimeSpan CacheRefreshInterval = TimeSpan.FromMinutes(60);
 
     private readonly SemaphoreSlim _semaphore = new(1, 1);
     private string[]? _cachedOrigins;
@@ -74,7 +75,7 @@ public sealed class DynamicCorsPolicyProvider(
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToArray();
 
-            _cacheExpiry = DateTimeOffset.UtcNow.Add(CacheRefreshInterval);
+            _cacheExpiry = DateTimeOffset.UtcNow.AddMinutes(cacheOptions.Value.CorsCacheMinutes);
 
             logger.LogDebug("CORS origins cache refreshed with {Count} origins", _cachedOrigins.Length);
 

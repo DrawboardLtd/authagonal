@@ -94,5 +94,18 @@
   "noAccount": "Noch kein Konto?",
   "createAccount": "Konto erstellen",
   "continue": "Weiter",
-  "orSignInWith": "Oder anmelden mit {{provider}}"
+  "orSignInWith": "Oder anmelden mit {{provider}}",
+  "registerTitle": "Konto erstellen",
+  "firstName": "Vorname",
+  "firstNamePlaceholder": "Max",
+  "lastName": "Nachname",
+  "lastNamePlaceholder": "Mustermann",
+  "registering": "Konto wird erstellt...",
+  "registerButton": "Konto erstellen",
+  "alreadyHaveAccount": "Bereits ein Konto?",
+  "registrationSuccess": "Registrierung erfolgreich! Bitte überprüfen Sie Ihre E-Mail, um Ihr Konto zu bestätigen, und melden Sie sich dann an.",
+  "errorEmailAlreadyRegistered": "Ein Konto mit dieser E-Mail-Adresse existiert bereits.",
+  "errorWeakPassword": "Das Passwort erfüllt nicht die Anforderungen.",
+  "errorEmailAndPasswordRequired": "E-Mail und Passwort sind erforderlich.",
+  "errorRegistrationFailed": "Registrierung fehlgeschlagen. Bitte versuchen Sie es erneut."
 }

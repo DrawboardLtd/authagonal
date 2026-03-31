@@ -1,26 +1,25 @@
 using Authagonal.Core.Stores;
+using Microsoft.Extensions.Options;
 
 namespace Authagonal.Server.Services;
 
 public sealed class TokenCleanupService(
     IServiceScopeFactory scopeFactory,
+    IOptions<BackgroundServiceOptions> bgOptions,
     ILogger<TokenCleanupService> logger) : BackgroundService
 {
-    private static readonly TimeSpan InitialDelay = TimeSpan.FromMinutes(5);
-    private static readonly TimeSpan Interval = TimeSpan.FromMinutes(60);
-
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         try
         {
-            await Task.Delay(InitialDelay, stoppingToken);
+            await Task.Delay(TimeSpan.FromMinutes(bgOptions.Value.TokenCleanupDelayMinutes), stoppingToken);
         }
         catch (OperationCanceledException)
         {
             return;
         }
 
-        using var timer = new PeriodicTimer(Interval);
+        using var timer = new PeriodicTimer(TimeSpan.FromMinutes(bgOptions.Value.TokenCleanupIntervalMinutes));
 
         do
         {

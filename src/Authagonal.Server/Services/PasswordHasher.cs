@@ -1,5 +1,6 @@
 using System.Buffers.Binary;
 using System.Security.Cryptography;
+using Microsoft.Extensions.Options;
 
 namespace Authagonal.Server.Services;
 
@@ -15,7 +16,7 @@ public sealed class PasswordHasher
     // PBKDF2 configuration (Authagonal native format)
     private const int SaltSizeBytes = 16;       // 128-bit salt
     private const int KeySizeBytes = 32;         // 256-bit derived key
-    private const int Iterations = 100_000;
+    private readonly int _iterations;
     private static readonly HashAlgorithmName HashAlgorithm = HashAlgorithmName.SHA256;
 
     // Version prefix for our PBKDF2 hashes so we can evolve the format
@@ -27,8 +28,15 @@ public sealed class PasswordHasher
     // ASP.NET Identity V3 format marker
     private const byte IdentityV3Marker = 0x01;
 
+    public PasswordHasher(IOptions<AuthOptions> authOptions)
+    {
+        _iterations = authOptions.Value.Pbkdf2Iterations;
+    }
+
+    public PasswordHasher() : this(Options.Create(new AuthOptions())) { }
+
     /// <summary>
-    /// Hashes a password using PBKDF2 with SHA-256, 100k iterations, 128-bit salt, 256-bit key.
+    /// Hashes a password using PBKDF2 with SHA-256, configurable iterations, 128-bit salt, 256-bit key.
     /// Returns a string with a version prefix for future-proofing.
     /// </summary>
     public string HashPassword(string password)
@@ -39,7 +47,7 @@ public sealed class PasswordHasher
         var key = Rfc2898DeriveBytes.Pbkdf2(
             password,
             salt,
-            Iterations,
+            _iterations,
             HashAlgorithm,
             KeySizeBytes);
 
@@ -102,7 +110,7 @@ public sealed class PasswordHasher
         return PasswordVerifyResult.Failed;
     }
 
-    private static PasswordVerifyResult VerifyPbkdf2(string password, string hash)
+    private PasswordVerifyResult VerifyPbkdf2(string password, string hash)
     {
         byte[] decoded;
         try
@@ -127,7 +135,7 @@ public sealed class PasswordHasher
         var computedKey = Rfc2898DeriveBytes.Pbkdf2(
             password,
             salt,
-            Iterations,
+            _iterations,
             HashAlgorithm,
             KeySizeBytes);
 

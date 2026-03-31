@@ -11,6 +11,7 @@ using Authagonal.Server;
 using Authagonal.Server.Endpoints;
 using Authagonal.Server.Endpoints.Scim;
 using Authagonal.Server.Services;
+using Authagonal.Server.Services.Cluster;
 using Authagonal.Server.Services.Oidc;
 using Authagonal.Server.Services.Saml;
 using Azure.Data.Tables;
@@ -214,6 +215,7 @@ public sealed class AuthagonalTestFactory : IAsyncDisposable
         builder.Configuration["Issuer"] = TestIssuer;
         builder.Configuration["Oidc:Issuer"] = TestIssuer;
         builder.Configuration["AdminApi:Enabled"] = "true";
+        builder.Configuration["Cluster:Enabled"] = "false";
 
         var services = builder.Services;
 
@@ -230,11 +232,19 @@ public sealed class AuthagonalTestFactory : IAsyncDisposable
         services.AddSingleton<IScimTokenStore>(ScimTokenStore);
         services.AddSingleton<IScimGroupStore>(ScimGroupStore);
 
+        // Rate limiter (in-memory, local-only for tests)
+        services.AddSingleton<IRateLimiter>(new DistributedRateLimiter("test-node"));
+
         // Extensibility test doubles
         services.AddSingleton<IEmailService>(EmailService);
         services.AddSingleton<IAuthHook>(AuthHook);
         services.AddSingleton<IProvisioningOrchestrator>(new TestProvisioningOrchestrator());
         services.AddSingleton<ISecretProvider>(new PlaintextSecretProvider());
+
+        // Options (mirrors AddAuthagonal)
+        services.Configure<AuthOptions>(_ => { });
+        services.Configure<CacheOptions>(_ => { });
+        services.Configure<BackgroundServiceOptions>(_ => { });
 
         // Core services (mirrors AddAuthagonal minus storage)
         services.AddLocalization();
@@ -267,10 +277,10 @@ public sealed class AuthagonalTestFactory : IAsyncDisposable
         services.AddSingleton<SamlMetadataParser>();
         services.AddSingleton<SamlResponseParser>();
         services.AddSingleton<SamlReplayCache>(sp =>
-            new SamlReplayCache(sp.GetRequiredKeyedService<TableClient>("SamlReplayCache")));
+            new SamlReplayCache(sp.GetRequiredKeyedService<TableClient>("SamlReplayCache"), sp.GetRequiredService<IOptions<CacheOptions>>()));
         services.AddSingleton<OidcDiscoveryClient>();
         services.AddSingleton<OidcStateStore>(sp =>
-            new OidcStateStore(sp.GetRequiredKeyedService<TableClient>("OidcStateStore")));
+            new OidcStateStore(sp.GetRequiredKeyedService<TableClient>("OidcStateStore"), sp.GetRequiredService<IOptions<CacheOptions>>()));
 
         // Authentication
         services.AddAuthentication(options =>

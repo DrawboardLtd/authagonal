@@ -20,6 +20,39 @@ Authagonal se configura mediante `appsettings.json` o variables de entorno. Las 
 | Ajuste | Predeterminado | Descripcion |
 |---|---|---|
 | `Authentication:CookieLifetimeHours` | `48` | Duracion de la sesion por cookie (deslizante) |
+| `Auth:MaxFailedAttempts` | `5` | Intentos de inicio de sesion fallidos antes del bloqueo de cuenta |
+| `Auth:LockoutDurationMinutes` | `10` | Duracion del bloqueo de cuenta despues del maximo de intentos fallidos |
+| `Auth:MaxRegistrationsPerIp` | `5` | Registros maximos por direccion IP dentro de la ventana |
+| `Auth:RegistrationWindowMinutes` | `60` | Ventana de limitacion de velocidad de registro |
+| `Auth:EmailVerificationExpiryHours` | `24` | Tiempo de vida del enlace de verificacion de correo |
+| `Auth:PasswordResetExpiryMinutes` | `60` | Tiempo de vida del enlace de restablecimiento de contrasena |
+| `Auth:MfaChallengeExpiryMinutes` | `5` | Tiempo de vida del token de verificacion MFA |
+| `Auth:MfaSetupTokenExpiryMinutes` | `15` | Tiempo de vida del token de configuracion MFA (para inscripcion forzada) |
+| `Auth:Pbkdf2Iterations` | `100000` | Numero de iteraciones PBKDF2 para el hashing de contrasenas |
+| `Auth:RefreshTokenReuseGraceSeconds` | `60` | Ventana de gracia para la reutilizacion concurrente del token de actualizacion |
+| `Auth:SigningKeyLifetimeDays` | `90` | Tiempo de vida de la clave de firma RSA antes de la rotacion automatica |
+| `Auth:SigningKeyCacheRefreshMinutes` | `60` | Frecuencia de recarga de claves de firma desde el almacenamiento |
+| `Auth:SecurityStampRevalidationMinutes` | `30` | Intervalo entre verificaciones del sello de seguridad del cookie |
+
+## Cache y tiempos de espera
+
+| Ajuste | Predeterminado | Descripcion |
+|---|---|---|
+| `Cache:CorsCacheMinutes` | `60` | Tiempo de cache de los origenes CORS permitidos |
+| `Cache:OidcDiscoveryCacheMinutes` | `60` | Duracion de cache del documento de descubrimiento OIDC |
+| `Cache:SamlMetadataCacheMinutes` | `60` | Duracion de cache de los metadatos SAML del IdP |
+| `Cache:OidcStateLifetimeMinutes` | `10` | Tiempo de vida del parametro state de autorizacion OIDC |
+| `Cache:SamlReplayLifetimeMinutes` | `10` | Tiempo de vida del ID AuthnRequest SAML (prevencion de replay) |
+| `Cache:HealthCheckTimeoutSeconds` | `5` | Tiempo de espera de la verificacion de salud de Table Storage |
+
+## Servicios en segundo plano
+
+| Ajuste | Predeterminado | Descripcion |
+|---|---|---|
+| `BackgroundServices:TokenCleanupDelayMinutes` | `5` | Retraso inicial antes de la primera limpieza de tokens expirados |
+| `BackgroundServices:TokenCleanupIntervalMinutes` | `60` | Intervalo de limpieza de tokens expirados |
+| `BackgroundServices:GrantReconciliationDelayMinutes` | `10` | Retraso inicial antes de la primera reconciliacion de autorizaciones |
+| `BackgroundServices:GrantReconciliationIntervalMinutes` | `30` | Intervalo de reconciliacion de autorizaciones |
 
 ## Clientes
 
@@ -246,14 +279,55 @@ Por defecto, Authagonal usa un servicio de email no-op que descarta silenciosame
 
 Los correos a direcciones `@example.com` se omiten silenciosamente (util para pruebas).
 
+## Cluster
+
+Las instancias de Authagonal forman automaticamente un cluster para compartir el estado de los limites de velocidad. La agrupacion esta habilitada por defecto sin necesidad de configuracion.
+
+| Ajuste | Variable de entorno | Predeterminado | Descripcion |
+|---|---|---|---|
+| `Cluster:Enabled` | `Cluster__Enabled` | `true` | Interruptor principal para la agrupacion. Establezca en `false` para limites de velocidad solo locales. |
+| `Cluster:MulticastGroup` | `Cluster__MulticastGroup` | `239.42.42.42` | Grupo de multicast UDP para descubrimiento de pares |
+| `Cluster:MulticastPort` | `Cluster__MulticastPort` | `19847` | Puerto de multicast UDP para descubrimiento de pares |
+| `Cluster:InternalUrl` | `Cluster__InternalUrl` | *(ninguno)* | URL con balanceo de carga como alternativa para gossip cuando el multicast no esta disponible |
+| `Cluster:Secret` | `Cluster__Secret` | *(ninguno)* | Secreto compartido para la autenticacion del endpoint de gossip (recomendado cuando se establece `InternalUrl`) |
+| `Cluster:GossipIntervalSeconds` | `Cluster__GossipIntervalSeconds` | `5` | Frecuencia con la que las instancias intercambian el estado de limites de velocidad |
+| `Cluster:DiscoveryIntervalSeconds` | `Cluster__DiscoveryIntervalSeconds` | `10` | Frecuencia con la que las instancias se anuncian mediante multicast |
+| `Cluster:PeerStaleAfterSeconds` | `Cluster__PeerStaleAfterSeconds` | `30` | Descartar pares de los que no se ha recibido respuesta despues de esta cantidad de segundos |
+
+**Sin configuracion (predeterminado):** Las instancias se descubren entre si mediante multicast UDP. Funciona en Kubernetes, Docker Compose o cualquier red compartida.
+
+**Multicast deshabilitado (por ejemplo, algunas VPC en la nube):**
+
+```json
+{
+  "Cluster": {
+    "InternalUrl": "http://authagonal-auth.svc.cluster.local:8080",
+    "Secret": "shared-secret-here"
+  }
+}
+```
+
+**Agrupacion completamente deshabilitada:**
+
+```json
+{
+  "Cluster": {
+    "Enabled": false
+  }
+}
+```
+
+Ver [Escalabilidad](scaling) para mas detalles sobre como funciona la limitacion de velocidad distribuida.
+
 ## Limitacion de velocidad
 
-Limites de velocidad integrados por IP:
+Limites de velocidad integrados por IP aplicados en todas las instancias mediante el protocolo de gossip del cluster:
 
-| Grupo de endpoints | Limite | Ventana |
+| Endpoint | Limite | Ventana |
 |---|---|---|
-| Endpoints de autenticacion (inicio de sesion, SSO) | 20 solicitudes | 1 minuto |
-| Endpoint de token | 30 solicitudes | 1 minuto |
+| `POST /api/auth/register` | 5 registros | 1 hora |
+
+Cuando la agrupacion esta habilitada, estos limites se consolidan entre todas las instancias. Cuando esta deshabilitada, cada instancia aplica su propio limite de forma independiente.
 
 ## CORS
 
@@ -267,6 +341,23 @@ CORS se configura dinamicamente. Los origenes de todos los `AllowedCorsOrigins` 
     "ConnectionString": "DefaultEndpointsProtocol=https;AccountName=...;AccountKey=...;TableEndpoint=https://..."
   },
   "Issuer": "https://auth.example.com",
+  "Auth": {
+    "MaxFailedAttempts": 5,
+    "LockoutDurationMinutes": 10,
+    "MaxRegistrationsPerIp": 5,
+    "RegistrationWindowMinutes": 60,
+    "EmailVerificationExpiryHours": 24,
+    "PasswordResetExpiryMinutes": 60,
+    "Pbkdf2Iterations": 100000,
+    "SigningKeyLifetimeDays": 90
+  },
+  "Cluster": {
+    "Enabled": true
+  },
+  "AdminApi": {
+    "Enabled": true,
+    "Scope": "authagonal-admin"
+  },
   "Authentication": {
     "CookieLifetimeHours": 48
   },

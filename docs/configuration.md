@@ -19,6 +19,39 @@ Authagonal is configured via `appsettings.json` or environment variables. Enviro
 | Setting | Default | Description |
 |---|---|---|
 | `Authentication:CookieLifetimeHours` | `48` | Cookie session lifetime (sliding) |
+| `Auth:MaxFailedAttempts` | `5` | Failed login attempts before account lockout |
+| `Auth:LockoutDurationMinutes` | `10` | Account lockout duration after max failed attempts |
+| `Auth:MaxRegistrationsPerIp` | `5` | Maximum registrations per IP address within the window |
+| `Auth:RegistrationWindowMinutes` | `60` | Registration rate limiting window |
+| `Auth:EmailVerificationExpiryHours` | `24` | Email verification link lifetime |
+| `Auth:PasswordResetExpiryMinutes` | `60` | Password reset link lifetime |
+| `Auth:MfaChallengeExpiryMinutes` | `5` | MFA challenge token lifetime |
+| `Auth:MfaSetupTokenExpiryMinutes` | `15` | MFA setup token lifetime (for forced enrollment) |
+| `Auth:Pbkdf2Iterations` | `100000` | PBKDF2 iteration count for password hashing |
+| `Auth:RefreshTokenReuseGraceSeconds` | `60` | Grace window for concurrent refresh token reuse |
+| `Auth:SigningKeyLifetimeDays` | `90` | RSA signing key lifetime before automatic rotation |
+| `Auth:SigningKeyCacheRefreshMinutes` | `60` | How often signing keys are reloaded from storage |
+| `Auth:SecurityStampRevalidationMinutes` | `30` | Interval between cookie security stamp checks |
+
+## Cache and Timeouts
+
+| Setting | Default | Description |
+|---|---|---|
+| `Cache:CorsCacheMinutes` | `60` | How long CORS allowed origins are cached |
+| `Cache:OidcDiscoveryCacheMinutes` | `60` | OIDC discovery document cache duration |
+| `Cache:SamlMetadataCacheMinutes` | `60` | SAML IdP metadata cache duration |
+| `Cache:OidcStateLifetimeMinutes` | `10` | OIDC authorization state parameter lifetime |
+| `Cache:SamlReplayLifetimeMinutes` | `10` | SAML AuthnRequest ID lifetime (replay prevention) |
+| `Cache:HealthCheckTimeoutSeconds` | `5` | Table Storage health check timeout |
+
+## Background Services
+
+| Setting | Default | Description |
+|---|---|---|
+| `BackgroundServices:TokenCleanupDelayMinutes` | `5` | Initial delay before first expired token cleanup |
+| `BackgroundServices:TokenCleanupIntervalMinutes` | `60` | Expired token cleanup interval |
+| `BackgroundServices:GrantReconciliationDelayMinutes` | `10` | Initial delay before first grant reconciliation |
+| `BackgroundServices:GrantReconciliationIntervalMinutes` | `30` | Grant reconciliation interval |
 
 ## Clients
 
@@ -259,14 +292,55 @@ services.AddAuthagonal(configuration);
 
 Emails to `@example.com` addresses are silently skipped (useful for testing).
 
+## Cluster
+
+Authagonal instances automatically form a cluster to share rate limit state. Clustering is enabled by default with zero configuration.
+
+| Setting | Env Variable | Default | Description |
+|---|---|---|---|
+| `Cluster:Enabled` | `Cluster__Enabled` | `true` | Master switch for clustering. Set to `false` for local-only rate limiting. |
+| `Cluster:MulticastGroup` | `Cluster__MulticastGroup` | `239.42.42.42` | UDP multicast group for peer discovery |
+| `Cluster:MulticastPort` | `Cluster__MulticastPort` | `19847` | UDP multicast port for peer discovery |
+| `Cluster:InternalUrl` | `Cluster__InternalUrl` | *(none)* | Load-balanced fallback URL for gossip when multicast is unavailable |
+| `Cluster:Secret` | `Cluster__Secret` | *(none)* | Shared secret for gossip endpoint authentication (recommended when `InternalUrl` is set) |
+| `Cluster:GossipIntervalSeconds` | `Cluster__GossipIntervalSeconds` | `5` | How often instances exchange rate limit state |
+| `Cluster:DiscoveryIntervalSeconds` | `Cluster__DiscoveryIntervalSeconds` | `10` | How often instances announce themselves via multicast |
+| `Cluster:PeerStaleAfterSeconds` | `Cluster__PeerStaleAfterSeconds` | `30` | Drop peers not heard from after this many seconds |
+
+**Zero-config (default):** Instances discover each other via UDP multicast. Works in Kubernetes, Docker Compose, or any shared network.
+
+**Multicast disabled (e.g., some cloud VPCs):**
+
+```json
+{
+  "Cluster": {
+    "InternalUrl": "http://authagonal-auth.svc.cluster.local:8080",
+    "Secret": "shared-secret-here"
+  }
+}
+```
+
+**Clustering fully disabled:**
+
+```json
+{
+  "Cluster": {
+    "Enabled": false
+  }
+}
+```
+
+See [Scaling](scaling) for more details on how distributed rate limiting works.
+
 ## Rate Limiting
 
-Built-in per-IP rate limits:
+Built-in per-IP rate limits are enforced across all instances via the cluster gossip protocol:
 
-| Endpoint Group | Limit | Window |
+| Endpoint | Limit | Window |
 |---|---|---|
-| Auth endpoints (login, SSO) | 20 requests | 1 minute |
-| Token endpoint | 30 requests | 1 minute |
+| `POST /api/auth/register` | 5 registrations | 1 hour |
+
+When clustering is enabled, these limits are consolidated across all instances. When disabled, each instance enforces its own limit independently.
 
 ## CORS
 
@@ -280,6 +354,19 @@ CORS is configured dynamically. Origins from all registered clients' `AllowedCor
     "ConnectionString": "DefaultEndpointsProtocol=https;AccountName=...;AccountKey=...;TableEndpoint=https://..."
   },
   "Issuer": "https://auth.example.com",
+  "Auth": {
+    "MaxFailedAttempts": 5,
+    "LockoutDurationMinutes": 10,
+    "MaxRegistrationsPerIp": 5,
+    "RegistrationWindowMinutes": 60,
+    "EmailVerificationExpiryHours": 24,
+    "PasswordResetExpiryMinutes": 60,
+    "Pbkdf2Iterations": 100000,
+    "SigningKeyLifetimeDays": 90
+  },
+  "Cluster": {
+    "Enabled": true
+  },
   "AdminApi": {
     "Enabled": true,
     "Scope": "authagonal-admin"

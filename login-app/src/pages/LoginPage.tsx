@@ -26,10 +26,14 @@ export default function LoginPage() {
   const returnUrl = searchParams.get('returnUrl') || '';
   const loginHint = searchParams.get('login_hint') || '';
   const oidcError = searchParams.get('error_description') || searchParams.get('error') || '';
+  const messageParam = searchParams.get('message') || '';
 
   const [email, setEmail] = useState(loginHint);
   const [password, setPassword] = useState('');
   const [error, setError] = useState(oidcError);
+  const [successMessage] = useState(() =>
+    messageParam === 'registration_success' ? t('registrationSuccess') : ''
+  );
   const [loading, setLoading] = useState(false);
   const [ssoInfo, setSsoInfo] = useState<{ redirectUrl: string } | null>(null);
   const [ssoChecked, setSsoChecked] = useState(false);
@@ -325,6 +329,7 @@ export default function LoginPage() {
         </div>
       )}
 
+      {successMessage && <div className="alert-success">{successMessage}</div>}
       {error && <div className="alert-error">{error}</div>}
 
       <form onSubmit={handleSubmit}>
@@ -414,6 +419,17 @@ export default function LoginPage() {
           </>
         )}
       </form>
+
+      {branding.showRegistration && (
+        <div className="form-footer" style={{ marginTop: '16px' }}>
+          <span style={{ color: '#6b7280', fontSize: '14px' }}>
+            {t('noAccount')}{' '}
+            <Link to={returnUrl ? `/register?returnUrl=${encodeURIComponent(returnUrl)}` : '/register'} className="link">
+              {t('createAccount')}
+            </Link>
+          </span>
+        </div>
+      )}
     </div>
   );
 }

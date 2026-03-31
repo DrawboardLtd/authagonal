@@ -94,5 +94,18 @@
   "noAccount": "¿No tienes cuenta?",
   "createAccount": "Crear una",
   "continue": "Continuar",
-  "orSignInWith": "O iniciar sesión con {{provider}}"
+  "orSignInWith": "O iniciar sesión con {{provider}}",
+  "registerTitle": "Crear cuenta",
+  "firstName": "Nombre",
+  "firstNamePlaceholder": "Juan",
+  "lastName": "Apellido",
+  "lastNamePlaceholder": "García",
+  "registering": "Creando cuenta...",
+  "registerButton": "Crear cuenta",
+  "alreadyHaveAccount": "¿Ya tienes cuenta?",
+  "registrationSuccess": "¡Registro exitoso! Revisa tu correo para verificar tu cuenta y luego inicia sesión.",
+  "errorEmailAlreadyRegistered": "Ya existe una cuenta con este correo.",
+  "errorWeakPassword": "La contraseña no cumple los requisitos.",
+  "errorEmailAndPasswordRequired": "El correo y la contraseña son obligatorios.",
+  "errorRegistrationFailed": "Error en el registro. Inténtalo de nuevo."
 }

@@ -94,5 +94,18 @@
   "noAccount": "De'wI' ghajbe'?",
   "createAccount": "yIchenmoH",
   "continue": "yItaH",
-  "orSignInWith": "pagh {{provider}} yIlo' yI'el"
+  "orSignInWith": "pagh {{provider}} yIlo' yI'el",
+  "registerTitle": "De'wI' yIchenmoH",
+  "firstName": "pong wa'DIch",
+  "firstNamePlaceholder": "worf",
+  "lastName": "pong qorDu'",
+  "lastNamePlaceholder": "mogh puqloD",
+  "registering": "De'wI' chenmoHlu'...",
+  "registerButton": "De'wI' yIchenmoH",
+  "alreadyHaveAccount": "De'wI' Daghaj'a'?",
+  "registrationSuccess": "QapHa'! QIn yInIDqa' 'ej yI'el.",
+  "errorEmailAlreadyRegistered": "De'wI' chenpu'.",
+  "errorWeakPassword": "mu'HaqHom puj.",
+  "errorEmailAndPasswordRequired": "QIn 'ej mu'HaqHom poQlu'.",
+  "errorRegistrationFailed": "chenmoH luj. yInIDqa'."
 }

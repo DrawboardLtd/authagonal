@@ -94,5 +94,18 @@
   "noAccount": "还没有账户？",
   "createAccount": "创建账户",
   "continue": "继续",
-  "orSignInWith": "或使用 {{provider}} 登录"
+  "orSignInWith": "或使用 {{provider}} 登录",
+  "registerTitle": "创建账户",
+  "firstName": "名",
+  "firstNamePlaceholder": "小明",
+  "lastName": "姓",
+  "lastNamePlaceholder": "张",
+  "registering": "正在创建账户...",
+  "registerButton": "创建账户",
+  "alreadyHaveAccount": "已有账户？",
+  "registrationSuccess": "注册成功！请检查您的邮箱以验证账户，然后登录。",
+  "errorEmailAlreadyRegistered": "此邮箱已注册。",
+  "errorWeakPassword": "密码不符合要求。",
+  "errorEmailAndPasswordRequired": "邮箱和密码为必填项。",
+  "errorRegistrationFailed": "注册失败，请重试。"
 }
