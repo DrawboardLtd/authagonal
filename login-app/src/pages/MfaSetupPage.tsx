@@ -3,6 +3,11 @@ import { useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { mfaStatus, mfaTotpSetup, mfaTotpConfirm, mfaWebAuthnSetup, mfaWebAuthnConfirm, mfaRecoveryGenerate, mfaDeleteCredential, ApiRequestError } from '../api';
 import type { MfaMethod } from '../types';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Alert } from '@/components/ui/alert';
+import { CardTitle, CardDescription, CardFooter } from '@/components/ui/card';
 
 function isSafeReturnUrl(url: string): boolean {
   if (!url) return false;
@@ -208,7 +213,7 @@ export default function MfaSetupPage() {
   }
 
   if (loading) {
-    return <div style={{ textAlign: 'center', padding: '40px' }}>{t('mfaLoading')}</div>;
+    return <div className="text-center py-10 text-gray-500">{t('mfaLoading')}</div>;
   }
 
   const hasTotp = methods.some(m => m.type === 'totp');
@@ -219,38 +224,34 @@ export default function MfaSetupPage() {
 
   return (
     <div>
-      <h2 className="auth-title">{t('mfaSetupTitle')}</h2>
+      <CardTitle>{t('mfaSetupTitle')}</CardTitle>
 
-      {error && <div className="alert-error">{error}</div>}
+      {error && <Alert variant="error">{error}</Alert>}
 
-      <div style={{ marginBottom: '24px' }}>
-        <p style={{ color: '#6b7280', textAlign: 'center' }}>
-          {enabled ? t('mfaStatusEnabled') : t('mfaStatusDisabled')}
-        </p>
-      </div>
+      <CardDescription className="mb-6">
+        {enabled ? t('mfaStatusEnabled') : t('mfaStatusDisabled')}
+      </CardDescription>
 
       {/* Enrolled methods */}
       {methods.filter(m => m.type !== 'recoverycode').length > 0 && (
-        <div style={{ marginBottom: '24px' }}>
-          <h3 style={{ fontSize: '16px', marginBottom: '8px' }}>{t('mfaEnrolledMethods')}</h3>
+        <div className="mb-6">
+          <h3 className="text-base font-medium mb-2">{t('mfaEnrolledMethods')}</h3>
           {methods.filter(m => m.type !== 'recoverycode').map(m => (
-            <div key={m.id} style={{
-              display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-              padding: '12px', border: '1px solid #e5e7eb', borderRadius: '8px', marginBottom: '8px'
-            }}>
+            <div key={m.id} className="flex justify-between items-center p-3 border border-gray-200 rounded-lg mb-2">
               <div>
-                <strong>{m.name}</strong>
+                <strong className="text-sm">{m.name}</strong>
                 <br />
-                <small style={{ color: '#9ca3af' }}>{t('mfaAddedOn', { date: new Date(m.createdAt).toLocaleDateString() })}</small>
+                <small className="text-gray-400 text-xs">{t('mfaAddedOn', { date: new Date(m.createdAt).toLocaleDateString() })}</small>
               </div>
-              <button
+              <Button
                 type="button"
-                className="btn-secondary"
-                style={{ fontSize: '13px', padding: '6px 12px' }}
+                variant="secondary"
+                size="sm"
+                className="w-auto"
                 onClick={() => handleDeleteCredential(m.id)}
               >
                 {t('mfaRemove')}
-              </button>
+              </Button>
             </div>
           ))}
         </div>
@@ -258,32 +259,22 @@ export default function MfaSetupPage() {
 
       {/* TOTP setup */}
       {!hasTotp && !totpSetup && (
-        <button
-          type="button"
-          className="btn-primary"
-          style={{ marginBottom: '16px', width: '100%' }}
-          onClick={handleTotpSetup}
-          disabled={totpLoading}
-        >
+        <Button className="mb-4" onClick={handleTotpSetup} disabled={totpLoading}>
           {t('mfaSetupTotp')}
-        </button>
+        </Button>
       )}
 
       {totpSetup && (
-        <div style={{ marginBottom: '24px' }}>
-          <p style={{ textAlign: 'center', marginBottom: '16px' }}>{t('mfaScanQrCode')}</p>
-          <div style={{ textAlign: 'center', marginBottom: '16px' }}>
-            <img src={totpSetup.qrCodeDataUri} alt="QR Code" style={{ width: '200px', height: '200px', imageRendering: 'pixelated' }} />
+        <div className="mb-6">
+          <p className="text-center mb-4 text-sm">{t('mfaScanQrCode')}</p>
+          <div className="text-center mb-4">
+            <img src={totpSetup.qrCodeDataUri} alt="QR Code" className="w-[200px] h-[200px] mx-auto" style={{ imageRendering: 'pixelated' }} />
           </div>
           {totpSetup.manualKey && (
-            <div style={{ textAlign: 'center', marginBottom: '16px' }}>
-              <p style={{ fontSize: '13px', color: '#6b7280', marginBottom: '4px' }}>{t('mfaManualKeyLabel')}</p>
+            <div className="text-center mb-4">
+              <p className="text-[13px] text-gray-500 mb-1">{t('mfaManualKeyLabel')}</p>
               <code
-                style={{
-                  display: 'inline-block', padding: '8px 12px', background: '#f3f4f6',
-                  borderRadius: '6px', fontSize: '14px', letterSpacing: '2px', userSelect: 'all',
-                  wordBreak: 'break-all', cursor: 'pointer',
-                }}
+                className="inline-block px-3 py-2 bg-gray-100 rounded-md text-sm tracking-widest select-all break-all cursor-pointer"
                 title={t('mfaCopyKey')}
                 onClick={() => navigator.clipboard?.writeText(totpSetup.manualKey)}
               >
@@ -291,9 +282,9 @@ export default function MfaSetupPage() {
               </code>
             </div>
           )}
-          <div className="form-group">
-            <label htmlFor="totp-confirm">{t('mfaEnterCode')}</label>
-            <input
+          <div className="mb-4">
+            <Label htmlFor="totp-confirm">{t('mfaEnterCode')}</Label>
+            <Input
               id="totp-confirm"
               type="text"
               value={totpCode}
@@ -305,88 +296,53 @@ export default function MfaSetupPage() {
               pattern="[0-9]{6}"
             />
           </div>
-          <button
-            type="button"
-            className="btn-primary"
-            style={{ width: '100%' }}
-            onClick={handleTotpConfirm}
-            disabled={totpLoading || totpCode.length !== 6}
-          >
+          <Button onClick={handleTotpConfirm} disabled={totpLoading || totpCode.length !== 6}>
             {t('mfaConfirm')}
-          </button>
+          </Button>
         </div>
       )}
 
       {/* WebAuthn / Passkey setup */}
       {supportsWebAuthn && !hasWebAuthn && (
-        <button
-          type="button"
-          className="btn-primary"
-          style={{ marginBottom: '16px', width: '100%' }}
-          onClick={handleWebAuthnSetup}
-          disabled={webAuthnLoading}
-        >
+        <Button className="mb-4" onClick={handleWebAuthnSetup} disabled={webAuthnLoading}>
           {webAuthnLoading ? t('mfaLoading') : t('mfaSetupPasskey')}
-        </button>
+        </Button>
       )}
 
       {/* Recovery codes */}
       {hasPrimaryMethod && !hasRecovery && !recoveryCodes && (
-        <button
-          type="button"
-          className="btn-secondary"
-          style={{ marginBottom: '16px', width: '100%' }}
-          onClick={handleRecoveryGenerate}
-          disabled={recoveryLoading}
-        >
+        <Button variant="secondary" className="mb-4" onClick={handleRecoveryGenerate} disabled={recoveryLoading}>
           {t('mfaGenerateRecoveryCodes')}
-        </button>
+        </Button>
       )}
 
       {recoveryCodes && (
-        <div style={{ marginBottom: '24px' }}>
-          <h3 style={{ fontSize: '16px', marginBottom: '8px' }}>{t('mfaRecoveryCodesTitle')}</h3>
-          <p style={{ color: '#6b7280', marginBottom: '12px', fontSize: '14px' }}>
-            {t('mfaRecoveryCodesWarning')}
-          </p>
-          <div style={{
-            background: '#f9fafb', padding: '16px', borderRadius: '8px',
-            fontFamily: 'monospace', fontSize: '14px', columns: 2, columnGap: '24px'
-          }}>
+        <div className="mb-6">
+          <h3 className="text-base font-medium mb-2">{t('mfaRecoveryCodesTitle')}</h3>
+          <p className="text-gray-500 mb-3 text-sm">{t('mfaRecoveryCodesWarning')}</p>
+          <div className="bg-gray-50 p-4 rounded-lg font-mono text-sm columns-2 gap-6">
             {recoveryCodes.map((code, i) => (
-              <div key={i} style={{ marginBottom: '4px' }}>{code}</div>
+              <div key={i} className="mb-1">{code}</div>
             ))}
           </div>
-          <button
-            type="button"
-            className="btn-secondary"
-            style={{ marginTop: '12px', width: '100%' }}
-            onClick={() => setRecoveryCodes(null)}
-          >
+          <Button variant="secondary" className="mt-3" onClick={() => setRecoveryCodes(null)}>
             {t('mfaDone')}
-          </button>
+          </Button>
         </div>
       )}
 
       {hasRecovery && !recoveryCodes && (
-        <button
-          type="button"
-          className="btn-secondary"
-          style={{ marginBottom: '16px', width: '100%' }}
-          onClick={handleRecoveryGenerate}
-          disabled={recoveryLoading}
-        >
+        <Button variant="secondary" className="mb-4" onClick={handleRecoveryGenerate} disabled={recoveryLoading}>
           {t('mfaRegenerateRecoveryCodes')}
-        </button>
+        </Button>
       )}
 
       {/* Skip button — only when not in forced setup mode (user has cookie session) */}
       {!mfaSetupToken && (
-        <div className="form-footer" style={{ marginTop: '16px' }}>
+        <CardFooter className="mt-4">
           <button
             type="button"
-            className="link"
-            style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '13px', color: '#6b7280' }}
+            className="bg-transparent border-none cursor-pointer text-[13px] text-gray-500 hover:text-gray-700"
             onClick={() => {
               const dest = returnUrl && isSafeReturnUrl(returnUrl) ? returnUrl : '/';
               window.location.href = dest;
@@ -394,16 +350,13 @@ export default function MfaSetupPage() {
           >
             {t('mfaSkipSetup')}
           </button>
-        </div>
+        </CardFooter>
       )}
 
       {/* Back to app link — shown when navigating from an external app */}
       {backUrl && (
-        <div style={{ marginTop: '24px', textAlign: 'center', paddingTop: '16px', borderTop: '1px solid #e5e7eb' }}>
-          <a
-            href={backUrl}
-            style={{ fontSize: '14px', color: '#2563eb', textDecoration: 'none' }}
-          >
+        <div className="mt-6 text-center pt-4 border-t border-gray-200">
+          <a href={backUrl} className="text-sm text-primary no-underline hover:underline">
             &larr; {t('mfaBackToApp')}
           </a>
         </div>

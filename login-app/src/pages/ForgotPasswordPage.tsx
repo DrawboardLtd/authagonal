@@ -2,6 +2,11 @@ import { useState } from 'react';
 import { useSearchParams, Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { forgotPassword } from '../api';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Alert } from '@/components/ui/alert';
+import { CardTitle, CardDescription, CardFooter } from '@/components/ui/card';
 
 export default function ForgotPasswordPage() {
   const { t } = useTranslation();
@@ -36,32 +41,28 @@ export default function ForgotPasswordPage() {
   if (submitted) {
     return (
       <div>
-        <h2 className="auth-title">{t('checkYourEmail')}</h2>
-        <div className="alert-success">
-          {t('resetEmailSent')}
-        </div>
-        <div className="form-footer">
-          <Link to={loginLink} className="link">
+        <CardTitle>{t('checkYourEmail')}</CardTitle>
+        <Alert variant="success">{t('resetEmailSent')}</Alert>
+        <CardFooter>
+          <Link to={loginLink} className="text-sm font-medium text-primary hover:underline no-underline">
             {t('backToSignIn')}
           </Link>
-        </div>
+        </CardFooter>
       </div>
     );
   }
 
   return (
     <div>
-      <h2 className="auth-title">{t('resetYourPassword')}</h2>
-      <p className="auth-subtitle">
-        {t('resetSubtitle')}
-      </p>
+      <CardTitle>{t('resetYourPassword')}</CardTitle>
+      <CardDescription className="mb-5">{t('resetSubtitle')}</CardDescription>
 
-      {error && <div className="alert-error">{error}</div>}
+      {error && <Alert variant="error">{error}</Alert>}
 
       <form onSubmit={handleSubmit}>
-        <div className="form-group">
-          <label htmlFor="email">{t('email')}</label>
-          <input
+        <div className="mb-4">
+          <Label htmlFor="email">{t('email')}</Label>
+          <Input
             id="email"
             type="email"
             value={email}
@@ -74,26 +75,15 @@ export default function ForgotPasswordPage() {
           />
         </div>
 
-        <button
-          type="submit"
-          className="btn-primary"
-          disabled={loading}
-        >
-          {loading ? (
-            <span className="btn-loading">
-              <span className="spinner" />
-              {t('sending')}
-            </span>
-          ) : (
-            t('sendResetLink')
-          )}
-        </button>
+        <Button type="submit" loading={loading}>
+          {loading ? t('sending') : t('sendResetLink')}
+        </Button>
 
-        <div className="form-footer">
-          <Link to={loginLink} className="link">
+        <CardFooter>
+          <Link to={loginLink} className="text-sm font-medium text-primary hover:underline no-underline">
             {t('backToSignIn')}
           </Link>
-        </div>
+        </CardFooter>
       </form>
     </div>
   );

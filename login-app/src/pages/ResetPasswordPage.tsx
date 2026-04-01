@@ -2,6 +2,12 @@ import { useState, useEffect } from 'react';
 import { useSearchParams, Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { resetPassword, ApiRequestError } from '../api';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Alert } from '@/components/ui/alert';
+import { CardTitle, CardFooter } from '@/components/ui/card';
+import { Check, X } from 'lucide-react';
 
 interface PasswordRule {
   rule: string;
@@ -125,15 +131,13 @@ export default function ResetPasswordPage() {
   if (success) {
     return (
       <div>
-        <h2 className="auth-title">{t('passwordResetSuccess')}</h2>
-        <div className="alert-success">
-          {t('passwordResetSuccessMessage')}
-        </div>
-        <div className="form-footer">
-          <Link to="/login" className="link">
+        <CardTitle>{t('passwordResetSuccess')}</CardTitle>
+        <Alert variant="success">{t('passwordResetSuccessMessage')}</Alert>
+        <CardFooter>
+          <Link to="/login" className="text-sm font-medium text-primary hover:underline no-underline">
             {t('signIn')}
           </Link>
-        </div>
+        </CardFooter>
       </div>
     );
   }
@@ -141,30 +145,28 @@ export default function ResetPasswordPage() {
   if (!token) {
     return (
       <div>
-        <h2 className="auth-title">{t('invalidLink')}</h2>
-        <div className="alert-error">
-          {t('invalidOrExpiredLink')}
-        </div>
-        <div className="form-footer">
-          <Link to="/forgot-password" className="link">
+        <CardTitle>{t('invalidLink')}</CardTitle>
+        <Alert variant="error">{t('invalidOrExpiredLink')}</Alert>
+        <CardFooter>
+          <Link to="/forgot-password" className="text-sm font-medium text-primary hover:underline no-underline">
             {t('requestNewResetLink')}
           </Link>
-        </div>
+        </CardFooter>
       </div>
     );
   }
 
   return (
     <div>
-      <h2 className="auth-title">{t('setNewPassword')}</h2>
+      <CardTitle>{t('setNewPassword')}</CardTitle>
 
-      {error && <div className="alert-error">{error}</div>}
-      {validationError && <div className="alert-error">{validationError}</div>}
+      {error && <Alert variant="error">{error}</Alert>}
+      {validationError && <Alert variant="error">{validationError}</Alert>}
 
       <form onSubmit={handleSubmit}>
-        <div className="form-group">
-          <label htmlFor="newPassword">{t('newPassword')}</label>
-          <input
+        <div className="mb-4">
+          <Label htmlFor="newPassword">{t('newPassword')}</Label>
+          <Input
             id="newPassword"
             type="password"
             value={newPassword}
@@ -178,19 +180,19 @@ export default function ResetPasswordPage() {
         </div>
 
         {newPassword.length > 0 && (
-          <ul className="password-requirements">
+          <ul className="list-none mb-4 p-3 bg-gray-50 rounded-md">
             {requirements.map((req) => (
-              <li key={req.label} className={req.met ? 'met' : 'unmet'}>
-                <span className="req-icon">{req.met ? '\u2713' : '\u2717'}</span>
+              <li key={req.label} className={`text-[13px] py-0.5 flex items-center gap-1.5 ${req.met ? 'text-green-800' : 'text-red-800'}`}>
+                {req.met ? <Check className="h-3.5 w-3.5 shrink-0" /> : <X className="h-3.5 w-3.5 shrink-0" />}
                 {req.label}
               </li>
             ))}
           </ul>
         )}
 
-        <div className="form-group">
-          <label htmlFor="confirmPassword">{t('confirmPassword')}</label>
-          <input
+        <div className="mb-4">
+          <Label htmlFor="confirmPassword">{t('confirmPassword')}</Label>
+          <Input
             id="confirmPassword"
             type="password"
             value={confirmPassword}
@@ -202,26 +204,15 @@ export default function ResetPasswordPage() {
           />
         </div>
 
-        <button
-          type="submit"
-          className="btn-primary"
-          disabled={loading || !allRequirementsMet}
-        >
-          {loading ? (
-            <span className="btn-loading">
-              <span className="spinner" />
-              {t('resetting')}
-            </span>
-          ) : (
-            t('resetPassword')
-          )}
-        </button>
+        <Button type="submit" loading={loading} disabled={!allRequirementsMet}>
+          {loading ? t('resetting') : t('resetPassword')}
+        </Button>
 
-        <div className="form-footer">
-          <Link to="/login" className="link">
+        <CardFooter>
+          <Link to="/login" className="text-sm font-medium text-primary hover:underline no-underline">
             {t('backToSignIn')}
           </Link>
-        </div>
+        </CardFooter>
       </form>
     </div>
   );

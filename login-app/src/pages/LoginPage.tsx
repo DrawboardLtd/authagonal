@@ -4,6 +4,12 @@ import { useTranslation } from 'react-i18next';
 import { login, logout, ssoCheck, getProviders, getSession, ApiRequestError } from '../api';
 import { useBranding } from '../branding';
 import type { ExternalProvider } from '../types';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Alert } from '@/components/ui/alert';
+import { Separator } from '@/components/ui/separator';
+import { CardTitle, CardFooter } from '@/components/ui/card';
 
 const API_URL = import.meta.env.VITE_API_URL || '';
 
@@ -238,26 +244,19 @@ export default function LoginPage() {
 
     return (
       <div>
-        <h2 className="auth-title">{t('mfaPromptTitle')}</h2>
-        <p style={{ textAlign: 'center', color: '#6b7280', marginBottom: '24px' }}>
+        <CardTitle>{t('mfaPromptTitle')}</CardTitle>
+        <p className="text-center text-gray-500 mb-6">
           {t('mfaPromptMessage')}
         </p>
-        <button
-          type="button"
-          className="btn-primary"
-          style={{ width: '100%', marginBottom: '12px' }}
+        <Button
+          className="mb-3"
           onClick={() => navigate(`/mfa-setup?returnUrl=${encodeURIComponent(mfaPrompt.returnUrl || '/')}`)}
         >
           {t('mfaPromptSetup')}
-        </button>
-        <button
-          type="button"
-          className="btn-secondary"
-          style={{ width: '100%' }}
-          onClick={skipMfa}
-        >
+        </Button>
+        <Button variant="secondary" onClick={skipMfa}>
           {t('mfaPromptSkip')}
-        </button>
+        </Button>
       </div>
     );
   }
@@ -265,12 +264,11 @@ export default function LoginPage() {
   if (session) {
     return (
       <div>
-        <h2 className="auth-title">{t('signedInAs', { name: session.name || session.email })}</h2>
-        <p style={{ textAlign: 'center', color: '#6b7280' }}>{t('signedInMessage')}</p>
-        <div className="form-footer" style={{ marginTop: '16px' }}>
-          <button
-            type="button"
-            className="btn-secondary"
+        <CardTitle>{t('signedInAs', { name: session.name || session.email })}</CardTitle>
+        <p className="text-center text-gray-500">{t('signedInMessage')}</p>
+        <CardFooter>
+          <Button
+            variant="secondary"
             onClick={() => {
               logout().then(() => {
                 setSession(null);
@@ -280,27 +278,28 @@ export default function LoginPage() {
             }}
           >
             {t('signOut')}
-          </button>
-        </div>
+          </Button>
+        </CardFooter>
       </div>
     );
   }
 
   return (
     <div>
-      <h2 className="auth-title">{t('signIn')}</h2>
+      <CardTitle>{t('signIn')}</CardTitle>
 
       {providers.length > 0 && !showPasswordField && (
-        <div className="external-providers">
+        <div className="mb-2">
           {providers.map((p) => (
-            <button
+            <Button
               key={p.connectionId}
               type="button"
-              className={`btn-provider btn-provider-${p.connectionId}`}
+              variant="secondary"
+              className="mb-2"
               onClick={() => handleProviderLogin(p)}
             >
               {p.connectionId === 'google' && (
-                <svg className="provider-icon" viewBox="0 0 24 24" width="20" height="20">
+                <svg className="shrink-0" viewBox="0 0 24 24" width="20" height="20">
                   <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 0 1-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z" fill="#4285F4"/>
                   <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/>
                   <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05"/>
@@ -308,34 +307,33 @@ export default function LoginPage() {
                 </svg>
               )}
               {t('continueWith', { provider: p.name })}
-            </button>
+            </Button>
           ))}
-          <div className="divider">
-            <span>{t('or')}</span>
-          </div>
+          <Separator label={t('or')} />
         </div>
       )}
 
       {providers.length > 0 && showPasswordField && (
-        <div className="divider" style={{ marginBottom: '16px' }}>
+        <div className="flex items-center gap-3 mb-4 text-gray-400 text-[13px]">
+          <div className="flex-1 h-px bg-gray-200" />
           <button
             type="button"
             onClick={() => { setSsoChecked(false); setSsoInfo(null); lastCheckedEmailRef.current = ''; }}
-            className="link"
-            style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '13px' }}
+            className="bg-transparent border-none cursor-pointer text-[13px] text-primary hover:underline"
           >
             {t('orSignInWith', { provider: providers.map(p => p.name).join(', ') })}
           </button>
+          <div className="flex-1 h-px bg-gray-200" />
         </div>
       )}
 
-      {successMessage && <div className="alert-success">{successMessage}</div>}
-      {error && <div className="alert-error">{error}</div>}
+      {successMessage && <Alert variant="success">{successMessage}</Alert>}
+      {error && <Alert variant="error">{error}</Alert>}
 
       <form onSubmit={handleSubmit}>
-        <div className="form-group">
-          <label htmlFor="email">{t('email')}</label>
-          <input
+        <div className="mb-4">
+          <Label htmlFor="email">{t('email')}</Label>
+          <Input
             id="email"
             type="email"
             value={email}
@@ -350,38 +348,33 @@ export default function LoginPage() {
         </div>
 
         {!ssoChecked && !ssoChecking && (
-          <button
+          <Button
             type="button"
-            className="btn-primary"
             onClick={() => performSsoCheck(email)}
             disabled={!email.includes('@')}
           >
             {t('continue')}
-          </button>
+          </Button>
         )}
 
         {ssoChecking && (
-          <div className="sso-checking">{t('ssoChecking')}</div>
+          <p className="text-sm text-gray-500 mb-4">{t('ssoChecking')}</p>
         )}
 
         {ssoInfo && (
-          <div className="sso-notice">
-            <p>{t('ssoNotice')}</p>
-            <button
-              type="button"
-              className="btn-secondary"
-              onClick={handleSsoRedirect}
-            >
+          <div className="mb-4">
+            <p className="text-sm text-gray-500 mb-3">{t('ssoNotice')}</p>
+            <Button variant="secondary" type="button" onClick={handleSsoRedirect}>
               {t('continueWithSso')}
-            </button>
+            </Button>
           </div>
         )}
 
         {showPasswordField && (
           <>
-            <div className="form-group">
-              <label htmlFor="password">{t('password')}</label>
-              <input
+            <div className="mb-4">
+              <Label htmlFor="password">{t('password')}</Label>
+              <Input
                 id="password"
                 type="password"
                 value={password}
@@ -394,41 +387,30 @@ export default function LoginPage() {
               />
             </div>
 
-            <button
-              type="submit"
-              className="btn-primary"
-              disabled={loading}
-            >
-              {loading ? (
-                <span className="btn-loading">
-                  <span className="spinner" />
-                  {t('signingIn')}
-                </span>
-              ) : (
-                t('signIn')
-              )}
-            </button>
+            <Button type="submit" loading={loading}>
+              {loading ? t('signingIn') : t('signIn')}
+            </Button>
 
             {branding.showForgotPassword && (
-              <div className="form-footer">
-                <Link to={forgotPasswordLink} className="link">
+              <CardFooter>
+                <Link to={forgotPasswordLink} className="text-sm font-medium text-primary hover:underline no-underline">
                   {t('forgotPassword')}
                 </Link>
-              </div>
+              </CardFooter>
             )}
           </>
         )}
       </form>
 
       {branding.showRegistration && (
-        <div className="form-footer" style={{ marginTop: '16px' }}>
-          <span style={{ color: '#6b7280', fontSize: '14px' }}>
+        <CardFooter className="mt-4">
+          <span className="text-sm text-gray-500">
             {t('noAccount')}{' '}
-            <Link to={returnUrl ? `/register?returnUrl=${encodeURIComponent(returnUrl)}` : '/register'} className="link">
+            <Link to={returnUrl ? `/register?returnUrl=${encodeURIComponent(returnUrl)}` : '/register'} className="text-sm font-medium text-primary hover:underline no-underline">
               {t('createAccount')}
             </Link>
           </span>
-        </div>
+        </CardFooter>
       )}
     </div>
   );

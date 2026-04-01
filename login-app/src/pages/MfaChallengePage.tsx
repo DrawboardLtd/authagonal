@@ -2,6 +2,11 @@ import { useState, useCallback } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { mfaVerify, ApiRequestError } from '../api';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Alert } from '@/components/ui/alert';
+import { CardTitle, CardDescription } from '@/components/ui/card';
 
 function isSafeReturnUrl(url: string): boolean {
   if (!url) return false;
@@ -163,74 +168,60 @@ export default function MfaChallengePage() {
 
   return (
     <div>
-      <h2 className="auth-title">{t('mfaTitle')}</h2>
-      <p style={{ textAlign: 'center', color: '#6b7280', marginBottom: '24px' }}>
-        {t('mfaSubtitle')}
-      </p>
+      <CardTitle>{t('mfaTitle')}</CardTitle>
+      <CardDescription className="mb-6">{t('mfaSubtitle')}</CardDescription>
 
       {availableMethods.length > 1 && (
-        <div style={{ display: 'flex', gap: '8px', marginBottom: '16px', justifyContent: 'center', flexWrap: 'wrap' }}>
+        <div className="flex gap-2 mb-4 justify-center flex-wrap">
           {hasWebAuthn && (
-            <button
+            <Button
               type="button"
-              className={method === 'webauthn' ? 'btn-primary' : 'btn-secondary'}
-              style={{ flex: 1, fontSize: '14px', padding: '8px' }}
+              variant={method === 'webauthn' ? 'default' : 'secondary'}
+              size="sm"
+              className="flex-1"
               onClick={() => { setMethod('webauthn'); setCode(''); setError(''); }}
             >
               {t('mfaMethodWebAuthn')}
-            </button>
+            </Button>
           )}
           {availableMethods.includes('totp') && (
-            <button
+            <Button
               type="button"
-              className={method === 'totp' ? 'btn-primary' : 'btn-secondary'}
-              style={{ flex: 1, fontSize: '14px', padding: '8px' }}
+              variant={method === 'totp' ? 'default' : 'secondary'}
+              size="sm"
+              className="flex-1"
               onClick={() => { setMethod('totp'); setCode(''); setError(''); }}
             >
               {t('mfaMethodTotp')}
-            </button>
+            </Button>
           )}
           {availableMethods.includes('recoverycode') && (
-            <button
+            <Button
               type="button"
-              className={method === 'recovery' ? 'btn-primary' : 'btn-secondary'}
-              style={{ flex: 1, fontSize: '14px', padding: '8px' }}
+              variant={method === 'recovery' ? 'default' : 'secondary'}
+              size="sm"
+              className="flex-1"
               onClick={() => { setMethod('recovery'); setCode(''); setError(''); }}
             >
               {t('mfaMethodRecovery')}
-            </button>
+            </Button>
           )}
         </div>
       )}
 
-      {error && <div className="alert-error">{error}</div>}
+      {error && <Alert variant="error">{error}</Alert>}
 
       {method === 'webauthn' ? (
-        <div>
-          <button
-            type="button"
-            className="btn-primary"
-            disabled={loading}
-            onClick={handleWebAuthn}
-            style={{ width: '100%' }}
-          >
-            {loading ? (
-              <span className="btn-loading">
-                <span className="spinner" />
-                {t('mfaVerifying')}
-              </span>
-            ) : (
-              t('mfaUsePasskey')
-            )}
-          </button>
-        </div>
+        <Button type="button" loading={loading} onClick={handleWebAuthn}>
+          {loading ? t('mfaVerifying') : t('mfaUsePasskey')}
+        </Button>
       ) : (
         <form id="mfa-form" onSubmit={handleSubmit}>
-          <div className="form-group">
-            <label htmlFor="mfa-code">
+          <div className="mb-4">
+            <Label htmlFor="mfa-code">
               {method === 'totp' ? t('mfaTotpLabel') : t('mfaRecoveryLabel')}
-            </label>
-            <input
+            </Label>
+            <Input
               id="mfa-code"
               type="text"
               value={code}
@@ -245,16 +236,9 @@ export default function MfaChallengePage() {
             />
           </div>
 
-          <button type="submit" className="btn-primary" disabled={loading}>
-            {loading ? (
-              <span className="btn-loading">
-                <span className="spinner" />
-                {t('mfaVerifying')}
-              </span>
-            ) : (
-              t('mfaVerify')
-            )}
-          </button>
+          <Button type="submit" loading={loading}>
+            {loading ? t('mfaVerifying') : t('mfaVerify')}
+          </Button>
         </form>
       )}
     </div>

@@ -3,6 +3,11 @@ import { useSearchParams, Link, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { register, getPasswordPolicy, ApiRequestError } from '../api';
 import type { PasswordPolicyRule } from '../types';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Alert } from '@/components/ui/alert';
+import { CardTitle, CardFooter } from '@/components/ui/card';
 
 export default function RegisterPage() {
   const { t } = useTranslation();
@@ -70,15 +75,15 @@ export default function RegisterPage() {
 
   return (
     <div>
-      <h2 className="auth-title">{t('registerTitle')}</h2>
+      <CardTitle>{t('registerTitle')}</CardTitle>
 
-      {error && <div className="alert-error">{error}</div>}
+      {error && <Alert variant="error">{error}</Alert>}
 
       <form onSubmit={handleSubmit}>
-        <div style={{ display: 'flex', gap: '12px' }}>
-          <div className="form-group" style={{ flex: 1 }}>
-            <label htmlFor="firstName">{t('firstName')}</label>
-            <input
+        <div className="flex gap-3">
+          <div className="mb-4 flex-1">
+            <Label htmlFor="firstName">{t('firstName')}</Label>
+            <Input
               id="firstName"
               type="text"
               value={firstName}
@@ -88,9 +93,9 @@ export default function RegisterPage() {
               maxLength={100}
             />
           </div>
-          <div className="form-group" style={{ flex: 1 }}>
-            <label htmlFor="lastName">{t('lastName')}</label>
-            <input
+          <div className="mb-4 flex-1">
+            <Label htmlFor="lastName">{t('lastName')}</Label>
+            <Input
               id="lastName"
               type="text"
               value={lastName}
@@ -102,9 +107,9 @@ export default function RegisterPage() {
           </div>
         </div>
 
-        <div className="form-group">
-          <label htmlFor="email">{t('email')}</label>
-          <input
+        <div className="mb-4">
+          <Label htmlFor="email">{t('email')}</Label>
+          <Input
             id="email"
             type="email"
             value={email}
@@ -117,9 +122,9 @@ export default function RegisterPage() {
           />
         </div>
 
-        <div className="form-group">
-          <label htmlFor="password">{t('password')}</label>
-          <input
+        <div className="mb-4">
+          <Label htmlFor="password">{t('password')}</Label>
+          <Input
             id="password"
             type="password"
             value={password}
@@ -133,30 +138,23 @@ export default function RegisterPage() {
         </div>
 
         {policyRules.length > 0 && (
-          <ul style={{ fontSize: '13px', color: '#6b7280', margin: '0 0 16px 0', paddingLeft: '20px' }}>
+          <ul className="text-[13px] text-gray-500 mb-4 pl-5 list-disc">
             {policyRules.map((rule) => (
               <li key={rule.rule}>{rule.label}</li>
             ))}
           </ul>
         )}
 
-        <button type="submit" className="btn-primary" disabled={loading}>
-          {loading ? (
-            <span className="btn-loading">
-              <span className="spinner" />
-              {t('registering')}
-            </span>
-          ) : (
-            t('registerButton')
-          )}
-        </button>
+        <Button type="submit" loading={loading}>
+          {loading ? t('registering') : t('registerButton')}
+        </Button>
 
-        <div className="form-footer">
-          <span style={{ color: '#6b7280', fontSize: '14px' }}>
+        <CardFooter>
+          <span className="text-sm text-gray-500">
             {t('alreadyHaveAccount')}{' '}
-            <Link to={loginLink} className="link">{t('signIn')}</Link>
+            <Link to={loginLink} className="text-sm font-medium text-primary hover:underline no-underline">{t('signIn')}</Link>
           </span>
-        </div>
+        </CardFooter>
       </form>
     </div>
   );
