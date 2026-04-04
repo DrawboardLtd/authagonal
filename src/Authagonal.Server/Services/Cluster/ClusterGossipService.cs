@@ -5,6 +5,7 @@ namespace Authagonal.Server.Services.Cluster;
 
 public sealed class ClusterGossipService(
     PeerRegistry peerRegistry,
+    ClusterNode clusterNode,
     DistributedRateLimiter rateLimiter,
     IHttpClientFactory httpClientFactory,
     IOptions<ClusterOptions> options,
@@ -26,7 +27,7 @@ public sealed class ClusterGossipService(
         }
 
         logger.LogInformation("Cluster gossip service started, interval={Interval}s, nodeId={NodeId}",
-            opts.GossipIntervalSeconds, rateLimiter.NodeId);
+            opts.GossipIntervalSeconds, clusterNode.NodeId);
 
         using var timer = new PeriodicTimer(TimeSpan.FromSeconds(opts.GossipIntervalSeconds));
 

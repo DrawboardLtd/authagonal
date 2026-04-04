@@ -27,7 +27,7 @@ public static class MfaEndpoints
         TotpService totpService,
         RecoveryCodeService recoveryCodeService,
         WebAuthnService webAuthnService,
-        IAuthHook authHook,
+        IEnumerable<IAuthHook> authHooks,
         ILogger<Program> logger,
         CancellationToken ct)
     {
@@ -69,7 +69,7 @@ public static class MfaEndpoints
                 totpCred.LastUsedAt = DateTimeOffset.UtcNow;
                 await mfaStore.UpdateCredentialAsync(totpCred, ct);
 
-                await authHook.OnMfaVerifiedAsync(user.Id, user.Email, "totp", ct);
+                await authHooks.RunOnMfaVerifiedAsync(user.Id, user.Email, "totp", ct);
                 break;
             }
 
@@ -92,7 +92,7 @@ public static class MfaEndpoints
                 matchedCred.LastUsedAt = DateTimeOffset.UtcNow;
                 await mfaStore.UpdateCredentialAsync(matchedCred, ct);
 
-                await authHook.OnMfaVerifiedAsync(user.Id, user.Email, "recovery", ct);
+                await authHooks.RunOnMfaVerifiedAsync(user.Id, user.Email, "recovery", ct);
                 break;
             }
 
@@ -154,7 +154,7 @@ public static class MfaEndpoints
                 matchedWebAuthnCred.LastUsedAt = DateTimeOffset.UtcNow;
                 await mfaStore.UpdateCredentialAsync(matchedWebAuthnCred, ct);
 
-                await authHook.OnMfaVerifiedAsync(user.Id, user.Email, "webauthn", ct);
+                await authHooks.RunOnMfaVerifiedAsync(user.Id, user.Email, "webauthn", ct);
                 break;
             }
 
@@ -168,7 +168,7 @@ public static class MfaEndpoints
         var name = CookieSignInHelper.GetDisplayName(user);
         logger.LogInformation("User {UserId} ({Email}) signed in via MFA ({Method})", user.Id, user.Email, request.Method);
 
-        await authHook.OnUserAuthenticatedAsync(user.Id, user.Email, "password", challenge.ClientId, ct);
+        await authHooks.RunOnUserAuthenticatedAsync(user.Id, user.Email, "password", challenge.ClientId, ct);
 
         return Results.Ok(new { userId = user.Id, email = user.Email, name });
     }
