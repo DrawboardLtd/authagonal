@@ -26,9 +26,17 @@ grep 'authagonal-login' demos/custom-server/login-app/package.json
 grep 'Version=' demos/custom-server/CustomAuthServer.csproj
 echo ""
 
-# Commit and tag (unset CLAUDECODE to allow nested claude invocation from git aicc)
+# Commit and tag
+git add -A
+diff_input=$(printf '%s\n\n%s' "$(git diff --cached --stat)" "$(git diff --cached | head -500)")
 unset CLAUDECODE 2>/dev/null || true
-git aicc
+msg=$(echo "$diff_input" | claude --model claude-haiku-4-5-20251001 -p \
+  'Generate a concise git commit message for these changes. Output only the commit message text with no markdown, code blocks, or explanation. Then output a completely blank line. Then output a hyphen delimited list of the high-level changes. Focus on what behaviour changed or what problem was solved, not on which files, methods, or variables were modified. One point per line.' \
+  2>&1 | grep -v '^```' | sed '/^Co-authored-by:/d')
+[ -z "$msg" ] && msg="Bump version to $version"
+git commit -m "$msg"
+echo "Committed with message:"
+echo "$msg"
 git tag "$next"
 echo ""
 echo "Tagged $next — run 'git push origin master $next' to publish"
