@@ -1,6 +1,6 @@
 {
   "name": "@drawboard/authagonal-login",
-  "version": "0.1.36",
+  "version": "0.1.37",
   "description": "Default login UI for Authagonal — runtime-configurable via branding.json",
   "type": "module",
   "license": "MIT",
@@ -9,9 +9,14 @@
     "url": "https://github.com/DrawboardLtd/authagonal.git",
     "directory": "login-app"
   },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
   "exports": {
-    ".": "./src/index.ts",
-    "./styles.css": "./src/styles.css"
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./styles.css": "./dist/style.css"
   },
   "files": [
     "dist",
@@ -25,6 +30,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "build:spa": "vite build --config vite.spa.config.ts",
     "lint": "eslint .",
     "preview": "vite preview"
   },
