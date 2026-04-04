@@ -35,4 +35,6 @@ export type { LoginResponse, ApiError, SessionResponse, SsoCheckResponse, Extern
 export { default as i18n } from './i18n';
 export { useTranslation } from 'react-i18next';
 
-// Styles — import '@drawboard/authagonal-login/src/styles.css' in your entry point
+// Styles — bundled into dist/style.css via the side-effect import below.
+// Consumers: import '@drawboard/authagonal-login/styles.css'
+import './styles.css';
