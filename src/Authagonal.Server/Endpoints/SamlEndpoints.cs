@@ -73,7 +73,7 @@ public static class SamlEndpoints
         HttpContext httpContext,
         ISamlProviderStore samlStore,
         IUserStore userStore,
-        IAuthHook authHook,
+        IEnumerable<IAuthHook> authHooks,
         SamlMetadataParser metadataParser,
         SamlResponseParser responseParser,
         SamlReplayCache replayCache,
@@ -185,7 +185,7 @@ public static class SamlEndpoints
 
             await userStore.CreateAsync(user, ct);
             logger.LogInformation("Created new user {UserId} ({Email}) via SAML SSO", user.Id, email);
-            await authHook.OnUserCreatedAsync(user.Id, email, "saml", ct);
+            await authHooks.RunOnUserCreatedAsync(user.Id, email, "saml", ct);
         }
         else
         {
@@ -255,7 +255,7 @@ public static class SamlEndpoints
         logger.LogInformation("User {UserId} ({Email}) signed in via SAML connection {ConnectionId}",
             user.Id, email, connectionId);
 
-        await authHook.OnUserAuthenticatedAsync(user.Id, email, "saml", ct: ct);
+        await authHooks.RunOnUserAuthenticatedAsync(user.Id, email, "saml", ct: ct);
 
         // Redirect to RelayState (already sanitized)
         return Results.Redirect(relayState);

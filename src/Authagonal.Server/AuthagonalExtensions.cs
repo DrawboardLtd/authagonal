@@ -140,7 +140,10 @@ public static class AuthagonalExtensions
         // Extensibility points — TryAdd so custom registrations take precedence
         services.TryAddSingleton<IEmailService, NullEmailService>();
         services.TryAddSingleton<IProvisioningOrchestrator, TccProvisioningOrchestrator>();
-        services.TryAddSingleton<IAuthHook, NullAuthHook>();
+        // Auth hooks — multiple IAuthHook implementations can be registered and all will run.
+        // NullAuthHook is only added if no hooks are registered by the host.
+        if (!services.Any(s => s.ServiceType == typeof(IAuthHook)))
+            services.AddSingleton<IAuthHook, NullAuthHook>();
 
         // Secret provider: defaults to plaintext; set SecretProvider:VaultUri to use Key Vault
         var vaultUri = configuration["SecretProvider:VaultUri"];
@@ -290,15 +293,18 @@ public static class AuthagonalExtensions
         services.AddSingleton<ICorsPolicyProvider, DynamicCorsPolicyProvider>();
 
         // ---------------------------------------------------------------------------
-        // Cluster — gossip-based distributed rate limiting
+        // Cluster — node identity, gossip, leader election, distributed rate limiting
         // ---------------------------------------------------------------------------
         services.Configure<ClusterOptions>(configuration.GetSection("Cluster"));
 
-        var nodeId = Convert.ToHexString(RandomNumberGenerator.GetBytes(6)).ToLowerInvariant();
-        var rateLimiter = new DistributedRateLimiter(nodeId);
+        var clusterNode = new ClusterNode(Convert.ToHexString(RandomNumberGenerator.GetBytes(6)).ToLowerInvariant());
+        services.AddSingleton(clusterNode);
+        services.AddSingleton<PeerRegistry>();
+        services.AddSingleton<ClusterLeaderService>();
+
+        var rateLimiter = new DistributedRateLimiter(clusterNode);
         services.AddSingleton(rateLimiter);
         services.AddSingleton<IRateLimiter>(rateLimiter);
-        services.AddSingleton<PeerRegistry>();
 
         var clusterEnabled = configuration.GetValue("Cluster:Enabled", true);
         if (clusterEnabled)

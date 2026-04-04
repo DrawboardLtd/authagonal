@@ -45,7 +45,7 @@ public static class AuthEndpoints
         IMfaStore mfaStore,
         PasswordHasher passwordHasher,
         WebAuthnService webAuthnService,
-        IAuthHook authHook,
+        IEnumerable<IAuthHook> authHooks,
         IOptions<AuthOptions> authOptions,
         ILogger<Program> logger,
         CancellationToken ct)
@@ -107,7 +107,7 @@ public static class AuthEndpoints
             user.UpdatedAt = DateTimeOffset.UtcNow;
             await userStore.UpdateAsync(user, ct);
 
-            await authHook.OnLoginFailedAsync(request.Email!, "invalid_password", ct);
+            await authHooks.RunOnLoginFailedAsync(request.Email!, "invalid_password", ct);
 
             return Results.Json(new { error = "invalid_credentials" }, statusCode: 401);
         }
@@ -136,7 +136,7 @@ public static class AuthEndpoints
             client = await clientStore.GetAsync(clientId, ct);
 
         var clientPolicy = client?.MfaPolicy ?? MfaPolicy.Disabled;
-        var effectivePolicy = await authHook.ResolveMfaPolicyAsync(user.Id, user.Email, clientPolicy, clientId ?? "", ct);
+        var effectivePolicy = await authHooks.RunResolveMfaPolicyAsync(user.Id, user.Email, clientPolicy, clientId ?? "", ct);
 
         if (effectivePolicy != MfaPolicy.Disabled)
         {
@@ -208,7 +208,7 @@ public static class AuthEndpoints
         var name = CookieSignInHelper.GetDisplayName(user);
         logger.LogInformation("User {UserId} ({Email}) signed in", user.Id, user.Email);
 
-        await authHook.OnUserAuthenticatedAsync(user.Id, user.Email, "password", ct: ct);
+        await authHooks.RunOnUserAuthenticatedAsync(user.Id, user.Email, "password", ct: ct);
 
         // If Enabled but user hasn't enrolled, hint that MFA is available
         var mfaAvailable = effectivePolicy == MfaPolicy.Enabled && !user.MfaEnabled;
