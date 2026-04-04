@@ -66,7 +66,7 @@ public static class UserEndpoints
     private static async Task<IResult> RegisterUser(
         RegisterUserRequest request,
         IUserStore userStore,
-        IAuthHook authHook,
+        IEnumerable<IAuthHook> authHooks,
         PasswordHasher passwordHasher,
         PasswordValidator passwordValidator,
         PasswordPolicy passwordPolicy,
@@ -109,7 +109,7 @@ public static class UserEndpoints
         };
 
         await userStore.CreateAsync(user, ct);
-        await authHook.OnUserCreatedAsync(userId, request.Email, "admin", ct);
+        await authHooks.RunOnUserCreatedAsync(userId, request.Email, "admin", ct);
 
         // Send verification email
         var issuer = tenantContext.Issuer;

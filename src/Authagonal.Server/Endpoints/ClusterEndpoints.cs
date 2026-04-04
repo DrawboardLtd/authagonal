@@ -16,6 +16,7 @@ public static class ClusterEndpoints
 
     private static IResult HandleGossipAsync(
         GossipMessage message,
+        ClusterNode clusterNode,
         DistributedRateLimiter rateLimiter,
         IOptions<ClusterOptions> options)
     {
@@ -24,9 +25,9 @@ public static class ClusterEndpoints
         // For simplicity we rely on the endpoint being internal-only (not exposed via ingress)
 
         // Detect self-gossip
-        if (string.Equals(message.NodeId, rateLimiter.NodeId, StringComparison.OrdinalIgnoreCase))
+        if (string.Equals(message.NodeId, clusterNode.NodeId, StringComparison.OrdinalIgnoreCase))
         {
-            return Results.Ok(new GossipResponse { NodeId = rateLimiter.NodeId, Self = true });
+            return Results.Ok(new GossipResponse { NodeId = clusterNode.NodeId, Self = true });
         }
 
         // Merge sender's state
