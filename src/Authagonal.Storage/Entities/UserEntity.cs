@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Azure;
 using Azure.Data.Tables;
 using Authagonal.Core.Models;
@@ -30,8 +31,10 @@ public sealed class UserEntity : ITableEntity
     public string? ExternalId { get; set; }
     public bool IsActive { get; set; } = true;
     public string? ScimProvisionedByClientId { get; set; }
+    public string RolesJson { get; set; } = "[]";
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset? UpdatedAt { get; set; }
+    public DateTimeOffset? LastLoginAt { get; set; }
 
     public static UserEntity FromModel(AuthUser user) => new()
     {
@@ -54,8 +57,10 @@ public sealed class UserEntity : ITableEntity
         ExternalId = user.ExternalId,
         IsActive = user.IsActive,
         ScimProvisionedByClientId = user.ScimProvisionedByClientId,
+        RolesJson = JsonSerializer.Serialize(user.Roles),
         CreatedAt = user.CreatedAt,
         UpdatedAt = user.UpdatedAt,
+        LastLoginAt = user.LastLoginAt,
     };
 
     public AuthUser ToModel() => new()
@@ -78,7 +83,9 @@ public sealed class UserEntity : ITableEntity
         ExternalId = ExternalId,
         IsActive = IsActive,
         ScimProvisionedByClientId = ScimProvisionedByClientId,
+        Roles = JsonSerializer.Deserialize<List<string>>(RolesJson) ?? [],
         CreatedAt = CreatedAt,
         UpdatedAt = UpdatedAt,
+        LastLoginAt = LastLoginAt,
     };
 }

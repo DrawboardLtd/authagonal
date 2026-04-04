@@ -14,6 +14,7 @@ public sealed class TokenService(
     IGrantStore grantStore,
     IClientStore clientStore,
     IUserStore userStore,
+    IScimGroupStore scimGroupStore,
     IKeyManager keyManager,
     ITenantContext tenantContext,
     IOptions<AuthOptions> authOptions,
@@ -45,6 +46,16 @@ public sealed class TokenService(
         if (user is not null)
         {
             claims["sub"] = user.Id;
+
+            if (user.Roles.Count > 0)
+                claims["roles"] = user.Roles.ToArray();
+
+            if (client.IncludeGroupsInTokens)
+            {
+                var groups = await scimGroupStore.GetGroupsByUserIdAsync(user.Id, ct);
+                if (groups.Count > 0)
+                    claims["groups"] = groups.Select(g => g.DisplayName).ToArray();
+            }
         }
 
         if (additionalClaims is not null)
@@ -119,6 +130,16 @@ public sealed class TokenService(
         if (!string.IsNullOrEmpty(user.OrganizationId))
         {
             claims["org_id"] = user.OrganizationId;
+        }
+
+        if (user.Roles.Count > 0)
+            claims["roles"] = user.Roles.ToArray();
+
+        if (client.IncludeGroupsInTokens)
+        {
+            var groups = await scimGroupStore.GetGroupsByUserIdAsync(user.Id, ct);
+            if (groups.Count > 0)
+                claims["groups"] = groups.Select(g => g.DisplayName).ToArray();
         }
 
         var descriptor = new SecurityTokenDescriptor

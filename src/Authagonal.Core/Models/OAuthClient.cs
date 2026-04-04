@@ -14,6 +14,7 @@ public sealed class OAuthClient
     public bool AllowOfflineAccess { get; set; }
     public bool RequireClientSecret { get; set; } = true;
     public bool AlwaysIncludeUserClaimsInIdToken { get; set; }
+    public bool IncludeGroupsInTokens { get; set; }
     public int AccessTokenLifetimeSeconds { get; set; } = 1800;
     public int IdentityTokenLifetimeSeconds { get; set; } = 300;
     public int AuthorizationCodeLifetimeSeconds { get; set; } = 300;

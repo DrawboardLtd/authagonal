@@ -25,6 +25,7 @@ public sealed class ClientEntity : ITableEntity
     public bool AllowOfflineAccess { get; set; }
     public bool RequireClientSecret { get; set; }
     public bool AlwaysIncludeUserClaimsInIdToken { get; set; }
+    public bool IncludeGroupsInTokens { get; set; }
     public int AccessTokenLifetimeSeconds { get; set; }
     public int IdentityTokenLifetimeSeconds { get; set; }
     public int AuthorizationCodeLifetimeSeconds { get; set; }
@@ -49,6 +50,7 @@ public sealed class ClientEntity : ITableEntity
         AllowOfflineAccess = client.AllowOfflineAccess,
         RequireClientSecret = client.RequireClientSecret,
         AlwaysIncludeUserClaimsInIdToken = client.AlwaysIncludeUserClaimsInIdToken,
+        IncludeGroupsInTokens = client.IncludeGroupsInTokens,
         AccessTokenLifetimeSeconds = client.AccessTokenLifetimeSeconds,
         IdentityTokenLifetimeSeconds = client.IdentityTokenLifetimeSeconds,
         AuthorizationCodeLifetimeSeconds = client.AuthorizationCodeLifetimeSeconds,
@@ -73,6 +75,7 @@ public sealed class ClientEntity : ITableEntity
         AllowOfflineAccess = AllowOfflineAccess,
         RequireClientSecret = RequireClientSecret,
         AlwaysIncludeUserClaimsInIdToken = AlwaysIncludeUserClaimsInIdToken,
+        IncludeGroupsInTokens = IncludeGroupsInTokens,
         AccessTokenLifetimeSeconds = AccessTokenLifetimeSeconds,
         IdentityTokenLifetimeSeconds = IdentityTokenLifetimeSeconds,
         AuthorizationCodeLifetimeSeconds = AuthorizationCodeLifetimeSeconds,

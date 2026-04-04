@@ -1,3 +1,4 @@
+using Authagonal.Core.Models;
 using Authagonal.Core.Stores;
 using Authagonal.Server.Services;
 using Microsoft.IdentityModel.JsonWebTokens;
@@ -13,6 +14,7 @@ public static class UserinfoEndpoint
             HttpContext httpContext,
             Authagonal.Core.Services.IKeyManager keyManager,
             IUserStore userStore,
+            IScimGroupStore scimGroupStore,
             Authagonal.Core.Services.ITenantContext tenantContext,
             CancellationToken ct) =>
         {
@@ -88,6 +90,15 @@ public static class UserinfoEndpoint
 
             if (!string.IsNullOrWhiteSpace(user.OrganizationId))
                 claims["org_id"] = user.OrganizationId;
+
+            if (user.Roles.Count > 0)
+                claims["roles"] = user.Roles;
+
+            var groups = await scimGroupStore.GetGroupsByUserIdAsync(user.Id, ct);
+            if (groups.Count > 0)
+            {
+                claims["groups"] = groups.Select(g => new { id = g.Id, name = g.DisplayName }).ToArray();
+            }
 
             return Results.Ok(claims);
         })

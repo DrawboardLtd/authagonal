@@ -56,6 +56,7 @@ public sealed class AuthagonalTestFactory : IAsyncDisposable
     public InMemoryMfaStore MfaStore { get; } = new();
     public InMemoryScimTokenStore ScimTokenStore { get; } = new();
     public InMemoryScimGroupStore ScimGroupStore { get; } = new();
+    public InMemoryRoleStore RoleStore { get; } = new();
     public TestEmailService EmailService { get; } = new();
     public TestAuthHook AuthHook { get; } = new();
 
@@ -231,6 +232,7 @@ public sealed class AuthagonalTestFactory : IAsyncDisposable
         services.AddSingleton<IMfaStore>(MfaStore);
         services.AddSingleton<IScimTokenStore>(ScimTokenStore);
         services.AddSingleton<IScimGroupStore>(ScimGroupStore);
+        services.AddSingleton<IRoleStore>(RoleStore);
 
         // Tenant context
         services.AddSingleton<Authagonal.Core.Services.ITenantContext>(

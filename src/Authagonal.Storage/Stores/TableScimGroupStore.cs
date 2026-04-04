@@ -38,6 +38,25 @@ public sealed class TableScimGroupStore(
         }
     }
 
+    public async Task<IReadOnlyList<ScimGroup>> GetGroupsByUserIdAsync(string userId, CancellationToken ct = default)
+    {
+        var groups = new List<ScimGroup>();
+        var query = scimGroupsTable.QueryAsync<ScimGroupEntity>(
+            e => e.RowKey == ScimGroupEntity.GroupRowKey,
+            cancellationToken: ct);
+
+        await foreach (var entity in query)
+        {
+            var group = entity.ToModel();
+            if (group.MemberUserIds.Contains(userId))
+            {
+                groups.Add(group);
+            }
+        }
+
+        return groups;
+    }
+
     public async Task<(IReadOnlyList<ScimGroup> Groups, int TotalCount)> ListAsync(
         string? organizationId, int startIndex, int count, CancellationToken ct = default)
     {

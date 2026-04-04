@@ -472,6 +472,14 @@ public sealed class InMemoryScimGroupStore : IScimGroupStore
         return Task.FromResult<(IReadOnlyList<ScimGroup>, int)>((paged, list.Count));
     }
 
+    public Task<IReadOnlyList<ScimGroup>> GetGroupsByUserIdAsync(string userId, CancellationToken ct = default)
+    {
+        var groups = _groups.Values
+            .Where(g => g.MemberUserIds.Contains(userId))
+            .ToList();
+        return Task.FromResult<IReadOnlyList<ScimGroup>>(groups);
+    }
+
     public Task CreateAsync(ScimGroup group, CancellationToken ct = default)
     {
         _groups[group.Id] = group;
@@ -487,6 +495,42 @@ public sealed class InMemoryScimGroupStore : IScimGroupStore
     public Task DeleteAsync(string groupId, CancellationToken ct = default)
     {
         _groups.TryRemove(groupId, out _);
+        return Task.CompletedTask;
+    }
+}
+
+public sealed class InMemoryRoleStore : IRoleStore
+{
+    private readonly ConcurrentDictionary<string, Role> _roles = new();
+
+    public Task<Role?> GetAsync(string roleId, CancellationToken ct = default)
+        => Task.FromResult(_roles.GetValueOrDefault(roleId));
+
+    public Task<Role?> GetByNameAsync(string name, CancellationToken ct = default)
+    {
+        var role = _roles.Values.FirstOrDefault(r =>
+            string.Equals(r.Name, name, StringComparison.Ordinal));
+        return Task.FromResult(role);
+    }
+
+    public Task<IReadOnlyList<Role>> ListAsync(CancellationToken ct = default)
+        => Task.FromResult<IReadOnlyList<Role>>(_roles.Values.OrderBy(r => r.CreatedAt).ToList());
+
+    public Task CreateAsync(Role role, CancellationToken ct = default)
+    {
+        _roles[role.Id] = role;
+        return Task.CompletedTask;
+    }
+
+    public Task UpdateAsync(Role role, CancellationToken ct = default)
+    {
+        _roles[role.Id] = role;
+        return Task.CompletedTask;
+    }
+
+    public Task DeleteAsync(string roleId, CancellationToken ct = default)
+    {
+        _roles.TryRemove(roleId, out _);
         return Task.CompletedTask;
     }
 }

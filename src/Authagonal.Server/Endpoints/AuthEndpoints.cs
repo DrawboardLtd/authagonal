@@ -112,9 +112,10 @@ public static class AuthEndpoints
             return Results.Json(new { error = "invalid_credentials" }, statusCode: 401);
         }
 
-        // Successful login - reset lockout counters
+        // Successful login - reset lockout counters, record login time
         user.AccessFailedCount = 0;
         user.LockoutEnd = null;
+        user.LastLoginAt = DateTimeOffset.UtcNow;
         user.UpdatedAt = DateTimeOffset.UtcNow;
 
         // Rehash if needed (BCrypt -> PBKDF2 migration)

@@ -31,6 +31,7 @@ public static class ServiceCollectionExtensions
     private const string ScimTokensTableName = "ScimTokens";
     private const string ScimGroupsTableName = "ScimGroups";
     private const string ScimGroupExternalIdsTableName = "ScimGroupExternalIds";
+    private const string RolesTableName = "Roles";
 
     public static IServiceCollection AddTableStorage(this IServiceCollection services, string connectionString)
     {
@@ -64,6 +65,7 @@ public static class ServiceCollectionExtensions
         var scimTokens = EnsureTable(serviceClient, ScimTokensTableName);
         var scimGroups = EnsureTable(serviceClient, ScimGroupsTableName);
         var scimGroupExternalIds = EnsureTable(serviceClient, ScimGroupExternalIdsTableName);
+        var roles = EnsureTable(serviceClient, RolesTableName);
 
         // Register store implementations as singletons.
         // TryAdd allows multi-tenant hosts to register scoped stores first.
@@ -79,6 +81,7 @@ public static class ServiceCollectionExtensions
         services.TryAddSingleton<IMfaStore>(new TableMfaStore(mfaCredentials, mfaChallenges, mfaWebAuthnIndex));
         services.TryAddSingleton<IScimTokenStore>(new TableScimTokenStore(scimTokens));
         services.TryAddSingleton<IScimGroupStore>(new TableScimGroupStore(scimGroups, scimGroupExternalIds));
+        services.TryAddSingleton<IRoleStore>(new TableRoleStore(roles));
 
         // Register grant table clients as keyed singletons for the reconciliation service.
         services.AddKeyedSingleton("Grants", grants);
