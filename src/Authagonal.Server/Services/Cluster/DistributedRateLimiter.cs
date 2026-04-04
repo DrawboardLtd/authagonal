@@ -4,17 +4,17 @@ namespace Authagonal.Server.Services.Cluster;
 
 public sealed class DistributedRateLimiter : IRateLimiter
 {
-    private readonly string _nodeId;
+    private readonly ClusterNode _node;
     private readonly object _lock = new();
     private readonly Dictionary<string, WindowCounter> _localCounters = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, PeerState> _peerStates = new(StringComparer.OrdinalIgnoreCase);
 
-    public DistributedRateLimiter(string nodeId)
+    public DistributedRateLimiter(ClusterNode node)
     {
-        _nodeId = nodeId;
+        _node = node;
     }
 
-    public string NodeId => _nodeId;
+    public string NodeId => _node.NodeId;
 
     public Task<bool> IsRateLimitedAsync(string key, int maxAttempts, TimeSpan window, CancellationToken ct = default)
     {
@@ -66,13 +66,13 @@ public sealed class DistributedRateLimiter : IRateLimiter
             {
                 snapshot[kvp.Key] = new WindowCounter { Count = kvp.Value.Count, WindowStart = kvp.Value.WindowStart };
             }
-            return new GossipMessage { NodeId = _nodeId, Counters = snapshot };
+            return new GossipMessage { NodeId = _node.NodeId, Counters = snapshot };
         }
     }
 
     public void MergePeerState(string peerId, Dictionary<string, WindowCounter> counters)
     {
-        if (string.Equals(peerId, _nodeId, StringComparison.OrdinalIgnoreCase))
+        if (string.Equals(peerId, _node.NodeId, StringComparison.OrdinalIgnoreCase))
             return;
 
         lock (_lock)

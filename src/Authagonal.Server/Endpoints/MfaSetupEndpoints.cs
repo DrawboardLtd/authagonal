@@ -166,7 +166,7 @@ public static class MfaSetupEndpoints
         IUserStore userStore,
         TotpService totpService,
         ISecretProvider secretProvider,
-        IAuthHook authHook,
+        IEnumerable<IAuthHook> authHooks,
         CancellationToken ct)
     {
         var (userId, setupChallenge) = await ResolveUserIdAsync(httpContext, mfaStore, ct);
@@ -205,7 +205,7 @@ public static class MfaSetupEndpoints
         {
             await CookieSignInHelper.SignInAsync(httpContext, user);
             await mfaStore.ConsumeChallengeAsync(setupChallenge.ChallengeId, ct);
-            await authHook.OnUserAuthenticatedAsync(user.Id, user.Email, "password", setupChallenge.ClientId, ct);
+            await authHooks.RunOnUserAuthenticatedAsync(user.Id, user.Email, "password", setupChallenge.ClientId, ct);
         }
 
         return Results.Ok(new { success = true });
@@ -260,7 +260,7 @@ public static class MfaSetupEndpoints
         IMfaStore mfaStore,
         IUserStore userStore,
         WebAuthnService webAuthnService,
-        IAuthHook authHook,
+        IEnumerable<IAuthHook> authHooks,
         CancellationToken ct)
     {
         var (userId, setupChallenge) = await ResolveUserIdAsync(httpContext, mfaStore, ct);
@@ -321,7 +321,7 @@ public static class MfaSetupEndpoints
         {
             await CookieSignInHelper.SignInAsync(httpContext, user);
             await mfaStore.ConsumeChallengeAsync(setupChallenge.ChallengeId, ct);
-            await authHook.OnUserAuthenticatedAsync(user.Id, user.Email, "password", setupChallenge.ClientId, ct);
+            await authHooks.RunOnUserAuthenticatedAsync(user.Id, user.Email, "password", setupChallenge.ClientId, ct);
         }
 
         return Results.Ok(new { success = true, credentialId = credential.Id });

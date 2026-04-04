@@ -15,7 +15,7 @@ public static class TokenEndpoint
             HttpContext httpContext,
             ITokenService tokenService,
             IClientStore clientStore,
-            IAuthHook authHook,
+            IEnumerable<IAuthHook> authHooks,
             PasswordHasher passwordHasher,
             CancellationToken ct) =>
         {
@@ -67,7 +67,7 @@ public static class TokenEndpoint
                     _ => throw new UnreachableException()
                 };
 
-                await authHook.OnTokenIssuedAsync(null, clientId, grantType, ct);
+                await authHooks.RunOnTokenIssuedAsync(null, clientId, grantType, ct);
 
                 return result;
             }

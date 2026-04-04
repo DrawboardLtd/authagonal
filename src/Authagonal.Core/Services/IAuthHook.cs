@@ -5,7 +5,7 @@ namespace Authagonal.Core.Services;
 /// <summary>
 /// Hook into the authentication lifecycle. Implementations are called at key points
 /// during authentication and can influence outcomes by throwing exceptions to abort operations.
-/// The default implementation is a no-op.
+/// Multiple implementations can be registered — all will run in registration order.
 /// </summary>
 public interface IAuthHook
 {
@@ -36,4 +36,48 @@ public interface IAuthHook
     /// <summary>Called after a user successfully completes MFA verification.</summary>
     /// <param name="mfaMethod">One of "totp", "webauthn", or "recovery".</param>
     Task OnMfaVerifiedAsync(string userId, string email, string mfaMethod, CancellationToken ct = default);
+}
+
+/// <summary>
+/// Extension methods for running all hooks in an <see cref="IEnumerable{IAuthHook}"/> pipeline.
+/// </summary>
+public static class AuthHookExtensions
+{
+    public static async Task RunOnUserAuthenticatedAsync(this IEnumerable<IAuthHook> hooks, string userId, string email, string method, string? clientId = null, CancellationToken ct = default)
+    {
+        foreach (var hook in hooks)
+            await hook.OnUserAuthenticatedAsync(userId, email, method, clientId, ct);
+    }
+
+    public static async Task RunOnUserCreatedAsync(this IEnumerable<IAuthHook> hooks, string userId, string email, string createdVia, CancellationToken ct = default)
+    {
+        foreach (var hook in hooks)
+            await hook.OnUserCreatedAsync(userId, email, createdVia, ct);
+    }
+
+    public static async Task RunOnLoginFailedAsync(this IEnumerable<IAuthHook> hooks, string email, string reason, CancellationToken ct = default)
+    {
+        foreach (var hook in hooks)
+            await hook.OnLoginFailedAsync(email, reason, ct);
+    }
+
+    public static async Task RunOnTokenIssuedAsync(this IEnumerable<IAuthHook> hooks, string? subjectId, string clientId, string grantType, CancellationToken ct = default)
+    {
+        foreach (var hook in hooks)
+            await hook.OnTokenIssuedAsync(subjectId, clientId, grantType, ct);
+    }
+
+    public static async Task<MfaPolicy> RunResolveMfaPolicyAsync(this IEnumerable<IAuthHook> hooks, string userId, string email, MfaPolicy clientPolicy, string clientId, CancellationToken ct = default)
+    {
+        var policy = clientPolicy;
+        foreach (var hook in hooks)
+            policy = await hook.ResolveMfaPolicyAsync(userId, email, policy, clientId, ct);
+        return policy;
+    }
+
+    public static async Task RunOnMfaVerifiedAsync(this IEnumerable<IAuthHook> hooks, string userId, string email, string mfaMethod, CancellationToken ct = default)
+    {
+        foreach (var hook in hooks)
+            await hook.OnMfaVerifiedAsync(userId, email, mfaMethod, ct);
+    }
 }

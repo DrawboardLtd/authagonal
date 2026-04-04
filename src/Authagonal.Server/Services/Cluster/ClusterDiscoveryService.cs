@@ -7,7 +7,7 @@ namespace Authagonal.Server.Services.Cluster;
 
 public sealed class ClusterDiscoveryService(
     PeerRegistry peerRegistry,
-    DistributedRateLimiter rateLimiter,
+    ClusterNode clusterNode,
     IOptions<ClusterOptions> options,
     ILogger<ClusterDiscoveryService> logger) : BackgroundService
 {
@@ -33,7 +33,7 @@ public sealed class ClusterDiscoveryService(
         }
 
         logger.LogInformation("Cluster discovery started on {Group}:{Port}, nodeId={NodeId}",
-            opts.MulticastGroup, opts.MulticastPort, rateLimiter.NodeId);
+            opts.MulticastGroup, opts.MulticastPort, clusterNode.NodeId);
 
         // Start listener and announcer in parallel
         var listenTask = ListenAsync(stoppingToken);
@@ -59,7 +59,7 @@ public sealed class ClusterDiscoveryService(
                 var address = parts[1];
 
                 // Ignore self
-                if (string.Equals(nodeId, rateLimiter.NodeId, StringComparison.OrdinalIgnoreCase))
+                if (string.Equals(nodeId, clusterNode.NodeId, StringComparison.OrdinalIgnoreCase))
                     continue;
 
                 peerRegistry.AddOrRefresh(nodeId, address);
@@ -82,7 +82,7 @@ public sealed class ClusterDiscoveryService(
 
         // Determine our own HTTP address
         var httpAddress = GetOwnHttpAddress();
-        var announcement = Encoding.UTF8.GetBytes($"{rateLimiter.NodeId}|{httpAddress}");
+        var announcement = Encoding.UTF8.GetBytes($"{clusterNode.NodeId}|{httpAddress}");
 
         // Initial announcement
         try
