@@ -1,6 +1,6 @@
 {
   "name": "@drawboard/authagonal-login",
-  "version": "0.1.39",
+  "version": "0.1.40",
   "description": "Default login UI for Authagonal — runtime-configurable via branding.json",
   "type": "module",
   "license": "MIT",
@@ -16,7 +16,7 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
     },
-    "./styles.css": "./dist/style.css"
+    "./styles.css": "./dist/index.css"
   },
   "files": [
     "dist",
