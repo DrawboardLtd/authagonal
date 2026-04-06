@@ -56,6 +56,12 @@ Chaque instance maintient ses propres compteurs en memoire en utilisant un CRDT 
 
 Cela signifie que les limites de debit sont appliquees globalement : si un client atteint 3 instances differentes, les 3 savent que le total est de 3, et non 1 chacune.
 
+### Identite des noeuds
+
+Chaque instance genere un identifiant de noeud hexadecimal aleatoire au demarrage (par exemple, `a3f1b2`). Cet identifiant identifie l'instance dans les messages gossip et l'etat de limitation du debit. Il n'est pas persiste -- un nouvel identifiant est genere a chaque redemarrage.
+
+Un `ClusterLeaderService` s'execute sur chaque instance, elisant un leader unique parmi les pairs decouverts (l'identifiant de noeud le plus bas l'emporte). Le leadership est transfere automatiquement lorsque le leader tombe en panne. L'election du leader est disponible pour les taches de coordination a l'echelle du cluster qui ne doivent s'executer que sur un seul noeud.
+
 ### Configuration du cluster
 
 Le clustering est **active par defaut** sans aucune configuration. Les instances sur le meme reseau se decouvrent automatiquement via UDP multicast (`239.42.42.42:19847`).

@@ -6,7 +6,7 @@ locale: fr
 
 # Localisation
 
-Authagonal prend en charge six langues par defaut : anglais, chinois simplifie (`zh-Hans`), allemand (`de`), francais (`fr`), espagnol (`es`) et vietnamien (`vi`). La localisation couvre les reponses de l'API serveur, l'interface de connexion et ce site de documentation.
+Authagonal prend en charge huit langues par defaut : anglais, chinois simplifie (`zh-Hans`), allemand (`de`), francais (`fr`), espagnol (`es`), vietnamien (`vi`), portugais (`pt`) et klingon (`tlh`). La localisation couvre les reponses de l'API serveur, l'interface de connexion et ce site de documentation.
 
 ## Langues prises en charge
 
@@ -18,6 +18,7 @@ Authagonal prend en charge six langues par defaut : anglais, chinois simplifie (
 | `fr` | Francais |
 | `es` | Espagnol |
 | `vi` | Vietnamien |
+| `pt` | Portugais |
 
 ## Serveur (reponses API)
 
@@ -65,6 +66,8 @@ Resources/
   SharedMessages.de.resx
   SharedMessages.fr.resx
   SharedMessages.es.resx
+  SharedMessages.vi.resx
+  SharedMessages.pt.resx
 ```
 
 ## Interface de connexion
@@ -75,9 +78,10 @@ La SPA de connexion utilise [react-i18next](https://react.i18next.com/) pour la 
 
 L'ordre de detection est :
 
-1. **Parametre de requete** — `?lng=de` a la priorite sur tout
-2. **Langue du navigateur** — `navigator.language` (automatique)
-3. **Repli** — Anglais (`en`)
+1. **localStorage** — preference persistee d'une visite precedente
+2. **Parametre de requete** — `?lng=de` remplace la detection du navigateur
+3. **Langue du navigateur** — `navigator.language` (automatique)
+4. **Repli** — Anglais (`en`)
 
 ### Fichiers de traduction
 
@@ -91,6 +95,9 @@ i18n/
   de.json         # German
   fr.json         # French
   es.json         # Spanish
+  vi.json         # Vietnamese
+  pt.json         # Portuguese
+  tlh.json        # Klingon
 ```
 
 ### Labels de la politique de mot de passe
@@ -127,7 +134,7 @@ src/Authagonal.Server/Resources/SharedMessages.ja.resx
 Ajoutez `"ja"` au tableau des cultures prises en charge dans `AuthagonalExtensions.cs` :
 
 ```csharp
-var supportedCultures = new[] { "en", "zh-Hans", "de", "fr", "es", "ja" };
+var supportedCultures = new[] { "en", "zh-Hans", "de", "fr", "es", "vi", "pt", "ja" };
 ```
 
 ### 2. Interface de connexion

@@ -56,6 +56,12 @@ Cada instancia mantiene sus propios contadores en memoria utilizando un CRDT G-C
 
 Esto significa que los limites de velocidad se aplican globalmente: si un cliente accede a 3 instancias diferentes, las 3 saben que el total es 3, no 1 cada una.
 
+### Identidad de nodo
+
+Cada instancia genera un identificador de nodo hexadecimal aleatorio al inicio (por ejemplo, `a3f1b2`). Este identificador identifica la instancia en los mensajes de gossip y el estado de limites de velocidad. No se persiste — se genera uno nuevo en cada reinicio.
+
+Un `ClusterLeaderService` se ejecuta en cada instancia, eligiendo un unico lider entre los pares descubiertos (el identificador de nodo mas bajo gana). El liderazgo se transfiere automaticamente cuando el lider muere. La eleccion de lider esta disponible para tareas de coordinacion a nivel de cluster que solo deben ejecutarse en un nodo.
+
 ### Configuracion del cluster
 
 El clustering esta **habilitado por defecto** sin necesidad de configuracion. Las instancias en la misma red se descubren automaticamente a traves de UDP multicast (`239.42.42.42:19847`).

@@ -106,7 +106,6 @@ Azure AD 声明（完整 URI 格式）映射为简单名称：
 | `http://schemas.xmlsoap.org/ws/2005/05/identity/claims/surname` | `lastName` |
 | `http://schemas.xmlsoap.org/ws/2005/05/identity/claims/name` | `name`（UPN） |
 | `http://schemas.microsoft.com/identity/claims/objectidentifier` | `oid` |
-| `http://schemas.microsoft.com/identity/claims/tenantid` | `tenantId` |
 | `http://schemas.microsoft.com/identity/claims/displayname` | `displayName` |
 
 ## 安全性

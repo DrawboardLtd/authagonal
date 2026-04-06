@@ -100,7 +100,7 @@ Người dùng đăng ký MFA thông qua các endpoint thiết lập tự phục
 
 ### Thiết lập TOTP
 
-1. Gọi `POST /api/auth/mfa/totp/setup` — trả về mã QR (`data:image/svg+xml;base64,...`) và token thiết lập
+1. Gọi `POST /api/auth/mfa/totp/setup` — trả về mã QR (`data:image/png;base64,...`), `manualKey` (Base32 để nhập thủ công) và token thiết lập
 2. Người dùng quét mã QR bằng ứng dụng xác thực của họ
 3. Người dùng nhập mã 6 chữ số để xác nhận: `POST /api/auth/mfa/totp/confirm`
 

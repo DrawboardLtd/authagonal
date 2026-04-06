@@ -78,9 +78,10 @@ Die Login-SPA verwendet [react-i18next](https://react.i18next.com/) fur die clie
 
 Die Erkennungsreihenfolge ist:
 
-1. **Abfrageparameter** — `?lng=de` uberschreibt alles
-2. **Browsersprache** — `navigator.language` (automatisch)
-3. **Fallback** — Englisch (`en`)
+1. **localStorage** — gespeicherte Praeferenz von einem frueheren Besuch
+2. **Abfrageparameter** — `?lng=de` ueberschreibt die Browsererkennung
+3. **Browsersprache** — `navigator.language` (automatisch)
+4. **Fallback** — Englisch (`en`)
 
 ### Ubersetzungsdateien
 
@@ -94,6 +95,9 @@ i18n/
   de.json         # German
   fr.json         # French
   es.json         # Spanish
+  vi.json         # Vietnamese
+  pt.json         # Portuguese
+  tlh.json        # Klingon
 ```
 
 ### Passwortrichtlinien-Labels
@@ -130,7 +134,7 @@ src/Authagonal.Server/Resources/SharedMessages.ja.resx
 Fugen Sie `"ja"` zum Array der unterstutzten Kulturen in `AuthagonalExtensions.cs` hinzu:
 
 ```csharp
-var supportedCultures = new[] { "en", "zh-Hans", "de", "fr", "es", "ja" };
+var supportedCultures = new[] { "en", "zh-Hans", "de", "fr", "es", "vi", "pt", "ja" };
 ```
 
 ### 2. Login-Oberflache

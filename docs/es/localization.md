@@ -18,6 +18,7 @@ Authagonal admite ocho idiomas de forma predeterminada: ingles, chino simplifica
 | `fr` | Frances |
 | `es` | Espanol |
 | `vi` | Vietnamita |
+| `pt` | Portugues |
 
 ## Servidor (respuestas de la API)
 
@@ -65,6 +66,8 @@ Resources/
   SharedMessages.de.resx
   SharedMessages.fr.resx
   SharedMessages.es.resx
+  SharedMessages.vi.resx
+  SharedMessages.pt.resx
 ```
 
 ## Interfaz de inicio de sesion
@@ -75,9 +78,10 @@ La SPA de inicio de sesion utiliza [react-i18next](https://react.i18next.com/) p
 
 El orden de deteccion es:
 
-1. **Parametro de consulta** — `?lng=de` tiene prioridad sobre todo
-2. **Idioma del navegador** — `navigator.language` (automatico)
-3. **Respaldo** — Ingles (`en`)
+1. **localStorage** — preferencia persistida de una visita anterior
+2. **Parametro de consulta** — `?lng=de` anula la deteccion del navegador
+3. **Idioma del navegador** — `navigator.language` (automatico)
+4. **Respaldo** — Ingles (`en`)
 
 ### Archivos de traduccion
 
@@ -91,6 +95,9 @@ i18n/
   de.json         # German
   fr.json         # French
   es.json         # Spanish
+  vi.json         # Vietnamese
+  pt.json         # Portuguese
+  tlh.json        # Klingon
 ```
 
 ### Etiquetas de la politica de contrasenas
@@ -127,7 +134,7 @@ src/Authagonal.Server/Resources/SharedMessages.ja.resx
 Agregue `"ja"` al arreglo de culturas admitidas en `AuthagonalExtensions.cs`:
 
 ```csharp
-var supportedCultures = new[] { "en", "zh-Hans", "de", "fr", "es", "ja" };
+var supportedCultures = new[] { "en", "zh-Hans", "de", "fr", "es", "vi", "pt", "ja" };
 ```
 
 ### 2. Interfaz de inicio de sesion

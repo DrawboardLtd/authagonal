@@ -56,6 +56,12 @@ Cada instância mantém seus próprios contadores em memória usando um CRDT G-C
 
 Isso significa que os limites de taxa são aplicados globalmente: se um cliente atinge 3 instâncias diferentes, todas as 3 sabem que o total é 3, e não 1 cada.
 
+### Identidade do nó
+
+Cada instância gera um ID de nó hexadecimal aleatório na inicialização (ex.: `a3f1b2`). Este ID identifica a instância nas mensagens de gossip e no estado de limitação de taxa. Não é persistido — um novo ID é gerado a cada reinicialização.
+
+Um `ClusterLeaderService` executa em cada instância, elegendo um único líder entre os peers descobertos (o ID de nó mais baixo vence). A liderança é transferida automaticamente quando o líder morre. A eleição de líder está disponível para tarefas de coordenação ao nível do cluster que devem ser executadas em apenas um nó.
+
 ### Configuração do cluster
 
 O clustering é **habilitado por padrão** com zero configuração. Instâncias na mesma rede se descobrem automaticamente via UDP multicast (`239.42.42.42:19847`).

@@ -53,6 +53,17 @@ La migracion es idempotente -- es seguro ejecutarla multiples veces. Los registr
 2. Ejecutar una migracion delta final cercana al cambio
 3. Re-ejecutar si algo sale mal
 
+## Que NO se migra
+
+Estas funcionalidades de Authagonal no tienen equivalente en Duende y comienzan vacias despues de la migracion:
+
+- **Roles** — roles RBAC y asignaciones de roles a usuarios
+- **Credenciales MFA** — inscripciones de TOTP, WebAuthn y codigos de recuperacion
+- **Tokens y grupos SCIM** — configuracion de aprovisionamiento SCIM
+- **Provisiones de usuarios** — estado de aprovisionamiento de aplicaciones posteriores TCC
+
+Los usuarios deberan volver a inscribir MFA si la `MfaPolicy` de su cliente es `Enabled` o `Required`.
+
 ## Migracion de la clave de firma
 
 Aun no automatizada. Para mantener los tokens existentes validos durante el cambio:

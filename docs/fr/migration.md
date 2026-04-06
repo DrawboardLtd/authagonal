@@ -53,6 +53,17 @@ La migration est idempotente -- elle peut etre executee plusieurs fois en toute 
 2. Executer une migration delta finale proche du basculement
 3. Re-executer en cas de probleme
 
+## Ce qui N'EST PAS migre
+
+Ces fonctionnalites Authagonal n'ont pas d'equivalent Duende et sont vides apres la migration :
+
+- **Roles** -- roles RBAC et assignations role-utilisateur
+- **Identifiants MFA** -- inscriptions TOTP, WebAuthn et codes de recuperation
+- **Jetons et groupes SCIM** -- configuration du provisionnement SCIM
+- **Provisions utilisateur** -- etat de provisionnement des applications en aval TCC
+
+Les utilisateurs devront se reinscrire a la MFA si la `MfaPolicy` de votre client est `Enabled` ou `Required`.
+
 ## Migration de la cle de signature
 
 Pas encore automatisee. Pour garder les jetons existants valides lors du basculement :

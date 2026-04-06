@@ -53,6 +53,17 @@ dotnet run --project tools/Authagonal.Migration -- \
 2. 在接近切换时运行最终增量迁移
 3. 如果出现问题可以重新运行
 
+## 未迁移的内容
+
+以下 Authagonal 功能在 Duende 中没有对应项，迁移后将从空开始：
+
+- **角色** — RBAC 角色和用户-角色分配
+- **MFA 凭据** — TOTP、WebAuthn 和恢复代码注册
+- **SCIM 令牌和组** — SCIM 预配配置
+- **用户预配** — TCC 下游应用预配状态
+
+如果您的客户端的 `MfaPolicy` 为 `Enabled` 或 `Required`，用户将需要重新注册 MFA。
+
 ## 签名密钥迁移
 
 尚未自动化。要在切换期间保持现有令牌有效：

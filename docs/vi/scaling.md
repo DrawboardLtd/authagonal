@@ -56,6 +56,12 @@ Mỗi instance duy trì bộ đếm riêng trong bộ nhớ bằng CRDT G-Counte
 
 Điều này có nghĩa là giới hạn tốc độ được thực thi trên toàn cục: nếu một client truy cập 3 instance khác nhau, cả 3 đều biết tổng số là 3, không phải mỗi instance là 1.
 
+### Định danh node
+
+Mỗi instance tạo một ID node hex ngẫu nhiên khi khởi động (ví dụ: `a3f1b2`). ID này xác định instance trong các thông điệp gossip và trạng thái giới hạn tốc độ. Nó không được lưu trữ bền vững — một ID mới được tạo mỗi lần khởi động lại.
+
+Một `ClusterLeaderService` chạy trên mỗi instance, bầu chọn một leader duy nhất trong số các peer được phát hiện (ID node thấp nhất thắng). Quyền leader được chuyển giao tự động khi leader ngừng hoạt động. Bầu cử leader có sẵn cho các tác vụ phối hợp trên toàn cụm chỉ nên chạy trên một node.
+
 ### Cấu hình cluster
 
 Clustering được **bật mặc định** mà không cần cấu hình. Các instance trên cùng mạng tự động phát hiện lẫn nhau qua UDP multicast (`239.42.42.42:19847`).

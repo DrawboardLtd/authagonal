@@ -56,6 +56,12 @@ Jede Instanz pflegt ihre eigenen Zaehler im Speicher mithilfe eines CRDT G-Count
 
 Das bedeutet, dass Ratenbegrenzungen global durchgesetzt werden: Wenn ein Client 3 verschiedene Instanzen anspricht, wissen alle 3, dass die Gesamtzahl 3 betraegt, nicht jeweils 1.
 
+### Knotenidentitaet
+
+Jede Instanz generiert beim Start eine zufaellige hexadezimale Knoten-ID (z.B. `a3f1b2`). Diese ID identifiziert die Instanz in Gossip-Nachrichten und dem Ratenbegrenzungsstatus. Sie wird nicht persistiert -- bei jedem Neustart wird eine neue ID generiert.
+
+Ein `ClusterLeaderService` laeuft auf jeder Instanz und waehlt einen einzelnen Leader unter den entdeckten Peers (niedrigste Knoten-ID gewinnt). Die Fuehrung wird automatisch uebertragen, wenn der Leader ausfaellt. Die Leader-Wahl steht fuer cluster-weite Koordinationsaufgaben zur Verfuegung, die nur auf einem Knoten ausgefuehrt werden sollen.
+
 ### Cluster-Konfiguration
 
 Clustering ist **standardmaessig aktiviert** ohne jegliche Konfiguration. Instanzen im selben Netzwerk entdecken sich automatisch ueber UDP Multicast (`239.42.42.42:19847`).

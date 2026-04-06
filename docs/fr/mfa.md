@@ -100,7 +100,7 @@ Les utilisateurs s'inscrivent à la MFA via les points de terminaison de configu
 
 ### Configuration TOTP
 
-1. Appeler `POST /api/auth/mfa/totp/setup` — retourne un code QR (`data:image/svg+xml;base64,...`) et un jeton de configuration
+1. Appeler `POST /api/auth/mfa/totp/setup` — retourne un code QR (`data:image/png;base64,...`), une `manualKey` (Base32 pour la saisie manuelle) et un jeton de configuration
 2. L'utilisateur scanne le code QR avec son application d'authentification
 3. L'utilisateur saisit le code à 6 chiffres pour confirmer : `POST /api/auth/mfa/totp/confirm`
 

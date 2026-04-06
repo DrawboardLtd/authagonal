@@ -53,6 +53,17 @@ Quá trình di chuyển là idempotent — an toàn để chạy nhiều lần. 
 2. Chạy di chuyển delta cuối cùng gần thời điểm chuyển đổi
 3. Chạy lại nếu có vấn đề
 
+## Những gì KHÔNG được di chuyển
+
+Các tính năng Authagonal sau không có tương đương trong Duende và sẽ bắt đầu trống sau khi di chuyển:
+
+- **Vai trò** — Vai trò RBAC và gán vai trò cho người dùng
+- **Thông tin xác thực MFA** — Đăng ký TOTP, WebAuthn và mã khôi phục
+- **Token và nhóm SCIM** — Cấu hình cung cấp SCIM
+- **Cung cấp người dùng** — Trạng thái cung cấp ứng dụng hạ nguồn TCC
+
+Người dùng sẽ cần đăng ký lại MFA nếu `MfaPolicy` của client là `Enabled` hoặc `Required`.
+
 ## Di chuyển khóa ký
 
 Chưa được tự động hóa. Để giữ token hiện có hợp lệ trong quá trình chuyển đổi:

@@ -17,10 +17,11 @@ O Authagonal inclui uma implementação própria de Service Provider SAML 2.0. S
 
 ### Não Suportado
 
-- SSO iniciado pelo IdP
 - Logout SAML (use timeout de sessão)
 - Encriptação de asserções (não publique um certificado de encriptação)
 - Binding de artefacto
+
+O SSO iniciado pelo IdP é suportado — o endpoint ACS trata respostas sem `InResponseTo` (ignorando a validação de replay para respostas não solicitadas).
 
 ## Configuração do Azure AD
 
@@ -105,7 +106,6 @@ As claims do Azure AD (formato URI completo) são mapeadas para nomes simples:
 | `http://schemas.xmlsoap.org/ws/2005/05/identity/claims/surname` | `lastName` |
 | `http://schemas.xmlsoap.org/ws/2005/05/identity/claims/name` | `name` (UPN) |
 | `http://schemas.microsoft.com/identity/claims/objectidentifier` | `oid` |
-| `http://schemas.microsoft.com/identity/claims/tenantid` | `tenantId` |
 | `http://schemas.microsoft.com/identity/claims/displayname` | `displayName` |
 
 ## Segurança

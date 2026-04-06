@@ -6,7 +6,7 @@ locale: pt
 
 # Localização
 
-O Authagonal suporta sete idiomas prontos a usar: Inglês, Chinês Simplificado (`zh-Hans`), Alemão (`de`), Francês (`fr`), Espanhol (`es`), Vietnamita (`vi`) e Português (`pt`). A localização abrange as respostas da API do servidor, a interface de login e este site de documentação.
+O Authagonal suporta oito idiomas prontos a usar: Inglês, Chinês Simplificado (`zh-Hans`), Alemão (`de`), Francês (`fr`), Espanhol (`es`), Vietnamita (`vi`), Português (`pt`) e Klingon (`tlh`). A localização abrange as respostas da API do servidor, a interface de login e este site de documentação.
 
 ## Idiomas Suportados
 
@@ -66,6 +66,8 @@ Resources/
   SharedMessages.de.resx
   SharedMessages.fr.resx
   SharedMessages.es.resx
+  SharedMessages.vi.resx
+  SharedMessages.pt.resx
 ```
 
 ## Interface de Login
@@ -76,9 +78,10 @@ O SPA de login usa [react-i18next](https://react.i18next.com/) para localizaçã
 
 A ordem de deteção é:
 
-1. **Parâmetro de query** — `?lng=de` sobrepõe tudo
-2. **Idioma do navegador** — `navigator.language` (automático)
-3. **Fallback** — Inglês (`en`)
+1. **localStorage** — preferência persistida de uma visita anterior
+2. **Parâmetro de query** — `?lng=de` sobrepõe a deteção do navegador
+3. **Idioma do navegador** — `navigator.language` (automático)
+4. **Fallback** — Inglês (`en`)
 
 ### Ficheiros de tradução
 
@@ -92,6 +95,9 @@ i18n/
   de.json         # German
   fr.json         # French
   es.json         # Spanish
+  vi.json         # Vietnamese
+  pt.json         # Portuguese
+  tlh.json        # Klingon
 ```
 
 ### Rótulos da política de senhas
@@ -128,7 +134,7 @@ src/Authagonal.Server/Resources/SharedMessages.ja.resx
 Adicione `"ja"` ao array de culturas suportadas em `AuthagonalExtensions.cs`:
 
 ```csharp
-var supportedCultures = new[] { "en", "zh-Hans", "de", "fr", "es", "ja" };
+var supportedCultures = new[] { "en", "zh-Hans", "de", "fr", "es", "vi", "pt", "ja" };
 ```
 
 ### 2. Interface de Login

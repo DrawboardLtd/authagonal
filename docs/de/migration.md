@@ -53,6 +53,17 @@ Die Migration ist idempotent -- sicher mehrfach ausfuehrbar. Bestehende Datensae
 2. Eine abschliessende Delta-Migration kurz vor der Umstellung ausfuehren
 3. Bei Problemen erneut ausfuehren
 
+## Was NICHT migriert wird
+
+Diese Authagonal-Funktionen haben kein Duende-Aequivalent und sind nach der Migration leer:
+
+- **Rollen** — RBAC-Rollen und Benutzer-Rollen-Zuweisungen
+- **MFA-Anmeldedaten** — TOTP-, WebAuthn- und Wiederherstellungscode-Registrierungen
+- **SCIM-Token und -Gruppen** — SCIM-Bereitstellungskonfiguration
+- **Benutzerbereitstellungen** — TCC-Status der nachgelagerten App-Bereitstellung
+
+Benutzer muessen MFA erneut registrieren, wenn die `MfaPolicy` Ihres Clients auf `Enabled` oder `Required` gesetzt ist.
+
 ## Signaturschluessel-Migration
 
 Noch nicht automatisiert. Um bestehende Token waehrend der Umstellung gueltig zu halten:

@@ -100,7 +100,7 @@ Benutzer registrieren MFA über die Self-Service-Einrichtungsendpunkte. Diese er
 
 ### TOTP-Einrichtung
 
-1. `POST /api/auth/mfa/totp/setup` aufrufen — gibt einen QR-Code (`data:image/svg+xml;base64,...`) und ein Setup-Token zurück
+1. `POST /api/auth/mfa/totp/setup` aufrufen — gibt einen QR-Code (`data:image/png;base64,...`), einen `manualKey` (Base32 fuer manuelle Eingabe) und ein Setup-Token zurück
 2. Benutzer scannt den QR-Code mit seiner Authentifizierungs-App
 3. Benutzer gibt den 6-stelligen Code zur Bestätigung ein: `POST /api/auth/mfa/totp/confirm`
 

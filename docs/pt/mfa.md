@@ -100,7 +100,7 @@ Os usuários registram a MFA por meio dos endpoints de configuração de autoate
 
 ### Configuração do TOTP
 
-1. Chamar `POST /api/auth/mfa/totp/setup` — retorna um código QR (`data:image/svg+xml;base64,...`) e um token de configuração
+1. Chamar `POST /api/auth/mfa/totp/setup` — retorna um código QR (`data:image/png;base64,...`), uma `manualKey` (Base32 para entrada manual) e um token de configuração
 2. O usuário escaneia o código QR com seu aplicativo de autenticação
 3. O usuário insere o código de 6 dígitos para confirmar: `POST /api/auth/mfa/totp/confirm`
 
