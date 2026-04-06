@@ -119,7 +119,9 @@ public static class AuthagonalExtensions
         services.AddScoped<AuthorizationCodeService>();
         services.AddScoped<ITokenService, TokenService>();
         services.AddHostedService<TokenCleanupService>();
-        services.AddHostedService<GrantReconciliationService>();
+        // Only register if keyed TableClient services are available (single-tenant mode)
+        if (services.Any(s => s.IsKeyedService && s.ServiceType == typeof(Azure.Data.Tables.TableClient)))
+            services.AddHostedService<GrantReconciliationService>();
         services.AddHostedService<SigningKeyRotationService>();
         services.AddHttpClient("Provisioning");
         services.AddHostedService<ClientSeedService>();
