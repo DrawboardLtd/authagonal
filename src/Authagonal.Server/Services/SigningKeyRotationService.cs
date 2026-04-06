@@ -26,7 +26,6 @@ public sealed class SigningKeyRotationService(
             return;
         }
 
-        // Wait before first check to let the cluster stabilise
         try
         {
             await Task.Delay(TimeSpan.FromMinutes(options.KeyRotationCheckIntervalMinutes), stoppingToken);
@@ -48,7 +47,15 @@ public sealed class SigningKeyRotationService(
                     continue;
                 }
 
-                await CheckAndRotateAsync(options, stoppingToken);
+                await using var scope = scopeFactory.CreateAsyncScope();
+                var keyStore = scope.ServiceProvider.GetRequiredService<ISigningKeyStore>();
+
+                var rotated = await SigningKeyOps.CheckAndRotateAsync(
+                    keyStore, options.SigningKeyLifetimeDays, options.KeyRotationLeadTimeDays,
+                    logger, stoppingToken);
+
+                if (rotated)
+                    await keyManager.ForceRefreshAsync(stoppingToken);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
@@ -60,43 +67,5 @@ public sealed class SigningKeyRotationService(
             }
         }
         while (await timer.WaitForNextTickAsync(stoppingToken));
-    }
-
-    private async Task CheckAndRotateAsync(AuthOptions options, CancellationToken ct)
-    {
-        await using var scope = scopeFactory.CreateAsyncScope();
-        var keyStore = scope.ServiceProvider.GetRequiredService<ISigningKeyStore>();
-
-        var activeKey = await keyStore.GetActiveKeyAsync(ct);
-        if (activeKey is null)
-        {
-            logger.LogWarning("No active signing key found — KeyManager will generate one on next refresh");
-            return;
-        }
-
-        var now = DateTimeOffset.UtcNow;
-        var timeUntilExpiry = activeKey.ExpiresAt - now;
-        var rotationThreshold = TimeSpan.FromDays(options.KeyRotationLeadTimeDays);
-
-        if (timeUntilExpiry > rotationThreshold)
-        {
-            logger.LogDebug(
-                "Active key {KeyId} expires in {Days:F0} days — no rotation needed (threshold: {Threshold} days)",
-                activeKey.KeyId, timeUntilExpiry.TotalDays, options.KeyRotationLeadTimeDays);
-            return;
-        }
-
-        logger.LogInformation(
-            "Active key {KeyId} expires in {Days:F0} days (threshold: {Threshold} days). Rotating",
-            activeKey.KeyId, timeUntilExpiry.TotalDays, options.KeyRotationLeadTimeDays);
-
-        // Deactivate the old key (it stays in JWKS until it expires for token validation)
-        await keyStore.DeactivateKeyAsync(activeKey.KeyId, ct);
-
-        // KeyManager's next refresh will detect no active key and generate a new one.
-        // Force an immediate refresh so the new key is live within seconds.
-        await keyManager.ForceRefreshAsync(ct);
-
-        logger.LogInformation("Signing key rotated. Old key {OldKeyId} deactivated", activeKey.KeyId);
     }
 }
