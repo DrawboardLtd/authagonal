@@ -65,6 +65,12 @@ public sealed class KeyManager : IKeyManager, IHostedService, IDisposable
     }
 
     /// <summary>
+    /// Forces an immediate key refresh from storage. Called by the rotation service
+    /// after deactivating the old key so the new key is picked up promptly.
+    /// </summary>
+    public Task ForceRefreshAsync(CancellationToken ct = default) => RefreshKeysAsync(ct);
+
+    /// <summary>
     /// Returns all valid JSON Web Keys for the JWKS endpoint.
     /// Includes old keys that haven't expired yet (for token validation during rotation).
     /// </summary>

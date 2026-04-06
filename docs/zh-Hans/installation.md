@@ -110,13 +110,7 @@ app.Run();
 npm install @drawboard/authagonal-login
 ```
 
-通过 `branding.json` 进行自定义（参阅[品牌定制](branding)），并将 SPA 构建到服务器的 `wwwroot/` 目录：
-
-```bash
-cd node_modules/@drawboard/authagonal-login
-npx vite build
-cp -r dist/* /path/to/wwwroot/
-```
+该包提供编译后的 JS 和 CSS -- 可在您自己的 React 应用中直接导入组件和样式。完整演练请参阅[自定义服务器](custom-server)。
 
 ## 迁移工具
 

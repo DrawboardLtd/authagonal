@@ -6,7 +6,7 @@ locale: es
 
 # Localizacion
 
-Authagonal admite seis idiomas de forma predeterminada: ingles, chino simplificado (`zh-Hans`), aleman (`de`), frances (`fr`), espanol (`es`) y vietnamita (`vi`). La localizacion abarca las respuestas de la API del servidor, la interfaz de inicio de sesion y este sitio de documentacion.
+Authagonal admite ocho idiomas de forma predeterminada: ingles, chino simplificado (`zh-Hans`), aleman (`de`), frances (`fr`), espanol (`es`), vietnamita (`vi`), portugues (`pt`) y klingon (`tlh`). La localizacion abarca las respuestas de la API del servidor, la interfaz de inicio de sesion y este sitio de documentacion.
 
 ## Idiomas admitidos
 

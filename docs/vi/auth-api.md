@@ -65,9 +65,49 @@ Client nên chuyển hướng đến trang thiết lập MFA. Token thiết lậ
 | `invalid_credentials` | 401 | Email hoặc mật khẩu sai |
 | `locked_out` | 423 | Quá nhiều lần thất bại. `retryAfter` (giây) được bao gồm. |
 | `email_not_confirmed` | 403 | Email chưa được xác minh |
-| `sso_required` | 403 | Tên miền yêu cầu SSO. `redirectUrl` trỏ đến trang đăng nhập SSO. |
+| `sso_required` | 409 | Tên miền yêu cầu SSO. `redirectUrl` trỏ đến trang đăng nhập SSO. |
 | `email_required` | 400 | Trường email trống |
 | `password_required` | 400 | Trường mật khẩu trống |
+
+### Đăng ký
+
+```
+POST /api/auth/register
+Content-Type: application/json
+
+{
+  "email": "user@example.com",
+  "password": "SecurePass1!",
+  "firstName": "Jane",
+  "lastName": "Doe"
+}
+```
+
+Tạo tài khoản người dùng mới và gửi email xác minh. Trả về `409` nếu email đã được đăng ký.
+
+### Xác nhận email
+
+```
+POST /api/auth/confirm-email?token={token}
+```
+
+Xác nhận địa chỉ email của người dùng bằng token từ email xác minh.
+
+### Nhà cung cấp
+
+```
+GET /api/auth/providers
+```
+
+Trả về danh sách các nhà cung cấp danh tính bên ngoài đã cấu hình (để hiển thị các nút SSO):
+
+```json
+{
+  "providers": [
+    { "connectionId": "google", "name": "Google", "loginUrl": "/oidc/google/login" }
+  ]
+}
+```
 
 ### Đăng xuất
 
@@ -106,7 +146,7 @@ Content-Type: application/json
 |---|---|
 | `weak_password` | Không đáp ứng yêu cầu độ mạnh |
 | `invalid_token` | Token bị lỗi định dạng |
-| `token_expired` | Token đã hết hạn (hiệu lực 24 giờ) |
+| `token_expired` | Token đã hết hạn (hiệu lực 60 phút mặc định, cấu hình qua `Auth:PasswordResetExpiryMinutes`) |
 
 ### Phiên
 
@@ -233,7 +273,7 @@ Trả về các phương thức MFA đã đăng ký của người dùng. Yêu c
 
 ```
 POST /api/auth/mfa/totp/setup
-→ { "setupToken": "...", "qrCodeDataUri": "data:image/svg+xml;base64,..." }
+→ { "setupToken": "...", "qrCodeDataUri": "data:image/png;base64,...", "manualKey": "BASE32..." }
 
 POST /api/auth/mfa/totp/confirm
 { "setupToken": "...", "code": "123456" }

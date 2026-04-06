@@ -16,21 +16,18 @@ All `Authagonal.Core` store interfaces are implemented using Azure Table Storage
 | `TableSamlProviderStore` | SamlProviders | SAML 2.0 identity provider configs |
 | `TableSsoDomainStore` | SsoDomains | Email domain-to-SSO provider routing |
 | `TableUserProvisionStore` | UserProvisions | Downstream app provisioning state |
+| `TableMfaStore` | MfaCredentials, MfaChallenges, MfaWebAuthnIndex | MFA credentials and challenges |
+| `TableRoleStore` | Roles | Role definitions and user-role assignments |
+| `TableScimTokenStore` | ScimTokens | SCIM Bearer tokens (hashed) |
+| `TableScimGroupStore` | ScimGroups, ScimGroupExternalIds | SCIM-provisioned groups |
+| `TableTombstoneWriter` | Tombstones | Soft-delete tracking for incremental backups |
 
 ## Usage
 
 If you're using `Authagonal.Server`, storage is registered automatically. For standalone use:
 
 ```csharp
-builder.Services.AddTableStorage(builder.Configuration);
-```
-
-```json
-{
-  "Storage": {
-    "ConnectionString": "UseDevelopmentStorage=true"
-  }
-}
+builder.Services.AddTableStorage(builder.Configuration["Storage:ConnectionString"]!);
 ```
 
 Tables are auto-created on first run. Retry policies (5 retries, exponential backoff) are configured by default.

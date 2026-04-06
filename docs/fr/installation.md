@@ -110,13 +110,7 @@ L'interface de connexion est publiee en tant que package npm pour la personnalis
 npm install @drawboard/authagonal-login
 ```
 
-Personnalisez via `branding.json` (voir [Personnalisation visuelle](branding)) et compilez la SPA dans le repertoire `wwwroot/` de votre serveur :
-
-```bash
-cd node_modules/@drawboard/authagonal-login
-npx vite build
-cp -r dist/* /path/to/wwwroot/
-```
+Le package fournit du JS et du CSS compiles -- importez les composants et les styles directement dans votre propre application React. Consultez [Serveur personnalise](custom-server) pour un guide complet.
 
 ## Outil de migration
 

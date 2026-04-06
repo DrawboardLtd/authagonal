@@ -42,7 +42,11 @@ Placez un fichier `branding.json` dans le repertoire `wwwroot/` (ou montez-le da
 | `primaryColor` | `string` | `"#2563eb"` | Couleur hexadecimale pour les boutons, liens et indicateurs de focus |
 | `supportEmail` | `string \| null` | `null` | Adresse email de support (reserve pour un usage futur) |
 | `showForgotPassword` | `boolean` | `true` | Afficher/masquer le lien "Mot de passe oublie ?" sur la page de connexion |
+| `showRegistration` | `boolean` | `false` | Afficher/masquer le lien d'inscription en libre-service |
 | `customCssUrl` | `string \| null` | `null` | URL vers un fichier CSS personnalise charge apres les styles par defaut |
+| `welcomeTitle` | `LocalizedString` | `null` | Remplacer le titre de la page de connexion (chaine simple ou `{ "en": "...", "de": "..." }`) |
+| `welcomeSubtitle` | `LocalizedString` | `null` | Remplacer le sous-titre de la page de connexion |
+| `languages` | `array \| null` | `null` | Options du selecteur de langue (`[{ "code": "en", "label": "English" }, ...]`) |
 
 ## Exemple Docker
 
@@ -78,37 +82,17 @@ services:
 
 L'option `customCssUrl` charge une feuille de style supplementaire apres les styles par defaut, de sorte que vos regles ont la priorite. Utile pour changer les polices, ajuster l'espacement ou restyler des elements specifiques.
 
-### Classes CSS disponibles
-
-| Classe | Element |
-|---|---|
-| `.auth-container` | Conteneur pleine page (flex center) |
-| `.auth-card` | La carte de connexion (boite blanche avec ombre) |
-| `.auth-logo` | Zone logo/titre |
-| `.auth-logo h1` | En-tete texte (quand aucune image de logo) |
-| `.auth-logo-img` | Image du logo (quand `logoUrl` est defini) |
-| `.auth-title` | Titres des pages ("Connexion", "Reinitialiser votre mot de passe") |
-| `.auth-subtitle` | Texte secondaire sous les titres |
-| `.form-group` | Conteneur de champ de formulaire |
-| `.form-group label` | Libelles des champs |
-| `input` | Champs de saisie texte |
-| `.btn-primary` | Bouton d'action principal |
-| `.btn-secondary` | Bouton secondaire (par exemple, "Continuer avec SSO") |
-| `.alert-error` | Messages d'erreur |
-| `.alert-success` | Messages de succes |
-| `.link` | Liens texte |
-| `.sso-notice` | Notification de detection SSO |
-| `.password-requirements` | Liste des exigences de robustesse du mot de passe |
-
 ### Proprietes CSS personnalisees
 
-La couleur principale est exposee en tant que propriete CSS personnalisee. Vous pouvez la remplacer dans votre CSS personnalise au lieu d'utiliser `branding.json` :
+La couleur principale est definie via la propriete CSS personnalisee `--brand-primary` (qui alimente le theme Tailwind). Remplacez-la dans votre CSS personnalise au lieu d'utiliser `branding.json` :
 
 ```css
 :root {
-  --color-primary: #059669;
+  --brand-primary: #059669;
 }
 ```
+
+L'interface de connexion utilise Tailwind CSS. Le CSS personnalise peut cibler les elements HTML standard et les classes utilitaires Tailwind. Les composants d'interface exportes (`Button`, `Input`, `Card`, `Alert`, etc.) utilisent Tailwind en interne.
 
 ### Exemple : Arriere-plan et police personnalises
 
@@ -117,16 +101,6 @@ La couleur principale est exposee en tant que propriete CSS personnalisee. Vous 
 body {
   font-family: 'Inter', sans-serif;
   background-color: #0f172a;
-}
-
-.auth-card {
-  border-radius: 16px;
-  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.2);
-}
-
-.auth-logo h1 {
-  font-family: 'Inter', sans-serif;
-  font-weight: 800;
 }
 ```
 

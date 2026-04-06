@@ -30,6 +30,11 @@ public sealed class AuthOptions
     public int SigningKeyLifetimeDays { get; set; } = 90;
     public int SigningKeyCacheRefreshMinutes { get; set; } = 60;
 
+    // --- Key rotation ---
+    public bool KeyRotationEnabled { get; set; }
+    public int KeyRotationCheckIntervalMinutes { get; set; } = 360;
+    public int KeyRotationLeadTimeDays { get; set; } = 14;
+
     // --- Cookie validation ---
     public int SecurityStampRevalidationMinutes { get; set; } = 30;
 }

@@ -42,9 +42,11 @@ builder.Services.AddAuthagonal(builder.Configuration);
 | Interface | Padrão | Finalidade |
 |---|---|---|
 | `IAuthHook` | `NullAuthHook` (no-op) | Hooks de ciclo de vida para eventos de autenticação — registo de auditoria, validação personalizada, webhooks |
-| `IEmailService` | `EmailService` (SendGrid) | Entrega de e-mail para verificação e redefinição de senha |
+| `IEmailService` | `NullEmailService` (no-op) | Entrega de e-mail para verificação e redefinição de senha |
 | `IProvisioningOrchestrator` | `TccProvisioningOrchestrator` | Provisionamento de utilizadores em aplicações downstream |
 | `ISecretProvider` | `PlaintextSecretProvider` | Resolução de segredos (Key Vault, AWS Secrets Manager, etc.) |
+| `ITenantContext` | `DefaultTenantContext` (lê de `IConfiguration`) | Resolução de tenant para implantações multi-tenant |
+| `IKeyManager` | `KeyManager` (singleton) | Gestão de chaves de assinatura — substitua para isolamento de chaves por tenant |
 
 ## IAuthHook
 

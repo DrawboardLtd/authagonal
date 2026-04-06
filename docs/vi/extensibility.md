@@ -42,9 +42,11 @@ builder.Services.AddAuthagonal(builder.Configuration);
 | Giao diện | Mặc định | Mục đích |
 |---|---|---|
 | `IAuthHook` | `NullAuthHook` (không làm gì) | Hook vòng đời cho các sự kiện xác thực — ghi nhật ký kiểm tra, xác thực tùy chỉnh, webhooks |
-| `IEmailService` | `EmailService` (SendGrid) | Gửi email cho xác minh và đặt lại mật khẩu |
+| `IEmailService` | `NullEmailService` (không thực hiện gì) | Gửi email cho xác minh và đặt lại mật khẩu |
 | `IProvisioningOrchestrator` | `TccProvisioningOrchestrator` | Cấp phát người dùng vào các ứng dụng phía sau |
 | `ISecretProvider` | `PlaintextSecretProvider` | Giải quyết bí mật (Key Vault, AWS Secrets Manager, v.v.) |
+| `ITenantContext` | `DefaultTenantContext` (đọc từ `IConfiguration`) | Giải quyết tenant cho triển khai đa tenant |
+| `IKeyManager` | `KeyManager` (singleton) | Quản lý khóa ký — ghi đè cho cách ly khóa theo tenant |
 
 ## IAuthHook
 

@@ -100,7 +100,7 @@ public Task<MfaPolicy> ResolveMfaPolicyAsync(
 
 ### TOTP 设置
 
-1. 调用 `POST /api/auth/mfa/totp/setup` — 返回 QR 码（`data:image/svg+xml;base64,...`）和设置令牌
+1. 调用 `POST /api/auth/mfa/totp/setup` — 返回 QR 码（`data:image/png;base64,...`）、`manualKey`（Base32 格式，用于手动输入）和设置令牌
 2. 用户使用验证器应用扫描 QR 码
 3. 用户输入 6 位验证码确认：`POST /api/auth/mfa/totp/confirm`
 

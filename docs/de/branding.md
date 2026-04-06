@@ -42,7 +42,11 @@ Platzieren Sie eine `branding.json`-Datei im `wwwroot/`-Verzeichnis (oder montie
 | `primaryColor` | `string` | `"#2563eb"` | Hex-Farbe fuer Schaltflaechen, Links und Fokus-Indikatoren |
 | `supportEmail` | `string \| null` | `null` | Support-Kontakt-E-Mail (fuer zukuenftige Verwendung reserviert) |
 | `showForgotPassword` | `boolean` | `true` | Anzeigen/Ausblenden des "Passwort vergessen?"-Links auf der Login-Seite |
+| `showRegistration` | `boolean` | `false` | Anzeigen/Ausblenden des Self-Service-Registrierungslinks |
 | `customCssUrl` | `string \| null` | `null` | URL zu einer benutzerdefinierten CSS-Datei, die nach den Standardstilen geladen wird |
+| `welcomeTitle` | `LocalizedString` | `null` | Ueberschreibt den Titel der Login-Seite (einfacher String oder `{ "en": "...", "de": "..." }`) |
+| `welcomeSubtitle` | `LocalizedString` | `null` | Ueberschreibt den Untertitel der Login-Seite |
+| `languages` | `array \| null` | `null` | Sprachauswahl-Optionen (`[{ "code": "en", "label": "English" }, ...]`) |
 
 ## Docker-Beispiel
 
@@ -78,37 +82,17 @@ services:
 
 Die Option `customCssUrl` laedt ein zusaetzliches Stylesheet nach den Standardstilen, sodass Ihre Regeln Vorrang haben. Nuetzlich zum Aendern von Schriftarten, Anpassen von Abstaenden oder Neugestalten bestimmter Elemente.
 
-### Verfuegbare CSS-Klassen
-
-| Klasse | Element |
-|---|---|
-| `.auth-container` | Ganzseitiger Wrapper (Flex-Zentrierung) |
-| `.auth-card` | Die Login-Karte (weisse Box mit Schatten) |
-| `.auth-logo` | Logo-/Titelbereich |
-| `.auth-logo h1` | Textkopfzeile (wenn kein Logo-Bild) |
-| `.auth-logo-img` | Logo-Bild (wenn `logoUrl` gesetzt ist) |
-| `.auth-title` | Seitentitel ("Anmelden", "Passwort zuruecksetzen") |
-| `.auth-subtitle` | Sekundaertext unter Titeln |
-| `.form-group` | Formularfeld-Wrapper |
-| `.form-group label` | Feldbeschriftungen |
-| `input` | Texteingaben |
-| `.btn-primary` | Primaere Aktionsschaltflaeche |
-| `.btn-secondary` | Sekundaere Schaltflaeche (z.B. "Weiter mit SSO") |
-| `.alert-error` | Fehlermeldungen |
-| `.alert-success` | Erfolgsmeldungen |
-| `.link` | Textlinks |
-| `.sso-notice` | SSO-Erkennungshinweis |
-| `.password-requirements` | Passwortstaerke-Liste |
-
 ### CSS Custom Properties
 
-Die Primaerfarbe ist als CSS Custom Property verfuegbar. Sie koennen sie in Ihrem benutzerdefinierten CSS ueberschreiben, anstatt `branding.json` zu verwenden:
+Die Primaerfarbe wird ueber die CSS Custom Property `--brand-primary` gesetzt (die in das Tailwind-Theme einfliesst). Ueberschreiben Sie sie in Ihrem benutzerdefinierten CSS anstatt `branding.json` zu verwenden:
 
 ```css
 :root {
-  --color-primary: #059669;
+  --brand-primary: #059669;
 }
 ```
+
+Die Login-Oberflaeche verwendet Tailwind CSS. Benutzerdefiniertes CSS kann Standard-HTML-Elemente und Tailwind-Utility-Klassen ansprechen. Die exportierten UI-Komponenten (`Button`, `Input`, `Card`, `Alert` usw.) verwenden intern Tailwind.
 
 ### Beispiel: Benutzerdefinierter Hintergrund und Schriftart
 
@@ -117,16 +101,6 @@ Die Primaerfarbe ist als CSS Custom Property verfuegbar. Sie koennen sie in Ihre
 body {
   font-family: 'Inter', sans-serif;
   background-color: #0f172a;
-}
-
-.auth-card {
-  border-radius: 16px;
-  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.2);
-}
-
-.auth-logo h1 {
-  font-family: 'Inter', sans-serif;
-  font-weight: 800;
 }
 ```
 

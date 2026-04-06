@@ -65,9 +65,49 @@ O cliente deve redirecionar para uma página de configuração de MFA. O token d
 | `invalid_credentials` | 401 | E-mail ou senha incorretos |
 | `locked_out` | 423 | Demasiadas tentativas falhadas. `retryAfter` (segundos) é incluído. |
 | `email_not_confirmed` | 403 | E-mail ainda não verificado |
-| `sso_required` | 403 | O domínio requer SSO. `redirectUrl` aponta para o login SSO. |
+| `sso_required` | 409 | O domínio requer SSO. `redirectUrl` aponta para o login SSO. |
 | `email_required` | 400 | Campo de e-mail vazio |
 | `password_required` | 400 | Campo de senha vazio |
+
+### Registar
+
+```
+POST /api/auth/register
+Content-Type: application/json
+
+{
+  "email": "user@example.com",
+  "password": "SecurePass1!",
+  "firstName": "Jane",
+  "lastName": "Doe"
+}
+```
+
+Cria uma nova conta de utilizador e envia um e-mail de verificação. Retorna `409` se o e-mail já estiver registado.
+
+### Confirmar E-mail
+
+```
+POST /api/auth/confirm-email?token={token}
+```
+
+Confirma o endereço de e-mail do utilizador usando o token do e-mail de verificação.
+
+### Provedores
+
+```
+GET /api/auth/providers
+```
+
+Retorna a lista de provedores de identidade externos configurados (para renderizar botões SSO):
+
+```json
+{
+  "providers": [
+    { "connectionId": "google", "name": "Google", "loginUrl": "/oidc/google/login" }
+  ]
+}
+```
 
 ### Logout
 
@@ -106,7 +146,7 @@ Content-Type: application/json
 |---|---|
 | `weak_password` | Não cumpre os requisitos de complexidade |
 | `invalid_token` | O token é malformado |
-| `token_expired` | O token expirou (validade de 24 horas) |
+| `token_expired` | O token expirou (validade padrão de 60 minutos, configurável via `Auth:PasswordResetExpiryMinutes`) |
 
 ### Sessão
 
@@ -233,7 +273,7 @@ Retorna os métodos MFA inscritos do utilizador. Requer autenticação por cooki
 
 ```
 POST /api/auth/mfa/totp/setup
--> { "setupToken": "...", "qrCodeDataUri": "data:image/svg+xml;base64,..." }
+→ { "setupToken": "...", "qrCodeDataUri": "data:image/png;base64,...", "manualKey": "BASE32..." }
 
 POST /api/auth/mfa/totp/confirm
 { "setupToken": "...", "code": "123456" }

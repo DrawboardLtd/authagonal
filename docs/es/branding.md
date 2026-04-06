@@ -42,7 +42,11 @@ Coloque un archivo `branding.json` en el directorio `wwwroot/` (o montelo en el 
 | `primaryColor` | `string` | `"#2563eb"` | Color hexadecimal para botones, enlaces e indicadores de enfoque |
 | `supportEmail` | `string \| null` | `null` | Correo electronico de soporte (reservado para uso futuro) |
 | `showForgotPassword` | `boolean` | `true` | Mostrar/ocultar el enlace "Contrasena olvidada?" en la pagina de inicio de sesion |
+| `showRegistration` | `boolean` | `false` | Mostrar/ocultar el enlace de registro de autoservicio |
 | `customCssUrl` | `string \| null` | `null` | URL a un archivo CSS personalizado cargado despues de los estilos predeterminados |
+| `welcomeTitle` | `LocalizedString` | `null` | Anular el titulo de la pagina de inicio de sesion (cadena simple o `{ "en": "...", "de": "..." }`) |
+| `welcomeSubtitle` | `LocalizedString` | `null` | Anular el subtitulo de la pagina de inicio de sesion |
+| `languages` | `array \| null` | `null` | Opciones del selector de idioma (`[{ "code": "en", "label": "English" }, ...]`) |
 
 ## Ejemplo Docker
 
@@ -78,37 +82,17 @@ services:
 
 La opcion `customCssUrl` carga una hoja de estilos adicional despues de los estilos predeterminados, por lo que sus reglas tienen prioridad. Util para cambiar fuentes, ajustar espaciado o reestilizar elementos especificos.
 
-### Clases CSS disponibles
-
-| Clase | Elemento |
-|---|---|
-| `.auth-container` | Contenedor de pagina completa (flex center) |
-| `.auth-card` | La tarjeta de inicio de sesion (caja blanca con sombra) |
-| `.auth-logo` | Area de logo/titulo |
-| `.auth-logo h1` | Encabezado de texto (cuando no hay imagen de logo) |
-| `.auth-logo-img` | Imagen del logo (cuando `logoUrl` esta establecido) |
-| `.auth-title` | Titulos de pagina ("Iniciar sesion", "Restablecer su contrasena") |
-| `.auth-subtitle` | Texto secundario debajo de los titulos |
-| `.form-group` | Contenedor de campo de formulario |
-| `.form-group label` | Etiquetas de campos |
-| `input` | Campos de entrada de texto |
-| `.btn-primary` | Boton de accion principal |
-| `.btn-secondary` | Boton secundario (por ejemplo, "Continuar con SSO") |
-| `.alert-error` | Mensajes de error |
-| `.alert-success` | Mensajes de exito |
-| `.link` | Enlaces de texto |
-| `.sso-notice` | Aviso de deteccion SSO |
-| `.password-requirements` | Lista de requisitos de robustez de contrasena |
-
 ### Propiedades CSS personalizadas
 
-El color principal se expone como una propiedad CSS personalizada. Puede sobreescribirlo en su CSS personalizado en lugar de usar `branding.json`:
+El color principal se establece mediante la propiedad CSS personalizada `--brand-primary` (que alimenta el tema de Tailwind). Puede sobreescribirlo en su CSS personalizado en lugar de usar `branding.json`:
 
 ```css
 :root {
-  --color-primary: #059669;
+  --brand-primary: #059669;
 }
 ```
+
+La interfaz de inicio de sesion utiliza Tailwind CSS. El CSS personalizado puede apuntar a elementos HTML estandar y clases de utilidad de Tailwind. Los componentes de UI exportados (`Button`, `Input`, `Card`, `Alert`, etc.) usan Tailwind internamente.
 
 ### Ejemplo: Fondo y fuente personalizados
 
@@ -117,16 +101,6 @@ El color principal se expone como una propiedad CSS personalizada. Puede sobrees
 body {
   font-family: 'Inter', sans-serif;
   background-color: #0f172a;
-}
-
-.auth-card {
-  border-radius: 16px;
-  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.2);
-}
-
-.auth-logo h1 {
-  font-family: 'Inter', sans-serif;
-  font-weight: 800;
 }
 ```
 

@@ -33,7 +33,7 @@ That's it. You now have a fully functional auth server with:
 - **OAuth 2.0 / OpenID Connect** — Authorization code + PKCE, refresh tokens, client credentials
 - **SAML 2.0 SSO** — SP-initiated flows with automatic metadata parsing
 - **External OIDC providers** — Google, Microsoft, Okta, etc.
-- **Built-in login UI** — Customizable SPA with localization (7 languages)
+- **Built-in login UI** — Customizable SPA with localization (8 languages)
 - **Admin APIs** — User management, SSO provider management, token administration
 - **Password policy** — Configurable strength requirements
 

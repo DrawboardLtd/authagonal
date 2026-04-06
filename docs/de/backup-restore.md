@@ -55,7 +55,7 @@ Wenn keine `.lastbackup`-Datei existiert, fuehrt der erste inkrementelle Lauf ei
 
 Das Sicherungstool schliesst standardmaessig alle Authagonal-Tabellen ein:
 
-`Users`, `UserEmails`, `UserLogins`, `Clients`, `Grants`, `GrantsBySubject`, `GrantsByExpiry`, `SigningKeys`, `SsoDomains`, `SamlProviders`, `OidcProviders`, `UserProvisions`
+`Users`, `UserEmails`, `UserLogins`, `UserExternalIds`, `Clients`, `Grants`, `GrantsBySubject`, `GrantsByExpiry`, `SigningKeys`, `SsoDomains`, `SamlProviders`, `OidcProviders`, `UserProvisions`, `MfaCredentials`, `MfaChallenges`, `MfaWebAuthnIndex`, `ScimTokens`, `ScimGroups`, `ScimGroupExternalIds`, `Roles`
 
 Transiente Tabellen (`SamlReplayCache`, `OidcStateStore`) sind standardmaessig ausgeschlossen — fuegen Sie diese bei Bedarf explizit mit `--tables` hinzu.
 

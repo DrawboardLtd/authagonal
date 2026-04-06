@@ -42,7 +42,11 @@ Khi khởi động, SPA tải `/branding.json`. Nếu tệp không tồn tại h
 | `primaryColor` | `string` | `"#2563eb"` | Màu hex cho nút, liên kết và chỉ báo focus |
 | `supportEmail` | `string \| null` | `null` | Email liên hệ hỗ trợ (dành cho sử dụng trong tương lai) |
 | `showForgotPassword` | `boolean` | `true` | Hiển thị/ẩn liên kết "Quên mật khẩu?" trên trang đăng nhập |
+| `showRegistration` | `boolean` | `false` | Hiển thị/ẩn liên kết đăng ký tự phục vụ |
 | `customCssUrl` | `string \| null` | `null` | URL đến tệp CSS tùy chỉnh được tải sau các style mặc định |
+| `welcomeTitle` | `LocalizedString` | `null` | Ghi đè tiêu đề trang đăng nhập (chuỗi thuần hoặc `{ "en": "...", "de": "..." }`) |
+| `welcomeSubtitle` | `LocalizedString` | `null` | Ghi đè phụ đề trang đăng nhập |
+| `languages` | `array \| null` | `null` | Tùy chọn bộ chọn ngôn ngữ (`[{ "code": "en", "label": "English" }, ...]`) |
 
 ## Ví dụ Docker
 
@@ -78,37 +82,17 @@ services:
 
 Tùy chọn `customCssUrl` tải một stylesheet bổ sung sau các style mặc định, nên các quy tắc của bạn được ưu tiên. Hữu ích để thay đổi phông chữ, điều chỉnh khoảng cách, hoặc thay đổi style các phần tử cụ thể.
 
-### Các lớp CSS có sẵn
-
-| Lớp | Phần tử |
-|---|---|
-| `.auth-container` | Wrapper toàn trang (flex center) |
-| `.auth-card` | Thẻ đăng nhập (hộp trắng có bóng) |
-| `.auth-logo` | Khu vực logo/tiêu đề |
-| `.auth-logo h1` | Tiêu đề văn bản (khi không có hình logo) |
-| `.auth-logo-img` | Hình ảnh logo (khi `logoUrl` được đặt) |
-| `.auth-title` | Tiêu đề trang ("Đăng nhập", "Đặt lại mật khẩu") |
-| `.auth-subtitle` | Văn bản phụ dưới tiêu đề |
-| `.form-group` | Wrapper trường biểu mẫu |
-| `.form-group label` | Nhãn trường |
-| `input` | Ô nhập liệu |
-| `.btn-primary` | Nút hành động chính |
-| `.btn-secondary` | Nút phụ (ví dụ: "Tiếp tục với SSO") |
-| `.alert-error` | Thông báo lỗi |
-| `.alert-success` | Thông báo thành công |
-| `.link` | Liên kết văn bản |
-| `.sso-notice` | Thông báo phát hiện SSO |
-| `.password-requirements` | Danh sách yêu cầu độ mạnh mật khẩu |
-
 ### Thuộc tính CSS tùy chỉnh
 
-Màu chính được hiển thị dưới dạng thuộc tính CSS tùy chỉnh. Bạn có thể ghi đè nó trong CSS tùy chỉnh thay vì sử dụng `branding.json`:
+Màu chính được đặt qua thuộc tính CSS tùy chỉnh `--brand-primary` (được tích hợp vào theme Tailwind). Ghi đè nó trong CSS tùy chỉnh thay vì sử dụng `branding.json`:
 
 ```css
 :root {
-  --color-primary: #059669;
+  --brand-primary: #059669;
 }
 ```
+
+Giao diện đăng nhập sử dụng Tailwind CSS. CSS tùy chỉnh có thể nhắm mục tiêu các phần tử HTML tiêu chuẩn và các lớp tiện ích Tailwind. Các component UI được xuất (`Button`, `Input`, `Card`, `Alert`, v.v.) sử dụng Tailwind nội bộ.
 
 ### Ví dụ: Nền và phông chữ tùy chỉnh
 
@@ -117,16 +101,6 @@ Màu chính được hiển thị dưới dạng thuộc tính CSS tùy chỉnh.
 body {
   font-family: 'Inter', sans-serif;
   background-color: #0f172a;
-}
-
-.auth-card {
-  border-radius: 16px;
-  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.2);
-}
-
-.auth-logo h1 {
-  font-family: 'Inter', sans-serif;
-  font-weight: 800;
 }
 ```
 

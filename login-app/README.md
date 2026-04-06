@@ -10,7 +10,7 @@ Use as a standalone app (built into the Authagonal Docker image) or as an npm pa
 npm install @drawboard/authagonal-login
 ```
 
-Peer dependencies: `react`, `react-dom`, `react-router-dom`.
+`react`, `react-dom`, and `react-router-dom` are externalized at build time — your app must provide them.
 
 ## Quick start
 
@@ -184,7 +184,7 @@ const title = resolveLocalized(branding.welcomeTitle, i18n.language) ?? 'Default
 
 ## i18n
 
-Built-in support for 7 languages:
+Built-in support for 8 languages:
 
 | Code | Language |
 |---|---|
@@ -195,6 +195,7 @@ Built-in support for 7 languages:
 | `es` | Spanish |
 | `vi` | Vietnamese |
 | `pt` | Portuguese |
+| `tlh` | Klingon |
 
 Language is auto-detected from the browser and persisted to `localStorage`. Force a language via query string: `?lng=es`.
 
@@ -218,6 +219,20 @@ import { useTranslation } from 'react-i18next';
 | `LoginPage` | Login form with SSO check, external providers, session detection |
 | `ForgotPasswordPage` | Email input → sends reset link |
 | `ResetPasswordPage` | Token + new password form with policy validation |
+| `MfaChallengePage` | TOTP/passkey/recovery code verification |
+| `MfaSetupPage` | QR code scanning, passkey registration, recovery code generation |
+
+### UI Components
+
+| Export | Description |
+|---|---|
+| `Button` | Styled button with variants (`default`, `outline`, `ghost`, etc.) |
+| `Input` | Styled text input |
+| `Label` | Form label |
+| `Card`, `CardHeader`, `CardTitle`, `CardDescription`, `CardContent`, `CardFooter` | Card layout primitives |
+| `Alert` | Alert/notification banner |
+| `Separator` | Visual divider |
+| `cn` | Tailwind class merge utility |
 
 ### API client
 
@@ -232,6 +247,14 @@ import { useTranslation } from 'react-i18next';
 | `getProviders()` | List external identity providers |
 | `getPasswordPolicy()` | Fetch password rules |
 | `ApiRequestError` | Error class with `.error`, `.retryAfter`, `.redirectUrl` |
+| `mfaVerify(challengeId, method, code)` | Verify MFA challenge |
+| `mfaStatus()` | Get enrolled MFA methods |
+| `mfaTotpSetup()` | Start TOTP enrollment |
+| `mfaTotpConfirm(setupToken, code)` | Confirm TOTP enrollment |
+| `mfaWebAuthnSetup()` | Start WebAuthn/passkey enrollment |
+| `mfaWebAuthnConfirm(setupToken, attestation)` | Confirm passkey enrollment |
+| `mfaRecoveryGenerate()` | Generate recovery codes |
+| `mfaDeleteCredential(credentialId)` | Remove an MFA credential |
 
 ### Branding
 
@@ -241,6 +264,13 @@ import { useTranslation } from 'react-i18next';
 | `BrandingContext` | React context for branding config |
 | `useBranding()` | Hook to read branding config |
 | `resolveLocalized(value, lang)` | Resolve a `LocalizedString` for a language |
+
+### i18n
+
+| Export | Description |
+|---|---|
+| `i18n` | Pre-configured i18next instance |
+| `useTranslation` | Re-exported from `react-i18next` — always import from this package to avoid context duplication |
 
 ### Types
 
@@ -253,9 +283,11 @@ interface BrandingConfig {
   primaryColor: string;
   supportEmail: string | null;
   showForgotPassword: boolean;
+  showRegistration: boolean;
   customCssUrl: string | null;
   welcomeTitle: LocalizedString;
   welcomeSubtitle: LocalizedString;
+  languages: { code: string; label: string }[] | null;
 }
 
 interface ExternalProvider {
@@ -283,8 +315,32 @@ interface PasswordPolicyRule {
   value: number | null;
   label: string;
 }
+
+interface LoginResponse {
+  userId?: string;
+  email?: string;
+  name?: string;
+  mfaRequired?: boolean;
+  challengeId?: string;
+  methods?: string[];
+  webAuthn?: object;
+  mfaSetupRequired?: boolean;
+  setupToken?: string;
+  mfaAvailable?: boolean;
+}
+
+interface MfaStatusResponse {
+  enabled: boolean;
+  methods: { id: string; type: string; name: string; createdAt: string; lastUsedAt: string }[];
+}
+
+interface MfaTotpSetupResponse {
+  setupToken: string;
+  qrCodeDataUri: string;
+  manualKey: string;
+}
 ```
 
 ## License
 
-Proprietary — Drawboard Ltd.
+[MIT](../../LICENSE)

@@ -61,9 +61,6 @@ app.Run();
 ```json
 {
   "Issuer": "https://auth.example.com",
-  "Oidc": {
-    "Issuer": "https://auth.example.com"
-  },
   "Storage": {
     "ConnectionString": "DefaultEndpointsProtocol=https;AccountName=..."
   },
@@ -87,7 +84,6 @@ app.Run();
 | Schluessel | Beschreibung |
 |---|---|
 | `Issuer` | Die oeffentliche URL Ihres Auth-Servers. Wird in Tokens und OIDC Discovery verwendet. |
-| `Oidc:Issuer` | Normalerweise identisch mit `Issuer`. Separat, wenn sich interne und externe URLs unterscheiden. |
 | `Storage:ConnectionString` | Azure Table Storage Verbindungszeichenfolge. |
 | `Clients` | Array von OAuth-Clients, die beim Start geseedet werden. |
 
@@ -97,7 +93,7 @@ Registrieren Sie Ihre Implementierungen **vor** dem Aufruf von `AddAuthagonal()`
 
 | Schnittstelle | Zweck | Standard |
 |---|---|---|
-| `IEmailService` | Versand von Verifizierungs- und Passwortzuruecksetzungs-E-Mails | SendGrid (erfordert Konfiguration) |
+| `IEmailService` | Versand von Verifizierungs- und Passwortzuruecksetzungs-E-Mails | No-op (verwirft stillschweigend) |
 | `IAuthHook` | Login-, Registrierungs- und Token-Ereignisse abfangen oder auditieren | Leeroperationen |
 | `IProvisioningOrchestrator` | Benutzer bei der Autorisierung in nachgelagerte Apps bereitstellen | TCC-Bereitstellung |
 | `ISecretProvider` | Client-Geheimnisse aufloesen | Klartext (oder Key Vault mit `SecretProvider:VaultUri`) |
@@ -109,27 +105,31 @@ using Authagonal.Core.Services;
 
 public class AuditAuthHook(ILogger<AuditAuthHook> logger) : IAuthHook
 {
-    public Task OnUserAuthenticatedAsync(string userId, string email, string method)
+    public Task OnUserAuthenticatedAsync(string userId, string email,
+        string method, string? clientId = null, CancellationToken ct = default)
     {
         logger.LogInformation("Login: {Email} via {Method}", email, method);
         return Task.CompletedTask;
     }
 
-    public Task OnUserCreatedAsync(string userId, string email)
+    public Task OnUserCreatedAsync(string userId, string email,
+        string createdVia, CancellationToken ct = default)
     {
-        logger.LogInformation("New user: {Email}", email);
+        logger.LogInformation("New user: {Email} via {Via}", email, createdVia);
         return Task.CompletedTask;
     }
 
-    public Task OnLoginFailedAsync(string email, string reason)
+    public Task OnLoginFailedAsync(string email, string reason,
+        CancellationToken ct = default)
     {
         logger.LogWarning("Failed login: {Email} — {Reason}", email, reason);
         return Task.CompletedTask;
     }
 
-    public Task OnTokenIssuedAsync(string clientId, string? userId, IEnumerable<string> scopes)
+    public Task OnTokenIssuedAsync(string? subjectId, string clientId,
+        string grantType, CancellationToken ct = default)
     {
-        logger.LogInformation("Token issued to {ClientId}", clientId);
+        logger.LogInformation("Token issued: {ClientId} ({GrantType})", clientId, grantType);
         return Task.CompletedTask;
     }
 }
@@ -142,13 +142,15 @@ using Authagonal.Core.Services;
 
 public class ConsoleEmailService(ILogger<ConsoleEmailService> logger) : IEmailService
 {
-    public Task SendVerificationEmailAsync(string email, string callbackUrl)
+    public Task SendVerificationEmailAsync(string email, string callbackUrl,
+        CancellationToken ct = default)
     {
         logger.LogInformation("Verify email: {Url}", callbackUrl);
         return Task.CompletedTask;
     }
 
-    public Task SendPasswordResetEmailAsync(string email, string callbackUrl)
+    public Task SendPasswordResetEmailAsync(string email, string callbackUrl,
+        CancellationToken ct = default)
     {
         logger.LogInformation("Reset password: {Url}", callbackUrl);
         return Task.CompletedTask;
@@ -208,36 +210,41 @@ import {
   LoginPage,
   ForgotPasswordPage,
   ResetPasswordPage,
+  MfaChallengePage,
+  MfaSetupPage,
+} from '@drawboard/authagonal-login';
+
+// UI primitives
+import {
+  Button, Input, Label, Card, Alert, Separator, cn,
 } from '@drawboard/authagonal-login';
 
 // API clients — call from your custom pages
 import {
-  login,
-  logout,
-  ssoCheck,
-  forgotPassword,
-  resetPassword,
-  getSession,
-  getPasswordPolicy,
+  login, logout, ssoCheck, forgotPassword, resetPassword,
+  getSession, getProviders, getPasswordPolicy,
+  mfaVerify, mfaStatus, mfaTotpSetup, mfaTotpConfirm,
+  mfaWebAuthnSetup, mfaWebAuthnConfirm, mfaRecoveryGenerate,
+  mfaDeleteCredential,
+  ApiRequestError,
 } from '@drawboard/authagonal-login';
 
 // Branding
 import {
-  loadBranding,
-  useBranding,
-  BrandingContext,
+  loadBranding, useBranding, BrandingContext, resolveLocalized,
 } from '@drawboard/authagonal-login';
+
+// i18n — always import from this package, not react-i18next directly
+import { useTranslation, i18n } from '@drawboard/authagonal-login';
 
 // Styles
 import '@drawboard/authagonal-login/styles.css';
 
 // Types
 import type {
-  BrandingConfig,
-  ApiError,
-  LoginResponse,
-  SessionResponse,
-  PasswordPolicyResponse,
+  BrandingConfig, LocalizedString, LoginResponse,
+  SessionResponse, ExternalProvider, PasswordPolicyResponse,
+  MfaStatusResponse, MfaTotpSetupResponse,
 } from '@drawboard/authagonal-login';
 ```
 
@@ -310,7 +317,7 @@ export default function MyLoginPage() {
       window.location.href = params.get('returnUrl') || '/';
     } catch (err) {
       if (err instanceof ApiRequestError) {
-        setError(err.errorDescription || 'Login failed');
+        setError(err.message || 'Login failed');
       }
     }
   };

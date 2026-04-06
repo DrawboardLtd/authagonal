@@ -55,6 +55,12 @@ Each instance maintains its own counters in memory using a CRDT G-Counter. Insta
 
 This means rate limits are enforced globally: if a client hits 3 different instances, all 3 know the total is 3, not 1 each.
 
+### Node identity
+
+Each instance generates a random hex node ID at startup (e.g., `a3f1b2`). This ID identifies the instance in gossip messages and rate limit state. It is not persisted — a new ID is generated on each restart.
+
+A `ClusterLeaderService` runs on each instance, electing a single leader among discovered peers (lowest node ID wins). Leadership transfers automatically when the leader dies. The leader is used for cluster-wide coordination — currently, signing key rotation (when enabled) runs only on the leader to avoid concurrent key generation.
+
 ### Cluster configuration
 
 Clustering is **enabled by default** with zero configuration. Instances on the same network discover each other automatically via UDP multicast (`239.42.42.42:19847`).

@@ -1,5 +1,41 @@
 # Changelog
 
+## [0.1.42] — 2026-04-06
+
+### Fixed
+
+- **npm package CSS** — login-app now imports `styles.css` as a side effect in the entry point, so Vite emits `dist/index.css` in library mode. Fixed export map to point to `dist/index.css`.
+- **npm package types** — swapped build order to `vite build && tsc -b` so Vite's `emptyOutDir` doesn't wipe TypeScript declaration files.
+
+## [0.1.38] — 2026-04-05
+
+### Changed
+
+- **Compiled library** — `@drawboard/authagonal-login` now ships compiled JS + CSS in `dist/` instead of raw TypeScript source. Consumers no longer need Tailwind or the Vite build toolchain.
+
+## [0.1.31] — 2026-03-31
+
+### Added
+
+- **Self-service registration** — `POST /api/auth/register` endpoint with distributed per-IP rate limiting (5 registrations per IP per hour, configurable).
+- **Distributed rate limiting** — CRDT G-Counter shared via gossip protocol across cluster instances.
+- **MIT license** — switched from proprietary to MIT.
+
+### Changed
+
+- **Cluster node identity** — each instance generates a random hex node ID at startup for gossip protocol identification.
+- **Cluster leader election** — `ClusterLeaderService` elects a single leader among discovered peers for cluster-wide coordination.
+
+## [0.1.30] — 2026-03-30
+
+### Added
+
+- **Role-based access control** — `Role` model, `IRoleStore`/`TableRoleStore`, and admin API endpoints at `/api/v1/roles/` for CRUD, assign, unassign, and user-role queries.
+- **Multi-tenant abstractions** — `ITenantContext` and `IKeyManager` interfaces for per-tenant configuration and signing key isolation. `DefaultTenantContext` reads from `IConfiguration`.
+- **Tailwind CSS** — login SPA migrated from custom CSS to Tailwind. Reusable UI components exported: `Button`, `Input`, `Label`, `Card`, `Alert`, `Separator`, `cn`.
+- **Multiple IAuthHook support** — all registered `IAuthHook` implementations now run in registration order via `IEnumerable<IAuthHook>` pipeline.
+- **Backup & restore library** — `src/Authagonal.Backup` with `BackupService`, `RestoreService`, tombstone-based delete tracking, merge and rollup for backup compaction.
+
 ## [0.1.26] — 2026-03-30
 
 ### Fixed

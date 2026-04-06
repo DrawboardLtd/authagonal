@@ -99,7 +99,7 @@ Users enroll MFA through the self-service setup endpoints. These require either 
 
 ### TOTP Setup
 
-1. Call `POST /api/auth/mfa/totp/setup` — returns a QR code (`data:image/svg+xml;base64,...`) and setup token
+1. Call `POST /api/auth/mfa/totp/setup` — returns a QR code (`data:image/png;base64,...`), a `manualKey` (Base32 for manual entry), and setup token
 2. User scans the QR code with their authenticator app
 3. User enters the 6-digit code to confirm: `POST /api/auth/mfa/totp/confirm`
 

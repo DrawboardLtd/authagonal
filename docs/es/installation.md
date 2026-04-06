@@ -110,13 +110,7 @@ La interfaz de inicio de sesion se publica como un paquete npm para personalizac
 npm install @drawboard/authagonal-login
 ```
 
-Personalice mediante `branding.json` (ver [Personalizacion visual](branding)) y compile la SPA en el directorio `wwwroot/` de su servidor:
-
-```bash
-cd node_modules/@drawboard/authagonal-login
-npx vite build
-cp -r dist/* /path/to/wwwroot/
-```
+El paquete incluye JS y CSS compilados — importe componentes y estilos directamente en su propia aplicacion React. Consulte [Servidor personalizado](custom-server) para una guia completa.
 
 ## Herramienta de migracion
 

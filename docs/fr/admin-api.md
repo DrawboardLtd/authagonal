@@ -124,30 +124,127 @@ Supprime un identifiant MFA specifique (par exemple, un authentificateur perdu).
 ### Fournisseurs SAML
 
 ```
-GET    /api/v1/sso/saml                    # Lister tous
-GET    /api/v1/sso/saml/{connectionId}     # Obtenir un
-POST   /api/v1/sso/saml                    # Creer
-PUT    /api/v1/sso/saml/{connectionId}     # Mettre a jour
-DELETE /api/v1/sso/saml/{connectionId}     # Supprimer
+POST   /api/v1/saml/connections                    # Creer
+GET    /api/v1/saml/connections/{connectionId}     # Obtenir un
+PUT    /api/v1/saml/connections/{connectionId}     # Mettre a jour
+DELETE /api/v1/saml/connections/{connectionId}     # Supprimer
 ```
 
 ### Fournisseurs OIDC
 
 ```
-GET    /api/v1/sso/oidc                    # Lister tous
-GET    /api/v1/sso/oidc/{connectionId}     # Obtenir un
-POST   /api/v1/sso/oidc                    # Creer
-PUT    /api/v1/sso/oidc/{connectionId}     # Mettre a jour
-DELETE /api/v1/sso/oidc/{connectionId}     # Supprimer
+POST   /api/v1/oidc/connections                    # Creer
+GET    /api/v1/oidc/connections/{connectionId}     # Obtenir un
+DELETE /api/v1/oidc/connections/{connectionId}     # Supprimer
 ```
 
 ### Domaines SSO
 
 ```
 GET    /api/v1/sso/domains                 # Lister tous
-GET    /api/v1/sso/domains/{domain}        # Obtenir un
-POST   /api/v1/sso/domains                 # Creer
-DELETE /api/v1/sso/domains/{domain}        # Supprimer
+```
+
+## Roles
+
+### Lister les roles
+
+```
+GET /api/v1/roles
+```
+
+### Obtenir un role
+
+```
+GET /api/v1/roles/{roleId}
+```
+
+### Creer un role
+
+```
+POST /api/v1/roles
+Content-Type: application/json
+
+{
+  "name": "admin",
+  "description": "Administrator role"
+}
+```
+
+### Mettre a jour un role
+
+```
+PUT /api/v1/roles/{roleId}
+Content-Type: application/json
+
+{
+  "name": "admin",
+  "description": "Updated description"
+}
+```
+
+### Supprimer un role
+
+```
+DELETE /api/v1/roles/{roleId}
+```
+
+### Assigner un role a un utilisateur
+
+```
+POST /api/v1/roles/assign
+Content-Type: application/json
+
+{
+  "userId": "user-id",
+  "roleId": "role-id"
+}
+```
+
+### Retirer un role d'un utilisateur
+
+```
+POST /api/v1/roles/unassign
+Content-Type: application/json
+
+{
+  "userId": "user-id",
+  "roleId": "role-id"
+}
+```
+
+### Obtenir les roles d'un utilisateur
+
+```
+GET /api/v1/roles/user/{userId}
+```
+
+## Jetons SCIM
+
+### Generer un jeton
+
+```
+POST /api/v1/scim/tokens
+Content-Type: application/json
+
+{
+  "clientId": "client-id"
+}
+```
+
+Renvoie le jeton brut une seule fois. Stockez-le en securite -- il ne peut pas etre recupere a nouveau.
+
+### Lister les jetons
+
+```
+GET /api/v1/scim/tokens?clientId=client-id
+```
+
+Renvoie les metadonnees des jetons (identifiant, date de creation) sans la valeur brute du jeton.
+
+### Revoquer un jeton
+
+```
+DELETE /api/v1/scim/tokens/{tokenId}?clientId=client-id
 ```
 
 ## Jetons
@@ -155,14 +252,7 @@ DELETE /api/v1/sso/domains/{domain}        # Supprimer
 ### Usurper l'identite d'un utilisateur
 
 ```
-POST /api/v1/tokens/impersonate
-Content-Type: application/json
-
-{
-  "userId": "user-id",
-  "clientId": "client-id",
-  "scopes": ["openid", "profile"]
-}
+POST /api/v1/token?clientId=client-id&userId=user-id&scopes=openid,profile
 ```
 
-Emet des jetons au nom d'un utilisateur sans necessiter ses identifiants. Utile pour les tests et le support.
+Emet des jetons au nom d'un utilisateur sans necessiter ses identifiants. Utile pour les tests et le support. Les parametres sont passes en tant que chaines de requete. Le parametre optionnel `refreshTokenLifetime` controle la validite du jeton de rafraichissement.

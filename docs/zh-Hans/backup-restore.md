@@ -55,7 +55,7 @@ backups/
 
 备份工具默认包含所有 Authagonal 表：
 
-`Users`、`UserEmails`、`UserLogins`、`Clients`、`Grants`、`GrantsBySubject`、`GrantsByExpiry`、`SigningKeys`、`SsoDomains`、`SamlProviders`、`OidcProviders`、`UserProvisions`
+`Users`、`UserEmails`、`UserLogins`、`UserExternalIds`、`Clients`、`Grants`、`GrantsBySubject`、`GrantsByExpiry`、`SigningKeys`、`SsoDomains`、`SamlProviders`、`OidcProviders`、`UserProvisions`、`MfaCredentials`、`MfaChallenges`、`MfaWebAuthnIndex`、`ScimTokens`、`ScimGroups`、`ScimGroupExternalIds`、`Roles`
 
 临时表（`SamlReplayCache`、`OidcStateStore`）默认排除——如需要，请使用 `--tables` 明确包含。
 

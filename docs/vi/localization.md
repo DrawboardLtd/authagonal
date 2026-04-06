@@ -6,7 +6,7 @@ locale: vi
 
 # Ban dia hoa
 
-Authagonal ho tro sau ngon ngu ngay tu dau: tieng Anh, tieng Trung gian the (`zh-Hans`), tieng Duc (`de`), tieng Phap (`fr`), tieng Tay Ban Nha (`es`) va tieng Viet (`vi`). Ban dia hoa bao gom cac phan hoi API cua may chu, giao dien dang nhap va trang tai lieu nay.
+Authagonal ho tro tam ngon ngu ngay tu dau: tieng Anh, tieng Trung gian the (`zh-Hans`), tieng Duc (`de`), tieng Phap (`fr`), tieng Tay Ban Nha (`es`), tieng Viet (`vi`), tieng Bo Dao Nha (`pt`) va tieng Klingon (`tlh`). Ban dia hoa bao gom cac phan hoi API cua may chu, giao dien dang nhap va trang tai lieu nay.
 
 ## Cac ngon ngu duoc ho tro
 
@@ -18,6 +18,7 @@ Authagonal ho tro sau ngon ngu ngay tu dau: tieng Anh, tieng Trung gian the (`zh
 | `fr` | Tieng Phap |
 | `es` | Tieng Tay Ban Nha |
 | `vi` | Tieng Viet |
+| `pt` | Tieng Bo Dao Nha |
 
 ## May chu (phan hoi API)
 
@@ -65,6 +66,8 @@ Resources/
   SharedMessages.de.resx
   SharedMessages.fr.resx
   SharedMessages.es.resx
+  SharedMessages.vi.resx
+  SharedMessages.pt.resx
 ```
 
 ## Giao dien dang nhap
@@ -75,9 +78,10 @@ Ung dung SPA dang nhap su dung [react-i18next](https://react.i18next.com/) de ba
 
 Thu tu phat hien la:
 
-1. **Tham so truy van** — `?lng=de` ghi de tat ca
-2. **Ngon ngu trinh duyet** — `navigator.language` (tu dong)
-3. **Du phong** — Tieng Anh (`en`)
+1. **localStorage** — tuy chon da luu tu lan truy cap truoc
+2. **Tham so truy van** — `?lng=de` ghi de phat hien trinh duyet
+3. **Ngon ngu trinh duyet** — `navigator.language` (tu dong)
+4. **Du phong** — Tieng Anh (`en`)
 
 ### Tep dich
 
@@ -91,6 +95,9 @@ i18n/
   de.json         # German
   fr.json         # French
   es.json         # Spanish
+  vi.json         # Vietnamese
+  pt.json         # Portuguese
+  tlh.json        # Klingon
 ```
 
 ### Nhan chinh sach mat khau
@@ -127,7 +134,7 @@ src/Authagonal.Server/Resources/SharedMessages.ja.resx
 Them `"ja"` vao mang cac culture duoc ho tro trong `AuthagonalExtensions.cs`:
 
 ```csharp
-var supportedCultures = new[] { "en", "zh-Hans", "de", "fr", "es", "ja" };
+var supportedCultures = new[] { "en", "zh-Hans", "de", "fr", "es", "vi", "pt", "ja" };
 ```
 
 ### 2. Giao dien dang nhap

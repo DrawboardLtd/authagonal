@@ -41,7 +41,11 @@ Place a `branding.json` file in the `wwwroot/` directory (or mount it into the D
 | `primaryColor` | `string` | `"#2563eb"` | Hex color for buttons, links, and focus indicators |
 | `supportEmail` | `string \| null` | `null` | Support contact email (reserved for future use) |
 | `showForgotPassword` | `boolean` | `true` | Show/hide the "Forgot password?" link on the login page |
+| `showRegistration` | `boolean` | `false` | Show/hide the self-service registration link |
 | `customCssUrl` | `string \| null` | `null` | URL to a custom CSS file loaded after the default styles |
+| `welcomeTitle` | `LocalizedString` | `null` | Override the login page title (plain string or `{ "en": "...", "de": "..." }`) |
+| `welcomeSubtitle` | `LocalizedString` | `null` | Override the login page subtitle |
+| `languages` | `array \| null` | `null` | Language selector options (`[{ "code": "en", "label": "English" }, ...]`) |
 
 ## Docker Example
 
@@ -77,37 +81,17 @@ services:
 
 The `customCssUrl` option loads an additional stylesheet after the default styles, so your rules take precedence. Useful for changing fonts, adjusting spacing, or restyling specific elements.
 
-### Available CSS Classes
-
-| Class | Element |
-|---|---|
-| `.auth-container` | Full-page wrapper (flex center) |
-| `.auth-card` | The login card (white box with shadow) |
-| `.auth-logo` | Logo/title area |
-| `.auth-logo h1` | Text header (when no logo image) |
-| `.auth-logo-img` | Logo image (when `logoUrl` is set) |
-| `.auth-title` | Page titles ("Sign in", "Reset your password") |
-| `.auth-subtitle` | Secondary text below titles |
-| `.form-group` | Form field wrapper |
-| `.form-group label` | Field labels |
-| `input` | Text inputs |
-| `.btn-primary` | Primary action button |
-| `.btn-secondary` | Secondary button (e.g., "Continue with SSO") |
-| `.alert-error` | Error messages |
-| `.alert-success` | Success messages |
-| `.link` | Text links |
-| `.sso-notice` | SSO detection notice |
-| `.password-requirements` | Password strength list |
-
 ### CSS Custom Properties
 
-The primary color is exposed as a CSS custom property. You can override it in your custom CSS instead of using `branding.json`:
+The primary color is set via the `--brand-primary` CSS custom property (which feeds into the Tailwind theme). Override it in your custom CSS instead of using `branding.json`:
 
 ```css
 :root {
-  --color-primary: #059669;
+  --brand-primary: #059669;
 }
 ```
+
+The login UI uses Tailwind CSS. Custom CSS can target standard HTML elements and Tailwind utility classes. The exported UI components (`Button`, `Input`, `Card`, `Alert`, etc.) use Tailwind internally.
 
 ### Example: Custom Background and Font
 
@@ -116,16 +100,6 @@ The primary color is exposed as a CSS custom property. You can override it in yo
 body {
   font-family: 'Inter', sans-serif;
   background-color: #0f172a;
-}
-
-.auth-card {
-  border-radius: 16px;
-  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.2);
-}
-
-.auth-logo h1 {
-  font-family: 'Inter', sans-serif;
-  font-weight: 800;
 }
 ```
 

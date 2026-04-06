@@ -42,9 +42,11 @@ builder.Services.AddAuthagonal(builder.Configuration);
 | 接口 | 默认实现 | 用途 |
 |---|---|---|
 | `IAuthHook` | `NullAuthHook`（空操作） | 认证事件的生命周期钩子 -- 审计日志、自定义验证、Webhook |
-| `IEmailService` | `EmailService`（SendGrid） | 用于验证和密码重置的邮件发送 |
+| `IEmailService` | `NullEmailService`（空操作） | 用于验证和密码重置的邮件发送 |
 | `IProvisioningOrchestrator` | `TccProvisioningOrchestrator` | 将用户预配到下游应用 |
 | `ISecretProvider` | `PlaintextSecretProvider` | 密钥解析（Key Vault、AWS Secrets Manager 等） |
+| `ITenantContext` | `DefaultTenantContext`（从 `IConfiguration` 读取） | 多租户部署的租户解析 |
+| `IKeyManager` | `KeyManager`（单例） | 签名密钥管理 -- 覆盖以实现按租户密钥隔离 |
 
 ## IAuthHook
 

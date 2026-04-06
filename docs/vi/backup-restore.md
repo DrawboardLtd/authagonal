@@ -55,7 +55,7 @@ Nếu không có tệp `.lastbackup`, lần chạy gia tăng đầu tiên sẽ t
 
 Công cụ sao lưu bao gồm tất cả các bảng Authagonal theo mặc định:
 
-`Users`, `UserEmails`, `UserLogins`, `Clients`, `Grants`, `GrantsBySubject`, `GrantsByExpiry`, `SigningKeys`, `SsoDomains`, `SamlProviders`, `OidcProviders`, `UserProvisions`
+`Users`, `UserEmails`, `UserLogins`, `UserExternalIds`, `Clients`, `Grants`, `GrantsBySubject`, `GrantsByExpiry`, `SigningKeys`, `SsoDomains`, `SamlProviders`, `OidcProviders`, `UserProvisions`, `MfaCredentials`, `MfaChallenges`, `MfaWebAuthnIndex`, `ScimTokens`, `ScimGroups`, `ScimGroupExternalIds`, `Roles`
 
 Các bảng tạm thời (`SamlReplayCache`, `OidcStateStore`) bị loại trừ theo mặc định — thêm chúng rõ ràng với `--tables` nếu cần.
 

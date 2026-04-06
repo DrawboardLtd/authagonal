@@ -109,13 +109,7 @@ The login UI is published as an npm package for customization:
 npm install @drawboard/authagonal-login
 ```
 
-Customize via `branding.json` (see [Branding](branding)) and build the SPA into your server's `wwwroot/`:
-
-```bash
-cd node_modules/@drawboard/authagonal-login
-npx vite build
-cp -r dist/* /path/to/wwwroot/
-```
+The package ships compiled JS and CSS — import components and styles directly in your own React app. See [Custom Server](custom-server) for a full walkthrough.
 
 ## Migration Tool
 

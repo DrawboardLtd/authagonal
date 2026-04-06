@@ -52,6 +52,17 @@ The migration is idempotent — safe to run multiple times. Existing records are
 2. Run a final delta migration close to cutover
 3. Re-run if anything goes wrong
 
+## What Is NOT Migrated
+
+These Authagonal features have no Duende equivalent and start empty after migration:
+
+- **Roles** — RBAC roles and user-role assignments
+- **MFA credentials** — TOTP, WebAuthn, and recovery code enrollments
+- **SCIM tokens and groups** — SCIM provisioning configuration
+- **User provisions** — TCC downstream app provisioning state
+
+Users will need to re-enroll MFA if your client's `MfaPolicy` is `Enabled` or `Required`.
+
 ## Signing Key Migration
 
 Not yet automated. To keep existing tokens valid across the cutover:

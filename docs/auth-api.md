@@ -64,9 +64,49 @@ The client should redirect to an MFA setup page. The setup token authenticates t
 | `invalid_credentials` | 401 | Wrong email or password |
 | `locked_out` | 423 | Too many failed attempts. `retryAfter` (seconds) is included. |
 | `email_not_confirmed` | 403 | Email not yet verified |
-| `sso_required` | 403 | Domain requires SSO. `redirectUrl` points to the SSO login. |
+| `sso_required` | 409 | Domain requires SSO. `redirectUrl` points to the SSO login. |
 | `email_required` | 400 | Email field is empty |
 | `password_required` | 400 | Password field is empty |
+
+### Register
+
+```
+POST /api/auth/register
+Content-Type: application/json
+
+{
+  "email": "user@example.com",
+  "password": "SecurePass1!",
+  "firstName": "Jane",
+  "lastName": "Doe"
+}
+```
+
+Creates a new user account and sends a verification email. Returns `409` if the email is already registered.
+
+### Confirm Email
+
+```
+POST /api/auth/confirm-email?token={token}
+```
+
+Confirms the user's email address using the token from the verification email.
+
+### Providers
+
+```
+GET /api/auth/providers
+```
+
+Returns the list of configured external identity providers (for rendering SSO buttons):
+
+```json
+{
+  "providers": [
+    { "connectionId": "google", "name": "Google", "loginUrl": "/oidc/google/login" }
+  ]
+}
+```
 
 ### Logout
 
@@ -105,7 +145,7 @@ Content-Type: application/json
 |---|---|
 | `weak_password` | Doesn't meet strength requirements |
 | `invalid_token` | Token is malformed |
-| `token_expired` | Token has expired (24-hour validity) |
+| `token_expired` | Token has expired (default 60-minute validity, configurable via `Auth:PasswordResetExpiryMinutes`) |
 
 ### Session
 
@@ -232,7 +272,7 @@ Returns the user's enrolled MFA methods. Requires cookie auth or `X-MFA-Setup-To
 
 ```
 POST /api/auth/mfa/totp/setup
-→ { "setupToken": "...", "qrCodeDataUri": "data:image/svg+xml;base64,..." }
+→ { "setupToken": "...", "qrCodeDataUri": "data:image/png;base64,...", "manualKey": "BASE32..." }
 
 POST /api/auth/mfa/totp/confirm
 { "setupToken": "...", "code": "123456" }

@@ -33,6 +33,7 @@ O Authagonal é configurado via `appsettings.json` ou variáveis de ambiente. As
 | `Auth:SigningKeyLifetimeDays` | `90` | Tempo de vida da chave de assinatura RSA antes da rotação automática |
 | `Auth:SigningKeyCacheRefreshMinutes` | `60` | Frequência de recarregamento das chaves de assinatura do armazenamento |
 | `Auth:SecurityStampRevalidationMinutes` | `30` | Intervalo entre verificações do carimbo de segurança do cookie |
+| `DataProtection:BlobUri` | *(nenhum)* | URI de Blob do Azure para persistir chaves de Data Protection entre instâncias |
 
 ## Cache e Tempos Limite
 
@@ -267,13 +268,20 @@ Quando configurado, os valores de segredo que se assemelham a referências do Ke
 
 ## E-mail
 
-Por padrão, o Authagonal usa um serviço de e-mail no-op que descarta silenciosamente todos os e-mails. Para habilitar o envio de e-mails, registre uma implementação de `IEmailService` antes de chamar `AddAuthagonal()`. O serviço integrado `EmailService` usa o SendGrid.
+Por padrão, o Authagonal usa um serviço de e-mail no-op que descarta silenciosamente todos os e-mails. Para habilitar o envio de e-mails, registre uma implementação de `IEmailService` antes de chamar `AddAuthagonal()`.
+
+O `EmailService` integrado usa o SendGrid. Para usá-lo, registre-o explicitamente:
+
+```csharp
+services.AddSingleton<IEmailService, EmailService>();
+services.AddAuthagonal(configuration);
+```
 
 | Definição | Descrição |
 |---|---|
 | `Email:SendGridApiKey` | Chave de API do SendGrid para envio de e-mails |
-| `Email:FromAddress` | Endereço de e-mail do remetente |
-| `Email:FromName` | Nome de exibição do remetente |
+| `Email:SenderEmail` | Endereço de e-mail do remetente |
+| `Email:SenderName` | Nome de exibição do remetente |
 | `Email:VerificationTemplateId` | ID do template dinâmico do SendGrid para verificação de e-mail |
 | `Email:PasswordResetTemplateId` | ID do template dinâmico do SendGrid para redefinição de senha |
 
@@ -366,8 +374,8 @@ O CORS é configurado dinamicamente. As origens de todos os `AllowedCorsOrigins`
   },
   "Email": {
     "SendGridApiKey": "SG.xxx",
-    "FromAddress": "noreply@example.com",
-    "FromName": "Example Auth",
+    "SenderEmail": "noreply@example.com",
+    "SenderName": "Example Auth",
     "VerificationTemplateId": "d-xxx",
     "PasswordResetTemplateId": "d-yyy"
   },

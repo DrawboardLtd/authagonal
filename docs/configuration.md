@@ -31,7 +31,11 @@ Authagonal is configured via `appsettings.json` or environment variables. Enviro
 | `Auth:RefreshTokenReuseGraceSeconds` | `60` | Grace window for concurrent refresh token reuse |
 | `Auth:SigningKeyLifetimeDays` | `90` | RSA signing key lifetime before automatic rotation |
 | `Auth:SigningKeyCacheRefreshMinutes` | `60` | How often signing keys are reloaded from storage |
+| `Auth:KeyRotationEnabled` | `false` | Enable automatic signing key rotation |
+| `Auth:KeyRotationCheckIntervalMinutes` | `360` | How often to check if the active key needs rotation |
+| `Auth:KeyRotationLeadTimeDays` | `14` | Rotate when the active key expires within this many days |
 | `Auth:SecurityStampRevalidationMinutes` | `30` | Interval between cookie security stamp checks |
+| `DataProtection:BlobUri` | *(none)* | Azure Blob URI for persisting data protection keys across instances |
 
 ## Cache and Timeouts
 
@@ -383,8 +387,8 @@ CORS is configured dynamically. Origins from all registered clients' `AllowedCor
   },
   "Email": {
     "SendGridApiKey": "SG.xxx",
-    "FromAddress": "noreply@example.com",
-    "FromName": "Example Auth",
+    "SenderEmail": "noreply@example.com",
+    "SenderName": "Example Auth",
     "VerificationTemplateId": "d-xxx",
     "PasswordResetTemplateId": "d-yyy"
   },

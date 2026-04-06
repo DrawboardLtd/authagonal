@@ -55,7 +55,7 @@ Si no existe un archivo `.lastbackup`, la primera ejecucion incremental realiza 
 
 La herramienta de copia de seguridad incluye todas las tablas de Authagonal de forma predeterminada:
 
-`Users`, `UserEmails`, `UserLogins`, `Clients`, `Grants`, `GrantsBySubject`, `GrantsByExpiry`, `SigningKeys`, `SsoDomains`, `SamlProviders`, `OidcProviders`, `UserProvisions`
+`Users`, `UserEmails`, `UserLogins`, `UserExternalIds`, `Clients`, `Grants`, `GrantsBySubject`, `GrantsByExpiry`, `SigningKeys`, `SsoDomains`, `SamlProviders`, `OidcProviders`, `UserProvisions`, `MfaCredentials`, `MfaChallenges`, `MfaWebAuthnIndex`, `ScimTokens`, `ScimGroups`, `ScimGroupExternalIds`, `Roles`
 
 Las tablas transitorias (`SamlReplayCache`, `OidcStateStore`) se excluyen de forma predeterminada; incluyalas explicitamente con `--tables` si es necesario.
 

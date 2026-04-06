@@ -6,7 +6,7 @@ locale: zh-Hans
 
 # 本地化
 
-Authagonal 开箱即支持六种语言：英语、简体中文 (`zh-Hans`)、德语 (`de`)、法语 (`fr`)、西班牙语 (`es`) 和越南语 (`vi`)。本地化涵盖服务器 API 响应、登录界面以及本文档站点。
+Authagonal 开箱即支持八种语言：英语、简体中文 (`zh-Hans`)、德语 (`de`)、法语 (`fr`)、西班牙语 (`es`)、越南语 (`vi`)、葡萄牙语 (`pt`) 和克林贡语 (`tlh`)。本地化涵盖服务器 API 响应、登录界面以及本文档站点。
 
 ## 支持的语言
 
@@ -18,6 +18,7 @@ Authagonal 开箱即支持六种语言：英语、简体中文 (`zh-Hans`)、德
 | `fr` | 法语 |
 | `es` | 西班牙语 |
 | `vi` | 越南语 |
+| `pt` | 葡萄牙语 |
 
 ## 服务器（API 响应）
 
@@ -65,6 +66,8 @@ Resources/
   SharedMessages.de.resx
   SharedMessages.fr.resx
   SharedMessages.es.resx
+  SharedMessages.vi.resx
+  SharedMessages.pt.resx
 ```
 
 ## 登录界面
@@ -75,9 +78,10 @@ Resources/
 
 检测顺序如下：
 
-1. **查询参数** — `?lng=de` 优先级最高
-2. **浏览器语言** — `navigator.language`（自动）
-3. **回退** — 英语 (`en`)
+1. **localStorage** — 来自上次访问的持久化偏好
+2. **查询参数** — `?lng=de` 覆盖浏览器检测
+3. **浏览器语言** — `navigator.language`（自动）
+4. **回退** — 英语 (`en`)
 
 ### 翻译文件
 
@@ -91,6 +95,9 @@ i18n/
   de.json         # German
   fr.json         # French
   es.json         # Spanish
+  vi.json         # Vietnamese
+  pt.json         # Portuguese
+  tlh.json        # Klingon
 ```
 
 ### 密码策略标签
@@ -127,7 +134,7 @@ src/Authagonal.Server/Resources/SharedMessages.ja.resx
 在 `AuthagonalExtensions.cs` 中将 `"ja"` 添加到支持的文化数组中：
 
 ```csharp
-var supportedCultures = new[] { "en", "zh-Hans", "de", "fr", "es", "ja" };
+var supportedCultures = new[] { "en", "zh-Hans", "de", "fr", "es", "vi", "pt", "ja" };
 ```
 
 ### 2. 登录界面

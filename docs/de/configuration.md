@@ -33,6 +33,7 @@ Authagonal wird ueber `appsettings.json` oder Umgebungsvariablen konfiguriert. U
 | `Auth:SigningKeyLifetimeDays` | `90` | RSA-Signaturschluessel-Lebensdauer vor automatischer Rotation |
 | `Auth:SigningKeyCacheRefreshMinutes` | `60` | Wie oft Signaturschluessel aus dem Speicher neu geladen werden |
 | `Auth:SecurityStampRevalidationMinutes` | `30` | Intervall zwischen Cookie-Sicherheitsstempel-Pruefungen |
+| `DataProtection:BlobUri` | *(keine)* | Azure Blob-URI zur Persistierung von Data Protection-Schluesseln ueber Instanzen hinweg |
 
 ## Cache und Timeouts
 
@@ -272,8 +273,8 @@ Standardmäßig verwendet Authagonal einen No-Op-E-Mail-Dienst, der alle E-Mails
 | Einstellung | Beschreibung |
 |---|---|
 | `Email:SendGridApiKey` | SendGrid-API-Schluessel zum Versenden von E-Mails |
-| `Email:FromAddress` | Absender-E-Mail-Adresse |
-| `Email:FromName` | Absender-Anzeigename |
+| `Email:SenderEmail` | Absender-E-Mail-Adresse |
+| `Email:SenderName` | Absender-Anzeigename |
 | `Email:VerificationTemplateId` | SendGrid Dynamic Template ID fuer E-Mail-Verifizierung |
 | `Email:PasswordResetTemplateId` | SendGrid Dynamic Template ID fuer Passwortzuruecksetzung |
 
@@ -370,8 +371,8 @@ CORS wird dynamisch konfiguriert. Urspruenge aus den `AllowedCorsOrigins` aller 
   },
   "Email": {
     "SendGridApiKey": "SG.xxx",
-    "FromAddress": "noreply@example.com",
-    "FromName": "Example Auth",
+    "SenderEmail": "noreply@example.com",
+    "SenderName": "Example Auth",
     "VerificationTemplateId": "d-xxx",
     "PasswordResetTemplateId": "d-yyy"
   },

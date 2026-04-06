@@ -110,13 +110,7 @@ Giao diện đăng nhập được phát hành dưới dạng gói npm để tù
 npm install @drawboard/authagonal-login
 ```
 
-Tùy chỉnh qua `branding.json` (xem [Tùy chỉnh giao diện](branding)) và build SPA vào thư mục `wwwroot/` của máy chủ:
-
-```bash
-cd node_modules/@drawboard/authagonal-login
-npx vite build
-cp -r dist/* /path/to/wwwroot/
-```
+Gói đã bao gồm JS và CSS đã biên dịch — nhập trực tiếp các component và style vào ứng dụng React của bạn. Xem [Máy chủ tùy chỉnh](custom-server) để biết hướng dẫn đầy đủ.
 
 ## Công cụ di chuyển
 

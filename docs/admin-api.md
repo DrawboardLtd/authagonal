@@ -123,30 +123,127 @@ Removes a specific MFA credential (e.g., a lost authenticator). If the last prim
 ### SAML Providers
 
 ```
-GET    /api/v1/sso/saml                    # List all
-GET    /api/v1/sso/saml/{connectionId}     # Get one
-POST   /api/v1/sso/saml                    # Create
-PUT    /api/v1/sso/saml/{connectionId}     # Update
-DELETE /api/v1/sso/saml/{connectionId}     # Delete
+POST   /api/v1/saml/connections                    # Create
+GET    /api/v1/saml/connections/{connectionId}     # Get one
+PUT    /api/v1/saml/connections/{connectionId}     # Update
+DELETE /api/v1/saml/connections/{connectionId}     # Delete
 ```
 
 ### OIDC Providers
 
 ```
-GET    /api/v1/sso/oidc                    # List all
-GET    /api/v1/sso/oidc/{connectionId}     # Get one
-POST   /api/v1/sso/oidc                    # Create
-PUT    /api/v1/sso/oidc/{connectionId}     # Update
-DELETE /api/v1/sso/oidc/{connectionId}     # Delete
+POST   /api/v1/oidc/connections                    # Create
+GET    /api/v1/oidc/connections/{connectionId}     # Get one
+DELETE /api/v1/oidc/connections/{connectionId}     # Delete
 ```
 
 ### SSO Domains
 
 ```
 GET    /api/v1/sso/domains                 # List all
-GET    /api/v1/sso/domains/{domain}        # Get one
-POST   /api/v1/sso/domains                 # Create
-DELETE /api/v1/sso/domains/{domain}        # Delete
+```
+
+## Roles
+
+### List Roles
+
+```
+GET /api/v1/roles
+```
+
+### Get Role
+
+```
+GET /api/v1/roles/{roleId}
+```
+
+### Create Role
+
+```
+POST /api/v1/roles
+Content-Type: application/json
+
+{
+  "name": "admin",
+  "description": "Administrator role"
+}
+```
+
+### Update Role
+
+```
+PUT /api/v1/roles/{roleId}
+Content-Type: application/json
+
+{
+  "name": "admin",
+  "description": "Updated description"
+}
+```
+
+### Delete Role
+
+```
+DELETE /api/v1/roles/{roleId}
+```
+
+### Assign Role to User
+
+```
+POST /api/v1/roles/assign
+Content-Type: application/json
+
+{
+  "userId": "user-id",
+  "roleId": "role-id"
+}
+```
+
+### Unassign Role from User
+
+```
+POST /api/v1/roles/unassign
+Content-Type: application/json
+
+{
+  "userId": "user-id",
+  "roleId": "role-id"
+}
+```
+
+### Get User's Roles
+
+```
+GET /api/v1/roles/user/{userId}
+```
+
+## SCIM Tokens
+
+### Generate Token
+
+```
+POST /api/v1/scim/tokens
+Content-Type: application/json
+
+{
+  "clientId": "client-id"
+}
+```
+
+Returns the raw token once. Store it securely — it cannot be retrieved again.
+
+### List Tokens
+
+```
+GET /api/v1/scim/tokens?clientId=client-id
+```
+
+Returns token metadata (ID, created date) without the raw token value.
+
+### Revoke Token
+
+```
+DELETE /api/v1/scim/tokens/{tokenId}?clientId=client-id
 ```
 
 ## Tokens
@@ -154,14 +251,7 @@ DELETE /api/v1/sso/domains/{domain}        # Delete
 ### Impersonate User
 
 ```
-POST /api/v1/tokens/impersonate
-Content-Type: application/json
-
-{
-  "userId": "user-id",
-  "clientId": "client-id",
-  "scopes": ["openid", "profile"]
-}
+POST /api/v1/token?clientId=client-id&userId=user-id&scopes=openid,profile
 ```
 
-Issues tokens on behalf of a user without requiring their credentials. Useful for testing and support.
+Issues tokens on behalf of a user without requiring their credentials. Useful for testing and support. Parameters are passed as query strings. Optional `refreshTokenLifetime` parameter controls refresh token validity.

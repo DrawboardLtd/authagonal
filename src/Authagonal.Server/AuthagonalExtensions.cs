@@ -120,6 +120,7 @@ public static class AuthagonalExtensions
         services.AddScoped<ITokenService, TokenService>();
         services.AddHostedService<TokenCleanupService>();
         services.AddHostedService<GrantReconciliationService>();
+        services.AddHostedService<SigningKeyRotationService>();
         services.AddHttpClient("Provisioning");
         services.AddHostedService<ClientSeedService>();
         services.AddHostedService<ProviderSeedService>();

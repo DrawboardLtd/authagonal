@@ -6,7 +6,7 @@ locale: de
 
 # Lokalisierung
 
-Authagonal unterstutzt sechs Sprachen standardmassig: Englisch, Vereinfachtes Chinesisch (`zh-Hans`), Deutsch (`de`), Franzosisch (`fr`), Spanisch (`es`) und Vietnamesisch (`vi`). Die Lokalisierung umfasst die Server-API-Antworten, die Login-Oberflache und diese Dokumentationsseite.
+Authagonal unterstuetzt acht Sprachen standardmaessig: Englisch, Vereinfachtes Chinesisch (`zh-Hans`), Deutsch (`de`), Franzoesisch (`fr`), Spanisch (`es`), Vietnamesisch (`vi`), Portugiesisch (`pt`) und Klingonisch (`tlh`). Die Lokalisierung umfasst die Server-API-Antworten, die Login-Oberflaeche und diese Dokumentationsseite.
 
 ## Unterstutzte Sprachen
 
@@ -15,9 +15,10 @@ Authagonal unterstutzt sechs Sprachen standardmassig: Englisch, Vereinfachtes Ch
 | `en` | Englisch (Standard) |
 | `zh-Hans` | Vereinfachtes Chinesisch |
 | `de` | Deutsch |
-| `fr` | Franzosisch |
+| `fr` | Franzoesisch |
 | `es` | Spanisch |
 | `vi` | Vietnamesisch |
+| `pt` | Portugiesisch |
 
 ## Server (API-Antworten)
 
@@ -65,6 +66,8 @@ Resources/
   SharedMessages.de.resx
   SharedMessages.fr.resx
   SharedMessages.es.resx
+  SharedMessages.vi.resx
+  SharedMessages.pt.resx
 ```
 
 ## Login-Oberflache

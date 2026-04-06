@@ -55,7 +55,7 @@ Si aucun fichier `.lastbackup` n'existe, la premiere execution incrementale effe
 
 L'outil de sauvegarde inclut toutes les tables Authagonal par defaut :
 
-`Users`, `UserEmails`, `UserLogins`, `Clients`, `Grants`, `GrantsBySubject`, `GrantsByExpiry`, `SigningKeys`, `SsoDomains`, `SamlProviders`, `OidcProviders`, `UserProvisions`
+`Users`, `UserEmails`, `UserLogins`, `UserExternalIds`, `Clients`, `Grants`, `GrantsBySubject`, `GrantsByExpiry`, `SigningKeys`, `SsoDomains`, `SamlProviders`, `OidcProviders`, `UserProvisions`, `MfaCredentials`, `MfaChallenges`, `MfaWebAuthnIndex`, `ScimTokens`, `ScimGroups`, `ScimGroupExternalIds`, `Roles`
 
 Les tables transitoires (`SamlReplayCache`, `OidcStateStore`) sont exclues par defaut — incluez-les explicitement avec `--tables` si necessaire.
 

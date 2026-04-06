@@ -124,30 +124,127 @@ DELETE /api/v1/profile/{userId}/mfa/{credentialId}
 ### SAML 提供者
 
 ```
-GET    /api/v1/sso/saml                    # 列出所有
-GET    /api/v1/sso/saml/{connectionId}     # 获取单个
-POST   /api/v1/sso/saml                    # 创建
-PUT    /api/v1/sso/saml/{connectionId}     # 更新
-DELETE /api/v1/sso/saml/{connectionId}     # 删除
+POST   /api/v1/saml/connections                    # 创建
+GET    /api/v1/saml/connections/{connectionId}     # 获取单个
+PUT    /api/v1/saml/connections/{connectionId}     # 更新
+DELETE /api/v1/saml/connections/{connectionId}     # 删除
 ```
 
 ### OIDC 提供者
 
 ```
-GET    /api/v1/sso/oidc                    # 列出所有
-GET    /api/v1/sso/oidc/{connectionId}     # 获取单个
-POST   /api/v1/sso/oidc                    # 创建
-PUT    /api/v1/sso/oidc/{connectionId}     # 更新
-DELETE /api/v1/sso/oidc/{connectionId}     # 删除
+POST   /api/v1/oidc/connections                    # 创建
+GET    /api/v1/oidc/connections/{connectionId}     # 获取单个
+DELETE /api/v1/oidc/connections/{connectionId}     # 删除
 ```
 
 ### SSO 域
 
 ```
 GET    /api/v1/sso/domains                 # 列出所有
-GET    /api/v1/sso/domains/{domain}        # 获取单个
-POST   /api/v1/sso/domains                 # 创建
-DELETE /api/v1/sso/domains/{domain}        # 删除
+```
+
+## 角色
+
+### 列出角色
+
+```
+GET /api/v1/roles
+```
+
+### 获取角色
+
+```
+GET /api/v1/roles/{roleId}
+```
+
+### 创建角色
+
+```
+POST /api/v1/roles
+Content-Type: application/json
+
+{
+  "name": "admin",
+  "description": "Administrator role"
+}
+```
+
+### 更新角色
+
+```
+PUT /api/v1/roles/{roleId}
+Content-Type: application/json
+
+{
+  "name": "admin",
+  "description": "Updated description"
+}
+```
+
+### 删除角色
+
+```
+DELETE /api/v1/roles/{roleId}
+```
+
+### 为用户分配角色
+
+```
+POST /api/v1/roles/assign
+Content-Type: application/json
+
+{
+  "userId": "user-id",
+  "roleId": "role-id"
+}
+```
+
+### 取消用户角色分配
+
+```
+POST /api/v1/roles/unassign
+Content-Type: application/json
+
+{
+  "userId": "user-id",
+  "roleId": "role-id"
+}
+```
+
+### 获取用户的角色
+
+```
+GET /api/v1/roles/user/{userId}
+```
+
+## SCIM 令牌
+
+### 生成令牌
+
+```
+POST /api/v1/scim/tokens
+Content-Type: application/json
+
+{
+  "clientId": "client-id"
+}
+```
+
+返回原始令牌一次。请安全存储 -- 之后无法再次获取。
+
+### 列出令牌
+
+```
+GET /api/v1/scim/tokens?clientId=client-id
+```
+
+返回令牌元数据（ID、创建日期），不包含原始令牌值。
+
+### 撤销令牌
+
+```
+DELETE /api/v1/scim/tokens/{tokenId}?clientId=client-id
 ```
 
 ## 令牌
@@ -155,14 +252,7 @@ DELETE /api/v1/sso/domains/{domain}        # 删除
 ### 模拟用户
 
 ```
-POST /api/v1/tokens/impersonate
-Content-Type: application/json
-
-{
-  "userId": "user-id",
-  "clientId": "client-id",
-  "scopes": ["openid", "profile"]
-}
+POST /api/v1/token?clientId=client-id&userId=user-id&scopes=openid,profile
 ```
 
-代表用户签发令牌，无需其凭据。适用于测试和技术支持。
+代表用户签发令牌，无需其凭据。适用于测试和技术支持。参数通过查询字符串传递。可选的 `refreshTokenLifetime` 参数控制刷新令牌的有效期。

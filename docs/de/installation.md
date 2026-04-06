@@ -110,13 +110,7 @@ Die Login-Oberflaeche wird als npm-Paket zur Anpassung veroeffentlicht:
 npm install @drawboard/authagonal-login
 ```
 
-Passen Sie es ueber `branding.json` an (siehe [Branding](branding)) und erstellen Sie die SPA in das `wwwroot/`-Verzeichnis Ihres Servers:
-
-```bash
-cd node_modules/@drawboard/authagonal-login
-npx vite build
-cp -r dist/* /path/to/wwwroot/
-```
+Das Paket liefert kompiliertes JS und CSS -- importieren Sie Komponenten und Stile direkt in Ihre eigene React-App. Siehe [Benutzerdefinierter Server](custom-server) fuer eine vollstaendige Anleitung.
 
 ## Migrationstool
 

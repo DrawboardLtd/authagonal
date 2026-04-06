@@ -42,7 +42,11 @@ locale: zh-Hans
 | `primaryColor` | `string` | `"#2563eb"` | 按钮、链接和焦点指示器的十六进制颜色 |
 | `supportEmail` | `string \| null` | `null` | 技术支持联系邮箱（保留供将来使用） |
 | `showForgotPassword` | `boolean` | `true` | 在登录页面显示/隐藏"忘记密码？"链接 |
+| `showRegistration` | `boolean` | `false` | 显示/隐藏自助注册链接 |
 | `customCssUrl` | `string \| null` | `null` | 在默认样式之后加载的自定义 CSS 文件的 URL |
+| `welcomeTitle` | `LocalizedString` | `null` | 覆盖登录页面标题（纯字符串或 `{ "en": "...", "de": "..." }`） |
+| `welcomeSubtitle` | `LocalizedString` | `null` | 覆盖登录页面副标题 |
+| `languages` | `array \| null` | `null` | 语言选择器选项（`[{ "code": "en", "label": "English" }, ...]`） |
 
 ## Docker 示例
 
@@ -78,37 +82,17 @@ services:
 
 `customCssUrl` 选项会在默认样式之后加载一个额外的样式表，因此您的规则具有更高优先级。适用于更改字体、调整间距或重新设计特定元素的样式。
 
-### 可用 CSS 类
-
-| 类名 | 元素 |
-|---|---|
-| `.auth-container` | 全页包装器（弹性居中） |
-| `.auth-card` | 登录卡片（带阴影的白色框） |
-| `.auth-logo` | 徽标/标题区域 |
-| `.auth-logo h1` | 文本页头（无徽标图片时） |
-| `.auth-logo-img` | 徽标图片（设置 `logoUrl` 时） |
-| `.auth-title` | 页面标题（"登录"、"重置密码"） |
-| `.auth-subtitle` | 标题下方的次要文本 |
-| `.form-group` | 表单字段包装器 |
-| `.form-group label` | 字段标签 |
-| `input` | 文本输入框 |
-| `.btn-primary` | 主要操作按钮 |
-| `.btn-secondary` | 次要按钮（例如"通过 SSO 继续"） |
-| `.alert-error` | 错误消息 |
-| `.alert-success` | 成功消息 |
-| `.link` | 文本链接 |
-| `.sso-notice` | SSO 检测通知 |
-| `.password-requirements` | 密码强度列表 |
-
 ### CSS 自定义属性
 
-主色调以 CSS 自定义属性的形式公开。您可以在自定义 CSS 中覆盖它，而不使用 `branding.json`：
+主色调通过 `--brand-primary` CSS 自定义属性设置（馈入 Tailwind 主题）。在自定义 CSS 中覆盖它，而不使用 `branding.json`：
 
 ```css
 :root {
-  --color-primary: #059669;
+  --brand-primary: #059669;
 }
 ```
+
+登录界面使用 Tailwind CSS。自定义 CSS 可以定位标准 HTML 元素和 Tailwind 实用类。导出的 UI 组件（`Button`、`Input`、`Card`、`Alert` 等）内部使用 Tailwind。
 
 ### 示例：自定义背景和字体
 
@@ -117,16 +101,6 @@ services:
 body {
   font-family: 'Inter', sans-serif;
   background-color: #0f172a;
-}
-
-.auth-card {
-  border-radius: 16px;
-  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.2);
-}
-
-.auth-logo h1 {
-  font-family: 'Inter', sans-serif;
-  font-weight: 800;
 }
 ```
 

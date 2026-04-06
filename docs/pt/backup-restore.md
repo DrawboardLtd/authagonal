@@ -55,7 +55,7 @@ Se nenhum arquivo `.lastbackup` existir, a primeira execucao incremental realiza
 
 A ferramenta de backup inclui todas as tabelas do Authagonal por padrao:
 
-`Users`, `UserEmails`, `UserLogins`, `Clients`, `Grants`, `GrantsBySubject`, `GrantsByExpiry`, `SigningKeys`, `SsoDomains`, `SamlProviders`, `OidcProviders`, `UserProvisions`
+`Users`, `UserEmails`, `UserLogins`, `UserExternalIds`, `Clients`, `Grants`, `GrantsBySubject`, `GrantsByExpiry`, `SigningKeys`, `SsoDomains`, `SamlProviders`, `OidcProviders`, `UserProvisions`, `MfaCredentials`, `MfaChallenges`, `MfaWebAuthnIndex`, `ScimTokens`, `ScimGroups`, `ScimGroupExternalIds`, `Roles`
 
 Tabelas transitorias (`SamlReplayCache`, `OidcStateStore`) sao excluidas por padrao — inclua-as explicitamente com `--tables` se necessario.
 

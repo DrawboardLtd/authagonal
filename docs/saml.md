@@ -16,10 +16,11 @@ Authagonal includes a homebrew SAML 2.0 Service Provider implementation. No thir
 
 ### Not Supported
 
-- IdP-initiated SSO
 - SAML logout (use session timeout)
 - Assertion encryption (don't publish an encryption cert)
 - Artifact binding
+
+IdP-initiated SSO is supported — the ACS endpoint handles responses without `InResponseTo` (skipping replay validation for unsolicited responses).
 
 ## Azure AD Setup
 
@@ -104,7 +105,6 @@ Azure AD claims (full URI format) are mapped to simple names:
 | `http://schemas.xmlsoap.org/ws/2005/05/identity/claims/surname` | `lastName` |
 | `http://schemas.xmlsoap.org/ws/2005/05/identity/claims/name` | `name` (UPN) |
 | `http://schemas.microsoft.com/identity/claims/objectidentifier` | `oid` |
-| `http://schemas.microsoft.com/identity/claims/tenantid` | `tenantId` |
 | `http://schemas.microsoft.com/identity/claims/displayname` | `displayName` |
 
 ## Security

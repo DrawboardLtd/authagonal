@@ -65,9 +65,49 @@ Content-Type: application/json
 | `invalid_credentials` | 401 | 邮箱或密码错误 |
 | `locked_out` | 423 | 失败尝试次数过多。包含 `retryAfter`（秒）。 |
 | `email_not_confirmed` | 403 | 邮箱尚未验证 |
-| `sso_required` | 403 | 该域需要 SSO。`redirectUrl` 指向 SSO 登录。 |
+| `sso_required` | 409 | 该域需要 SSO。`redirectUrl` 指向 SSO 登录。 |
 | `email_required` | 400 | 邮箱字段为空 |
 | `password_required` | 400 | 密码字段为空 |
+
+### 注册
+
+```
+POST /api/auth/register
+Content-Type: application/json
+
+{
+  "email": "user@example.com",
+  "password": "SecurePass1!",
+  "firstName": "Jane",
+  "lastName": "Doe"
+}
+```
+
+创建新用户账户并发送验证邮件。如果邮箱已被注册，返回 `409`。
+
+### 确认邮箱
+
+```
+POST /api/auth/confirm-email?token={token}
+```
+
+使用验证邮件中的令牌确认用户的邮箱地址。
+
+### 提供者
+
+```
+GET /api/auth/providers
+```
+
+返回已配置的外部身份提供者列表（用于渲染 SSO 按钮）：
+
+```json
+{
+  "providers": [
+    { "connectionId": "google", "name": "Google", "loginUrl": "/oidc/google/login" }
+  ]
+}
+```
 
 ### 注销
 
@@ -106,7 +146,7 @@ Content-Type: application/json
 |---|---|
 | `weak_password` | 不满足强度要求 |
 | `invalid_token` | 令牌格式错误 |
-| `token_expired` | 令牌已过期（24 小时有效期） |
+| `token_expired` | 令牌已过期（默认 60 分钟有效期，可通过 `Auth:PasswordResetExpiryMinutes` 配置） |
 
 ### 会话
 
@@ -233,7 +273,7 @@ GET /api/auth/mfa/status
 
 ```
 POST /api/auth/mfa/totp/setup
--> { "setupToken": "...", "qrCodeDataUri": "data:image/svg+xml;base64,..." }
+-> { "setupToken": "...", "qrCodeDataUri": "data:image/png;base64,...", "manualKey": "BASE32..." }
 
 POST /api/auth/mfa/totp/confirm
 { "setupToken": "...", "code": "123456" }

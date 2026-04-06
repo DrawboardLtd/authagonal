@@ -124,30 +124,127 @@ Xóa một thông tin xác thực MFA cụ thể (ví dụ: ứng dụng xác th
 ### Nhà cung cấp SAML
 
 ```
-GET    /api/v1/sso/saml                    # Liệt kê tất cả
-GET    /api/v1/sso/saml/{connectionId}     # Lấy một
-POST   /api/v1/sso/saml                    # Tạo mới
-PUT    /api/v1/sso/saml/{connectionId}     # Cập nhật
-DELETE /api/v1/sso/saml/{connectionId}     # Xóa
+POST   /api/v1/saml/connections                    # Tạo mới
+GET    /api/v1/saml/connections/{connectionId}     # Lấy một
+PUT    /api/v1/saml/connections/{connectionId}     # Cập nhật
+DELETE /api/v1/saml/connections/{connectionId}     # Xóa
 ```
 
 ### Nhà cung cấp OIDC
 
 ```
-GET    /api/v1/sso/oidc                    # Liệt kê tất cả
-GET    /api/v1/sso/oidc/{connectionId}     # Lấy một
-POST   /api/v1/sso/oidc                    # Tạo mới
-PUT    /api/v1/sso/oidc/{connectionId}     # Cập nhật
-DELETE /api/v1/sso/oidc/{connectionId}     # Xóa
+POST   /api/v1/oidc/connections                    # Tạo mới
+GET    /api/v1/oidc/connections/{connectionId}     # Lấy một
+DELETE /api/v1/oidc/connections/{connectionId}     # Xóa
 ```
 
 ### Tên miền SSO
 
 ```
 GET    /api/v1/sso/domains                 # Liệt kê tất cả
-GET    /api/v1/sso/domains/{domain}        # Lấy một
-POST   /api/v1/sso/domains                 # Tạo mới
-DELETE /api/v1/sso/domains/{domain}        # Xóa
+```
+
+## Vai trò
+
+### Liệt kê vai trò
+
+```
+GET /api/v1/roles
+```
+
+### Lấy vai trò
+
+```
+GET /api/v1/roles/{roleId}
+```
+
+### Tạo vai trò
+
+```
+POST /api/v1/roles
+Content-Type: application/json
+
+{
+  "name": "admin",
+  "description": "Administrator role"
+}
+```
+
+### Cập nhật vai trò
+
+```
+PUT /api/v1/roles/{roleId}
+Content-Type: application/json
+
+{
+  "name": "admin",
+  "description": "Updated description"
+}
+```
+
+### Xóa vai trò
+
+```
+DELETE /api/v1/roles/{roleId}
+```
+
+### Gán vai trò cho người dùng
+
+```
+POST /api/v1/roles/assign
+Content-Type: application/json
+
+{
+  "userId": "user-id",
+  "roleId": "role-id"
+}
+```
+
+### Hủy gán vai trò khỏi người dùng
+
+```
+POST /api/v1/roles/unassign
+Content-Type: application/json
+
+{
+  "userId": "user-id",
+  "roleId": "role-id"
+}
+```
+
+### Lấy vai trò của người dùng
+
+```
+GET /api/v1/roles/user/{userId}
+```
+
+## Token SCIM
+
+### Tạo token
+
+```
+POST /api/v1/scim/tokens
+Content-Type: application/json
+
+{
+  "clientId": "client-id"
+}
+```
+
+Trả về token thô một lần. Lưu trữ an toàn — không thể truy xuất lại.
+
+### Liệt kê token
+
+```
+GET /api/v1/scim/tokens?clientId=client-id
+```
+
+Trả về metadata token (ID, ngày tạo) mà không có giá trị token thô.
+
+### Thu hồi token
+
+```
+DELETE /api/v1/scim/tokens/{tokenId}?clientId=client-id
 ```
 
 ## Token
@@ -155,14 +252,7 @@ DELETE /api/v1/sso/domains/{domain}        # Xóa
 ### Giả mạo người dùng
 
 ```
-POST /api/v1/tokens/impersonate
-Content-Type: application/json
-
-{
-  "userId": "user-id",
-  "clientId": "client-id",
-  "scopes": ["openid", "profile"]
-}
+POST /api/v1/token?clientId=client-id&userId=user-id&scopes=openid,profile
 ```
 
-Cấp token thay mặt người dùng mà không cần thông tin đăng nhập của họ. Hữu ích cho kiểm thử và hỗ trợ.
+Cấp token thay mặt người dùng mà không cần thông tin đăng nhập của họ. Hữu ích cho kiểm thử và hỗ trợ. Các tham số được truyền dưới dạng query string. Tham số `refreshTokenLifetime` tùy chọn điều khiển thời hạn refresh token.

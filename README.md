@@ -24,6 +24,7 @@ This starts the auth server on `http://localhost:8080` with an Azurite storage e
 |---|---|
 | `src/Authagonal.Core` | Domain models, interfaces, extensibility contracts |
 | `src/Authagonal.Storage` | Azure Table Storage implementations |
+| `src/Authagonal.Backup` | Backup, restore, merge and rollup library for Table Storage data |
 | `src/Authagonal.Server` | ASP.NET Core host — OIDC, SAML, auth API, admin API |
 | `login-app` | React/TypeScript login SPA (Vite), published as `@drawboard/authagonal-login` |
 | `tools/Authagonal.Migration` | Duende IdentityServer → Table Storage migration tool |
@@ -42,7 +43,10 @@ This starts the auth server on `http://localhost:8080` with an Azurite storage e
 - **Multi-Factor Authentication** — TOTP (authenticator apps), WebAuthn/passkeys, recovery codes. Per-client MFA policy (`Disabled`, `Enabled`, `Required`) with `IAuthHook` override for per-user control.
 - **Configurable Password Policy** — min length, character requirements, exposed via API for dynamic frontend validation
 - **TCC Provisioning** — Try-Confirm-Cancel provisioning into downstream apps at authorize time
-- **Auth Hooks** — `IAuthHook` extensibility point for audit logging, custom validation, webhooks
+- **Auth Hooks** — `IAuthHook` extensibility point for audit logging, custom validation, webhooks. Multiple implementations run in registration order.
+- **Role-Based Access Control** — role CRUD, user-role assignment/removal via admin API (`/api/v1/roles`)
+- **Multi-Tenant Abstractions** — `ITenantContext` and `IKeyManager` interfaces for per-tenant configuration and signing key isolation
+- **Backup & Restore** — incremental backups with tombstone-based delete tracking, restore with upsert/merge/clean modes
 - **Composable Library** — `AddAuthagonal()` / `UseAuthagonal()` extension methods to host in your own project
 - **Session Invalidation** — SecurityStamp rotation on org change, password reset
 - **SCIM 2.0 Provisioning** — inbound user/group provisioning from Entra ID, Okta, OneLogin. Per-client static Bearer tokens, soft-delete deactivation, TCC downstream triggers
@@ -82,7 +86,7 @@ cd login-app && npm install && npm run dev
 ```csharp
 var builder = WebApplication.CreateBuilder(args);
 
-// Override extensibility points before AddAuthagonal
+// Override extensibility points before AddAuthagonal (multiple hooks supported)
 builder.Services.AddSingleton<IAuthHook, MyAuditHook>();
 builder.Services.AddSingleton<IEmailService, MyEmailService>();
 

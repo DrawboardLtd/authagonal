@@ -65,9 +65,49 @@ Der Client sollte zu einer MFA-Einrichtungsseite weiterleiten. Das Setup-Token a
 | `invalid_credentials` | 401 | Falsche E-Mail oder falsches Passwort |
 | `locked_out` | 423 | Zu viele fehlgeschlagene Versuche. `retryAfter` (Sekunden) ist enthalten. |
 | `email_not_confirmed` | 403 | E-Mail noch nicht verifiziert |
-| `sso_required` | 403 | Domain erfordert SSO. `redirectUrl` verweist auf die SSO-Anmeldung. |
+| `sso_required` | 409 | Domain erfordert SSO. `redirectUrl` verweist auf die SSO-Anmeldung. |
 | `email_required` | 400 | E-Mail-Feld ist leer |
 | `password_required` | 400 | Passwort-Feld ist leer |
+
+### Registrieren
+
+```
+POST /api/auth/register
+Content-Type: application/json
+
+{
+  "email": "user@example.com",
+  "password": "SecurePass1!",
+  "firstName": "Jane",
+  "lastName": "Doe"
+}
+```
+
+Erstellt ein neues Benutzerkonto und sendet eine Verifizierungs-E-Mail. Gibt `409` zurueck, wenn die E-Mail bereits registriert ist.
+
+### E-Mail bestaetigen
+
+```
+POST /api/auth/confirm-email?token={token}
+```
+
+Bestaetigt die E-Mail-Adresse des Benutzers mit dem Token aus der Verifizierungs-E-Mail.
+
+### Anbieter
+
+```
+GET /api/auth/providers
+```
+
+Gibt die Liste der konfigurierten externen Identitaetsanbieter zurueck (zum Rendern von SSO-Schaltflaechen):
+
+```json
+{
+  "providers": [
+    { "connectionId": "google", "name": "Google", "loginUrl": "/oidc/google/login" }
+  ]
+}
+```
 
 ### Abmelden
 
@@ -106,7 +146,7 @@ Content-Type: application/json
 |---|---|
 | `weak_password` | Erfuellt nicht die Staerkeanforderungen |
 | `invalid_token` | Token ist fehlerhaft |
-| `token_expired` | Token ist abgelaufen (24 Stunden Gueltigkeit) |
+| `token_expired` | Token ist abgelaufen (standardmaessig 60 Minuten Gueltigkeit, konfigurierbar ueber `Auth:PasswordResetExpiryMinutes`) |
 
 ### Sitzung
 
@@ -233,7 +273,7 @@ Gibt die registrierten MFA-Methoden des Benutzers zurueck. Erfordert Cookie-Auth
 
 ```
 POST /api/auth/mfa/totp/setup
-→ { "setupToken": "...", "qrCodeDataUri": "data:image/svg+xml;base64,..." }
+→ { "setupToken": "...", "qrCodeDataUri": "data:image/png;base64,...", "manualKey": "BASE32..." }
 
 POST /api/auth/mfa/totp/confirm
 { "setupToken": "...", "code": "123456" }

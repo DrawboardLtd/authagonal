@@ -5,7 +5,7 @@ title: Localization
 
 # Localization
 
-Authagonal supports seven languages out of the box: English, Simplified Chinese (`zh-Hans`), German (`de`), French (`fr`), Spanish (`es`), Vietnamese (`vi`), and Portuguese (`pt`). Localization covers the server API responses, the login UI, and this documentation site.
+Authagonal supports eight languages out of the box: English, Simplified Chinese (`zh-Hans`), German (`de`), French (`fr`), Spanish (`es`), Vietnamese (`vi`), Portuguese (`pt`), and Klingon (`tlh`). Localization covers the server API responses, the login UI, and this documentation site.
 
 ## Supported Languages
 
@@ -65,6 +65,8 @@ Resources/
   SharedMessages.de.resx
   SharedMessages.fr.resx
   SharedMessages.es.resx
+  SharedMessages.vi.resx
+  SharedMessages.pt.resx
 ```
 
 ## Login UI
@@ -75,9 +77,10 @@ The login SPA uses [react-i18next](https://react.i18next.com/) for client-side l
 
 The detection order is:
 
-1. **Query parameter** — `?lng=de` overrides everything
-2. **Browser language** — `navigator.language` (automatic)
-3. **Fallback** — English (`en`)
+1. **localStorage** — persisted preference from a previous visit
+2. **Query parameter** — `?lng=de` overrides browser detection
+3. **Browser language** — `navigator.language` (automatic)
+4. **Fallback** — English (`en`)
 
 ### Translation files
 
@@ -91,6 +94,9 @@ i18n/
   de.json         # German
   fr.json         # French
   es.json         # Spanish
+  vi.json         # Vietnamese
+  pt.json         # Portuguese
+  tlh.json        # Klingon
 ```
 
 ### Password policy labels
@@ -127,7 +133,7 @@ src/Authagonal.Server/Resources/SharedMessages.ja.resx
 Add `"ja"` to the supported cultures array in `AuthagonalExtensions.cs`:
 
 ```csharp
-var supportedCultures = new[] { "en", "zh-Hans", "de", "fr", "es", "ja" };
+var supportedCultures = new[] { "en", "zh-Hans", "de", "fr", "es", "vi", "pt", "ja" };
 ```
 
 ### 2. Login UI
