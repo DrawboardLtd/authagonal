@@ -118,14 +118,18 @@ public static class AuthagonalExtensions
         services.AddHostedService(sp => sp.GetRequiredService<KeyManager>());
         services.AddScoped<AuthorizationCodeService>();
         services.AddScoped<ITokenService, TokenService>();
-        services.AddHostedService<TokenCleanupService>();
-        // Only register if keyed TableClient services are available (single-tenant mode)
-        if (services.Any(s => s.IsKeyedService && s.ServiceType == typeof(Azure.Data.Tables.TableClient)))
+        // Single-tenant background services — only register when keyed TableClient services
+        // are available. Multi-tenant hosts (authagonal-cloud) handle these differently.
+        var isSingleTenant = services.Any(s => s.IsKeyedService && s.ServiceType == typeof(Azure.Data.Tables.TableClient));
+        if (isSingleTenant)
+        {
+            services.AddHostedService<TokenCleanupService>();
             services.AddHostedService<GrantReconciliationService>();
+            services.AddHostedService<ClientSeedService>();
+            services.AddHostedService<ProviderSeedService>();
+        }
         services.AddHostedService<SigningKeyRotationService>();
         services.AddHttpClient("Provisioning");
-        services.AddHostedService<ClientSeedService>();
-        services.AddHostedService<ProviderSeedService>();
         services.AddSingleton<TotpService>();
         services.AddSingleton<RecoveryCodeService>();
         services.AddSingleton<WebAuthnService>();
