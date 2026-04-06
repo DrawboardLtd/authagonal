@@ -47,6 +47,7 @@ public static class AuthagonalExtensions
         // Localization
         // ---------------------------------------------------------------------------
         services.AddLocalization();
+        services.AddHttpContextAccessor();
 
         // ---------------------------------------------------------------------------
         // Tenant context — default single-tenant reads from IConfiguration.
@@ -258,7 +259,7 @@ public static class AuthagonalExtensions
         .AddScheme<AuthenticationSchemeOptions, ScimBearerAuthenticationHandler>("ScimBearer", null);
 
         services.AddSingleton<IPostConfigureOptions<JwtBearerOptions>>(sp =>
-            new JwtBearerKeyResolverPostConfigure(sp.GetRequiredService<Authagonal.Core.Services.IKeyManager>()));
+            new JwtBearerKeyResolverPostConfigure(sp));
 
         // ---------------------------------------------------------------------------
         // Authorization
@@ -459,16 +460,20 @@ public static class AuthagonalExtensions
 
 /// <summary>
 /// Wires IKeyManager into JWT bearer token validation at runtime.
+/// Resolves IKeyManager per-request via IHttpContextAccessor to support scoped (multi-tenant) lifetimes.
 /// </summary>
-sealed class JwtBearerKeyResolverPostConfigure(Authagonal.Core.Services.IKeyManager keyManager) : IPostConfigureOptions<JwtBearerOptions>
+sealed class JwtBearerKeyResolverPostConfigure(IServiceProvider rootProvider) : IPostConfigureOptions<JwtBearerOptions>
 {
     public void PostConfigure(string? name, JwtBearerOptions options)
     {
         if (name != JwtBearerDefaults.AuthenticationScheme)
             return;
 
-        options.TokenValidationParameters.IssuerSigningKeyResolver = (_, _, _, _) =>
+        options.TokenValidationParameters.IssuerSigningKeyResolver = (_, securityToken, _, _) =>
         {
+            var httpContextAccessor = rootProvider.GetRequiredService<IHttpContextAccessor>();
+            var sp = httpContextAccessor.HttpContext?.RequestServices ?? rootProvider;
+            var keyManager = sp.GetRequiredService<Authagonal.Core.Services.IKeyManager>();
             return keyManager.GetSecurityKeys()
                 .Select(jwk =>
                 {
