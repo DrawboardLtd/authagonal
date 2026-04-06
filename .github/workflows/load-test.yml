@@ -1,0 +1,61 @@
+name: Load Tests
+
+on:
+  # Smoke test after every deploy
+  workflow_run:
+    workflows: [Release]
+    types: [completed]
+
+  # Soak test on a schedule (daily at 03:00 UTC)
+  schedule:
+    - cron: "0 3 * * *"
+
+  # Manual trigger with test type selection
+  workflow_dispatch:
+    inputs:
+      test:
+        description: "Test to run"
+        required: true
+        default: smoke
+        type: choice
+        options:
+          - smoke
+          - stress
+          - soak
+      duration:
+        description: "Soak test duration (e.g., 30m, 1h)"
+        required: false
+        default: "30m"
+
+env:
+  BASE_URL: https://sso.demo.authagonal.drawboard.com
+
+jobs:
+  smoke:
+    if: >
+      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success') ||
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.test == 'smoke')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: grafana/setup-k6-action@v1
+      - run: k6 run tests/load/smoke.js -e BASE_URL=${{ env.BASE_URL }}
+
+  stress:
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.test == 'stress'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: grafana/setup-k6-action@v1
+      - run: k6 run tests/load/stress.js -e BASE_URL=${{ env.BASE_URL }}
+
+  soak:
+    if: >
+      github.event_name == 'schedule' ||
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.test == 'soak')
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v6
+      - uses: grafana/setup-k6-action@v1
+      - run: k6 run tests/load/soak.js -e BASE_URL=${{ env.BASE_URL }} -e DURATION=${{ github.event.inputs.duration || '30m' }}

@@ -30,6 +30,7 @@ jobs:
           dotnet pack src/Authagonal.Core/Authagonal.Core.csproj -c Release -p:Version=${{ steps.version.outputs.version }} -o nupkgs
           dotnet pack src/Authagonal.Storage/Authagonal.Storage.csproj -c Release -p:Version=${{ steps.version.outputs.version }} -o nupkgs
           dotnet pack src/Authagonal.Server/Authagonal.Server.csproj -c Release -p:Version=${{ steps.version.outputs.version }} -o nupkgs
+          dotnet pack src/Authagonal.Backup/Authagonal.Backup.csproj -c Release -p:Version=${{ steps.version.outputs.version }} -o nupkgs
 
       - name: Push to NuGet
         run: dotnet nuget push nupkgs/*.nupkg --api-key ${{ secrets.NUGET_API_KEY }} --source https://api.nuget.org/v3/index.json --skip-duplicate
