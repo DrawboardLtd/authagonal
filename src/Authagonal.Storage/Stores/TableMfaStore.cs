@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using Azure.Data.Tables;
 using Authagonal.Core.Models;
 using Authagonal.Core.Stores;
+using Authagonal.Core.Services;
 using Authagonal.Storage.Entities;
 
 namespace Authagonal.Storage.Stores;
@@ -9,7 +10,8 @@ namespace Authagonal.Storage.Stores;
 public sealed class TableMfaStore(
     TableClient credentialsTable,
     TableClient challengesTable,
-    TableClient webAuthnIndexTable) : IMfaStore
+    TableClient webAuthnIndexTable,
+    ITombstoneWriter? tombstoneWriter = null) : IMfaStore
 {
     public async Task<IReadOnlyList<MfaCredential>> GetCredentialsAsync(string userId, CancellationToken ct = default)
     {
@@ -53,6 +55,8 @@ public sealed class TableMfaStore(
         try
         {
             await credentialsTable.DeleteEntityAsync(userId, credentialId, cancellationToken: ct);
+            if (tombstoneWriter is not null)
+                await tombstoneWriter.WriteAsync("MfaCredentials", userId, credentialId, ct);
         }
         catch (Azure.RequestFailedException ex) when (ex.Status == 404)
         {
@@ -62,18 +66,23 @@ public sealed class TableMfaStore(
 
     public async Task DeleteAllCredentialsAsync(string userId, CancellationToken ct = default)
     {
+        var tombstones = new List<(string, string)>();
         await foreach (var entity in credentialsTable.QueryAsync<MfaCredentialEntity>(
             e => e.PartitionKey == userId, select: new[] { "PartitionKey", "RowKey" }, cancellationToken: ct))
         {
             try
             {
                 await credentialsTable.DeleteEntityAsync(entity.PartitionKey, entity.RowKey, cancellationToken: ct);
+                tombstones.Add((entity.PartitionKey, entity.RowKey));
             }
             catch (Azure.RequestFailedException ex) when (ex.Status == 404)
             {
                 // Already deleted
             }
         }
+
+        if (tombstoneWriter is not null && tombstones.Count > 0)
+            await tombstoneWriter.WriteBatchAsync("MfaCredentials", tombstones, ct);
     }
 
     public async Task<(string UserId, string CredentialId)?> FindByWebAuthnCredentialIdAsync(
@@ -112,6 +121,8 @@ public sealed class TableMfaStore(
         try
         {
             await webAuthnIndexTable.DeleteEntityAsync(hash, MfaWebAuthnIndexEntity.LookupRowKey, cancellationToken: ct);
+            if (tombstoneWriter is not null)
+                await tombstoneWriter.WriteAsync("MfaWebAuthnIndex", hash, MfaWebAuthnIndexEntity.LookupRowKey, ct);
         }
         catch (Azure.RequestFailedException ex) when (ex.Status == 404)
         {

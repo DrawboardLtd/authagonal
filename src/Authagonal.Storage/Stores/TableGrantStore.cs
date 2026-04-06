@@ -4,6 +4,7 @@ using Azure;
 using Azure.Data.Tables;
 using Authagonal.Core.Models;
 using Authagonal.Core.Stores;
+using Authagonal.Core.Services;
 using Authagonal.Storage.Entities;
 using Microsoft.Extensions.Logging;
 
@@ -13,7 +14,8 @@ public sealed class TableGrantStore(
     TableClient grantsTable,
     TableClient grantsBySubjectTable,
     TableClient grantsByExpiryTable,
-    ILogger<TableGrantStore> logger) : IGrantStore
+    ILogger<TableGrantStore> logger,
+    ITombstoneWriter? tombstoneWriter = null) : IGrantStore
 {
     public async Task StoreAsync(PersistedGrant grant, CancellationToken ct = default)
     {
@@ -152,6 +154,14 @@ public sealed class TableGrantStore(
                 }
                 catch (RequestFailedException ex) when (ex.Status == 404) { }
             }
+
+            if (tombstoneWriter is not null)
+            {
+                await tombstoneWriter.WriteAsync("Grants", hashedKey, GrantEntity.GrantRowKey, ct);
+                await tombstoneWriter.WriteAsync("GrantsByExpiry", expiryBucket, hashedKey, ct);
+                if (!string.IsNullOrEmpty(entity.SubjectId))
+                    await tombstoneWriter.WriteAsync("GrantsBySubject", entity.SubjectId, $"{entity.Type}|{hashedKey}", ct);
+            }
         }
         catch (RequestFailedException ex) when (ex.Status == 404) { }
     }
@@ -168,12 +178,17 @@ public sealed class TableGrantStore(
             entities.Add(entity);
         }
 
+        var grantTombstones = new List<(string, string)>();
+        var expiryTombstones = new List<(string, string)>();
+        var subjectTombstones = new List<(string, string)>();
+
         foreach (var entity in entities)
         {
             // Delete from primary grants table
             try
             {
                 await grantsTable.DeleteEntityAsync(entity.HashedKey, GrantEntity.GrantRowKey, cancellationToken: ct);
+                grantTombstones.Add((entity.HashedKey, GrantEntity.GrantRowKey));
             }
             catch (RequestFailedException ex) when (ex.Status == 404) { }
 
@@ -182,6 +197,7 @@ public sealed class TableGrantStore(
             try
             {
                 await grantsByExpiryTable.DeleteEntityAsync(expiryBucket, entity.HashedKey, cancellationToken: ct);
+                expiryTombstones.Add((expiryBucket, entity.HashedKey));
             }
             catch (RequestFailedException ex) when (ex.Status == 404) { }
 
@@ -189,8 +205,16 @@ public sealed class TableGrantStore(
             try
             {
                 await grantsBySubjectTable.DeleteEntityAsync(entity.PartitionKey, entity.RowKey, cancellationToken: ct);
+                subjectTombstones.Add((entity.PartitionKey, entity.RowKey));
             }
             catch (RequestFailedException ex) when (ex.Status == 404) { }
+        }
+
+        if (tombstoneWriter is not null)
+        {
+            await tombstoneWriter.WriteBatchAsync("Grants", grantTombstones, ct);
+            await tombstoneWriter.WriteBatchAsync("GrantsByExpiry", expiryTombstones, ct);
+            await tombstoneWriter.WriteBatchAsync("GrantsBySubject", subjectTombstones, ct);
         }
     }
 
@@ -206,12 +230,17 @@ public sealed class TableGrantStore(
             entities.Add(entity);
         }
 
+        var grantTombstones = new List<(string, string)>();
+        var expiryTombstones = new List<(string, string)>();
+        var subjectTombstones = new List<(string, string)>();
+
         foreach (var entity in entities)
         {
             // Delete from primary grants table
             try
             {
                 await grantsTable.DeleteEntityAsync(entity.HashedKey, GrantEntity.GrantRowKey, cancellationToken: ct);
+                grantTombstones.Add((entity.HashedKey, GrantEntity.GrantRowKey));
             }
             catch (RequestFailedException ex) when (ex.Status == 404) { }
 
@@ -220,6 +249,7 @@ public sealed class TableGrantStore(
             try
             {
                 await grantsByExpiryTable.DeleteEntityAsync(expiryBucket, entity.HashedKey, cancellationToken: ct);
+                expiryTombstones.Add((expiryBucket, entity.HashedKey));
             }
             catch (RequestFailedException ex) when (ex.Status == 404) { }
 
@@ -227,8 +257,16 @@ public sealed class TableGrantStore(
             try
             {
                 await grantsBySubjectTable.DeleteEntityAsync(entity.PartitionKey, entity.RowKey, cancellationToken: ct);
+                subjectTombstones.Add((entity.PartitionKey, entity.RowKey));
             }
             catch (RequestFailedException ex) when (ex.Status == 404) { }
+        }
+
+        if (tombstoneWriter is not null)
+        {
+            await tombstoneWriter.WriteBatchAsync("Grants", grantTombstones, ct);
+            await tombstoneWriter.WriteBatchAsync("GrantsByExpiry", expiryTombstones, ct);
+            await tombstoneWriter.WriteBatchAsync("GrantsBySubject", subjectTombstones, ct);
         }
     }
 

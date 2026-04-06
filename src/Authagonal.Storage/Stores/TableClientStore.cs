@@ -2,11 +2,12 @@ using Azure;
 using Azure.Data.Tables;
 using Authagonal.Core.Models;
 using Authagonal.Core.Stores;
+using Authagonal.Core.Services;
 using Authagonal.Storage.Entities;
 
 namespace Authagonal.Storage.Stores;
 
-public sealed class TableClientStore(TableClient clientsTable) : IClientStore
+public sealed class TableClientStore(TableClient clientsTable, ITombstoneWriter? tombstoneWriter = null) : IClientStore
 {
     public async Task<OAuthClient?> GetAsync(string clientId, CancellationToken ct = default)
     {
@@ -48,6 +49,8 @@ public sealed class TableClientStore(TableClient clientsTable) : IClientStore
         try
         {
             await clientsTable.DeleteEntityAsync(clientId, ClientEntity.ConfigRowKey, cancellationToken: ct);
+            if (tombstoneWriter is not null)
+                await tombstoneWriter.WriteAsync("Clients", clientId, ClientEntity.ConfigRowKey, ct);
         }
         catch (RequestFailedException ex) when (ex.Status == 404) { }
     }

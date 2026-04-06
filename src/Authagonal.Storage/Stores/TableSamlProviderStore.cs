@@ -2,11 +2,12 @@ using Azure;
 using Azure.Data.Tables;
 using Authagonal.Core.Models;
 using Authagonal.Core.Stores;
+using Authagonal.Core.Services;
 using Authagonal.Storage.Entities;
 
 namespace Authagonal.Storage.Stores;
 
-public sealed class TableSamlProviderStore(TableClient samlProvidersTable) : ISamlProviderStore
+public sealed class TableSamlProviderStore(TableClient samlProvidersTable, ITombstoneWriter? tombstoneWriter = null) : ISamlProviderStore
 {
     public async Task<SamlProviderConfig?> GetAsync(string connectionId, CancellationToken ct = default)
     {
@@ -49,6 +50,8 @@ public sealed class TableSamlProviderStore(TableClient samlProvidersTable) : ISa
         {
             await samlProvidersTable.DeleteEntityAsync(
                 connectionId, SamlProviderEntity.ConfigRowKey, cancellationToken: ct);
+            if (tombstoneWriter is not null)
+                await tombstoneWriter.WriteAsync("SamlProviders", connectionId, SamlProviderEntity.ConfigRowKey, ct);
         }
         catch (RequestFailedException ex) when (ex.Status == 404) { }
     }

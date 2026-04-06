@@ -2,11 +2,12 @@ using Azure;
 using Azure.Data.Tables;
 using Authagonal.Core.Models;
 using Authagonal.Core.Stores;
+using Authagonal.Core.Services;
 using Authagonal.Storage.Entities;
 
 namespace Authagonal.Storage.Stores;
 
-public sealed class TableOidcProviderStore(TableClient oidcProvidersTable) : IOidcProviderStore
+public sealed class TableOidcProviderStore(TableClient oidcProvidersTable, ITombstoneWriter? tombstoneWriter = null) : IOidcProviderStore
 {
     public async Task<OidcProviderConfig?> GetAsync(string connectionId, CancellationToken ct = default)
     {
@@ -49,6 +50,8 @@ public sealed class TableOidcProviderStore(TableClient oidcProvidersTable) : IOi
         {
             await oidcProvidersTable.DeleteEntityAsync(
                 connectionId, OidcProviderEntity.ConfigRowKey, cancellationToken: ct);
+            if (tombstoneWriter is not null)
+                await tombstoneWriter.WriteAsync("OidcProviders", connectionId, OidcProviderEntity.ConfigRowKey, ct);
         }
         catch (RequestFailedException ex) when (ex.Status == 404) { }
     }

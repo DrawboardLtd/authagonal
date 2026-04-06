@@ -2,11 +2,12 @@ using Azure;
 using Azure.Data.Tables;
 using Authagonal.Core.Models;
 using Authagonal.Core.Stores;
+using Authagonal.Core.Services;
 using Authagonal.Storage.Entities;
 
 namespace Authagonal.Storage.Stores;
 
-public sealed class TableRoleStore(TableClient rolesTable) : IRoleStore
+public sealed class TableRoleStore(TableClient rolesTable, ITombstoneWriter? tombstoneWriter = null) : IRoleStore
 {
     public async Task<Role?> GetAsync(string roleId, CancellationToken ct = default)
     {
@@ -62,6 +63,8 @@ public sealed class TableRoleStore(TableClient rolesTable) : IRoleStore
         try
         {
             await rolesTable.DeleteEntityAsync(RoleEntity.RolePartition, roleId, cancellationToken: ct);
+            if (tombstoneWriter is not null)
+                await tombstoneWriter.WriteAsync("Roles", RoleEntity.RolePartition, roleId, ct);
         }
         catch (RequestFailedException ex) when (ex.Status == 404) { }
     }

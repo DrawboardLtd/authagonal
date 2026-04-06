@@ -3,6 +3,7 @@
     <Project Path="src/Authagonal.Core/Authagonal.Core.csproj" />
     <Project Path="src/Authagonal.Server/Authagonal.Server.csproj" />
     <Project Path="src/Authagonal.Storage/Authagonal.Storage.csproj" />
+    <Project Path="src/Authagonal.Backup/Authagonal.Backup.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/Authagonal.Tests/Authagonal.Tests.csproj" />
@@ -10,6 +11,7 @@
   <Folder Name="/tools/">
     <Project Path="tools/Authagonal.Migration/Authagonal.Migration.csproj" />
     <Project Path="tools/Authagonal.Backup/Authagonal.Backup.csproj" />
+    <Project Path="tools/Authagonal.Restore/Authagonal.Restore.csproj" />
   </Folder>
   <Folder Name="/demos/">
     <Project Path="demos/custom-server/CustomAuthServer.csproj" />

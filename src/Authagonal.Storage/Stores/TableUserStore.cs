@@ -2,6 +2,7 @@ using Azure;
 using Azure.Data.Tables;
 using Authagonal.Core.Models;
 using Authagonal.Core.Stores;
+using Authagonal.Core.Services;
 using Authagonal.Storage.Entities;
 
 namespace Authagonal.Storage.Stores;
@@ -10,7 +11,8 @@ public sealed class TableUserStore(
     TableClient usersTable,
     TableClient userEmailsTable,
     TableClient userLoginsTable,
-    TableClient userExternalIdsTable) : IUserStore
+    TableClient userExternalIdsTable,
+    ITombstoneWriter? tombstoneWriter = null) : IUserStore
 {
     public async Task<AuthUser?> GetAsync(string userId, CancellationToken ct = default)
     {
@@ -70,6 +72,8 @@ public sealed class TableUserStore(
                 try
                 {
                     await userEmailsTable.DeleteEntityAsync(oldNormalizedEmail, UserEmailEntity.LookupRowKey, cancellationToken: ct);
+                    if (tombstoneWriter is not null)
+                        await tombstoneWriter.WriteAsync("UserEmails", oldNormalizedEmail, UserEmailEntity.LookupRowKey, ct);
                 }
                 catch (RequestFailedException ex) when (ex.Status == 404)
                 {
@@ -100,6 +104,8 @@ public sealed class TableUserStore(
             {
                 await userEmailsTable.DeleteEntityAsync(
                     existing.Value.NormalizedEmail, UserEmailEntity.LookupRowKey, cancellationToken: ct);
+                if (tombstoneWriter is not null)
+                    await tombstoneWriter.WriteAsync("UserEmails", existing.Value.NormalizedEmail, UserEmailEntity.LookupRowKey, ct);
             }
             catch (RequestFailedException ex) when (ex.Status == 404) { }
 
@@ -112,6 +118,8 @@ public sealed class TableUserStore(
 
             // Delete user profile
             await usersTable.DeleteEntityAsync(userId, UserEntity.ProfileRowKey, cancellationToken: ct);
+            if (tombstoneWriter is not null)
+                await tombstoneWriter.WriteAsync("Users", userId, UserEntity.ProfileRowKey, ct);
         }
         catch (RequestFailedException ex) when (ex.Status == 404) { }
     }
@@ -179,10 +187,12 @@ public sealed class TableUserStore(
 
     public async Task RemoveExternalIdAsync(string userId, string clientId, string externalId, CancellationToken ct = default)
     {
+        var pk = $"{clientId}|{externalId}";
         try
         {
-            await userExternalIdsTable.DeleteEntityAsync(
-                $"{clientId}|{externalId}", UserExternalIdEntity.LookupRowKey, cancellationToken: ct);
+            await userExternalIdsTable.DeleteEntityAsync(pk, UserExternalIdEntity.LookupRowKey, cancellationToken: ct);
+            if (tombstoneWriter is not null)
+                await tombstoneWriter.WriteAsync("UserExternalIds", pk, UserExternalIdEntity.LookupRowKey, ct);
         }
         catch (RequestFailedException ex) when (ex.Status == 404) { }
     }
@@ -204,12 +214,16 @@ public sealed class TableUserStore(
         try
         {
             await userLoginsTable.DeleteEntityAsync(forwardPk, UserLoginEntity.LookupRowKey, cancellationToken: ct);
+            if (tombstoneWriter is not null)
+                await tombstoneWriter.WriteAsync("UserLogins", forwardPk, UserLoginEntity.LookupRowKey, ct);
         }
         catch (RequestFailedException ex) when (ex.Status == 404) { }
 
         try
         {
             await userLoginsTable.DeleteEntityAsync(userId, reverseRk, cancellationToken: ct);
+            if (tombstoneWriter is not null)
+                await tombstoneWriter.WriteAsync("UserLogins", userId, reverseRk, ct);
         }
         catch (RequestFailedException ex) when (ex.Status == 404) { }
     }

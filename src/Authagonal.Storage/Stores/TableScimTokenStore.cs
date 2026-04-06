@@ -2,11 +2,12 @@ using Azure;
 using Azure.Data.Tables;
 using Authagonal.Core.Models;
 using Authagonal.Core.Stores;
+using Authagonal.Core.Services;
 using Authagonal.Storage.Entities;
 
 namespace Authagonal.Storage.Stores;
 
-public sealed class TableScimTokenStore(TableClient scimTokensTable) : IScimTokenStore
+public sealed class TableScimTokenStore(TableClient scimTokensTable, ITombstoneWriter? tombstoneWriter = null) : IScimTokenStore
 {
     public async Task<ScimToken?> FindByHashAsync(string tokenHash, CancellationToken ct = default)
     {
@@ -72,8 +73,9 @@ public sealed class TableScimTokenStore(TableClient scimTokensTable) : IScimToke
     {
         try
         {
+            var reverseRk = $"{ScimTokenEntity.TokenRowKeyPrefix}{tokenId}";
             var reverseEntity = await scimTokensTable.GetEntityAsync<ScimTokenEntity>(
-                clientId, $"{ScimTokenEntity.TokenRowKeyPrefix}{tokenId}", cancellationToken: ct);
+                clientId, reverseRk, cancellationToken: ct);
 
             var tokenHash = reverseEntity.Value.TokenHash;
 
@@ -85,7 +87,13 @@ public sealed class TableScimTokenStore(TableClient scimTokensTable) : IScimToke
             catch (RequestFailedException ex) when (ex.Status == 404) { }
 
             // Delete reverse index
-            await scimTokensTable.DeleteEntityAsync(clientId, $"{ScimTokenEntity.TokenRowKeyPrefix}{tokenId}", cancellationToken: ct);
+            await scimTokensTable.DeleteEntityAsync(clientId, reverseRk, cancellationToken: ct);
+
+            if (tombstoneWriter is not null)
+            {
+                await tombstoneWriter.WriteAsync("ScimTokens", tokenHash, ScimTokenEntity.LookupRowKey, ct);
+                await tombstoneWriter.WriteAsync("ScimTokens", clientId, reverseRk, ct);
+            }
         }
         catch (RequestFailedException ex) when (ex.Status == 404)
         {

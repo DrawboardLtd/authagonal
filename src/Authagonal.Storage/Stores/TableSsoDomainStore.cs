@@ -2,11 +2,12 @@ using Azure;
 using Azure.Data.Tables;
 using Authagonal.Core.Models;
 using Authagonal.Core.Stores;
+using Authagonal.Core.Services;
 using Authagonal.Storage.Entities;
 
 namespace Authagonal.Storage.Stores;
 
-public sealed class TableSsoDomainStore(TableClient ssoDomainsTable) : ISsoDomainStore
+public sealed class TableSsoDomainStore(TableClient ssoDomainsTable, ITombstoneWriter? tombstoneWriter = null) : ISsoDomainStore
 {
     public async Task<SsoDomain?> GetAsync(string domain, CancellationToken ct = default)
     {
@@ -51,6 +52,8 @@ public sealed class TableSsoDomainStore(TableClient ssoDomainsTable) : ISsoDomai
         {
             await ssoDomainsTable.DeleteEntityAsync(
                 normalizedDomain, SsoDomainEntity.MappingRowKey, cancellationToken: ct);
+            if (tombstoneWriter is not null)
+                await tombstoneWriter.WriteAsync("SsoDomains", normalizedDomain, SsoDomainEntity.MappingRowKey, ct);
         }
         catch (RequestFailedException ex) when (ex.Status == 404) { }
     }
@@ -67,13 +70,18 @@ public sealed class TableSsoDomainStore(TableClient ssoDomainsTable) : ISsoDomai
             entities.Add(entity);
         }
 
+        var tombstones = new List<(string, string)>();
         foreach (var entity in entities)
         {
             try
             {
                 await ssoDomainsTable.DeleteEntityAsync(entity.PartitionKey, entity.RowKey, cancellationToken: ct);
+                tombstones.Add((entity.PartitionKey, entity.RowKey));
             }
             catch (RequestFailedException ex) when (ex.Status == 404) { }
         }
+
+        if (tombstoneWriter is not null && tombstones.Count > 0)
+            await tombstoneWriter.WriteBatchAsync("SsoDomains", tombstones, ct);
     }
 }

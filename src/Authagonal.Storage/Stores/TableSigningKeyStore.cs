@@ -2,11 +2,12 @@ using Azure;
 using Azure.Data.Tables;
 using Authagonal.Core.Models;
 using Authagonal.Core.Stores;
+using Authagonal.Core.Services;
 using Authagonal.Storage.Entities;
 
 namespace Authagonal.Storage.Stores;
 
-public sealed class TableSigningKeyStore(TableClient signingKeysTable) : ISigningKeyStore
+public sealed class TableSigningKeyStore(TableClient signingKeysTable, ITombstoneWriter? tombstoneWriter = null) : ISigningKeyStore
 {
     public async Task<SigningKeyInfo?> GetActiveKeyAsync(CancellationToken ct = default)
     {
@@ -63,6 +64,8 @@ public sealed class TableSigningKeyStore(TableClient signingKeysTable) : ISignin
         {
             await signingKeysTable.DeleteEntityAsync(
                 SigningKeyEntity.SigningPartitionKey, keyId, cancellationToken: ct);
+            if (tombstoneWriter is not null)
+                await tombstoneWriter.WriteAsync("SigningKeys", SigningKeyEntity.SigningPartitionKey, keyId, ct);
         }
         catch (RequestFailedException ex) when (ex.Status == 404) { }
     }

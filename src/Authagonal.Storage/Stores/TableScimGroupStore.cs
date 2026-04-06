@@ -2,13 +2,15 @@ using Azure;
 using Azure.Data.Tables;
 using Authagonal.Core.Models;
 using Authagonal.Core.Stores;
+using Authagonal.Core.Services;
 using Authagonal.Storage.Entities;
 
 namespace Authagonal.Storage.Stores;
 
 public sealed class TableScimGroupStore(
     TableClient scimGroupsTable,
-    TableClient scimGroupExternalIdsTable) : IScimGroupStore
+    TableClient scimGroupExternalIdsTable,
+    ITombstoneWriter? tombstoneWriter = null) : IScimGroupStore
 {
     public async Task<ScimGroup?> GetAsync(string groupId, CancellationToken ct = default)
     {
@@ -116,10 +118,13 @@ public sealed class TableScimGroupStore(
                 if (!string.Equals(oldExternalId, group.ExternalId, StringComparison.Ordinal) ||
                     !string.Equals(oldOrgId, group.OrganizationId, StringComparison.Ordinal))
                 {
+                    var oldIndexPk = $"{oldOrgId}|{oldExternalId}";
                     try
                     {
                         await scimGroupExternalIdsTable.DeleteEntityAsync(
-                            $"{oldOrgId}|{oldExternalId}", ScimGroupEntity.GroupLookupRowKey, cancellationToken: ct);
+                            oldIndexPk, ScimGroupEntity.GroupLookupRowKey, cancellationToken: ct);
+                        if (tombstoneWriter is not null)
+                            await tombstoneWriter.WriteAsync("ScimGroupExternalIds", oldIndexPk, ScimGroupEntity.GroupLookupRowKey, ct);
                     }
                     catch (RequestFailedException ex) when (ex.Status == 404) { }
                 }
@@ -149,16 +154,21 @@ public sealed class TableScimGroupStore(
             // Remove external ID index
             if (!string.IsNullOrEmpty(group.ExternalId) && !string.IsNullOrEmpty(group.OrganizationId))
             {
+                var indexPk = $"{group.OrganizationId}|{group.ExternalId}";
                 try
                 {
                     await scimGroupExternalIdsTable.DeleteEntityAsync(
-                        $"{group.OrganizationId}|{group.ExternalId}", ScimGroupEntity.GroupLookupRowKey, cancellationToken: ct);
+                        indexPk, ScimGroupEntity.GroupLookupRowKey, cancellationToken: ct);
+                    if (tombstoneWriter is not null)
+                        await tombstoneWriter.WriteAsync("ScimGroupExternalIds", indexPk, ScimGroupEntity.GroupLookupRowKey, ct);
                 }
                 catch (RequestFailedException ex) when (ex.Status == 404) { }
             }
 
             // Delete the group
             await scimGroupsTable.DeleteEntityAsync(groupId, ScimGroupEntity.GroupRowKey, cancellationToken: ct);
+            if (tombstoneWriter is not null)
+                await tombstoneWriter.WriteAsync("ScimGroups", groupId, ScimGroupEntity.GroupRowKey, ct);
         }
         catch (RequestFailedException ex) when (ex.Status == 404)
         {

@@ -1,32 +1,10 @@
-using System.Diagnostics;
-using System.IO.Compression;
-using System.Text.Json;
-using Azure;
 using Azure.Core;
 using Azure.Data.Tables;
+using Authagonal.Backup;
 
 // ---------------------------------------------------------------------------
-// Authagonal Table Storage Restore Tool
-//
-// Usage:
-//   authagonal-restore --connection-string "..." --input ./backups/20260329-120000
-//   authagonal-restore --connection-string "..." --input ./backups/20260329-120000 --tables Users,Clients
-//   authagonal-restore --connection-string "..." --input ./backups/20260329-120000 --dry-run
-//   authagonal-restore --connection-string "..." --input ./backups/20260329-120000 --mode upsert
-//
-// Environment variable:
-//   STORAGE_CONNECTION_STRING — fallback when --connection-string is not given
-//
-// Modes:
-//   upsert  (default) — Insert or replace each entity. Existing data is overwritten.
-//   merge   — Insert or merge. Existing properties not in the backup are preserved.
-//   clean   — Delete all existing data in each table before restoring.
-//
-// Input:
-//   A backup directory produced by authagonal-backup, containing:
-//     <TableName>.jsonl       (uncompressed, one JSON object per line)
-//     <TableName>.jsonl.gz    (gzip compressed — auto-detected)
-//     _manifest.json          (optional, metadata)
+// Authagonal Table Storage Restore CLI
+// Thin wrapper over Authagonal.Backup library.
 // ---------------------------------------------------------------------------
 
 var cliArgs = Environment.GetCommandLineArgs().Skip(1).ToArray();
@@ -34,8 +12,9 @@ var cliArgs = Environment.GetCommandLineArgs().Skip(1).ToArray();
 var connectionString = GetArg(cliArgs, "--connection-string") ?? Environment.GetEnvironmentVariable("STORAGE_CONNECTION_STRING");
 var inputDir = GetArg(cliArgs, "--input");
 var tableFilter = GetArg(cliArgs, "--tables")?.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+var prefix = GetArg(cliArgs, "--prefix") ?? "";
+var modeStr = GetArg(cliArgs, "--mode") ?? "upsert";
 var dryRun = HasFlag(cliArgs, "--dry-run");
-var mode = GetArg(cliArgs, "--mode") ?? "upsert";
 
 if (connectionString is null || inputDir is null || HasFlag(cliArgs, "--help"))
 {
@@ -49,88 +28,21 @@ if (connectionString is null || inputDir is null || HasFlag(cliArgs, "--help"))
       --connection-string <conn>   Azure Table Storage connection string
                                    (or set STORAGE_CONNECTION_STRING env var)
       --input <dir>                Backup directory to restore from
-      --tables <t1,t2,...>         Comma-separated list of tables to restore (default: all .jsonl/.jsonl.gz files)
+      --tables <t1,t2,...>         Comma-separated list of tables to restore
+      --prefix <prefix>            Table name prefix (for multi-tenant)
       --mode <mode>                Restore mode: upsert (default), merge, or clean
       --dry-run                    Show what would be restored without writing
       --help                       Show this help
-
-    Gzip-compressed backup files (.jsonl.gz) are detected and decompressed automatically.
-
-    Modes:
-      upsert   Insert or replace each entity (default)
-      merge    Insert or merge — existing properties not in backup are preserved
-      clean    Delete all rows in each table before restoring
     """);
-    return connectionString is null || inputDir is null ? 1 : 0;
+    return (connectionString is null || inputDir is null) && !HasFlag(cliArgs, "--help") ? 1 : 0;
 }
 
-if (!Directory.Exists(inputDir))
+var mode = modeStr.ToLowerInvariant() switch
 {
-    Console.Error.WriteLine($"Error: input directory not found: {inputDir}");
-    return 1;
-}
-
-if (mode is not ("upsert" or "merge" or "clean"))
-{
-    Console.Error.WriteLine($"Error: invalid mode '{mode}'. Must be upsert, merge, or clean.");
-    return 1;
-}
-
-// Discover .jsonl and .jsonl.gz files in the input directory
-var jsonlFiles = Directory.GetFiles(inputDir)
-    .Where(f => !Path.GetFileName(f).StartsWith("_"))
-    .Where(f => f.EndsWith(".jsonl", StringComparison.OrdinalIgnoreCase)
-             || f.EndsWith(".jsonl.gz", StringComparison.OrdinalIgnoreCase))
-    .ToArray();
-
-if (jsonlFiles.Length == 0)
-{
-    Console.Error.WriteLine($"Error: no .jsonl or .jsonl.gz files found in {inputDir}");
-    return 1;
-}
-
-// Build table name → file path mapping (prefer .jsonl.gz if both exist)
-var tableFileMap = new Dictionary<string, string>();
-foreach (var f in jsonlFiles)
-{
-    var name = Path.GetFileName(f);
-    var tableName = name.EndsWith(".jsonl.gz", StringComparison.OrdinalIgnoreCase)
-        ? name[..^".jsonl.gz".Length]
-        : name[..^".jsonl".Length];
-    tableFileMap[tableName] = f; // .gz overwrites .jsonl if both present (sorted naturally)
-}
-
-var availableTables = tableFileMap.Keys.ToArray();
-var tablesToRestore = tableFilter ?? availableTables;
-
-// Validate requested tables exist in backup
-foreach (var t in tablesToRestore)
-{
-    if (!availableTables.Contains(t))
-    {
-        Console.Error.WriteLine($"Error: table '{t}' not found in backup. Available: {string.Join(", ", availableTables)}");
-        return 1;
-    }
-}
-
-// Read manifest if available
-var manifestPath = Path.Combine(inputDir, "_manifest.json");
-if (File.Exists(manifestPath))
-{
-    try
-    {
-        var manifestText = await File.ReadAllTextAsync(manifestPath);
-        var manifest = JsonSerializer.Deserialize<JsonElement>(manifestText);
-        if (manifest.TryGetProperty("BackupTimestamp", out var ts))
-            Console.WriteLine($"Backup timestamp: {ts}");
-        if (manifest.TryGetProperty("Mode", out var m))
-            Console.WriteLine($"Backup mode: {m}");
-    }
-    catch
-    {
-        // Manifest is informational only
-    }
-}
+    "merge" => RestoreMode.Merge,
+    "clean" => RestoreMode.Clean,
+    _ => RestoreMode.Upsert,
+};
 
 var clientOptions = new TableClientOptions();
 clientOptions.Retry.MaxRetries = 5;
@@ -140,136 +52,31 @@ clientOptions.Retry.Mode = RetryMode.Exponential;
 
 var serviceClient = new TableServiceClient(connectionString, clientOptions);
 
-Console.WriteLine($"Input directory: {inputDir}");
-Console.WriteLine($"Tables: {string.Join(", ", tablesToRestore)}");
-Console.WriteLine($"Mode: {mode}");
-if (dryRun) Console.WriteLine("DRY RUN — no data will be written");
-Console.WriteLine();
+// Determine the backup ID from the input path
+var rootDir = Path.GetDirectoryName(inputDir)!;
+var backupId = Path.GetFileName(inputDir);
+var source = new FileSystemBackupSource(rootDir);
 
-var sw = Stopwatch.StartNew();
-long totalEntities = 0;
-long totalErrors = 0;
-
-foreach (var tableName in tablesToRestore)
+var options = new RestoreOptions
 {
-    if (!tableFileMap.TryGetValue(tableName, out var filePath))
-    {
-        Console.WriteLine($"  {tableName}: file not found (skipped)");
-        continue;
-    }
+    Tables = tableFilter,
+    TablePrefix = string.IsNullOrEmpty(prefix) ? null : prefix,
+    Mode = mode,
+    DryRun = dryRun,
+};
 
-    var isCompressed = filePath.EndsWith(".gz", StringComparison.OrdinalIgnoreCase);
+var service = new RestoreService(serviceClient, source, options);
+var result = await service.RunAsync(backupId);
 
-    var tableClient = serviceClient.GetTableClient(tableName);
-    var tableStart = Stopwatch.StartNew();
-
-    if (!dryRun)
-    {
-        // Ensure table exists
-        await tableClient.CreateIfNotExistsAsync();
-
-        // In clean mode, delete all existing entities first
-        if (mode == "clean")
-        {
-            Console.WriteLine($"  {tableName}: cleaning existing data...");
-            long deleted = 0;
-            await foreach (var existing in tableClient.QueryAsync<TableEntity>(select: new[] { "PartitionKey", "RowKey" }))
-            {
-                try
-                {
-                    await tableClient.DeleteEntityAsync(existing.PartitionKey, existing.RowKey, ETag.All);
-                    deleted++;
-                }
-                catch (RequestFailedException)
-                {
-                    // Entity may have been deleted concurrently
-                }
-            }
-            if (deleted > 0)
-                Console.WriteLine($"  {tableName}: deleted {deleted:N0} existing entities");
-        }
-    }
-
-    long count = 0;
-    long errors = 0;
-
-    await foreach (var line in ReadLinesAsync(filePath, isCompressed))
-    {
-        if (string.IsNullOrWhiteSpace(line)) continue;
-
-        JsonElement json;
-        try
-        {
-            json = JsonSerializer.Deserialize<JsonElement>(line);
-        }
-        catch (JsonException ex)
-        {
-            Console.Error.WriteLine($"  {tableName}: skipping malformed line: {ex.Message}");
-            errors++;
-            continue;
-        }
-
-        if (!json.TryGetProperty("PartitionKey", out var pk) || !json.TryGetProperty("RowKey", out var rk))
-        {
-            Console.Error.WriteLine($"  {tableName}: skipping entity without PartitionKey/RowKey");
-            errors++;
-            continue;
-        }
-
-        var entity = new TableEntity(pk.GetString()!, rk.GetString()!);
-
-        // Add all properties except metadata
-        foreach (var prop in json.EnumerateObject())
-        {
-            if (prop.Name is "PartitionKey" or "RowKey" or "Timestamp" or "ETag" or "odata.etag")
-                continue;
-
-            entity[prop.Name] = ConvertJsonValue(prop.Value);
-        }
-
-        if (!dryRun)
-        {
-            try
-            {
-                if (mode == "merge")
-                {
-                    await tableClient.UpsertEntityAsync(entity, TableUpdateMode.Merge);
-                }
-                else
-                {
-                    await tableClient.UpsertEntityAsync(entity, TableUpdateMode.Replace);
-                }
-            }
-            catch (RequestFailedException ex)
-            {
-                Console.Error.WriteLine($"  {tableName}: error restoring {pk}/{rk}: {ex.Message}");
-                errors++;
-                continue;
-            }
-        }
-
-        count++;
-    }
-
-    tableStart.Stop();
-    totalEntities += count;
-    totalErrors += errors;
-
-    var errSuffix = errors > 0 ? $", {errors} errors" : "";
-    Console.WriteLine($"  {tableName}: {count:N0} entities restored ({tableStart.Elapsed.TotalSeconds:F1}s{errSuffix})");
-}
-
-sw.Stop();
 Console.WriteLine();
-Console.WriteLine($"Done: {totalEntities:N0} entities in {sw.Elapsed.TotalSeconds:F1}s");
-if (totalErrors > 0)
-    Console.WriteLine($"Warnings: {totalErrors:N0} entities had errors");
+foreach (var (table, info) in result.Tables)
+{
+    var errorSuffix = info.Errors > 0 ? $" ({info.Errors} errors)" : "";
+    Console.WriteLine($"  {table}: {info.Restored:N0} entities restored{errorSuffix}");
+}
+Console.WriteLine($"Done: {result.TotalRestored:N0} entities restored, {result.TotalErrors} errors");
 
-return totalErrors > 0 ? 2 : 0;
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
+return result.TotalErrors > 0 ? 2 : 0;
 
 static string? GetArg(string[] args, string name)
 {
@@ -278,60 +85,4 @@ static string? GetArg(string[] args, string name)
     return null;
 }
 
-static bool HasFlag(string[] args, string name)
-    => args.Contains(name);
-
-static async IAsyncEnumerable<string> ReadLinesAsync(string path, bool isCompressed)
-{
-    Stream fileStream = new FileStream(path, FileMode.Open, FileAccess.Read);
-    Stream readStream = isCompressed ? new GZipStream(fileStream, CompressionMode.Decompress) : fileStream;
-    using var reader = new StreamReader(readStream, System.Text.Encoding.UTF8);
-    try
-    {
-        while (await reader.ReadLineAsync() is { } line)
-            yield return line;
-    }
-    finally
-    {
-        if (isCompressed) readStream.Dispose();
-        fileStream.Dispose();
-    }
-}
-
-/// <summary>
-/// Converts a JSON value back to the appropriate .NET type for Table Storage.
-/// Table Storage supports: string, int32, int64, double, bool, DateTime, byte[], Guid.
-/// The backup tool serializes all values as JSON, so we need to infer types.
-/// </summary>
-static object? ConvertJsonValue(JsonElement value)
-{
-    return value.ValueKind switch
-    {
-        JsonValueKind.String => TryParseTypedString(value.GetString()!),
-        JsonValueKind.Number => value.TryGetInt32(out var i) ? i
-            : value.TryGetInt64(out var l) ? l
-            : value.GetDouble(),
-        JsonValueKind.True => true,
-        JsonValueKind.False => false,
-        JsonValueKind.Null => null,
-        // Arrays and objects: serialize back to JSON string for storage
-        _ => value.GetRawText(),
-    };
-}
-
-/// <summary>
-/// Attempts to parse string values that may represent DateTimeOffset or Guid.
-/// Table Storage stores these as typed values, but JSON round-trips them as strings.
-/// </summary>
-static object TryParseTypedString(string s)
-{
-    // Try DateTimeOffset (ISO 8601 format from backup)
-    if (s.Length >= 19 && s.Length <= 35 && DateTimeOffset.TryParse(s, out var dto))
-        return dto;
-
-    // Try Guid
-    if (s.Length == 36 && Guid.TryParse(s, out var guid))
-        return guid;
-
-    return s;
-}
+static bool HasFlag(string[] args, string name) => args.Contains(name);

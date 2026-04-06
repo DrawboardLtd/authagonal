@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsPackable>true</IsPackable>
+    <PackageId>Authagonal.Backup</PackageId>
+    <Description>Backup, restore, merge and rollup for Authagonal Table Storage data.</Description>
+    <Authors>Drawboard</Authors>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageProjectUrl>https://github.com/DrawboardLtd/authagonal</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/DrawboardLtd/authagonal</RepositoryUrl>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Azure.Data.Tables" Version="12.11.0" />
+  </ItemGroup>
+
+</Project>
