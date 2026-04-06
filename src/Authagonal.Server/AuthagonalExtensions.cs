@@ -41,7 +41,7 @@ public static class AuthagonalExtensions
     /// <c>IEmailService</c>, <c>IAuthHook</c>, <c>IProvisioningOrchestrator</c>, <c>ISecretProvider</c>.
     /// </para>
     /// </summary>
-    public static IServiceCollection AddAuthagonal(this IServiceCollection services, IConfiguration configuration)
+    public static IServiceCollection AddAuthagonal(this IServiceCollection services, IConfiguration configuration, bool multiTenant = false)
     {
         // ---------------------------------------------------------------------------
         // Localization
@@ -113,22 +113,21 @@ public static class AuthagonalExtensions
         // ---------------------------------------------------------------------------
         services.AddSingleton<PasswordHasher>();
         services.AddSingleton<PasswordValidator>();
-        services.AddSingleton<KeyManager>();
-        services.TryAddSingleton<Authagonal.Core.Services.IKeyManager>(sp => sp.GetRequiredService<KeyManager>());
-        services.AddHostedService(sp => sp.GetRequiredService<KeyManager>());
         services.AddScoped<AuthorizationCodeService>();
         services.AddScoped<ITokenService, TokenService>();
-        // Single-tenant background services — only register when keyed TableClient services
-        // are available. Multi-tenant hosts (authagonal-cloud) handle these differently.
-        var isSingleTenant = services.Any(s => s.IsKeyedService && s.ServiceType == typeof(Azure.Data.Tables.TableClient));
-        if (isSingleTenant)
+        // Single-tenant services — KeyManager, background cleanup, seeding.
+        // Multi-tenant hosts pass multiTenant: true and register their own equivalents.
+        if (!multiTenant)
         {
+            services.AddSingleton<KeyManager>();
+            services.TryAddSingleton<Authagonal.Core.Services.IKeyManager>(sp => sp.GetRequiredService<KeyManager>());
+            services.AddHostedService(sp => sp.GetRequiredService<KeyManager>());
             services.AddHostedService<TokenCleanupService>();
             services.AddHostedService<GrantReconciliationService>();
+            services.AddHostedService<SigningKeyRotationService>();
             services.AddHostedService<ClientSeedService>();
             services.AddHostedService<ProviderSeedService>();
         }
-        services.AddHostedService<SigningKeyRotationService>();
         services.AddHttpClient("Provisioning");
         services.AddSingleton<TotpService>();
         services.AddSingleton<RecoveryCodeService>();
