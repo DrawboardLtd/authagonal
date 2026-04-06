@@ -8,8 +8,8 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Authagonal.Server" Version="0.1.45" />
-    <PackageReference Include="Authagonal.Storage" Version="0.1.45" />
+    <PackageReference Include="Authagonal.Server" Version="0.1.46" />
+    <PackageReference Include="Authagonal.Storage" Version="0.1.46" />
   </ItemGroup>
 
   <!-- Build the custom login SPA (which imports @drawboard/authagonal-login

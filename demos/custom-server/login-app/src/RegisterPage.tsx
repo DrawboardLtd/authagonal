@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import { useTranslation } from '@drawboard/authagonal-login';
+import { useTranslation, Button, Input, Label, Alert, CardTitle, CardFooter } from '@drawboard/authagonal-login';
 
 const API_URL = import.meta.env.VITE_API_URL || '';
 
@@ -52,7 +52,6 @@ export default function RegisterPage() {
         return;
       }
 
-      // Registration succeeded — navigate to login
       const loginUrl = returnUrl
         ? `/login?returnUrl=${encodeURIComponent(returnUrl)}&login_hint=${encodeURIComponent(email)}`
         : `/login?login_hint=${encodeURIComponent(email)}`;
@@ -70,15 +69,15 @@ export default function RegisterPage() {
 
   return (
     <div>
-      <h2 className="auth-title">Create Account</h2>
+      <CardTitle>Create Account</CardTitle>
 
-      {error && <div className="alert-error">{error}</div>}
+      {error && <Alert variant="error">{error}</Alert>}
 
       <form onSubmit={handleSubmit}>
-        <div style={{ display: 'flex', gap: '12px' }}>
-          <div className="form-group" style={{ flex: 1 }}>
-            <label htmlFor="firstName">First name</label>
-            <input
+        <div className="flex gap-3 mb-4">
+          <div className="flex-1">
+            <Label htmlFor="firstName">First name</Label>
+            <Input
               id="firstName"
               type="text"
               value={firstName}
@@ -88,9 +87,9 @@ export default function RegisterPage() {
               maxLength={100}
             />
           </div>
-          <div className="form-group" style={{ flex: 1 }}>
-            <label htmlFor="lastName">Last name</label>
-            <input
+          <div className="flex-1">
+            <Label htmlFor="lastName">Last name</Label>
+            <Input
               id="lastName"
               type="text"
               value={lastName}
@@ -102,9 +101,9 @@ export default function RegisterPage() {
           </div>
         </div>
 
-        <div className="form-group">
-          <label htmlFor="email">{t('email')}</label>
-          <input
+        <div className="mb-4">
+          <Label htmlFor="email">{t('email')}</Label>
+          <Input
             id="email"
             type="email"
             value={email}
@@ -117,9 +116,9 @@ export default function RegisterPage() {
           />
         </div>
 
-        <div className="form-group">
-          <label htmlFor="password">{t('password')}</label>
-          <input
+        <div className="mb-4">
+          <Label htmlFor="password">{t('password')}</Label>
+          <Input
             id="password"
             type="password"
             value={password}
@@ -132,43 +131,36 @@ export default function RegisterPage() {
           />
         </div>
 
-        <label htmlFor="terms" style={{ display: 'flex', alignItems: 'flex-start', gap: '8px', fontSize: '13px', color: '#4b5563', cursor: 'pointer', margin: '12px 0' }}>
+        <label htmlFor="terms" className="flex items-start gap-2 text-[13px] text-gray-600 cursor-pointer my-3">
           <input
             id="terms"
             type="checkbox"
             checked={agreedToTerms}
             onChange={(e) => setAgreedToTerms(e.target.checked)}
-            style={{ flexShrink: 0, marginTop: '2px', accentColor: 'var(--color-primary)' }}
+            className="shrink-0 mt-0.5 accent-primary"
           />
           <span>
             I agree to the Acme Corp{' '}
-            <a href="https://acme.example.com/terms" target="_blank" rel="noopener noreferrer" className="link">
+            <a href="https://acme.example.com/terms" target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">
               Terms of Service
             </a>{' '}
             and{' '}
-            <a href="https://acme.example.com/privacy" target="_blank" rel="noopener noreferrer" className="link">
+            <a href="https://acme.example.com/privacy" target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">
               Privacy Policy
             </a>
           </span>
         </label>
 
-        <button type="submit" className="btn-primary" disabled={loading}>
-          {loading ? (
-            <span className="btn-loading">
-              <span className="spinner" />
-              Creating account...
-            </span>
-          ) : (
-            'Create Account'
-          )}
-        </button>
+        <Button type="submit" loading={loading}>
+          {loading ? 'Creating account...' : 'Create Account'}
+        </Button>
 
-        <div className="form-footer">
-          <span style={{ color: '#6b7280', fontSize: '14px' }}>
+        <CardFooter>
+          <span className="text-sm text-gray-500">
             Already have an account?{' '}
-            <Link to={loginLink} className="link">{t('signIn')}</Link>
+            <Link to={loginLink} className="text-sm font-medium text-primary hover:underline no-underline">{t('signIn')}</Link>
           </span>
-        </div>
+        </CardFooter>
       </form>
     </div>
   );
