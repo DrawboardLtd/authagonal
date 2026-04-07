@@ -10,10 +10,14 @@ namespace Authagonal.Server.Services;
 
 public sealed class TccProvisioningOrchestrator(
     IHttpClientFactory httpClientFactory,
-    IUserProvisionStore provisionStore,
+    IHttpContextAccessor httpContextAccessor,
     IConfiguration configuration,
     ILogger<TccProvisioningOrchestrator> logger) : IProvisioningOrchestrator
 {
+    private IUserProvisionStore GetProvisionStore() =>
+        httpContextAccessor.HttpContext?.RequestServices.GetRequiredService<IUserProvisionStore>()
+        ?? throw new InvalidOperationException("UserProvisionStore requires an active HTTP request");
+
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
@@ -26,7 +30,7 @@ public sealed class TccProvisioningOrchestrator(
             return;
 
         // Determine which apps still need provisioning
-        var existing = await provisionStore.GetByUserAsync(user.Id, ct);
+        var existing = await GetProvisionStore().GetByUserAsync(user.Id, ct);
         var existingAppIds = existing.Select(p => p.AppId).ToHashSet(StringComparer.OrdinalIgnoreCase);
         var appsToProvision = requiredAppIds.Where(id => !existingAppIds.Contains(id)).ToList();
 
@@ -104,7 +108,7 @@ public sealed class TccProvisioningOrchestrator(
 
     public async Task DeprovisionAllAsync(string userId, CancellationToken ct = default)
     {
-        var provisions = await provisionStore.GetByUserAsync(userId, ct);
+        var provisions = await GetProvisionStore().GetByUserAsync(userId, ct);
 
         foreach (var provision in provisions)
         {
@@ -129,7 +133,7 @@ public sealed class TccProvisioningOrchestrator(
                 }
             }
 
-            await provisionStore.RemoveAsync(userId, provision.AppId, ct);
+            await GetProvisionStore().RemoveAsync(userId, provision.AppId, ct);
         }
     }
 
@@ -141,7 +145,7 @@ public sealed class TccProvisioningOrchestrator(
         var now = DateTimeOffset.UtcNow;
         foreach (var appId in appIds)
         {
-            await provisionStore.StoreAsync(new UserProvision
+            await GetProvisionStore().StoreAsync(new UserProvision
             {
                 UserId = userId,
                 AppId = appId,
