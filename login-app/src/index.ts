@@ -16,10 +16,14 @@ export { cn } from './lib/utils';
 
 // Pages
 export { default as LoginPage } from './pages/LoginPage';
+export { default as RegisterPage } from './pages/RegisterPage';
 export { default as ForgotPasswordPage } from './pages/ForgotPasswordPage';
 export { default as ResetPasswordPage } from './pages/ResetPasswordPage';
 export { default as MfaChallengePage } from './pages/MfaChallengePage';
 export { default as MfaSetupPage } from './pages/MfaSetupPage';
+
+// App — standalone SPA with routing (for consumers that want the full app)
+export { default as App } from './App';
 
 // Branding
 export { loadBranding, BrandingContext, useBranding, resolveLocalized } from './branding';
