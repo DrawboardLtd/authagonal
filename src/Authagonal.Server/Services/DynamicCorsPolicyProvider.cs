@@ -5,7 +5,6 @@ using Microsoft.Extensions.Options;
 namespace Authagonal.Server.Services;
 
 public sealed class DynamicCorsPolicyProvider(
-    IClientStore clientStore,
     IConfiguration configuration,
     IOptions<CacheOptions> cacheOptions,
     ILogger<DynamicCorsPolicyProvider> logger) : ICorsPolicyProvider
@@ -17,7 +16,7 @@ public sealed class DynamicCorsPolicyProvider(
 
     public async Task<CorsPolicy?> GetPolicyAsync(HttpContext context, string? policyName)
     {
-        var origins = await GetAllowedOriginsAsync();
+        var origins = await GetAllowedOriginsAsync(context);
 
         if (origins.Length == 0)
             return null;
@@ -41,7 +40,7 @@ public sealed class DynamicCorsPolicyProvider(
         return policyBuilder.Build();
     }
 
-    private async Task<string[]> GetAllowedOriginsAsync()
+    private async Task<string[]> GetAllowedOriginsAsync(HttpContext context)
     {
         if (_cachedOrigins is not null && DateTimeOffset.UtcNow < _cacheExpiry)
             return _cachedOrigins;
@@ -58,6 +57,8 @@ public sealed class DynamicCorsPolicyProvider(
             var clientOrigins = new List<string>();
             try
             {
+                // Resolve IClientStore from the request scope (supports multi-tenant)
+                var clientStore = context.RequestServices.GetRequiredService<IClientStore>();
                 var clients = await clientStore.GetAllAsync();
                 foreach (var client in clients)
                 {

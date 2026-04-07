@@ -12,9 +12,7 @@ namespace Authagonal.Server.Services;
 public sealed class ScimBearerAuthenticationHandler(
     IOptionsMonitor<AuthenticationSchemeOptions> options,
     ILoggerFactory logger,
-    UrlEncoder encoder,
-    IScimTokenStore scimTokenStore,
-    IClientStore clientStore)
+    UrlEncoder encoder)
     : AuthenticationHandler<AuthenticationSchemeOptions>(options, logger, encoder)
 {
     protected override async Task<AuthenticateResult> HandleAuthenticateAsync()
@@ -30,6 +28,10 @@ public sealed class ScimBearerAuthenticationHandler(
         {
             return AuthenticateResult.Fail("Empty bearer token");
         }
+
+        // Resolve stores from request scope (supports multi-tenant)
+        var scimTokenStore = Context.RequestServices.GetRequiredService<IScimTokenStore>();
+        var clientStore = Context.RequestServices.GetRequiredService<IClientStore>();
 
         // Hash the token for lookup
         var tokenHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(rawToken))).ToLowerInvariant();
