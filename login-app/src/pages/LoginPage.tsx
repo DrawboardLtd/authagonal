@@ -339,6 +339,12 @@ export default function LoginPage() {
             value={email}
             onChange={(e) => handleEmailChange(e.target.value)}
             onBlur={handleEmailBlur}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !ssoChecked && !ssoChecking && email.includes('@')) {
+                e.preventDefault();
+                performSsoCheck(email);
+              }
+            }}
             placeholder={t('emailPlaceholder')}
             autoComplete="email"
             autoFocus={!loginHint}
