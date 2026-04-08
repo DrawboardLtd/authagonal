@@ -72,6 +72,7 @@ public static class UserEndpoints
         PasswordPolicy passwordPolicy,
         IEmailService emailService,
         Authagonal.Core.Services.ITenantContext tenantContext,
+        IProvisioningOrchestrator provisioning,
         IOptions<AuthOptions> authOptions,
         IStringLocalizer<SharedMessages> localizer,
         CancellationToken ct)
@@ -109,6 +110,17 @@ public static class UserEndpoints
         };
 
         await userStore.CreateAsync(user, ct);
+
+        try
+        {
+            await provisioning.ProvisionAsync(user, ct);
+        }
+        catch (ProvisioningException ex)
+        {
+            await userStore.DeleteAsync(user.Id, ct);
+            return Results.UnprocessableEntity(new { error = "provisioning_rejected", message = ex.Message });
+        }
+
         await authHooks.RunOnUserCreatedAsync(userId, request.Email, "admin", ct);
 
         // Send verification email

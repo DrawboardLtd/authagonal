@@ -15,6 +15,11 @@ public interface IProvisioningOrchestrator
     Task ProvisionAsync(AuthUser user, IReadOnlyList<string> requiredAppIds, CancellationToken ct = default);
 
     /// <summary>
+    /// Provisions the user into all apps discovered from the registered <see cref="IProvisioningAppProvider"/>.
+    /// </summary>
+    Task ProvisionAsync(AuthUser user, CancellationToken ct = default);
+
+    /// <summary>
     /// Deprovisions a user from all apps they are provisioned into.
     /// Best-effort: logs failures but does not throw.
     /// </summary>

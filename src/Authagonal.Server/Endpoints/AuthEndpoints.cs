@@ -263,6 +263,7 @@ public static class AuthEndpoints
         PasswordPolicy passwordPolicy,
         ITenantContext tenantContext,
         IRateLimiter rateLimiter,
+        IProvisioningOrchestrator provisioning,
         IOptions<AuthOptions> authOptions,
         ILogger<Program> logger,
         CancellationToken ct)
@@ -307,6 +308,18 @@ public static class AuthEndpoints
         };
 
         await userStore.CreateAsync(user, ct);
+
+        // Provision to downstream apps (TCC)
+        try
+        {
+            await provisioning.ProvisionAsync(user, ct);
+        }
+        catch (ProvisioningException ex)
+        {
+            await userStore.DeleteAsync(user.Id, ct);
+            logger.LogWarning(ex, "Provisioning rejected registration for {Email}", user.Email);
+            return Results.UnprocessableEntity(new { error = "provisioning_rejected", message = ex.Message });
+        }
 
         // Send verification email
         var expiresAt = DateTimeOffset.UtcNow.AddHours(ao.EmailVerificationExpiryHours).ToUnixTimeSeconds();

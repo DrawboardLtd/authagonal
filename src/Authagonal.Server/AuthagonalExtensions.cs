@@ -173,6 +173,7 @@ public static class AuthagonalExtensions
 
         // Extensibility points — TryAdd so custom registrations take precedence
         services.TryAddSingleton<IEmailService, NullEmailService>();
+        services.TryAddSingleton<IProvisioningAppProvider, ConfigProvisioningAppProvider>();
         services.TryAddSingleton<IProvisioningOrchestrator, TccProvisioningOrchestrator>();
         // Auth hooks — multiple IAuthHook implementations can be registered and all will run.
         // NullAuthHook is only added if no hooks are registered by the host.

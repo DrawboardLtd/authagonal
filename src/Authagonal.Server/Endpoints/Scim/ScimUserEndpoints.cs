@@ -172,17 +172,16 @@ public static class ScimUserEndpoints
         }
 
         // Trigger TCC provisioning
-        var client = await clientStore.GetAsync(clientId, ct);
-        if (client?.ProvisioningApps.Count > 0)
+        // Provision to downstream apps (TCC)
+        try
         {
-            try
-            {
-                await provisioning.ProvisionAsync(user, client.ProvisioningApps, ct);
-            }
-            catch (ProvisioningException ex)
-            {
-                logger.LogWarning(ex, "SCIM provisioning downstream failed for user {UserId}", user.Id);
-            }
+            await provisioning.ProvisionAsync(user, ct);
+        }
+        catch (ProvisioningException ex)
+        {
+            await userStore.DeleteAsync(user.Id, ct);
+            logger.LogWarning(ex, "Provisioning rejected SCIM user {UserId}", user.Id);
+            return Results.UnprocessableEntity(new { error = "provisioning_rejected", message = ex.Message });
         }
 
         logger.LogInformation("SCIM user created: {UserId} ({Email}) by client {ClientId}", user.Id, email, clientId);

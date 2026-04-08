@@ -86,6 +86,7 @@ public static class OidcEndpoints
         IHttpClientFactory httpClientFactory,
         ISecretProvider secretProvider,
         Authagonal.Core.Services.ITenantContext tenantContext,
+        IProvisioningOrchestrator provisioning,
         ILogger<Program> logger,
         CancellationToken ct)
     {
@@ -260,6 +261,18 @@ public static class OidcEndpoints
             };
 
             await userStore.CreateAsync(user, ct);
+
+            try
+            {
+                await provisioning.ProvisionAsync(user, ct);
+            }
+            catch (ProvisioningException ex)
+            {
+                await userStore.DeleteAsync(user.Id, ct);
+                logger.LogWarning(ex, "Provisioning rejected OIDC SSO user {Email}", email);
+                return Results.BadRequest(new { error = "provisioning_rejected", message = ex.Message });
+            }
+
             logger.LogInformation("Created new user {UserId} ({Email}) via OIDC SSO", user.Id, email);
             await authHooks.RunOnUserCreatedAsync(user.Id, email, "oidc", ct);
         }

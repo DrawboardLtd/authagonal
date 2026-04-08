@@ -79,6 +79,7 @@ public static class SamlEndpoints
         SamlReplayCache replayCache,
         IMemoryCache memoryCache,
         Authagonal.Core.Services.ITenantContext tenantContext,
+        IProvisioningOrchestrator provisioning,
         IOptions<CacheOptions> cacheOptions,
         ILogger<Program> logger,
         CancellationToken ct)
@@ -184,6 +185,18 @@ public static class SamlEndpoints
             };
 
             await userStore.CreateAsync(user, ct);
+
+            try
+            {
+                await provisioning.ProvisionAsync(user, ct);
+            }
+            catch (ProvisioningException ex)
+            {
+                await userStore.DeleteAsync(user.Id, ct);
+                logger.LogWarning(ex, "Provisioning rejected SAML SSO user {Email}", email);
+                return Results.BadRequest(new { error = "provisioning_rejected", message = ex.Message });
+            }
+
             logger.LogInformation("Created new user {UserId} ({Email}) via SAML SSO", user.Id, email);
             await authHooks.RunOnUserCreatedAsync(user.Id, email, "saml", ct);
         }

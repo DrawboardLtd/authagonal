@@ -11,7 +11,7 @@ namespace Authagonal.Server.Services;
 public sealed class TccProvisioningOrchestrator(
     IHttpClientFactory httpClientFactory,
     IHttpContextAccessor httpContextAccessor,
-    IConfiguration configuration,
+    IProvisioningAppProvider appProvider,
     ILogger<TccProvisioningOrchestrator> logger) : IProvisioningOrchestrator
 {
     private IUserProvisionStore GetProvisionStore() =>
@@ -23,6 +23,22 @@ public sealed class TccProvisioningOrchestrator(
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
     };
+
+    public async Task ProvisionAsync(AuthUser user, CancellationToken ct = default)
+    {
+        var provisioningApps = await appProvider.GetAppsAsync(ct);
+        if (provisioningApps.Count == 0) return;
+
+        var appIds = provisioningApps.Select(a => a.AppId).ToList();
+        // Cache app configs for lookup during TCC phases
+        _resolvedApps = provisioningApps.ToDictionary(a => a.AppId, a => new AppConfig(a.CallbackUrl, a.ApiKey), StringComparer.OrdinalIgnoreCase);
+
+        await ProvisionAsync(user, appIds, ct);
+        _resolvedApps = null;
+    }
+
+    // App configs resolved from the provider (set during ProvisionAsync(user) call)
+    [ThreadStatic] private static Dictionary<string, AppConfig>? _resolvedApps;
 
     public async Task ProvisionAsync(AuthUser user, IReadOnlyList<string> requiredAppIds, CancellationToken ct = default)
     {
@@ -216,15 +232,15 @@ public sealed class TccProvisioningOrchestrator(
 
     private AppConfig? GetAppConfig(string appId)
     {
-        var section = configuration.GetSection($"ProvisioningApps:{appId}");
-        if (!section.Exists())
-            return null;
+        // Check resolved apps from provider (set during ProvisionAsync(user) call)
+        if (_resolvedApps?.TryGetValue(appId, out var resolved) == true)
+            return resolved;
 
-        var callbackUrl = section["CallbackUrl"];
-        if (string.IsNullOrWhiteSpace(callbackUrl))
-            return null;
+        // Fall back to async provider lookup (for legacy per-client app ID calls)
+        var app = appProvider.GetAppsAsync().GetAwaiter().GetResult()
+            .FirstOrDefault(a => string.Equals(a.AppId, appId, StringComparison.OrdinalIgnoreCase));
 
-        return new AppConfig(callbackUrl, section["ApiKey"]);
+        return app is not null ? new AppConfig(app.CallbackUrl, app.ApiKey) : null;
     }
 
     // ── HTTP helpers ──────────────────────────────────────────────────
