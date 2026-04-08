@@ -434,6 +434,7 @@ public static class AuthagonalExtensions
         app.MapAuthorizeEndpoint();
         app.MapTokenEndpoint();
         app.MapRevocationEndpoint();
+        app.MapDeviceAuthorizationEndpoints();
         app.MapEndSessionEndpoint();
         app.MapUserinfoEndpoint();
 

@@ -10,5 +10,6 @@ public interface ITokenService
     Task<TokenResponse> HandleAuthorizationCodeAsync(string code, string clientId, string redirectUri, string codeVerifier, CancellationToken ct = default);
     Task<TokenResponse> HandleRefreshTokenAsync(string refreshToken, string clientId, CancellationToken ct = default);
     Task<TokenResponse> HandleClientCredentialsAsync(string clientId, IEnumerable<string> scopes, CancellationToken ct = default);
+    Task<TokenResponse> HandleDeviceCodeAsync(string subjectId, string clientId, IReadOnlyList<string> scopes, CancellationToken ct = default);
     Task<bool> RevokeRefreshTokenAsync(string token, string clientId, CancellationToken ct = default);
 }

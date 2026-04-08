@@ -375,6 +375,45 @@ public sealed class TokenService(
         };
     }
 
+    public async Task<TokenResponse> HandleDeviceCodeAsync(
+        string subjectId,
+        string clientId,
+        IReadOnlyList<string> scopes,
+        CancellationToken ct = default)
+    {
+        var client = await clientStore.GetAsync(clientId, ct)
+            ?? throw new InvalidOperationException($"Client '{clientId}' not found");
+
+        var user = await userStore.GetAsync(subjectId, ct)
+            ?? throw new InvalidOperationException($"User '{subjectId}' not found");
+
+        var scopeList = scopes.ToList();
+        var accessToken = await CreateAccessTokenAsync(user, client, scopeList, ct: ct);
+
+        string? refreshToken = null;
+        if (scopeList.Contains("offline_access") && client.AllowOfflineAccess)
+        {
+            refreshToken = await CreateRefreshTokenAsync(user, client, scopeList, ct);
+        }
+
+        string? idToken = null;
+        if (scopeList.Contains("openid"))
+        {
+            idToken = await CreateIdTokenAsync(user, client, scopeList, ct: ct);
+        }
+
+        logger.LogInformation("Device code token issued for user {UserId} via client {ClientId}", subjectId, clientId);
+
+        return new TokenResponse
+        {
+            AccessToken = accessToken,
+            RefreshToken = refreshToken,
+            IdToken = idToken,
+            ExpiresIn = client.AccessTokenLifetimeSeconds,
+            Scope = string.Join(' ', scopeList)
+        };
+    }
+
     public async Task<bool> RevokeRefreshTokenAsync(string token, string clientId, CancellationToken ct = default)
     {
         var grant = await grantStore.GetAsync(token, ct);
