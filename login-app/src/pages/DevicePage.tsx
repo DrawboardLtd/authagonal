@@ -1,6 +1,5 @@
 import { useState, useEffect } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
-import { useTranslation } from 'react-i18next';
 import { getSession } from '../api';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -11,7 +10,6 @@ import { CardTitle } from '@/components/ui/card';
 const API_URL = import.meta.env.VITE_API_URL || '';
 
 export default function DevicePage() {
-  const { t } = useTranslation();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const [userCode, setUserCode] = useState(searchParams.get('user_code') || '');
