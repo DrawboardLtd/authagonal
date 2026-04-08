@@ -94,6 +94,10 @@ See the [Configuration](configuration) page for all cluster settings.
 - **Peer unreachable** — that peer's last-known state is still used; stale peers are pruned after 30 seconds
 - **Multicast unavailable** — discovery fails silently; gossip falls back to `InternalUrl` if configured
 
+### Multi-tenant deployments
+
+In multi-tenant mode (`AddAuthagonalCore()`), background services like `GrantReconciliationService` and `SigningKeyRotationService` are not registered — the host manages these per-tenant. Only `TokenCleanupService` runs unconditionally.
+
 ## Scaling recommendations
 
 **Vertical scaling** — increase CPU and memory on a single instance. Useful for handling more concurrent requests per instance.

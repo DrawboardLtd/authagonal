@@ -23,6 +23,18 @@ app.MapFallbackToFile("index.html");
 app.Run();
 ```
 
+### Hospedagem Multi-Tenant
+
+Para implantações multi-tenant, use `AddAuthagonalCore()` em vez disso. Ele regista endpoints, middleware e serviços principais, mas ignora o armazenamento, `KeyManager` e serviços em segundo plano — você os fornece por tenant:
+
+```csharp
+builder.Services.AddScoped<ITenantContext, MyTenantContext>();
+builder.Services.AddScoped<IKeyManager, MyPerTenantKeyManager>();
+builder.Services.AddAuthagonalCore(builder.Configuration);
+```
+
+`IKeyManager` e as interfaces de armazenamento (`IClientStore`, `IScimTokenStore`, etc.) são resolvidos a partir de `HttpContext.RequestServices` no momento do pedido, portanto os registos com escopo (scoped) funcionam corretamente para o isolamento por tenant.
+
 ## Substituição de Serviços
 
 Registe as suas implementações personalizadas **antes** de chamar `AddAuthagonal()`. O Authagonal usa `TryAdd` internamente, portanto os seus registos têm precedência:
@@ -47,6 +59,7 @@ builder.Services.AddAuthagonal(builder.Configuration);
 | `ISecretProvider` | `PlaintextSecretProvider` | Resolução de segredos (Key Vault, AWS Secrets Manager, etc.) |
 | `ITenantContext` | `DefaultTenantContext` (lê de `IConfiguration`) | Resolução de tenant para implantações multi-tenant |
 | `IKeyManager` | `KeyManager` (singleton) | Gestão de chaves de assinatura — substitua para isolamento de chaves por tenant |
+| `IProvisioningAppProvider` | `ConfigProvisioningAppProvider` | Resolve as aplicações de provisionamento disponíveis — substitua para resolução dinâmica ou por tenant |
 
 ## IAuthHook
 

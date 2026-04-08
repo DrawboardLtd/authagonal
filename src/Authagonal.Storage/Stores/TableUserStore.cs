@@ -152,31 +152,85 @@ public sealed class TableUserStore(
         }
     }
 
-    public async Task<(IReadOnlyList<AuthUser> Users, int TotalCount)> ListAsync(
+    public async Task<(IReadOnlyList<AuthUser> Users, bool HasMore)> ListAsync(
         string? organizationId, int startIndex, int count, CancellationToken ct = default)
     {
-        var allUsers = new List<AuthUser>();
-        var query = usersTable.QueryAsync<UserEntity>(
-            e => e.RowKey == UserEntity.ProfileRowKey,
-            cancellationToken: ct);
+        var results = new List<AuthUser>();
+        var skipped = 0;
+        var start = Math.Max(0, startIndex);
 
-        await foreach (var entity in query)
+        await foreach (var entity in usersTable.QueryAsync<UserEntity>(
+            e => e.RowKey == UserEntity.ProfileRowKey,
+            maxPerPage: count + 1,
+            cancellationToken: ct))
         {
             var user = entity.ToModel();
-            if (organizationId is null || string.Equals(user.OrganizationId, organizationId, StringComparison.Ordinal))
+            if (organizationId is not null &&
+                !string.Equals(user.OrganizationId, organizationId, StringComparison.Ordinal))
+                continue;
+
+            if (skipped < start)
             {
-                allUsers.Add(user);
+                skipped++;
+                continue;
             }
+
+            results.Add(user);
+
+            // Fetch one extra to determine hasMore, then stop
+            if (results.Count > count)
+                break;
         }
 
-        var totalCount = allUsers.Count;
-        var paged = allUsers
-            .OrderBy(u => u.CreatedAt)
-            .Skip(startIndex - 1)
-            .Take(count)
-            .ToList();
+        var hasMore = results.Count > count;
+        if (hasMore)
+            results.RemoveAt(results.Count - 1);
 
-        return (paged, totalCount);
+        return (results, hasMore);
+    }
+
+    public async Task<IReadOnlyList<AuthUser>> SearchAsync(
+        string query, int maxResults = 20, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(query))
+            return [];
+
+        query = query.Trim();
+        var results = new List<AuthUser>();
+
+        // 1. Try exact userId match (point read)
+        var byId = await GetAsync(query, ct);
+        if (byId is not null)
+            results.Add(byId);
+
+        // 2. Try exact email match
+        var byEmail = await FindByEmailAsync(query, ct);
+        if (byEmail is not null && results.All(u => u.Id != byEmail.Id))
+            results.Add(byEmail);
+
+        if (results.Count >= maxResults)
+            return results;
+
+        // 3. Email prefix search — range query on UserEmails table
+        var prefix = query.ToUpperInvariant();
+        var prefixEnd = prefix + "\uffff";
+
+        await foreach (var entity in userEmailsTable.QueryAsync<UserEmailEntity>(
+            e => e.PartitionKey.CompareTo(prefix) >= 0 && e.PartitionKey.CompareTo(prefixEnd) < 0,
+            cancellationToken: ct))
+        {
+            if (results.Any(u => u.Id == entity.UserId))
+                continue;
+
+            var user = await GetAsync(entity.UserId, ct);
+            if (user is not null)
+                results.Add(user);
+
+            if (results.Count >= maxResults)
+                break;
+        }
+
+        return results;
     }
 
     public async Task SetExternalIdAsync(string userId, string clientId, string externalId, CancellationToken ct = default)

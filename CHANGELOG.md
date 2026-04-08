@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.1.57] — 2026-04-08
+
+### Added
+
+- **Auto-provisioning on all creation endpoints** — TCC provisioning now triggers when users are created via admin API, self-service registration, SAML SSO, OIDC SSO, and SCIM. If any provisioning app rejects the user in the Try phase, the user is deleted and the endpoint returns `422`.
+- **`IProvisioningAppProvider`** — new extensibility point for resolving available provisioning apps dynamically. Default `ConfigProvisioningAppProvider` reads from `appsettings.json`. Override to resolve apps per-tenant or from an external source.
+- **`SigningKeyOps` utility** — extracted signing key operations (generate, rotate, build JWKS) into a reusable static class. Enables both single-tenant `KeyManager` and multi-tenant wrappers to share key logic.
+- **`RegisterPage` and `App` exports** — `@drawboard/authagonal-login` now exports the built-in registration page and a standalone `App` component with full routing for consumers who want the complete SPA.
+- **Enter key SSO check** — email field on the login page accepts Enter to trigger SSO domain check (no longer requires tab/blur).
+- **Load testing framework** — k6-based test suite (`tests/load/`) with smoke, stress, and soak tests targeting the demo deployment. GitHub Actions workflow runs smoke after every deploy and soak daily.
+- **`Authagonal.Backup` NuGet package** — backup library now published to nuget.org alongside Server, Core, and Storage.
+
+### Changed
+
+- **Multi-tenant dependency resolution** — `IClientStore`, `IScimTokenStore`, and `IUserProvisionStore` now resolved from `HttpContext.RequestServices` for per-request tenant isolation. `IKeyManager` supports scoped registration for per-tenant signing keys.
+- **`AddAuthagonalCore()` / `AddAuthagonal()` split** — `AddAuthagonalCore()` registers services safe for both single and multi-tenant hosts. `AddAuthagonal()` adds the full single-tenant stack (stores, KeyManager, background services). Multi-tenant hosts call `AddAuthagonalCore()` and register their own equivalents.
+- **Conditional background services** — `GrantReconciliationService` and `SigningKeyRotationService` only register in single-tenant mode. Multi-tenant hosts manage these per-tenant.
+- **Demo login pages** — `AcmeLoginPage` and `RegisterPage` refactored to use the library's UI components (`Button`, `Input`, `Label`, `Alert`, `CardTitle`, `CardFooter`) instead of the old pre-Tailwind CSS classes.
+
 ## [0.1.42] — 2026-04-06
 
 ### Fixed

@@ -49,15 +49,39 @@ public sealed class InMemoryUserStore : IUserStore
         return Task.FromResult<AuthUser?>(null);
     }
 
-    public Task<(IReadOnlyList<AuthUser> Users, int TotalCount)> ListAsync(string? organizationId, int startIndex, int count, CancellationToken ct = default)
+    public Task<(IReadOnlyList<AuthUser> Users, bool HasMore)> ListAsync(string? organizationId, int startIndex, int count, CancellationToken ct = default)
     {
         var all = _users.Values.AsEnumerable();
         if (organizationId is not null)
             all = all.Where(u => u.OrganizationId == organizationId);
 
-        var list = all.OrderBy(u => u.CreatedAt).ToList();
-        var paged = list.Skip(startIndex - 1).Take(count).ToList();
-        return Task.FromResult<(IReadOnlyList<AuthUser>, int)>((paged, list.Count));
+        var list = all.OrderBy(u => u.CreatedAt).Skip(Math.Max(0, startIndex)).ToList();
+        var paged = list.Take(count).ToList();
+        return Task.FromResult<(IReadOnlyList<AuthUser>, bool)>((paged, list.Count > count));
+    }
+
+    public Task<IReadOnlyList<AuthUser>> SearchAsync(string query, int maxResults = 20, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(query))
+            return Task.FromResult<IReadOnlyList<AuthUser>>([]);
+
+        query = query.Trim();
+        var results = new List<AuthUser>();
+
+        // Exact userId
+        if (_users.TryGetValue(query, out var byId))
+            results.Add(byId);
+
+        // Email prefix match
+        var prefix = query.ToUpperInvariant();
+        foreach (var u in _users.Values)
+        {
+            if (results.Count >= maxResults) break;
+            if (u.NormalizedEmail.StartsWith(prefix, StringComparison.Ordinal) && results.All(r => r.Id != u.Id))
+                results.Add(u);
+        }
+
+        return Task.FromResult<IReadOnlyList<AuthUser>>(results);
     }
 
     public Task SetExternalIdAsync(string userId, string clientId, string externalId, CancellationToken ct = default)

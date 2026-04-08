@@ -212,6 +212,8 @@ import {
   ResetPasswordPage,
   MfaChallengePage,
   MfaSetupPage,
+  RegisterPage,
+  App,              // Standalone SPA with full routing
 } from '@drawboard/authagonal-login';
 
 // UI primitives

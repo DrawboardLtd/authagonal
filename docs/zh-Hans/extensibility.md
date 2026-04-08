@@ -23,6 +23,18 @@ app.MapFallbackToFile("index.html");
 app.Run();
 ```
 
+### 多租户托管
+
+对于多租户部署，请改用 `AddAuthagonalCore()`。它注册端点、中间件和核心服务，但跳过存储、`KeyManager` 和后台服务 -- 您需要按租户提供这些：
+
+```csharp
+builder.Services.AddScoped<ITenantContext, MyTenantContext>();
+builder.Services.AddScoped<IKeyManager, MyPerTenantKeyManager>();
+builder.Services.AddAuthagonalCore(builder.Configuration);
+```
+
+`IKeyManager` 和存储接口（`IClientStore`、`IScimTokenStore` 等）在请求时从 `HttpContext.RequestServices` 解析，因此作用域（scoped）注册可以正确地实现按租户隔离。
+
 ## 覆盖服务
 
 在调用 `AddAuthagonal()` **之前**注册您的自定义实现。Authagonal 内部使用 `TryAdd`，因此您的注册具有优先权：
@@ -47,6 +59,7 @@ builder.Services.AddAuthagonal(builder.Configuration);
 | `ISecretProvider` | `PlaintextSecretProvider` | 密钥解析（Key Vault、AWS Secrets Manager 等） |
 | `ITenantContext` | `DefaultTenantContext`（从 `IConfiguration` 读取） | 多租户部署的租户解析 |
 | `IKeyManager` | `KeyManager`（单例） | 签名密钥管理 -- 覆盖以实现按租户密钥隔离 |
+| `IProvisioningAppProvider` | `ConfigProvisioningAppProvider` | 解析可用的预配应用 -- 覆盖以实现动态或按租户的应用解析 |
 
 ## IAuthHook
 

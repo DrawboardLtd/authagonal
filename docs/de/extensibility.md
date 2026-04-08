@@ -23,6 +23,18 @@ app.MapFallbackToFile("index.html");
 app.Run();
 ```
 
+### Multi-Mandanten-Hosting
+
+Fuer Multi-Mandanten-Deployments verwenden Sie stattdessen `AddAuthagonalCore()`. Es registriert Endpunkte, Middleware und Kerndienste, ueberspringt aber Storage, `KeyManager` und Hintergrunddienste -- diese stellen Sie pro Mandant bereit:
+
+```csharp
+builder.Services.AddScoped<ITenantContext, MyTenantContext>();
+builder.Services.AddScoped<IKeyManager, MyPerTenantKeyManager>();
+builder.Services.AddAuthagonalCore(builder.Configuration);
+```
+
+`IKeyManager` und Store-Schnittstellen (`IClientStore`, `IScimTokenStore` usw.) werden zur Anforderungszeit aus `HttpContext.RequestServices` aufgeloest, sodass Scoped-Registrierungen fuer die mandantenspezifische Isolierung korrekt funktionieren.
+
 ## Services ueberschreiben
 
 Registrieren Sie Ihre benutzerdefinierten Implementierungen **vor** dem Aufruf von `AddAuthagonal()`. Authagonal verwendet intern `TryAdd`, sodass Ihre Registrierungen Vorrang haben:
@@ -47,6 +59,7 @@ builder.Services.AddAuthagonal(builder.Configuration);
 | `ISecretProvider` | `PlaintextSecretProvider` | Geheimnis-Aufloesung (Key Vault, AWS Secrets Manager usw.) |
 | `ITenantContext` | `DefaultTenantContext` (liest aus `IConfiguration`) | Mandantenaufloesung fuer Multi-Mandanten-Deployments |
 | `IKeyManager` | `KeyManager` (Singleton) | Signaturschluessel-Verwaltung -- ueberschreiben fuer mandantenspezifische Schluesselisolierung |
+| `IProvisioningAppProvider` | `ConfigProvisioningAppProvider` | Aufloesen verfuegbarer Bereitstellungs-Apps -- ueberschreiben fuer dynamische oder mandantenspezifische App-Aufloesung |
 
 ## IAuthHook
 

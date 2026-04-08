@@ -10,11 +10,20 @@ O Authagonal provisiona utilizadores em aplicações downstream usando o padrão
 
 ## Quando o Provisionamento é Executado
 
-O provisionamento é executado no **endpoint de autorização** (`/connect/authorize`), após o utilizador ser autenticado mas antes de um código de autorização ser emitido. Isto significa:
+O provisionamento é executado automaticamente sempre que um utilizador é criado, independentemente do caminho de criação:
 
-- É executado no primeiro login do utilizador através de um cliente que requer provisionamento
-- Combinações aplicação/utilizador já provisionadas são ignoradas (rastreadas na tabela `UserProvisions`)
-- Se o provisionamento falhar, o pedido de autorização retorna `access_denied` — nenhum código é emitido
+| Endpoint | Gatilho |
+|---|---|
+| `POST /api/v1/profile/` | Criação de utilizador pelo administrador |
+| `POST /api/auth/register` | Registo self-service |
+| SAML ACS (`POST /saml/{id}/acs`) | Primeiro login SSO (novo utilizador) |
+| OIDC callback (`GET /oidc/callback`) | Primeiro login SSO (novo utilizador) |
+| SCIM (`POST /scim/v2/Users`) | Provisionamento do fornecedor de identidade |
+| `GET /connect/authorize` | Primeira autorização através de um cliente com `ProvisioningApps` |
+
+Combinações aplicação/utilizador já provisionadas são ignoradas (rastreadas na tabela `UserProvisions`).
+
+**Em caso de rejeição:** Se alguma aplicação de provisionamento rejeitar o utilizador na fase Try, o utilizador é eliminado e o endpoint retorna `422 Unprocessable Entity` com o motivo da rejeição. Isto previne utilizadores criados parcialmente.
 
 ## Configuração
 
@@ -148,6 +157,17 @@ Authorize Endpoint
 ### Em Caso de Falha Parcial de Confirmação
 
 Se algumas confirmações tiverem sucesso mas uma falhar, as aplicações confirmadas com sucesso têm os seus registos de provisionamento armazenados (para que não sejam tentadas novamente). O utilizador vê um erro e pode tentar novamente — apenas a aplicação que falhou será tentada da próxima vez.
+
+## Resolução Personalizada de Aplicações
+
+Por padrão, as aplicações de provisionamento são lidas da secção de configuração `ProvisioningApps` via `ConfigProvisioningAppProvider`. Substitua `IProvisioningAppProvider` para resolver aplicações dinamicamente — por exemplo, a partir de uma base de dados ou por tenant:
+
+```csharp
+builder.Services.AddSingleton<IProvisioningAppProvider, MyAppProvider>();
+builder.Services.AddAuthagonal(builder.Configuration);
+```
+
+O provedor retorna uma lista de aplicações e as suas URLs de callback. O `TccProvisioningOrchestrator` chama Try/Confirm/Cancel em cada uma.
 
 ## Desprovisionamento
 

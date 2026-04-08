@@ -10,11 +10,20 @@ Authagonal cấp phát người dùng vào các ứng dụng phía sau sử dụ
 
 ## Khi nào cấp phát chạy
 
-Cấp phát chạy tại **endpoint ủy quyền** (`/connect/authorize`), sau khi người dùng được xác thực nhưng trước khi mã ủy quyền được cấp. Điều này có nghĩa:
+Cấp phát chạy tự động mỗi khi người dùng được tạo, bất kể đường dẫn tạo:
 
-- Nó chạy trong lần đăng nhập đầu tiên của người dùng qua client yêu cầu cấp phát
-- Các tổ hợp ứng dụng/người dùng đã được cấp phát sẽ bị bỏ qua (được theo dõi trong bảng `UserProvisions`)
-- Nếu cấp phát thất bại, yêu cầu ủy quyền trả về `access_denied` — không có mã nào được cấp
+| Endpoint | Trình kích hoạt |
+|---|---|
+| `POST /api/v1/profile/` | Quản trị viên tạo người dùng |
+| `POST /api/auth/register` | Đăng ký tự phục vụ |
+| SAML ACS (`POST /saml/{id}/acs`) | Đăng nhập SSO đầu tiên (người dùng mới) |
+| OIDC callback (`GET /oidc/callback`) | Đăng nhập SSO đầu tiên (người dùng mới) |
+| SCIM (`POST /scim/v2/Users`) | Cấp phát từ nhà cung cấp danh tính |
+| `GET /connect/authorize` | Ủy quyền đầu tiên qua client có `ProvisioningApps` |
+
+Các tổ hợp ứng dụng/người dùng đã được cấp phát sẽ bị bỏ qua (được theo dõi trong bảng `UserProvisions`).
+
+**Khi bị từ chối:** Nếu bất kỳ ứng dụng cấp phát nào từ chối người dùng trong giai đoạn Try, người dùng sẽ bị xóa và endpoint trả về `422 Unprocessable Entity` với lý do từ chối. Điều này ngăn chặn việc tạo người dùng không hoàn chỉnh.
 
 ## Cấu hình
 
@@ -148,6 +157,17 @@ Authorize Endpoint
 ### Khi xác nhận thất bại một phần
 
 Nếu một số xác nhận thành công nhưng một xác nhận thất bại, các ứng dụng được xác nhận thành công sẽ có bản ghi cấp phát được lưu (nên sẽ không bị thử lại). Người dùng thấy lỗi và có thể thử lại — chỉ ứng dụng thất bại sẽ được thử lại lần sau.
+
+## Giải quyết ứng dụng tùy chỉnh
+
+Mặc định, các ứng dụng cấp phát được đọc từ phần cấu hình `ProvisioningApps` thông qua `ConfigProvisioningAppProvider`. Ghi đè `IProvisioningAppProvider` để giải quyết ứng dụng một cách động — ví dụ, từ cơ sở dữ liệu hoặc theo tenant:
+
+```csharp
+builder.Services.AddSingleton<IProvisioningAppProvider, MyAppProvider>();
+builder.Services.AddAuthagonal(builder.Configuration);
+```
+
+Provider trả về danh sách các ứng dụng và URL callback của chúng. `TccProvisioningOrchestrator` gọi Try/Confirm/Cancel trên mỗi ứng dụng.
 
 ## Hủy cấp phát
 

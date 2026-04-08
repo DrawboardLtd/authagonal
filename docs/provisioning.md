@@ -9,11 +9,20 @@ Authagonal provisions users into downstream applications using the **Try-Confirm
 
 ## When Provisioning Runs
 
-Provisioning runs at the **authorize endpoint** (`/connect/authorize`), after the user is authenticated but before an authorization code is issued. This means:
+Provisioning runs automatically whenever a user is created, regardless of the creation path:
 
-- It runs on the user's first login through a client that requires provisioning
-- Already-provisioned app/user combinations are skipped (tracked in the `UserProvisions` table)
-- If provisioning fails, the authorize request returns `access_denied` — no code is issued
+| Endpoint | Trigger |
+|---|---|
+| `POST /api/v1/profile/` | Admin user creation |
+| `POST /api/auth/register` | Self-service registration |
+| SAML ACS (`POST /saml/{id}/acs`) | First SSO login (new user) |
+| OIDC callback (`GET /oidc/callback`) | First SSO login (new user) |
+| SCIM (`POST /scim/v2/Users`) | Identity provider provisioning |
+| `GET /connect/authorize` | First authorization through a client with `ProvisioningApps` |
+
+Already-provisioned app/user combinations are skipped (tracked in the `UserProvisions` table).
+
+**On rejection:** If any provisioning app rejects the user in the Try phase, the user is deleted and the endpoint returns `422 Unprocessable Entity` with the rejection reason. This prevents half-created users.
 
 ## Configuration
 
@@ -147,6 +156,17 @@ Authorize Endpoint
 ### On Partial Confirm Failure
 
 If some confirms succeed but one fails, the successfully confirmed apps have their provision records stored (so they won't be retried). The user sees an error and can retry — only the failed app will be attempted next time.
+
+## Custom App Resolution
+
+By default, provisioning apps are read from the `ProvisioningApps` configuration section via `ConfigProvisioningAppProvider`. Override `IProvisioningAppProvider` to resolve apps dynamically — for example, from a database or per-tenant:
+
+```csharp
+builder.Services.AddSingleton<IProvisioningAppProvider, MyAppProvider>();
+builder.Services.AddAuthagonal(builder.Configuration);
+```
+
+The provider returns a list of apps and their callback URLs. The `TccProvisioningOrchestrator` calls Try/Confirm/Cancel on each.
 
 ## Deprovisioning
 

@@ -95,6 +95,10 @@ Consulte la pagina de [Configuracion](configuration) para todas las opciones del
 - **Par inaccesible** — el ultimo estado conocido de ese par se sigue utilizando; los pares obsoletos se eliminan despues de 30 segundos
 - **Multicast no disponible** — el descubrimiento falla silenciosamente; el protocolo de difusion recurre a `InternalUrl` si esta configurado
 
+### Despliegues multi-tenant
+
+En el modo multi-tenant (`AddAuthagonalCore()`), los servicios en segundo plano como `GrantReconciliationService` y `SigningKeyRotationService` no se registran — el host los gestiona por tenant. Solo `TokenCleanupService` se ejecuta incondicionalmente.
+
 ## Recomendaciones de escalabilidad
 
 **Escalado vertical** — aumente la CPU y la memoria en una sola instancia. Util para manejar mas solicitudes concurrentes por instancia.

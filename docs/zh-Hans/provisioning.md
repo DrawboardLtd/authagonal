@@ -10,11 +10,20 @@ Authagonal 使用 **Try-Confirm-Cancel (TCC)** 模式将用户预配到下游应
 
 ## 预配何时运行
 
-预配在**授权端点** (`/connect/authorize`) 处运行，在用户认证之后但授权码签发之前。这意味着：
+预配在用户被创建时自动运行，与创建路径无关：
 
-- 它在用户首次通过需要预配的客户端登录时运行
-- 已预配的应用/用户组合会被跳过（在 `UserProvisions` 表中跟踪）
-- 如果预配失败，授权请求返回 `access_denied` -- 不签发授权码
+| 端点 | 触发条件 |
+|---|---|
+| `POST /api/v1/profile/` | 管理员创建用户 |
+| `POST /api/auth/register` | 自助注册 |
+| SAML ACS (`POST /saml/{id}/acs`) | 首次 SSO 登录（新用户） |
+| OIDC 回调 (`GET /oidc/callback`) | 首次 SSO 登录（新用户） |
+| SCIM (`POST /scim/v2/Users`) | 身份提供者预配 |
+| `GET /connect/authorize` | 首次通过带有 `ProvisioningApps` 的客户端授权 |
+
+已预配的应用/用户组合会被跳过（在 `UserProvisions` 表中跟踪）。
+
+**被拒绝时：** 如果任何预配应用在 Try 阶段拒绝了用户，该用户将被删除，端点返回 `422 Unprocessable Entity` 并附带拒绝原因。这可以防止产生半创建的用户。
 
 ## 配置
 
@@ -148,6 +157,17 @@ Authorize Endpoint
 ### 部分确认失败时
 
 如果部分确认成功但有一个失败，成功确认的应用会存储其预配记录（这样就不会重试）。用户会看到错误消息并可以重试 -- 只有失败的应用会在下次尝试。
+
+## 自定义应用解析
+
+默认情况下，预配应用通过 `ConfigProvisioningAppProvider` 从 `ProvisioningApps` 配置节读取。覆盖 `IProvisioningAppProvider` 以动态解析应用 -- 例如，从数据库或按租户解析：
+
+```csharp
+builder.Services.AddSingleton<IProvisioningAppProvider, MyAppProvider>();
+builder.Services.AddAuthagonal(builder.Configuration);
+```
+
+Provider 返回应用列表及其回调 URL。`TccProvisioningOrchestrator` 对每个应用调用 Try/Confirm/Cancel。
 
 ## 取消预配
 

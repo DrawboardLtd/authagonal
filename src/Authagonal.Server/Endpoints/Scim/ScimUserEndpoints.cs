@@ -53,7 +53,7 @@ public static class ScimUserEndpoints
         // Use ScimProvisionedByClientId for scoping - users created by this SCIM client
         // For now, we scope by listing all users and filtering
 
-        var (users, totalCount) = await userStore.ListAsync(orgId, 1, int.MaxValue, ct);
+        var (users, _) = await userStore.ListAsync(orgId, 1, int.MaxValue, ct);
 
         // Apply filter
         var parsed = ScimFilterParser.Parse(filter);

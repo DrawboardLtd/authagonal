@@ -10,11 +10,20 @@ Authagonal aprovisiona usuarios en aplicaciones posteriores utilizando el patron
 
 ## Cuando se ejecuta el aprovisionamiento
 
-El aprovisionamiento se ejecuta en el **endpoint de autorizacion** (`/connect/authorize`), despues de que el usuario se autentica pero antes de que se emita un codigo de autorizacion. Esto significa:
+El aprovisionamiento se ejecuta automaticamente cada vez que se crea un usuario, independientemente de la ruta de creacion:
 
-- Se ejecuta en el primer inicio de sesion del usuario a traves de un cliente que requiere aprovisionamiento
-- Las combinaciones aplicacion/usuario ya aprovisionadas se omiten (rastreadas en la tabla `UserProvisions`)
-- Si el aprovisionamiento falla, la solicitud de autorizacion devuelve `access_denied` -- no se emite ningun codigo
+| Endpoint | Disparador |
+|---|---|
+| `POST /api/v1/profile/` | Creacion de usuario por administrador |
+| `POST /api/auth/register` | Registro de autoservicio |
+| SAML ACS (`POST /saml/{id}/acs`) | Primer inicio de sesion SSO (usuario nuevo) |
+| OIDC callback (`GET /oidc/callback`) | Primer inicio de sesion SSO (usuario nuevo) |
+| SCIM (`POST /scim/v2/Users`) | Aprovisionamiento del proveedor de identidad |
+| `GET /connect/authorize` | Primera autorizacion a traves de un cliente con `ProvisioningApps` |
+
+Las combinaciones aplicacion/usuario ya aprovisionadas se omiten (rastreadas en la tabla `UserProvisions`).
+
+**En caso de rechazo:** Si alguna aplicacion de aprovisionamiento rechaza al usuario en la fase Try, el usuario se elimina y el endpoint devuelve `422 Unprocessable Entity` con el motivo del rechazo. Esto evita usuarios creados a medias.
 
 ## Configuracion
 
@@ -148,6 +157,17 @@ Authorize Endpoint
 ### En caso de fallo parcial de confirmacion
 
 Si algunas confirmaciones tienen exito pero una falla, las aplicaciones confirmadas exitosamente tienen sus registros de aprovisionamiento almacenados (por lo que no se reintentaran). El usuario ve un error y puede reintentar -- solo la aplicacion fallida se intentara la proxima vez.
+
+## Resolucion personalizada de aplicaciones
+
+Por defecto, las aplicaciones de aprovisionamiento se leen de la seccion de configuracion `ProvisioningApps` a traves de `ConfigProvisioningAppProvider`. Anule `IProvisioningAppProvider` para resolver aplicaciones dinamicamente — por ejemplo, desde una base de datos o por tenant:
+
+```csharp
+builder.Services.AddSingleton<IProvisioningAppProvider, MyAppProvider>();
+builder.Services.AddAuthagonal(builder.Configuration);
+```
+
+El proveedor devuelve una lista de aplicaciones y sus URLs de callback. El `TccProvisioningOrchestrator` llama a Try/Confirm/Cancel en cada una.
 
 ## Desaprovisionamiento
 

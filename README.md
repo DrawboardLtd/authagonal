@@ -31,6 +31,7 @@ This starts the auth server on `http://localhost:8080` with an Azurite storage e
 | `tools/Authagonal.Backup` | Azure Table Storage backup tool (incremental support) |
 | `tools/Authagonal.Restore` | Azure Table Storage restore tool (upsert, merge, clean modes) |
 | `tests/Authagonal.Tests` | Unit tests |
+| `tests/load` | k6 load tests (smoke, stress, soak) |
 | `demos/custom-server` | Demo: host Authagonal as a library with custom extensions |
 | `demos/sample-app` | Demo: client app (API + React SPA) authenticating via Authagonal |
 
@@ -42,7 +43,7 @@ This starts the auth server on `http://localhost:8080` with an Azurite storage e
 - **SAML/OIDC from Config** — define identity providers in configuration, seeded on startup
 - **Multi-Factor Authentication** — TOTP (authenticator apps), WebAuthn/passkeys, recovery codes. Per-client MFA policy (`Disabled`, `Enabled`, `Required`) with `IAuthHook` override for per-user control.
 - **Configurable Password Policy** — min length, character requirements, exposed via API for dynamic frontend validation
-- **TCC Provisioning** — Try-Confirm-Cancel provisioning into downstream apps at authorize time
+- **TCC Provisioning** — Try-Confirm-Cancel provisioning into downstream apps on all user creation endpoints (admin, registration, SSO, SCIM). Pluggable via `IProvisioningAppProvider`.
 - **Auth Hooks** — `IAuthHook` extensibility point for audit logging, custom validation, webhooks. Multiple implementations run in registration order.
 - **Role-Based Access Control** — role CRUD, user-role assignment/removal via admin API (`/api/v1/roles`)
 - **Multi-Tenant Abstractions** — `ITenantContext` and `IKeyManager` interfaces for per-tenant configuration and signing key isolation
@@ -100,6 +101,19 @@ app.Run();
 ```
 
 See `demos/custom-server/` for a complete example.
+
+## Load Testing
+
+```bash
+# Quick smoke test
+k6 run tests/load/smoke.js -e BASE_URL=http://localhost:8080
+
+# Stress test (ramps to 100 VUs)
+k6 run tests/load/stress.js
+
+# Soak test (30 minutes sustained load)
+k6 run tests/load/soak.js -e DURATION=30m
+```
 
 ## Configuration
 

@@ -95,6 +95,10 @@ Xem trang [Cấu hình](configuration) để biết tất cả các thiết lậ
 - **Peer không thể truy cập** — trạng thái được biết cuối cùng của peer đó vẫn được sử dụng; các peer cũ được loại bỏ sau 30 giây
 - **Multicast không khả dụng** — phát hiện thất bại trong im lặng; gossip chuyển sang sử dụng `InternalUrl` nếu đã được cấu hình
 
+### Triển khai đa tenant
+
+Trong chế độ đa tenant (`AddAuthagonalCore()`), các dịch vụ nền như `GrantReconciliationService` và `SigningKeyRotationService` không được đăng ký — host quản lý chúng theo từng tenant. Chỉ `TokenCleanupService` chạy vô điều kiện.
+
 ## Khuyến nghị mở rộng quy mô
 
 **Mở rộng theo chiều dọc** — tăng CPU và bộ nhớ trên một instance đơn. Hữu ích để xử lý nhiều yêu cầu đồng thời hơn trên mỗi instance.

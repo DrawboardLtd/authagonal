@@ -22,6 +22,18 @@ app.MapFallbackToFile("index.html");
 app.Run();
 ```
 
+### Multi-Tenant Hosting
+
+For multi-tenant deployments, use `AddAuthagonalCore()` instead. It registers endpoints, middleware, and core services but skips storage, `KeyManager`, and background services — you provide those per-tenant:
+
+```csharp
+builder.Services.AddScoped<ITenantContext, MyTenantContext>();
+builder.Services.AddScoped<IKeyManager, MyPerTenantKeyManager>();
+builder.Services.AddAuthagonalCore(builder.Configuration);
+```
+
+`IKeyManager` and store interfaces (`IClientStore`, `IScimTokenStore`, etc.) are resolved from `HttpContext.RequestServices` at request time, so scoped registrations work correctly for per-tenant isolation.
+
 ## Overriding Services
 
 Register your custom implementations **before** calling `AddAuthagonal()`. Authagonal uses `TryAdd` internally, so your registrations take precedence:
@@ -46,6 +58,7 @@ builder.Services.AddAuthagonal(builder.Configuration);
 | `ISecretProvider` | `PlaintextSecretProvider` | Secret resolution (Key Vault, AWS Secrets Manager, etc.) |
 | `ITenantContext` | `DefaultTenantContext` (reads from `IConfiguration`) | Tenant resolution for multi-tenant deployments |
 | `IKeyManager` | `KeyManager` (singleton) | Signing key management — override for per-tenant key isolation |
+| `IProvisioningAppProvider` | `ConfigProvisioningAppProvider` | Resolves available provisioning apps — override for dynamic or per-tenant app resolution |
 
 ## IAuthHook
 

@@ -12,7 +12,8 @@ public interface IUserStore
     Task<bool> ExistsAsync(string userId, CancellationToken ct = default);
 
     Task<AuthUser?> FindByExternalIdAsync(string clientId, string externalId, CancellationToken ct = default);
-    Task<(IReadOnlyList<AuthUser> Users, int TotalCount)> ListAsync(string? organizationId, int startIndex, int count, CancellationToken ct = default);
+    Task<(IReadOnlyList<AuthUser> Users, bool HasMore)> ListAsync(string? organizationId, int startIndex, int count, CancellationToken ct = default);
+    Task<IReadOnlyList<AuthUser>> SearchAsync(string query, int maxResults = 20, CancellationToken ct = default);
     Task SetExternalIdAsync(string userId, string clientId, string externalId, CancellationToken ct = default);
     Task RemoveExternalIdAsync(string userId, string clientId, string externalId, CancellationToken ct = default);
 

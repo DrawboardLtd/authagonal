@@ -221,6 +221,8 @@ import { useTranslation } from 'react-i18next';
 | `ResetPasswordPage` | Token + new password form with policy validation |
 | `MfaChallengePage` | TOTP/passkey/recovery code verification |
 | `MfaSetupPage` | QR code scanning, passkey registration, recovery code generation |
+| `RegisterPage` | Self-service registration form with email/password |
+| `App` | Standalone SPA with full routing (login, register, forgot/reset password, MFA) |
 
 ### UI Components
 

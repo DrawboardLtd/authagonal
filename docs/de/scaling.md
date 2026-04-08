@@ -95,6 +95,10 @@ Siehe die Seite [Konfiguration](configuration) fuer alle Cluster-Einstellungen.
 - **Peer nicht erreichbar** — der letzte bekannte Zustand dieses Peers wird weiterhin verwendet; veraltete Peers werden nach 30 Sekunden entfernt
 - **Multicast nicht verfuegbar** — Discovery schlaegt stillschweigend fehl; Gossip faellt auf `InternalUrl` zurueck, falls konfiguriert
 
+### Multi-Mandanten-Deployments
+
+Im Multi-Mandanten-Modus (`AddAuthagonalCore()`) werden Hintergrunddienste wie `GrantReconciliationService` und `SigningKeyRotationService` nicht registriert -- der Host verwaltet diese pro Mandant. Nur `TokenCleanupService` laeuft bedingungslos.
+
 ## Skalierungsempfehlungen
 
 **Vertikale Skalierung** — Erhoehen Sie CPU und Speicher einer einzelnen Instanz. Nuetzlich fuer die Verarbeitung von mehr gleichzeitigen Anfragen pro Instanz.

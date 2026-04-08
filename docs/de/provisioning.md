@@ -10,11 +10,20 @@ Authagonal stellt Benutzer in nachgelagerte Anwendungen ueber das **Try-Confirm-
 
 ## Wann die Bereitstellung laeuft
 
-Die Bereitstellung laeuft am **Autorisierungsendpunkt** (`/connect/authorize`), nachdem der Benutzer authentifiziert wurde, aber bevor ein Autorisierungscode ausgestellt wird. Das bedeutet:
+Die Bereitstellung laeuft automatisch, wenn ein Benutzer erstellt wird, unabhaengig vom Erstellungspfad:
 
-- Sie laeuft bei der ersten Anmeldung des Benutzers ueber einen Client, der Bereitstellung erfordert
-- Bereits bereitgestellte App/Benutzer-Kombinationen werden uebersprungen (nachverfolgt in der `UserProvisions`-Tabelle)
-- Wenn die Bereitstellung fehlschlaegt, gibt die Autorisierungsanfrage `access_denied` zurueck -- es wird kein Code ausgestellt
+| Endpunkt | Ausloeser |
+|---|---|
+| `POST /api/v1/profile/` | Admin-Benutzererstellung |
+| `POST /api/auth/register` | Self-Service-Registrierung |
+| SAML ACS (`POST /saml/{id}/acs`) | Erster SSO-Login (neuer Benutzer) |
+| OIDC-Callback (`GET /oidc/callback`) | Erster SSO-Login (neuer Benutzer) |
+| SCIM (`POST /scim/v2/Users`) | Identity-Provider-Bereitstellung |
+| `GET /connect/authorize` | Erste Autorisierung ueber einen Client mit `ProvisioningApps` |
+
+Bereits bereitgestellte App/Benutzer-Kombinationen werden uebersprungen (nachverfolgt in der `UserProvisions`-Tabelle).
+
+**Bei Ablehnung:** Wenn eine Bereitstellungs-App den Benutzer in der Try-Phase ablehnt, wird der Benutzer geloescht und der Endpunkt gibt `422 Unprocessable Entity` mit dem Ablehnungsgrund zurueck. Dies verhindert halb erstellte Benutzer.
 
 ## Konfiguration
 
@@ -148,6 +157,17 @@ Authorize Endpoint
 ### Bei teilweisem Bestaetigungsfehler
 
 Wenn einige Bestaetigungen erfolgreich sind, aber eine fehlschlaegt, werden die erfolgreich bestaetigten Apps mit ihren Bereitstellungsdatensaetzen gespeichert (sodass sie nicht erneut versucht werden). Der Benutzer sieht einen Fehler und kann es erneut versuchen -- nur die fehlgeschlagene App wird beim naechsten Mal versucht.
+
+## Benutzerdefinierte App-Aufloesung
+
+Standardmaessig werden Bereitstellungs-Apps aus dem Konfigurationsabschnitt `ProvisioningApps` ueber `ConfigProvisioningAppProvider` gelesen. Ueberschreiben Sie `IProvisioningAppProvider`, um Apps dynamisch aufzuloesen -- beispielsweise aus einer Datenbank oder pro Mandant:
+
+```csharp
+builder.Services.AddSingleton<IProvisioningAppProvider, MyAppProvider>();
+builder.Services.AddAuthagonal(builder.Configuration);
+```
+
+Der Provider gibt eine Liste von Apps und deren Callback-URLs zurueck. Der `TccProvisioningOrchestrator` ruft Try/Confirm/Cancel fuer jede App auf.
 
 ## Deprovisioning
 

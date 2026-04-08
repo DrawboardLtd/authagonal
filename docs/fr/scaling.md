@@ -95,6 +95,10 @@ Consultez la page [Configuration](configuration) pour tous les parametres du clu
 - **Pair injoignable** — le dernier etat connu de ce pair est toujours utilise ; les pairs obsoletes sont supprimes apres 30 secondes
 - **Multicast indisponible** — la decouverte echoue silencieusement ; le gossip se replie sur `InternalUrl` si configure
 
+### Deploiements multi-tenant
+
+En mode multi-tenant (`AddAuthagonalCore()`), les services d'arriere-plan comme `GrantReconciliationService` et `SigningKeyRotationService` ne sont pas enregistres -- l'hote les gere par tenant. Seul `TokenCleanupService` s'execute inconditionnellement.
+
 ## Recommandations de mise a l'echelle
 
 **Mise a l'echelle verticale** — augmentez le CPU et la memoire sur une seule instance. Utile pour gerer plus de requetes simultanees par instance.

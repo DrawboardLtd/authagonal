@@ -10,11 +10,20 @@ Authagonal provisionne les utilisateurs dans les applications en aval en utilisa
 
 ## Quand le provisionnement s'execute
 
-Le provisionnement s'execute au niveau du **point d'acces d'autorisation** (`/connect/authorize`), apres l'authentification de l'utilisateur mais avant l'emission d'un code d'autorisation. Cela signifie :
+Le provisionnement s'execute automatiquement chaque fois qu'un utilisateur est cree, quel que soit le chemin de creation :
 
-- Il s'execute lors de la premiere connexion de l'utilisateur via un client qui necessite le provisionnement
-- Les combinaisons application/utilisateur deja provisionnees sont ignorees (suivies dans la table `UserProvisions`)
-- Si le provisionnement echoue, la requete d'autorisation renvoie `access_denied` -- aucun code n'est emis
+| Point d'acces | Declencheur |
+|---|---|
+| `POST /api/v1/profile/` | Creation d'utilisateur par l'administrateur |
+| `POST /api/auth/register` | Inscription en libre-service |
+| SAML ACS (`POST /saml/{id}/acs`) | Premiere connexion SSO (nouvel utilisateur) |
+| OIDC callback (`GET /oidc/callback`) | Premiere connexion SSO (nouvel utilisateur) |
+| SCIM (`POST /scim/v2/Users`) | Provisionnement du fournisseur d'identite |
+| `GET /connect/authorize` | Premiere autorisation via un client avec `ProvisioningApps` |
+
+Les combinaisons application/utilisateur deja provisionnees sont ignorees (suivies dans la table `UserProvisions`).
+
+**En cas de rejet :** Si une application de provisionnement rejette l'utilisateur lors de la phase Try, l'utilisateur est supprime et le point d'acces renvoie `422 Unprocessable Entity` avec le motif du rejet. Cela empeche la creation d'utilisateurs a moitie crees.
 
 ## Configuration
 
@@ -148,6 +157,17 @@ Authorize Endpoint
 ### En cas d'echec partiel de confirmation
 
 Si certaines confirmations reussissent mais qu'une echoue, les applications confirmees avec succes ont leurs enregistrements de provisionnement stockes (donc elles ne seront pas retentees). L'utilisateur voit une erreur et peut reessayer -- seule l'application echouee sera tentee la prochaine fois.
+
+## Resolution d'applications personnalisee
+
+Par defaut, les applications de provisionnement sont lues depuis la section de configuration `ProvisioningApps` via `ConfigProvisioningAppProvider`. Remplacez `IProvisioningAppProvider` pour resoudre les applications dynamiquement — par exemple, depuis une base de donnees ou par tenant :
+
+```csharp
+builder.Services.AddSingleton<IProvisioningAppProvider, MyAppProvider>();
+builder.Services.AddAuthagonal(builder.Configuration);
+```
+
+Le fournisseur renvoie une liste d'applications et leurs URLs de callback. Le `TccProvisioningOrchestrator` appelle Try/Confirm/Cancel sur chacune.
 
 ## Deprovisionnement
 

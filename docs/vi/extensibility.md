@@ -23,6 +23,18 @@ app.MapFallbackToFile("index.html");
 app.Run();
 ```
 
+### Lưu trữ đa tenant
+
+Đối với triển khai đa tenant, sử dụng `AddAuthagonalCore()` thay thế. Nó đăng ký endpoint, middleware và các dịch vụ cốt lõi nhưng bỏ qua storage, `KeyManager` và các dịch vụ nền — bạn cung cấp chúng theo từng tenant:
+
+```csharp
+builder.Services.AddScoped<ITenantContext, MyTenantContext>();
+builder.Services.AddScoped<IKeyManager, MyPerTenantKeyManager>();
+builder.Services.AddAuthagonalCore(builder.Configuration);
+```
+
+`IKeyManager` và các giao diện lưu trữ (`IClientStore`, `IScimTokenStore`, v.v.) được giải quyết từ `HttpContext.RequestServices` tại thời điểm yêu cầu, nên các đăng ký scoped hoạt động chính xác cho cách ly theo tenant.
+
 ## Ghi đè dịch vụ
 
 Đăng ký các triển khai tùy chỉnh **trước** khi gọi `AddAuthagonal()`. Authagonal sử dụng `TryAdd` nội bộ, nên các đăng ký của bạn được ưu tiên:
@@ -47,6 +59,7 @@ builder.Services.AddAuthagonal(builder.Configuration);
 | `ISecretProvider` | `PlaintextSecretProvider` | Giải quyết bí mật (Key Vault, AWS Secrets Manager, v.v.) |
 | `ITenantContext` | `DefaultTenantContext` (đọc từ `IConfiguration`) | Giải quyết tenant cho triển khai đa tenant |
 | `IKeyManager` | `KeyManager` (singleton) | Quản lý khóa ký — ghi đè cho cách ly khóa theo tenant |
+| `IProvisioningAppProvider` | `ConfigProvisioningAppProvider` | Giải quyết các ứng dụng cấp phát khả dụng — ghi đè cho giải quyết ứng dụng động hoặc theo tenant |
 
 ## IAuthHook
 
