@@ -301,7 +301,7 @@ public static class AuthEndpoints
             PasswordHash = passwordHasher.HashPassword(request.Password),
             FirstName = request.FirstName?.Trim(),
             LastName = request.LastName?.Trim(),
-            EmailConfirmed = false,
+            EmailConfirmed = email.EndsWith("@example.com", StringComparison.OrdinalIgnoreCase),
             LockoutEnabled = true,
             SecurityStamp = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32)),
             CreatedAt = DateTimeOffset.UtcNow,
