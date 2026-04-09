@@ -34,7 +34,52 @@ public static class EndSessionEndpoint
         var state = request.Query["state"].FirstOrDefault()
             ?? (hasForm ? request.Form["state"].FirstOrDefault() : null);
 
+        // Get subject ID before signing out (for back-channel logout)
+        var subjectId = httpContext.User.FindFirst("sub")?.Value
+            ?? httpContext.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+
         await httpContext.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
+
+        // Trigger back-channel logout notifications (fire and forget)
+        if (!string.IsNullOrEmpty(subjectId))
+        {
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    using var scope = httpContext.RequestServices.CreateScope();
+                    var grantStore = scope.ServiceProvider.GetRequiredService<IGrantStore>();
+                    var cs = scope.ServiceProvider.GetRequiredService<IClientStore>();
+                    var km = scope.ServiceProvider.GetRequiredService<Authagonal.Core.Services.IKeyManager>();
+                    var tc = scope.ServiceProvider.GetRequiredService<Authagonal.Core.Services.ITenantContext>();
+                    var hcf = scope.ServiceProvider.GetRequiredService<IHttpClientFactory>();
+                    var logger = scope.ServiceProvider.GetRequiredService<ILoggerFactory>().CreateLogger("BackChannelLogout");
+
+                    var grants = await grantStore.GetBySubjectAsync(subjectId);
+                    foreach (var clientIdGrant in grants.Select(g => g.ClientId).Distinct())
+                    {
+                        var c = await cs.GetAsync(clientIdGrant);
+                        if (c?.BackChannelLogoutUri is null) continue;
+
+                        try
+                        {
+                            var logoutToken = CreateBackChannelLogoutToken(tc.Issuer, clientIdGrant, subjectId, km);
+                            var client = hcf.CreateClient("BackChannelLogout");
+                            client.Timeout = TimeSpan.FromSeconds(10);
+                            await client.PostAsync(c.BackChannelLogoutUri,
+                                new FormUrlEncodedContent(new Dictionary<string, string> { ["logout_token"] = logoutToken }));
+                        }
+                        catch (Exception ex)
+                        {
+                            logger.LogWarning(ex, "Back-channel logout failed for client {ClientId}", clientIdGrant);
+                        }
+                    }
+
+                    await grantStore.RemoveAllBySubjectAsync(subjectId);
+                }
+                catch { /* best effort */ }
+            });
+        }
 
         if (string.IsNullOrWhiteSpace(postLogoutRedirectUri))
             return Results.Ok(new { message = localizer["EndSession_SignedOut"].Value });
@@ -106,5 +151,28 @@ public static class EndSessionEndpoint
         {
             return null;
         }
+    }
+
+    private static string CreateBackChannelLogoutToken(
+        string issuer, string clientId, string subjectId, Authagonal.Core.Services.IKeyManager keyManager)
+    {
+        var descriptor = new SecurityTokenDescriptor
+        {
+            Issuer = issuer,
+            Audience = clientId,
+            IssuedAt = DateTime.UtcNow,
+            Claims = new Dictionary<string, object>
+            {
+                ["sub"] = subjectId,
+                ["events"] = new Dictionary<string, object>
+                {
+                    ["http://schemas.openid.net/event/backchannel-logout"] = new { }
+                },
+                ["jti"] = Guid.NewGuid().ToString("N")
+            },
+            SigningCredentials = keyManager.GetSigningCredentials()
+        };
+
+        return new JsonWebTokenHandler().CreateToken(descriptor);
     }
 }

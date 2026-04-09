@@ -16,6 +16,7 @@ public static class DiscoveryEndpoint
                 userinfo_endpoint = $"{issuer}/connect/userinfo",
                 jwks_uri = $"{issuer}/.well-known/openid-configuration/jwks",
                 revocation_endpoint = $"{issuer}/connect/revocation",
+                introspection_endpoint = $"{issuer}/connect/introspect",
                 end_session_endpoint = $"{issuer}/connect/endsession",
                 scopes_supported = new[] { "openid", "profile", "email", "offline_access" },
                 response_types_supported = new[] { "code" },
@@ -24,7 +25,9 @@ public static class DiscoveryEndpoint
                 subject_types_supported = new[] { "public" },
                 id_token_signing_alg_values_supported = new[] { "RS256" },
                 token_endpoint_auth_methods_supported = new[] { "client_secret_basic", "client_secret_post" },
-                code_challenge_methods_supported = new[] { "S256" }
+                code_challenge_methods_supported = new[] { "S256" },
+                backchannel_logout_supported = true,
+                backchannel_logout_session_supported = false
             });
         })
         .AllowAnonymous()

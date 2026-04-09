@@ -8,6 +8,7 @@ public sealed class OAuthClient
     public List<string> AllowedGrantTypes { get; set; } = [];
     public List<string> RedirectUris { get; set; } = [];
     public List<string> PostLogoutRedirectUris { get; set; } = [];
+    public string? BackChannelLogoutUri { get; set; }
     public List<string> AllowedScopes { get; set; } = [];
     public List<string> AllowedCorsOrigins { get; set; } = [];
     public bool RequirePkce { get; set; } = true;

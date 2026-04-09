@@ -60,6 +60,13 @@ public sealed class AuthagonalTestFactory : IAsyncDisposable
     public TestEmailService EmailService { get; } = new();
     public TestAuthHook AuthHook { get; } = new();
 
+    /// <summary>Set before starting the factory to inject a mock HTTP handler for OIDC/SAML metadata.</summary>
+    public HttpMessageHandler? OidcHttpHandler { get; set; }
+    public HttpMessageHandler? SamlHttpHandler { get; set; }
+
+    /// <summary>Set to an Azurite connection string to enable SAML/OIDC state storage.</summary>
+    public string? AzuriteConnectionString { get; set; }
+
     private WebApplication? _app;
     private bool _started;
 
@@ -276,14 +283,27 @@ public sealed class AuthagonalTestFactory : IAsyncDisposable
             options.Origins = new HashSet<string> { TestIssuer };
         });
         services.AddHttpClient("Provisioning");
-        services.AddHttpClient("SamlMetadata");
-        services.AddHttpClient("OidcDiscovery");
+        if (SamlHttpHandler is not null)
+            services.AddHttpClient("SamlMetadata").ConfigurePrimaryHttpMessageHandler(() => SamlHttpHandler);
+        else
+            services.AddHttpClient("SamlMetadata");
+        if (OidcHttpHandler is not null)
+            services.AddHttpClient("OidcDiscovery").ConfigurePrimaryHttpMessageHandler(() => OidcHttpHandler);
+        else
+            services.AddHttpClient("OidcDiscovery");
         services.AddMemoryCache();
 
-        // SAML/OIDC services (needed for endpoint routing to resolve parameters)
-        var dummyTableClient = new TableClient("UseDevelopmentStorage=true", "dummy");
-        services.AddKeyedSingleton("SamlReplayCache", dummyTableClient);
-        services.AddKeyedSingleton("OidcStateStore", dummyTableClient);
+        // SAML/OIDC services (state stores need real table storage for SSO tests)
+        var stateConnStr = AzuriteConnectionString ?? "UseDevelopmentStorage=true";
+        var samlTable = new TableClient(stateConnStr, $"SamlReplay{Guid.NewGuid():N}"[..20]);
+        var oidcTable = new TableClient(stateConnStr, $"OidcState{Guid.NewGuid():N}"[..20]);
+        if (AzuriteConnectionString is not null)
+        {
+            samlTable.CreateIfNotExists();
+            oidcTable.CreateIfNotExists();
+        }
+        services.AddKeyedSingleton("SamlReplayCache", samlTable);
+        services.AddKeyedSingleton("OidcStateStore", oidcTable);
         services.AddSingleton<SamlMetadataParser>();
         services.AddSingleton<SamlResponseParser>();
         services.AddSingleton<SamlReplayCache>(sp =>
