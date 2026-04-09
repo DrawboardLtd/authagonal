@@ -18,11 +18,21 @@ public sealed class VaultTransitSignatureProvider : SignatureProvider
 
     public override byte[] Sign(byte[] input)
     {
-        // Vault Transit sign is async but SignatureProvider.Sign is sync.
-        // Use GetAwaiter().GetResult() — this is the standard pattern for bridging
-        // sync-only interfaces with async backends in Microsoft.IdentityModel.
         return _key.TransitClient.SignAsync(_key.VaultKeyName, input, CancellationToken.None)
             .GetAwaiter().GetResult();
+    }
+
+    public override bool Sign(ReadOnlySpan<byte> data, Span<byte> destination, out int bytesWritten)
+    {
+        var sig = Sign(data.ToArray());
+        if (sig.Length > destination.Length)
+        {
+            bytesWritten = 0;
+            return false;
+        }
+        sig.CopyTo(destination);
+        bytesWritten = sig.Length;
+        return true;
     }
 
     public override bool Verify(byte[] input, byte[] signature)
