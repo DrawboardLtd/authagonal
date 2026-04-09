@@ -170,6 +170,12 @@ public static class SamlEndpoints
         var user = await userStore.FindByEmailAsync(email, ct);
         if (user is null)
         {
+            if (config.DisableJitProvisioning)
+            {
+                logger.LogInformation("JIT provisioning disabled for SAML connection {ConnectionId}, rejecting unknown user {Email}", connectionId, email);
+                return Results.Redirect($"{relayState}?error=access_denied&error_description={Uri.EscapeDataString("User not found. Contact your administrator to be provisioned.")}");
+            }
+
             user = new AuthUser
             {
                 Id = Guid.NewGuid().ToString("N"),
