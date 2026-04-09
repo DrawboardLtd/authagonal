@@ -77,6 +77,9 @@ public sealed class TestAuthHook : IAuthHook
 
 public sealed class TestProvisioningOrchestrator : IProvisioningOrchestrator
 {
+    public Task ProvisionAsync(Core.Models.AuthUser user, CancellationToken ct = default)
+        => Task.CompletedTask;
+
     public Task ProvisionAsync(Core.Models.AuthUser user, IReadOnlyList<string> requiredAppIds, CancellationToken ct = default)
         => Task.CompletedTask;
 

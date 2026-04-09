@@ -239,7 +239,9 @@ public sealed class AuthagonalTestFactory : IAsyncDisposable
             new TestTenantContext(TestIssuer));
 
         // Rate limiter (in-memory, local-only for tests)
-        services.AddSingleton<IRateLimiter>(new DistributedRateLimiter("test-node"));
+        var testNode = new ClusterNode("test-node");
+        services.AddSingleton(testNode);
+        services.AddSingleton<IRateLimiter>(new DistributedRateLimiter(testNode));
 
         // Extensibility test doubles
         services.AddSingleton<IEmailService>(EmailService);
@@ -253,6 +255,7 @@ public sealed class AuthagonalTestFactory : IAsyncDisposable
         services.Configure<BackgroundServiceOptions>(_ => { });
 
         // Core services (mirrors AddAuthagonal minus storage)
+        services.AddHttpContextAccessor();
         services.AddLocalization();
         services.AddDataProtection();
         services.AddSingleton(new PasswordPolicy());
@@ -346,7 +349,7 @@ public sealed class AuthagonalTestFactory : IAsyncDisposable
         .AddScheme<AuthenticationSchemeOptions, Authagonal.Server.Services.ScimBearerAuthenticationHandler>("ScimBearer", null);
 
         services.AddSingleton<IPostConfigureOptions<JwtBearerOptions>>(sp =>
-            new JwtBearerKeyResolverPostConfigure(sp.GetRequiredService<Authagonal.Core.Services.IKeyManager>()));
+            new JwtBearerKeyResolverPostConfigure(sp));
 
         // Authorization
         var adminScope = builder.Configuration["AdminApi:Scope"] ?? "authagonal-admin";

@@ -9,7 +9,7 @@ namespace Authagonal.Server.Services;
 /// HTTP client for HashiCorp Vault Transit secrets engine.
 /// Handles sign, verify, key creation, rotation, and public key export.
 /// </summary>
-public sealed class VaultTransitClient
+public class VaultTransitClient
 {
     private readonly HttpClient _client;
     private readonly ILogger<VaultTransitClient> _logger;
@@ -21,7 +21,7 @@ public sealed class VaultTransitClient
     }
 
     /// <summary>Sign data using a Transit key. Returns raw signature bytes.</summary>
-    public async Task<byte[]> SignAsync(string keyName, byte[] data, CancellationToken ct = default)
+    public virtual async Task<byte[]> SignAsync(string keyName, byte[] data, CancellationToken ct = default)
     {
         var input = Convert.ToBase64String(data);
         var payload = JsonSerializer.Serialize(new { input, hash_algorithm = "sha2-256", signature_algorithm = "pkcs1v15" });
@@ -41,7 +41,7 @@ public sealed class VaultTransitClient
     }
 
     /// <summary>Create a new Transit key.</summary>
-    public async Task CreateKeyAsync(string keyName, string type = "rsa-2048", CancellationToken ct = default)
+    public virtual async Task CreateKeyAsync(string keyName, string type = "rsa-2048", CancellationToken ct = default)
     {
         var payload = JsonSerializer.Serialize(new { type });
         await PostAsync($"/v1/transit/keys/{keyName}", payload, ct);
@@ -49,14 +49,14 @@ public sealed class VaultTransitClient
     }
 
     /// <summary>Rotate a Transit key (creates a new version).</summary>
-    public async Task RotateKeyAsync(string keyName, CancellationToken ct = default)
+    public virtual async Task RotateKeyAsync(string keyName, CancellationToken ct = default)
     {
         await PostAsync($"/v1/transit/keys/{keyName}/rotate", "{}", ct);
         _logger.LogInformation("Rotated Vault Transit key {KeyName}", keyName);
     }
 
     /// <summary>Read key metadata including all versions and their public keys.</summary>
-    public async Task<TransitKeyInfo?> ReadKeyAsync(string keyName, CancellationToken ct = default)
+    public virtual async Task<TransitKeyInfo?> ReadKeyAsync(string keyName, CancellationToken ct = default)
     {
         try
         {
@@ -71,7 +71,7 @@ public sealed class VaultTransitClient
     }
 
     /// <summary>Check if a Transit key exists.</summary>
-    public async Task<bool> KeyExistsAsync(string keyName, CancellationToken ct = default)
+    public virtual async Task<bool> KeyExistsAsync(string keyName, CancellationToken ct = default)
     {
         return await ReadKeyAsync(keyName, ct) is not null;
     }

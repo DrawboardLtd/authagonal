@@ -7,7 +7,7 @@ public class DistributedRateLimiterTests
     [Fact]
     public async Task LocalOnly_EnforcesMax()
     {
-        var limiter = new DistributedRateLimiter("node-1");
+        var limiter = new DistributedRateLimiter(new ClusterNode("node-1"));
         var window = TimeSpan.FromHours(1);
 
         for (var i = 0; i < 5; i++)
@@ -24,7 +24,7 @@ public class DistributedRateLimiterTests
     [Fact]
     public async Task WindowExpiration_ResetsCounters()
     {
-        var limiter = new DistributedRateLimiter("node-1");
+        var limiter = new DistributedRateLimiter(new ClusterNode("node-1"));
         // Use a very short window that we can reason about
         var window = TimeSpan.FromMilliseconds(50);
 
@@ -46,7 +46,7 @@ public class DistributedRateLimiterTests
     [Fact]
     public async Task MergingPeerState_IncreasesConsolidatedTotal()
     {
-        var limiter = new DistributedRateLimiter("node-1");
+        var limiter = new DistributedRateLimiter(new ClusterNode("node-1"));
         var window = TimeSpan.FromHours(1);
 
         // 3 local requests
@@ -68,7 +68,7 @@ public class DistributedRateLimiterTests
     [Fact]
     public void StalePeerPruning_RemovesPeerAfterTimeout()
     {
-        var limiter = new DistributedRateLimiter("node-1");
+        var limiter = new DistributedRateLimiter(new ClusterNode("node-1"));
 
         // Add peer state
         var peerCounters = new Dictionary<string, WindowCounter>
@@ -91,8 +91,8 @@ public class DistributedRateLimiterTests
     [Fact]
     public async Task TwoInstances_ExchangeState_AgreeOnTotal()
     {
-        var limiterA = new DistributedRateLimiter("node-a");
-        var limiterB = new DistributedRateLimiter("node-b");
+        var limiterA = new DistributedRateLimiter(new ClusterNode("node-a"));
+        var limiterB = new DistributedRateLimiter(new ClusterNode("node-b"));
         var window = TimeSpan.FromHours(1);
 
         // Node A: 3 requests
@@ -121,7 +121,7 @@ public class DistributedRateLimiterTests
     [Fact]
     public async Task IdempotentMerge_SamePeerStateTwice_DoesNotDoubleCount()
     {
-        var limiter = new DistributedRateLimiter("node-1");
+        var limiter = new DistributedRateLimiter(new ClusterNode("node-1"));
         var window = TimeSpan.FromHours(1);
 
         var now = DateTimeOffset.UtcNow;
@@ -143,7 +143,7 @@ public class DistributedRateLimiterTests
     [Fact]
     public void SelfMerge_IsIgnored()
     {
-        var limiter = new DistributedRateLimiter("node-1");
+        var limiter = new DistributedRateLimiter(new ClusterNode("node-1"));
 
         var selfCounters = new Dictionary<string, WindowCounter>
         {
@@ -202,7 +202,7 @@ public class DistributedRateLimiterTests
     [Fact]
     public async Task GetLocalState_ReturnsSnapshot()
     {
-        var limiter = new DistributedRateLimiter("test-node");
+        var limiter = new DistributedRateLimiter(new ClusterNode("test-node"));
 
         // Make some requests
         await limiter.IsRateLimitedAsync("key-a", 10, TimeSpan.FromHours(1));
@@ -220,7 +220,7 @@ public class DistributedRateLimiterTests
     [Fact]
     public async Task MergePeerState_NewerWindow_ReplacesOlderWindow()
     {
-        var limiter = new DistributedRateLimiter("node-1");
+        var limiter = new DistributedRateLimiter(new ClusterNode("node-1"));
         var oldTime = DateTimeOffset.UtcNow.AddMinutes(-30);
         var newTime = DateTimeOffset.UtcNow;
 

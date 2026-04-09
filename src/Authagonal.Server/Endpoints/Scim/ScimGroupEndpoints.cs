@@ -40,7 +40,7 @@ public static class ScimGroupEndpoints
         var start = startIndex ?? 1;
         var pageSize = Math.Min(count ?? 100, 200);
 
-        var (groups, totalCount) = await groupStore.ListAsync(null, 1, int.MaxValue, ct);
+        var (groups, totalCount) = await groupStore.ListAsync(null, 0, int.MaxValue, ct);
 
         // Apply filter
         var parsed = ScimFilterParser.Parse(filter);
