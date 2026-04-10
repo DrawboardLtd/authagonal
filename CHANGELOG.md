@@ -1,5 +1,84 @@
 # Changelog
 
+## [0.1.66] — 2026-04-09
+
+### Added
+
+- **OIDC/SAML provider configuration properties** — `OidcProviderConfig` and `SamlProviderConfig` models extended with new properties. OIDC and SAML endpoints updated to support provider-level configuration.
+
+### Changed
+
+- Upgraded `Authagonal.Server` and `Authagonal.Storage` to 0.1.66.
+
+## [0.1.65] — 2026-04-09
+
+### Added
+
+- **OIDC Back-Channel Logout** — implements Back-Channel Logout 1.0. When a user logs out, Authagonal sends logout tokens to each client's registered `BackChannelLogoutUri` (fire-and-forget).
+- **OAuth 2.0 Token Introspection** — `POST /connect/introspect` (RFC 7662) allows resource servers to verify token validity and retrieve claims. Authenticated via client credentials.
+- **`BackChannelLogoutUri` on `OAuthClient`** — new optional property for registering a client's back-channel logout endpoint.
+- **Comprehensive test coverage** — new test suites for admin SSO endpoints, OIDC SSO flow, SAML flow, SCIM discovery endpoints, and token introspection. Added `OidcMockHandler` and `SamlTestHelper` test utilities.
+
+### Changed
+
+- Discovery endpoint now advertises `introspection_endpoint` and `backchannel_logout_supported`.
+- `EndSessionEndpoint` sends back-channel logout notifications to all clients with a registered logout URI.
+
+## [0.1.64] — 2026-04-09
+
+### Added
+
+- **Admin role endpoint tests** — full CRUD and assign/unassign coverage.
+- **Admin SCIM token endpoint tests** — create, list, and revoke token coverage.
+- **Device authorization flow tests** — end-to-end device code grant coverage.
+- **Token edge case tests** — expired tokens, invalid grants, scope handling.
+- **End session tests** — logout and session cleanup coverage.
+
+### Fixed
+
+- **SCIM pagination offset** — `startIndex` now correctly zero-indexed internally, fixing off-by-one in paginated SCIM list responses.
+
+### Changed
+
+- **`VaultTransitClient` testability** — removed `sealed` modifier and made methods `virtual` so the client can be mocked in tests.
+
+## [0.1.63] — 2026-04-09
+
+### Changed
+
+- **Span-based signing** — `VaultTransitSignatureProvider` now overrides the `Sign(byte[], int, int)` span-based method for more efficient memory handling and better P/Invoke interop support.
+
+## [0.1.62] — 2026-04-08
+
+### Added
+
+- **HashiCorp Vault Transit integration** — `VaultTransitClient`, `VaultTransitCryptoProvider`, `VaultTransitSecurityKey`, and `VaultTransitSignatureProvider` enable remote cryptographic key signing via Vault's Transit secrets engine. Allows JWT signing without local private key access.
+
+### Changed
+
+- **PBKDF2 iterations** — reduced from 100,000 to 50,000 to balance security with performance.
+
+## [0.1.60] — 2026-04-08
+
+### Added
+
+- **OAuth Device Authorization Grant** — implements RFC 8628 for input-constrained devices (smart TVs, CLIs, IoT).
+  - `POST /connect/deviceauthorization` — initiates a device flow, returns `device_code`, `user_code`, and `verification_uri`.
+  - Device code approval page — authenticated users enter the user code to authorize the device.
+  - `urn:ietf:params:oauth:grant-type:device_code` grant type on the token endpoint — devices poll until the user approves.
+- **Device authorization UI** — `DevicePage` added to the login SPA for user code entry and approval.
+- Discovery endpoint now advertises `device_authorization_endpoint`.
+
+## [0.1.59] — 2026-04-08
+
+### Changed
+
+- **Auto-confirm `@example.com` emails** — user registration automatically confirms email addresses ending with `@example.com`, simplifying demo and test workflows.
+
+## [0.1.58] — 2026-04-08
+
+This release is a re-cut of 0.1.57 with package version bumps. See [0.1.57] for the full feature list.
+
 ## [0.1.57] — 2026-04-08
 
 ### Added
