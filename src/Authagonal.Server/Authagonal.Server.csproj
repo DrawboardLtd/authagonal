@@ -16,7 +16,6 @@
     <PackageReference Include="QRCoder" Version="1.6.0" />
     <PackageReference Include="Fido2.AspNet" Version="4.0.0" />
     <PackageReference Include="Microsoft.Bcl.Memory" Version="10.0.5" />
-    <PackageReference Include="SendGrid" Version="9.29.3" />
   </ItemGroup>
 
   <PropertyGroup>
