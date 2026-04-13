@@ -18,6 +18,7 @@ public static class AuthorizeEndpoint
             IUserStore userStore,
             IProvisioningOrchestrator provisioningOrchestrator,
             IConfiguration configuration,
+            IGrantStore grantStore,
             AuthorizationCodeService authCodeService,
             CancellationToken ct) =>
         {
@@ -86,6 +87,38 @@ public static class AuthorizeEndpoint
 
             if (string.IsNullOrWhiteSpace(subjectId))
                 return BuildErrorRedirect(redirectUri, "server_error", "Unable to determine user identity", state);
+
+            // Check consent (if required by this client)
+            if (client.RequireConsent)
+            {
+                var consentKey = $"consent:{subjectId}:{clientId}";
+                var existingConsent = await grantStore.GetAsync(consentKey, ct);
+                if (existingConsent is null)
+                {
+                    // No consent yet — redirect to consent page
+                    var consentAppUrl = configuration["LoginAppUrl"] ?? "/login";
+                    var authorizeUrl = $"{httpContext.Request.Path}{httpContext.Request.QueryString}";
+                    var consentUrl = $"{consentAppUrl.TrimEnd('/')}/consent?returnUrl={Uri.EscapeDataString(authorizeUrl)}&client_id={Uri.EscapeDataString(clientId)}&scope={Uri.EscapeDataString(string.Join(" ", requestedScopes))}";
+                    return Results.Redirect(consentUrl);
+                }
+
+                // Consent exists — verify scopes still match
+                try
+                {
+                    var consentData = System.Text.Json.JsonSerializer.Deserialize<ConsentData>(existingConsent.Data);
+                    var consentedScopes = new HashSet<string>(consentData?.Scopes ?? []);
+                    if (!requestedScopes.All(s => consentedScopes.Contains(s)))
+                    {
+                        // New scopes requested — re-consent
+                        await grantStore.RemoveAsync(consentKey, ct);
+                        var consentAppUrl = configuration["LoginAppUrl"] ?? "/login";
+                        var authorizeUrl = $"{httpContext.Request.Path}{httpContext.Request.QueryString}";
+                        var consentUrl = $"{consentAppUrl.TrimEnd('/')}/consent?returnUrl={Uri.EscapeDataString(authorizeUrl)}&client_id={Uri.EscapeDataString(clientId)}&scope={Uri.EscapeDataString(string.Join(" ", requestedScopes))}";
+                        return Results.Redirect(consentUrl);
+                    }
+                }
+                catch { /* consent data malformed — allow anyway */ }
+            }
 
             // Provision user into required downstream apps (TCC)
             if (client.ProvisioningApps.Count > 0)
@@ -181,5 +214,11 @@ public static class AuthorizeEndpoint
         uriBuilder.Query = queryParams.ToString();
 
         return Results.Redirect(uriBuilder.ToString());
+    }
+
+    internal sealed class ConsentData
+    {
+        public List<string> Scopes { get; set; } = [];
+        public DateTimeOffset ConsentedAt { get; set; }
     }
 }

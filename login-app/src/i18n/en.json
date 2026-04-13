@@ -107,5 +107,30 @@
   "errorEmailAlreadyRegistered": "An account with this email already exists.",
   "errorWeakPassword": "Password does not meet strength requirements.",
   "errorEmailAndPasswordRequired": "Email and password are required.",
-  "errorRegistrationFailed": "Registration failed. Please try again."
+  "errorRegistrationFailed": "Registration failed. Please try again.",
+
+  "consent.title": "Authorize {{appName}}",
+  "consent.subtitle": "{{appName}} wants to access your account",
+  "consent.scopeOpenid": "Verify your identity",
+  "consent.scopeProfile": "View your name and profile picture",
+  "consent.scopeEmail": "View your email address",
+  "consent.scopeOfflineAccess": "Stay signed in on your behalf",
+  "consent.scopeAddress": "View your address",
+  "consent.scopePhone": "View your phone number",
+  "consent.allow": "Allow",
+  "consent.deny": "Deny",
+  "consent.hint": "You can manage authorized apps from the Authorized Apps page.",
+  "consent.loading": "Loading...",
+  "consent.loadError": "Failed to load application details.",
+  "consent.submitError": "Something went wrong. Please try again.",
+
+  "grants.title": "Authorized Apps",
+  "grants.subtitle": "Apps you've granted access to your account.",
+  "grants.loading": "Loading...",
+  "grants.loadError": "Failed to load authorized apps.",
+  "grants.noGrants": "No apps have been authorized yet.",
+  "grants.grantedOn": "Authorized on {{date}}",
+  "grants.revoke": "Revoke",
+  "grants.revokeConfirm": "Revoke access for this app? You'll need to re-authorize next time.",
+  "grants.revokeFailed": "Failed to revoke access."
 }

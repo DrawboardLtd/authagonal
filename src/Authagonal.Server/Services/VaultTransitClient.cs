@@ -67,6 +67,17 @@ public class VaultTransitClient
         _logger.LogInformation("Rotated Vault Transit key {KeyName}", keyName);
     }
 
+    /// <summary>Delete a Transit key (must enable deletion_allowed first).</summary>
+    public virtual async Task DeleteKeyAsync(string keyName, CancellationToken ct = default)
+    {
+        // Enable deletion
+        var configPayload = JsonSerializer.Serialize(new { deletion_allowed = true });
+        await PostAsync($"/v1/transit/keys/{keyName}/config", configPayload, ct);
+        // Delete
+        await DeleteAsync($"/v1/transit/keys/{keyName}", ct);
+        _logger.LogInformation("Deleted Vault Transit key {KeyName}", keyName);
+    }
+
     /// <summary>Read key metadata including all versions and their public keys.</summary>
     public virtual async Task<TransitKeyInfo?> ReadKeyAsync(string keyName, CancellationToken ct = default)
     {
@@ -101,6 +112,13 @@ public class VaultTransitClient
         }
 
         return body;
+    }
+
+    private async Task DeleteAsync(string path, CancellationToken ct)
+    {
+        using var response = await _client.DeleteAsync(path, ct);
+        if (!response.IsSuccessStatusCode)
+            response.EnsureSuccessStatusCode();
     }
 
     private async Task<string> GetAsync(string path, CancellationToken ct)

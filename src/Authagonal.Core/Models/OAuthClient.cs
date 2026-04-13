@@ -22,6 +22,7 @@ public sealed class OAuthClient
     public int AbsoluteRefreshTokenLifetimeSeconds { get; set; } = 2592000;
     public int SlidingRefreshTokenLifetimeSeconds { get; set; } = 1296000;
     public RefreshTokenUsage RefreshTokenUsage { get; set; } = RefreshTokenUsage.OneTime;
+    public bool RequireConsent { get; set; }
     public List<string> ProvisioningApps { get; set; } = [];
     public MfaPolicy MfaPolicy { get; set; } = MfaPolicy.Disabled;
 }

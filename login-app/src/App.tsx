@@ -7,6 +7,8 @@ import ResetPasswordPage from './pages/ResetPasswordPage';
 import MfaChallengePage from './pages/MfaChallengePage';
 import MfaSetupPage from './pages/MfaSetupPage';
 import DevicePage from './pages/DevicePage';
+import ConsentPage from './pages/ConsentPage';
+import GrantsPage from './pages/GrantsPage';
 
 export default function App() {
   return (
@@ -20,6 +22,8 @@ export default function App() {
           <Route path="/mfa-challenge" element={<MfaChallengePage />} />
           <Route path="/mfa-setup" element={<MfaSetupPage />} />
           <Route path="/device" element={<DevicePage />} />
+          <Route path="/consent" element={<ConsentPage />} />
+          <Route path="/grants" element={<GrantsPage />} />
           <Route path="*" element={<Navigate to="/login" replace />} />
         </Routes>
       </AuthLayout>

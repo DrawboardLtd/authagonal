@@ -432,6 +432,7 @@ public static class AuthagonalExtensions
         app.MapDiscoveryEndpoints();
         app.MapJwksEndpoint();
         app.MapAuthorizeEndpoint();
+        app.MapConsentEndpoints();
         app.MapTokenEndpoint();
         app.MapRevocationEndpoint();
         app.MapIntrospectionEndpoint();
