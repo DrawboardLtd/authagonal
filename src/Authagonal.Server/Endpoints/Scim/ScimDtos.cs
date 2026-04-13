@@ -200,7 +200,7 @@ public sealed class ScimPatchRequest
 public sealed class ScimPatchOperation
 {
     [JsonPropertyName("op")]
-    public required string Op { get; set; }
+    public string Op { get; set; } = "";
 
     [JsonPropertyName("path")]
     public string? Path { get; set; }
