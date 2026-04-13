@@ -15,7 +15,9 @@
     <PackageReference Include="Microsoft.IdentityModel.Tokens" Version="8.17.0" />
     <PackageReference Include="QRCoder" Version="1.6.0" />
     <PackageReference Include="Fido2.AspNet" Version="4.0.0" />
-    <PackageReference Include="Microsoft.Bcl.Memory" Version="10.0.5" />
+    <PackageReference Include="Azure.Storage.Blobs" Version="12.*" />
+    <!-- Pin transitive to fix CVE GHSA-73j8-2gch-69rq -->
+    <PackageReference Include="Microsoft.Bcl.Memory" Version="10.*" />
   </ItemGroup>
 
   <PropertyGroup>
