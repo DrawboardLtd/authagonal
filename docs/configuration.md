@@ -27,7 +27,7 @@ Authagonal is configured via `appsettings.json` or environment variables. Enviro
 | `Auth:PasswordResetExpiryMinutes` | `60` | Password reset link lifetime |
 | `Auth:MfaChallengeExpiryMinutes` | `5` | MFA challenge token lifetime |
 | `Auth:MfaSetupTokenExpiryMinutes` | `15` | MFA setup token lifetime (for forced enrollment) |
-| `Auth:Pbkdf2Iterations` | `100000` | PBKDF2 iteration count for password hashing |
+| `Auth:Pbkdf2Iterations` | `50000` | PBKDF2 iteration count for password hashing |
 | `Auth:RefreshTokenReuseGraceSeconds` | `60` | Grace window for concurrent refresh token reuse |
 | `Auth:SigningKeyLifetimeDays` | `90` | RSA signing key lifetime before automatic rotation |
 | `Auth:SigningKeyCacheRefreshMinutes` | `60` | How often signing keys are reloaded from storage |
@@ -84,6 +84,8 @@ Clients are defined in the `Clients` array and seeded on startup. Each client ca
       "SlidingRefreshTokenLifetimeSeconds": 1296000,
       "RefreshTokenUsage": "OneTime",
       "MfaPolicy": "Enabled",
+      "RequireConsent": false,
+      "BackChannelLogoutUri": "https://app.example.com/logout-callback",
       "ProvisioningApps": ["my-backend"]
     }
   ]
@@ -97,6 +99,7 @@ Clients are defined in the `Clients` array and seeded on startup. Each client ca
 | `authorization_code` | Interactive user login (web apps, SPAs, mobile) |
 | `client_credentials` | Service-to-service communication |
 | `refresh_token` | Token renewal (requires `AllowOfflineAccess: true`) |
+| `urn:ietf:params:oauth:grant-type:device_code` | Device authorization grant (RFC 8628) for input-constrained devices |
 
 ### Refresh Token Usage
 
@@ -275,11 +278,37 @@ When configured, secret values that look like Key Vault references are resolved 
 | `AdminApi:Enabled` | `true` | Set to `false` to disable all admin endpoints (they won't be registered) |
 | `AdminApi:Scope` | `authagonal-admin` | JWT scope required to access admin endpoints. Change this to match your existing scope name (e.g., `projects-identity-admin` for IdentityServer migrations). |
 
+## Consent
+
+Per-client consent can be enabled with the `RequireConsent` property:
+
+| Value | Behavior |
+|---|---|
+| `false` (default) | Authorization proceeds immediately after authentication |
+| `true` | User is shown a consent screen listing requested scopes. Consent is persisted for 5 years and re-prompted only when new scopes are requested. |
+
+Users can view and revoke their consent grants at `GET /consent/grants` and `DELETE /consent/grants/{clientId}`.
+
+## Back-Channel Logout
+
+Register a `BackChannelLogoutUri` on a client to receive OIDC Back-Channel Logout 1.0 notifications. When a user logs out, Authagonal sends a signed logout token (JWT) to each client's registered URI.
+
+```json
+{
+  "Clients": [
+    {
+      "ClientId": "my-app",
+      "BackChannelLogoutUri": "https://app.example.com/logout-callback"
+    }
+  ]
+}
+```
+
 ## Email
 
 By default, Authagonal uses a no-op email service that silently discards all emails. To enable email delivery, register an `IEmailService` implementation before calling `AddAuthagonal()`.
 
-The built-in `EmailService` uses SendGrid. To use it, register it explicitly:
+The built-in `EmailService` uses [Resend](https://resend.com). To use it, register it explicitly:
 
 ```csharp
 services.AddSingleton<IEmailService, EmailService>();
@@ -288,11 +317,9 @@ services.AddAuthagonal(configuration);
 
 | Setting | Description |
 |---|---|
-| `Email:SendGridApiKey` | SendGrid API key for sending emails |
+| `Email:ResendApiKey` | Resend API key for sending emails |
 | `Email:SenderEmail` | Sender email address |
-| `Email:SenderName` | Sender display name |
-| `Email:VerificationTemplateId` | SendGrid dynamic template ID for email verification |
-| `Email:PasswordResetTemplateId` | SendGrid dynamic template ID for password reset |
+| `Email:SenderName` | Sender display name (defaults to `"Authagonal"`) |
 
 Emails to `@example.com` addresses are silently skipped (useful for testing).
 
@@ -350,6 +377,12 @@ When clustering is enabled, these limits are consolidated across all instances. 
 
 CORS is configured dynamically. Origins from all registered clients' `AllowedCorsOrigins` are automatically allowed, with a 60-minute cache.
 
+## HashiCorp Vault Transit
+
+Authagonal can sign JWTs using HashiCorp Vault's Transit secrets engine. Private keys never leave Vault — only the signing operation is delegated remotely. Public keys are cached locally for verification.
+
+This is configured programmatically when hosting as a library. See [Extensibility](extensibility) for details.
+
 ## Full Example
 
 ```json
@@ -365,7 +398,7 @@ CORS is configured dynamically. Origins from all registered clients' `AllowedCor
     "RegistrationWindowMinutes": 60,
     "EmailVerificationExpiryHours": 24,
     "PasswordResetExpiryMinutes": 60,
-    "Pbkdf2Iterations": 100000,
+    "Pbkdf2Iterations": 50000,
     "SigningKeyLifetimeDays": 90
   },
   "Cluster": {
@@ -386,11 +419,9 @@ CORS is configured dynamically. Origins from all registered clients' `AllowedCor
     "RequireSpecialChar": true
   },
   "Email": {
-    "SendGridApiKey": "SG.xxx",
+    "ResendApiKey": "re_xxx",
     "SenderEmail": "noreply@example.com",
-    "SenderName": "Example Auth",
-    "VerificationTemplateId": "d-xxx",
-    "PasswordResetTemplateId": "d-yyy"
+    "SenderName": "Example Auth"
   },
   "SamlProviders": [
     {
@@ -431,6 +462,8 @@ CORS is configured dynamically. Origins from all registered clients' `AllowedCor
       "RequireClientSecret": false,
       "AllowOfflineAccess": true,
       "MfaPolicy": "Enabled",
+      "RequireConsent": false,
+      "BackChannelLogoutUri": "https://app.example.com/logout-callback",
       "ProvisioningApps": ["backend"]
     }
   ]

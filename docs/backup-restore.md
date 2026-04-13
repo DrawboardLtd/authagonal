@@ -43,7 +43,11 @@ backups/
     _manifest.json
 ```
 
-Each `.jsonl` file contains one JSON object per line (one per table entity). With `--gzip`, files are compressed as `.jsonl.gz`. The `_manifest.json` records the backup timestamp, mode, compression, and entity counts.
+Each `.jsonl` file contains one JSON object per line (one per table entity). With `--gzip`, files are compressed as `.jsonl.gz`. The `_manifest.json` records the backup timestamp, mode, compression, entity counts, and SHA-256 file hashes for integrity verification.
+
+### Integrity verification
+
+Each backup manifest includes a `FileHashes` dictionary mapping filenames to their SHA-256 hashes. During restore, file integrity is automatically verified against these hashes before any data is written. If a hash mismatch is detected, the restore aborts with an error.
 
 ### Incremental backups
 

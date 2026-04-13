@@ -1,5 +1,64 @@
 # Changelog
 
+## [0.1.74] — 2026-04-10
+
+### Changed
+
+- **Request DTOs as classes** — all request DTOs converted from records to classes for Native AOT compatibility.
+
+## [0.1.73] — 2026-04-10
+
+### Changed
+
+- **`ScimPatchOperation.Op` optional** — `Op` property on `ScimPatchOperation` is now optional, improving compatibility with SCIM clients that omit it for replace operations.
+
+## [0.1.72] — 2026-04-10
+
+### Fixed
+
+- **Card UI imports** — added missing Card component imports in login-app pages.
+
+## [0.1.71] — 2026-04-10
+
+### Fixed
+
+- **Unused imports** — removed unused imports across login-app source files.
+
+## [0.1.70] — 2026-04-10
+
+### Added
+
+- **Native AOT support** — enabled IL trimming and source-generated JSON serialization across all packages (`Authagonal.Server`, `Authagonal.Core`, `Authagonal.Storage`, `Authagonal.Backup`). `AuthagonalJsonContext`, `StorageJsonContext`, and `BackupJsonContext` provide trim-safe serialization for 40+ types. `EnableRequestDelegateGenerator` and `EnableConfigurationBindingGenerator` enabled for minimal API AOT compatibility.
+
+### Changed
+
+- **Slimmed NuGet dependencies** — removed unused packages and resolved a security vulnerability.
+
+## [0.1.69] — 2026-04-09
+
+### Added
+
+- **OAuth consent screen** — clients with `RequireConsent: true` prompt users to approve requested scopes before issuing an authorization code. Consent decisions are persisted (5-year TTL) and re-prompted only when new scopes are requested.
+  - `GET /consent/info` — returns client name and requested scopes for the consent page.
+  - `POST /consent` — records the user's allow/deny decision.
+  - `GET /consent/grants` — lists all applications the user has authorized.
+  - `DELETE /consent/grants/{clientId}` — revokes consent for a specific application.
+  - `ConsentPage` and `GrantsPage` added to the login SPA with full i18n support.
+- **Backup integrity verification** — `BackupManifest` now includes a `FileHashes` dictionary (SHA-256) populated during backup creation and verified during restore.
+- **Enhanced login UI customization** — added `data-auth` attributes to all login form elements for CSS targeting and test automation. New CSS custom properties: `--auth-bg`, `--auth-card-bg`, `--auth-radius`, `--auth-font`, `--auth-heading`.
+
+## [0.1.68] — 2026-04-09
+
+### Changed
+
+- Package version bump.
+
+## [0.1.67] — 2026-04-09
+
+### Changed
+
+- **Email service: SendGrid → Resend** — the built-in `EmailService` now uses the [Resend](https://resend.com) API instead of SendGrid. Configuration keys changed from `Email:SendGridApiKey` to `Email:ResendApiKey`. The `IEmailService` interface is unchanged — custom implementations are unaffected.
+
 ## [0.1.66] — 2026-04-09
 
 ### Added

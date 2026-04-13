@@ -308,11 +308,144 @@ DELETE /api/auth/mfa/credentials/{credentialId}
 
 Removes a specific MFA credential. If the last primary method is removed, MFA is disabled for the user.
 
+## Device Authorization (RFC 8628)
+
+### Request Device Code
+
+```
+POST /connect/deviceauthorization
+Content-Type: application/x-www-form-urlencoded
+
+client_id=my-cli&scope=openid+profile
+```
+
+Returns a device code, user code, and verification URI:
+
+```json
+{
+  "device_code": "abc123...",
+  "user_code": "ABCD-EFGH",
+  "verification_uri": "https://auth.example.com/device",
+  "verification_uri_complete": "https://auth.example.com/device?user_code=ABCD-EFGH",
+  "expires_in": 600,
+  "interval": 5
+}
+```
+
+The device displays the `verification_uri` and `user_code` to the user, then polls the token endpoint with the `device_code`. The user visits the verification URI, logs in, and enters the user code to approve.
+
+### Approve Device
+
+```
+POST /api/auth/device/approve
+Content-Type: application/json
+
+{
+  "userCode": "ABCD-EFGH"
+}
+```
+
+Requires cookie authentication. Approves the device code for the current user. The device can then exchange the device code for tokens via the token endpoint using grant type `urn:ietf:params:oauth:grant-type:device_code`.
+
+## Token Introspection (RFC 7662)
+
+```
+POST /connect/introspect
+Content-Type: application/x-www-form-urlencoded
+Authorization: Basic base64(client_id:client_secret)
+
+token=eyJhbGci...
+```
+
+Or with form-encoded credentials:
+
+```
+POST /connect/introspect
+Content-Type: application/x-www-form-urlencoded
+
+token=eyJhbGci...&client_id=my-app&client_secret=secret
+```
+
+Returns token metadata:
+
+```json
+{
+  "active": true,
+  "sub": "user-id",
+  "client_id": "my-app",
+  "scope": "openid profile",
+  "iss": "https://auth.example.com",
+  "exp": 1234567890,
+  "iat": 1234567890,
+  "token_type": "Bearer"
+}
+```
+
+Inactive or invalid tokens return `{ "active": false }`. Supports both JWT access tokens and opaque refresh tokens.
+
+## Consent Endpoints
+
+### Consent Info
+
+```
+GET /consent/info?returnUrl={encoded-authorize-url}
+```
+
+Returns the client name and requested scopes for the consent page:
+
+```json
+{
+  "clientName": "My Application",
+  "scopes": ["openid", "profile", "email"]
+}
+```
+
+### Submit Consent
+
+```
+POST /consent
+Content-Type: application/json
+
+{
+  "returnUrl": "/connect/authorize?...",
+  "allow": true
+}
+```
+
+Records the user's consent decision. On allow, redirects back to the authorize flow. On deny, returns an `access_denied` error to the client.
+
+### List Grants
+
+```
+GET /consent/grants
+```
+
+Returns all applications the user has authorized:
+
+```json
+[
+  {
+    "clientId": "my-app",
+    "clientName": "My Application",
+    "scopes": ["openid", "profile", "email"],
+    "consentedAt": "2026-04-09T12:00:00Z"
+  }
+]
+```
+
+### Revoke Grant
+
+```
+DELETE /consent/grants/{clientId}
+```
+
+Revokes consent for a specific application. The user will be prompted to re-consent on their next login.
+
 ## Building a Custom Login UI
 
 The default SPA (`login-app/`) is one implementation of this API. To build your own:
 
-1. Serve your UI at the paths `/login`, `/forgot-password`, `/reset-password`
+1. Serve your UI at the paths `/login`, `/forgot-password`, `/reset-password`, `/consent`, `/device`
 2. The authorize endpoint redirects unauthenticated users to `/login?returnUrl={encoded-authorize-url}`
 3. After successful login (cookie set), redirect the user to the `returnUrl`
 4. Password reset links use `{Issuer}/reset-password?p={token}`

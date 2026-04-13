@@ -83,15 +83,50 @@ The `customCssUrl` option loads an additional stylesheet after the default style
 
 ### CSS Custom Properties
 
-The primary color is set via the `--brand-primary` CSS custom property (which feeds into the Tailwind theme). Override it in your custom CSS instead of using `branding.json`:
+The login UI exposes several CSS custom properties for fine-grained control:
+
+| Property | Default | Description |
+|---|---|---|
+| `--brand-primary` | `#2563eb` | Primary color for buttons, links, focus rings |
+| `--auth-bg` | `#f3f4f6` | Page background color |
+| `--auth-card-bg` | `white` | Card/form background color |
+| `--auth-radius` | `0.5rem` | Border radius for cards and inputs |
+| `--auth-font` | *(system)* | Font family |
+| `--auth-heading` | `#111827` | Heading text color |
+
+Override them in your custom CSS:
 
 ```css
 :root {
   --brand-primary: #059669;
+  --auth-bg: #0f172a;
+  --auth-card-bg: #1e293b;
+  --auth-heading: #f8fafc;
 }
 ```
 
 The login UI uses Tailwind CSS. Custom CSS can target standard HTML elements and Tailwind utility classes. The exported UI components (`Button`, `Input`, `Card`, `Alert`, etc.) use Tailwind internally.
+
+### Data Attributes
+
+All login form elements have `data-auth` attributes for CSS targeting and test automation:
+
+| Attribute | Element |
+|---|---|
+| `data-auth="page"` | Main page wrapper |
+| `data-auth="header"` | Header section |
+| `data-auth="logo"` | Logo image |
+| `data-auth="app-name"` | App name heading |
+| `data-auth="content"` | Main content area |
+| `data-auth="languages"` | Language selector |
+
+Target these in your custom CSS:
+
+```css
+[data-auth="header"] {
+  background: linear-gradient(135deg, #667eea, #764ba2);
+}
+```
 
 ### Example: Custom Background and Font
 

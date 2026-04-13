@@ -37,22 +37,28 @@ This starts the auth server on `http://localhost:8080` with an Azurite storage e
 
 ## Features
 
-- **OIDC Provider** — authorization_code + PKCE, client_credentials, refresh_token grants
+- **OIDC Provider** — authorization_code + PKCE, client_credentials, refresh_token, device_code grants
 - **SAML 2.0 SP** — homebrew implementation, full Azure AD support
 - **Dynamic OIDC Federation** — Google, Apple, Azure AD — configure via API or `appsettings.json`
 - **SAML/OIDC from Config** — define identity providers in configuration, seeded on startup
+- **OAuth Consent Screen** — per-client `RequireConsent` flag, scope-aware re-consent, grant management UI
+- **Device Authorization Grant** — RFC 8628 flow for input-constrained devices (smart TVs, CLIs, IoT)
+- **Token Introspection** — RFC 7662 `POST /connect/introspect` for resource servers to verify token validity
+- **Back-Channel Logout** — OIDC Back-Channel Logout 1.0; logout tokens sent to each client's `BackChannelLogoutUri`
 - **Multi-Factor Authentication** — TOTP (authenticator apps), WebAuthn/passkeys, recovery codes. Per-client MFA policy (`Disabled`, `Enabled`, `Required`) with `IAuthHook` override for per-user control.
 - **Configurable Password Policy** — min length, character requirements, exposed via API for dynamic frontend validation
 - **TCC Provisioning** — Try-Confirm-Cancel provisioning into downstream apps on all user creation endpoints (admin, registration, SSO, SCIM). Pluggable via `IProvisioningAppProvider`.
 - **Auth Hooks** — `IAuthHook` extensibility point for audit logging, custom validation, webhooks. Multiple implementations run in registration order.
 - **Role-Based Access Control** — role CRUD, user-role assignment/removal via admin API (`/api/v1/roles`)
 - **Multi-Tenant Abstractions** — `ITenantContext` and `IKeyManager` interfaces for per-tenant configuration and signing key isolation
-- **Backup & Restore** — incremental backups with tombstone-based delete tracking, restore with upsert/merge/clean modes
+- **HashiCorp Vault Transit** — remote JWT signing via Vault's Transit secrets engine. Private keys never leave Vault.
+- **Backup & Restore** — incremental backups with integrity verification (SHA-256), tombstone-based delete tracking, restore with upsert/merge/clean modes
+- **Native AOT Ready** — IL trimming and source-generated JSON serialization across all packages
 - **Composable Library** — `AddAuthagonal()` / `UseAuthagonal()` extension methods to host in your own project
 - **Session Invalidation** — SecurityStamp rotation on org change, password reset
 - **SCIM 2.0 Provisioning** — inbound user/group provisioning from Entra ID, Okta, OneLogin. Per-client static Bearer tokens, soft-delete deactivation, TCC downstream triggers
 - **Admin APIs** — user CRUD, SAML/OIDC provider management, token impersonation, SCIM token management
-- **Brandable Login UI** — runtime-configurable branding via `branding.json`, or install the npm package and override individual components
+- **Brandable Login UI** — runtime-configurable branding via `branding.json`, CSS custom properties, or install the npm package and override individual components
 
 ## Deployment Options
 

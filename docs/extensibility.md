@@ -164,9 +164,43 @@ app.MapGet("/custom/health", () => new { status = "healthy" });
 app.MapFallbackToFile("index.html");
 ```
 
+## HashiCorp Vault Transit Integration
+
+Authagonal can delegate JWT signing to HashiCorp Vault's Transit secrets engine. Private keys never leave Vault — only the signing operation is remote. Public keys are cached locally for verification.
+
+```csharp
+var builder = WebApplication.CreateBuilder(args);
+
+// Configure Vault Transit HTTP client
+builder.Services.AddHttpClient("Vault", client =>
+{
+    client.BaseAddress = new Uri("https://vault.example.com");
+    client.DefaultRequestHeaders.Add("X-Vault-Token", "hvs.xxx");
+});
+
+// Register Vault Transit services
+builder.Services.AddSingleton<VaultTransitClient>();
+builder.Services.AddSingleton<VaultTransitCryptoProvider>();
+
+builder.Services.AddAuthagonal(builder.Configuration);
+```
+
+The `VaultTransitClient` provides these operations:
+
+| Method | Description |
+|---|---|
+| `SignAsync(keyName, data)` | Sign data using a Vault Transit key |
+| `VerifyAsync(keyName, data, signature)` | Verify a signature (local, using cached public key) |
+| `CreateKeyAsync(keyName, type)` | Create a new Transit key (default: RSA-2048) |
+| `RotateKeyAsync(keyName)` | Rotate a key to a new version |
+| `ReadKeyAsync(keyName)` | Read key metadata and public keys |
+| `KeyExistsAsync(keyName)` | Check if a key exists |
+
+The `VaultTransitCryptoProvider` integrates with .NET's `JsonWebTokenHandler` so that JWT signing transparently uses Vault. The `VaultTransitSecurityKey` and `VaultTransitSignatureProvider` handle the low-level integration.
+
 ## Custom Email Service
 
-Replace SendGrid with any email provider:
+Replace Resend with any email provider:
 
 ```csharp
 public sealed class SmtpEmailService(SmtpClient smtp) : IEmailService

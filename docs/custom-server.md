@@ -212,6 +212,9 @@ import {
   MfaChallengePage,
   MfaSetupPage,
   RegisterPage,
+  ConsentPage,
+  GrantsPage,
+  DevicePage,
   App,              // Standalone SPA with full routing
 } from '@drawboard/authagonal-login';
 
@@ -275,7 +278,9 @@ Mix custom pages with the base package pages:
 
 ```tsx
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
-import { ForgotPasswordPage, ResetPasswordPage } from '@drawboard/authagonal-login';
+import {
+  ForgotPasswordPage, ResetPasswordPage, ConsentPage, DevicePage, GrantsPage,
+} from '@drawboard/authagonal-login';
 import MyLoginPage from './MyLoginPage';
 import MyLayout from './MyLayout';
 
@@ -287,6 +292,9 @@ export default function App() {
           <Route path="/login" element={<MyLoginPage />} />
           <Route path="/forgot-password" element={<ForgotPasswordPage />} />
           <Route path="/reset-password" element={<ResetPasswordPage />} />
+          <Route path="/consent" element={<ConsentPage />} />
+          <Route path="/device" element={<DevicePage />} />
+          <Route path="/grants" element={<GrantsPage />} />
           <Route path="*" element={<Navigate to="/login" replace />} />
         </Routes>
       </MyLayout>
