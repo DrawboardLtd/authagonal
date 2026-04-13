@@ -40,6 +40,18 @@ public class VaultTransitClient
         return Convert.FromBase64String(parts[2]);
     }
 
+    /// <summary>Verify a signature using a Transit key.</summary>
+    public virtual async Task<bool> VerifyAsync(string keyName, byte[] data, byte[] signature, CancellationToken ct = default)
+    {
+        var input = Convert.ToBase64String(data);
+        var sig = $"vault:v1:{Convert.ToBase64String(signature)}";
+        var payload = JsonSerializer.Serialize(new { input, signature = sig, hash_algorithm = "sha2-256", signature_algorithm = "pkcs1v15" });
+
+        var response = await PostAsync($"/v1/transit/verify/{keyName}/sha2-256", payload, ct);
+        var result = JsonSerializer.Deserialize<VaultResponse<VerifyResponse>>(response);
+        return result?.Data?.Valid ?? false;
+    }
+
     /// <summary>Create a new Transit key.</summary>
     public virtual async Task CreateKeyAsync(string keyName, string type = "rsa-2048", CancellationToken ct = default)
     {
@@ -114,6 +126,12 @@ public class VaultTransitClient
     {
         [JsonPropertyName("signature")]
         public string? Signature { get; set; }
+    }
+
+    private sealed class VerifyResponse
+    {
+        [JsonPropertyName("valid")]
+        public bool Valid { get; set; }
     }
 }
 

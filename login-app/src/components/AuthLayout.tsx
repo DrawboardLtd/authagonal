@@ -40,17 +40,17 @@ export default function AuthLayout({ children }: AuthLayoutProps) {
   }, [branding]);
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-100 p-4">
-      <Card>
-        <div className="text-center mb-6">
+    <div className="min-h-screen flex items-center justify-center p-4" data-auth="page" style={{ background: 'var(--auth-bg, #f3f4f6)' }}>
+      <Card style={{ background: 'var(--auth-card-bg, white)', borderRadius: 'var(--auth-radius, 0.5rem)', fontFamily: 'var(--auth-font, inherit)' }}>
+        <div className="text-center mb-6" data-auth="header">
           {branding.logoUrl ? (
-            <img src={branding.logoUrl} alt={branding.appName} className="max-h-12 max-w-full object-contain mx-auto" />
+            <img src={branding.logoUrl} alt={branding.appName} className="max-h-12 max-w-full object-contain mx-auto" data-auth="logo" />
           ) : (
-            <h1 className="text-2xl font-bold text-gray-900 tracking-tight">{branding.appName}</h1>
+            <h1 className="text-2xl font-bold tracking-tight" data-auth="app-name" style={{ color: 'var(--auth-heading, #111827)' }}>{branding.appName}</h1>
           )}
         </div>
-        {children}
-        <div className="flex flex-wrap justify-center gap-1 mt-6 pt-4 border-t border-gray-200">
+        <div data-auth="content">{children}</div>
+        <div className="flex flex-wrap justify-center gap-1 mt-6 pt-4 border-t border-gray-200" data-auth="languages">
           {(branding.languages ?? ALL_LANGUAGES).map((lang) => (
             <button
               key={lang.code}

@@ -330,8 +330,8 @@ export default function LoginPage() {
       {successMessage && <Alert variant="success">{successMessage}</Alert>}
       {error && <Alert variant="error">{error}</Alert>}
 
-      <form onSubmit={handleSubmit}>
-        <div className="mb-4">
+      <form onSubmit={handleSubmit} data-auth="login-form">
+        <div className="mb-4" data-auth="email-field">
           <Label htmlFor="email">{t('email')}</Label>
           <Input
             id="email"
@@ -378,7 +378,7 @@ export default function LoginPage() {
 
         {showPasswordField && (
           <>
-            <div className="mb-4">
+            <div className="mb-4" data-auth="password-field">
               <Label htmlFor="password">{t('password')}</Label>
               <Input
                 id="password"
@@ -393,7 +393,7 @@ export default function LoginPage() {
               />
             </div>
 
-            <Button type="submit" loading={loading}>
+            <Button type="submit" loading={loading} data-auth="submit-button">
               {loading ? t('signingIn') : t('signIn')}
             </Button>
 

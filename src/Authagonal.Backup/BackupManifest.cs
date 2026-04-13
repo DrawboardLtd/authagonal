@@ -14,6 +14,12 @@ public sealed class BackupManifest
     public long TombstoneCount { get; set; }
     public long TotalEntities { get; set; }
     public double DurationSeconds { get; set; }
+
+    /// <summary>
+    /// SHA-256 hex hash of each backup file. Populated during backup, verified during restore.
+    /// Key = filename (e.g. "Users.jsonl.gz"), Value = lowercase hex hash.
+    /// </summary>
+    public Dictionary<string, string> FileHashes { get; set; } = new();
 }
 
 public sealed class TableBackupInfo
