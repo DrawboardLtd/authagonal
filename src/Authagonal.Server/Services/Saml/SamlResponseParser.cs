@@ -245,6 +245,7 @@ public sealed class SamlResponseParser(ILogger<SamlResponseParser> logger)
         };
     }
 
+    [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("Trimming", "IL2026", Justification = "SAML XML signature validation requires reflection")]
     private static bool ValidateElementSignature(
         XmlElement element,
         IReadOnlyList<X509Certificate2> trustedCertificates,

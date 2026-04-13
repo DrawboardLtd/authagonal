@@ -86,7 +86,7 @@ public static class ConsentEndpoint
                 Type = "consent",
                 SubjectId = subjectId,
                 ClientId = request.ClientId,
-                Data = JsonSerializer.Serialize(consentData),
+                Data = JsonSerializer.Serialize(consentData, AuthagonalJsonContext.Default.ConsentData),
                 CreatedAt = DateTimeOffset.UtcNow,
                 ExpiresAt = DateTimeOffset.UtcNow.AddYears(5), // consent doesn't expire quickly
             }, ct);
@@ -114,7 +114,7 @@ public static class ConsentEndpoint
             foreach (var grant in consentGrants)
             {
                 var client = await clientStore.GetAsync(grant.ClientId, ct);
-                var data = JsonSerializer.Deserialize<AuthorizeEndpoint.ConsentData>(grant.Data);
+                var data = JsonSerializer.Deserialize(grant.Data, AuthagonalJsonContext.Default.ConsentData);
                 results.Add(new
                 {
                     clientId = grant.ClientId,
@@ -147,5 +147,5 @@ public static class ConsentEndpoint
         return app;
     }
 
-    private sealed record ConsentRequest(string ClientId, string Decision, string[]? Scopes, string? ReturnUrl);
+    internal sealed record ConsentRequest(string ClientId, string Decision, string[]? Scopes, string? ReturnUrl);
 }

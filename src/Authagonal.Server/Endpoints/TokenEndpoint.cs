@@ -148,16 +148,14 @@ public static class TokenEndpoint
         if (grant.ConsumedAt is not null)
             return TokenError("invalid_grant", "Device code has already been used");
 
-        var data = JsonSerializer.Deserialize<DeviceCodeData>(grant.Data);
+        var data = JsonSerializer.Deserialize(grant.Data, AuthagonalJsonContext.Default.DeviceCodeData);
         if (data is null)
             return TokenError("server_error", "Invalid device code data");
 
         if (!data.IsApproved || string.IsNullOrEmpty(data.SubjectId))
         {
             // RFC 8628 §3.5 — authorization_pending
-            return Results.Json(
-                new { error = "authorization_pending", error_description = "The user has not yet approved the request" },
-                statusCode: 400);
+            return JsonResults.OAuthError("authorization_pending", "The user has not yet approved the request");
         }
 
         // Consume the device code
@@ -201,8 +199,7 @@ public static class TokenEndpoint
 
     private static IResult TokenError(string error, string description)
     {
-        return Results.Json(
-            new { error, error_description = description },
+        return JsonResults.OAuthError(error, description,
             statusCode: error == "invalid_client" ? 401 : 400);
     }
 }

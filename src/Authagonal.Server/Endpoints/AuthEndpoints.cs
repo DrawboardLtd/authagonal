@@ -51,10 +51,10 @@ public static class AuthEndpoints
         CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(request.Email))
-            return Results.Json(new { error = "email_required" }, statusCode: 400);
+            return JsonResults.Error("email_required");
 
         if (string.IsNullOrWhiteSpace(request.Password))
-            return Results.Json(new { error = "password_required" }, statusCode: 400);
+            return JsonResults.Error("password_required");
 
         // Check SSO domain first
         var domain = request.Email.Split('@', 2).LastOrDefault()?.ToLowerInvariant();
@@ -67,28 +67,28 @@ public static class AuthEndpoints
                     ? $"/oidc/{ssoDomain.ConnectionId}/login"
                     : $"/saml/{ssoDomain.ConnectionId}/login";
 
-                return Results.Json(new { error = "sso_required", redirectUrl = ssoRedirectUrl }, statusCode: 409);
+                return TypedResults.Json(new SsoRedirectError { Error = "sso_required", RedirectUrl = ssoRedirectUrl }, AuthagonalJsonContext.Default.SsoRedirectError, statusCode: 409);
             }
         }
 
         var user = await userStore.FindByEmailAsync(request.Email, ct);
         if (user is null)
-            return Results.Json(new { error = "invalid_credentials" }, statusCode: 401);
+            return JsonResults.Error("invalid_credentials", 401);
 
         // Check if account is active
         if (!user.IsActive)
-            return Results.Json(new { error = "account_disabled" }, statusCode: 403);
+            return JsonResults.Error("account_disabled", 403);
 
         // Check lockout
         if (user.LockoutEnabled && user.LockoutEnd.HasValue && user.LockoutEnd > DateTimeOffset.UtcNow)
         {
             var remaining = user.LockoutEnd.Value - DateTimeOffset.UtcNow;
-            return Results.Json(new { error = "locked_out", retryAfter = (int)remaining.TotalSeconds }, statusCode: 423);
+            return TypedResults.Json(new LockedOutError { Error = "locked_out", RetryAfter = (int)remaining.TotalSeconds }, AuthagonalJsonContext.Default.LockedOutError, statusCode: 423);
         }
 
         // Check email confirmed
         if (!user.EmailConfirmed)
-            return Results.Json(new { error = "email_not_confirmed" }, statusCode: 403);
+            return JsonResults.Error("email_not_confirmed", 403);
 
         // Verify password
         var verifyResult = passwordHasher.VerifyPassword(request.Password, user.PasswordHash!);
@@ -109,7 +109,7 @@ public static class AuthEndpoints
 
             await authHooks.RunOnLoginFailedAsync(request.Email!, "invalid_password", ct);
 
-            return Results.Json(new { error = "invalid_credentials" }, statusCode: 401);
+            return JsonResults.Error("invalid_credentials", 401);
         }
 
         // Successful login - reset lockout counters, record login time
@@ -273,26 +273,26 @@ public static class AuthEndpoints
         var ao = authOptions.Value;
         var rateLimited = await rateLimiter.IsRateLimitedAsync($"register|{ip}", ao.MaxRegistrationsPerIp, TimeSpan.FromMinutes(ao.RegistrationWindowMinutes), ct);
         if (rateLimited)
-            return Results.Json(new { error = "rate_limited", message = "Too many registration attempts. Please try again later." }, statusCode: 429);
+            return JsonResults.Error("rate_limited", "Too many registration attempts. Please try again later.", 429);
 
         if (string.IsNullOrWhiteSpace(request.Email) || string.IsNullOrWhiteSpace(request.Password))
-            return Results.Json(new { error = "email_and_password_required" }, statusCode: 400);
+            return JsonResults.Error("email_and_password_required");
 
         // Basic email format validation
         var emailTrimmed = request.Email.Trim();
         if (!emailTrimmed.Contains('@') || emailTrimmed.Length < 5 ||
             emailTrimmed.StartsWith('@') || emailTrimmed.EndsWith('@') || emailTrimmed.EndsWith('.'))
-            return Results.Json(new { error = "invalid_email", message = "Please enter a valid email address." }, statusCode: 400);
+            return JsonResults.Error("invalid_email", "Please enter a valid email address.");
 
         var (isValid, validationError) = passwordValidator.Validate(request.Password, passwordPolicy);
         if (!isValid)
-            return Results.Json(new { error = "weak_password", message = validationError }, statusCode: 400);
+            return JsonResults.Error("weak_password", validationError!);
 
         var email = emailTrimmed.ToLowerInvariant();
 
         var existing = await userStore.FindByEmailAsync(email, ct);
         if (existing is not null)
-            return Results.Json(new { error = "email_already_registered" }, statusCode: 409);
+            return JsonResults.Error("email_already_registered", 409);
         var user = new AuthUser
         {
             Id = Guid.NewGuid().ToString("D"),
@@ -339,7 +339,7 @@ public static class AuthEndpoints
 
         logger.LogInformation("User registered: {UserId} ({Email})", user.Id, user.Email);
 
-        return Results.Json(new { success = true, userId = user.Id }, statusCode: 201);
+        return TypedResults.Json(new RegistrationSuccess { Success = true, UserId = user.Id }, AuthagonalJsonContext.Default.RegistrationSuccess, statusCode: 201);
     }
 
     private static async Task<IResult> ConfirmEmailAsync(
@@ -357,7 +357,7 @@ public static class AuthEndpoints
         }
 
         if (string.IsNullOrWhiteSpace(token))
-            return Results.Json(new { error = "invalid_request", message = "Token is required." }, statusCode: 400);
+            return JsonResults.Error("invalid_request", "Token is required.");
 
         string decoded;
         try
@@ -366,12 +366,12 @@ public static class AuthEndpoints
         }
         catch
         {
-            return Results.Json(new { error = "invalid_token", message = "Invalid token format." }, statusCode: 400);
+            return JsonResults.Error("invalid_token", "Invalid token format.");
         }
 
         var parts = decoded.Split("||");
         if (parts.Length < 3)
-            return Results.Json(new { error = "invalid_token", message = "Invalid token format." }, statusCode: 400);
+            return JsonResults.Error("invalid_token", "Invalid token format.");
 
         var securityStamp = parts[0];
         var email = parts[1];
@@ -379,15 +379,15 @@ public static class AuthEndpoints
         if (!long.TryParse(parts[2], out var expiresAtUnix) ||
             DateTimeOffset.UtcNow.ToUnixTimeSeconds() > expiresAtUnix)
         {
-            return Results.Json(new { error = "token_expired", message = "This verification link has expired." }, statusCode: 400);
+            return JsonResults.Error("token_expired", "This verification link has expired.");
         }
 
         var user = await userStore.FindByEmailAsync(email, ct);
         if (user is null)
-            return Results.Json(new { error = "invalid_token", message = "Invalid or expired verification link." }, statusCode: 400);
+            return JsonResults.Error("invalid_token", "Invalid or expired verification link.");
 
         if (user.SecurityStamp != securityStamp)
-            return Results.Json(new { error = "invalid_token", message = "This verification link has already been used or has expired." }, statusCode: 400);
+            return JsonResults.Error("invalid_token", "This verification link has already been used or has expired.");
 
         user.EmailConfirmed = true;
         user.SecurityStamp = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
@@ -468,15 +468,15 @@ public static class AuthEndpoints
         CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(request.Token))
-            return Results.Json(new { error = "invalid_token", message = localizer["Auth_ResetTokenRequired"].Value }, statusCode: 400);
+            return JsonResults.Error("invalid_token", localizer["Auth_ResetTokenRequired"].Value);
 
         if (string.IsNullOrWhiteSpace(request.NewPassword))
-            return Results.Json(new { error = "password_required", message = localizer["Auth_PasswordRequired"].Value }, statusCode: 400);
+            return JsonResults.Error("password_required", localizer["Auth_PasswordRequired"].Value);
 
         // Validate password strength
         var (isValid, validationError) = passwordValidator.Validate(request.NewPassword, passwordPolicy);
         if (!isValid)
-            return Results.Json(new { error = "weak_password", message = validationError }, statusCode: 400);
+            return JsonResults.Error("weak_password", validationError!);
 
         // Decode token: base64(token||email)
         string decoded;
@@ -486,12 +486,12 @@ public static class AuthEndpoints
         }
         catch
         {
-            return Results.Json(new { error = "invalid_token", message = localizer["Auth_InvalidTokenFormat"].Value }, statusCode: 400);
+            return JsonResults.Error("invalid_token", localizer["Auth_InvalidTokenFormat"].Value);
         }
 
         var parts = decoded.Split("||");
         if (parts.Length < 2)
-            return Results.Json(new { error = "invalid_token", message = localizer["Auth_InvalidTokenFormat"].Value }, statusCode: 400);
+            return JsonResults.Error("invalid_token", localizer["Auth_InvalidTokenFormat"].Value);
 
         var resetToken = parts[0];
         var email = parts[1];
@@ -502,21 +502,21 @@ public static class AuthEndpoints
             if (!long.TryParse(parts[2], out var expiresAtUnix) ||
                 DateTimeOffset.UtcNow.ToUnixTimeSeconds() > expiresAtUnix)
             {
-                return Results.Json(new { error = "token_expired", message = localizer["Auth_TokenExpired"].Value }, statusCode: 400);
+                return JsonResults.Error("token_expired", localizer["Auth_TokenExpired"].Value);
             }
         }
         else
         {
-            return Results.Json(new { error = "invalid_token", message = localizer["Auth_InvalidTokenFormat"].Value }, statusCode: 400);
+            return JsonResults.Error("invalid_token", localizer["Auth_InvalidTokenFormat"].Value);
         }
 
         var user = await userStore.FindByEmailAsync(email, ct);
         if (user is null)
-            return Results.Json(new { error = "invalid_token", message = localizer["Auth_InvalidToken"].Value }, statusCode: 400);
+            return JsonResults.Error("invalid_token", localizer["Auth_InvalidToken"].Value);
 
         // Validate token matches security stamp
         if (user.SecurityStamp != resetToken)
-            return Results.Json(new { error = "token_expired", message = localizer["Auth_TokenUsedOrExpired"].Value }, statusCode: 400);
+            return JsonResults.Error("token_expired", localizer["Auth_TokenUsedOrExpired"].Value);
 
         // Reset password
         user.PasswordHash = passwordHasher.HashPassword(request.NewPassword);
@@ -593,7 +593,7 @@ public static class AuthEndpoints
         CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(email))
-            return Results.Json(new { error = "email_required" }, statusCode: 400);
+            return JsonResults.Error("email_required");
 
         var domain = email.Split('@', 2).LastOrDefault()?.ToLowerInvariant();
         if (string.IsNullOrWhiteSpace(domain))

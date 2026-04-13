@@ -245,6 +245,7 @@ public sealed class TccProvisioningOrchestrator(
 
     // ── HTTP helpers ──────────────────────────────────────────────────
 
+    [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("Trimming", "IL2026", Justification = "Provisioning payloads are polymorphic external contracts")]
     private async Task<T?> PostAsync<T>(
         AppConfig app, string url, object payload, CancellationToken ct) where T : class
     {
@@ -272,6 +273,7 @@ public sealed class TccProvisioningOrchestrator(
         }
     }
 
+    [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("Trimming", "IL2026", Justification = "Provisioning payloads are polymorphic external contracts")]
     private async Task<HttpResponseMessage> SendPostAsync(
         AppConfig app, string url, object payload, CancellationToken ct)
     {

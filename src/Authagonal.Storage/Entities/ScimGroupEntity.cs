@@ -29,7 +29,7 @@ public sealed class ScimGroupEntity : ITableEntity
         DisplayName = group.DisplayName,
         ExternalId = group.ExternalId,
         OrganizationId = group.OrganizationId,
-        MemberUserIdsJson = JsonSerializer.Serialize(group.MemberUserIds),
+        MemberUserIdsJson = JsonSerializer.Serialize(group.MemberUserIds, StorageJsonContext.Default.ListString),
         CreatedAt = group.CreatedAt,
         UpdatedAt = group.UpdatedAt,
     };
@@ -42,7 +42,7 @@ public sealed class ScimGroupEntity : ITableEntity
         OrganizationId = OrganizationId,
         MemberUserIds = string.IsNullOrEmpty(MemberUserIdsJson)
             ? []
-            : JsonSerializer.Deserialize<List<string>>(MemberUserIdsJson) ?? [],
+            : JsonSerializer.Deserialize(MemberUserIdsJson, StorageJsonContext.Default.ListString) ?? [],
         CreatedAt = CreatedAt,
         UpdatedAt = UpdatedAt,
     };

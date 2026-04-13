@@ -65,13 +65,13 @@ public sealed class EmailService(IHttpClientFactory httpClientFactory, IConfigur
 
         using var request = new HttpRequestMessage(HttpMethod.Post, ResendApiUrl);
         request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", apiKey);
-        request.Content = JsonContent.Create(new
+        request.Content = JsonContent.Create(new ResendEmailRequest
         {
-            from = $"{senderName} <{senderEmail}>",
-            to = new[] { toEmail },
-            subject,
-            html
-        });
+            From = $"{senderName} <{senderEmail}>",
+            To = [toEmail],
+            Subject = subject,
+            Html = html
+        }, AuthagonalJsonContext.Default.ResendEmailRequest);
 
         var response = await client.SendAsync(request, ct);
 

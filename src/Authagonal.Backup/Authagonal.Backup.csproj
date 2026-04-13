@@ -4,6 +4,7 @@
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <IsTrimmable>true</IsTrimmable>
     <IsPackable>true</IsPackable>
     <PackageId>Authagonal.Backup</PackageId>
     <Description>Backup, restore, merge and rollup for Authagonal Table Storage data.</Description>

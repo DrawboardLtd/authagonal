@@ -140,12 +140,12 @@ public static class SigningKeyOps
         if (p.DP is not null) dict["DP"] = Convert.ToBase64String(p.DP);
         if (p.DQ is not null) dict["DQ"] = Convert.ToBase64String(p.DQ);
         if (p.InverseQ is not null) dict["InverseQ"] = Convert.ToBase64String(p.InverseQ);
-        return JsonSerializer.Serialize(dict);
+        return JsonSerializer.Serialize(dict!, AuthagonalJsonContext.Default.DictionaryStringString);
     }
 
     public static RSAParameters DeserializeRsaParameters(string json)
     {
-        var dict = JsonSerializer.Deserialize<Dictionary<string, string>>(json)
+        var dict = JsonSerializer.Deserialize(json, AuthagonalJsonContext.Default.DictionaryStringString)
             ?? throw new InvalidOperationException("Failed to deserialize RSA parameters");
 
         return new RSAParameters

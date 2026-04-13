@@ -68,7 +68,7 @@ public static class DeviceAuthorizationEndpoint
                 Scopes = validScopes,
                 IsApproved = false,
                 SubjectId = null,
-            });
+            }, AuthagonalJsonContext.Default.DeviceCodeData);
 
             await grantStore.StoreAsync(new PersistedGrant
             {
@@ -114,7 +114,7 @@ public static class DeviceAuthorizationEndpoint
             CancellationToken ct) =>
         {
             if (httpContext.User.Identity?.IsAuthenticated != true)
-                return Results.Json(new { error = "not_authenticated" }, statusCode: 401);
+                return JsonResults.Error("not_authenticated", 401);
 
             var form = await httpContext.Request.ReadFormAsync(ct);
             var userCode = form["user_code"].FirstOrDefault()?.Trim().ToUpperInvariant();
@@ -137,13 +137,13 @@ public static class DeviceAuthorizationEndpoint
                 ?? httpContext.User.FindFirst("sub")?.Value;
 
             if (string.IsNullOrEmpty(subjectId))
-                return Results.Json(new { error = "missing_identity" }, statusCode: 401);
+                return JsonResults.Error("missing_identity", 401);
 
-            var data = JsonSerializer.Deserialize<DeviceCodeData>(deviceGrant.Data)!;
+            var data = JsonSerializer.Deserialize(deviceGrant.Data, AuthagonalJsonContext.Default.DeviceCodeData)!;
             data.IsApproved = true;
             data.SubjectId = subjectId;
 
-            deviceGrant.Data = JsonSerializer.Serialize(data);
+            deviceGrant.Data = JsonSerializer.Serialize(data, AuthagonalJsonContext.Default.DeviceCodeData);
             deviceGrant.SubjectId = subjectId;
             await grantStore.StoreAsync(deviceGrant, ct);
 
@@ -170,7 +170,7 @@ public static class DeviceAuthorizationEndpoint
     }
 
     private static IResult DeviceError(string error, string description) =>
-        Results.Json(new { error, error_description = description },
+        JsonResults.OAuthError(error, description,
             statusCode: error == "invalid_client" ? 401 : 400);
 }
 

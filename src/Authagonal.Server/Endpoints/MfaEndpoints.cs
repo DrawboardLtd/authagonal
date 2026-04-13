@@ -32,19 +32,19 @@ public static class MfaEndpoints
         CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(request.ChallengeId))
-            return Results.Json(new { error = "challenge_required" }, statusCode: 400);
+            return JsonResults.Error("challenge_required");
 
         if (string.IsNullOrWhiteSpace(request.Method))
-            return Results.Json(new { error = "method_required" }, statusCode: 400);
+            return JsonResults.Error("method_required");
 
         // Consume challenge (atomic — prevents replay)
         var challenge = await mfaStore.ConsumeChallengeAsync(request.ChallengeId, ct);
         if (challenge is null)
-            return Results.Json(new { error = "invalid_challenge" }, statusCode: 400);
+            return JsonResults.Error("invalid_challenge");
 
         var user = await userStore.GetAsync(challenge.UserId, ct);
         if (user is null)
-            return Results.Json(new { error = "user_not_found" }, statusCode: 400);
+            return JsonResults.Error("user_not_found");
 
         var credentials = await mfaStore.GetCredentialsAsync(challenge.UserId, ct);
 
@@ -53,18 +53,18 @@ public static class MfaEndpoints
             case "totp":
             {
                 if (string.IsNullOrWhiteSpace(request.Code))
-                    return Results.Json(new { error = "code_required" }, statusCode: 400);
+                    return JsonResults.Error("code_required");
 
                 var totpCred = credentials.FirstOrDefault(c => c.Type == MfaCredentialType.Totp);
                 if (totpCred is null)
-                    return Results.Json(new { error = "totp_not_enrolled" }, statusCode: 400);
+                    return JsonResults.Error("totp_not_enrolled");
 
                 // Decrypt secret
                 var secretBase64 = await secretProvider.ResolveAsync(totpCred.SecretProtected!, ct);
                 var secret = Convert.FromBase64String(secretBase64);
 
                 if (!totpService.VerifyCode(secret, request.Code))
-                    return Results.Json(new { error = "invalid_code" }, statusCode: 401);
+                    return JsonResults.Error("invalid_code", 401);
 
                 totpCred.LastUsedAt = DateTimeOffset.UtcNow;
                 await mfaStore.UpdateCredentialAsync(totpCred, ct);
@@ -76,7 +76,7 @@ public static class MfaEndpoints
             case "recovery":
             {
                 if (string.IsNullOrWhiteSpace(request.Code))
-                    return Results.Json(new { error = "code_required" }, statusCode: 400);
+                    return JsonResults.Error("code_required");
 
                 var recoveryCreds = credentials
                     .Where(c => c.Type == MfaCredentialType.RecoveryCode && !c.IsConsumed)
@@ -86,7 +86,7 @@ public static class MfaEndpoints
                     recoveryCodeService.VerifyCode(request.Code, c.SecretProtected!));
 
                 if (matchedCred is null)
-                    return Results.Json(new { error = "invalid_code" }, statusCode: 401);
+                    return JsonResults.Error("invalid_code", 401);
 
                 matchedCred.IsConsumed = true;
                 matchedCred.LastUsedAt = DateTimeOffset.UtcNow;
@@ -99,20 +99,20 @@ public static class MfaEndpoints
             case "webauthn":
             {
                 if (string.IsNullOrWhiteSpace(request.Assertion))
-                    return Results.Json(new { error = "assertion_required" }, statusCode: 400);
+                    return JsonResults.Error("assertion_required");
 
                 if (string.IsNullOrWhiteSpace(challenge.WebAuthnChallenge))
-                    return Results.Json(new { error = "webauthn_not_available" }, statusCode: 400);
+                    return JsonResults.Error("webauthn_not_available");
 
                 var assertionOptions = AssertionOptions.FromJson(challenge.WebAuthnChallenge);
                 AuthenticatorAssertionRawResponse assertionResponse;
                 try
                 {
-                    assertionResponse = JsonSerializer.Deserialize<AuthenticatorAssertionRawResponse>(request.Assertion)!;
+                    assertionResponse = DeserializeFido2Assertion(request.Assertion);
                 }
                 catch
                 {
-                    return Results.Json(new { error = "invalid_assertion" }, statusCode: 400);
+                    return JsonResults.Error("invalid_assertion");
                 }
 
                 // Find matching credential by credential ID
@@ -131,7 +131,7 @@ public static class MfaEndpoints
                 foreach (var wc in webAuthnCreds)
                 {
                     if (wc.PublicKeyJson is null) continue;
-                    var data = JsonSerializer.Deserialize<WebAuthnCredentialData>(wc.PublicKeyJson);
+                    var data = JsonSerializer.Deserialize(wc.PublicKeyJson!, AuthagonalJsonContext.Default.WebAuthnCredentialData);
                     if (data?.CredentialId == assertedCredentialId)
                     {
                         matchedWebAuthnCred = wc;
@@ -141,14 +141,14 @@ public static class MfaEndpoints
                 }
 
                 if (matchedWebAuthnCred is null || credData is null)
-                    return Results.Json(new { error = "credential_not_found" }, statusCode: 401);
+                    return JsonResults.Error("credential_not_found", 401);
 
                 var storedPublicKey = Convert.FromBase64String(credData.PublicKey);
                 var (success, _, newSignCount) = await webAuthnService.CompleteAssertionAsync(
                     assertionOptions, assertionResponse, storedPublicKey, matchedWebAuthnCred.SignCount, ct);
 
                 if (!success)
-                    return Results.Json(new { error = "assertion_failed" }, statusCode: 401);
+                    return JsonResults.Error("assertion_failed", 401);
 
                 matchedWebAuthnCred.SignCount = newSignCount;
                 matchedWebAuthnCred.LastUsedAt = DateTimeOffset.UtcNow;
@@ -159,7 +159,7 @@ public static class MfaEndpoints
             }
 
             default:
-                return Results.Json(new { error = "unsupported_method" }, statusCode: 400);
+                return JsonResults.Error("unsupported_method");
         }
 
         // MFA verified — sign cookie
@@ -172,6 +172,10 @@ public static class MfaEndpoints
 
         return Results.Ok(new { userId = user.Id, email = user.Email, name });
     }
+
+    [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("Trimming", "IL2026", Justification = "Fido2 external type")]
+    private static AuthenticatorAssertionRawResponse DeserializeFido2Assertion(string json)
+        => JsonSerializer.Deserialize<AuthenticatorAssertionRawResponse>(json)!;
 }
 
 public sealed record MfaVerifyRequest(string? ChallengeId, string? Method, string? Code, string? Assertion);

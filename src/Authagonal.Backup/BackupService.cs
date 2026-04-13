@@ -7,6 +7,7 @@ using Azure.Data.Tables;
 
 namespace Authagonal.Backup;
 
+[System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("Trimming", "IL2026", Justification = "Backup entity serialization uses heterogeneous Dictionary<string, object?> values")]
 public sealed class BackupService(TableServiceClient serviceClient, IBackupTarget target, BackupOptions options)
 {
     private static readonly JsonSerializerOptions JsonOptions = new()

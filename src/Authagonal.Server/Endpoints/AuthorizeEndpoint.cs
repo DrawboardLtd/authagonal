@@ -105,7 +105,7 @@ public static class AuthorizeEndpoint
                 // Consent exists — verify scopes still match
                 try
                 {
-                    var consentData = System.Text.Json.JsonSerializer.Deserialize<ConsentData>(existingConsent.Data);
+                    var consentData = System.Text.Json.JsonSerializer.Deserialize(existingConsent.Data, AuthagonalJsonContext.Default.ConsentData);
                     var consentedScopes = new HashSet<string>(consentData?.Scopes ?? []);
                     if (!requestedScopes.All(s => consentedScopes.Contains(s)))
                     {

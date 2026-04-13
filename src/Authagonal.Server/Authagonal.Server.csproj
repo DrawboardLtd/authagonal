@@ -24,6 +24,9 @@
     <TargetFramework>net10.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
+    <IsTrimmable>true</IsTrimmable>
+    <EnableRequestDelegateGenerator>true</EnableRequestDelegateGenerator>
+    <EnableConfigurationBindingGenerator>true</EnableConfigurationBindingGenerator>
     <IsPackable>true</IsPackable>
     <PackageId>Authagonal.Server</PackageId>
     <Description>Drop-in authentication server for ASP.NET Core. OAuth 2.0, OIDC, SAML SSO, and admin APIs.</Description>

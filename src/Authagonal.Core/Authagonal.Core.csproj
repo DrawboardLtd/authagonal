@@ -4,6 +4,7 @@
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <IsTrimmable>true</IsTrimmable>
     <IsPackable>true</IsPackable>
     <PackageId>Authagonal.Core</PackageId>
     <Description>Core models, interfaces, and abstractions for the Authagonal authentication server.</Description>

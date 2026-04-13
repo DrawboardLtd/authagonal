@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using Microsoft.Extensions.Localization;
 
 namespace Authagonal.Server.Middleware;
@@ -9,11 +10,6 @@ public sealed class ExceptionHandlingMiddleware(
     ILogger<ExceptionHandlingMiddleware> logger,
     IStringLocalizer<SharedMessages> localizer)
 {
-    private static readonly JsonSerializerOptions JsonOptions = new()
-    {
-        PropertyNamingPolicy = JsonNamingPolicy.CamelCase
-    };
-
     public async Task InvokeAsync(HttpContext context)
     {
         try
@@ -50,15 +46,15 @@ public sealed class ExceptionHandlingMiddleware(
                 _ => localizer["Error_ServerError"].Value
             };
 
-            var errorResponse = new
+            var errorResponse = new ErrorResponse
             {
-                error = "server_error",
-                error_description = errorDescription,
-                correlation_id = correlationId
+                Error = "server_error",
+                ErrorDescription = errorDescription,
+                CorrelationId = correlationId
             };
 
             await context.Response.WriteAsync(
-                JsonSerializer.Serialize(errorResponse, JsonOptions));
+                JsonSerializer.Serialize(errorResponse, AuthagonalJsonContext.Default.ErrorResponse));
         }
     }
 }
@@ -69,4 +65,14 @@ public static class ExceptionHandlingMiddlewareExtensions
     {
         return app.UseMiddleware<ExceptionHandlingMiddleware>();
     }
+}
+
+internal sealed class ErrorResponse
+{
+    [JsonPropertyName("error")]
+    public required string Error { get; set; }
+    [JsonPropertyName("error_description")]
+    public required string ErrorDescription { get; set; }
+    [JsonPropertyName("correlation_id")]
+    public required string CorrelationId { get; set; }
 }

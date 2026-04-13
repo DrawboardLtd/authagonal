@@ -10,7 +10,7 @@ public sealed class FileSystemBackupSource(string rootDirectory) : IBackupSource
         if (!File.Exists(path)) return null;
 
         var json = await File.ReadAllTextAsync(path, ct);
-        return JsonSerializer.Deserialize<BackupManifest>(json);
+        return JsonSerializer.Deserialize(json, BackupJsonContext.Default.BackupManifest);
     }
 
     public Task<Stream?> OpenReadAsync(string backupId, string fileName, CancellationToken ct = default)

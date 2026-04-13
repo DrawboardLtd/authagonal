@@ -17,7 +17,7 @@ public sealed class FileSystemBackupTarget(string rootDirectory) : IBackupTarget
         var dir = Path.Combine(rootDirectory, backupId);
         Directory.CreateDirectory(dir);
         var path = Path.Combine(dir, "_manifest.json");
-        var json = JsonSerializer.Serialize(manifest, new JsonSerializerOptions { WriteIndented = true });
+        var json = JsonSerializer.Serialize(manifest, BackupJsonContext.Default.BackupManifest);
         await File.WriteAllTextAsync(path, json, ct);
     }
 

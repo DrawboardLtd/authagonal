@@ -77,11 +77,11 @@ public sealed class ClusterGossipService(
             var client = httpClientFactory.CreateClient("ClusterGossip");
             var url = $"{peerAddress.TrimEnd('/')}/_internal/cluster/gossip";
 
-            var response = await client.PostAsJsonAsync(url, localState, ct);
+            var response = await client.PostAsJsonAsync(url, localState, AuthagonalJsonContext.Default.GossipMessage, ct);
 
             if (response.IsSuccessStatusCode)
             {
-                var gossipResponse = await response.Content.ReadFromJsonAsync<GossipResponse>(ct);
+                var gossipResponse = await response.Content.ReadFromJsonAsync(AuthagonalJsonContext.Default.GossipResponse, ct);
                 if (gossipResponse is not null && !gossipResponse.Self && gossipResponse.Counters is not null)
                 {
                     rateLimiter.MergePeerState(gossipResponse.NodeId, gossipResponse.Counters);
@@ -107,7 +107,7 @@ public sealed class ClusterGossipService(
 
                 var request = new HttpRequestMessage(HttpMethod.Post, url)
                 {
-                    Content = JsonContent.Create(localState)
+                    Content = JsonContent.Create(localState, AuthagonalJsonContext.Default.GossipMessage)
                 };
 
                 if (!string.IsNullOrWhiteSpace(secret))
@@ -117,7 +117,7 @@ public sealed class ClusterGossipService(
 
                 if (response.IsSuccessStatusCode)
                 {
-                    var gossipResponse = await response.Content.ReadFromJsonAsync<GossipResponse>(ct);
+                    var gossipResponse = await response.Content.ReadFromJsonAsync(AuthagonalJsonContext.Default.GossipResponse, ct);
                     if (gossipResponse is null)
                         return;
 

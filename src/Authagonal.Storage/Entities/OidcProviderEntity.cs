@@ -32,7 +32,7 @@ public sealed class OidcProviderEntity : ITableEntity
         ClientId = config.ClientId,
         ClientSecret = config.ClientSecret,
         RedirectUrl = config.RedirectUrl,
-        AllowedDomainsJson = JsonSerializer.Serialize(config.AllowedDomains),
+        AllowedDomainsJson = JsonSerializer.Serialize(config.AllowedDomains, StorageJsonContext.Default.ListString),
         CreatedAt = config.CreatedAt,
         UpdatedAt = config.UpdatedAt,
     };
@@ -45,7 +45,7 @@ public sealed class OidcProviderEntity : ITableEntity
         ClientId = ClientId,
         ClientSecret = ClientSecret,
         RedirectUrl = RedirectUrl,
-        AllowedDomains = JsonSerializer.Deserialize<List<string>>(AllowedDomainsJson) ?? [],
+        AllowedDomains = JsonSerializer.Deserialize(AllowedDomainsJson, StorageJsonContext.Default.ListString) ?? [],
         CreatedAt = CreatedAt,
         UpdatedAt = UpdatedAt,
     };

@@ -117,7 +117,7 @@ public static class MfaSetupEndpoints
             await mfaStore.DeleteCredentialAsync(userId, pending.Id, ct);
 
         if (credentials.Any(c => c.Type == MfaCredentialType.Totp && c.Name != "TOTP (pending)"))
-            return Results.Json(new { error = "totp_already_enrolled" }, statusCode: 409);
+            return JsonResults.Error("totp_already_enrolled", 409);
 
         // Generate secret
         var secret = totpService.GenerateSecret();
@@ -173,19 +173,19 @@ public static class MfaSetupEndpoints
         if (userId is null) return Results.Unauthorized();
 
         if (string.IsNullOrWhiteSpace(request.SetupToken) || string.IsNullOrWhiteSpace(request.Code))
-            return Results.Json(new { error = "invalid_request" }, statusCode: 400);
+            return JsonResults.Error("invalid_request");
 
         // Find the pending credential
         var cred = await mfaStore.GetCredentialAsync(userId, request.SetupToken, ct);
         if (cred is null || cred.Type != MfaCredentialType.Totp)
-            return Results.Json(new { error = "invalid_setup_token" }, statusCode: 400);
+            return JsonResults.Error("invalid_setup_token");
 
         // Verify code against the stored secret
         var secretBase64 = await secretProvider.ResolveAsync(cred.SecretProtected!, ct);
         var secret = Convert.FromBase64String(secretBase64);
 
         if (!totpService.VerifyCode(secret, request.Code))
-            return Results.Json(new { error = "invalid_code" }, statusCode: 400);
+            return JsonResults.Error("invalid_code");
 
         // Confirm: update the credential name to indicate it's active
         cred.Name = "Authenticator app";
@@ -267,22 +267,22 @@ public static class MfaSetupEndpoints
         if (userId is null) return Results.Unauthorized();
 
         if (string.IsNullOrWhiteSpace(request.SetupToken) || string.IsNullOrWhiteSpace(request.AttestationResponse))
-            return Results.Json(new { error = "invalid_request" }, statusCode: 400);
+            return JsonResults.Error("invalid_request");
 
         // Find the pending setup credential
         var setupCred = await mfaStore.GetCredentialAsync(userId, request.SetupToken, ct);
         if (setupCred is null || setupCred.Type != MfaCredentialType.WebAuthn || setupCred.PublicKeyJson is null)
-            return Results.Json(new { error = "invalid_setup_token" }, statusCode: 400);
+            return JsonResults.Error("invalid_setup_token");
 
         var originalOptions = CredentialCreateOptions.FromJson(setupCred.PublicKeyJson);
         AuthenticatorAttestationRawResponse attestationResponse;
         try
         {
-            attestationResponse = JsonSerializer.Deserialize<AuthenticatorAttestationRawResponse>(request.AttestationResponse)!;
+            attestationResponse = DeserializeFido2Attestation(request.AttestationResponse);
         }
         catch
         {
-            return Results.Json(new { error = "invalid_attestation" }, statusCode: 400);
+            return JsonResults.Error("invalid_attestation");
         }
 
         MfaCredential credential;
@@ -292,7 +292,7 @@ public static class MfaSetupEndpoints
         }
         catch (Fido2VerificationException)
         {
-            return Results.Json(new { error = "attestation_failed" }, statusCode: 400);
+            return JsonResults.Error("attestation_failed");
         }
 
         // Delete the pending setup credential and create the real one
@@ -300,7 +300,7 @@ public static class MfaSetupEndpoints
         await mfaStore.CreateCredentialAsync(credential, ct);
 
         // Store WebAuthn credential ID mapping for discovery
-        var credData = JsonSerializer.Deserialize<WebAuthnCredentialData>(credential.PublicKeyJson!);
+        var credData = JsonSerializer.Deserialize(credential.PublicKeyJson!, AuthagonalJsonContext.Default.WebAuthnCredentialData);
         if (credData is not null)
         {
             await mfaStore.StoreWebAuthnCredentialIdMappingAsync(
@@ -340,7 +340,7 @@ public static class MfaSetupEndpoints
         // Must have TOTP or WebAuthn enrolled first
         var existing = await mfaStore.GetCredentialsAsync(userId, ct);
         if (!existing.Any(c => c.Type is MfaCredentialType.Totp or MfaCredentialType.WebAuthn))
-            return Results.Json(new { error = "primary_method_required" }, statusCode: 400);
+            return JsonResults.Error("primary_method_required");
 
         // Delete existing recovery codes
         var oldRecoveryCodes = existing.Where(c => c.Type == MfaCredentialType.RecoveryCode).ToList();
@@ -386,6 +386,10 @@ public static class MfaSetupEndpoints
 
         return Results.Ok(new { success = true });
     }
+
+    [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("Trimming", "IL2026", Justification = "Fido2 external type")]
+    private static AuthenticatorAttestationRawResponse DeserializeFido2Attestation(string json)
+        => JsonSerializer.Deserialize<AuthenticatorAttestationRawResponse>(json)!;
 }
 
 public sealed record TotpConfirmRequest(string? SetupToken, string? Code);

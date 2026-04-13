@@ -28,7 +28,7 @@ public sealed class SamlProviderEntity : ITableEntity
         ConnectionName = config.ConnectionName,
         EntityId = config.EntityId,
         MetadataLocation = config.MetadataLocation,
-        AllowedDomainsJson = JsonSerializer.Serialize(config.AllowedDomains),
+        AllowedDomainsJson = JsonSerializer.Serialize(config.AllowedDomains, StorageJsonContext.Default.ListString),
         CreatedAt = config.CreatedAt,
         UpdatedAt = config.UpdatedAt,
     };
@@ -39,7 +39,7 @@ public sealed class SamlProviderEntity : ITableEntity
         ConnectionName = ConnectionName,
         EntityId = EntityId,
         MetadataLocation = MetadataLocation,
-        AllowedDomains = JsonSerializer.Deserialize<List<string>>(AllowedDomainsJson) ?? [],
+        AllowedDomains = JsonSerializer.Deserialize(AllowedDomainsJson, StorageJsonContext.Default.ListString) ?? [],
         CreatedAt = CreatedAt,
         UpdatedAt = UpdatedAt,
     };

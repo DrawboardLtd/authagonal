@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Text.Json.Serialization;
 
 namespace Authagonal.Server.Endpoints.Scim;
@@ -6,9 +7,11 @@ public static class ScimResults
 {
     private const string ScimJsonContentType = "application/scim+json";
 
+    [UnconditionalSuppressMessage("Trimming", "IL2026", Justification = "SCIM resources are polymorphic")]
     public static IResult Success(object value, int statusCode = 200)
         => Results.Json(value, contentType: ScimJsonContentType, statusCode: statusCode);
 
+    [UnconditionalSuppressMessage("Trimming", "IL2026", Justification = "SCIM resources are polymorphic")]
     public static IResult Created(object value, string? location = null)
     {
         return Results.Json(value, contentType: ScimJsonContentType, statusCode: 201);
@@ -22,7 +25,7 @@ public static class ScimResults
             ScimType = scimType,
             Detail = detail,
         };
-        return Results.Json(error, contentType: ScimJsonContentType, statusCode: status);
+        return TypedResults.Json(error, AuthagonalJsonContext.Default.ScimError, contentType: ScimJsonContentType, statusCode: status);
     }
 
     public static IResult NotFound(string detail)

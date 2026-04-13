@@ -24,10 +24,12 @@ public class VaultTransitClient
     public virtual async Task<byte[]> SignAsync(string keyName, byte[] data, CancellationToken ct = default)
     {
         var input = Convert.ToBase64String(data);
-        var payload = JsonSerializer.Serialize(new { input, hash_algorithm = "sha2-256", signature_algorithm = "pkcs1v15" });
+        var payload = JsonSerializer.Serialize(
+            new VaultSignRequest { Input = input, HashAlgorithm = "sha2-256", SignatureAlgorithm = "pkcs1v15" },
+            AuthagonalJsonContext.Default.VaultSignRequest);
 
         var response = await PostAsync($"/v1/transit/sign/{keyName}/sha2-256", payload, ct);
-        var result = JsonSerializer.Deserialize<VaultResponse<SignResponse>>(response);
+        var result = JsonSerializer.Deserialize(response, AuthagonalJsonContext.Default.VaultResponseSignResponse);
 
         var sig = result?.Data?.Signature
             ?? throw new InvalidOperationException($"Vault Transit sign returned no signature for key '{keyName}'");
@@ -45,17 +47,21 @@ public class VaultTransitClient
     {
         var input = Convert.ToBase64String(data);
         var sig = $"vault:v1:{Convert.ToBase64String(signature)}";
-        var payload = JsonSerializer.Serialize(new { input, signature = sig, hash_algorithm = "sha2-256", signature_algorithm = "pkcs1v15" });
+        var payload = JsonSerializer.Serialize(
+            new VaultVerifyRequest { Input = input, Signature = sig, HashAlgorithm = "sha2-256", SignatureAlgorithm = "pkcs1v15" },
+            AuthagonalJsonContext.Default.VaultVerifyRequest);
 
         var response = await PostAsync($"/v1/transit/verify/{keyName}/sha2-256", payload, ct);
-        var result = JsonSerializer.Deserialize<VaultResponse<VerifyResponse>>(response);
+        var result = JsonSerializer.Deserialize(response, AuthagonalJsonContext.Default.VaultResponseVerifyResponse);
         return result?.Data?.Valid ?? false;
     }
 
     /// <summary>Create a new Transit key.</summary>
     public virtual async Task CreateKeyAsync(string keyName, string type = "rsa-2048", CancellationToken ct = default)
     {
-        var payload = JsonSerializer.Serialize(new { type });
+        var payload = JsonSerializer.Serialize(
+            new VaultCreateKeyRequest { Type = type },
+            AuthagonalJsonContext.Default.VaultCreateKeyRequest);
         await PostAsync($"/v1/transit/keys/{keyName}", payload, ct);
         _logger.LogInformation("Created Vault Transit key {KeyName} (type={Type})", keyName, type);
     }
@@ -71,7 +77,9 @@ public class VaultTransitClient
     public virtual async Task DeleteKeyAsync(string keyName, CancellationToken ct = default)
     {
         // Enable deletion
-        var configPayload = JsonSerializer.Serialize(new { deletion_allowed = true });
+        var configPayload = JsonSerializer.Serialize(
+            new VaultKeyConfigRequest { DeletionAllowed = true },
+            AuthagonalJsonContext.Default.VaultKeyConfigRequest);
         await PostAsync($"/v1/transit/keys/{keyName}/config", configPayload, ct);
         // Delete
         await DeleteAsync($"/v1/transit/keys/{keyName}", ct);
@@ -84,7 +92,7 @@ public class VaultTransitClient
         try
         {
             var response = await GetAsync($"/v1/transit/keys/{keyName}", ct);
-            var result = JsonSerializer.Deserialize<VaultResponse<TransitKeyInfo>>(response);
+            var result = JsonSerializer.Deserialize(response, AuthagonalJsonContext.Default.VaultResponseTransitKeyInfo);
             return result?.Data;
         }
         catch (HttpRequestException ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound)
@@ -132,25 +140,60 @@ public class VaultTransitClient
         return body;
     }
 
-    // ── Response DTOs ────────────────────────────────────────────────
+}
 
-    private sealed class VaultResponse<T>
-    {
-        [JsonPropertyName("data")]
-        public T? Data { get; set; }
-    }
+// ── Vault DTOs ──────────────────────────────────────────────────────
 
-    private sealed class SignResponse
-    {
-        [JsonPropertyName("signature")]
-        public string? Signature { get; set; }
-    }
+internal sealed class VaultResponse<T>
+{
+    [JsonPropertyName("data")]
+    public T? Data { get; set; }
+}
 
-    private sealed class VerifyResponse
-    {
-        [JsonPropertyName("valid")]
-        public bool Valid { get; set; }
-    }
+internal sealed class SignResponse
+{
+    [JsonPropertyName("signature")]
+    public string? Signature { get; set; }
+}
+
+internal sealed class VerifyResponse
+{
+    [JsonPropertyName("valid")]
+    public bool Valid { get; set; }
+}
+
+internal sealed class VaultSignRequest
+{
+    [JsonPropertyName("input")]
+    public required string Input { get; set; }
+    [JsonPropertyName("hash_algorithm")]
+    public required string HashAlgorithm { get; set; }
+    [JsonPropertyName("signature_algorithm")]
+    public required string SignatureAlgorithm { get; set; }
+}
+
+internal sealed class VaultVerifyRequest
+{
+    [JsonPropertyName("input")]
+    public required string Input { get; set; }
+    [JsonPropertyName("signature")]
+    public required string Signature { get; set; }
+    [JsonPropertyName("hash_algorithm")]
+    public required string HashAlgorithm { get; set; }
+    [JsonPropertyName("signature_algorithm")]
+    public required string SignatureAlgorithm { get; set; }
+}
+
+internal sealed class VaultCreateKeyRequest
+{
+    [JsonPropertyName("type")]
+    public required string Type { get; set; }
+}
+
+internal sealed class VaultKeyConfigRequest
+{
+    [JsonPropertyName("deletion_allowed")]
+    public bool DeletionAllowed { get; set; }
 }
 
 /// <summary>Transit key metadata from Vault.</summary>

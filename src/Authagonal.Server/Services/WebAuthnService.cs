@@ -22,7 +22,7 @@ public sealed class WebAuthnService(IFido2 fido2)
             .Where(c => c.Type == MfaCredentialType.WebAuthn && c.PublicKeyJson is not null)
             .Select(c =>
             {
-                var data = JsonSerializer.Deserialize<WebAuthnCredentialData>(c.PublicKeyJson!);
+                var data = JsonSerializer.Deserialize(c.PublicKeyJson!, AuthagonalJsonContext.Default.WebAuthnCredentialData);
                 return new PublicKeyCredentialDescriptor(Convert.FromBase64String(data!.CredentialId));
             })
             .ToList();
@@ -72,7 +72,7 @@ public sealed class WebAuthnService(IFido2 fido2)
             UserId = userId,
             Type = MfaCredentialType.WebAuthn,
             Name = "Passkey",
-            PublicKeyJson = JsonSerializer.Serialize(credData),
+            PublicKeyJson = JsonSerializer.Serialize(credData, AuthagonalJsonContext.Default.WebAuthnCredentialData),
             SignCount = (uint)result.SignCount,
             CreatedAt = DateTimeOffset.UtcNow,
         };
@@ -84,7 +84,7 @@ public sealed class WebAuthnService(IFido2 fido2)
             .Where(c => c.Type == MfaCredentialType.WebAuthn && c.PublicKeyJson is not null)
             .Select(c =>
             {
-                var data = JsonSerializer.Deserialize<WebAuthnCredentialData>(c.PublicKeyJson!);
+                var data = JsonSerializer.Deserialize(c.PublicKeyJson!, AuthagonalJsonContext.Default.WebAuthnCredentialData);
                 return new PublicKeyCredentialDescriptor(Convert.FromBase64String(data!.CredentialId));
             })
             .ToList();

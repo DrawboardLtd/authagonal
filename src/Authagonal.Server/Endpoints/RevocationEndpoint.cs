@@ -20,16 +20,16 @@ public static class RevocationEndpoint
             var (clientId, clientSecret) = ExtractClientCredentials(httpContext, form);
 
             if (string.IsNullOrWhiteSpace(clientId))
-                return Results.Json(new { error = "invalid_client", error_description = "client_id is required" }, statusCode: 401);
+                return JsonResults.OAuthError("invalid_client", "client_id is required", 401);
 
             var client = await clientStore.GetAsync(clientId, ct);
             if (client is null)
-                return Results.Json(new { error = "invalid_client", error_description = "Unknown client" }, statusCode: 401);
+                return JsonResults.OAuthError("invalid_client", "Unknown client", 401);
 
             if (client.RequireClientSecret)
             {
                 if (string.IsNullOrWhiteSpace(clientSecret))
-                    return Results.Json(new { error = "invalid_client", error_description = "client_secret is required" }, statusCode: 401);
+                    return JsonResults.OAuthError("invalid_client", "client_secret is required", 401);
 
                 var secretValid = client.ClientSecretHashes.Any(hash =>
                 {
@@ -39,7 +39,7 @@ public static class RevocationEndpoint
                 });
 
                 if (!secretValid)
-                    return Results.Json(new { error = "invalid_client", error_description = "Invalid client credentials" }, statusCode: 401);
+                    return JsonResults.OAuthError("invalid_client", "Invalid client credentials", 401);
             }
 
             var token = form["token"].FirstOrDefault();

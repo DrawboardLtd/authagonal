@@ -58,7 +58,7 @@ public sealed class AuthorizationCodeService(
             Type = "authorization_code",
             SubjectId = subjectId,
             ClientId = clientId,
-            Data = JsonSerializer.Serialize(authCode),
+            Data = JsonSerializer.Serialize(authCode, AuthagonalJsonContext.Default.AuthorizationCode),
             CreatedAt = now,
             ExpiresAt = expiresAt
         };
@@ -97,7 +97,7 @@ public sealed class AuthorizationCodeService(
             return null;
         }
 
-        var authCode = JsonSerializer.Deserialize<AuthorizationCode>(grant.Data);
+        var authCode = JsonSerializer.Deserialize(grant.Data, AuthagonalJsonContext.Default.AuthorizationCode);
 
         if (authCode is null)
         {

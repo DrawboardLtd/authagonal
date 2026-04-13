@@ -178,7 +178,7 @@ public sealed class TokenService(
                 SubjectId = user.Id,
                 ClientId = client.ClientId,
                 CreatedAt = now
-            }),
+            }, AuthagonalJsonContext.Default.RefreshTokenData),
             CreatedAt = now,
             ExpiresAt = now.AddSeconds(client.AbsoluteRefreshTokenLifetimeSeconds)
         };
@@ -206,7 +206,7 @@ public sealed class TokenService(
         if (grant.ExpiresAt <= DateTimeOffset.UtcNow)
             throw new InvalidOperationException("Authorization code has expired");
 
-        var authCode = JsonSerializer.Deserialize<AuthorizationCode>(grant.Data)
+        var authCode = JsonSerializer.Deserialize(grant.Data, AuthagonalJsonContext.Default.AuthorizationCode)
             ?? throw new InvalidOperationException("Failed to deserialize authorization code");
 
         // Validate client
@@ -297,7 +297,7 @@ public sealed class TokenService(
             throw new InvalidOperationException("Refresh token has been revoked (replay detected)");
         }
 
-        var data = JsonSerializer.Deserialize<RefreshTokenData>(grant.Data)
+        var data = JsonSerializer.Deserialize(grant.Data, AuthagonalJsonContext.Default.RefreshTokenData)
             ?? throw new InvalidOperationException("Failed to deserialize refresh token data");
 
         var client = await clientStore.GetAsync(clientId, ct)
@@ -453,7 +453,7 @@ public sealed class TokenService(
     /// <summary>
     /// Internal model for refresh token data serialized in PersistedGrant.Data
     /// </summary>
-    private sealed class RefreshTokenData
+    internal sealed class RefreshTokenData
     {
         public required List<string> Scopes { get; set; }
         public required string SubjectId { get; set; }
