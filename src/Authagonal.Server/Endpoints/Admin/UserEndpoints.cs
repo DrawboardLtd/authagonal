@@ -369,24 +369,33 @@ public static class UserEndpoints
     }
 
     // Request DTOs
-    public sealed record RegisterUserRequest(
-        string Email,
-        string Password,
-        string? FirstName,
-        string? LastName);
+    public sealed class RegisterUserRequest
+    {
+        public string Email { get; set; } = "";
+        public string Password { get; set; } = "";
+        public string? FirstName { get; set; }
+        public string? LastName { get; set; }
+    }
 
-    public sealed record UpdateUserRequest(
-        string UserId,
-        string? FirstName,
-        string? LastName,
-        string? CompanyName,
-        string? Phone,
-        string? OrganizationId);
+    public sealed class UpdateUserRequest
+    {
+        public string UserId { get; set; } = "";
+        public string? FirstName { get; set; }
+        public string? LastName { get; set; }
+        public string? CompanyName { get; set; }
+        public string? Phone { get; set; }
+        public string? OrganizationId { get; set; }
+    }
 
-    public sealed record ConfirmEmailRequest(string Token);
+    public sealed class ConfirmEmailRequest
+    {
+        public string Token { get; set; } = "";
+    }
 
-    public sealed record LinkExternalIdentityRequest(
-        string Provider,
-        string ProviderKey,
-        string? DisplayName);
+    public sealed class LinkExternalIdentityRequest
+    {
+        public string Provider { get; set; } = "";
+        public string ProviderKey { get; set; } = "";
+        public string? DisplayName { get; set; }
+    }
 }

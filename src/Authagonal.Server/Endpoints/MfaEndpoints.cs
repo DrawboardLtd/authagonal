@@ -178,4 +178,10 @@ public static class MfaEndpoints
         => JsonSerializer.Deserialize<AuthenticatorAssertionRawResponse>(json)!;
 }
 
-public sealed record MfaVerifyRequest(string? ChallengeId, string? Method, string? Code, string? Assertion);
+public sealed class MfaVerifyRequest
+{
+    public string? ChallengeId { get; set; }
+    public string? Method { get; set; }
+    public string? Code { get; set; }
+    public string? Assertion { get; set; }
+}

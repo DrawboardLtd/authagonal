@@ -147,5 +147,11 @@ public static class ConsentEndpoint
         return app;
     }
 
-    internal sealed record ConsentRequest(string ClientId, string Decision, string[]? Scopes, string? ReturnUrl);
+    internal sealed class ConsentRequest
+    {
+        public string ClientId { get; set; } = "";
+        public string Decision { get; set; } = "";
+        public string[]? Scopes { get; set; }
+        public string? ReturnUrl { get; set; }
+    }
 }

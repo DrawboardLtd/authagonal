@@ -618,8 +618,32 @@ public static class AuthEndpoints
 
 }
 
-public sealed record LoginRequest(string? Email, string? Password);
-public sealed record RegisterRequest(string? Email, string? Password, string? FirstName, string? LastName);
-public sealed record ConfirmEmailRequest(string? Token);
-public sealed record ForgotPasswordRequest(string? Email);
-public sealed record ResetPasswordRequest(string? Token, string? NewPassword);
+public sealed class LoginRequest
+{
+    public string? Email { get; set; }
+    public string? Password { get; set; }
+}
+
+public sealed class RegisterRequest
+{
+    public string? Email { get; set; }
+    public string? Password { get; set; }
+    public string? FirstName { get; set; }
+    public string? LastName { get; set; }
+}
+
+public sealed class ConfirmEmailRequest
+{
+    public string? Token { get; set; }
+}
+
+public sealed class ForgotPasswordRequest
+{
+    public string? Email { get; set; }
+}
+
+public sealed class ResetPasswordRequest
+{
+    public string? Token { get; set; }
+    public string? NewPassword { get; set; }
+}

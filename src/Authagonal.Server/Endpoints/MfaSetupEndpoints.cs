@@ -392,5 +392,14 @@ public static class MfaSetupEndpoints
         => JsonSerializer.Deserialize<AuthenticatorAttestationRawResponse>(json)!;
 }
 
-public sealed record TotpConfirmRequest(string? SetupToken, string? Code);
-public sealed record WebAuthnConfirmRequest(string? SetupToken, string? AttestationResponse);
+public sealed class TotpConfirmRequest
+{
+    public string? SetupToken { get; set; }
+    public string? Code { get; set; }
+}
+
+public sealed class WebAuthnConfirmRequest
+{
+    public string? SetupToken { get; set; }
+    public string? AttestationResponse { get; set; }
+}

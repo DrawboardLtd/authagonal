@@ -131,4 +131,7 @@ public static class BackChannelLogoutEndpoint
     }
 }
 
-public sealed record BackChannelLogoutRequest(string SubjectId);
+public sealed class BackChannelLogoutRequest
+{
+    public string SubjectId { get; set; } = "";
+}

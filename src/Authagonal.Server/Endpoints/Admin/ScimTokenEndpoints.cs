@@ -110,4 +110,9 @@ public static class ScimTokenEndpoints
     }
 }
 
-public sealed record GenerateScimTokenRequest(string? ClientId, string? Description, int? ExpiresInDays);
+public sealed class GenerateScimTokenRequest
+{
+    public string? ClientId { get; set; }
+    public string? Description { get; set; }
+    public int? ExpiresInDays { get; set; }
+}

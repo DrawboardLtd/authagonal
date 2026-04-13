@@ -153,7 +153,21 @@ public static class RoleEndpoints
         return Results.Ok(new { userId = user.Id, roles = user.Roles });
     }
 
-    public sealed record CreateRoleRequest(string? Name, string? Description);
-    public sealed record UpdateRoleRequest(string? Name, string? Description);
-    public sealed record RoleAssignmentRequest(string? UserId, string? RoleName);
+    public sealed class CreateRoleRequest
+    {
+        public string? Name { get; set; }
+        public string? Description { get; set; }
+    }
+
+    public sealed class UpdateRoleRequest
+    {
+        public string? Name { get; set; }
+        public string? Description { get; set; }
+    }
+
+    public sealed class RoleAssignmentRequest
+    {
+        public string? UserId { get; set; }
+        public string? RoleName { get; set; }
+    }
 }

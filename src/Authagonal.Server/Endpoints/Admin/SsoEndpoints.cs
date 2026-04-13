@@ -240,19 +240,26 @@ public static class SsoEndpoints
 
     // Request DTOs
 
-    public sealed record CreateSamlRequest(
-        string ConnectionName,
-        string EntityId,
-        string MetadataLocation,
-        List<string>? AllowedDomains);
+    public sealed class CreateSamlRequest
+    {
+        public string ConnectionName { get; set; } = "";
+        public string EntityId { get; set; } = "";
+        public string MetadataLocation { get; set; } = "";
+        public List<string>? AllowedDomains { get; set; }
+    }
 
-    public sealed record UpdateSamlDomainsRequest(List<string>? AllowedDomains);
+    public sealed class UpdateSamlDomainsRequest
+    {
+        public List<string>? AllowedDomains { get; set; }
+    }
 
-    public sealed record CreateOidcRequest(
-        string ConnectionName,
-        string MetadataLocation,
-        string ClientId,
-        string ClientSecret,
-        string RedirectUrl,
-        List<string>? AllowedDomains);
+    public sealed class CreateOidcRequest
+    {
+        public string ConnectionName { get; set; } = "";
+        public string MetadataLocation { get; set; } = "";
+        public string ClientId { get; set; } = "";
+        public string ClientSecret { get; set; } = "";
+        public string RedirectUrl { get; set; } = "";
+        public List<string>? AllowedDomains { get; set; }
+    }
 }
