@@ -8,7 +8,7 @@ public static class DiscoveryEndpoint
         {
             var issuer = tenantContext.Issuer;
 
-            return TypedResults.Json(new OidcDiscoveryDocument
+            return TypedResults.Json(new DiscoveryResponse
             {
                 Issuer = issuer,
                 AuthorizationEndpoint = $"{issuer}/connect/authorize",
@@ -28,7 +28,7 @@ public static class DiscoveryEndpoint
                 CodeChallengeMethodsSupported = ["S256"],
                 BackchannelLogoutSupported = true,
                 BackchannelLogoutSessionSupported = false,
-            }, AuthagonalJsonContext.Default.OidcDiscoveryDocument);
+            }, AuthagonalJsonContext.Default.DiscoveryResponse);
         })
         .AllowAnonymous()
         .WithTags("Discovery");
