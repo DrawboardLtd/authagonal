@@ -36,31 +36,31 @@ public static class UserEndpoints
     {
         var user = await userStore.GetAsync(userId, ct);
         if (user is null)
-            return Results.NotFound(new { error = "user_not_found", error_description = string.Format(localizer["Admin_UserNotFound"].Value, userId) });
+            return TypedResults.Json(new ErrorInfoResponse { Error = "user_not_found", ErrorDescription = string.Format(localizer["Admin_UserNotFound"].Value, userId) }, AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 404);
 
         var logins = await userStore.GetLoginsAsync(userId, ct);
 
-        return Results.Ok(new
+        return TypedResults.Json(new UserDetailResponse
         {
-            user.Id,
-            user.Email,
-            user.EmailConfirmed,
-            user.FirstName,
-            user.LastName,
-            user.CompanyName,
-            user.Phone,
-            user.OrganizationId,
-            user.LockoutEnabled,
-            user.LockoutEnd,
-            user.CreatedAt,
-            user.UpdatedAt,
-            ExternalLogins = logins.Select(l => new
+            Id = user.Id,
+            Email = user.Email,
+            EmailConfirmed = user.EmailConfirmed,
+            FirstName = user.FirstName,
+            LastName = user.LastName,
+            CompanyName = user.CompanyName,
+            Phone = user.Phone,
+            OrganizationId = user.OrganizationId,
+            LockoutEnabled = user.LockoutEnabled,
+            LockoutEnd = user.LockoutEnd,
+            CreatedAt = user.CreatedAt,
+            UpdatedAt = user.UpdatedAt,
+            ExternalLogins = logins.Select(l => new ExternalLoginDto
             {
-                l.Provider,
-                l.ProviderKey,
-                l.DisplayName
+                Provider = l.Provider,
+                ProviderKey = l.ProviderKey,
+                DisplayName = l.DisplayName
             })
-        });
+        }, AuthagonalJsonContext.Default.UserDetailResponse);
     }
 
     private static async Task<IResult> RegisterUser(
@@ -78,18 +78,18 @@ public static class UserEndpoints
         CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(request.Email))
-            return Results.BadRequest(new { error = "invalid_request", error_description = localizer["Admin_EmailRequired"].Value });
+            return TypedResults.Json(new ErrorInfoResponse { Error = "invalid_request", ErrorDescription = localizer["Admin_EmailRequired"].Value }, AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 400);
 
         if (string.IsNullOrWhiteSpace(request.Password))
-            return Results.BadRequest(new { error = "invalid_request", error_description = localizer["Admin_PasswordRequired"].Value });
+            return TypedResults.Json(new ErrorInfoResponse { Error = "invalid_request", ErrorDescription = localizer["Admin_PasswordRequired"].Value }, AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 400);
 
         var (isValid, validationError) = passwordValidator.Validate(request.Password, passwordPolicy);
         if (!isValid)
-            return Results.BadRequest(new { error = "weak_password", error_description = validationError });
+            return TypedResults.Json(new ErrorInfoResponse { Error = "weak_password", ErrorDescription = validationError }, AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 400);
 
         var existing = await userStore.FindByEmailAsync(request.Email, ct);
         if (existing is not null)
-            return Results.Conflict(new { error = "user_exists", error_description = localizer["Admin_UserExists"].Value });
+            return TypedResults.Json(new ErrorInfoResponse { Error = "user_exists", ErrorDescription = localizer["Admin_UserExists"].Value }, AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 409);
 
         var userId = Guid.NewGuid().ToString("N");
         var now = DateTimeOffset.UtcNow;
@@ -118,7 +118,7 @@ public static class UserEndpoints
         catch (ProvisioningException ex)
         {
             await userStore.DeleteAsync(user.Id, ct);
-            return Results.UnprocessableEntity(new { error = "provisioning_rejected", message = ex.Message });
+            return TypedResults.Json(new ErrorInfoResponse { Error = "provisioning_rejected", Message = ex.Message }, AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 422);
         }
 
         await authHooks.RunOnUserCreatedAsync(userId, request.Email, "admin", ct);
@@ -158,11 +158,11 @@ public static class UserEndpoints
         CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(request.UserId))
-            return Results.BadRequest(new { error = "invalid_request", error_description = localizer["Admin_UserIdRequired"].Value });
+            return TypedResults.Json(new ErrorInfoResponse { Error = "invalid_request", ErrorDescription = localizer["Admin_UserIdRequired"].Value }, AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 400);
 
         var user = await userStore.GetAsync(request.UserId, ct);
         if (user is null)
-            return Results.NotFound(new { error = "user_not_found", error_description = string.Format(localizer["Admin_UserNotFound"].Value, request.UserId) });
+            return TypedResults.Json(new ErrorInfoResponse { Error = "user_not_found", ErrorDescription = string.Format(localizer["Admin_UserNotFound"].Value, request.UserId) }, AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 404);
 
         var orgChanged = request.OrganizationId is not null &&
             !string.Equals(user.OrganizationId, request.OrganizationId, StringComparison.Ordinal);
@@ -183,18 +183,18 @@ public static class UserEndpoints
 
         await userStore.UpdateAsync(user, ct);
 
-        return Results.Ok(new
+        return TypedResults.Json(new UserUpdateResponse
         {
-            user.Id,
-            user.Email,
-            user.EmailConfirmed,
-            user.FirstName,
-            user.LastName,
-            user.CompanyName,
-            user.Phone,
-            user.OrganizationId,
-            user.UpdatedAt
-        });
+            Id = user.Id,
+            Email = user.Email,
+            EmailConfirmed = user.EmailConfirmed,
+            FirstName = user.FirstName,
+            LastName = user.LastName,
+            CompanyName = user.CompanyName,
+            Phone = user.Phone,
+            OrganizationId = user.OrganizationId,
+            UpdatedAt = user.UpdatedAt
+        }, AuthagonalJsonContext.Default.UserUpdateResponse);
     }
 
     private static async Task<IResult> DeleteUser(
@@ -207,7 +207,7 @@ public static class UserEndpoints
     {
         var user = await userStore.GetAsync(userId, ct);
         if (user is null)
-            return Results.NotFound(new { error = "user_not_found", error_description = string.Format(localizer["Admin_UserNotFound"].Value, userId) });
+            return TypedResults.Json(new ErrorInfoResponse { Error = "user_not_found", ErrorDescription = string.Format(localizer["Admin_UserNotFound"].Value, userId) }, AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 404);
 
         // Remove all grants for this user
         await grantStore.RemoveAllBySubjectAsync(userId, ct);
@@ -238,7 +238,7 @@ public static class UserEndpoints
         }
 
         if (string.IsNullOrWhiteSpace(token))
-            return Results.BadRequest(new { error = "invalid_request", error_description = localizer["Admin_TokenRequired"].Value });
+            return TypedResults.Json(new ErrorInfoResponse { Error = "invalid_request", ErrorDescription = localizer["Admin_TokenRequired"].Value }, AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 400);
 
         string decoded;
         try
@@ -247,12 +247,12 @@ public static class UserEndpoints
         }
         catch
         {
-            return Results.BadRequest(new { error = "invalid_token", error_description = localizer["Admin_InvalidTokenFormat"].Value });
+            return TypedResults.Json(new ErrorInfoResponse { Error = "invalid_token", ErrorDescription = localizer["Admin_InvalidTokenFormat"].Value }, AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 400);
         }
 
         var parts = decoded.Split("||");
         if (parts.Length < 2)
-            return Results.BadRequest(new { error = "invalid_token", error_description = localizer["Admin_InvalidTokenFormat"].Value });
+            return TypedResults.Json(new ErrorInfoResponse { Error = "invalid_token", ErrorDescription = localizer["Admin_InvalidTokenFormat"].Value }, AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 400);
 
         var securityStamp = parts[0];
         var email = parts[1];
@@ -263,20 +263,20 @@ public static class UserEndpoints
             if (!long.TryParse(parts[2], out var expiresAtUnix) ||
                 DateTimeOffset.UtcNow.ToUnixTimeSeconds() > expiresAtUnix)
             {
-                return Results.BadRequest(new { error = "token_expired", error_description = localizer["Admin_VerificationExpired"].Value });
+                return TypedResults.Json(new ErrorInfoResponse { Error = "token_expired", ErrorDescription = localizer["Admin_VerificationExpired"].Value }, AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 400);
             }
         }
         else
         {
-            return Results.BadRequest(new { error = "invalid_token", error_description = localizer["Admin_InvalidTokenFormat"].Value });
+            return TypedResults.Json(new ErrorInfoResponse { Error = "invalid_token", ErrorDescription = localizer["Admin_InvalidTokenFormat"].Value }, AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 400);
         }
 
         var user = await userStore.FindByEmailAsync(email, ct);
         if (user is null)
-            return Results.NotFound(new { error = "user_not_found", error_description = localizer["Admin_UserNotFoundSimple"].Value });
+            return TypedResults.Json(new ErrorInfoResponse { Error = "user_not_found", ErrorDescription = localizer["Admin_UserNotFoundSimple"].Value }, AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 404);
 
         if (user.SecurityStamp != securityStamp)
-            return Results.BadRequest(new { error = "invalid_token", error_description = localizer["Admin_TokenInvalidOrExpired"].Value });
+            return TypedResults.Json(new ErrorInfoResponse { Error = "invalid_token", ErrorDescription = localizer["Admin_TokenInvalidOrExpired"].Value }, AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 400);
 
         user.EmailConfirmed = true;
         user.SecurityStamp = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
@@ -284,7 +284,7 @@ public static class UserEndpoints
 
         await userStore.UpdateAsync(user, ct);
 
-        return Results.Ok(new { message = localizer["Auth_EmailConfirmed"].Value });
+        return TypedResults.Json(new MessageResponse { Message = localizer["Auth_EmailConfirmed"].Value }, AuthagonalJsonContext.Default.MessageResponse);
     }
 
     private static async Task<IResult> SendVerificationEmail(
@@ -298,10 +298,10 @@ public static class UserEndpoints
     {
         var user = await userStore.GetAsync(userId, ct);
         if (user is null)
-            return Results.NotFound(new { error = "user_not_found", error_description = string.Format(localizer["Admin_UserNotFound"].Value, userId) });
+            return TypedResults.Json(new ErrorInfoResponse { Error = "user_not_found", ErrorDescription = string.Format(localizer["Admin_UserNotFound"].Value, userId) }, AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 404);
 
         if (user.EmailConfirmed)
-            return Results.BadRequest(new { error = "already_confirmed", error_description = localizer["Admin_EmailAlreadyConfirmed"].Value });
+            return TypedResults.Json(new ErrorInfoResponse { Error = "already_confirmed", ErrorDescription = localizer["Admin_EmailAlreadyConfirmed"].Value }, AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 400);
 
         // Rotate security stamp for new token
         user.SecurityStamp = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
@@ -316,7 +316,7 @@ public static class UserEndpoints
 
         await emailService.SendVerificationEmailAsync(user.Email, callbackUrl, ct);
 
-        return Results.Ok(new { message = localizer["Auth_VerificationSent"].Value });
+        return TypedResults.Json(new MessageResponse { Message = localizer["Auth_VerificationSent"].Value }, AuthagonalJsonContext.Default.MessageResponse);
     }
 
     private static async Task<IResult> LinkExternalIdentity(
@@ -328,10 +328,10 @@ public static class UserEndpoints
     {
         var user = await userStore.GetAsync(userId, ct);
         if (user is null)
-            return Results.NotFound(new { error = "user_not_found", error_description = string.Format(localizer["Admin_UserNotFound"].Value, userId) });
+            return TypedResults.Json(new ErrorInfoResponse { Error = "user_not_found", ErrorDescription = string.Format(localizer["Admin_UserNotFound"].Value, userId) }, AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 404);
 
         if (string.IsNullOrWhiteSpace(request.Provider) || string.IsNullOrWhiteSpace(request.ProviderKey))
-            return Results.BadRequest(new { error = "invalid_request", error_description = localizer["Admin_ProviderAndKeyRequired"].Value });
+            return TypedResults.Json(new ErrorInfoResponse { Error = "invalid_request", ErrorDescription = localizer["Admin_ProviderAndKeyRequired"].Value }, AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 400);
 
         var login = new ExternalLoginInfo
         {
@@ -361,7 +361,7 @@ public static class UserEndpoints
     {
         var user = await userStore.GetAsync(userId, ct);
         if (user is null)
-            return Results.NotFound(new { error = "user_not_found", error_description = string.Format(localizer["Admin_UserNotFound"].Value, userId) });
+            return TypedResults.Json(new ErrorInfoResponse { Error = "user_not_found", ErrorDescription = string.Format(localizer["Admin_UserNotFound"].Value, userId) }, AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 404);
 
         await userStore.RemoveLoginAsync(userId, provider, externalUserId, ct);
 

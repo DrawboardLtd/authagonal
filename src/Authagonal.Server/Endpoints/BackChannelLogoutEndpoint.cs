@@ -37,7 +37,7 @@ public static class BackChannelLogoutEndpoint
         CancellationToken ct)
     {
         if (string.IsNullOrEmpty(request.SubjectId))
-            return Results.BadRequest(new { error = "subject_id_required" });
+            return TypedResults.Json(new ErrorInfoResponse { Error = "subject_id_required" }, AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 400);
 
         // Find all clients with back-channel logout URIs
         // For now, iterate grants to find which clients the user has active sessions with

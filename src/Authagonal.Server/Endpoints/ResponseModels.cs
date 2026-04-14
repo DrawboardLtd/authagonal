@@ -225,7 +225,7 @@ public sealed class BackChannelLogoutResult
 
 // --- Admin: User ---
 
-public sealed class ExternalLoginInfo
+public sealed class ExternalLoginDto
 {
     [JsonPropertyName("provider")] public string Provider { get; set; } = "";
     [JsonPropertyName("providerKey")] public string ProviderKey { get; set; } = "";
@@ -250,7 +250,7 @@ public sealed class UserDetailResponse
 
     [JsonPropertyName("createdAt")] public DateTimeOffset CreatedAt { get; set; }
     [JsonPropertyName("updatedAt")] public DateTimeOffset UpdatedAt { get; set; }
-    [JsonPropertyName("externalLogins")] public IEnumerable<ExternalLoginInfo> ExternalLogins { get; set; } = [];
+    [JsonPropertyName("externalLogins")] public IEnumerable<ExternalLoginDto> ExternalLogins { get; set; } = [];
 }
 
 public sealed class UserUpdateResponse

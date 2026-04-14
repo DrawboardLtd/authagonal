@@ -26,21 +26,21 @@ public static class MfaAdminEndpoints
     {
         var user = await userStore.GetAsync(userId, ct);
         if (user is null)
-            return Results.NotFound(new { error = "user_not_found" });
+            return TypedResults.Json(new ErrorInfoResponse { Error = "user_not_found" }, AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 404);
 
         var credentials = await mfaStore.GetCredentialsAsync(userId, ct);
 
-        var methods = credentials.Select(c => new
+        var methods = credentials.Select(c => new MfaMethodInfo
         {
-            id = c.Id,
-            type = c.Type.ToString().ToLowerInvariant(),
-            name = c.Name,
-            createdAt = c.CreatedAt,
-            lastUsedAt = c.LastUsedAt,
-            isConsumed = c.Type == MfaCredentialType.RecoveryCode ? c.IsConsumed : (bool?)null,
+            Id = c.Id,
+            Type = c.Type.ToString().ToLowerInvariant(),
+            Name = c.Name,
+            CreatedAt = c.CreatedAt,
+            LastUsedAt = c.LastUsedAt,
+            IsConsumed = c.Type == MfaCredentialType.RecoveryCode ? c.IsConsumed : null,
         }).ToList();
 
-        return Results.Ok(new { enabled = user.MfaEnabled, methods });
+        return TypedResults.Json(new MfaStatusResponse { Enabled = user.MfaEnabled, Methods = methods }, AuthagonalJsonContext.Default.MfaStatusResponse);
     }
 
     private static async Task<IResult> ResetMfa(
@@ -52,7 +52,7 @@ public static class MfaAdminEndpoints
     {
         var user = await userStore.GetAsync(userId, ct);
         if (user is null)
-            return Results.NotFound(new { error = "user_not_found" });
+            return TypedResults.Json(new ErrorInfoResponse { Error = "user_not_found" }, AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 404);
 
         await mfaStore.DeleteAllCredentialsAsync(userId, ct);
 
@@ -65,7 +65,7 @@ public static class MfaAdminEndpoints
 
         logger.LogInformation("MFA reset for user {UserId} via admin API", userId);
 
-        return Results.Ok(new { success = true });
+        return TypedResults.Json(new SuccessResponse(), AuthagonalJsonContext.Default.SuccessResponse);
     }
 
     private static async Task<IResult> DeleteCredential(
@@ -77,11 +77,11 @@ public static class MfaAdminEndpoints
     {
         var user = await userStore.GetAsync(userId, ct);
         if (user is null)
-            return Results.NotFound(new { error = "user_not_found" });
+            return TypedResults.Json(new ErrorInfoResponse { Error = "user_not_found" }, AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 404);
 
         var cred = await mfaStore.GetCredentialAsync(userId, credentialId, ct);
         if (cred is null)
-            return Results.NotFound(new { error = "credential_not_found" });
+            return TypedResults.Json(new ErrorInfoResponse { Error = "credential_not_found" }, AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 404);
 
         await mfaStore.DeleteCredentialAsync(userId, credentialId, ct);
 
@@ -97,6 +97,6 @@ public static class MfaAdminEndpoints
             }
         }
 
-        return Results.Ok(new { success = true });
+        return TypedResults.Json(new SuccessResponse(), AuthagonalJsonContext.Default.SuccessResponse);
     }
 }
