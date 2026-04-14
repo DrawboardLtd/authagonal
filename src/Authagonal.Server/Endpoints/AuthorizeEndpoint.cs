@@ -20,6 +20,7 @@ public static class AuthorizeEndpoint
             IConfiguration configuration,
             IGrantStore grantStore,
             AuthorizationCodeService authCodeService,
+            ILogger<AuthorizationCodeService> logger,
             CancellationToken ct) =>
         {
             var query = httpContext.Request.Query;
@@ -117,7 +118,16 @@ public static class AuthorizeEndpoint
                         return Results.Redirect(consentUrl);
                     }
                 }
-                catch { /* consent data malformed — allow anyway */ }
+                catch (Exception ex)
+                {
+                    // Consent data malformed — treat as not consented (require re-consent)
+                    logger.LogWarning(ex, "Malformed consent data for key {ConsentKey}, requiring re-consent", consentKey);
+                    await grantStore.RemoveAsync(consentKey, ct);
+                    var consentAppUrl2 = configuration["LoginAppUrl"] ?? "/login";
+                    var authorizeUrl2 = $"{httpContext.Request.Path}{httpContext.Request.QueryString}";
+                    var consentUrl2 = $"{consentAppUrl2.TrimEnd('/')}/consent?returnUrl={Uri.EscapeDataString(authorizeUrl2)}&client_id={Uri.EscapeDataString(clientId)}&scope={Uri.EscapeDataString(string.Join(" ", requestedScopes))}";
+                    return Results.Redirect(consentUrl2);
+                }
             }
 
             // Provision user into required downstream apps (TCC)

@@ -407,6 +407,7 @@ public static class AuthEndpoints
     private static async Task<IResult> ForgotPasswordAsync(
         ForgotPasswordRequest request,
         IUserStore userStore,
+        IGrantStore grantStore,
         IEmailService emailService,
         ITenantContext tenantContext,
         IOptions<AuthOptions> authOptions,
@@ -426,21 +427,27 @@ public static class AuthEndpoints
             return TypedResults.Json(new SuccessResponse(), AuthagonalJsonContext.Default.SuccessResponse);
         }
 
-        // Generate a reset token: random bytes + tie to security stamp
-        var resetToken = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
+        // Generate a separate single-use reset token (not the security stamp)
+        var tokenBytes = RandomNumberGenerator.GetBytes(32);
+        var resetToken = Base64UrlEncode(tokenBytes);
 
-        // Update security stamp to include reset context
-        user.SecurityStamp = resetToken;
-        user.UpdatedAt = DateTimeOffset.UtcNow;
-        await userStore.UpdateAsync(user, ct);
+        // Store the token hash as a persisted grant (single-use, short expiry)
+        var tokenHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(resetToken))).ToLowerInvariant();
+        var expiresAt = DateTimeOffset.UtcNow.AddMinutes(authOptions.Value.PasswordResetExpiryMinutes);
 
-        // Encode: token||email||expiresAtUnixSeconds
-        var expiresAt = DateTimeOffset.UtcNow.AddMinutes(authOptions.Value.PasswordResetExpiryMinutes).ToUnixTimeSeconds();
-        var payload = $"{resetToken}||{user.Email}||{expiresAt}";
-        var encodedPayload = Convert.ToBase64String(Encoding.UTF8.GetBytes(payload));
+        await grantStore.StoreAsync(new PersistedGrant
+        {
+            Key = tokenHash,
+            Type = "password_reset",
+            SubjectId = user.Id,
+            ClientId = "auth",
+            Data = user.Id,
+            CreatedAt = DateTimeOffset.UtcNow,
+            ExpiresAt = expiresAt,
+        }, ct);
 
         var issuer = tenantContext.Issuer;
-        var callbackUrl = $"{issuer}/reset-password?p={Uri.EscapeDataString(encodedPayload)}";
+        var callbackUrl = $"{issuer}/reset-password?p={Uri.EscapeDataString(resetToken)}";
 
         try
         {
@@ -477,47 +484,39 @@ public static class AuthEndpoints
         if (!isValid)
             return JsonResults.Error("weak_password", validationError!);
 
-        // Decode token: base64(token||email)
-        string decoded;
-        try
-        {
-            decoded = Encoding.UTF8.GetString(Convert.FromBase64String(request.Token));
-        }
-        catch
-        {
-            return JsonResults.Error("invalid_token", localizer["Auth_InvalidTokenFormat"].Value);
-        }
+        // Look up the reset token grant by its hash
+        var tokenHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(request.Token))).ToLowerInvariant();
+        var grant = await grantStore.GetAsync(tokenHash, ct);
 
-        var parts = decoded.Split("||");
-        if (parts.Length < 2)
-            return JsonResults.Error("invalid_token", localizer["Auth_InvalidTokenFormat"].Value);
-
-        var resetToken = parts[0];
-        var email = parts[1];
-
-        // Validate expiration if present (tokens without expiry are legacy — reject them)
-        if (parts.Length >= 3)
-        {
-            if (!long.TryParse(parts[2], out var expiresAtUnix) ||
-                DateTimeOffset.UtcNow.ToUnixTimeSeconds() > expiresAtUnix)
-            {
-                return JsonResults.Error("token_expired", localizer["Auth_TokenExpired"].Value);
-            }
-        }
-        else
-        {
-            return JsonResults.Error("invalid_token", localizer["Auth_InvalidTokenFormat"].Value);
-        }
-
-        var user = await userStore.FindByEmailAsync(email, ct);
-        if (user is null)
+        if (grant is null || grant.Type != "password_reset")
             return JsonResults.Error("invalid_token", localizer["Auth_InvalidToken"].Value);
 
-        // Validate token matches security stamp
-        if (user.SecurityStamp != resetToken)
-            return JsonResults.Error("token_expired", localizer["Auth_TokenUsedOrExpired"].Value);
+        // Check expiration
+        if (DateTimeOffset.UtcNow > grant.ExpiresAt)
+        {
+            await grantStore.RemoveAsync(tokenHash, ct);
+            return JsonResults.Error("token_expired", localizer["Auth_TokenExpired"].Value);
+        }
 
-        // Reset password
+        // Check if already consumed (single-use)
+        if (grant.ConsumedAt is not null)
+        {
+            await grantStore.RemoveAsync(tokenHash, ct);
+            return JsonResults.Error("token_expired", localizer["Auth_TokenUsedOrExpired"].Value);
+        }
+
+        var userId = grant.Data;
+        var user = await userStore.GetAsync(userId, ct);
+        if (user is null)
+        {
+            await grantStore.RemoveAsync(tokenHash, ct);
+            return JsonResults.Error("invalid_token", localizer["Auth_InvalidToken"].Value);
+        }
+
+        // Delete the grant immediately (single-use)
+        await grantStore.RemoveAsync(tokenHash, ct);
+
+        // Reset password and rotate security stamp (invalidates all existing sessions)
         user.PasswordHash = passwordHasher.HashPassword(request.NewPassword);
         user.SecurityStamp = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
         user.AccessFailedCount = 0;
@@ -607,6 +606,14 @@ public static class AuthEndpoints
             ConnectionId = ssoDomain.ConnectionId,
             RedirectUrl = redirectUrl
         }, AuthagonalJsonContext.Default.SsoCheckResponse);
+    }
+
+    private static string Base64UrlEncode(byte[] bytes)
+    {
+        return Convert.ToBase64String(bytes)
+            .TrimEnd('=')
+            .Replace('+', '-')
+            .Replace('/', '_');
     }
 
 }

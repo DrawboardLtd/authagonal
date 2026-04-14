@@ -154,6 +154,20 @@ public static class SamlEndpoints
             return Results.Redirect($"{relayState}?error=saml_error&error_description={Uri.EscapeDataString(parseResult.Error ?? "Unknown error")}");
         }
 
+        // Replay protection for IdP-initiated flows (no InResponseTo).
+        // SP-initiated flows are already protected by the request ID replay cache above.
+        // For IdP-initiated, check the assertion ID to prevent assertion replay.
+        if (expectedInResponseTo is null && !string.IsNullOrEmpty(parseResult.AssertionId))
+        {
+            var isNew = await replayCache.CheckAndStoreAssertionIdAsync(parseResult.AssertionId, ct);
+            if (!isNew)
+            {
+                logger.LogWarning("SAML IdP-initiated assertion replay detected: AssertionId={AssertionId}, ConnectionId={ConnectionId}",
+                    parseResult.AssertionId, connectionId);
+                return Results.BadRequest(new { error = "saml_replay", error_description = "SAML assertion replay detected." });
+            }
+        }
+
         // Map claims
         var userInfo = SamlClaimMapper.MapClaims(
             parseResult.NameId!, parseResult.NameIdFormat, parseResult.Attributes);

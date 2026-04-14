@@ -60,6 +60,16 @@ public sealed class InMemoryUserStore : IUserStore
         return Task.FromResult<(IReadOnlyList<AuthUser>, bool)>((paged, list.Count > count));
     }
 
+    public Task<(IReadOnlyList<AuthUser> Users, bool HasMore)> ListByScimClientAsync(string scimClientId, int startIndex, int count, CancellationToken ct = default)
+    {
+        var all = _users.Values.Where(u =>
+            string.Equals(u.ScimProvisionedByClientId, scimClientId, StringComparison.Ordinal));
+
+        var list = all.OrderBy(u => u.CreatedAt).Skip(Math.Max(0, startIndex)).ToList();
+        var paged = list.Take(count).ToList();
+        return Task.FromResult<(IReadOnlyList<AuthUser>, bool)>((paged, list.Count > count));
+    }
+
     public Task<IReadOnlyList<AuthUser>> SearchAsync(string query, int maxResults = 20, CancellationToken ct = default)
     {
         if (string.IsNullOrWhiteSpace(query))

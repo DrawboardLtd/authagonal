@@ -217,16 +217,19 @@ public sealed class TokenService(
         if (!string.Equals(authCode.RedirectUri, redirectUri, StringComparison.Ordinal))
             throw new InvalidOperationException("Redirect URI mismatch");
 
+        var client = await clientStore.GetAsync(clientId, ct)
+            ?? throw new InvalidOperationException($"Client '{clientId}' not found");
+
         // Validate PKCE
+        if (client.RequirePkce && string.IsNullOrEmpty(authCode.CodeChallenge))
+            throw new InvalidOperationException("PKCE is required for this client but no code_challenge was present");
+
         if (!string.IsNullOrEmpty(authCode.CodeChallenge))
         {
             var method = authCode.CodeChallengeMethod ?? "plain";
             if (!PkceValidator.ValidateCodeVerifier(codeVerifier, authCode.CodeChallenge, method))
                 throw new InvalidOperationException("PKCE validation failed");
         }
-
-        var client = await clientStore.GetAsync(clientId, ct)
-            ?? throw new InvalidOperationException($"Client '{clientId}' not found");
 
         var user = await userStore.GetAsync(authCode.SubjectId, ct)
             ?? throw new InvalidOperationException($"User '{authCode.SubjectId}' not found");

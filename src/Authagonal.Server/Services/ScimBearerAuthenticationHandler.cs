@@ -46,6 +46,15 @@ public sealed class ScimBearerAuthenticationHandler(
             return AuthenticateResult.Fail("Invalid SCIM token");
         }
 
+        // Constant-time comparison to prevent timing attacks on hash values
+        var storedHashBytes = Encoding.UTF8.GetBytes(scimToken.TokenHash);
+        var computedHashBytes = Encoding.UTF8.GetBytes(tokenHash);
+        if (!CryptographicOperations.FixedTimeEquals(storedHashBytes, computedHashBytes))
+        {
+            Logger.LogWarning("SCIM token hash mismatch (constant-time) for hash prefix {HashPrefix}", tokenHash[..12]);
+            return AuthenticateResult.Fail("Invalid SCIM token");
+        }
+
         if (scimToken.IsRevoked)
         {
             return AuthenticateResult.Fail("SCIM token has been revoked");

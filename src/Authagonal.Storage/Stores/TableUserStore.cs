@@ -189,6 +189,40 @@ public sealed class TableUserStore(
         return (results, hasMore);
     }
 
+    public async Task<(IReadOnlyList<AuthUser> Users, bool HasMore)> ListByScimClientAsync(
+        string scimClientId, int startIndex, int count, CancellationToken ct = default)
+    {
+        var results = new List<AuthUser>();
+        var skipped = 0;
+        var start = Math.Max(0, startIndex);
+
+        await foreach (var entity in usersTable.QueryAsync<UserEntity>(
+            e => e.RowKey == UserEntity.ProfileRowKey && e.ScimProvisionedByClientId == scimClientId,
+            maxPerPage: count + 1,
+            cancellationToken: ct))
+        {
+            var user = entity.ToModel();
+
+            if (skipped < start)
+            {
+                skipped++;
+                continue;
+            }
+
+            results.Add(user);
+
+            // Fetch one extra to determine hasMore, then stop
+            if (results.Count > count)
+                break;
+        }
+
+        var hasMore = results.Count > count;
+        if (hasMore)
+            results.RemoveAt(results.Count - 1);
+
+        return (results, hasMore);
+    }
+
     public async Task<IReadOnlyList<AuthUser>> SearchAsync(
         string query, int maxResults = 20, CancellationToken ct = default)
     {

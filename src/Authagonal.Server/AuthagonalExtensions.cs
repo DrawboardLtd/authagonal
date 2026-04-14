@@ -235,6 +235,16 @@ public static class AuthagonalExtensions
                 if (userId is null || stampClaim is null)
                     return;
 
+                // Absolute session expiration — reject sessions older than 7 days
+                // regardless of sliding renewal to prevent indefinite session extension
+                if (context.Properties.IssuedUtc is DateTimeOffset issuedUtc &&
+                    DateTimeOffset.UtcNow - issuedUtc > TimeSpan.FromDays(7))
+                {
+                    context.RejectPrincipal();
+                    await context.HttpContext.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
+                    return;
+                }
+
                 var authOpts = context.HttpContext.RequestServices.GetRequiredService<IOptions<AuthOptions>>().Value;
                 var lastValidated = context.Properties.GetString("stamp_validated");
                 if (lastValidated is not null &&

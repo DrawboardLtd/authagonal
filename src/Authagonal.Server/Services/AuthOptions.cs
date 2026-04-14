@@ -21,10 +21,10 @@ public sealed class AuthOptions
     public int MfaSetupTokenExpiryMinutes { get; set; } = 15;
 
     // --- Password hashing ---
-    public int Pbkdf2Iterations { get; set; } = 50_000;
+    public int Pbkdf2Iterations { get; set; } = 100_000;
 
     // --- Refresh tokens ---
-    public int RefreshTokenReuseGraceSeconds { get; set; } = 60;
+    public int RefreshTokenReuseGraceSeconds { get; set; } = 10;
 
     // --- Signing keys ---
     public int SigningKeyLifetimeDays { get; set; } = 90;

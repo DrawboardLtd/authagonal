@@ -22,6 +22,7 @@ public sealed record SamlParseResult
     public string? NameIdFormat { get; init; }
     public Dictionary<string, string> Attributes { get; init; } = new();
     public string? SessionIndex { get; init; }
+    public string? AssertionId { get; init; }
 }
 
 public sealed class SamlResponseParser(ILogger<SamlResponseParser> logger)
@@ -99,6 +100,8 @@ public sealed class SamlResponseParser(ILogger<SamlResponseParser> logger)
         var assertionNode = responseElement.SelectSingleNode("saml:Assertion", nsManager);
         if (assertionNode is not XmlElement assertionElement)
             return Fail("SAML response does not contain an Assertion.");
+
+        var assertionId = assertionElement.Attributes?["ID"]?.Value;
 
         var responseSignatureValid = ValidateElementSignature(
             responseElement, context.TrustedCertificates, logger);
@@ -241,7 +244,8 @@ public sealed class SamlResponseParser(ILogger<SamlResponseParser> logger)
             NameId = nameId,
             NameIdFormat = nameIdFormat,
             Attributes = attributes,
-            SessionIndex = sessionIndex
+            SessionIndex = sessionIndex,
+            AssertionId = assertionId
         };
     }
 

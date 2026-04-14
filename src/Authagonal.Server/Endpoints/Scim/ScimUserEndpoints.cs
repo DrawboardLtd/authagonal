@@ -3,6 +3,7 @@ using Authagonal.Core.Models;
 using Authagonal.Core.Services;
 using Authagonal.Core.Stores;
 using Authagonal.Server.Services;
+using Authagonal.Server.Services.Cluster;
 
 namespace Authagonal.Server.Endpoints.Scim;
 
@@ -35,25 +36,23 @@ public static class ScimUserEndpoints
     private static async Task<IResult> ListUsersAsync(
         HttpContext httpContext,
         IUserStore userStore,
-        IClientStore clientStore,
         Authagonal.Core.Services.ITenantContext tenantContext,
+        IRateLimiter rateLimiter,
         int? startIndex,
         int? count,
         string? filter,
         CancellationToken ct)
     {
         var clientId = GetClientId(httpContext);
+        if (await rateLimiter.IsRateLimitedAsync($"scim|{clientId}", 200, TimeSpan.FromMinutes(1), ct))
+            return ScimResults.Error(429, "tooMany", "Too many SCIM requests. Please try again later.");
+
         var baseUrl = GetBaseUrl(tenantContext);
         var start = startIndex ?? 1;
         var pageSize = Math.Min(count ?? 100, 200);
 
-        // Resolve client to get organization scoping
-        var client = await clientStore.GetAsync(clientId, ct);
-        string? orgId = null;
-        // Use ScimProvisionedByClientId for scoping - users created by this SCIM client
-        // For now, we scope by listing all users and filtering
-
-        var (users, _) = await userStore.ListAsync(orgId, 0, int.MaxValue, ct);
+        // Scope to users provisioned by this SCIM client
+        var (users, _) = await userStore.ListByScimClientAsync(clientId, 0, int.MaxValue, ct);
 
         // Apply filter
         var parsed = ScimFilterParser.Parse(filter);
@@ -88,12 +87,18 @@ public static class ScimUserEndpoints
 
     private static async Task<IResult> GetUserAsync(
         string id,
+        HttpContext httpContext,
         IUserStore userStore,
         Authagonal.Core.Services.ITenantContext tenantContext,
+        IRateLimiter rateLimiter,
         CancellationToken ct)
     {
+        var clientId = GetClientId(httpContext);
+        if (await rateLimiter.IsRateLimitedAsync($"scim|{clientId}", 200, TimeSpan.FromMinutes(1), ct))
+            return ScimResults.Error(429, "tooMany", "Too many SCIM requests. Please try again later.");
+
         var user = await userStore.GetAsync(id, ct);
-        if (user is null)
+        if (user is null || !string.Equals(user.ScimProvisionedByClientId, clientId, StringComparison.Ordinal))
             return ScimResults.NotFound($"User '{id}' not found");
 
         var baseUrl = GetBaseUrl(tenantContext);
@@ -104,13 +109,16 @@ public static class ScimUserEndpoints
         ScimCreateUserRequest request,
         HttpContext httpContext,
         IUserStore userStore,
-        IClientStore clientStore,
         IProvisioningOrchestrator provisioning,
         Authagonal.Core.Services.ITenantContext tenantContext,
+        IRateLimiter rateLimiter,
         ILogger<Program> logger,
         CancellationToken ct)
     {
         var clientId = GetClientId(httpContext);
+        if (await rateLimiter.IsRateLimitedAsync($"scim|{clientId}", 200, TimeSpan.FromMinutes(1), ct))
+            return ScimResults.Error(429, "tooMany", "Too many SCIM requests. Please try again later.");
+
         var baseUrl = GetBaseUrl(tenantContext);
 
         // Extract email from userName or emails array
@@ -196,13 +204,17 @@ public static class ScimUserEndpoints
         HttpContext httpContext,
         IUserStore userStore,
         Authagonal.Core.Services.ITenantContext tenantContext,
+        IRateLimiter rateLimiter,
         CancellationToken ct)
     {
         var clientId = GetClientId(httpContext);
+        if (await rateLimiter.IsRateLimitedAsync($"scim|{clientId}", 200, TimeSpan.FromMinutes(1), ct))
+            return ScimResults.Error(429, "tooMany", "Too many SCIM requests. Please try again later.");
+
         var baseUrl = GetBaseUrl(tenantContext);
 
         var user = await userStore.GetAsync(id, ct);
-        if (user is null)
+        if (user is null || !string.Equals(user.ScimProvisionedByClientId, clientId, StringComparison.Ordinal))
             return ScimResults.NotFound($"User '{id}' not found");
 
         // Extract email
@@ -246,14 +258,18 @@ public static class ScimUserEndpoints
         IUserStore userStore,
         IGrantStore grantStore,
         Authagonal.Core.Services.ITenantContext tenantContext,
+        IRateLimiter rateLimiter,
         ILogger<Program> logger,
         CancellationToken ct)
     {
         var clientId = GetClientId(httpContext);
+        if (await rateLimiter.IsRateLimitedAsync($"scim|{clientId}", 200, TimeSpan.FromMinutes(1), ct))
+            return ScimResults.Error(429, "tooMany", "Too many SCIM requests. Please try again later.");
+
         var baseUrl = GetBaseUrl(tenantContext);
 
         var user = await userStore.GetAsync(id, ct);
-        if (user is null)
+        if (user is null || !string.Equals(user.ScimProvisionedByClientId, clientId, StringComparison.Ordinal))
             return ScimResults.NotFound($"User '{id}' not found");
 
         var wasActive = user.IsActive;
@@ -293,13 +309,16 @@ public static class ScimUserEndpoints
         IUserStore userStore,
         IGrantStore grantStore,
         IProvisioningOrchestrator provisioning,
+        IRateLimiter rateLimiter,
         ILogger<Program> logger,
         CancellationToken ct)
     {
         var clientId = GetClientId(httpContext);
+        if (await rateLimiter.IsRateLimitedAsync($"scim|{clientId}", 200, TimeSpan.FromMinutes(1), ct))
+            return ScimResults.Error(429, "tooMany", "Too many SCIM requests. Please try again later.");
 
         var user = await userStore.GetAsync(id, ct);
-        if (user is null)
+        if (user is null || !string.Equals(user.ScimProvisionedByClientId, clientId, StringComparison.Ordinal))
             return ScimResults.NotFound($"User '{id}' not found");
 
         // Soft delete: deactivate

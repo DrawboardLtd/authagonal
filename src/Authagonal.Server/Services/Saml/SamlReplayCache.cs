@@ -56,4 +56,28 @@ public sealed class SamlReplayCache(TableClient tableClient, IOptions<CacheOptio
             return null; // Not found — possibly replayed or never stored
         }
     }
+
+    /// <summary>
+    /// Checks whether a SAML assertion ID has been seen before (replay detection).
+    /// Stores the assertion ID with a TTL to prevent replay. Returns true if the
+    /// assertion is new (not replayed); false if it was already seen.
+    /// </summary>
+    public async Task<bool> CheckAndStoreAssertionIdAsync(string assertionId, CancellationToken ct = default)
+    {
+        var entity = new TableEntity(assertionId, "assertion")
+        {
+            ["CreatedAt"] = DateTimeOffset.UtcNow
+        };
+
+        try
+        {
+            // Add — fails with 409 Conflict if the entity already exists
+            await tableClient.AddEntityAsync(entity, ct);
+            return true; // New assertion — not a replay
+        }
+        catch (Azure.RequestFailedException ex) when (ex.Status == 409)
+        {
+            return false; // Already seen — replay detected
+        }
+    }
 }
