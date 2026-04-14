@@ -8,27 +8,27 @@ public static class DiscoveryEndpoint
         {
             var issuer = tenantContext.Issuer;
 
-            return Results.Ok(new
+            return TypedResults.Json(new OidcDiscoveryDocument
             {
-                issuer,
-                authorization_endpoint = $"{issuer}/connect/authorize",
-                token_endpoint = $"{issuer}/connect/token",
-                userinfo_endpoint = $"{issuer}/connect/userinfo",
-                jwks_uri = $"{issuer}/.well-known/openid-configuration/jwks",
-                revocation_endpoint = $"{issuer}/connect/revocation",
-                introspection_endpoint = $"{issuer}/connect/introspect",
-                end_session_endpoint = $"{issuer}/connect/endsession",
-                scopes_supported = new[] { "openid", "profile", "email", "offline_access" },
-                response_types_supported = new[] { "code" },
-                device_authorization_endpoint = $"{issuer}/connect/deviceauthorization",
-                grant_types_supported = new[] { "authorization_code", "refresh_token", "client_credentials", "urn:ietf:params:oauth:grant-type:device_code" },
-                subject_types_supported = new[] { "public" },
-                id_token_signing_alg_values_supported = new[] { "RS256" },
-                token_endpoint_auth_methods_supported = new[] { "client_secret_basic", "client_secret_post" },
-                code_challenge_methods_supported = new[] { "S256" },
-                backchannel_logout_supported = true,
-                backchannel_logout_session_supported = false
-            });
+                Issuer = issuer,
+                AuthorizationEndpoint = $"{issuer}/connect/authorize",
+                TokenEndpoint = $"{issuer}/connect/token",
+                UserinfoEndpoint = $"{issuer}/connect/userinfo",
+                JwksUri = $"{issuer}/.well-known/openid-configuration/jwks",
+                RevocationEndpoint = $"{issuer}/connect/revocation",
+                IntrospectionEndpoint = $"{issuer}/connect/introspect",
+                EndSessionEndpoint = $"{issuer}/connect/endsession",
+                DeviceAuthorizationEndpoint = $"{issuer}/connect/deviceauthorization",
+                ScopesSupported = ["openid", "profile", "email", "offline_access"],
+                ResponseTypesSupported = ["code"],
+                GrantTypesSupported = ["authorization_code", "refresh_token", "client_credentials", "urn:ietf:params:oauth:grant-type:device_code"],
+                SubjectTypesSupported = ["public"],
+                IdTokenSigningAlgValuesSupported = ["RS256"],
+                TokenEndpointAuthMethodsSupported = ["client_secret_basic", "client_secret_post"],
+                CodeChallengeMethodsSupported = ["S256"],
+                BackchannelLogoutSupported = true,
+                BackchannelLogoutSessionSupported = false,
+            }, AuthagonalJsonContext.Default.OidcDiscoveryDocument);
         })
         .AllowAnonymous()
         .WithTags("Discovery");

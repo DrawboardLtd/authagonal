@@ -10,20 +10,20 @@ public static class JwksEndpoint
         {
             var keys = keyManager.GetSecurityKeys();
 
-            var jwks = new
+            var jwks = new JwksDocument
             {
-                keys = keys.Select(k => new
+                Keys = keys.Select(k => new JwkKey
                 {
-                    kty = k.Kty,
-                    use = k.Use,
-                    kid = k.Kid,
-                    alg = k.Alg,
-                    n = k.N,
-                    e = k.E
-                })
+                    Kty = k.Kty,
+                    Use = k.Use,
+                    Kid = k.Kid,
+                    Alg = k.Alg,
+                    N = k.N,
+                    E = k.E,
+                }).ToList()
             };
 
-            return Results.Ok(jwks);
+            return TypedResults.Json(jwks, AuthagonalJsonContext.Default.JwksDocument);
         })
         .AllowAnonymous()
         .WithTags("Discovery");
