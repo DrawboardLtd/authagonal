@@ -18,11 +18,11 @@ public static class ConsentEndpoint
         {
             var client = await clientStore.GetAsync(client_id, ct);
             if (client is null)
-                return TypedResults.Json(new ErrorInfoResponse { Error = "client_not_found" }, AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 404);
+                return (IResult)TypedResults.Json(new ErrorInfoResponse { Error = "client_not_found" }, AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 404);
 
             var requestedScopes = (scope ?? "openid").Split(' ', StringSplitOptions.RemoveEmptyEntries);
 
-            return TypedResults.Json(new ConsentInfoResponse
+            return (IResult)TypedResults.Json(new ConsentInfoResponse
             {
                 ClientId = client.ClientId,
                 ClientName = client.ClientName,

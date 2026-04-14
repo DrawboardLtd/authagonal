@@ -352,7 +352,7 @@ public static class MfaSetupEndpoints
         foreach (var cred in credentials)
             await mfaStore.CreateCredentialAsync(cred, ct);
 
-        return TypedResults.Json(new RecoveryCodesResponse { Codes = plaintextCodes }, AuthagonalJsonContext.Default.RecoveryCodesResponse);
+        return TypedResults.Json(new RecoveryCodesResponse { Codes = plaintextCodes.ToList() }, AuthagonalJsonContext.Default.RecoveryCodesResponse);
     }
 
     private static async Task<IResult> DeleteCredentialAsync(

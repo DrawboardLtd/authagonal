@@ -53,7 +53,7 @@ public static class UserEndpoints
             LockoutEnabled = user.LockoutEnabled,
             LockoutEnd = user.LockoutEnd,
             CreatedAt = user.CreatedAt,
-            UpdatedAt = user.UpdatedAt,
+            UpdatedAt = user.UpdatedAt ?? user.CreatedAt,
             ExternalLogins = logins.Select(l => new ExternalLoginDto
             {
                 Provider = l.Provider,
@@ -193,7 +193,7 @@ public static class UserEndpoints
             CompanyName = user.CompanyName,
             Phone = user.Phone,
             OrganizationId = user.OrganizationId,
-            UpdatedAt = user.UpdatedAt
+            UpdatedAt = user.UpdatedAt ?? user.CreatedAt
         }, AuthagonalJsonContext.Default.UserUpdateResponse);
     }
 
