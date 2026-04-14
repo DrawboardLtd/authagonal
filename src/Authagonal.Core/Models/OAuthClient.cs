@@ -2,8 +2,8 @@ namespace Authagonal.Core.Models;
 
 public sealed class OAuthClient
 {
-    public required string ClientId { get; set; }
-    public required string ClientName { get; set; }
+    public string ClientId { get; set; } = "";
+    public string ClientName { get; set; } = "";
     public List<string> ClientSecretHashes { get; set; } = [];
     public List<string> AllowedGrantTypes { get; set; } = [];
     public List<string> RedirectUris { get; set; } = [];

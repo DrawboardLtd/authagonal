@@ -2,12 +2,12 @@ namespace Authagonal.Core.Models;
 
 public sealed class OidcProviderConfig
 {
-    public required string ConnectionId { get; set; }
-    public required string ConnectionName { get; set; }
-    public required string MetadataLocation { get; set; }
-    public required string ClientId { get; set; }
-    public required string ClientSecret { get; set; }
-    public required string RedirectUrl { get; set; }
+    public string ConnectionId { get; set; } = "";
+    public string ConnectionName { get; set; } = "";
+    public string MetadataLocation { get; set; } = "";
+    public string ClientId { get; set; } = "";
+    public string ClientSecret { get; set; } = "";
+    public string RedirectUrl { get; set; } = "";
     public List<string> AllowedDomains { get; set; } = [];
     public bool DisableJitProvisioning { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
