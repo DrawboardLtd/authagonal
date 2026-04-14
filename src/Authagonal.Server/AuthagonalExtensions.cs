@@ -159,7 +159,7 @@ public static class AuthagonalExtensions
         services.AddHttpClient("Provisioning");
         services.AddSingleton<TotpService>();
         services.AddSingleton<RecoveryCodeService>();
-        services.AddSingleton<WebAuthnService>();
+        services.AddScoped<WebAuthnService>();
 
         // WebAuthn (FIDO2)
         var issuer = configuration["Issuer"] ?? "https://localhost";
@@ -173,8 +173,8 @@ public static class AuthagonalExtensions
 
         // Extensibility points — TryAdd so custom registrations take precedence
         services.TryAddSingleton<IEmailService, NullEmailService>();
-        services.TryAddSingleton<IProvisioningAppProvider, ConfigProvisioningAppProvider>();
-        services.TryAddSingleton<IProvisioningOrchestrator, TccProvisioningOrchestrator>();
+        services.TryAddScoped<IProvisioningAppProvider, ConfigProvisioningAppProvider>();
+        services.TryAddScoped<IProvisioningOrchestrator, TccProvisioningOrchestrator>();
         // Auth hooks — multiple IAuthHook implementations can be registered and all will run.
         // NullAuthHook is only added if no hooks are registered by the host.
         if (!services.Any(s => s.ServiceType == typeof(IAuthHook)))
