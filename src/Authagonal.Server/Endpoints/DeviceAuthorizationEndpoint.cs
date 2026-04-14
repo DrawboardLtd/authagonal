@@ -93,15 +93,14 @@ public static class DeviceAuthorizationEndpoint
 
             var verificationUri = $"{tenantContext.Issuer}/device";
 
-            return Results.Ok(new
+            return TypedResults.Json(new DeviceAuthorizationResponse
             {
-                device_code = deviceCode,
-                user_code = userCode,
-                verification_uri = verificationUri,
-                verification_uri_complete = $"{verificationUri}?user_code={userCode}",
-                expires_in = expiresIn,
-                interval = 5,
-            });
+                DeviceCode = deviceCode,
+                UserCode = userCode,
+                VerificationUri = verificationUri,
+                VerificationUriComplete = $"{verificationUri}?user_code={userCode}",
+                ExpiresIn = expiresIn,
+            }, AuthagonalJsonContext.Default.DeviceAuthorizationResponse);
         })
         .AllowAnonymous()
         .DisableAntiforgery()
@@ -120,17 +119,17 @@ public static class DeviceAuthorizationEndpoint
             var userCode = form["user_code"].FirstOrDefault()?.Trim().ToUpperInvariant();
 
             if (string.IsNullOrWhiteSpace(userCode))
-                return Results.BadRequest(new { error = "user_code_required" });
+                return TypedResults.Json(new ErrorInfoResponse { Error = "user_code_required" }, AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 400);
 
             // Look up the user code
             var userCodeGrant = await grantStore.GetAsync($"device_user:{userCode}", ct);
             if (userCodeGrant is null || userCodeGrant.ConsumedAt is not null || userCodeGrant.ExpiresAt < DateTimeOffset.UtcNow)
-                return Results.BadRequest(new { error = "invalid_user_code", message = "Code is invalid or expired" });
+                return TypedResults.Json(new ErrorInfoResponse { Error = "invalid_user_code", Message = "Code is invalid or expired" }, AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 400);
 
             var deviceCode = userCodeGrant.Data;
             var deviceGrant = await grantStore.GetAsync($"device:{deviceCode}", ct);
             if (deviceGrant is null || deviceGrant.ExpiresAt < DateTimeOffset.UtcNow)
-                return Results.BadRequest(new { error = "expired", message = "Device code has expired" });
+                return TypedResults.Json(new ErrorInfoResponse { Error = "expired", Message = "Device code has expired" }, AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 400);
 
             // Approve — write the subject ID into the device code data
             var subjectId = httpContext.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value
@@ -150,7 +149,7 @@ public static class DeviceAuthorizationEndpoint
             // Consume the user code so it can't be reused
             await grantStore.ConsumeAsync($"device_user:{userCode}", ct);
 
-            return Results.Ok(new { approved = true });
+            return TypedResults.Json(new DeviceApprovedResponse(), AuthagonalJsonContext.Default.DeviceApprovedResponse);
         })
         .DisableAntiforgery()
         .WithTags("OAuth");

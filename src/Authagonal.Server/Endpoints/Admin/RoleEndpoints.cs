@@ -26,7 +26,7 @@ public static class RoleEndpoints
     private static async Task<IResult> ListRoles(IRoleStore roleStore, CancellationToken ct)
     {
         var roles = await roleStore.ListAsync(ct);
-        return Results.Ok(new { roles });
+        return TypedResults.Json(new RoleListResponse { Roles = roles }, AuthagonalJsonContext.Default.RoleListResponse);
     }
 
     private static async Task<IResult> GetRole(string roleId, IRoleStore roleStore, CancellationToken ct)
@@ -41,11 +41,11 @@ public static class RoleEndpoints
         CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(request.Name))
-            return Results.BadRequest(new { error = "invalid_request", error_description = "name is required" });
+            return TypedResults.Json(new ErrorInfoResponse { Error = "invalid_request", ErrorDescription = "name is required" }, AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 400);
 
         var existing = await roleStore.GetByNameAsync(request.Name, ct);
         if (existing is not null)
-            return Results.Conflict(new { error = "role_exists", error_description = $"Role '{request.Name}' already exists" });
+            return TypedResults.Json(new ErrorInfoResponse { Error = "role_exists", ErrorDescription = $"Role '{request.Name}' already exists" }, AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 409);
 
         var role = new Role
         {
@@ -100,15 +100,15 @@ public static class RoleEndpoints
         CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(request.UserId) || string.IsNullOrWhiteSpace(request.RoleName))
-            return Results.BadRequest(new { error = "invalid_request", error_description = "userId and roleName are required" });
+            return TypedResults.Json(new ErrorInfoResponse { Error = "invalid_request", ErrorDescription = "userId and roleName are required" }, AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 400);
 
         var role = await roleStore.GetByNameAsync(request.RoleName, ct);
         if (role is null)
-            return Results.NotFound(new { error = "role_not_found", error_description = $"Role '{request.RoleName}' not found" });
+            return TypedResults.Json(new ErrorInfoResponse { Error = "role_not_found", ErrorDescription = $"Role '{request.RoleName}' not found" }, AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 404);
 
         var user = await userStore.GetAsync(request.UserId, ct);
         if (user is null)
-            return Results.NotFound(new { error = "user_not_found", error_description = $"User '{request.UserId}' not found" });
+            return TypedResults.Json(new ErrorInfoResponse { Error = "user_not_found", ErrorDescription = $"User '{request.UserId}' not found" }, AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 404);
 
         if (!user.Roles.Contains(request.RoleName))
         {
@@ -117,7 +117,7 @@ public static class RoleEndpoints
             await userStore.UpdateAsync(user, ct);
         }
 
-        return Results.Ok(new { userId = user.Id, roles = user.Roles });
+        return TypedResults.Json(new UserRolesResponse { UserId = user.Id, Roles = user.Roles }, AuthagonalJsonContext.Default.UserRolesResponse);
     }
 
     private static async Task<IResult> UnassignRole(
@@ -126,11 +126,11 @@ public static class RoleEndpoints
         CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(request.UserId) || string.IsNullOrWhiteSpace(request.RoleName))
-            return Results.BadRequest(new { error = "invalid_request", error_description = "userId and roleName are required" });
+            return TypedResults.Json(new ErrorInfoResponse { Error = "invalid_request", ErrorDescription = "userId and roleName are required" }, AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 400);
 
         var user = await userStore.GetAsync(request.UserId, ct);
         if (user is null)
-            return Results.NotFound(new { error = "user_not_found", error_description = $"User '{request.UserId}' not found" });
+            return TypedResults.Json(new ErrorInfoResponse { Error = "user_not_found", ErrorDescription = $"User '{request.UserId}' not found" }, AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 404);
 
         if (user.Roles.Remove(request.RoleName))
         {
@@ -138,7 +138,7 @@ public static class RoleEndpoints
             await userStore.UpdateAsync(user, ct);
         }
 
-        return Results.Ok(new { userId = user.Id, roles = user.Roles });
+        return TypedResults.Json(new UserRolesResponse { UserId = user.Id, Roles = user.Roles }, AuthagonalJsonContext.Default.UserRolesResponse);
     }
 
     private static async Task<IResult> GetUserRoles(
@@ -148,9 +148,9 @@ public static class RoleEndpoints
     {
         var user = await userStore.GetAsync(userId, ct);
         if (user is null)
-            return Results.NotFound(new { error = "user_not_found" });
+            return TypedResults.Json(new ErrorInfoResponse { Error = "user_not_found" }, AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 404);
 
-        return Results.Ok(new { userId = user.Id, roles = user.Roles });
+        return TypedResults.Json(new UserRolesResponse { UserId = user.Id, Roles = user.Roles }, AuthagonalJsonContext.Default.UserRolesResponse);
     }
 
     public sealed class CreateRoleRequest

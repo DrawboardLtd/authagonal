@@ -154,7 +154,7 @@ public static class AuthEndpoints
                 };
                 await mfaStore.StoreChallengeAsync(setupChallenge, ct);
 
-                return Results.Ok(new { mfaSetupRequired = true, setupToken = setupChallenge.ChallengeId });
+                return TypedResults.Json(new MfaSetupRequiredResponse { SetupToken = setupChallenge.ChallengeId }, AuthagonalJsonContext.Default.MfaSetupRequiredResponse);
             }
 
             if (user.MfaEnabled)
@@ -192,13 +192,12 @@ public static class AuthEndpoints
 
                 logger.LogInformation("MFA challenge created for user {UserId}", user.Id);
 
-                return Results.Ok(new
+                return TypedResults.Json(new MfaRequiredResponse
                 {
-                    mfaRequired = true,
-                    challengeId = challenge.ChallengeId,
-                    methods,
-                    webAuthn = webAuthnOptions,
-                });
+                    ChallengeId = challenge.ChallengeId,
+                    Methods = methods,
+                    WebAuthn = webAuthnOptions,
+                }, AuthagonalJsonContext.Default.MfaRequiredResponse);
             }
         }
 
@@ -213,7 +212,7 @@ public static class AuthEndpoints
         // If Enabled but user hasn't enrolled, hint that MFA is available
         var mfaAvailable = effectivePolicy == MfaPolicy.Enabled && !user.MfaEnabled;
 
-        return Results.Ok(new { userId = user.Id, email = user.Email, name, mfaAvailable, clientId = mfaAvailable ? clientId : null });
+        return TypedResults.Json(new LoginSuccessResponse { UserId = user.Id, Email = user.Email, Name = name, MfaAvailable = mfaAvailable, ClientId = mfaAvailable ? clientId : null }, AuthagonalJsonContext.Default.LoginSuccessResponse);
     }
 
     internal static string? ExtractClientIdFromReturnUrl(string? returnUrl)
@@ -318,7 +317,7 @@ public static class AuthEndpoints
         {
             await userStore.DeleteAsync(user.Id, ct);
             logger.LogWarning(ex, "Provisioning rejected registration for {Email}", user.Email);
-            return Results.UnprocessableEntity(new { error = "provisioning_rejected", message = ex.Message });
+            return TypedResults.Json(new ErrorInfoResponse { Error = "provisioning_rejected", Message = ex.Message }, AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 422);
         }
 
         // Send verification email
@@ -396,13 +395,13 @@ public static class AuthEndpoints
 
         logger.LogInformation("Email confirmed for user {UserId} ({Email})", user.Id, user.Email);
 
-        return Results.Ok(new { success = true, message = "Email confirmed successfully." });
+        return TypedResults.Json(new SuccessMessageResponse { Message = "Email confirmed successfully." }, AuthagonalJsonContext.Default.SuccessMessageResponse);
     }
 
     private static async Task<IResult> LogoutAsync(HttpContext httpContext, CancellationToken ct)
     {
         await httpContext.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
-        return Results.Ok(new { success = true });
+        return TypedResults.Json(new SuccessResponse(), AuthagonalJsonContext.Default.SuccessResponse);
     }
 
     private static async Task<IResult> ForgotPasswordAsync(
@@ -416,7 +415,7 @@ public static class AuthEndpoints
     {
         // Always return success to prevent email enumeration
         if (string.IsNullOrWhiteSpace(request.Email))
-            return Results.Ok(new { success = true });
+            return TypedResults.Json(new SuccessResponse(), AuthagonalJsonContext.Default.SuccessResponse);
 
         var user = await userStore.FindByEmailAsync(request.Email, ct);
         if (user is null)
@@ -424,7 +423,7 @@ public static class AuthEndpoints
             logger.LogInformation("Password reset requested for non-existent email: {Email}", request.Email);
             // Artificial delay to prevent timing-based email enumeration
             await Task.Delay(TimeSpan.FromMilliseconds(100 + RandomNumberGenerator.GetInt32(200)), ct);
-            return Results.Ok(new { success = true });
+            return TypedResults.Json(new SuccessResponse(), AuthagonalJsonContext.Default.SuccessResponse);
         }
 
         // Generate a reset token: random bytes + tie to security stamp
@@ -453,7 +452,7 @@ public static class AuthEndpoints
             logger.LogError(ex, "Failed to send password reset email to {Email}", user.Email);
         }
 
-        return Results.Ok(new { success = true });
+        return TypedResults.Json(new SuccessResponse(), AuthagonalJsonContext.Default.SuccessResponse);
     }
 
     private static async Task<IResult> ResetPasswordAsync(
@@ -531,7 +530,7 @@ public static class AuthEndpoints
 
         logger.LogInformation("Password reset completed for user {UserId} ({Email})", user.Id, user.Email);
 
-        return Results.Ok(new { success = true });
+        return TypedResults.Json(new SuccessResponse(), AuthagonalJsonContext.Default.SuccessResponse);
     }
 
     private static IResult GetSessionAsync(HttpContext httpContext, CancellationToken ct)
@@ -541,36 +540,30 @@ public static class AuthEndpoints
         var email = httpContext.User.FindFirstValue(ClaimTypes.Email);
         var name = httpContext.User.FindFirstValue(ClaimTypes.Name);
 
-        return Results.Ok(new
-        {
-            authenticated = true,
-            userId,
-            email,
-            name
-        });
+        return TypedResults.Json(new SessionResponse { UserId = userId, Email = email, Name = name }, AuthagonalJsonContext.Default.SessionResponse);
     }
 
     private static IResult GetPasswordPolicy(
         PasswordPolicy policy,
         IStringLocalizer<SharedMessages> localizer)
     {
-        var rules = new List<object>();
+        var rules = new List<PasswordPolicyRule>();
 
-        rules.Add(new { rule = "minLength", value = policy.MinLength, label = string.Format(localizer["PasswordPolicy_MinLength"].Value, policy.MinLength) });
+        rules.Add(new PasswordPolicyRule { Rule = "minLength", Value = policy.MinLength, Label = string.Format(localizer["PasswordPolicy_MinLength"].Value, policy.MinLength) });
 
         if (policy.RequireUppercase)
-            rules.Add(new { rule = "uppercase", value = (object?)null, label = localizer["PasswordPolicy_Uppercase"].Value });
+            rules.Add(new PasswordPolicyRule { Rule = "uppercase", Label = localizer["PasswordPolicy_Uppercase"].Value });
 
         if (policy.RequireLowercase)
-            rules.Add(new { rule = "lowercase", value = (object?)null, label = localizer["PasswordPolicy_Lowercase"].Value });
+            rules.Add(new PasswordPolicyRule { Rule = "lowercase", Label = localizer["PasswordPolicy_Lowercase"].Value });
 
         if (policy.RequireDigit)
-            rules.Add(new { rule = "digit", value = (object?)null, label = localizer["PasswordPolicy_Digit"].Value });
+            rules.Add(new PasswordPolicyRule { Rule = "digit", Label = localizer["PasswordPolicy_Digit"].Value });
 
         if (policy.RequireSpecialChar)
-            rules.Add(new { rule = "specialChar", value = (object?)null, label = localizer["PasswordPolicy_SpecialChar"].Value });
+            rules.Add(new PasswordPolicyRule { Rule = "specialChar", Label = localizer["PasswordPolicy_SpecialChar"].Value });
 
-        return Results.Ok(new { rules });
+        return TypedResults.Json(new PasswordPolicyResponse { Rules = rules }, AuthagonalJsonContext.Default.PasswordPolicyResponse);
     }
 
     private static async Task<IResult> GetProvidersAsync(
@@ -578,13 +571,13 @@ public static class AuthEndpoints
         CancellationToken ct)
     {
         var providers = await oidcStore.GetAllAsync(ct);
-        var result = providers.Select(p => new
+        var result = providers.Select(p => new SsoProviderInfo
         {
-            connectionId = p.ConnectionId,
-            name = p.ConnectionName,
-            loginUrl = $"/oidc/{p.ConnectionId}/login"
+            ConnectionId = p.ConnectionId,
+            Name = p.ConnectionName,
+            LoginUrl = $"/oidc/{p.ConnectionId}/login"
         });
-        return Results.Ok(new { providers = result });
+        return TypedResults.Json(new SsoProviderListResponse { Providers = result }, AuthagonalJsonContext.Default.SsoProviderListResponse);
     }
 
     private static async Task<IResult> SsoCheckAsync(
@@ -597,23 +590,23 @@ public static class AuthEndpoints
 
         var domain = email.Split('@', 2).LastOrDefault()?.ToLowerInvariant();
         if (string.IsNullOrWhiteSpace(domain))
-            return Results.Ok(new { ssoRequired = false });
+            return TypedResults.Json(new SsoCheckResponse { SsoRequired = false }, AuthagonalJsonContext.Default.SsoCheckResponse);
 
         var ssoDomain = await ssoDomainStore.GetAsync(domain, ct);
         if (ssoDomain is null)
-            return Results.Ok(new { ssoRequired = false });
+            return TypedResults.Json(new SsoCheckResponse { SsoRequired = false }, AuthagonalJsonContext.Default.SsoCheckResponse);
 
         var redirectUrl = ssoDomain.ProviderType.Equals("oidc", StringComparison.OrdinalIgnoreCase)
             ? $"/oidc/{ssoDomain.ConnectionId}/login"
             : $"/saml/{ssoDomain.ConnectionId}/login";
 
-        return Results.Ok(new
+        return TypedResults.Json(new SsoCheckResponse
         {
-            ssoRequired = true,
-            providerType = ssoDomain.ProviderType,
-            connectionId = ssoDomain.ConnectionId,
-            redirectUrl
-        });
+            SsoRequired = true,
+            ProviderType = ssoDomain.ProviderType,
+            ConnectionId = ssoDomain.ConnectionId,
+            RedirectUrl = redirectUrl
+        }, AuthagonalJsonContext.Default.SsoCheckResponse);
     }
 
 }

@@ -139,7 +139,7 @@ public static class IntrospectionEndpoint
     }
 
     private static IResult InactiveResponse() =>
-        Results.Ok(new { active = false });
+        TypedResults.Json(new IntrospectionInactiveResponse(), AuthagonalJsonContext.Default.IntrospectionInactiveResponse);
 
     private static (string? ClientId, string? ClientSecret) ExtractClientCredentials(
         HttpContext httpContext, IFormCollection form)

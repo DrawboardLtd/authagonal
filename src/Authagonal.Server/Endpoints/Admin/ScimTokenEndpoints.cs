@@ -28,11 +28,11 @@ public static class ScimTokenEndpoints
         CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(request.ClientId))
-            return Results.BadRequest(new { error = "invalid_request", error_description = "clientId is required" });
+            return TypedResults.Json(new ErrorInfoResponse { Error = "invalid_request", ErrorDescription = "clientId is required" }, AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 400);
 
         var client = await clientStore.GetAsync(request.ClientId, ct);
         if (client is null)
-            return Results.NotFound(new { error = "client_not_found", error_description = $"Client '{request.ClientId}' not found" });
+            return TypedResults.Json(new ErrorInfoResponse { Error = "client_not_found", ErrorDescription = $"Client '{request.ClientId}' not found" }, AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 404);
 
         // Generate a cryptographically secure token
         var rawTokenBytes = RandomNumberGenerator.GetBytes(32);
@@ -58,15 +58,15 @@ public static class ScimTokenEndpoints
         logger.LogInformation("SCIM token generated: {TokenId} for client {ClientId}", token.TokenId, token.ClientId);
 
         // Return the raw token once — it cannot be recovered later
-        return Results.Ok(new
+        return TypedResults.Json(new ScimTokenCreatedResponse
         {
-            tokenId = token.TokenId,
-            clientId = token.ClientId,
-            token = rawToken,
-            description = token.Description,
-            createdAt = token.CreatedAt,
-            expiresAt = token.ExpiresAt,
-        });
+            TokenId = token.TokenId,
+            ClientId = token.ClientId,
+            Token = rawToken,
+            Description = token.Description,
+            CreatedAt = token.CreatedAt,
+            ExpiresAt = token.ExpiresAt ?? default,
+        }, AuthagonalJsonContext.Default.ScimTokenCreatedResponse);
     }
 
     private static async Task<IResult> ListTokensAsync(
@@ -75,21 +75,21 @@ public static class ScimTokenEndpoints
         CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(clientId))
-            return Results.BadRequest(new { error = "invalid_request", error_description = "clientId query parameter is required" });
+            return TypedResults.Json(new ErrorInfoResponse { Error = "invalid_request", ErrorDescription = "clientId query parameter is required" }, AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 400);
 
         var tokens = await scimTokenStore.GetByClientAsync(clientId, ct);
 
-        var result = tokens.Select(t => new
+        var result = tokens.Select(t => new ScimTokenInfo
         {
-            tokenId = t.TokenId,
-            clientId = t.ClientId,
-            description = t.Description,
-            createdAt = t.CreatedAt,
-            expiresAt = t.ExpiresAt,
-            isRevoked = t.IsRevoked,
+            TokenId = t.TokenId,
+            ClientId = t.ClientId,
+            Description = t.Description,
+            CreatedAt = t.CreatedAt,
+            ExpiresAt = t.ExpiresAt ?? default,
+            IsRevoked = t.IsRevoked,
         });
 
-        return Results.Ok(new { tokens = result });
+        return TypedResults.Json(new ScimTokenListResponse { Tokens = result }, AuthagonalJsonContext.Default.ScimTokenListResponse);
     }
 
     private static async Task<IResult> RevokeTokenAsync(
@@ -100,13 +100,13 @@ public static class ScimTokenEndpoints
         CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(clientId))
-            return Results.BadRequest(new { error = "invalid_request", error_description = "clientId query parameter is required" });
+            return TypedResults.Json(new ErrorInfoResponse { Error = "invalid_request", ErrorDescription = "clientId query parameter is required" }, AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 400);
 
         await scimTokenStore.RevokeAsync(tokenId, clientId, ct);
 
         logger.LogInformation("SCIM token revoked: {TokenId} for client {ClientId}", tokenId, clientId);
 
-        return Results.Ok(new { success = true });
+        return TypedResults.Json(new SuccessResponse(), AuthagonalJsonContext.Default.SuccessResponse);
     }
 }
 

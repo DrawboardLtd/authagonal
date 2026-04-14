@@ -82,7 +82,7 @@ public static class EndSessionEndpoint
         }
 
         if (string.IsNullOrWhiteSpace(postLogoutRedirectUri))
-            return Results.Ok(new { message = localizer["EndSession_SignedOut"].Value });
+            return TypedResults.Json(new MessageResponse { Message = localizer["EndSession_SignedOut"].Value }, AuthagonalJsonContext.Default.MessageResponse);
 
         // Validate post_logout_redirect_uri against the client from id_token_hint
         if (!string.IsNullOrWhiteSpace(idTokenHint))
@@ -103,7 +103,7 @@ public static class EndSessionEndpoint
         }
 
         // If we can't validate the redirect, don't redirect — just confirm logout
-        return Results.Ok(new { message = localizer["EndSession_SignedOut"].Value });
+        return TypedResults.Json(new MessageResponse { Message = localizer["EndSession_SignedOut"].Value }, AuthagonalJsonContext.Default.MessageResponse);
     }
 
     private static string? ExtractClientId(string idToken, Authagonal.Core.Services.IKeyManager keyManager, string issuer)

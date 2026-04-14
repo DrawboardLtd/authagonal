@@ -71,19 +71,19 @@ public static class MfaSetupEndpoints
             .Where(c => c.Name is not "TOTP (pending)" and not "WebAuthn (pending)")
             .ToList();
 
-        var methods = confirmed.Select(c => new
+        var methods = confirmed.Select(c => new MfaMethodInfo
         {
-            id = c.Id,
-            type = c.Type.ToString().ToLowerInvariant(),
-            name = c.Name,
-            createdAt = c.CreatedAt,
-            lastUsedAt = c.LastUsedAt,
-            isConsumed = c.Type == MfaCredentialType.RecoveryCode ? c.IsConsumed : (bool?)null,
+            Id = c.Id,
+            Type = c.Type.ToString().ToLowerInvariant(),
+            Name = c.Name,
+            CreatedAt = c.CreatedAt,
+            LastUsedAt = c.LastUsedAt,
+            IsConsumed = c.Type == MfaCredentialType.RecoveryCode ? c.IsConsumed : (bool?)null,
         }).ToList();
 
         var enabled = confirmed.Any(c => c.Type != MfaCredentialType.RecoveryCode);
 
-        return Results.Ok(new { enabled, methods });
+        return TypedResults.Json(new MfaStatusResponse { Enabled = enabled, Methods = methods }, AuthagonalJsonContext.Default.MfaStatusResponse);
     }
 
     private static async Task<IResult> TotpSetupAsync(
@@ -156,7 +156,7 @@ public static class MfaSetupEndpoints
         };
         await mfaStore.CreateCredentialAsync(setupCred, ct);
 
-        return Results.Ok(new { setupToken, qrCodeDataUri, manualKey });
+        return TypedResults.Json(new TotpSetupResponse { SetupToken = setupToken, QrCodeDataUri = qrCodeDataUri, ManualKey = manualKey }, AuthagonalJsonContext.Default.TotpSetupResponse);
     }
 
     private static async Task<IResult> TotpConfirmAsync(
@@ -208,7 +208,7 @@ public static class MfaSetupEndpoints
             await authHooks.RunOnUserAuthenticatedAsync(user.Id, user.Email, "password", setupChallenge.ClientId, ct);
         }
 
-        return Results.Ok(new { success = true });
+        return TypedResults.Json(new SuccessResponse(), AuthagonalJsonContext.Default.SuccessResponse);
     }
 
     private static async Task<IResult> WebAuthnSetupAsync(
@@ -251,7 +251,7 @@ public static class MfaSetupEndpoints
         };
         await mfaStore.CreateCredentialAsync(setupCred, ct);
 
-        return Results.Ok(new { setupToken, options });
+        return TypedResults.Json(new WebAuthnSetupResponse { SetupToken = setupToken, Options = options }, AuthagonalJsonContext.Default.WebAuthnSetupResponse);
     }
 
     private static async Task<IResult> WebAuthnConfirmAsync(
@@ -324,7 +324,7 @@ public static class MfaSetupEndpoints
             await authHooks.RunOnUserAuthenticatedAsync(user.Id, user.Email, "password", setupChallenge.ClientId, ct);
         }
 
-        return Results.Ok(new { success = true, credentialId = credential.Id });
+        return TypedResults.Json(new WebAuthnConfirmResponse { CredentialId = credential.Id }, AuthagonalJsonContext.Default.WebAuthnConfirmResponse);
     }
 
     private static async Task<IResult> RecoveryGenerateAsync(
@@ -352,7 +352,7 @@ public static class MfaSetupEndpoints
         foreach (var cred in credentials)
             await mfaStore.CreateCredentialAsync(cred, ct);
 
-        return Results.Ok(new { codes = plaintextCodes });
+        return TypedResults.Json(new RecoveryCodesResponse { Codes = plaintextCodes }, AuthagonalJsonContext.Default.RecoveryCodesResponse);
     }
 
     private static async Task<IResult> DeleteCredentialAsync(
@@ -367,7 +367,7 @@ public static class MfaSetupEndpoints
 
         var cred = await mfaStore.GetCredentialAsync(userId, credentialId, ct);
         if (cred is null)
-            return Results.NotFound(new { error = "credential_not_found" });
+            return JsonResults.Error("credential_not_found", 404);
 
         await mfaStore.DeleteCredentialAsync(userId, credentialId, ct);
 
@@ -384,7 +384,7 @@ public static class MfaSetupEndpoints
             }
         }
 
-        return Results.Ok(new { success = true });
+        return TypedResults.Json(new SuccessResponse(), AuthagonalJsonContext.Default.SuccessResponse);
     }
 
     [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("Trimming", "IL2026", Justification = "Fido2 external type")]

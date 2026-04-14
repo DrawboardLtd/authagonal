@@ -18,16 +18,16 @@ public static class ConsentEndpoint
         {
             var client = await clientStore.GetAsync(client_id, ct);
             if (client is null)
-                return Results.NotFound(new { error = "client_not_found" });
+                return TypedResults.Json(new ErrorInfoResponse { Error = "client_not_found" }, AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 404);
 
             var requestedScopes = (scope ?? "openid").Split(' ', StringSplitOptions.RemoveEmptyEntries);
 
-            return Results.Ok(new
+            return TypedResults.Json(new ConsentInfoResponse
             {
-                clientId = client.ClientId,
-                clientName = client.ClientName,
-                scopes = requestedScopes,
-            });
+                ClientId = client.ClientId,
+                ClientName = client.ClientName,
+                Scopes = requestedScopes,
+            }, AuthagonalJsonContext.Default.ConsentInfoResponse);
         });
 
         app.MapPost("/consent", async (
@@ -45,7 +45,7 @@ public static class ConsentEndpoint
 
             var client = await clientStore.GetAsync(request.ClientId, ct);
             if (client is null)
-                return Results.NotFound(new { error = "client_not_found" });
+                return TypedResults.Json(new ErrorInfoResponse { Error = "client_not_found" }, AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 404);
 
             if (request.Decision == "deny")
             {
@@ -66,10 +66,10 @@ public static class ConsentEndpoint
                         if (!string.IsNullOrEmpty(state))
                             errorParams["state"] = state;
                         errorBuilder.Query = errorParams.ToString();
-                        return Results.Ok(new { redirect = errorBuilder.ToString() });
+                        return TypedResults.Json(new RedirectResponse { Redirect = errorBuilder.ToString() }, AuthagonalJsonContext.Default.RedirectResponse);
                     }
                 }
-                return Results.Ok(new { redirect = "/" });
+                return TypedResults.Json(new RedirectResponse { Redirect = "/" }, AuthagonalJsonContext.Default.RedirectResponse);
             }
 
             // Persist consent
@@ -92,7 +92,7 @@ public static class ConsentEndpoint
             }, ct);
 
             // Redirect back to authorize endpoint to complete the flow
-            return Results.Ok(new { redirect = request.ReturnUrl ?? "/" });
+            return TypedResults.Json(new RedirectResponse { Redirect = request.ReturnUrl ?? "/" }, AuthagonalJsonContext.Default.RedirectResponse);
         });
 
         // List all consent grants for the current user

@@ -170,7 +170,7 @@ public static class MfaEndpoints
 
         await authHooks.RunOnUserAuthenticatedAsync(user.Id, user.Email, "password", challenge.ClientId, ct);
 
-        return Results.Ok(new { userId = user.Id, email = user.Email, name });
+        return TypedResults.Json(new UserIdentityResponse { UserId = user.Id, Email = user.Email, Name = name }, AuthagonalJsonContext.Default.UserIdentityResponse);
     }
 
     [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("Trimming", "IL2026", Justification = "Fido2 external type")]

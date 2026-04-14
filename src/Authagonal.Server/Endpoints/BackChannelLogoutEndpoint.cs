@@ -100,7 +100,7 @@ public static class BackChannelLogoutEndpoint
         // Revoke all grants for the subject
         await grantStore.RemoveAllBySubjectAsync(request.SubjectId, ct);
 
-        return Results.Ok(new { notified, failed, grantsRevoked = grants.Count });
+        return TypedResults.Json(new BackChannelLogoutResult { Notified = notified, Failed = failed, GrantsRevoked = grants.Count }, AuthagonalJsonContext.Default.BackChannelLogoutResult);
     }
 
     private static string CreateLogoutToken(
