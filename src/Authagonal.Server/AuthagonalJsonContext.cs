@@ -68,6 +68,15 @@ namespace Authagonal.Server;
 [JsonSerializable(typeof(GossipResponse))]
 // Email
 [JsonSerializable(typeof(ResendEmailRequest))]
+// Auth request DTOs
+[JsonSerializable(typeof(LoginRequest))]
+[JsonSerializable(typeof(RegisterRequest))]
+[JsonSerializable(typeof(ConfirmEmailRequest))]
+[JsonSerializable(typeof(ForgotPasswordRequest))]
+[JsonSerializable(typeof(ResetPasswordRequest))]
+[JsonSerializable(typeof(MfaVerifyRequest))]
+[JsonSerializable(typeof(TotpConfirmRequest))]
+[JsonSerializable(typeof(WebAuthnConfirmRequest))]
 internal partial class AuthagonalJsonContext : JsonSerializerContext
 {
 }
