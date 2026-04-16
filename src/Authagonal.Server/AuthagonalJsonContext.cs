@@ -68,6 +68,8 @@ namespace Authagonal.Server;
 [JsonSerializable(typeof(GossipResponse))]
 // Email
 [JsonSerializable(typeof(ResendEmailRequest))]
+// Token response
+[JsonSerializable(typeof(TokenResponse))]
 // Auth request DTOs
 [JsonSerializable(typeof(LoginRequest))]
 [JsonSerializable(typeof(RegisterRequest))]
