@@ -450,11 +450,13 @@ public static class AuthagonalExtensions
         app.MapDeviceAuthorizationEndpoints();
         app.MapEndSessionEndpoint();
         app.MapUserinfoEndpoint();
+        app.MapClientRegistrationEndpoint();
 
         if (app.Configuration.GetValue("AdminApi:Enabled", true))
         {
             app.MapUserAdminEndpoints();
             app.MapRoleAdminEndpoints();
+            app.MapScopeAdminEndpoints();
             app.MapSsoAdminEndpoints();
             app.MapTokenAdminEndpoints();
             app.MapMfaAdminEndpoints();

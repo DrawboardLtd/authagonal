@@ -32,6 +32,7 @@ public sealed class UserEntity : ITableEntity
     public bool IsActive { get; set; } = true;
     public string? ScimProvisionedByClientId { get; set; }
     public string RolesJson { get; set; } = "[]";
+    public string CustomAttributesJson { get; set; } = "{}";
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset? UpdatedAt { get; set; }
     public DateTimeOffset? LastLoginAt { get; set; }
@@ -58,6 +59,7 @@ public sealed class UserEntity : ITableEntity
         IsActive = user.IsActive,
         ScimProvisionedByClientId = user.ScimProvisionedByClientId,
         RolesJson = JsonSerializer.Serialize(user.Roles, StorageJsonContext.Default.ListString),
+        CustomAttributesJson = JsonSerializer.Serialize(user.CustomAttributes, StorageJsonContext.Default.DictionaryStringString),
         CreatedAt = user.CreatedAt,
         UpdatedAt = user.UpdatedAt,
         LastLoginAt = user.LastLoginAt,
@@ -84,6 +86,7 @@ public sealed class UserEntity : ITableEntity
         IsActive = IsActive,
         ScimProvisionedByClientId = ScimProvisionedByClientId,
         Roles = JsonSerializer.Deserialize(RolesJson, StorageJsonContext.Default.ListString) ?? [],
+        CustomAttributes = JsonSerializer.Deserialize(CustomAttributesJson, StorageJsonContext.Default.DictionaryStringString) ?? [],
         CreatedAt = CreatedAt,
         UpdatedAt = UpdatedAt,
         LastLoginAt = LastLoginAt,

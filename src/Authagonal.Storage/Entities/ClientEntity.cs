@@ -19,6 +19,10 @@ public sealed class ClientEntity : ITableEntity
     public required string AllowedGrantTypesJson { get; set; }
     public required string RedirectUrisJson { get; set; }
     public required string PostLogoutRedirectUrisJson { get; set; }
+    public string? BackChannelLogoutUri { get; set; }
+    public string? FrontChannelLogoutUri { get; set; }
+    public bool FrontChannelLogoutSessionRequired { get; set; } = true;
+    public string AudiencesJson { get; set; } = "[]";
     public required string AllowedScopesJson { get; set; }
     public required string AllowedCorsOriginsJson { get; set; }
     public bool RequirePkce { get; set; }
@@ -26,6 +30,7 @@ public sealed class ClientEntity : ITableEntity
     public bool RequireClientSecret { get; set; }
     public bool AlwaysIncludeUserClaimsInIdToken { get; set; }
     public bool IncludeGroupsInTokens { get; set; }
+    public bool RequireConsent { get; set; }
     public int AccessTokenLifetimeSeconds { get; set; }
     public int IdentityTokenLifetimeSeconds { get; set; }
     public int AuthorizationCodeLifetimeSeconds { get; set; }
@@ -44,6 +49,10 @@ public sealed class ClientEntity : ITableEntity
         AllowedGrantTypesJson = JsonSerializer.Serialize(client.AllowedGrantTypes, StorageJsonContext.Default.ListString),
         RedirectUrisJson = JsonSerializer.Serialize(client.RedirectUris, StorageJsonContext.Default.ListString),
         PostLogoutRedirectUrisJson = JsonSerializer.Serialize(client.PostLogoutRedirectUris, StorageJsonContext.Default.ListString),
+        BackChannelLogoutUri = client.BackChannelLogoutUri,
+        FrontChannelLogoutUri = client.FrontChannelLogoutUri,
+        FrontChannelLogoutSessionRequired = client.FrontChannelLogoutSessionRequired,
+        AudiencesJson = JsonSerializer.Serialize(client.Audiences, StorageJsonContext.Default.ListString),
         AllowedScopesJson = JsonSerializer.Serialize(client.AllowedScopes, StorageJsonContext.Default.ListString),
         AllowedCorsOriginsJson = JsonSerializer.Serialize(client.AllowedCorsOrigins, StorageJsonContext.Default.ListString),
         RequirePkce = client.RequirePkce,
@@ -51,6 +60,7 @@ public sealed class ClientEntity : ITableEntity
         RequireClientSecret = client.RequireClientSecret,
         AlwaysIncludeUserClaimsInIdToken = client.AlwaysIncludeUserClaimsInIdToken,
         IncludeGroupsInTokens = client.IncludeGroupsInTokens,
+        RequireConsent = client.RequireConsent,
         AccessTokenLifetimeSeconds = client.AccessTokenLifetimeSeconds,
         IdentityTokenLifetimeSeconds = client.IdentityTokenLifetimeSeconds,
         AuthorizationCodeLifetimeSeconds = client.AuthorizationCodeLifetimeSeconds,
@@ -69,6 +79,10 @@ public sealed class ClientEntity : ITableEntity
         AllowedGrantTypes = JsonSerializer.Deserialize(AllowedGrantTypesJson, StorageJsonContext.Default.ListString) ?? [],
         RedirectUris = JsonSerializer.Deserialize(RedirectUrisJson, StorageJsonContext.Default.ListString) ?? [],
         PostLogoutRedirectUris = JsonSerializer.Deserialize(PostLogoutRedirectUrisJson, StorageJsonContext.Default.ListString) ?? [],
+        BackChannelLogoutUri = BackChannelLogoutUri,
+        FrontChannelLogoutUri = FrontChannelLogoutUri,
+        FrontChannelLogoutSessionRequired = FrontChannelLogoutSessionRequired,
+        Audiences = JsonSerializer.Deserialize(AudiencesJson, StorageJsonContext.Default.ListString) ?? [],
         AllowedScopes = JsonSerializer.Deserialize(AllowedScopesJson, StorageJsonContext.Default.ListString) ?? [],
         AllowedCorsOrigins = JsonSerializer.Deserialize(AllowedCorsOriginsJson, StorageJsonContext.Default.ListString) ?? [],
         RequirePkce = RequirePkce,
@@ -76,6 +90,7 @@ public sealed class ClientEntity : ITableEntity
         RequireClientSecret = RequireClientSecret,
         AlwaysIncludeUserClaimsInIdToken = AlwaysIncludeUserClaimsInIdToken,
         IncludeGroupsInTokens = IncludeGroupsInTokens,
+        RequireConsent = RequireConsent,
         AccessTokenLifetimeSeconds = AccessTokenLifetimeSeconds,
         IdentityTokenLifetimeSeconds = IdentityTokenLifetimeSeconds,
         AuthorizationCodeLifetimeSeconds = AuthorizationCodeLifetimeSeconds,

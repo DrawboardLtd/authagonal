@@ -1,6 +1,9 @@
 using System.Text;
 using Authagonal.Core.Services;
 using Authagonal.Core.Stores;
+using Authagonal.Server.Services;
+using Microsoft.IdentityModel.JsonWebTokens;
+using Microsoft.IdentityModel.Tokens;
 
 namespace Authagonal.Server.Endpoints;
 
@@ -12,6 +15,10 @@ public static class RevocationEndpoint
             HttpContext httpContext,
             ITokenService tokenService,
             IClientStore clientStore,
+            IRevokedTokenStore revokedTokenStore,
+            IKeyManager keyManager,
+            ITenantContext tenantContext,
+            PasswordHasher passwordHasher,
             CancellationToken ct) =>
         {
             var form = await httpContext.Request.ReadFormAsync(ct);
@@ -33,9 +40,8 @@ public static class RevocationEndpoint
 
                 var secretValid = client.ClientSecretHashes.Any(hash =>
                 {
-                    var hasher = new Services.PasswordHasher();
-                    var result = hasher.VerifyPassword(clientSecret, hash);
-                    return result is Services.PasswordVerifyResult.Success or Services.PasswordVerifyResult.SuccessRehashNeeded;
+                    var result = passwordHasher.VerifyPassword(clientSecret, hash);
+                    return result is PasswordVerifyResult.Success or PasswordVerifyResult.SuccessRehashNeeded;
                 });
 
                 if (!secretValid)
@@ -48,10 +54,17 @@ public static class RevocationEndpoint
 
             var tokenTypeHint = form["token_type_hint"].FirstOrDefault();
 
-            // We only support revoking refresh tokens currently
-            if (tokenTypeHint is null or "refresh_token")
+            // Try access_token first when hinted, otherwise try refresh_token first (historical default).
+            if (tokenTypeHint == "access_token")
             {
-                await tokenService.RevokeRefreshTokenAsync(token, clientId, ct);
+                if (!await TryRevokeAccessTokenAsync(token, clientId, keyManager, tenantContext, revokedTokenStore, ct))
+                    await tokenService.RevokeRefreshTokenAsync(token, clientId, ct);
+            }
+            else
+            {
+                var refreshRevoked = await tokenService.RevokeRefreshTokenAsync(token, clientId, ct);
+                if (!refreshRevoked)
+                    await TryRevokeAccessTokenAsync(token, clientId, keyManager, tenantContext, revokedTokenStore, ct);
             }
 
             // Per RFC 7009, always return 200 OK
@@ -62,6 +75,66 @@ public static class RevocationEndpoint
         .WithTags("OAuth");
 
         return app;
+    }
+
+    private static async Task<bool> TryRevokeAccessTokenAsync(
+        string token, string clientId, IKeyManager keyManager, ITenantContext tenantContext,
+        IRevokedTokenStore revokedTokenStore, CancellationToken ct)
+    {
+        try
+        {
+            var handler = new JsonWebTokenHandler();
+            var keys = keyManager.GetSecurityKeys()
+                .Select(jwk =>
+                {
+                    var rsaKey = new RsaSecurityKey(new System.Security.Cryptography.RSAParameters
+                    {
+                        Modulus = Base64UrlEncoder.DecodeBytes(jwk.N),
+                        Exponent = Base64UrlEncoder.DecodeBytes(jwk.E),
+                    })
+                    { KeyId = jwk.Kid };
+                    return (SecurityKey)rsaKey;
+                })
+                .ToList();
+
+            var result = await handler.ValidateTokenAsync(token, new TokenValidationParameters
+            {
+                ValidIssuer = tenantContext.Issuer,
+                ValidateIssuer = true,
+                ValidateAudience = false,
+                ValidateLifetime = true,
+                IssuerSigningKeys = keys,
+                ValidateIssuerSigningKey = true,
+                ClockSkew = TimeSpan.FromSeconds(60),
+            });
+
+            if (!result.IsValid) return false;
+
+            // Per RFC 7009, the client revoking must own the token. Ignore silently if not.
+            var tokenClientId = result.Claims.TryGetValue("client_id", out var cidObj) ? cidObj?.ToString() : null;
+            if (!string.Equals(tokenClientId, clientId, StringComparison.Ordinal)) return false;
+
+            var jti = result.Claims.TryGetValue("jti", out var jtiObj) ? jtiObj?.ToString() : null;
+            if (string.IsNullOrWhiteSpace(jti)) return false;
+
+            DateTimeOffset expiresAt;
+            if (result.Claims.TryGetValue("exp", out var expObj) && expObj is not null &&
+                long.TryParse(expObj.ToString(), out var expSeconds))
+            {
+                expiresAt = DateTimeOffset.FromUnixTimeSeconds(expSeconds);
+            }
+            else
+            {
+                expiresAt = DateTimeOffset.UtcNow.AddHours(24);
+            }
+
+            await revokedTokenStore.AddAsync(jti, expiresAt, clientId, ct);
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     private static (string? ClientId, string? ClientSecret) ExtractClientCredentials(

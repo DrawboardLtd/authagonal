@@ -4,9 +4,28 @@ public static class DiscoveryEndpoint
 {
     public static IEndpointRouteBuilder MapDiscoveryEndpoints(this IEndpointRouteBuilder app)
     {
-        app.MapGet("/.well-known/openid-configuration", (Authagonal.Core.Services.ITenantContext tenantContext) =>
+        app.MapGet("/.well-known/openid-configuration", async (
+            Authagonal.Core.Services.ITenantContext tenantContext,
+            Authagonal.Core.Stores.IScopeStore scopeStore,
+            Microsoft.Extensions.Options.IOptions<Authagonal.Server.Services.AuthOptions> authOptions,
+            CancellationToken ct) =>
         {
             var issuer = tenantContext.Issuer;
+
+            var builtIn = new[] { "openid", "profile", "email", "offline_access" };
+            string[] scopesSupported;
+            try
+            {
+                var custom = await scopeStore.ListAsync(ct);
+                scopesSupported = builtIn
+                    .Concat(custom.Where(s => s.ShowInDiscoveryDocument).Select(s => s.Name))
+                    .Distinct(StringComparer.Ordinal)
+                    .ToArray();
+            }
+            catch
+            {
+                scopesSupported = builtIn;
+            }
 
             return TypedResults.Json(new DiscoveryResponse
             {
@@ -19,7 +38,8 @@ public static class DiscoveryEndpoint
                 IntrospectionEndpoint = $"{issuer}/connect/introspect",
                 EndSessionEndpoint = $"{issuer}/connect/endsession",
                 DeviceAuthorizationEndpoint = $"{issuer}/connect/deviceauthorization",
-                ScopesSupported = ["openid", "profile", "email", "offline_access"],
+                RegistrationEndpoint = authOptions.Value.DynamicClientRegistrationEnabled ? $"{issuer}/connect/register" : null,
+                ScopesSupported = scopesSupported,
                 ResponseTypesSupported = ["code"],
                 GrantTypesSupported = ["authorization_code", "refresh_token", "client_credentials", "urn:ietf:params:oauth:grant-type:device_code"],
                 SubjectTypesSupported = ["public"],
@@ -28,6 +48,9 @@ public static class DiscoveryEndpoint
                 CodeChallengeMethodsSupported = ["S256"],
                 BackchannelLogoutSupported = true,
                 BackchannelLogoutSessionSupported = false,
+                FrontchannelLogoutSupported = true,
+                FrontchannelLogoutSessionSupported = true,
+                ClaimsSupported = ["sub", "iss", "aud", "exp", "iat", "auth_time", "email", "email_verified", "name", "given_name", "family_name", "phone_number", "roles", "groups"],
             }, AuthagonalJsonContext.Default.DiscoveryResponse);
         })
         .AllowAnonymous()

@@ -37,4 +37,11 @@ public sealed class AuthOptions
 
     // --- Cookie validation ---
     public int SecurityStampRevalidationMinutes { get; set; } = 30;
+
+    // --- Dynamic client registration (RFC 7591) ---
+    /// <summary>
+    /// Enable the /connect/register endpoint. Off by default because open registration
+    /// can be abused in multi-tenant deployments.
+    /// </summary>
+    public bool DynamicClientRegistrationEnabled { get; set; }
 }

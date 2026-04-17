@@ -22,6 +22,10 @@ public sealed class DiscoveryResponse
     [JsonPropertyName("code_challenge_methods_supported")] public string[] CodeChallengeMethodsSupported { get; set; } = [];
     [JsonPropertyName("backchannel_logout_supported")] public bool BackchannelLogoutSupported { get; set; }
     [JsonPropertyName("backchannel_logout_session_supported")] public bool BackchannelLogoutSessionSupported { get; set; }
+    [JsonPropertyName("frontchannel_logout_supported")] public bool FrontchannelLogoutSupported { get; set; }
+    [JsonPropertyName("frontchannel_logout_session_supported")] public bool FrontchannelLogoutSessionSupported { get; set; }
+    [JsonPropertyName("registration_endpoint")] public string? RegistrationEndpoint { get; set; }
+    [JsonPropertyName("claims_supported")] public string[]? ClaimsSupported { get; set; }
 }
 
 public sealed class JwksDocument

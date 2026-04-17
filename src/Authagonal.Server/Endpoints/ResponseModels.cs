@@ -279,6 +279,52 @@ public sealed class UserRolesResponse
     [JsonPropertyName("roles")] public List<string> Roles { get; set; } = [];
 }
 
+// --- Admin: Scopes ---
+
+public sealed class ScopeListResponse
+{
+    [JsonPropertyName("scopes")] public IEnumerable<Authagonal.Core.Models.Scope> Scopes { get; set; } = [];
+}
+
+// --- Dynamic Client Registration (RFC 7591) ---
+
+public sealed class ClientRegistrationRequest
+{
+    [JsonPropertyName("client_name")] public string? ClientName { get; set; }
+    [JsonPropertyName("redirect_uris")] public List<string>? RedirectUris { get; set; }
+    [JsonPropertyName("post_logout_redirect_uris")] public List<string>? PostLogoutRedirectUris { get; set; }
+    [JsonPropertyName("grant_types")] public List<string>? GrantTypes { get; set; }
+    [JsonPropertyName("response_types")] public List<string>? ResponseTypes { get; set; }
+    [JsonPropertyName("scope")] public string? Scope { get; set; }
+    [JsonPropertyName("token_endpoint_auth_method")] public string? TokenEndpointAuthMethod { get; set; }
+    [JsonPropertyName("application_type")] public string? ApplicationType { get; set; }
+    [JsonPropertyName("contacts")] public List<string>? Contacts { get; set; }
+    [JsonPropertyName("backchannel_logout_uri")] public string? BackchannelLogoutUri { get; set; }
+    [JsonPropertyName("frontchannel_logout_uri")] public string? FrontchannelLogoutUri { get; set; }
+    [JsonPropertyName("frontchannel_logout_session_required")] public bool? FrontchannelLogoutSessionRequired { get; set; }
+    [JsonPropertyName("audiences")] public List<string>? Audiences { get; set; }
+    [JsonPropertyName("allowed_cors_origins")] public List<string>? AllowedCorsOrigins { get; set; }
+}
+
+public sealed class ClientRegistrationResponse
+{
+    [JsonPropertyName("client_id")] public string ClientId { get; set; } = "";
+
+    [JsonPropertyName("client_secret")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? ClientSecret { get; set; }
+
+    [JsonPropertyName("client_id_issued_at")] public long ClientIdIssuedAt { get; set; }
+    [JsonPropertyName("client_secret_expires_at")] public long ClientSecretExpiresAt { get; set; }
+    [JsonPropertyName("client_name")] public string ClientName { get; set; } = "";
+    [JsonPropertyName("redirect_uris")] public List<string> RedirectUris { get; set; } = [];
+    [JsonPropertyName("post_logout_redirect_uris")] public List<string> PostLogoutRedirectUris { get; set; } = [];
+    [JsonPropertyName("grant_types")] public List<string> GrantTypes { get; set; } = [];
+    [JsonPropertyName("response_types")] public List<string> ResponseTypes { get; set; } = [];
+    [JsonPropertyName("scope")] public string Scope { get; set; } = "";
+    [JsonPropertyName("token_endpoint_auth_method")] public string TokenEndpointAuthMethod { get; set; } = "";
+}
+
 // --- Admin: SCIM Tokens ---
 
 public sealed class ScimTokenCreatedResponse

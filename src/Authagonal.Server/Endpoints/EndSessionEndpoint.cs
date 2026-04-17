@@ -20,6 +20,7 @@ public static class EndSessionEndpoint
     private static async Task<IResult> HandleAsync(
         HttpContext httpContext,
         IClientStore clientStore,
+        IGrantStore grantStore,
         Authagonal.Core.Services.IKeyManager keyManager,
         Authagonal.Core.Services.ITenantContext tenantContext,
         IStringLocalizer<SharedMessages> localizer,
@@ -34,9 +35,35 @@ public static class EndSessionEndpoint
         var state = request.Query["state"].FirstOrDefault()
             ?? (hasForm ? request.Form["state"].FirstOrDefault() : null);
 
-        // Get subject ID before signing out (for back-channel logout)
+        // Get subject ID before signing out (for back-channel + front-channel logout)
         var subjectId = httpContext.User.FindFirst("sub")?.Value
             ?? httpContext.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+        var sessionId = httpContext.User.FindFirst("sid")?.Value;
+
+        // Collect front-channel logout URIs before signing out (grant lookup needs subject)
+        var frontChannelUris = new List<string>();
+        if (!string.IsNullOrEmpty(subjectId))
+        {
+            try
+            {
+                var grants = await grantStore.GetBySubjectAsync(subjectId);
+                foreach (var clientIdGrant in grants.Select(g => g.ClientId).Distinct())
+                {
+                    var c = await clientStore.GetAsync(clientIdGrant, ct);
+                    if (c?.FrontChannelLogoutUri is null) continue;
+                    var uri = c.FrontChannelLogoutUri;
+                    if (c.FrontChannelLogoutSessionRequired)
+                    {
+                        var sep = uri.Contains('?') ? '&' : '?';
+                        uri = $"{uri}{sep}iss={Uri.EscapeDataString(tenantContext.Issuer)}";
+                        if (!string.IsNullOrEmpty(sessionId))
+                            uri += $"&sid={Uri.EscapeDataString(sessionId)}";
+                    }
+                    frontChannelUris.Add(uri);
+                }
+            }
+            catch { /* fall through */ }
+        }
 
         await httpContext.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
 
@@ -81,11 +108,9 @@ public static class EndSessionEndpoint
             });
         }
 
-        if (string.IsNullOrWhiteSpace(postLogoutRedirectUri))
-            return TypedResults.Json(new MessageResponse { Message = localizer["EndSession_SignedOut"].Value }, AuthagonalJsonContext.Default.MessageResponse);
-
-        // Validate post_logout_redirect_uri against the client from id_token_hint
-        if (!string.IsNullOrWhiteSpace(idTokenHint))
+        // Resolve the final redirect target (if any) by validating post_logout_redirect_uri against the client from id_token_hint.
+        string? finalRedirect = null;
+        if (!string.IsNullOrWhiteSpace(postLogoutRedirectUri) && !string.IsNullOrWhiteSpace(idTokenHint))
         {
             var clientId = ExtractClientId(idTokenHint, keyManager, tenantContext.Issuer);
             if (clientId is not null)
@@ -94,15 +119,43 @@ public static class EndSessionEndpoint
                 if (client is not null &&
                     client.PostLogoutRedirectUris.Contains(postLogoutRedirectUri, StringComparer.OrdinalIgnoreCase))
                 {
-                    var redirect = string.IsNullOrWhiteSpace(state)
+                    finalRedirect = string.IsNullOrWhiteSpace(state)
                         ? postLogoutRedirectUri
                         : $"{postLogoutRedirectUri}{(postLogoutRedirectUri.Contains('?') ? '&' : '?')}state={Uri.EscapeDataString(state)}";
-                    return Results.Redirect(redirect);
                 }
             }
         }
 
-        // If we can't validate the redirect, don't redirect — just confirm logout
+        // If any clients registered front-channel logout URIs, render an HTML page with hidden iframes
+        // so each client's logout endpoint is hit in the user's browser before redirecting/confirming.
+        if (frontChannelUris.Count > 0)
+        {
+            var iframes = string.Join("\n", frontChannelUris.Select(u =>
+                $"<iframe src=\"{System.Net.WebUtility.HtmlEncode(u)}\" style=\"display:none\"></iframe>"));
+
+            string tail;
+            if (!string.IsNullOrWhiteSpace(finalRedirect))
+            {
+                var escaped = System.Net.WebUtility.HtmlEncode(finalRedirect);
+                tail = $"<script>setTimeout(function(){{ window.location.replace('{escaped}'); }}, 2000);</script>" +
+                       $"<noscript><meta http-equiv=\"refresh\" content=\"2;url={escaped}\"></noscript>";
+            }
+            else
+            {
+                var msg = System.Net.WebUtility.HtmlEncode(localizer["EndSession_SignedOut"].Value);
+                tail = $"<p>{msg}</p>";
+            }
+
+            var html = "<!DOCTYPE html><html><head><meta charset=\"utf-8\"><title>Signed out</title></head>" +
+                       $"<body>{iframes}{tail}</body></html>";
+
+            return Results.Content(html, "text/html; charset=utf-8");
+        }
+
+        if (!string.IsNullOrWhiteSpace(finalRedirect))
+            return Results.Redirect(finalRedirect);
+
+        // No front-channel URIs and no validated redirect — just confirm logout.
         return TypedResults.Json(new MessageResponse { Message = localizer["EndSession_SignedOut"].Value }, AuthagonalJsonContext.Default.MessageResponse);
     }
 

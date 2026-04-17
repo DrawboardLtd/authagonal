@@ -3,7 +3,8 @@ namespace Authagonal.Backup;
 public static class BackupDefaults
 {
     /// <summary>
-    /// All Authagonal data tables (20 tables). Excludes transient tables (SamlReplayCache, OidcStateStore)
+    /// All Authagonal data tables. Excludes transient tables (SamlReplayCache, OidcStateStore,
+    /// RevokedTokens — entries are bounded by access token lifetime, typically minutes)
     /// and the Tombstones table (handled separately by the backup engine).
     /// </summary>
     public static readonly string[] Tables =
@@ -17,6 +18,7 @@ public static class BackupDefaults
         "UserProvisions",
         "MfaCredentials", "MfaChallenges", "MfaWebAuthnIndex",
         "ScimTokens", "ScimGroups", "ScimGroupExternalIds",
-        "Roles"
+        "Roles",
+        "Scopes"
     ];
 }

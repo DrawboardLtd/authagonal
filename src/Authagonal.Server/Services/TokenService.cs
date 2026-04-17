@@ -69,12 +69,21 @@ public sealed class TokenService(
         var descriptor = new SecurityTokenDescriptor
         {
             Issuer = Issuer,
-            Audience = client.ClientId,
             IssuedAt = now.UtcDateTime,
             Expires = now.AddSeconds(client.AccessTokenLifetimeSeconds).UtcDateTime,
             SigningCredentials = keyManager.GetSigningCredentials(),
             Claims = claims
         };
+
+        if (client.Audiences.Count > 0)
+        {
+            // Per RFC 8707: honor configured audiences (API resources). Single value stays a string; multiple become an array.
+            claims["aud"] = client.Audiences.Count == 1 ? (object)client.Audiences[0] : client.Audiences.ToArray();
+        }
+        else
+        {
+            descriptor.Audience = client.ClientId;
+        }
 
         var handler = new JsonWebTokenHandler();
         return handler.CreateToken(descriptor);

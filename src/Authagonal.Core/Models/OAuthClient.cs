@@ -9,6 +9,9 @@ public sealed class OAuthClient
     public List<string> RedirectUris { get; set; } = [];
     public List<string> PostLogoutRedirectUris { get; set; } = [];
     public string? BackChannelLogoutUri { get; set; }
+    public string? FrontChannelLogoutUri { get; set; }
+    public bool FrontChannelLogoutSessionRequired { get; set; } = true;
+    public List<string> Audiences { get; set; } = [];
     public List<string> AllowedScopes { get; set; } = [];
     public List<string> AllowedCorsOrigins { get; set; } = [];
     public bool RequirePkce { get; set; } = true;

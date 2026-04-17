@@ -25,6 +25,7 @@ public static class IntrospectionEndpoint
         HttpContext httpContext,
         IClientStore clientStore,
         IGrantStore grantStore,
+        IRevokedTokenStore revokedTokenStore,
         Authagonal.Core.Services.IKeyManager keyManager,
         Authagonal.Core.Services.ITenantContext tenantContext,
         PasswordHasher passwordHasher,
@@ -93,8 +94,9 @@ public static class IntrospectionEndpoint
             if (!result.IsValid)
                 return InactiveResponse();
 
-            // Check if it's been revoked (refresh tokens stored as grants)
             var jti = result.Claims.TryGetValue("jti", out var jtiObj) ? jtiObj?.ToString() : null;
+            if (!string.IsNullOrWhiteSpace(jti) && await revokedTokenStore.IsRevokedAsync(jti, ct))
+                return InactiveResponse();
 
             var response = new Dictionary<string, object> { ["active"] = true };
 

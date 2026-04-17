@@ -21,6 +21,7 @@ public sealed class AuthUser
     public bool IsActive { get; set; } = true;
     public string? ScimProvisionedByClientId { get; set; }
     public List<string> Roles { get; set; } = [];
+    public Dictionary<string, string> CustomAttributes { get; set; } = [];
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset? UpdatedAt { get; set; }
     public DateTimeOffset? LastLoginAt { get; set; }
