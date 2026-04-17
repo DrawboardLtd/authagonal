@@ -67,7 +67,7 @@ export default function DevicePage() {
   }
 
   if (checking) {
-    return <p className="text-sm text-gray-500 text-center">Loading...</p>;
+    return <p className="text-sm text-gray-500 dark:text-gray-400 text-center">Loading...</p>;
   }
 
   // Not authenticated — redirect to login with returnUrl back to this page
@@ -79,7 +79,7 @@ export default function DevicePage() {
     return (
       <div className="text-center">
         <CardTitle className="mb-4">Sign in to continue</CardTitle>
-        <p className="text-sm text-gray-500 mb-6">
+        <p className="text-sm text-gray-500 dark:text-gray-400 mb-6">
           Sign in to approve access for your device.
         </p>
         <Button
@@ -98,13 +98,13 @@ export default function DevicePage() {
       <div className="text-center">
         <CardTitle className="mb-4">Device approved</CardTitle>
         <div className="flex justify-center mb-4">
-          <div className="w-16 h-16 rounded-full bg-green-100 flex items-center justify-center">
-            <svg className="w-8 h-8 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <div className="w-16 h-16 rounded-full bg-green-100 dark:bg-green-900/40 flex items-center justify-center">
+            <svg className="w-8 h-8 text-green-600 dark:text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
             </svg>
           </div>
         </div>
-        <p className="text-sm text-gray-500">
+        <p className="text-sm text-gray-500 dark:text-gray-400">
           You can close this window. Your device should be signed in momentarily.
         </p>
       </div>
@@ -115,7 +115,7 @@ export default function DevicePage() {
   return (
     <div>
       <CardTitle className="mb-2 text-center">Authorize device</CardTitle>
-      <p className="text-sm text-gray-500 text-center mb-6">
+      <p className="text-sm text-gray-500 dark:text-gray-400 text-center mb-6">
         Enter the code displayed on your device.
       </p>
 

@@ -54,7 +54,7 @@ public sealed class TableGrantStore(
         // Write expiry index for efficient cleanup queries
         var expiryEntity = new GrantByExpiryEntity
         {
-            PartitionKey = GrantByExpiryEntity.GetDateBucket(grant.ExpiresAt),
+            PartitionKey = GrantByExpiryEntity.GetPartitionKey(grant.ExpiresAt, hashedKey),
             RowKey = hashedKey,
             SubjectId = grant.SubjectId,
             Type = grant.Type,
@@ -137,10 +137,10 @@ public sealed class TableGrantStore(
             await grantsTable.DeleteEntityAsync(hashedKey, GrantEntity.GrantRowKey, cancellationToken: ct);
 
             // Delete from expiry index
-            var expiryBucket = GrantByExpiryEntity.GetDateBucket(entity.ExpiresAt);
+            var expiryPartition = GrantByExpiryEntity.GetPartitionKey(entity.ExpiresAt, hashedKey);
             try
             {
-                await grantsByExpiryTable.DeleteEntityAsync(expiryBucket, hashedKey, cancellationToken: ct);
+                await grantsByExpiryTable.DeleteEntityAsync(expiryPartition, hashedKey, cancellationToken: ct);
             }
             catch (RequestFailedException ex) when (ex.Status == 404) { }
 
@@ -158,7 +158,7 @@ public sealed class TableGrantStore(
             if (tombstoneWriter is not null)
             {
                 await tombstoneWriter.WriteAsync("Grants", hashedKey, GrantEntity.GrantRowKey, ct);
-                await tombstoneWriter.WriteAsync("GrantsByExpiry", expiryBucket, hashedKey, ct);
+                await tombstoneWriter.WriteAsync("GrantsByExpiry", expiryPartition, hashedKey, ct);
                 if (!string.IsNullOrEmpty(entity.SubjectId))
                     await tombstoneWriter.WriteAsync("GrantsBySubject", entity.SubjectId, $"{entity.Type}|{hashedKey}", ct);
             }
@@ -193,11 +193,11 @@ public sealed class TableGrantStore(
             catch (RequestFailedException ex) when (ex.Status == 404) { }
 
             // Delete from expiry index
-            var expiryBucket = GrantByExpiryEntity.GetDateBucket(entity.ExpiresAt);
+            var expiryPartition = GrantByExpiryEntity.GetPartitionKey(entity.ExpiresAt, entity.HashedKey);
             try
             {
-                await grantsByExpiryTable.DeleteEntityAsync(expiryBucket, entity.HashedKey, cancellationToken: ct);
-                expiryTombstones.Add((expiryBucket, entity.HashedKey));
+                await grantsByExpiryTable.DeleteEntityAsync(expiryPartition, entity.HashedKey, cancellationToken: ct);
+                expiryTombstones.Add((expiryPartition, entity.HashedKey));
             }
             catch (RequestFailedException ex) when (ex.Status == 404) { }
 
@@ -245,11 +245,11 @@ public sealed class TableGrantStore(
             catch (RequestFailedException ex) when (ex.Status == 404) { }
 
             // Delete from expiry index
-            var expiryBucket = GrantByExpiryEntity.GetDateBucket(entity.ExpiresAt);
+            var expiryPartition = GrantByExpiryEntity.GetPartitionKey(entity.ExpiresAt, entity.HashedKey);
             try
             {
-                await grantsByExpiryTable.DeleteEntityAsync(expiryBucket, entity.HashedKey, cancellationToken: ct);
-                expiryTombstones.Add((expiryBucket, entity.HashedKey));
+                await grantsByExpiryTable.DeleteEntityAsync(expiryPartition, entity.HashedKey, cancellationToken: ct);
+                expiryTombstones.Add((expiryPartition, entity.HashedKey));
             }
             catch (RequestFailedException ex) when (ex.Status == 404) { }
 
@@ -288,12 +288,13 @@ public sealed class TableGrantStore(
     public async Task RemoveExpiredAsync(DateTimeOffset cutoff, CancellationToken ct = default)
     {
         // Query expiry index for entries in date buckets up to the cutoff.
-        // This is a partition key range query — much faster than a full table scan.
-        var cutoffBucket = GrantByExpiryEntity.GetDateBucket(cutoff);
+        // PK format is "yyyy-MM-dd_N" (date-first, hash-spread across N slots),
+        // so a single lexicographic range scan still captures all partitions up to cutoff.
+        var cutoffUpperBound = GrantByExpiryEntity.GetCutoffUpperBound(cutoff);
         var expiredEntries = new List<GrantByExpiryEntity>();
 
         var query = grantsByExpiryTable.QueryAsync<GrantByExpiryEntity>(
-            filter: $"PartitionKey le '{cutoffBucket}'",
+            filter: $"PartitionKey le '{cutoffUpperBound}'",
             cancellationToken: ct);
 
         await foreach (var entity in query)

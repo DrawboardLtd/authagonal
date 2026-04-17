@@ -213,7 +213,7 @@ export default function MfaSetupPage() {
   }
 
   if (loading) {
-    return <div className="text-center py-10 text-gray-500">{t('mfaLoading')}</div>;
+    return <div className="text-center py-10 text-gray-500 dark:text-gray-400">{t('mfaLoading')}</div>;
   }
 
   const hasTotp = methods.some(m => m.type === 'totp');
@@ -235,13 +235,13 @@ export default function MfaSetupPage() {
       {/* Enrolled methods */}
       {methods.filter(m => m.type !== 'recoverycode').length > 0 && (
         <div className="mb-6">
-          <h3 className="text-base font-medium mb-2">{t('mfaEnrolledMethods')}</h3>
+          <h3 className="text-base font-medium mb-2 text-gray-900 dark:text-gray-100">{t('mfaEnrolledMethods')}</h3>
           {methods.filter(m => m.type !== 'recoverycode').map(m => (
-            <div key={m.id} className="flex justify-between items-center p-3 border border-gray-200 rounded-lg mb-2">
+            <div key={m.id} className="flex justify-between items-center p-3 border border-gray-200 dark:border-gray-800 rounded-lg mb-2">
               <div>
-                <strong className="text-sm">{m.name}</strong>
+                <strong className="text-sm text-gray-900 dark:text-gray-100">{m.name}</strong>
                 <br />
-                <small className="text-gray-400 text-xs">{t('mfaAddedOn', { date: new Date(m.createdAt).toLocaleDateString() })}</small>
+                <small className="text-gray-400 dark:text-gray-500 text-xs">{t('mfaAddedOn', { date: new Date(m.createdAt).toLocaleDateString() })}</small>
               </div>
               <Button
                 type="button"
@@ -266,15 +266,15 @@ export default function MfaSetupPage() {
 
       {totpSetup && (
         <div className="mb-6">
-          <p className="text-center mb-4 text-sm">{t('mfaScanQrCode')}</p>
+          <p className="text-center mb-4 text-sm text-gray-700 dark:text-gray-300">{t('mfaScanQrCode')}</p>
           <div className="text-center mb-4">
             <img src={totpSetup.qrCodeDataUri} alt="QR Code" className="w-[200px] h-[200px] mx-auto" style={{ imageRendering: 'pixelated' }} />
           </div>
           {totpSetup.manualKey && (
             <div className="text-center mb-4">
-              <p className="text-[13px] text-gray-500 mb-1">{t('mfaManualKeyLabel')}</p>
+              <p className="text-[13px] text-gray-500 dark:text-gray-400 mb-1">{t('mfaManualKeyLabel')}</p>
               <code
-                className="inline-block px-3 py-2 bg-gray-100 rounded-md text-sm tracking-widest select-all break-all cursor-pointer"
+                className="inline-block px-3 py-2 bg-gray-100 dark:bg-gray-800 text-gray-900 dark:text-gray-100 rounded-md text-sm tracking-widest select-all break-all cursor-pointer"
                 title={t('mfaCopyKey')}
                 onClick={() => navigator.clipboard?.writeText(totpSetup.manualKey)}
               >
@@ -318,9 +318,9 @@ export default function MfaSetupPage() {
 
       {recoveryCodes && (
         <div className="mb-6">
-          <h3 className="text-base font-medium mb-2">{t('mfaRecoveryCodesTitle')}</h3>
-          <p className="text-gray-500 mb-3 text-sm">{t('mfaRecoveryCodesWarning')}</p>
-          <div className="bg-gray-50 p-4 rounded-lg font-mono text-sm columns-2 gap-6">
+          <h3 className="text-base font-medium mb-2 text-gray-900 dark:text-gray-100">{t('mfaRecoveryCodesTitle')}</h3>
+          <p className="text-gray-500 dark:text-gray-400 mb-3 text-sm">{t('mfaRecoveryCodesWarning')}</p>
+          <div className="bg-gray-50 dark:bg-gray-800/60 text-gray-900 dark:text-gray-100 p-4 rounded-lg font-mono text-sm columns-2 gap-6">
             {recoveryCodes.map((code, i) => (
               <div key={i} className="mb-1">{code}</div>
             ))}
@@ -342,7 +342,7 @@ export default function MfaSetupPage() {
         <CardFooter className="mt-4">
           <button
             type="button"
-            className="bg-transparent border-none cursor-pointer text-[13px] text-gray-500 hover:text-gray-700"
+            className="bg-transparent border-none cursor-pointer text-[13px] text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200"
             onClick={() => {
               const dest = returnUrl && isSafeReturnUrl(returnUrl) ? returnUrl : '/';
               window.location.href = dest;
@@ -355,7 +355,7 @@ export default function MfaSetupPage() {
 
       {/* Back to app link — shown when navigating from an external app */}
       {backUrl && (
-        <div className="mt-6 text-center pt-4 border-t border-gray-200">
+        <div className="mt-6 text-center pt-4 border-t border-gray-200 dark:border-gray-800">
           <a href={backUrl} className="text-sm text-primary no-underline hover:underline">
             &larr; {t('mfaBackToApp')}
           </a>

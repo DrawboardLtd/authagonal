@@ -1,15 +1,28 @@
 @import 'tailwindcss';
 
+@custom-variant dark (&:where(.dark, .dark *));
+
 @theme {
   --color-primary: var(--brand-primary, #2563eb);
 }
 
 /*
- * Global baseline — minimal reset handled by Tailwind preflight.
- * We only define the branding custom property and the spinner animation.
+ * Default auth surface vars. Tenants can override any of these via
+ * branding.customCssUrl. Light values are declared at :root; dark-mode
+ * overrides are scoped to .dark so tenant CSS still wins when provided.
  */
 :root {
   --brand-primary: #2563eb;
+  --auth-bg: #f3f4f6;
+  --auth-card-bg: #ffffff;
+  --auth-heading: #111827;
+}
+
+.dark {
+  color-scheme: dark;
+  --auth-bg: #030712;
+  --auth-card-bg: #111827;
+  --auth-heading: #f9fafb;
 }
 
 body {

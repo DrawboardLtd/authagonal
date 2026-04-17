@@ -138,7 +138,7 @@ export default function RegisterPage() {
         </div>
 
         {policyRules.length > 0 && (
-          <ul className="text-[13px] text-gray-500 mb-4 pl-5 list-disc">
+          <ul className="text-[13px] text-gray-500 dark:text-gray-400 mb-4 pl-5 list-disc">
             {policyRules.map((rule) => (
               <li key={rule.rule}>{rule.label}</li>
             ))}
@@ -150,7 +150,7 @@ export default function RegisterPage() {
         </Button>
 
         <CardFooter>
-          <span className="text-sm text-gray-500">
+          <span className="text-sm text-gray-500 dark:text-gray-400">
             {t('alreadyHaveAccount')}{' '}
             <Link to={loginLink} className="text-sm font-medium text-primary hover:underline no-underline">{t('signIn')}</Link>
           </span>

@@ -14,7 +14,6 @@ public class GrantByExpiryEntityTests
     [Fact]
     public void GetDateBucket_ConvertsToUtc()
     {
-        // 2025-03-28 23:30 UTC+5 = 2025-03-28 18:30 UTC → bucket is 2025-03-28
         var date = new DateTimeOffset(2025, 3, 28, 23, 30, 0, TimeSpan.FromHours(5));
         Assert.Equal("2025-03-28", GrantByExpiryEntity.GetDateBucket(date));
     }
@@ -22,7 +21,6 @@ public class GrantByExpiryEntityTests
     [Fact]
     public void GetDateBucket_CrossesMidnightWhenConvertingToUtc()
     {
-        // 2025-03-29 01:00 UTC-5 = 2025-03-29 06:00 UTC → still 2025-03-29
         var date = new DateTimeOffset(2025, 3, 29, 1, 0, 0, TimeSpan.FromHours(-5));
         Assert.Equal("2025-03-29", GrantByExpiryEntity.GetDateBucket(date));
     }
@@ -50,5 +48,60 @@ public class GrantByExpiryEntityTests
     {
         var date = new DateTimeOffset(2025, 1, 5, 0, 0, 0, TimeSpan.Zero);
         Assert.Equal("2025-01-05", GrantByExpiryEntity.GetDateBucket(date));
+    }
+
+    [Fact]
+    public void GetPartitionKey_IsDateFirstThenShardSlot()
+    {
+        var date = new DateTimeOffset(2025, 7, 15, 0, 0, 0, TimeSpan.Zero);
+        var pk = GrantByExpiryEntity.GetPartitionKey(date, "0abc123");
+        Assert.StartsWith("2025-07-15_", pk);
+        Assert.Matches(@"^2025-07-15_\d$", pk);
+    }
+
+    [Fact]
+    public void GetPartitionKey_SameHashedKey_AlwaysSameSlot()
+    {
+        var date = new DateTimeOffset(2025, 7, 15, 0, 0, 0, TimeSpan.Zero);
+        var pk1 = GrantByExpiryEntity.GetPartitionKey(date, "deadbeef00");
+        var pk2 = GrantByExpiryEntity.GetPartitionKey(date, "deadbeef00");
+        Assert.Equal(pk1, pk2);
+    }
+
+    [Fact]
+    public void GetPartitionKey_DifferentHashesCanLandOnDifferentSlots()
+    {
+        var date = new DateTimeOffset(2025, 7, 15, 0, 0, 0, TimeSpan.Zero);
+        var slots = new HashSet<string>();
+        for (var i = 0; i < 256; i++)
+        {
+            var hashedKey = i.ToString("x2") + "0000";
+            slots.Add(GrantByExpiryEntity.GetPartitionKey(date, hashedKey));
+        }
+        Assert.Equal(GrantByExpiryEntity.ShardCount, slots.Count);
+    }
+
+    [Fact]
+    public void GetCutoffUpperBound_CoversAllShardSlotsForDate()
+    {
+        var date = new DateTimeOffset(2025, 7, 15, 23, 59, 59, TimeSpan.Zero);
+        var upper = GrantByExpiryEntity.GetCutoffUpperBound(date);
+
+        // Every possible partition key for today must sort le the upper bound.
+        for (var i = 0; i < 256; i++)
+        {
+            var hashedKey = i.ToString("x2") + "0000";
+            var pk = GrantByExpiryEntity.GetPartitionKey(date, hashedKey);
+            Assert.True(string.CompareOrdinal(pk, upper) <= 0, $"{pk} should be <= {upper}");
+        }
+
+        // Next day's partitions must sort above the upper bound.
+        var tomorrow = date.AddDays(1);
+        for (var i = 0; i < 256; i++)
+        {
+            var hashedKey = i.ToString("x2") + "0000";
+            var pk = GrantByExpiryEntity.GetPartitionKey(tomorrow, hashedKey);
+            Assert.True(string.CompareOrdinal(pk, upper) > 0, $"{pk} should be > {upper}");
+        }
     }
 }

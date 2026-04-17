@@ -180,9 +180,9 @@ export default function ResetPasswordPage() {
         </div>
 
         {newPassword.length > 0 && (
-          <ul className="list-none mb-4 p-3 bg-gray-50 rounded-md">
+          <ul className="list-none mb-4 p-3 bg-gray-50 dark:bg-gray-800/60 rounded-md">
             {requirements.map((req) => (
-              <li key={req.label} className={`text-[13px] py-0.5 flex items-center gap-1.5 ${req.met ? 'text-green-800' : 'text-red-800'}`}>
+              <li key={req.label} className={`text-[13px] py-0.5 flex items-center gap-1.5 ${req.met ? 'text-green-800 dark:text-green-400' : 'text-red-800 dark:text-red-400'}`}>
                 {req.met ? <Check className="h-3.5 w-3.5 shrink-0" /> : <X className="h-3.5 w-3.5 shrink-0" />}
                 {req.label}
               </li>

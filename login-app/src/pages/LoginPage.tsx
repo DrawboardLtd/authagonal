@@ -245,7 +245,7 @@ export default function LoginPage() {
     return (
       <div>
         <CardTitle>{t('mfaPromptTitle')}</CardTitle>
-        <p className="text-center text-gray-500 mb-6">
+        <p className="text-center text-gray-500 dark:text-gray-400 mb-6">
           {t('mfaPromptMessage')}
         </p>
         <Button
@@ -265,7 +265,7 @@ export default function LoginPage() {
     return (
       <div>
         <CardTitle>{t('signedInAs', { name: session.name || session.email })}</CardTitle>
-        <p className="text-center text-gray-500">{t('signedInMessage')}</p>
+        <p className="text-center text-gray-500 dark:text-gray-400">{t('signedInMessage')}</p>
         <CardFooter>
           <Button
             variant="secondary"
@@ -314,8 +314,8 @@ export default function LoginPage() {
       )}
 
       {providers.length > 0 && showPasswordField && (
-        <div className="flex items-center gap-3 mb-4 text-gray-400 text-[13px]">
-          <div className="flex-1 h-px bg-gray-200" />
+        <div className="flex items-center gap-3 mb-4 text-gray-400 dark:text-gray-500 text-[13px]">
+          <div className="flex-1 h-px bg-gray-200 dark:bg-gray-800" />
           <button
             type="button"
             onClick={() => { setSsoChecked(false); setSsoInfo(null); lastCheckedEmailRef.current = ''; }}
@@ -323,7 +323,7 @@ export default function LoginPage() {
           >
             {t('orSignInWith', { provider: providers.map(p => p.name).join(', ') })}
           </button>
-          <div className="flex-1 h-px bg-gray-200" />
+          <div className="flex-1 h-px bg-gray-200 dark:bg-gray-800" />
         </div>
       )}
 
@@ -364,12 +364,12 @@ export default function LoginPage() {
         )}
 
         {ssoChecking && (
-          <p className="text-sm text-gray-500 mb-4">{t('ssoChecking')}</p>
+          <p className="text-sm text-gray-500 dark:text-gray-400 mb-4">{t('ssoChecking')}</p>
         )}
 
         {ssoInfo && (
           <div className="mb-4">
-            <p className="text-sm text-gray-500 mb-3">{t('ssoNotice')}</p>
+            <p className="text-sm text-gray-500 dark:text-gray-400 mb-3">{t('ssoNotice')}</p>
             <Button variant="secondary" type="button" onClick={handleSsoRedirect}>
               {t('continueWithSso')}
             </Button>
@@ -410,7 +410,7 @@ export default function LoginPage() {
 
       {branding.showRegistration && (
         <CardFooter className="mt-4">
-          <span className="text-sm text-gray-500">
+          <span className="text-sm text-gray-500 dark:text-gray-400">
             {t('noAccount')}{' '}
             <Link to={returnUrl ? `/register?returnUrl=${encodeURIComponent(returnUrl)}` : '/register'} className="text-sm font-medium text-primary hover:underline no-underline">
               {t('createAccount')}

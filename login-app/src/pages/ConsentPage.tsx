@@ -70,7 +70,7 @@ export default function ConsentPage() {
   if (loading) {
     return (
       <AuthLayout>
-        <p className="text-sm text-gray-500 text-center">{t('consent.loading')}</p>
+        <p className="text-sm text-gray-500 dark:text-gray-400 text-center">{t('consent.loading')}</p>
       </AuthLayout>
     );
   }
@@ -78,7 +78,7 @@ export default function ConsentPage() {
   return (
     <AuthLayout>
       <CardTitle>{t('consent.title', { appName: info?.clientName ?? clientId })}</CardTitle>
-      <p className="text-sm text-gray-500 mb-4">{t('consent.subtitle', { appName: info?.clientName ?? clientId })}</p>
+      <p className="text-sm text-gray-500 dark:text-gray-400 mb-4">{t('consent.subtitle', { appName: info?.clientName ?? clientId })}</p>
 
       {error && <Alert variant="error">{error}</Alert>}
 
@@ -86,9 +86,9 @@ export default function ConsentPage() {
         {(info?.scopes ?? scope.split(' ')).map((s) => {
           const labelKey = SCOPE_LABELS[s];
           return (
-            <div key={s} className="flex items-center gap-3 p-3 bg-gray-50 rounded-lg">
+            <div key={s} className="flex items-center gap-3 p-3 bg-gray-50 dark:bg-gray-800/60 rounded-lg">
               <div className="w-2 h-2 bg-primary rounded-full shrink-0" />
-              <span className="text-sm text-gray-700">
+              <span className="text-sm text-gray-700 dark:text-gray-300">
                 {labelKey ? t(labelKey) : s}
               </span>
             </div>
@@ -106,7 +106,7 @@ export default function ConsentPage() {
       </div>
 
       <CardFooter>
-        <p className="text-xs text-gray-400">{t('consent.hint')}</p>
+        <p className="text-xs text-gray-400 dark:text-gray-500">{t('consent.hint')}</p>
       </CardFooter>
     </AuthLayout>
   );

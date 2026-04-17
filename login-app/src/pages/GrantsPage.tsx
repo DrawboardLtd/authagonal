@@ -49,24 +49,24 @@ export default function GrantsPage() {
   return (
     <AuthLayout>
       <CardTitle>{t('grants.title')}</CardTitle>
-      <p className="text-sm text-gray-500 mb-4">{t('grants.subtitle')}</p>
+      <p className="text-sm text-gray-500 dark:text-gray-400 mb-4">{t('grants.subtitle')}</p>
 
       {error && <Alert variant="error">{error}</Alert>}
 
       {loading ? (
-        <p className="text-sm text-gray-500">{t('grants.loading')}</p>
+        <p className="text-sm text-gray-500 dark:text-gray-400">{t('grants.loading')}</p>
       ) : grants.length === 0 ? (
-        <p className="text-sm text-gray-500">{t('grants.noGrants')}</p>
+        <p className="text-sm text-gray-500 dark:text-gray-400">{t('grants.noGrants')}</p>
       ) : (
         <div className="space-y-3">
           {grants.map((g) => (
-            <div key={g.clientId} className="flex items-start justify-between p-3 bg-gray-50 rounded-lg">
+            <div key={g.clientId} className="flex items-start justify-between p-3 bg-gray-50 dark:bg-gray-800/60 rounded-lg">
               <div>
-                <p className="text-sm font-medium text-gray-900">{g.clientName}</p>
-                <p className="text-xs text-gray-500 mt-0.5">
+                <p className="text-sm font-medium text-gray-900 dark:text-gray-100">{g.clientName}</p>
+                <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
                   {g.scopes.join(', ')}
                 </p>
-                <p className="text-xs text-gray-400 mt-0.5">
+                <p className="text-xs text-gray-400 dark:text-gray-500 mt-0.5">
                   {t('grants.grantedOn', { date: new Date(g.consentedAt).toLocaleDateString() })}
                 </p>
               </div>
