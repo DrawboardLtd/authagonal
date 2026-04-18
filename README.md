@@ -44,7 +44,11 @@ This starts the auth server on `http://localhost:8080` with an Azurite storage e
 - **OAuth Consent Screen** — per-client `RequireConsent` flag, scope-aware re-consent, grant management UI
 - **Device Authorization Grant** — RFC 8628 flow for input-constrained devices (smart TVs, CLIs, IoT)
 - **Token Introspection** — RFC 7662 `POST /connect/introspect` for resource servers to verify token validity
+- **Token Revocation** — RFC 7009 `POST /connect/revocation`; revocations tracked in a persistent revocation list consulted by the introspection endpoint
+- **Dynamic Client Registration** — RFC 7591 `POST /connect/register` for clients to self-register at runtime (opt-in via `Auth:DynamicClientRegistrationEnabled`), advertised via the discovery document when enabled
+- **Scope Management** — admin CRUD for OAuth scopes (`/api/v1/scopes`); custom scopes advertised dynamically by discovery and surfaced on the consent screen
 - **Back-Channel Logout** — OIDC Back-Channel Logout 1.0; logout tokens sent to each client's `BackChannelLogoutUri`
+- **Front-Channel Logout** — OIDC Front-Channel Logout 1.0 (RFC 7711); logout notification via the browser with configurable session requirements per client
 - **Multi-Factor Authentication** — TOTP (authenticator apps), WebAuthn/passkeys, recovery codes. Per-client MFA policy (`Disabled`, `Enabled`, `Required`) with `IAuthHook` override for per-user control.
 - **Configurable Password Policy** — min length, character requirements, exposed via API for dynamic frontend validation
 - **TCC Provisioning** — Try-Confirm-Cancel provisioning into downstream apps on all user creation endpoints (admin, registration, SSO, SCIM). Pluggable via `IProvisioningAppProvider`.
@@ -58,7 +62,9 @@ This starts the auth server on `http://localhost:8080` with an Azurite storage e
 - **Session Invalidation** — SecurityStamp rotation on org change, password reset
 - **SCIM 2.0 Provisioning** — inbound user/group provisioning from Entra ID, Okta, OneLogin. Per-client static Bearer tokens, soft-delete deactivation, TCC downstream triggers
 - **Admin APIs** — user CRUD, SAML/OIDC provider management, token impersonation, SCIM token management
+- **Custom User Attributes** — arbitrary per-user metadata via `AuthUser.CustomAttributes`, persisted alongside standard profile fields
 - **Brandable Login UI** — runtime-configurable branding via `branding.json`, CSS custom properties, or install the npm package and override individual components
+- **Dark Mode** — light / dark / system theme toggle in the login SPA; `prefers-color-scheme` detection with persisted user preference. Tenant branding variables override theme defaults.
 
 ## Deployment Options
 

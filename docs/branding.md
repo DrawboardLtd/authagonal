@@ -107,6 +107,47 @@ Override them in your custom CSS:
 
 The login UI uses Tailwind CSS. Custom CSS can target standard HTML elements and Tailwind utility classes. The exported UI components (`Button`, `Input`, `Card`, `Alert`, etc.) use Tailwind internally.
 
+## Dark Mode
+
+The login SPA ships with light, dark, and **system** themes. The theme toggle is always visible in the layout. User selection is persisted to `localStorage` under the `auth-theme` key.
+
+### How It Works
+
+- **Detection** — when the user picks "system", the SPA observes `window.matchMedia('(prefers-color-scheme: dark)')` and re-applies the theme automatically as the OS preference changes.
+- **Application** — the SPA toggles a `.dark` class on `<html>`. Tailwind's dark variant (`&:where(.dark, .dark *)`) activates the dark styles compiled into every component.
+- **Persistence** — explicit "light" / "dark" choices are stored in `localStorage`. "system" tracks the OS preference live.
+
+### CSS Variables
+
+Light values are declared at `:root`; dark-mode overrides are scoped to `.dark`, so tenant branding in `customCssUrl` always takes precedence when supplied.
+
+| Variable | Light | Dark |
+|---|---|---|
+| `--auth-bg` | `#f3f4f6` | `#030712` |
+| `--auth-card-bg` | `#ffffff` | `#111827` |
+| `--auth-heading` | `#111827` | `#f9fafb` |
+| `--brand-primary` | `#2563eb` | `#2563eb` (tenant branding wins) |
+
+### Disabling or Overriding
+
+Tenant branding always wins. To force a single theme, set your own values in `customCssUrl`:
+
+```css
+/* Force dark palette regardless of user choice */
+:root {
+  --auth-bg: #0f172a;
+  --auth-card-bg: #1e293b;
+  --auth-heading: #f8fafc;
+}
+.dark {
+  --auth-bg: #0f172a;
+  --auth-card-bg: #1e293b;
+  --auth-heading: #f8fafc;
+}
+```
+
+To remove the theme toggle entirely, use the npm package path — import `AuthLayout` and render without the toggle, or fork the SPA.
+
 ### Data Attributes
 
 All login form elements have `data-auth` attributes for CSS targeting and test automation:

@@ -1,5 +1,62 @@
 # Changelog
 
+## [0.1.86] — 2026-04-17
+
+### Added
+
+- **Dark mode** — login app supports light, dark, and system theme preferences. System color scheme is detected via `prefers-color-scheme` and user selection persists across browser sessions. New `useDarkMode` hook drives the theme toggle; all UI primitives (Alert, Button, Card, Input, Label, Separator) and pages (Login, Register, Consent, Device, Grants, MfaSetup, ResetPassword) updated with dark-mode styling. Tenant branding CSS variables still override theme defaults.
+
+### Changed
+
+- **Grant storage** — `GrantByExpiryEntity` partitioning refined for more reliable TTL sweeping of expired grants.
+
+## [0.1.85] — 2026-04-17
+
+### Added
+
+- **OAuth scope management** — admin CRUD endpoints under `/api/v1/scopes` backed by a new `ScopeEntity` table. Scopes defined at runtime are advertised by the discovery document and available to the consent screen alongside built-in scopes. New `IScopeStore` / `TableScopeStore` abstractions.
+- **Dynamic client registration (RFC 7591)** — `POST /connect/register` endpoint allows OAuth clients to self-register at runtime. Gated by `Auth:DynamicClientRegistrationEnabled` (default off) and advertised via `registration_endpoint` in the discovery document when enabled.
+- **Front-channel logout (RFC 7711)** — `EndSessionEndpoint` now supports front-channel logout URIs with configurable session requirements per client. Logs out of the authorization server and notifies registered clients via the browser.
+- **Token revocation tracking** — access tokens can be invalidated before their natural expiry. New `IRevokedTokenStore` / `TableRevokedTokenStore` back a persistent revocation list consulted by the introspection endpoint. `RevokedTokens` table added to backup defaults.
+- **Custom user attributes** — `AuthUser` gained a `CustomAttributes` dictionary for tenant-specific user metadata.
+- **Client audience** — `OAuthClient` gained an `Audience` field that flows into issued access tokens.
+
+### Changed
+
+- **Discovery document** — now advertises custom scopes and the registration endpoint dynamically based on configured state.
+
+## [0.1.84] — 2026-04-16
+
+### Fixed
+
+- **`TokenResponse` JSON serialization** — registered in `AuthagonalJsonContext` so token endpoint responses serialize correctly under Native AOT.
+
+## [0.1.83] — 2026-04-16
+
+### Added
+
+- **Table Storage backup whitepaper** — `docs/whitepaper-table-storage-backup.md` documents the backup strategy: full/incremental runs, tombstone tracking for deletes, merge/rollup operations, and restore procedures.
+
+### Fixed
+
+- **Auth request DTO JSON serialization** — registered `LoginRequest`, `RegisterRequest`, `ConfirmEmailRequest`, `ForgotPasswordRequest`, `ResetPasswordRequest`, `MfaVerifyRequest`, `TotpConfirmRequest`, and `WebAuthnConfirmRequest` in `AuthagonalJsonContext` for AOT compatibility.
+
+## [0.1.82] — 2026-04-15
+
+### Added
+
+- **SAML assertion replay detection** — IdP-initiated SAML flows now check incoming assertions against a replay cache (`SamlReplayCache`), rejecting re-submitted assertions.
+- **Absolute session expiration** — sessions now enforce a 7-day hard cap regardless of sliding renewal.
+- **Constant-time SCIM token comparison** — `ScimBearerAuthenticationHandler` uses constant-time comparison on token hashes to prevent timing attacks.
+
+### Changed
+
+- **Password reset tokens** — reset flows now use single-use persisted grants instead of the user security stamp, enabling explicit invalidation and preventing token reuse.
+- **PBKDF2 iterations increased** — password hashing cost raised in `AuthOptions`.
+- **Refresh token grace period reduced** — shorter window for accepting a refresh token after rotation.
+- **SCIM endpoints scoped to client** — SCIM requests are now scoped to the requesting OAuth client with per-client rate limiting, preventing cross-client enumeration.
+- **Consent data error handling** — improved logging and error paths when persisted consent data is malformed.
+
 ## [0.1.74] — 2026-04-10
 
 ### Changed
