@@ -568,3 +568,50 @@ public sealed class InMemoryRoleStore : IRoleStore
         return Task.CompletedTask;
     }
 }
+
+public sealed class InMemoryScopeStore : IScopeStore
+{
+    private readonly ConcurrentDictionary<string, Scope> _scopes = new(StringComparer.OrdinalIgnoreCase);
+
+    public Task<Scope?> GetAsync(string name, CancellationToken ct = default)
+        => Task.FromResult(_scopes.GetValueOrDefault(name));
+
+    public Task<IReadOnlyList<Scope>> ListAsync(CancellationToken ct = default)
+        => Task.FromResult<IReadOnlyList<Scope>>(_scopes.Values.OrderBy(s => s.Name).ToList());
+
+    public Task CreateAsync(Scope scope, CancellationToken ct = default)
+    {
+        _scopes[scope.Name] = scope;
+        return Task.CompletedTask;
+    }
+
+    public Task UpdateAsync(Scope scope, CancellationToken ct = default)
+    {
+        _scopes[scope.Name] = scope;
+        return Task.CompletedTask;
+    }
+
+    public Task DeleteAsync(string name, CancellationToken ct = default)
+    {
+        _scopes.TryRemove(name, out _);
+        return Task.CompletedTask;
+    }
+}
+
+public sealed class InMemoryRevokedTokenStore : IRevokedTokenStore
+{
+    private readonly ConcurrentDictionary<string, DateTimeOffset> _revoked = new();
+
+    public Task AddAsync(string jti, DateTimeOffset expiresAt, string? clientId = null, CancellationToken ct = default)
+    {
+        _revoked[jti] = expiresAt;
+        return Task.CompletedTask;
+    }
+
+    public Task<bool> IsRevokedAsync(string jti, CancellationToken ct = default)
+    {
+        if (_revoked.TryGetValue(jti, out var expiresAt) && expiresAt > DateTimeOffset.UtcNow)
+            return Task.FromResult(true);
+        return Task.FromResult(false);
+    }
+}

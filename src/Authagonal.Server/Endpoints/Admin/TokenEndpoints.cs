@@ -48,7 +48,7 @@ public static class TokenEndpoints
             : scopesParam.Split(' ', StringSplitOptions.RemoveEmptyEntries).ToList();
 
         var accessToken = await tokenService.CreateAccessTokenAsync(user, client, scopes, ct: ct);
-        var refreshToken = await tokenService.CreateRefreshTokenAsync(user, client, scopes, ct);
+        var refreshToken = await tokenService.CreateRefreshTokenAsync(user, client, scopes, ct: ct);
 
         string? idToken = null;
         if (scopes.Contains("openid", StringComparer.OrdinalIgnoreCase))

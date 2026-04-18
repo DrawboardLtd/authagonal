@@ -23,6 +23,7 @@ public sealed class AuthorizationCodeService(
         string? codeChallenge,
         string? codeChallengeMethod,
         string? nonce,
+        IEnumerable<string>? resources = null,
         CancellationToken ct = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(clientId);
@@ -45,6 +46,7 @@ public sealed class AuthorizationCodeService(
             SubjectId = subjectId,
             RedirectUri = redirectUri,
             Scopes = scopes.ToList(),
+            Resources = resources?.ToList(),
             CodeChallenge = codeChallenge,
             CodeChallengeMethod = codeChallengeMethod,
             Nonce = nonce,

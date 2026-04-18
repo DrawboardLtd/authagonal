@@ -30,6 +30,7 @@ public sealed class TokenService(
         OAuthClient client,
         IEnumerable<string> scopes,
         IDictionary<string, string>? additionalClaims = null,
+        IEnumerable<string>? resources = null,
         CancellationToken ct = default)
     {
         var now = DateTimeOffset.UtcNow;
@@ -75,9 +76,16 @@ public sealed class TokenService(
             Claims = claims
         };
 
-        if (client.Audiences.Count > 0)
+        // RFC 8707: if the caller specified resources for this token, narrow aud to that subset
+        // (already validated upstream as a subset of client.Audiences). Otherwise fall back to
+        // all configured audiences, or the client_id if none are configured.
+        var resourceList = resources?.Where(r => !string.IsNullOrWhiteSpace(r)).ToList();
+        if (resourceList is { Count: > 0 })
         {
-            // Per RFC 8707: honor configured audiences (API resources). Single value stays a string; multiple become an array.
+            claims["aud"] = resourceList.Count == 1 ? (object)resourceList[0] : resourceList.ToArray();
+        }
+        else if (client.Audiences.Count > 0)
+        {
             claims["aud"] = client.Audiences.Count == 1 ? (object)client.Audiences[0] : client.Audiences.ToArray();
         }
         else
@@ -169,6 +177,7 @@ public sealed class TokenService(
         AuthUser user,
         OAuthClient client,
         IEnumerable<string> scopes,
+        IEnumerable<string>? resources = null,
         CancellationToken ct = default)
     {
         var handle = GenerateRefreshTokenHandle();
@@ -184,6 +193,7 @@ public sealed class TokenService(
             Data = JsonSerializer.Serialize(new RefreshTokenData
             {
                 Scopes = scopeList,
+                Resources = resources?.ToList(),
                 SubjectId = user.Id,
                 ClientId = client.ClientId,
                 CreatedAt = now
@@ -243,8 +253,8 @@ public sealed class TokenService(
         var user = await userStore.GetAsync(authCode.SubjectId, ct)
             ?? throw new InvalidOperationException($"User '{authCode.SubjectId}' not found");
 
-        // Issue tokens
-        var accessToken = await CreateAccessTokenAsync(user, client, authCode.Scopes, ct: ct);
+        // Issue tokens — propagate any resource indicators captured at authorization time
+        var accessToken = await CreateAccessTokenAsync(user, client, authCode.Scopes, resources: authCode.Resources, ct: ct);
 
         string? idToken = null;
         if (authCode.Scopes.Contains(StandardScopes.OpenId))
@@ -255,7 +265,7 @@ public sealed class TokenService(
         string? refreshToken = null;
         if (authCode.Scopes.Contains(StandardScopes.OfflineAccess) && client.AllowOfflineAccess)
         {
-            refreshToken = await CreateRefreshTokenAsync(user, client, authCode.Scopes, ct);
+            refreshToken = await CreateRefreshTokenAsync(user, client, authCode.Scopes, authCode.Resources, ct);
         }
 
         logger.LogInformation(
@@ -275,6 +285,7 @@ public sealed class TokenService(
     public async Task<TokenResponse> HandleRefreshTokenAsync(
         string refreshToken,
         string clientId,
+        IEnumerable<string>? resources = null,
         CancellationToken ct = default)
     {
         var grant = await grantStore.GetAsync(refreshToken, ct);
@@ -321,17 +332,38 @@ public sealed class TokenService(
         if (!user.IsActive)
             throw new InvalidOperationException("User account has been deactivated");
 
+        // RFC 8707 §2.2: refresh can request a narrower audience than the original grant.
+        // If the client specifies resources on the refresh call, they must be a subset of what
+        // was recorded on the original grant (or if none were recorded, a subset of client.Audiences).
+        var requestedResources = resources?.Where(r => !string.IsNullOrWhiteSpace(r)).ToList();
+        List<string>? tokenResources;
+        if (requestedResources is { Count: > 0 })
+        {
+            var allowed = data.Resources is { Count: > 0 } ? data.Resources : client.Audiences;
+            foreach (var r in requestedResources)
+            {
+                if (!allowed.Contains(r, StringComparer.Ordinal))
+                    throw new InvalidOperationException($"Resource '{r}' is not permitted for this refresh token");
+            }
+            tokenResources = requestedResources;
+        }
+        else
+        {
+            tokenResources = data.Resources;
+        }
+
         // Consume the old token (mark as used)
         if (!grant.ConsumedAt.HasValue)
         {
             await grantStore.ConsumeAsync(refreshToken, ct);
         }
 
-        // Issue new refresh token (one-time rotation)
-        var newRefreshToken = await CreateRefreshTokenAsync(user, client, data.Scopes, ct);
+        // Issue new refresh token (one-time rotation) — preserve the original grant's resources
+        // so future refreshes keep the same ceiling even if this call narrowed the access token.
+        var newRefreshToken = await CreateRefreshTokenAsync(user, client, data.Scopes, data.Resources, ct);
 
-        // Issue new access token
-        var accessToken = await CreateAccessTokenAsync(user, client, data.Scopes, ct: ct);
+        // Issue new access token (narrowed to requested resources, if any)
+        var accessToken = await CreateAccessTokenAsync(user, client, data.Scopes, resources: tokenResources, ct: ct);
 
         // Issue new ID token if openid scope
         string? idToken = null;
@@ -357,6 +389,7 @@ public sealed class TokenService(
     public async Task<TokenResponse> HandleClientCredentialsAsync(
         string clientId,
         IEnumerable<string> scopes,
+        IEnumerable<string>? resources = null,
         CancellationToken ct = default)
     {
         var client = await clientStore.GetAsync(clientId, ct)
@@ -374,8 +407,21 @@ public sealed class TokenService(
                 throw new InvalidOperationException($"Scope '{scope}' is not allowed for client '{clientId}'");
         }
 
+        // RFC 8707: validate requested resources against the client's registered audiences.
+        var resourceList = resources?.Where(r => !string.IsNullOrWhiteSpace(r)).ToList();
+        if (resourceList is { Count: > 0 })
+        {
+            foreach (var r in resourceList)
+            {
+                if (!Uri.TryCreate(r, UriKind.Absolute, out var u) || !string.IsNullOrEmpty(u.Fragment))
+                    throw new InvalidOperationException($"Resource '{r}' is not a valid absolute URI");
+                if (!client.Audiences.Contains(r, StringComparer.Ordinal))
+                    throw new InvalidOperationException($"Resource '{r}' is not registered for this client");
+            }
+        }
+
         // Client credentials: access token only (no refresh token, no ID token)
-        var accessToken = await CreateAccessTokenAsync(null, client, scopeList, ct: ct);
+        var accessToken = await CreateAccessTokenAsync(null, client, scopeList, resources: resourceList, ct: ct);
 
         logger.LogInformation("Client credentials token issued for client {ClientId}", clientId);
 
@@ -405,7 +451,7 @@ public sealed class TokenService(
         string? refreshToken = null;
         if (scopeList.Contains("offline_access") && client.AllowOfflineAccess)
         {
-            refreshToken = await CreateRefreshTokenAsync(user, client, scopeList, ct);
+            refreshToken = await CreateRefreshTokenAsync(user, client, scopeList, ct: ct);
         }
 
         string? idToken = null;
@@ -468,6 +514,7 @@ public sealed class TokenService(
     internal sealed class RefreshTokenData
     {
         public required List<string> Scopes { get; set; }
+        public List<string>? Resources { get; set; }
         public required string SubjectId { get; set; }
         public required string ClientId { get; set; }
         public DateTimeOffset CreatedAt { get; set; }

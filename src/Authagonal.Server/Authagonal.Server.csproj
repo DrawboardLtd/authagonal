@@ -18,6 +18,10 @@
     <PackageReference Include="Azure.Storage.Blobs" Version="12.*" />
     <!-- Pin transitive to fix CVE GHSA-73j8-2gch-69rq -->
     <PackageReference Include="Microsoft.Bcl.Memory" Version="10.*" />
+    <!-- Pin transitive to fix CVE GHSA-37gx-xxp4-5rgx and GHSA-w3x6-4m5h-cxqf.
+         NoWarn=NU1510: the framework would prune this for Sdk.Web consumers, but downstream
+         non-Web test/tool projects need the explicit pin to avoid the vulnerable 8.0.2. -->
+    <PackageReference Include="System.Security.Cryptography.Xml" Version="9.*" NoWarn="NU1510" />
   </ItemGroup>
 
   <PropertyGroup>

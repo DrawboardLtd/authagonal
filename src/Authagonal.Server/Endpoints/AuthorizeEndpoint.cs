@@ -33,6 +33,7 @@ public static class AuthorizeEndpoint
             var codeChallenge = query["code_challenge"].FirstOrDefault();
             var codeChallengeMethod = query["code_challenge_method"].FirstOrDefault();
             var nonce = query["nonce"].FirstOrDefault();
+            var resources = query["resource"].Where(r => !string.IsNullOrWhiteSpace(r)).Cast<string>().ToArray();
 
             // Validate required parameters
             if (string.IsNullOrWhiteSpace(clientId))
@@ -58,6 +59,17 @@ public static class AuthorizeEndpoint
             var invalidScopes = requestedScopes.Except(client.AllowedScopes, StringComparer.OrdinalIgnoreCase).ToArray();
             if (invalidScopes.Length > 0)
                 return BuildErrorRedirect(redirectUri, "invalid_scope", $"Scopes not allowed: {string.Join(", ", invalidScopes)}", state);
+
+            // RFC 8707: validate resource indicators against the client's registered audiences.
+            // Each resource must be an absolute URI without a fragment, and must be in client.Audiences.
+            foreach (var resource in resources)
+            {
+                if (!Uri.TryCreate(resource, UriKind.Absolute, out var resourceUri) || !string.IsNullOrEmpty(resourceUri.Fragment))
+                    return BuildErrorRedirect(redirectUri, "invalid_target", $"resource '{resource}' is not a valid absolute URI", state);
+
+                if (!client.Audiences.Contains(resource, StringComparer.Ordinal))
+                    return BuildErrorRedirect(redirectUri, "invalid_target", $"resource '{resource}' is not registered for this client", state);
+            }
 
             // Validate PKCE
             if (client.RequirePkce)
@@ -157,6 +169,7 @@ public static class AuthorizeEndpoint
                 codeChallenge,
                 codeChallengeMethod,
                 nonce,
+                resources.Length > 0 ? resources : null,
                 ct);
 
             // Build redirect URI with code and state

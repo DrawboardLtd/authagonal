@@ -111,8 +111,17 @@ public static class TokenEndpoint
         if (string.IsNullOrWhiteSpace(refreshToken))
             return TokenError("invalid_request", "refresh_token is required");
 
-        var response = await tokenService.HandleRefreshTokenAsync(refreshToken, clientId, ct);
-        return Results.Ok(response);
+        var resources = form["resource"].Where(r => !string.IsNullOrWhiteSpace(r)).Cast<string>().ToArray();
+
+        try
+        {
+            var response = await tokenService.HandleRefreshTokenAsync(refreshToken, clientId, resources.Length > 0 ? resources : null, ct);
+            return Results.Ok(response);
+        }
+        catch (InvalidOperationException ex) when (ex.Message.StartsWith("Resource '", StringComparison.Ordinal))
+        {
+            return TokenError("invalid_target", ex.Message);
+        }
     }
 
     private static async Task<IResult> HandleClientCredentials(
@@ -120,9 +129,17 @@ public static class TokenEndpoint
     {
         var scope = form["scope"].FirstOrDefault() ?? string.Empty;
         var scopes = scope.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        var resources = form["resource"].Where(r => !string.IsNullOrWhiteSpace(r)).Cast<string>().ToArray();
 
-        var response = await tokenService.HandleClientCredentialsAsync(clientId, scopes, ct);
-        return Results.Ok(response);
+        try
+        {
+            var response = await tokenService.HandleClientCredentialsAsync(clientId, scopes, resources.Length > 0 ? resources : null, ct);
+            return Results.Ok(response);
+        }
+        catch (InvalidOperationException ex) when (ex.Message.StartsWith("Resource '", StringComparison.Ordinal))
+        {
+            return TokenError("invalid_target", ex.Message);
+        }
     }
 
     private static async Task<IResult> HandleDeviceCode(
