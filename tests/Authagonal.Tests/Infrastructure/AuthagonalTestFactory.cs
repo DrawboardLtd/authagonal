@@ -110,6 +110,7 @@ public sealed class AuthagonalTestFactory : IAsyncDisposable
             AllowedScopes = ["openid", "profile", "email", "offline_access"],
             AllowOfflineAccess = true,
             AccessTokenLifetimeSeconds = 3600,
+            Audiences = ["https://api.test/v1", "https://api.test/v2"],
         });
 
         await ClientStore.UpsertAsync(new OAuthClient
