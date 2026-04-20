@@ -12,8 +12,16 @@ public sealed class TableUserStore(
     TableClient userEmailsTable,
     TableClient userLoginsTable,
     TableClient userExternalIdsTable,
+    TableClient userFirstNamesTable,
+    TableClient userLastNamesTable,
     ITombstoneWriter? tombstoneWriter = null) : IUserStore
 {
+    private static string? Normalize(string? name)
+    {
+        if (string.IsNullOrWhiteSpace(name)) return null;
+        return name.Trim().ToUpperInvariant();
+    }
+
     public async Task<AuthUser?> GetAsync(string userId, CancellationToken ct = default)
     {
         try
@@ -50,6 +58,16 @@ public sealed class TableUserStore(
 
         await usersTable.AddEntityAsync(userEntity, ct);
         await userEmailsTable.UpsertEntityAsync(emailEntity, TableUpdateMode.Replace, ct);
+
+        var normFirst = Normalize(user.FirstName);
+        if (normFirst is not null)
+            await userFirstNamesTable.UpsertEntityAsync(
+                UserFirstNameEntity.Create(normFirst, user.Id), TableUpdateMode.Replace, ct);
+
+        var normLast = Normalize(user.LastName);
+        if (normLast is not null)
+            await userLastNamesTable.UpsertEntityAsync(
+                UserLastNameEntity.Create(normLast, user.Id), TableUpdateMode.Replace, ct);
     }
 
     public async Task UpdateAsync(AuthUser user, CancellationToken ct = default)
@@ -83,6 +101,50 @@ public sealed class TableUserStore(
                 var emailEntity = UserEmailEntity.Create(newNormalizedEmail, user.Id);
                 await userEmailsTable.UpsertEntityAsync(emailEntity, TableUpdateMode.Replace, ct);
             }
+
+            var oldFirst = Normalize(existing.Value.FirstName);
+            var newFirst = Normalize(user.FirstName);
+            if (!string.Equals(oldFirst, newFirst, StringComparison.Ordinal))
+            {
+                if (oldFirst is not null)
+                {
+                    var oldRk = UserFirstNameEntity.MakeRowKey(oldFirst, user.Id);
+                    try
+                    {
+                        await userFirstNamesTable.DeleteEntityAsync(
+                            UserFirstNameEntity.AllPartitionKey, oldRk, cancellationToken: ct);
+                        if (tombstoneWriter is not null)
+                            await tombstoneWriter.WriteAsync("UserFirstNames", UserFirstNameEntity.AllPartitionKey, oldRk, ct);
+                    }
+                    catch (RequestFailedException ex) when (ex.Status == 404) { }
+                }
+
+                if (newFirst is not null)
+                    await userFirstNamesTable.UpsertEntityAsync(
+                        UserFirstNameEntity.Create(newFirst, user.Id), TableUpdateMode.Replace, ct);
+            }
+
+            var oldLast = Normalize(existing.Value.LastName);
+            var newLast = Normalize(user.LastName);
+            if (!string.Equals(oldLast, newLast, StringComparison.Ordinal))
+            {
+                if (oldLast is not null)
+                {
+                    var oldRk = UserLastNameEntity.MakeRowKey(oldLast, user.Id);
+                    try
+                    {
+                        await userLastNamesTable.DeleteEntityAsync(
+                            UserLastNameEntity.AllPartitionKey, oldRk, cancellationToken: ct);
+                        if (tombstoneWriter is not null)
+                            await tombstoneWriter.WriteAsync("UserLastNames", UserLastNameEntity.AllPartitionKey, oldRk, ct);
+                    }
+                    catch (RequestFailedException ex) when (ex.Status == 404) { }
+                }
+
+                if (newLast is not null)
+                    await userLastNamesTable.UpsertEntityAsync(
+                        UserLastNameEntity.Create(newLast, user.Id), TableUpdateMode.Replace, ct);
+            }
         }
         catch (RequestFailedException ex) when (ex.Status == 404)
         {
@@ -108,6 +170,36 @@ public sealed class TableUserStore(
                     await tombstoneWriter.WriteAsync("UserEmails", existing.Value.NormalizedEmail, UserEmailEntity.LookupRowKey, ct);
             }
             catch (RequestFailedException ex) when (ex.Status == 404) { }
+
+            // Delete first-name index
+            var normFirst = Normalize(existing.Value.FirstName);
+            if (normFirst is not null)
+            {
+                var rk = UserFirstNameEntity.MakeRowKey(normFirst, userId);
+                try
+                {
+                    await userFirstNamesTable.DeleteEntityAsync(
+                        UserFirstNameEntity.AllPartitionKey, rk, cancellationToken: ct);
+                    if (tombstoneWriter is not null)
+                        await tombstoneWriter.WriteAsync("UserFirstNames", UserFirstNameEntity.AllPartitionKey, rk, ct);
+                }
+                catch (RequestFailedException ex) when (ex.Status == 404) { }
+            }
+
+            // Delete last-name index
+            var normLast = Normalize(existing.Value.LastName);
+            if (normLast is not null)
+            {
+                var rk = UserLastNameEntity.MakeRowKey(normLast, userId);
+                try
+                {
+                    await userLastNamesTable.DeleteEntityAsync(
+                        UserLastNameEntity.AllPartitionKey, rk, cancellationToken: ct);
+                    if (tombstoneWriter is not null)
+                        await tombstoneWriter.WriteAsync("UserLastNames", UserLastNameEntity.AllPartitionKey, rk, ct);
+                }
+                catch (RequestFailedException ex) when (ex.Status == 404) { }
+            }
 
             // Delete all external login entries for this user
             var logins = await GetLoginsAsync(userId, ct);
@@ -231,40 +323,75 @@ public sealed class TableUserStore(
 
         query = query.Trim();
         var results = new List<AuthUser>();
+        var seen = new HashSet<string>(StringComparer.Ordinal);
 
         // 1. Try exact userId match (point read)
         var byId = await GetAsync(query, ct);
-        if (byId is not null)
+        if (byId is not null && seen.Add(byId.Id))
             results.Add(byId);
 
         // 2. Try exact email match
         var byEmail = await FindByEmailAsync(query, ct);
-        if (byEmail is not null && results.All(u => u.Id != byEmail.Id))
+        if (byEmail is not null && seen.Add(byEmail.Id))
             results.Add(byEmail);
 
         if (results.Count >= maxResults)
             return results;
 
-        // 3. Email prefix search — range query on UserEmails table
+        // 3. Prefix search — run email, first-name, and last-name range queries in parallel,
+        //    then point-read the matching user ids (deduped) up to maxResults.
         var prefix = query.ToUpperInvariant();
         var prefixEnd = prefix + "\uffff";
 
-        await foreach (var entity in userEmailsTable.QueryAsync<UserEmailEntity>(
-            e => e.PartitionKey.CompareTo(prefix) >= 0 && e.PartitionKey.CompareTo(prefixEnd) < 0,
-            cancellationToken: ct))
-        {
-            if (results.Any(u => u.Id == entity.UserId))
-                continue;
+        var emailTask = CollectUserIdsAsync(
+            userEmailsTable.QueryAsync<UserEmailEntity>(
+                e => e.PartitionKey.CompareTo(prefix) >= 0 && e.PartitionKey.CompareTo(prefixEnd) < 0,
+                cancellationToken: ct),
+            e => e.UserId, maxResults, ct);
 
-            var user = await GetAsync(entity.UserId, ct);
+        var firstNameTask = CollectUserIdsAsync(
+            userFirstNamesTable.QueryAsync<UserFirstNameEntity>(
+                e => e.PartitionKey == UserFirstNameEntity.AllPartitionKey
+                     && e.RowKey.CompareTo(prefix) >= 0 && e.RowKey.CompareTo(prefixEnd) < 0,
+                cancellationToken: ct),
+            e => e.UserId, maxResults, ct);
+
+        var lastNameTask = CollectUserIdsAsync(
+            userLastNamesTable.QueryAsync<UserLastNameEntity>(
+                e => e.PartitionKey == UserLastNameEntity.AllPartitionKey
+                     && e.RowKey.CompareTo(prefix) >= 0 && e.RowKey.CompareTo(prefixEnd) < 0,
+                cancellationToken: ct),
+            e => e.UserId, maxResults, ct);
+
+        await Task.WhenAll(emailTask, firstNameTask, lastNameTask);
+
+        // Interleave: email hits first, then first-name, then last-name.
+        foreach (var id in emailTask.Result.Concat(firstNameTask.Result).Concat(lastNameTask.Result))
+        {
+            if (!seen.Add(id)) continue;
+            var user = await GetAsync(id, ct);
             if (user is not null)
                 results.Add(user);
-
             if (results.Count >= maxResults)
                 break;
         }
 
         return results;
+    }
+
+    private static async Task<List<string>> CollectUserIdsAsync<T>(
+        Azure.AsyncPageable<T> query,
+        Func<T, string> extractUserId,
+        int cap,
+        CancellationToken ct) where T : class
+    {
+        var ids = new List<string>();
+        await foreach (var entity in query.WithCancellation(ct))
+        {
+            ids.Add(extractUserId(entity));
+            if (ids.Count >= cap) break;
+        }
+        return ids;
     }
 
     public async Task SetExternalIdAsync(string userId, string clientId, string externalId, CancellationToken ct = default)

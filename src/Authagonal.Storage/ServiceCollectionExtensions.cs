@@ -12,6 +12,8 @@ public static class ServiceCollectionExtensions
 {
     private const string UsersTableName = "Users";
     private const string UserEmailsTableName = "UserEmails";
+    private const string UserFirstNamesTableName = "UserFirstNames";
+    private const string UserLastNamesTableName = "UserLastNames";
     private const string UserLoginsTableName = "UserLogins";
     private const string ClientsTableName = "Clients";
     private const string GrantsTableName = "Grants";
@@ -48,6 +50,8 @@ public static class ServiceCollectionExtensions
         // Eagerly create all table clients (and auto-create tables).
         var users = EnsureTable(serviceClient, UsersTableName);
         var userEmails = EnsureTable(serviceClient, UserEmailsTableName);
+        var userFirstNames = EnsureTable(serviceClient, UserFirstNamesTableName);
+        var userLastNames = EnsureTable(serviceClient, UserLastNamesTableName);
         var userLogins = EnsureTable(serviceClient, UserLoginsTableName);
         var clients = EnsureTable(serviceClient, ClientsTableName);
         var grants = EnsureTable(serviceClient, GrantsTableName);
@@ -73,7 +77,7 @@ public static class ServiceCollectionExtensions
 
         // Register store implementations as singletons.
         // TryAdd allows multi-tenant hosts to register scoped stores first.
-        services.TryAddSingleton<IUserStore>(new TableUserStore(users, userEmails, userLogins, userExternalIds));
+        services.TryAddSingleton<IUserStore>(new TableUserStore(users, userEmails, userLogins, userExternalIds, userFirstNames, userLastNames));
         services.TryAddSingleton<IClientStore>(new TableClientStore(clients));
         services.TryAddSingleton<IGrantStore>(sp =>
             new TableGrantStore(grants, grantsBySubject, grantsByExpiry, sp.GetRequiredService<ILoggerFactory>().CreateLogger<TableGrantStore>()));

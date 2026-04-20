@@ -20,6 +20,8 @@ internal sealed class StoreFactory
 
         var users = EnsureTable(serviceClient, "Users");
         var userEmails = EnsureTable(serviceClient, "UserEmails");
+        var userFirstNames = EnsureTable(serviceClient, "UserFirstNames");
+        var userLastNames = EnsureTable(serviceClient, "UserLastNames");
         var userLogins = EnsureTable(serviceClient, "UserLogins");
         var clients = EnsureTable(serviceClient, "Clients");
         var grants = EnsureTable(serviceClient, "Grants");
@@ -32,7 +34,7 @@ internal sealed class StoreFactory
 
         return new StoreFactory
         {
-            UserStore = new TableUserStore(users, userEmails, userLogins, userExternalIds),
+            UserStore = new TableUserStore(users, userEmails, userLogins, userExternalIds, userFirstNames, userLastNames),
             ClientStore = new TableClientStore(clients),
             GrantStore = new TableGrantStore(grants, grantsBySubject, grantsByExpiry, NullLogger<TableGrantStore>.Instance),
             SsoDomainStore = new TableSsoDomainStore(ssoDomains),

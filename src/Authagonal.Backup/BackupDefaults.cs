@@ -9,7 +9,7 @@ public static class BackupDefaults
     /// </summary>
     public static readonly string[] Tables =
     [
-        "Users", "UserEmails", "UserLogins", "UserExternalIds",
+        "Users", "UserEmails", "UserFirstNames", "UserLastNames", "UserLogins", "UserExternalIds",
         "Clients",
         "Grants", "GrantsBySubject", "GrantsByExpiry",
         "SigningKeys",
