@@ -211,6 +211,9 @@ public sealed class ConsentInfoResponse
 {
     [JsonPropertyName("clientId")] public string ClientId { get; set; } = "";
     [JsonPropertyName("clientName")] public string ClientName { get; set; } = "";
+    [JsonPropertyName("description")] public string? Description { get; set; }
+    [JsonPropertyName("clientUri")] public string? ClientUri { get; set; }
+    [JsonPropertyName("logoUri")] public string? LogoUri { get; set; }
     [JsonPropertyName("scopes")] public string[] Scopes { get; set; } = [];
 }
 

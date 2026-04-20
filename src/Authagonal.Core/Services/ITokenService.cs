@@ -6,7 +6,7 @@ public interface ITokenService
 {
     Task<string> CreateAccessTokenAsync(AuthUser? user, OAuthClient client, IEnumerable<string> scopes, IDictionary<string, string>? additionalClaims = null, IEnumerable<string>? resources = null, CancellationToken ct = default);
     Task<string> CreateIdTokenAsync(AuthUser user, OAuthClient client, IEnumerable<string> scopes, string? nonce = null, CancellationToken ct = default);
-    Task<string> CreateRefreshTokenAsync(AuthUser user, OAuthClient client, IEnumerable<string> scopes, IEnumerable<string>? resources = null, CancellationToken ct = default);
+    Task<string> CreateRefreshTokenAsync(AuthUser user, OAuthClient client, IEnumerable<string> scopes, IEnumerable<string>? resources = null, DateTimeOffset? originalCreatedAt = null, CancellationToken ct = default);
     Task<TokenResponse> HandleAuthorizationCodeAsync(string code, string clientId, string redirectUri, string codeVerifier, CancellationToken ct = default);
     Task<TokenResponse> HandleRefreshTokenAsync(string refreshToken, string clientId, IEnumerable<string>? resources = null, CancellationToken ct = default);
     Task<TokenResponse> HandleClientCredentialsAsync(string clientId, IEnumerable<string> scopes, IEnumerable<string>? resources = null, CancellationToken ct = default);

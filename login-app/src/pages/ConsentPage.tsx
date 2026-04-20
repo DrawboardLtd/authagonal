@@ -18,6 +18,9 @@ const SCOPE_LABELS: Record<string, string> = {
 interface ConsentInfo {
   clientId: string;
   clientName: string;
+  description?: string;
+  clientUri?: string;
+  logoUri?: string;
   scopes: string[];
 }
 
@@ -77,8 +80,36 @@ export default function ConsentPage() {
 
   return (
     <AuthLayout>
+      {info?.logoUri && (
+        <div className="flex justify-center mb-4">
+          <img
+            src={info.logoUri}
+            alt={info.clientName}
+            className="h-12 w-12 rounded-lg object-contain"
+            onError={(e) => {
+              (e.currentTarget as HTMLImageElement).style.display = 'none';
+            }}
+          />
+        </div>
+      )}
       <CardTitle>{t('consent.title', { appName: info?.clientName ?? clientId })}</CardTitle>
       <p className="text-sm text-gray-500 dark:text-gray-400 mb-4">{t('consent.subtitle', { appName: info?.clientName ?? clientId })}</p>
+
+      {info?.description && (
+        <p className="text-sm text-gray-600 dark:text-gray-300 mb-4">{info.description}</p>
+      )}
+      {info?.clientUri && (
+        <p className="text-xs text-gray-500 dark:text-gray-400 mb-4">
+          <a
+            href={info.clientUri}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-primary hover:underline"
+          >
+            {info.clientUri}
+          </a>
+        </p>
+      )}
 
       {error && <Alert variant="error">{error}</Alert>}
 

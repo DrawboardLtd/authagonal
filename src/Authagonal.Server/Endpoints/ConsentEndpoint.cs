@@ -26,6 +26,9 @@ public static class ConsentEndpoint
             {
                 ClientId = client.ClientId,
                 ClientName = client.ClientName,
+                Description = client.Description,
+                ClientUri = client.ClientUri,
+                LogoUri = client.LogoUri,
                 Scopes = requestedScopes,
             }, AuthagonalJsonContext.Default.ConsentInfoResponse);
         });

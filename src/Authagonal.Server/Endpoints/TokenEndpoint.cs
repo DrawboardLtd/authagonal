@@ -33,6 +33,9 @@ public static class TokenEndpoint
             if (client is null)
                 return TokenError("invalid_client", "Unknown client");
 
+            if (!client.Enabled)
+                return TokenError("unauthorized_client", "Client is disabled");
+
             // Verify client secret if required
             if (client.RequireClientSecret)
             {

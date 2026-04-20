@@ -178,11 +178,25 @@ public sealed class TokenService(
         OAuthClient client,
         IEnumerable<string> scopes,
         IEnumerable<string>? resources = null,
+        DateTimeOffset? originalCreatedAt = null,
         CancellationToken ct = default)
     {
         var handle = GenerateRefreshTokenHandle();
         var now = DateTimeOffset.UtcNow;
         var scopeList = scopes.ToList();
+
+        // Absolute mode: hard cap measured from the original issuance; rotation preserves
+        // the cap so long-lived clients can't refresh forever.
+        // Sliding mode: window extends by Sliding on each rotation, but never past the
+        // absolute cap from original issuance.
+        var origin = originalCreatedAt ?? now;
+        var absoluteCap = origin.AddSeconds(client.AbsoluteRefreshTokenLifetimeSeconds);
+        DateTimeOffset expiresAt = client.RefreshTokenExpiration switch
+        {
+            RefreshTokenExpiration.Sliding =>
+                new[] { now.AddSeconds(client.SlidingRefreshTokenLifetimeSeconds), absoluteCap }.Min(),
+            _ => absoluteCap,
+        };
 
         var grant = new PersistedGrant
         {
@@ -196,10 +210,11 @@ public sealed class TokenService(
                 Resources = resources?.ToList(),
                 SubjectId = user.Id,
                 ClientId = client.ClientId,
-                CreatedAt = now
+                CreatedAt = now,
+                OriginalCreatedAt = origin,
             }, AuthagonalJsonContext.Default.RefreshTokenData),
             CreatedAt = now,
-            ExpiresAt = now.AddSeconds(client.AbsoluteRefreshTokenLifetimeSeconds)
+            ExpiresAt = expiresAt,
         };
 
         await grantStore.StoreAsync(grant, ct);
@@ -265,7 +280,7 @@ public sealed class TokenService(
         string? refreshToken = null;
         if (authCode.Scopes.Contains(StandardScopes.OfflineAccess) && client.AllowOfflineAccess)
         {
-            refreshToken = await CreateRefreshTokenAsync(user, client, authCode.Scopes, authCode.Resources, ct);
+            refreshToken = await CreateRefreshTokenAsync(user, client, authCode.Scopes, authCode.Resources, ct: ct);
         }
 
         logger.LogInformation(
@@ -360,7 +375,11 @@ public sealed class TokenService(
 
         // Issue new refresh token (one-time rotation) — preserve the original grant's resources
         // so future refreshes keep the same ceiling even if this call narrowed the access token.
-        var newRefreshToken = await CreateRefreshTokenAsync(user, client, data.Scopes, data.Resources, ct);
+        // Pass OriginalCreatedAt through so the absolute cap stays anchored to first issuance,
+        // not the most recent rotation (falls back to CreatedAt for pre-upgrade tokens).
+        var originalCreatedAt = data.OriginalCreatedAt ?? data.CreatedAt;
+        var newRefreshToken = await CreateRefreshTokenAsync(
+            user, client, data.Scopes, data.Resources, originalCreatedAt, ct);
 
         // Issue new access token (narrowed to requested resources, if any)
         var accessToken = await CreateAccessTokenAsync(user, client, data.Scopes, resources: tokenResources, ct: ct);
@@ -518,5 +537,8 @@ public sealed class TokenService(
         public required string SubjectId { get; set; }
         public required string ClientId { get; set; }
         public DateTimeOffset CreatedAt { get; set; }
+        // Tracks first issuance so the absolute refresh lifetime cap survives rotations.
+        // Nullable so pre-upgrade grants deserialize cleanly; rotation falls back to CreatedAt.
+        public DateTimeOffset? OriginalCreatedAt { get; set; }
     }
 }

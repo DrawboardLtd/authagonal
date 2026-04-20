@@ -43,6 +43,9 @@ public static class AuthorizeEndpoint
             if (client is null)
                 return BuildErrorRedirect(redirectUri, "unauthorized_client", "Unknown client_id", state);
 
+            if (!client.Enabled)
+                return BuildErrorRedirect(redirectUri, "unauthorized_client", "Client is disabled", state);
+
             if (string.IsNullOrWhiteSpace(redirectUri))
                 return BuildErrorRedirect(null, "invalid_request", "redirect_uri is required", state);
 

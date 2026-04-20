@@ -15,11 +15,19 @@ public sealed class ClientEntity : ITableEntity
     public const string ConfigRowKey = "config";
 
     public required string ClientName { get; set; }
+    public string? Description { get; set; }
+    public string? ClientUri { get; set; }
+    public string? LogoUri { get; set; }
+    // Nullable with default-true semantics — a row written before this field existed
+    // should not read as disabled. ToModel() coerces null → true.
+    public bool? Enabled { get; set; } = true;
     public required string ClientSecretHashesJson { get; set; }
     public required string AllowedGrantTypesJson { get; set; }
     public required string RedirectUrisJson { get; set; }
     public required string PostLogoutRedirectUrisJson { get; set; }
     public string? BackChannelLogoutUri { get; set; }
+    // Same default-true pattern as Enabled.
+    public bool? BackChannelLogoutSessionRequired { get; set; } = true;
     public string? FrontChannelLogoutUri { get; set; }
     public bool FrontChannelLogoutSessionRequired { get; set; } = true;
     public string AudiencesJson { get; set; } = "[]";
@@ -37,6 +45,7 @@ public sealed class ClientEntity : ITableEntity
     public int AbsoluteRefreshTokenLifetimeSeconds { get; set; }
     public int SlidingRefreshTokenLifetimeSeconds { get; set; }
     public int RefreshTokenUsage { get; set; }
+    public int RefreshTokenExpiration { get; set; }
     public string ProvisioningAppsJson { get; set; } = "[]";
     public int MfaPolicy { get; set; }
 
@@ -45,11 +54,16 @@ public sealed class ClientEntity : ITableEntity
         PartitionKey = client.ClientId,
         RowKey = ConfigRowKey,
         ClientName = client.ClientName,
+        Description = client.Description,
+        ClientUri = client.ClientUri,
+        LogoUri = client.LogoUri,
+        Enabled = client.Enabled,
         ClientSecretHashesJson = JsonSerializer.Serialize(client.ClientSecretHashes, StorageJsonContext.Default.ListString),
         AllowedGrantTypesJson = JsonSerializer.Serialize(client.AllowedGrantTypes, StorageJsonContext.Default.ListString),
         RedirectUrisJson = JsonSerializer.Serialize(client.RedirectUris, StorageJsonContext.Default.ListString),
         PostLogoutRedirectUrisJson = JsonSerializer.Serialize(client.PostLogoutRedirectUris, StorageJsonContext.Default.ListString),
         BackChannelLogoutUri = client.BackChannelLogoutUri,
+        BackChannelLogoutSessionRequired = client.BackChannelLogoutSessionRequired,
         FrontChannelLogoutUri = client.FrontChannelLogoutUri,
         FrontChannelLogoutSessionRequired = client.FrontChannelLogoutSessionRequired,
         AudiencesJson = JsonSerializer.Serialize(client.Audiences, StorageJsonContext.Default.ListString),
@@ -67,6 +81,7 @@ public sealed class ClientEntity : ITableEntity
         AbsoluteRefreshTokenLifetimeSeconds = client.AbsoluteRefreshTokenLifetimeSeconds,
         SlidingRefreshTokenLifetimeSeconds = client.SlidingRefreshTokenLifetimeSeconds,
         RefreshTokenUsage = (int)client.RefreshTokenUsage,
+        RefreshTokenExpiration = (int)client.RefreshTokenExpiration,
         ProvisioningAppsJson = JsonSerializer.Serialize(client.ProvisioningApps, StorageJsonContext.Default.ListString),
         MfaPolicy = (int)client.MfaPolicy,
     };
@@ -75,11 +90,16 @@ public sealed class ClientEntity : ITableEntity
     {
         ClientId = PartitionKey,
         ClientName = ClientName,
+        Description = Description,
+        ClientUri = ClientUri,
+        LogoUri = LogoUri,
+        Enabled = Enabled ?? true,
         ClientSecretHashes = JsonSerializer.Deserialize(ClientSecretHashesJson, StorageJsonContext.Default.ListString) ?? [],
         AllowedGrantTypes = JsonSerializer.Deserialize(AllowedGrantTypesJson, StorageJsonContext.Default.ListString) ?? [],
         RedirectUris = JsonSerializer.Deserialize(RedirectUrisJson, StorageJsonContext.Default.ListString) ?? [],
         PostLogoutRedirectUris = JsonSerializer.Deserialize(PostLogoutRedirectUrisJson, StorageJsonContext.Default.ListString) ?? [],
         BackChannelLogoutUri = BackChannelLogoutUri,
+        BackChannelLogoutSessionRequired = BackChannelLogoutSessionRequired ?? true,
         FrontChannelLogoutUri = FrontChannelLogoutUri,
         FrontChannelLogoutSessionRequired = FrontChannelLogoutSessionRequired,
         Audiences = JsonSerializer.Deserialize(AudiencesJson, StorageJsonContext.Default.ListString) ?? [],
@@ -97,6 +117,7 @@ public sealed class ClientEntity : ITableEntity
         AbsoluteRefreshTokenLifetimeSeconds = AbsoluteRefreshTokenLifetimeSeconds,
         SlidingRefreshTokenLifetimeSeconds = SlidingRefreshTokenLifetimeSeconds,
         RefreshTokenUsage = (RefreshTokenUsage)RefreshTokenUsage,
+        RefreshTokenExpiration = (RefreshTokenExpiration)RefreshTokenExpiration,
         ProvisioningApps = JsonSerializer.Deserialize(ProvisioningAppsJson, StorageJsonContext.Default.ListString) ?? [],
         MfaPolicy = (MfaPolicy)MfaPolicy,
     };
