@@ -55,10 +55,15 @@ public static class DeviceAuthorizationEndpoint
             // Generate codes
             var deviceCode = Convert.ToHexString(RandomNumberGenerator.GetBytes(32)).ToLowerInvariant();
             var userCode = GenerateUserCode();
-            var expiresIn = 600; // 10 minutes
+            // Zero means the client was persisted before this field existed — use the 5-minute
+            // default that Duende also ships with so behaviour stays predictable across imports.
+            var expiresIn = client.DeviceCodeLifetimeSeconds > 0 ? client.DeviceCodeLifetimeSeconds : 300;
 
             var requestedScopes = scope.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-            var validScopes = requestedScopes.Intersect(client.AllowedScopes, StringComparer.OrdinalIgnoreCase).ToList();
+            var invalidScopes = requestedScopes.Except(client.AllowedScopes, StringComparer.OrdinalIgnoreCase).ToArray();
+            if (invalidScopes.Length > 0)
+                return DeviceError("invalid_scope", $"Scopes not allowed: {string.Join(", ", invalidScopes)}");
+            var validScopes = requestedScopes.ToList();
 
             // Store as a persisted grant
             var data = JsonSerializer.Serialize(new DeviceCodeData

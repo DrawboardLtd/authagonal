@@ -1,33 +1,27 @@
 using System.Diagnostics;
 using System.Text;
-using System.Text.Json;
 using Authagonal.Core.Constants;
-using Authagonal.Core.Models;
-using Authagonal.Core.Services;
 using Authagonal.Core.Stores;
 using Authagonal.Protocol.Services;
-using Authagonal.Server.Services;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Routing;
 
-namespace Authagonal.Server.Endpoints;
+namespace Authagonal.Protocol.Endpoints;
 
-public static class TokenEndpoint
+internal static class TokenEndpoint
 {
-    public static IEndpointRouteBuilder MapTokenEndpoint(this IEndpointRouteBuilder app)
+    public static IEndpointRouteBuilder MapProtocolTokenEndpoint(this IEndpointRouteBuilder app)
     {
         app.MapPost("/connect/token", async (
             HttpContext httpContext,
             IProtocolTokenService tokenService,
             IClientStore clientStore,
-            IUserStore userStore,
-            IGrantStore grantStore,
-            UserStoreOidcSubjectResolver subjectResolver,
             IClientSecretVerifier secretVerifier,
-            IEnumerable<IAuthHook> authHooks,
             CancellationToken ct) =>
         {
             var form = await httpContext.Request.ReadFormAsync(ct);
 
-            // Authenticate client
             var (clientId, clientSecret) = ExtractClientCredentials(httpContext, form);
 
             if (string.IsNullOrWhiteSpace(clientId))
@@ -40,7 +34,6 @@ public static class TokenEndpoint
             if (!client.Enabled)
                 return TokenError("unauthorized_client", "Client is disabled");
 
-            // Verify client secret if required
             if (client.RequireClientSecret)
             {
                 if (string.IsNullOrWhiteSpace(clientSecret))
@@ -57,23 +50,18 @@ public static class TokenEndpoint
             if (!client.AllowedGrantTypes.Contains(grantType, StringComparer.OrdinalIgnoreCase))
                 return TokenError("unauthorized_client", "Grant type not allowed for this client");
 
-            if (grantType is not (GrantTypes.AuthorizationCode or GrantTypes.RefreshToken or GrantTypes.ClientCredentials or GrantTypes.DeviceCode))
+            if (grantType is not (GrantTypes.AuthorizationCode or GrantTypes.RefreshToken or GrantTypes.ClientCredentials))
                 return TokenError("unsupported_grant_type", $"Grant type '{grantType}' is not supported");
 
             try
             {
-                var result = grantType switch
+                return grantType switch
                 {
                     GrantTypes.AuthorizationCode => await HandleAuthorizationCode(form, tokenService, clientId, ct),
                     GrantTypes.RefreshToken => await HandleRefreshToken(form, tokenService, clientId, ct),
                     GrantTypes.ClientCredentials => await HandleClientCredentials(form, tokenService, clientId, ct),
-                    GrantTypes.DeviceCode => await HandleDeviceCode(form, tokenService, grantStore, userStore, subjectResolver, client, ct),
                     _ => throw new UnreachableException()
                 };
-
-                await authHooks.RunOnTokenIssuedAsync(null, clientId, grantType, ct);
-
-                return result;
             }
             catch (InvalidOperationException ex)
             {
@@ -82,7 +70,7 @@ public static class TokenEndpoint
         })
         .AllowAnonymous()
         .DisableAntiforgery()
-        .WithTags("OAuth");
+        .WithTags("OIDC");
 
         return app;
     }
@@ -115,7 +103,8 @@ public static class TokenEndpoint
 
         try
         {
-            var response = await tokenService.HandleRefreshTokenAsync(refreshToken, clientId, resources.Length > 0 ? resources : null, ct);
+            var response = await tokenService.HandleRefreshTokenAsync(
+                refreshToken, clientId, resources.Length > 0 ? resources : null, ct);
             return Results.Ok(response);
         }
         catch (InvalidOperationException ex) when (ex.Message.StartsWith("Resource '", StringComparison.Ordinal))
@@ -133,7 +122,8 @@ public static class TokenEndpoint
 
         try
         {
-            var response = await tokenService.HandleClientCredentialsAsync(clientId, scopes, resources.Length > 0 ? resources : null, ct);
+            var response = await tokenService.HandleClientCredentialsAsync(
+                clientId, scopes, resources.Length > 0 ? resources : null, ct);
             return Results.Ok(response);
         }
         catch (InvalidOperationException ex) when (ex.Message.StartsWith("Resource '", StringComparison.Ordinal))
@@ -142,63 +132,9 @@ public static class TokenEndpoint
         }
     }
 
-    private static async Task<IResult> HandleDeviceCode(
-        IFormCollection form,
-        IProtocolTokenService tokenService,
-        IGrantStore grantStore,
-        IUserStore userStore,
-        UserStoreOidcSubjectResolver subjectResolver,
-        OAuthClient client,
-        CancellationToken ct)
-    {
-        var deviceCode = form["device_code"].FirstOrDefault();
-        if (string.IsNullOrWhiteSpace(deviceCode))
-            return TokenError("invalid_request", "device_code is required");
-
-        var grant = await grantStore.GetAsync($"device:{deviceCode}", ct);
-        if (grant is null)
-            return TokenError("invalid_grant", "Unknown device code");
-
-        if (grant.ExpiresAt < DateTimeOffset.UtcNow)
-        {
-            await grantStore.RemoveAsync($"device:{deviceCode}", ct);
-            return TokenError("expired_token", "Device code has expired");
-        }
-
-        if (grant.ClientId != client.ClientId)
-            return TokenError("invalid_grant", "Device code was issued to a different client");
-
-        if (grant.ConsumedAt is not null)
-            return TokenError("invalid_grant", "Device code has already been used");
-
-        var data = JsonSerializer.Deserialize(grant.Data, AuthagonalJsonContext.Default.DeviceCodeData);
-        if (data is null)
-            return TokenError("server_error", "Invalid device code data");
-
-        if (!data.IsApproved || string.IsNullOrEmpty(data.SubjectId))
-        {
-            // RFC 8628 §3.5 — authorization_pending
-            return JsonResults.OAuthError("authorization_pending", "The user has not yet approved the request");
-        }
-
-        var user = await userStore.GetAsync(data.SubjectId, ct);
-        if (user is null || !user.IsActive)
-            return TokenError("invalid_grant", "User not found or inactive");
-
-        // Consume the device code
-        await grantStore.ConsumeAsync($"device:{deviceCode}", ct);
-
-        // Build the subject through the shared resolver so group inflation and claim
-        // shape match what the authorize flow produces.
-        var subject = await subjectResolver.BuildSubjectAsync(user, client, ct: ct);
-        var response = await tokenService.HandleDeviceCodeAsync(subject, client, data.Scopes, ct);
-        return Results.Ok(response);
-    }
-
     private static (string? ClientId, string? ClientSecret) ExtractClientCredentials(
         HttpContext httpContext, IFormCollection form)
     {
-        // Try Authorization header first (client_secret_basic)
         var authHeader = httpContext.Request.Headers.Authorization.FirstOrDefault();
         if (!string.IsNullOrWhiteSpace(authHeader) && authHeader.StartsWith("Basic ", StringComparison.OrdinalIgnoreCase))
         {
@@ -214,13 +150,9 @@ public static class TokenEndpoint
                     return (id, secret);
                 }
             }
-            catch (FormatException)
-            {
-                // Malformed Basic header; fall through to form body
-            }
+            catch (FormatException) { /* fall through */ }
         }
 
-        // Fall back to client_secret_post (form body)
         var clientId = form["client_id"].FirstOrDefault();
         var clientSecret = form["client_secret"].FirstOrDefault();
         return (clientId, clientSecret);

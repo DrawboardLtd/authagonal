@@ -44,6 +44,10 @@ public sealed class ClientEntity : ITableEntity
     public int AuthorizationCodeLifetimeSeconds { get; set; }
     public int AbsoluteRefreshTokenLifetimeSeconds { get; set; }
     public int SlidingRefreshTokenLifetimeSeconds { get; set; }
+    // Zero means "fall back to the endpoint default" — older rows written before this column
+    // existed deserialise as 0, and DeviceAuthorizationEndpoint treats that as 300s.
+    public int DeviceCodeLifetimeSeconds { get; set; }
+    public bool RequirePushedAuthorizationRequests { get; set; }
     public int RefreshTokenUsage { get; set; }
     public int RefreshTokenExpiration { get; set; }
     public string ProvisioningAppsJson { get; set; } = "[]";
@@ -80,6 +84,8 @@ public sealed class ClientEntity : ITableEntity
         AuthorizationCodeLifetimeSeconds = client.AuthorizationCodeLifetimeSeconds,
         AbsoluteRefreshTokenLifetimeSeconds = client.AbsoluteRefreshTokenLifetimeSeconds,
         SlidingRefreshTokenLifetimeSeconds = client.SlidingRefreshTokenLifetimeSeconds,
+        DeviceCodeLifetimeSeconds = client.DeviceCodeLifetimeSeconds,
+        RequirePushedAuthorizationRequests = client.RequirePushedAuthorizationRequests,
         RefreshTokenUsage = (int)client.RefreshTokenUsage,
         RefreshTokenExpiration = (int)client.RefreshTokenExpiration,
         ProvisioningAppsJson = JsonSerializer.Serialize(client.ProvisioningApps, StorageJsonContext.Default.ListString),
@@ -116,6 +122,8 @@ public sealed class ClientEntity : ITableEntity
         AuthorizationCodeLifetimeSeconds = AuthorizationCodeLifetimeSeconds,
         AbsoluteRefreshTokenLifetimeSeconds = AbsoluteRefreshTokenLifetimeSeconds,
         SlidingRefreshTokenLifetimeSeconds = SlidingRefreshTokenLifetimeSeconds,
+        DeviceCodeLifetimeSeconds = DeviceCodeLifetimeSeconds,
+        RequirePushedAuthorizationRequests = RequirePushedAuthorizationRequests,
         RefreshTokenUsage = (RefreshTokenUsage)RefreshTokenUsage,
         RefreshTokenExpiration = (RefreshTokenExpiration)RefreshTokenExpiration,
         ProvisioningApps = JsonSerializer.Deserialize(ProvisioningAppsJson, StorageJsonContext.Default.ListString) ?? [],

@@ -1,6 +1,6 @@
 using System.Text.Json.Serialization;
 
-namespace Authagonal.Server.Endpoints;
+namespace Authagonal.Protocol.Endpoints;
 
 public sealed class DiscoveryResponse
 {
@@ -9,10 +9,6 @@ public sealed class DiscoveryResponse
     [JsonPropertyName("token_endpoint")] public string TokenEndpoint { get; set; } = "";
     [JsonPropertyName("userinfo_endpoint")] public string UserinfoEndpoint { get; set; } = "";
     [JsonPropertyName("jwks_uri")] public string JwksUri { get; set; } = "";
-    [JsonPropertyName("revocation_endpoint")] public string RevocationEndpoint { get; set; } = "";
-    [JsonPropertyName("introspection_endpoint")] public string IntrospectionEndpoint { get; set; } = "";
-    [JsonPropertyName("end_session_endpoint")] public string EndSessionEndpoint { get; set; } = "";
-    [JsonPropertyName("device_authorization_endpoint")] public string DeviceAuthorizationEndpoint { get; set; } = "";
     [JsonPropertyName("scopes_supported")] public string[] ScopesSupported { get; set; } = [];
     [JsonPropertyName("response_types_supported")] public string[] ResponseTypesSupported { get; set; } = [];
     [JsonPropertyName("grant_types_supported")] public string[] GrantTypesSupported { get; set; } = [];
@@ -20,13 +16,9 @@ public sealed class DiscoveryResponse
     [JsonPropertyName("id_token_signing_alg_values_supported")] public string[] IdTokenSigningAlgValuesSupported { get; set; } = [];
     [JsonPropertyName("token_endpoint_auth_methods_supported")] public string[] TokenEndpointAuthMethodsSupported { get; set; } = [];
     [JsonPropertyName("code_challenge_methods_supported")] public string[] CodeChallengeMethodsSupported { get; set; } = [];
-    [JsonPropertyName("backchannel_logout_supported")] public bool BackchannelLogoutSupported { get; set; }
-    [JsonPropertyName("backchannel_logout_session_supported")] public bool BackchannelLogoutSessionSupported { get; set; }
-    [JsonPropertyName("frontchannel_logout_supported")] public bool FrontchannelLogoutSupported { get; set; }
-    [JsonPropertyName("frontchannel_logout_session_supported")] public bool FrontchannelLogoutSessionSupported { get; set; }
-    [JsonPropertyName("registration_endpoint")] public string? RegistrationEndpoint { get; set; }
-    [JsonPropertyName("pushed_authorization_request_endpoint")] public string? PushedAuthorizationRequestEndpoint { get; set; }
     [JsonPropertyName("claims_supported")] public string[]? ClaimsSupported { get; set; }
+    [JsonPropertyName("pushed_authorization_request_endpoint")] public string? PushedAuthorizationRequestEndpoint { get; set; }
+    [JsonPropertyName("require_pushed_authorization_requests")] public bool? RequirePushedAuthorizationRequests { get; set; }
 }
 
 public sealed class JwksDocument
@@ -42,4 +34,10 @@ public sealed class JwkKey
     [JsonPropertyName("alg")] public string Alg { get; set; } = "";
     [JsonPropertyName("n")] public string N { get; set; } = "";
     [JsonPropertyName("e")] public string E { get; set; } = "";
+}
+
+internal sealed class OAuthErrorResponse
+{
+    [JsonPropertyName("error")] public required string Error { get; set; }
+    [JsonPropertyName("error_description")] public string? ErrorDescription { get; set; }
 }

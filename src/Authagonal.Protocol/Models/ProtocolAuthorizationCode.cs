@@ -1,6 +1,12 @@
-namespace Authagonal.Core.Models;
+namespace Authagonal.Protocol.Models;
 
-public sealed class AuthorizationCode
+/// <summary>
+/// Persisted authorization code payload. Stored in <c>PersistedGrant.Data</c> as JSON and
+/// reloaded at token exchange. Carries the full <see cref="OidcSubject"/> captured at
+/// authorize time so the token endpoint can mint tokens without re-calling the subject
+/// resolver — the resolver is only re-engaged on refresh.
+/// </summary>
+internal sealed class ProtocolAuthorizationCode
 {
     public required string Code { get; set; }
     public required string ClientId { get; set; }
@@ -13,12 +19,7 @@ public sealed class AuthorizationCode
     public string? Nonce { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset ExpiresAt { get; set; }
-
-    /// <summary>
-    /// Upper bound on how long tokens issued from this code may live, derived from a
-    /// session_max_exp cookie claim set during upstream federation (e.g. an SSO IdP that
-    /// caps subject sessions). Preserved through rotation so refresh tokens cannot outlive
-    /// the original federated session.
-    /// </summary>
     public DateTimeOffset? SessionMaxExpiresAt { get; set; }
+
+    public required OidcSubject Subject { get; set; }
 }

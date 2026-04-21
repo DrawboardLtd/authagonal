@@ -1,6 +1,6 @@
 using System.Security.Cryptography;
 using System.Text;
-using Authagonal.Server.Services;
+using Authagonal.Protocol.Services;
 
 namespace Authagonal.Tests;
 

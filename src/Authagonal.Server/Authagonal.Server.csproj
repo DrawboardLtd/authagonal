@@ -2,6 +2,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Authagonal.Core\Authagonal.Core.csproj" />
+    <ProjectReference Include="..\Authagonal.Protocol\Authagonal.Protocol.csproj" />
     <ProjectReference Include="..\Authagonal.Storage\Authagonal.Storage.csproj" />
   </ItemGroup>
 

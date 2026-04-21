@@ -1,13 +1,18 @@
-namespace Authagonal.Server.Endpoints;
+using Authagonal.Core.Services;
+using Authagonal.Core.Stores;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Routing;
 
-public static class DiscoveryEndpoint
+namespace Authagonal.Protocol.Endpoints;
+
+internal static class DiscoveryEndpoint
 {
-    public static IEndpointRouteBuilder MapDiscoveryEndpoints(this IEndpointRouteBuilder app)
+    public static IEndpointRouteBuilder MapProtocolDiscoveryEndpoint(this IEndpointRouteBuilder app)
     {
         app.MapGet("/.well-known/openid-configuration", async (
-            Authagonal.Core.Services.ITenantContext tenantContext,
-            Authagonal.Core.Stores.IScopeStore scopeStore,
-            Microsoft.Extensions.Options.IOptions<Authagonal.Server.Services.AuthOptions> authOptions,
+            ITenantContext tenantContext,
+            IScopeStore scopeStore,
             CancellationToken ct) =>
         {
             var issuer = tenantContext.Issuer;
@@ -34,28 +39,19 @@ public static class DiscoveryEndpoint
                 TokenEndpoint = $"{issuer}/connect/token",
                 UserinfoEndpoint = $"{issuer}/connect/userinfo",
                 JwksUri = $"{issuer}/.well-known/openid-configuration/jwks",
-                RevocationEndpoint = $"{issuer}/connect/revocation",
-                IntrospectionEndpoint = $"{issuer}/connect/introspect",
-                EndSessionEndpoint = $"{issuer}/connect/endsession",
-                DeviceAuthorizationEndpoint = $"{issuer}/connect/deviceauthorization",
-                RegistrationEndpoint = authOptions.Value.DynamicClientRegistrationEnabled ? $"{issuer}/connect/register" : null,
                 PushedAuthorizationRequestEndpoint = $"{issuer}/connect/par",
                 ScopesSupported = scopesSupported,
                 ResponseTypesSupported = ["code"],
-                GrantTypesSupported = ["authorization_code", "refresh_token", "client_credentials", "urn:ietf:params:oauth:grant-type:device_code"],
+                GrantTypesSupported = ["authorization_code", "refresh_token", "client_credentials"],
                 SubjectTypesSupported = ["public"],
                 IdTokenSigningAlgValuesSupported = ["RS256"],
                 TokenEndpointAuthMethodsSupported = ["client_secret_basic", "client_secret_post"],
                 CodeChallengeMethodsSupported = ["S256"],
-                BackchannelLogoutSupported = true,
-                BackchannelLogoutSessionSupported = false,
-                FrontchannelLogoutSupported = true,
-                FrontchannelLogoutSessionSupported = true,
-                ClaimsSupported = ["sub", "iss", "aud", "exp", "iat", "auth_time", "email", "email_verified", "name", "given_name", "family_name", "phone_number", "roles", "groups"],
-            }, AuthagonalJsonContext.Default.DiscoveryResponse);
+                ClaimsSupported = ["sub", "iss", "aud", "exp", "iat", "auth_time", "email", "email_verified", "name", "given_name", "family_name", "phone_number", "roles", "groups", "org_id"],
+            }, ProtocolJsonContext.Default.DiscoveryResponse);
         })
         .AllowAnonymous()
-        .WithTags("Discovery");
+        .WithTags("OIDC");
 
         return app;
     }

@@ -1,7 +1,7 @@
 using System.Text;
 using Authagonal.Core.Services;
 using Authagonal.Core.Stores;
-using Authagonal.Server.Services;
+using Authagonal.Protocol.Services;
 using Microsoft.IdentityModel.JsonWebTokens;
 using Microsoft.IdentityModel.Tokens;
 
@@ -13,12 +13,12 @@ public static class RevocationEndpoint
     {
         app.MapPost("/connect/revocation", async (
             HttpContext httpContext,
-            ITokenService tokenService,
+            IProtocolTokenService tokenService,
             IClientStore clientStore,
             IRevokedTokenStore revokedTokenStore,
             IKeyManager keyManager,
             ITenantContext tenantContext,
-            PasswordHasher passwordHasher,
+            IClientSecretVerifier secretVerifier,
             CancellationToken ct) =>
         {
             var form = await httpContext.Request.ReadFormAsync(ct);
@@ -38,13 +38,7 @@ public static class RevocationEndpoint
                 if (string.IsNullOrWhiteSpace(clientSecret))
                     return JsonResults.OAuthError("invalid_client", "client_secret is required", 401);
 
-                var secretValid = client.ClientSecretHashes.Any(hash =>
-                {
-                    var result = passwordHasher.VerifyPassword(clientSecret, hash);
-                    return result is PasswordVerifyResult.Success or PasswordVerifyResult.SuccessRehashNeeded;
-                });
-
-                if (!secretValid)
+                if (!await secretVerifier.VerifyAsync(client, clientSecret, ct))
                     return JsonResults.OAuthError("invalid_client", "Invalid client credentials", 401);
             }
 

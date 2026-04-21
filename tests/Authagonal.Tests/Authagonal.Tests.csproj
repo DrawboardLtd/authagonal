@@ -28,7 +28,6 @@
     <ProjectReference Include="..\..\src\Authagonal.Core\Authagonal.Core.csproj" />
     <ProjectReference Include="..\..\src\Authagonal.Storage\Authagonal.Storage.csproj" />
     <ProjectReference Include="..\..\src\Authagonal.Server\Authagonal.Server.csproj" />
-    <ProjectReference Include="..\..\src\Authagonal.OidcProvider\Authagonal.OidcProvider.csproj" />
   </ItemGroup>
 
 </Project>

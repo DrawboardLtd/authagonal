@@ -4,32 +4,44 @@ using Authagonal.Core.Constants;
 using Authagonal.Core.Models;
 using Authagonal.Core.Services;
 using Authagonal.Core.Stores;
+using Authagonal.Protocol.Models;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.JsonWebTokens;
 using Microsoft.IdentityModel.Tokens;
 
-namespace Authagonal.Server.Services;
+namespace Authagonal.Protocol.Services;
 
-public sealed class TokenService(
+public sealed class ProtocolTokenService(
     IGrantStore grantStore,
     IClientStore clientStore,
-    IUserStore userStore,
-    IScimGroupStore scimGroupStore,
+    IScopeStore scopeStore,
     IKeyManager keyManager,
     ITenantContext tenantContext,
-    IOptions<AuthOptions> authOptions,
-    ILogger<TokenService> logger) : ITokenService
+    IOidcSubjectResolver subjectResolver,
+    IOptions<AuthagonalProtocolOptions> protocolOptions,
+    ILogger<ProtocolTokenService> logger) : IProtocolTokenService
 {
     private const int RefreshTokenSizeBytes = 64;
-    private TimeSpan RefreshTokenReuseGraceWindow => TimeSpan.FromSeconds(authOptions.Value.RefreshTokenReuseGraceSeconds);
+    private TimeSpan RefreshTokenReuseGraceWindow =>
+        TimeSpan.FromSeconds(protocolOptions.Value.RefreshTokenReuseGraceSeconds);
 
     private string Issuer => tenantContext.Issuer;
 
+    // Protocol-level claims that custom attributes / additional claims must never shadow —
+    // even if a scope lists them in UserClaims. Overriding these would let configuration
+    // rewrite the OAuth/OIDC contract.
+    private static readonly HashSet<string> ReservedClaimNames = new(StringComparer.Ordinal)
+    {
+        "iss", "sub", "aud", "exp", "nbf", "iat", "jti",
+        "scope", "client_id", "nonce", "auth_time", "acr", "amr",
+        "roles", "groups", "sid",
+    };
+
     public async Task<string> CreateAccessTokenAsync(
-        AuthUser? user,
+        OidcSubject? subject,
         OAuthClient client,
         IEnumerable<string> scopes,
-        IDictionary<string, string>? additionalClaims = null,
         IEnumerable<string>? resources = null,
         CancellationToken ct = default)
     {
@@ -44,41 +56,53 @@ public sealed class TokenService(
             ["iat"] = now.ToUnixTimeSeconds()
         };
 
-        if (user is not null)
+        if (subject is not null)
         {
-            claims["sub"] = user.Id;
+            claims["sub"] = subject.SubjectId;
 
-            if (user.Roles.Count > 0)
-                claims["roles"] = user.Roles.ToArray();
+            if (subject.Roles is { Count: > 0 })
+                claims["roles"] = subject.Roles.ToArray();
 
-            if (client.IncludeGroupsInTokens)
-            {
-                var groups = await scimGroupStore.GetGroupsByUserIdAsync(user.Id, ct);
-                if (groups.Count > 0)
-                    claims["groups"] = groups.Select(g => g.DisplayName).ToArray();
-            }
+            if (subject.Groups is { Count: > 0 })
+                claims["groups"] = subject.Groups.ToArray();
         }
 
-        if (additionalClaims is not null)
+        // Scope-gated custom attributes — emitted only when a requested scope's UserClaims
+        // whitelist releases them. Protocol/reserved claims always win.
+        var allowedCustomClaims = await GetAllowedCustomClaimNamesAsync(scopeList, ct);
+        if (subject?.CustomAttributes is not null)
         {
-            foreach (var (key, value) in additionalClaims)
+            MergeCustomClaims(claims, subject.CustomAttributes, allowedCustomClaims, overwriteExisting: false);
+        }
+
+        // Ungated additional claims — forced onto the token regardless of scope. Used for
+        // bounded-scope tokens where the claim is the whole point (e.g. share-link tokens).
+        if (subject?.AdditionalClaims is not null)
+        {
+            foreach (var (key, value) in subject.AdditionalClaims)
             {
+                if (string.IsNullOrEmpty(key)) continue;
+                if (ReservedClaimNames.Contains(key)) continue;
                 claims[key] = value;
             }
         }
+
+        // Clamp lifetime by session cap if present.
+        var expires = now.AddSeconds(client.AccessTokenLifetimeSeconds);
+        if (subject?.SessionMaxExpiresAt is { } sessionCap && sessionCap < expires)
+            expires = sessionCap;
 
         var descriptor = new SecurityTokenDescriptor
         {
             Issuer = Issuer,
             IssuedAt = now.UtcDateTime,
-            Expires = now.AddSeconds(client.AccessTokenLifetimeSeconds).UtcDateTime,
+            Expires = expires.UtcDateTime,
             SigningCredentials = keyManager.GetSigningCredentials(),
             Claims = claims
         };
 
-        // RFC 8707: if the caller specified resources for this token, narrow aud to that subset
-        // (already validated upstream as a subset of client.Audiences). Otherwise fall back to
-        // all configured audiences, or the client_id if none are configured.
+        // RFC 8707 — narrow aud to caller-specified resources when present, otherwise fall
+        // back to the client's configured audiences, else client_id.
         var resourceList = resources?.Where(r => !string.IsNullOrWhiteSpace(r)).ToList();
         if (resourceList is { Count: > 0 })
         {
@@ -98,7 +122,7 @@ public sealed class TokenService(
     }
 
     public async Task<string> CreateIdTokenAsync(
-        AuthUser user,
+        OidcSubject subject,
         OAuthClient client,
         IEnumerable<string> scopes,
         string? nonce = null,
@@ -109,62 +133,65 @@ public sealed class TokenService(
 
         var claims = new Dictionary<string, object>
         {
-            ["sub"] = user.Id,
+            ["sub"] = subject.SubjectId,
             ["iat"] = now.ToUnixTimeSeconds()
         };
 
-        // Add nonce if provided (required for implicit/hybrid flows, optional for code flow)
         if (!string.IsNullOrEmpty(nonce))
-        {
             claims["nonce"] = nonce;
-        }
 
-        // Include profile claims when profile or openid scope is requested
+        if (!string.IsNullOrEmpty(subject.SessionId))
+            claims["sid"] = subject.SessionId;
+
         if (scopeList.Contains(StandardScopes.Email) || scopeList.Contains(StandardScopes.OpenId))
         {
-            if (!string.IsNullOrEmpty(user.Email))
-                claims["email"] = user.Email;
+            if (!string.IsNullOrEmpty(subject.Email))
+                claims["email"] = subject.Email;
 
-            claims["email_verified"] = user.EmailConfirmed;
+            claims["email_verified"] = subject.EmailVerified;
         }
 
         if (scopeList.Contains(StandardScopes.Profile) || scopeList.Contains(StandardScopes.OpenId))
         {
-            if (!string.IsNullOrEmpty(user.FirstName))
-                claims["given_name"] = user.FirstName;
+            if (!string.IsNullOrEmpty(subject.GivenName))
+                claims["given_name"] = subject.GivenName;
 
-            if (!string.IsNullOrEmpty(user.LastName))
-                claims["family_name"] = user.LastName;
+            if (!string.IsNullOrEmpty(subject.FamilyName))
+                claims["family_name"] = subject.FamilyName;
 
-            var fullName = BuildFullName(user.FirstName, user.LastName);
+            var fullName = subject.Name ?? BuildFullName(subject.GivenName, subject.FamilyName);
             if (!string.IsNullOrEmpty(fullName))
                 claims["name"] = fullName;
 
-            if (!string.IsNullOrEmpty(user.Phone))
-                claims["phone_number"] = user.Phone;
+            if (!string.IsNullOrEmpty(subject.Phone))
+                claims["phone_number"] = subject.Phone;
         }
 
-        if (!string.IsNullOrEmpty(user.OrganizationId))
+        if (!string.IsNullOrEmpty(subject.OrganizationId))
+            claims["org_id"] = subject.OrganizationId;
+
+        if (subject.Roles is { Count: > 0 })
+            claims["roles"] = subject.Roles.ToArray();
+
+        if (subject.Groups is { Count: > 0 })
+            claims["groups"] = subject.Groups.ToArray();
+
+        var allowedCustomClaims = await GetAllowedCustomClaimNamesAsync(scopeList, ct);
+        if (subject.CustomAttributes is not null)
         {
-            claims["org_id"] = user.OrganizationId;
+            MergeCustomClaims(claims, subject.CustomAttributes, allowedCustomClaims, overwriteExisting: false);
         }
 
-        if (user.Roles.Count > 0)
-            claims["roles"] = user.Roles.ToArray();
-
-        if (client.IncludeGroupsInTokens)
-        {
-            var groups = await scimGroupStore.GetGroupsByUserIdAsync(user.Id, ct);
-            if (groups.Count > 0)
-                claims["groups"] = groups.Select(g => g.DisplayName).ToArray();
-        }
+        var expires = now.AddSeconds(client.IdentityTokenLifetimeSeconds);
+        if (subject.SessionMaxExpiresAt is { } sessionCap && sessionCap < expires)
+            expires = sessionCap;
 
         var descriptor = new SecurityTokenDescriptor
         {
             Issuer = Issuer,
             Audience = client.ClientId,
             IssuedAt = now.UtcDateTime,
-            Expires = now.AddSeconds(client.IdentityTokenLifetimeSeconds).UtcDateTime,
+            Expires = expires.UtcDateTime,
             SigningCredentials = keyManager.GetSigningCredentials(),
             Claims = claims
         };
@@ -174,22 +201,19 @@ public sealed class TokenService(
     }
 
     public async Task<string> CreateRefreshTokenAsync(
-        AuthUser user,
+        OidcSubject subject,
         OAuthClient client,
         IEnumerable<string> scopes,
         IEnumerable<string>? resources = null,
         DateTimeOffset? originalCreatedAt = null,
-        DateTimeOffset? sessionMaxExpiresAt = null,
         CancellationToken ct = default)
     {
         var handle = GenerateRefreshTokenHandle();
         var now = DateTimeOffset.UtcNow;
         var scopeList = scopes.ToList();
 
-        // Absolute mode: hard cap measured from the original issuance; rotation preserves
-        // the cap so long-lived clients can't refresh forever.
-        // Sliding mode: window extends by Sliding on each rotation, but never past the
-        // absolute cap from original issuance.
+        // Absolute mode: cap measured from original issuance; rotation preserves cap.
+        // Sliding: window extends by Sliding on each rotation, capped at absolute.
         var origin = originalCreatedAt ?? now;
         var absoluteCap = origin.AddSeconds(client.AbsoluteRefreshTokenLifetimeSeconds);
         DateTimeOffset expiresAt = client.RefreshTokenExpiration switch
@@ -199,27 +223,27 @@ public sealed class TokenService(
             _ => absoluteCap,
         };
 
-        // Clamp by upstream session cap when present so tokens cannot outlive the
-        // federated session (e.g. an SSO IdP that caps subject sessions).
-        if (sessionMaxExpiresAt is { } sessionCap && sessionCap < expiresAt)
+        // Upstream session cap clamps refresh expiry so tokens can't outlive the federated session.
+        if (subject.SessionMaxExpiresAt is { } sessionCap && sessionCap < expiresAt)
             expiresAt = sessionCap;
 
         var grant = new PersistedGrant
         {
             Key = handle,
             Type = "refresh_token",
-            SubjectId = user.Id,
+            SubjectId = subject.SubjectId,
             ClientId = client.ClientId,
             Data = JsonSerializer.Serialize(new RefreshTokenData
             {
                 Scopes = scopeList,
                 Resources = resources?.ToList(),
-                SubjectId = user.Id,
+                SubjectId = subject.SubjectId,
                 ClientId = client.ClientId,
                 CreatedAt = now,
                 OriginalCreatedAt = origin,
-                SessionMaxExpiresAt = sessionMaxExpiresAt,
-            }, AuthagonalJsonContext.Default.RefreshTokenData),
+                SessionMaxExpiresAt = subject.SessionMaxExpiresAt,
+                Subject = subject,
+            }, ProtocolJsonContext.Default.RefreshTokenData),
             CreatedAt = now,
             ExpiresAt = expiresAt,
         };
@@ -236,32 +260,27 @@ public sealed class TokenService(
         string codeVerifier,
         CancellationToken ct = default)
     {
-        // Look up the authorization code grant
         var grant = await grantStore.GetAsync(code, ct);
         if (grant is null || grant.Type != "authorization_code")
             throw new InvalidOperationException("Invalid authorization code");
 
-        // Delete the code immediately (single-use)
         await grantStore.RemoveAsync(code, ct);
 
         if (grant.ExpiresAt <= DateTimeOffset.UtcNow)
             throw new InvalidOperationException("Authorization code has expired");
 
-        var authCode = JsonSerializer.Deserialize(grant.Data, AuthagonalJsonContext.Default.AuthorizationCode)
+        var authCode = JsonSerializer.Deserialize(grant.Data, ProtocolJsonContext.Default.ProtocolAuthorizationCode)
             ?? throw new InvalidOperationException("Failed to deserialize authorization code");
 
-        // Validate client
         if (!string.Equals(authCode.ClientId, clientId, StringComparison.Ordinal))
             throw new InvalidOperationException("Client ID mismatch");
 
-        // Validate redirect URI
         if (!string.Equals(authCode.RedirectUri, redirectUri, StringComparison.Ordinal))
             throw new InvalidOperationException("Redirect URI mismatch");
 
         var client = await clientStore.GetAsync(clientId, ct)
             ?? throw new InvalidOperationException($"Client '{clientId}' not found");
 
-        // Validate PKCE
         if (client.RequirePkce && string.IsNullOrEmpty(authCode.CodeChallenge))
             throw new InvalidOperationException("PKCE is required for this client but no code_challenge was present");
 
@@ -272,29 +291,26 @@ public sealed class TokenService(
                 throw new InvalidOperationException("PKCE validation failed");
         }
 
-        var user = await userStore.GetAsync(authCode.SubjectId, ct)
-            ?? throw new InvalidOperationException($"User '{authCode.SubjectId}' not found");
+        var subject = authCode.Subject;
 
-        // Issue tokens — propagate any resource indicators captured at authorization time
-        var accessToken = await CreateAccessTokenAsync(user, client, authCode.Scopes, resources: authCode.Resources, ct: ct);
+        var accessToken = await CreateAccessTokenAsync(subject, client, authCode.Scopes, authCode.Resources, ct);
 
         string? idToken = null;
         if (authCode.Scopes.Contains(StandardScopes.OpenId))
         {
-            idToken = await CreateIdTokenAsync(user, client, authCode.Scopes, authCode.Nonce, ct);
+            idToken = await CreateIdTokenAsync(subject, client, authCode.Scopes, authCode.Nonce, ct);
         }
 
         string? refreshToken = null;
         if (authCode.Scopes.Contains(StandardScopes.OfflineAccess) && client.AllowOfflineAccess)
         {
             refreshToken = await CreateRefreshTokenAsync(
-                user, client, authCode.Scopes, authCode.Resources,
-                sessionMaxExpiresAt: authCode.SessionMaxExpiresAt, ct: ct);
+                subject, client, authCode.Scopes, authCode.Resources, ct: ct);
         }
 
         logger.LogInformation(
             "Authorization code exchanged for tokens. Client: {ClientId}, Subject: {SubjectId}",
-            clientId, authCode.SubjectId);
+            clientId, subject.SubjectId);
 
         return new TokenResponse
         {
@@ -316,33 +332,24 @@ public sealed class TokenService(
         if (grant is null || grant.Type != "refresh_token")
             throw new InvalidOperationException("Invalid refresh token");
 
-        // Validate client
         if (!string.Equals(grant.ClientId, clientId, StringComparison.Ordinal))
             throw new InvalidOperationException("Client ID mismatch for refresh token");
 
         var now = DateTimeOffset.UtcNow;
 
-        // Check expiration
         if (grant.ExpiresAt <= now)
             throw new InvalidOperationException("Refresh token has expired");
 
-        var data = JsonSerializer.Deserialize(grant.Data, AuthagonalJsonContext.Default.RefreshTokenData)
+        var data = JsonSerializer.Deserialize(grant.Data, ProtocolJsonContext.Default.RefreshTokenData)
             ?? throw new InvalidOperationException("Failed to deserialize refresh token data");
 
-        // Consumed-token handling:
-        //   * grace window disabled (default) → any reuse of a consumed token is treated
-        //     as replay and revokes the family (safest posture)
-        //   * grace window enabled → a reuse within N seconds of consumption, when the
-        //     successor still exists and is unconsumed, is treated as an idempotent retry
-        //     and we re-issue fresh access/id tokens pointing at the same successor handle.
-        //     Anything outside the window, a missing/consumed successor, or a replay after
-        //     successful rotation still triggers the revoke-all policy.
+        // Replay handling — reuse inside grace window replays the successor idempotently,
+        // reuse outside it (or of a missing successor) revokes the whole family.
         if (grant.ConsumedAt.HasValue)
         {
-            var graceWindow = RefreshTokenReuseGraceWindow;
-            if (graceWindow > TimeSpan.Zero &&
+            if (RefreshTokenReuseGraceWindow > TimeSpan.Zero &&
                 !string.IsNullOrEmpty(data.SuccessorKey) &&
-                now - grant.ConsumedAt.Value <= graceWindow)
+                now - grant.ConsumedAt.Value <= RefreshTokenReuseGraceWindow)
             {
                 var successor = await grantStore.GetAsync(data.SuccessorKey, ct);
                 if (successor is not null &&
@@ -369,15 +376,21 @@ public sealed class TokenService(
         var client = await clientStore.GetAsync(clientId, ct)
             ?? throw new InvalidOperationException($"Client '{clientId}' not found");
 
-        var user = await userStore.GetAsync(data.SubjectId, ct)
-            ?? throw new InvalidOperationException($"User '{data.SubjectId}' not found");
+        // Re-engage the host's subject resolver so it can re-check session validity
+        // (deactivation, revoked share links, role changes, etc.).
+        var context = new OidcSubjectResolutionContext(clientId, data.Scopes, data.Resources ?? []);
+        var resolved = await subjectResolver.ResolveRefreshAsync(data.Subject, context, ct);
 
-        if (!user.IsActive)
-            throw new InvalidOperationException("User account has been deactivated");
+        OidcSubject freshSubject = resolved switch
+        {
+            OidcSubjectResult.Allowed a => a.Subject,
+            OidcSubjectResult.Rejected r => throw new InvalidOperationException(
+                $"Subject resolver rejected refresh: {r.Reason}{(r.Description is null ? "" : $" ({r.Description})")}"),
+            _ => throw new InvalidOperationException("Unknown subject resolver result"),
+        };
 
-        // RFC 8707 §2.2: refresh can request a narrower audience than the original grant.
-        // If the client specifies resources on the refresh call, they must be a subset of what
-        // was recorded on the original grant (or if none were recorded, a subset of client.Audiences).
+        // RFC 8707: refresh-time resources must be a subset of the original grant's resources
+        // (or client.Audiences if none recorded).
         var requestedResources = resources?.Where(r => !string.IsNullOrWhiteSpace(r)).ToList();
         List<string>? tokenResources;
         if (requestedResources is { Count: > 0 })
@@ -395,29 +408,22 @@ public sealed class TokenService(
             tokenResources = data.Resources;
         }
 
-        // Rotation order: issue the successor first, then atomically mark the old grant as
-        // consumed and record the successor handle via a single upsert. If the client retries
-        // with the original handle inside the grace window, the consumed-branch above can then
-        // locate the successor and replay the exact same successor to them.
-        // Pass OriginalCreatedAt so the absolute cap stays anchored to first issuance and
-        // SessionMaxExpiresAt so any upstream federation cap survives rotations.
+        // Rotation: issue successor, mark old consumed with successor key recorded.
         var originalCreatedAt = data.OriginalCreatedAt ?? data.CreatedAt;
         var newRefreshToken = await CreateRefreshTokenAsync(
-            user, client, data.Scopes, data.Resources, originalCreatedAt, data.SessionMaxExpiresAt, ct);
+            freshSubject, client, data.Scopes, data.Resources, originalCreatedAt, ct);
 
         data.SuccessorKey = newRefreshToken;
         grant.ConsumedAt = now;
-        grant.Data = JsonSerializer.Serialize(data, AuthagonalJsonContext.Default.RefreshTokenData);
+        grant.Data = JsonSerializer.Serialize(data, ProtocolJsonContext.Default.RefreshTokenData);
         await grantStore.StoreAsync(grant, ct);
 
-        // Issue new access token (narrowed to requested resources, if any)
-        var accessToken = await CreateAccessTokenAsync(user, client, data.Scopes, resources: tokenResources, ct: ct);
+        var accessToken = await CreateAccessTokenAsync(freshSubject, client, data.Scopes, tokenResources, ct);
 
-        // Issue new ID token if openid scope
         string? idToken = null;
         if (data.Scopes.Contains(StandardScopes.OpenId))
         {
-            idToken = await CreateIdTokenAsync(user, client, data.Scopes, ct: ct);
+            idToken = await CreateIdTokenAsync(freshSubject, client, data.Scopes, ct: ct);
         }
 
         logger.LogInformation(
@@ -434,27 +440,16 @@ public sealed class TokenService(
         };
     }
 
-    /// <summary>
-    /// Idempotent re-delivery for a retry arriving inside the grace window: mint a fresh
-    /// access token (and id token, if the original grant was OIDC) anchored to the successor
-    /// grant, but keep the successor handle and its expiry unchanged. No second rotation.
-    /// </summary>
     private async Task<TokenResponse> ReissueFromSuccessorAsync(
         PersistedGrant successor,
         IEnumerable<string>? resources,
         CancellationToken ct)
     {
-        var data = JsonSerializer.Deserialize(successor.Data, AuthagonalJsonContext.Default.RefreshTokenData)
+        var data = JsonSerializer.Deserialize(successor.Data, ProtocolJsonContext.Default.RefreshTokenData)
             ?? throw new InvalidOperationException("Failed to deserialize successor refresh token data");
 
         var client = await clientStore.GetAsync(successor.ClientId, ct)
             ?? throw new InvalidOperationException($"Client '{successor.ClientId}' not found");
-
-        var user = await userStore.GetAsync(data.SubjectId, ct)
-            ?? throw new InvalidOperationException($"User '{data.SubjectId}' not found");
-
-        if (!user.IsActive)
-            throw new InvalidOperationException("User account has been deactivated");
 
         var requestedResources = resources?.Where(r => !string.IsNullOrWhiteSpace(r)).ToList();
         List<string>? tokenResources;
@@ -473,12 +468,12 @@ public sealed class TokenService(
             tokenResources = data.Resources;
         }
 
-        var accessToken = await CreateAccessTokenAsync(user, client, data.Scopes, resources: tokenResources, ct: ct);
+        var accessToken = await CreateAccessTokenAsync(data.Subject, client, data.Scopes, tokenResources, ct);
 
         string? idToken = null;
         if (data.Scopes.Contains(StandardScopes.OpenId))
         {
-            idToken = await CreateIdTokenAsync(user, client, data.Scopes, ct: ct);
+            idToken = await CreateIdTokenAsync(data.Subject, client, data.Scopes, ct: ct);
         }
 
         logger.LogInformation(
@@ -509,14 +504,12 @@ public sealed class TokenService(
 
         var scopeList = scopes.ToList();
 
-        // Validate requested scopes against allowed scopes
         foreach (var scope in scopeList)
         {
             if (!client.AllowedScopes.Contains(scope))
                 throw new InvalidOperationException($"Scope '{scope}' is not allowed for client '{clientId}'");
         }
 
-        // RFC 8707: validate requested resources against the client's registered audiences.
         var resourceList = resources?.Where(r => !string.IsNullOrWhiteSpace(r)).ToList();
         if (resourceList is { Count: > 0 })
         {
@@ -529,8 +522,7 @@ public sealed class TokenService(
             }
         }
 
-        // Client credentials: access token only (no refresh token, no ID token)
-        var accessToken = await CreateAccessTokenAsync(null, client, scopeList, resources: resourceList, ct: ct);
+        var accessToken = await CreateAccessTokenAsync(null, client, scopeList, resourceList, ct);
 
         logger.LogInformation("Client credentials token issued for client {ClientId}", clientId);
 
@@ -543,33 +535,30 @@ public sealed class TokenService(
     }
 
     public async Task<TokenResponse> HandleDeviceCodeAsync(
-        string subjectId,
-        string clientId,
+        OidcSubject subject,
+        OAuthClient client,
         IReadOnlyList<string> scopes,
         CancellationToken ct = default)
     {
-        var client = await clientStore.GetAsync(clientId, ct)
-            ?? throw new InvalidOperationException($"Client '{clientId}' not found");
-
-        var user = await userStore.GetAsync(subjectId, ct)
-            ?? throw new InvalidOperationException($"User '{subjectId}' not found");
-
         var scopeList = scopes.ToList();
-        var accessToken = await CreateAccessTokenAsync(user, client, scopeList, ct: ct);
+
+        var accessToken = await CreateAccessTokenAsync(subject, client, scopeList, ct: ct);
 
         string? refreshToken = null;
-        if (scopeList.Contains("offline_access") && client.AllowOfflineAccess)
+        if (scopeList.Contains(StandardScopes.OfflineAccess) && client.AllowOfflineAccess)
         {
-            refreshToken = await CreateRefreshTokenAsync(user, client, scopeList, ct: ct);
+            refreshToken = await CreateRefreshTokenAsync(subject, client, scopeList, ct: ct);
         }
 
         string? idToken = null;
-        if (scopeList.Contains("openid"))
+        if (scopeList.Contains(StandardScopes.OpenId))
         {
-            idToken = await CreateIdTokenAsync(user, client, scopeList, ct: ct);
+            idToken = await CreateIdTokenAsync(subject, client, scopeList, ct: ct);
         }
 
-        logger.LogInformation("Device code token issued for user {UserId} via client {ClientId}", subjectId, clientId);
+        logger.LogInformation(
+            "Device code token issued for subject {SubjectId} via client {ClientId}",
+            subject.SubjectId, client.ClientId);
 
         return new TokenResponse
         {
@@ -617,26 +606,39 @@ public sealed class TokenService(
         };
     }
 
-    /// <summary>
-    /// Internal model for refresh token data serialized in PersistedGrant.Data
-    /// </summary>
-    internal sealed class RefreshTokenData
+    private async Task<HashSet<string>> GetAllowedCustomClaimNamesAsync(
+        IEnumerable<string> scopes, CancellationToken ct)
     {
-        public required List<string> Scopes { get; set; }
-        public List<string>? Resources { get; set; }
-        public required string SubjectId { get; set; }
-        public required string ClientId { get; set; }
-        public DateTimeOffset CreatedAt { get; set; }
-        // Tracks first issuance so the absolute refresh lifetime cap survives rotations.
-        // Nullable so pre-upgrade grants deserialize cleanly; rotation falls back to CreatedAt.
-        public DateTimeOffset? OriginalCreatedAt { get; set; }
-        // Handle of the refresh token that superseded this one. Set at rotation time
-        // alongside ConsumedAt so a retry arriving within the grace window can locate
-        // the successor and idempotently re-issue fresh access/id tokens.
-        public string? SuccessorKey { get; set; }
-        // Upper bound on token lifetime driven by an upstream federated session
-        // (e.g. SSO IdP max session). Preserved across rotations so the cap cannot be
-        // lifted by refreshing. Null means no cap.
-        public DateTimeOffset? SessionMaxExpiresAt { get; set; }
+        var allowed = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var scopeName in scopes)
+        {
+            if (scopeName is StandardScopes.OpenId or StandardScopes.Profile
+                or StandardScopes.Email or StandardScopes.OfflineAccess)
+                continue;
+
+            var scope = await scopeStore.GetAsync(scopeName, ct);
+            if (scope is null) continue;
+
+            foreach (var claim in scope.UserClaims)
+                allowed.Add(claim);
+        }
+        return allowed;
+    }
+
+    private static void MergeCustomClaims(
+        IDictionary<string, object> claims,
+        IEnumerable<KeyValuePair<string, string>>? source,
+        HashSet<string> allowedNames,
+        bool overwriteExisting)
+    {
+        if (source is null) return;
+        foreach (var (key, value) in source)
+        {
+            if (string.IsNullOrEmpty(key)) continue;
+            if (ReservedClaimNames.Contains(key)) continue;
+            if (!allowedNames.Contains(key)) continue;
+            if (!overwriteExisting && claims.ContainsKey(key)) continue;
+            claims[key] = value;
+        }
     }
 }

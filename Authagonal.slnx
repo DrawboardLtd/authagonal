@@ -1,7 +1,7 @@
 <Solution>
   <Folder Name="/src/">
     <Project Path="src/Authagonal.Core/Authagonal.Core.csproj" />
-    <Project Path="src/Authagonal.OidcProvider/Authagonal.OidcProvider.csproj" />
+    <Project Path="src/Authagonal.Protocol/Authagonal.Protocol.csproj" />
     <Project Path="src/Authagonal.Server/Authagonal.Server.csproj" />
     <Project Path="src/Authagonal.Storage/Authagonal.Storage.csproj" />
     <Project Path="src/Authagonal.Backup/Authagonal.Backup.csproj" />

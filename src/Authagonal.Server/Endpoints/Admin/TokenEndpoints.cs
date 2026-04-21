@@ -1,6 +1,7 @@
 using Authagonal.Core.Models;
-using Authagonal.Core.Services;
 using Authagonal.Core.Stores;
+using Authagonal.Protocol.Services;
+using Authagonal.Server.Services;
 
 namespace Authagonal.Server.Endpoints.Admin;
 
@@ -17,9 +18,10 @@ public static class TokenEndpoints
 
     private static async Task<IResult> CreateTokenForUser(
         HttpContext httpContext,
-        ITokenService tokenService,
+        IProtocolTokenService tokenService,
         IClientStore clientStore,
         IUserStore userStore,
+        UserStoreOidcSubjectResolver subjectResolver,
         CancellationToken ct)
     {
         var query = httpContext.Request.Query;
@@ -27,7 +29,6 @@ public static class TokenEndpoints
         var clientId = query["clientId"].FirstOrDefault();
         var userId = query["userId"].FirstOrDefault();
         var scopesParam = query["scopes"].FirstOrDefault();
-        var refreshTokenLifetimeParam = query["refreshTokenLifetime"].FirstOrDefault();
 
         if (string.IsNullOrWhiteSpace(clientId))
             return Results.BadRequest(new { error = "invalid_request", error_description = "clientId query parameter is required" });
@@ -47,13 +48,15 @@ public static class TokenEndpoints
             ? client.AllowedScopes
             : scopesParam.Split(' ', StringSplitOptions.RemoveEmptyEntries).ToList();
 
-        var accessToken = await tokenService.CreateAccessTokenAsync(user, client, scopes, ct: ct);
-        var refreshToken = await tokenService.CreateRefreshTokenAsync(user, client, scopes, ct: ct);
+        var subject = await subjectResolver.BuildSubjectAsync(user, client, ct: ct);
+
+        var accessToken = await tokenService.CreateAccessTokenAsync(subject, client, scopes, ct: ct);
+        var refreshToken = await tokenService.CreateRefreshTokenAsync(subject, client, scopes, ct: ct);
 
         string? idToken = null;
         if (scopes.Contains("openid", StringComparer.OrdinalIgnoreCase))
         {
-            idToken = await tokenService.CreateIdTokenAsync(user, client, scopes, ct: ct);
+            idToken = await tokenService.CreateIdTokenAsync(subject, client, scopes, ct: ct);
         }
 
         var response = new TokenResponse

@@ -7,6 +7,8 @@ using System.Text.Json;
 using Authagonal.Core.Models;
 using Authagonal.Core.Services;
 using Authagonal.Core.Stores;
+using Authagonal.Protocol;
+using Authagonal.Protocol.Services;
 using Authagonal.Server;
 using Authagonal.Server.Endpoints;
 using Authagonal.Server.Endpoints.Scim;
@@ -279,11 +281,25 @@ public sealed class AuthagonalTestFactory : IAsyncDisposable
         services.AddSingleton(new PasswordPolicy());
         services.AddSingleton<PasswordHasher>();
         services.AddSingleton<PasswordValidator>();
-        services.AddSingleton<KeyManager>();
-        services.AddSingleton<Authagonal.Core.Services.IKeyManager>(sp => sp.GetRequiredService<KeyManager>());
-        services.AddHostedService(sp => sp.GetRequiredService<KeyManager>());
-        services.AddScoped<AuthorizationCodeService>();
-        services.AddScoped<ITokenService, TokenService>();
+
+        // Protocol wiring — map AuthOptions onto AuthagonalProtocolOptions, plug in the
+        // PasswordHasher-backed secret verifier so bcrypt/pbkdf2 client secrets verify
+        // through the same pipeline as user passwords, then call AddAuthagonalProtocol.
+        services.AddSingleton<IConfigureOptions<AuthagonalProtocolOptions>>(sp =>
+        {
+            var auth = sp.GetRequiredService<IOptions<AuthOptions>>().Value;
+            return new ConfigureNamedOptions<AuthagonalProtocolOptions>(Options.DefaultName, o =>
+            {
+                o.SigningKeyLifetimeDays = auth.SigningKeyLifetimeDays;
+                o.SigningKeyCacheRefreshMinutes = auth.SigningKeyCacheRefreshMinutes;
+                o.RefreshTokenReuseGraceSeconds = auth.RefreshTokenReuseGraceSeconds;
+                o.AuthenticationScheme = CookieAuthenticationDefaults.AuthenticationScheme;
+            });
+        });
+        services.AddSingleton<IClientSecretVerifier, PasswordHasherClientSecretVerifier>();
+        services.AddAuthagonalProtocol(_ => { });
+        services.AddScoped<UserStoreOidcSubjectResolver>();
+        services.AddScoped<IOidcSubjectResolver>(sp => sp.GetRequiredService<UserStoreOidcSubjectResolver>());
         services.AddSingleton<TotpService>();
         services.AddSingleton<RecoveryCodeService>();
         services.AddSingleton<WebAuthnService>();

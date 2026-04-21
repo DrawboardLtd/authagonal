@@ -87,6 +87,8 @@ public class EntityRoundtripTests
             AuthorizationCodeLifetimeSeconds = 120,
             AbsoluteRefreshTokenLifetimeSeconds = 86400,
             SlidingRefreshTokenLifetimeSeconds = 43200,
+            DeviceCodeLifetimeSeconds = 600,
+            RequirePushedAuthorizationRequests = true,
             RefreshTokenUsage = RefreshTokenUsage.OneTime,
         };
 
@@ -110,6 +112,8 @@ public class EntityRoundtripTests
         Assert.Equal(client.AuthorizationCodeLifetimeSeconds, result.AuthorizationCodeLifetimeSeconds);
         Assert.Equal(client.AbsoluteRefreshTokenLifetimeSeconds, result.AbsoluteRefreshTokenLifetimeSeconds);
         Assert.Equal(client.SlidingRefreshTokenLifetimeSeconds, result.SlidingRefreshTokenLifetimeSeconds);
+        Assert.Equal(client.DeviceCodeLifetimeSeconds, result.DeviceCodeLifetimeSeconds);
+        Assert.Equal(client.RequirePushedAuthorizationRequests, result.RequirePushedAuthorizationRequests);
         Assert.Equal(client.RefreshTokenUsage, result.RefreshTokenUsage);
     }
 

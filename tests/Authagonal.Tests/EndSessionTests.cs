@@ -5,6 +5,7 @@ using System.Text;
 using System.Text.Json;
 using System.Web;
 using Authagonal.Tests.Infrastructure;
+using Microsoft.IdentityModel.JsonWebTokens;
 
 namespace Authagonal.Tests;
 
@@ -115,6 +116,56 @@ public sealed class EndSessionTests : IAsyncLifetime
     {
         var response = await _client.GetAsync("/connect/endsession");
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task IdToken_EmitsSidClaim_WhenCookieHasSessionId()
+    {
+        // Back-channel logout correlates to a session via the `sid` claim — the cookie
+        // sign-in flow mints a fresh sid per login and the ID token must carry it
+        // through so RPs can match logout notifications back to their active session.
+        await _factory.SeedTestUserAsync();
+        await _client.PostAsJsonAsync("/api/auth/login", new { email = "test@example.com", password = "Test1234!" });
+
+        var (verifier, challenge) = GeneratePkce();
+        var authorizeUrl = $"/connect/authorize?client_id={AuthagonalTestFactory.TestClientId}" +
+            $"&redirect_uri={Uri.EscapeDataString("https://app.test/callback")}" +
+            $"&response_type=code&scope=openid+profile+email+offline_access" +
+            $"&state=test&code_challenge={challenge}&code_challenge_method=S256";
+
+        var authResponse = await _client.GetAsync(authorizeUrl);
+        var code = HttpUtility.ParseQueryString(authResponse.Headers.Location!.Query)["code"]!;
+
+        var tokenForm = new FormUrlEncodedContent(new Dictionary<string, string>
+        {
+            ["grant_type"] = "authorization_code",
+            ["code"] = code,
+            ["redirect_uri"] = "https://app.test/callback",
+            ["code_verifier"] = verifier,
+            ["client_id"] = AuthagonalTestFactory.TestClientId
+        });
+        var tokenResponse = await _client.PostAsync("/connect/token", tokenForm);
+        var tokens = await tokenResponse.Content.ReadFromJsonAsync<JsonElement>();
+        var idToken = tokens.GetProperty("id_token").GetString()!;
+
+        var parsed = new JsonWebTokenHandler().ReadJsonWebToken(idToken);
+        var sid = parsed.GetClaim("sid")?.Value;
+        Assert.False(string.IsNullOrEmpty(sid));
+
+        // Refresh must preserve the sid so logout tokens remain correlatable after
+        // the app has rotated its tokens many times.
+        var refreshToken = tokens.GetProperty("refresh_token").GetString()!;
+        var refreshForm = new FormUrlEncodedContent(new Dictionary<string, string>
+        {
+            ["grant_type"] = "refresh_token",
+            ["refresh_token"] = refreshToken,
+            ["client_id"] = AuthagonalTestFactory.TestClientId
+        });
+        var refreshed = await _client.PostAsync("/connect/token", refreshForm);
+        var refreshedTokens = await refreshed.Content.ReadFromJsonAsync<JsonElement>();
+        var refreshedIdToken = refreshedTokens.GetProperty("id_token").GetString()!;
+        var refreshedSid = new JsonWebTokenHandler().ReadJsonWebToken(refreshedIdToken).GetClaim("sid")?.Value;
+        Assert.Equal(sid, refreshedSid);
     }
 
     private static (string Verifier, string Challenge) GeneratePkce()

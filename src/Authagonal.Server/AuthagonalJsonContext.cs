@@ -8,8 +8,6 @@ using Authagonal.Server.Services.Cluster;
 
 namespace Authagonal.Server;
 
-[JsonSerializable(typeof(AuthorizationCode))]
-[JsonSerializable(typeof(TokenService.RefreshTokenData))]
 [JsonSerializable(typeof(DeviceCodeData))]
 [JsonSerializable(typeof(AuthorizeEndpoint.ConsentData))]
 [JsonSerializable(typeof(WebAuthnCredentialData))]

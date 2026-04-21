@@ -29,6 +29,8 @@ public sealed class OAuthClient
     public int AuthorizationCodeLifetimeSeconds { get; set; } = 300;
     public int AbsoluteRefreshTokenLifetimeSeconds { get; set; } = 2592000;
     public int SlidingRefreshTokenLifetimeSeconds { get; set; } = 1296000;
+    public int DeviceCodeLifetimeSeconds { get; set; } = 300;
+    public bool RequirePushedAuthorizationRequests { get; set; }
     public RefreshTokenUsage RefreshTokenUsage { get; set; } = RefreshTokenUsage.OneTime;
     public RefreshTokenExpiration RefreshTokenExpiration { get; set; } = RefreshTokenExpiration.Absolute;
     public bool RequireConsent { get; set; }

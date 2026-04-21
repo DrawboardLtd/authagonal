@@ -1,17 +1,10 @@
 using System.Security.Cryptography;
 using System.Text;
 
-namespace Authagonal.Server.Services;
+namespace Authagonal.Protocol.Services;
 
 public static class PkceValidator
 {
-    /// <summary>
-    /// Validates a PKCE code verifier against the stored code challenge.
-    /// </summary>
-    /// <param name="codeVerifier">The code_verifier sent by the client in the token request.</param>
-    /// <param name="codeChallenge">The code_challenge stored during authorization.</param>
-    /// <param name="method">The code_challenge_method: "S256" or "plain".</param>
-    /// <returns>True if the verifier matches the challenge; false otherwise.</returns>
     public static bool ValidateCodeVerifier(string codeVerifier, string codeChallenge, string method)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(codeVerifier);

@@ -1,4 +1,5 @@
 using Authagonal.Core.Stores;
+using Authagonal.Protocol.Services;
 using Authagonal.Server.Services.Cluster;
 using Microsoft.Extensions.Options;
 
@@ -12,7 +13,7 @@ namespace Authagonal.Server.Services;
 public sealed class SigningKeyRotationService(
     IServiceScopeFactory scopeFactory,
     ClusterLeaderService leaderService,
-    KeyManager keyManager,
+    ProtocolKeyManager keyManager,
     IOptions<AuthOptions> authOptions,
     ILogger<SigningKeyRotationService> logger) : BackgroundService
 {
@@ -50,7 +51,7 @@ public sealed class SigningKeyRotationService(
                 await using var scope = scopeFactory.CreateAsyncScope();
                 var keyStore = scope.ServiceProvider.GetRequiredService<ISigningKeyStore>();
 
-                var rotated = await SigningKeyOps.CheckAndRotateAsync(
+                var rotated = await ProtocolSigningKeyOps.CheckAndRotateAsync(
                     keyStore, options.SigningKeyLifetimeDays, options.KeyRotationLeadTimeDays,
                     logger, stoppingToken);
 

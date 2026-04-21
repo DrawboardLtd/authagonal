@@ -1,6 +1,9 @@
 using Authagonal.Core.Models;
 using Authagonal.Core.Services;
 using Authagonal.Core.Stores;
+using Authagonal.Protocol;
+using Authagonal.Protocol.Endpoints;
+using Authagonal.Protocol.Services;
 using Authagonal.Server.Endpoints;
 using Authagonal.Server.Endpoints.Admin;
 using Authagonal.Server.Endpoints.Scim;
@@ -79,12 +82,12 @@ public static class AuthagonalExtensions
             dataProtection.PersistKeysToAzureBlobStorage(blobClient);
         }
 
-        // Single-tenant KeyManager (singleton, resolves ISigningKeyStore via scope factory)
-        services.AddSingleton<KeyManager>();
-        services.TryAddSingleton<Authagonal.Core.Services.IKeyManager>(sp => sp.GetRequiredService<KeyManager>());
-        services.AddHostedService(sp => sp.GetRequiredService<KeyManager>());
+        // Signing-key management is provided by Authagonal.Protocol's ProtocolKeyManager
+        // (registered via AddAuthagonalCore → AddAuthagonalProtocol). Single-tenant hosts
+        // get it as an IKeyManager singleton; multi-tenant hosts that registered their own
+        // IKeyManager before AddAuthagonalCore keep theirs.
 
-        // JWT key resolver (uses root provider, fine for singleton KeyManager)
+        // JWT key resolver (uses root provider, fine for singleton ProtocolKeyManager)
         services.AddSingleton<IPostConfigureOptions<JwtBearerOptions>>(sp =>
             new JwtBearerKeyResolverPostConfigure(sp));
 
@@ -154,9 +157,33 @@ public static class AuthagonalExtensions
         // ---------------------------------------------------------------------------
         services.AddSingleton<PasswordHasher>();
         services.AddSingleton<PasswordValidator>();
-        services.AddScoped<AuthorizationCodeService>();
-        services.AddScoped<ITokenService, TokenService>();
         services.AddHttpClient("Provisioning");
+
+        // Protocol — token service, key manager (when not pre-registered), auth-code
+        // service. Server maps AuthOptions into AuthagonalProtocolOptions so there's one
+        // source of truth for key lifetime / rotation / grace window.
+        services.AddSingleton<IConfigureOptions<AuthagonalProtocolOptions>>(sp =>
+        {
+            var auth = sp.GetRequiredService<IOptions<AuthOptions>>().Value;
+            return new ConfigureNamedOptions<AuthagonalProtocolOptions>(Options.DefaultName, o =>
+            {
+                o.SigningKeyLifetimeDays = auth.SigningKeyLifetimeDays;
+                o.SigningKeyCacheRefreshMinutes = auth.SigningKeyCacheRefreshMinutes;
+                o.RefreshTokenReuseGraceSeconds = auth.RefreshTokenReuseGraceSeconds;
+                o.AuthenticationScheme = CookieAuthenticationDefaults.AuthenticationScheme;
+            });
+        });
+
+        // Server-specific client-secret verifier — uses PasswordHasher so legacy
+        // PBKDF2v1, ASP.NET Identity V3, and BCrypt client-secret hashes all verify
+        // through the same path as user passwords. Must TryAdd before AddAuthagonalProtocol.
+        services.TryAddSingleton<IClientSecretVerifier, PasswordHasherClientSecretVerifier>();
+
+        services.AddAuthagonalProtocol(_ => { });
+
+        // Subject resolver — maps ClaimsPrincipal / OidcSubject back to AuthUser via the user store.
+        services.AddScoped<UserStoreOidcSubjectResolver>();
+        services.AddScoped<IOidcSubjectResolver>(sp => sp.GetRequiredService<UserStoreOidcSubjectResolver>());
         services.AddSingleton<TotpService>();
         services.AddSingleton<RecoveryCodeService>();
         services.AddScoped<WebAuthnService>();
@@ -451,6 +478,7 @@ public static class AuthagonalExtensions
         app.MapEndSessionEndpoint();
         app.MapUserinfoEndpoint();
         app.MapClientRegistrationEndpoint();
+        app.MapProtocolPushedAuthorizationEndpoint();
 
         if (app.Configuration.GetValue("AdminApi:Enabled", true))
         {

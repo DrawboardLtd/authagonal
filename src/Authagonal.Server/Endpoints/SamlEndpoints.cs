@@ -274,7 +274,8 @@ public static class SamlEndpoints
             new("sub", user.Id),
             new(ClaimTypes.Email, user.Email),
             new(ClaimTypes.Name, string.IsNullOrWhiteSpace(displayName) ? user.Email : displayName),
-            new("security_stamp", user.SecurityStamp ?? "")
+            new("security_stamp", user.SecurityStamp ?? ""),
+            new("sid", Guid.NewGuid().ToString("N"))
         };
 
         if (!string.IsNullOrWhiteSpace(user.OrganizationId))

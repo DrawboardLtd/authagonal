@@ -1,9 +1,9 @@
 using System.Security.Claims;
-using System.Security.Cryptography;
-using System.Text.Json;
 using System.Web;
 using Authagonal.Core.Services;
 using Authagonal.Core.Stores;
+using Authagonal.Protocol;
+using Authagonal.Protocol.Services;
 using Authagonal.Server.Services;
 
 namespace Authagonal.Server.Endpoints;
@@ -19,32 +19,59 @@ public static class AuthorizeEndpoint
             IProvisioningOrchestrator provisioningOrchestrator,
             IConfiguration configuration,
             IGrantStore grantStore,
-            AuthorizationCodeService authCodeService,
-            ILogger<AuthorizationCodeService> logger,
+            UserStoreOidcSubjectResolver subjectResolver,
+            ProtocolAuthorizationCodeService authCodeService,
+            ProtocolPushedAuthorizationService parService,
+            ILogger<ProtocolAuthorizationCodeService> logger,
             CancellationToken ct) =>
         {
-            var query = httpContext.Request.Query;
+            var clientId = httpContext.Request.Query["client_id"].FirstOrDefault();
+            var initialState = httpContext.Request.Query["state"].FirstOrDefault();
+            var requestUri = httpContext.Request.Query["request_uri"].FirstOrDefault();
+            // Pre-lookup redirect-back target — only honoured for non-PAR flow, since a PAR
+            // request keeps redirect_uri inside the pushed payload.
+            var initialRedirectUri = string.IsNullOrWhiteSpace(requestUri)
+                ? httpContext.Request.Query["redirect_uri"].FirstOrDefault()
+                : null;
 
-            var clientId = query["client_id"].FirstOrDefault();
-            var redirectUri = query["redirect_uri"].FirstOrDefault();
-            var responseType = query["response_type"].FirstOrDefault();
-            var scope = query["scope"].FirstOrDefault();
-            var state = query["state"].FirstOrDefault();
-            var codeChallenge = query["code_challenge"].FirstOrDefault();
-            var codeChallengeMethod = query["code_challenge_method"].FirstOrDefault();
-            var nonce = query["nonce"].FirstOrDefault();
-            var resources = query["resource"].Where(r => !string.IsNullOrWhiteSpace(r)).Cast<string>().ToArray();
-
-            // Validate required parameters
             if (string.IsNullOrWhiteSpace(clientId))
-                return BuildErrorRedirect(redirectUri, "invalid_request", "client_id is required", state);
+                return BuildErrorRedirect(initialRedirectUri, "invalid_request", "client_id is required", initialState);
 
             var client = await clientStore.GetAsync(clientId, ct);
             if (client is null)
-                return BuildErrorRedirect(redirectUri, "unauthorized_client", "Unknown client_id", state);
+                return BuildErrorRedirect(initialRedirectUri, "unauthorized_client", "Unknown client_id", initialState);
 
             if (!client.Enabled)
-                return BuildErrorRedirect(redirectUri, "unauthorized_client", "Client is disabled", state);
+                return BuildErrorRedirect(initialRedirectUri, "unauthorized_client", "Client is disabled", initialState);
+
+            Dictionary<string, string[]>? pushedParams = null;
+            if (!string.IsNullOrWhiteSpace(requestUri))
+            {
+                var record = await parService.LoadAsync(requestUri, clientId, ct);
+                if (record is null)
+                    return BuildErrorRedirect(null, "invalid_request", "request_uri is unknown, expired, or already consumed", initialState);
+                pushedParams = record.Parameters;
+            }
+            else if (client.RequirePushedAuthorizationRequests)
+            {
+                return BuildErrorRedirect(null, "invalid_request", "This client requires requests to be pushed via /connect/par", initialState);
+            }
+
+            string? Get(string key) => pushedParams is not null
+                ? (pushedParams.TryGetValue(key, out var values) ? values.FirstOrDefault() : null)
+                : httpContext.Request.Query[key].FirstOrDefault();
+            IEnumerable<string> GetAll(string key) => pushedParams is not null
+                ? (pushedParams.TryGetValue(key, out var values) ? values : [])
+                : httpContext.Request.Query[key].Where(v => v is not null).Cast<string>();
+
+            var redirectUri = Get("redirect_uri");
+            var responseType = Get("response_type");
+            var scope = Get("scope");
+            var state = Get("state");
+            var codeChallenge = Get("code_challenge");
+            var codeChallengeMethod = Get("code_challenge_method");
+            var nonce = Get("nonce");
+            var resources = GetAll("resource").Where(r => !string.IsNullOrWhiteSpace(r)).ToArray();
 
             if (string.IsNullOrWhiteSpace(redirectUri))
                 return BuildErrorRedirect(null, "invalid_request", "redirect_uri is required", state);
@@ -91,7 +118,7 @@ public static class AuthorizeEndpoint
                 var authorizeRelativeUrl = $"{httpContext.Request.Path}{httpContext.Request.QueryString}";
                 var loginUrl = $"{loginAppUrl}?returnUrl={Uri.EscapeDataString(authorizeRelativeUrl)}";
 
-                var loginHint = query["login_hint"].FirstOrDefault();
+                var loginHint = Get("login_hint");
                 if (!string.IsNullOrWhiteSpace(loginHint))
                     loginUrl += $"&login_hint={Uri.EscapeDataString(loginHint)}";
 
@@ -148,13 +175,13 @@ public static class AuthorizeEndpoint
             // Provision user into required downstream apps (TCC)
             if (client.ProvisioningApps.Count > 0)
             {
-                var user = await userStore.GetAsync(subjectId, ct);
-                if (user is null)
+                var provisionUser = await userStore.GetAsync(subjectId, ct);
+                if (provisionUser is null)
                     return BuildErrorRedirect(redirectUri, "server_error", "User not found", state);
 
                 try
                 {
-                    await provisioningOrchestrator.ProvisionAsync(user, client.ProvisioningApps, ct);
+                    await provisioningOrchestrator.ProvisionAsync(provisionUser, client.ProvisioningApps, ct);
                 }
                 catch (ProvisioningException ex)
                 {
@@ -163,27 +190,41 @@ public static class AuthorizeEndpoint
                 }
             }
 
-            // Carry the upstream-federation session cap (if any) into the auth code so the
-            // resulting refresh token cannot outlive the IdP session. Value is Unix seconds.
-            DateTimeOffset? sessionMaxExpiresAt = null;
-            var sessionMaxExpClaim = httpContext.User.FindFirstValue("session_max_exp");
-            if (!string.IsNullOrEmpty(sessionMaxExpClaim) && long.TryParse(sessionMaxExpClaim, out var sessionMaxExpSeconds))
+            // Resolve the subject through the host-registered resolver. The resolver reads
+            // AuthUser from the user store, applies any session_max_exp cap captured in the
+            // principal, and is the single place that maps identity → OidcSubject.
+            var resolution = await subjectResolver.ResolveAsync(
+                httpContext.User,
+                new OidcSubjectResolutionContext(clientId, requestedScopes, resources),
+                ct);
+
+            if (resolution is OidcSubjectResult.Rejected rejected)
             {
-                sessionMaxExpiresAt = DateTimeOffset.FromUnixTimeSeconds(sessionMaxExpSeconds);
+                var error = rejected.Reason switch
+                {
+                    OidcRejection.LoginRequired => "login_required",
+                    OidcRejection.ConsentRequired => "consent_required",
+                    OidcRejection.AccountSelectionRequired => "account_selection_required",
+                    _ => "access_denied",
+                };
+                return BuildErrorRedirect(redirectUri, error, rejected.Description ?? "Subject not permitted", state);
             }
 
-            // Create authorization code
+            var subject = ((OidcSubjectResult.Allowed)resolution).Subject;
+
             var code = await authCodeService.CreateCodeAsync(
                 clientId,
-                subjectId,
+                subject,
                 redirectUri,
                 requestedScopes.ToList(),
                 codeChallenge,
                 codeChallengeMethod,
                 nonce,
                 resources.Length > 0 ? resources : null,
-                sessionMaxExpiresAt,
                 ct);
+
+            if (!string.IsNullOrWhiteSpace(requestUri))
+                await parService.RemoveAsync(requestUri, ct);
 
             // Build redirect URI with code and state
             var uriBuilder = new UriBuilder(redirectUri);

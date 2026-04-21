@@ -2,23 +2,20 @@ using System.Security.Cryptography;
 using System.Text.Json;
 using Authagonal.Core.Models;
 using Authagonal.Core.Stores;
+using Microsoft.Extensions.Logging;
 using Microsoft.IdentityModel.Tokens;
 
-namespace Authagonal.Server.Services;
+namespace Authagonal.Protocol.Services;
 
 /// <summary>
-/// Shared signing key operations — key generation, rotation checks, JWKS building, RSA serialization.
-/// Used by both single-tenant KeyManager and multi-tenant cloud wrappers.
+/// Signing-key operations — generation, rotation checks, JWKS assembly, RSA serialization.
+/// Public so host-side rotation services (e.g. cluster-aware rotation) can reuse them.
 /// </summary>
-public static class SigningKeyOps
+public static class ProtocolSigningKeyOps
 {
     public const int RsaKeySizeInBits = 2048;
     public const string Algorithm = SecurityAlgorithms.RsaSha256;
 
-    /// <summary>
-    /// Ensures an active signing key exists, generating one if missing or expired.
-    /// Returns the active key.
-    /// </summary>
     public static async Task<SigningKeyInfo> EnsureActiveKeyAsync(
         ISigningKeyStore keyStore, int keyLifetimeDays, ILogger logger, CancellationToken ct = default)
     {
@@ -40,8 +37,9 @@ public static class SigningKeyOps
     }
 
     /// <summary>
-    /// Checks if the active key is approaching expiry and rotates if needed.
-    /// Returns true if rotation occurred.
+    /// Checks whether the active signing key is approaching expiry and rotates if so.
+    /// Returns true if rotation occurred. Callers should <c>ForceRefreshAsync</c> the key
+    /// manager after a successful rotation so the new key is picked up promptly.
     /// </summary>
     public static async Task<bool> CheckAndRotateAsync(
         ISigningKeyStore keyStore, int keyLifetimeDays, int leadTimeDays,
@@ -73,9 +71,6 @@ public static class SigningKeyOps
         return true;
     }
 
-    /// <summary>
-    /// Builds signing credentials from a key.
-    /// </summary>
     public static SigningCredentials BuildSigningCredentials(SigningKeyInfo key)
     {
         var rsaParams = DeserializeRsaParameters(key.RsaParametersJson);
@@ -85,9 +80,6 @@ public static class SigningKeyOps
         return new SigningCredentials(securityKey, Algorithm);
     }
 
-    /// <summary>
-    /// Builds the JWKS list from all non-expired keys in the store.
-    /// </summary>
     public static async Task<List<JsonWebKey>> BuildJwksAsync(
         ISigningKeyStore keyStore, CancellationToken ct = default)
     {
@@ -129,9 +121,9 @@ public static class SigningKeyOps
         };
     }
 
-    public static string SerializeRsaParameters(RSAParameters p)
+    private static string SerializeRsaParameters(RSAParameters p)
     {
-        var dict = new Dictionary<string, string?>();
+        var dict = new Dictionary<string, string>();
         if (p.Modulus is not null) dict["Modulus"] = Convert.ToBase64String(p.Modulus);
         if (p.Exponent is not null) dict["Exponent"] = Convert.ToBase64String(p.Exponent);
         if (p.D is not null) dict["D"] = Convert.ToBase64String(p.D);
@@ -140,12 +132,12 @@ public static class SigningKeyOps
         if (p.DP is not null) dict["DP"] = Convert.ToBase64String(p.DP);
         if (p.DQ is not null) dict["DQ"] = Convert.ToBase64String(p.DQ);
         if (p.InverseQ is not null) dict["InverseQ"] = Convert.ToBase64String(p.InverseQ);
-        return JsonSerializer.Serialize(dict!, AuthagonalJsonContext.Default.DictionaryStringString);
+        return JsonSerializer.Serialize(dict, ProtocolJsonContext.Default.DictionaryStringString);
     }
 
-    public static RSAParameters DeserializeRsaParameters(string json)
+    private static RSAParameters DeserializeRsaParameters(string json)
     {
-        var dict = JsonSerializer.Deserialize(json, AuthagonalJsonContext.Default.DictionaryStringString)
+        var dict = JsonSerializer.Deserialize(json, ProtocolJsonContext.Default.DictionaryStringString)
             ?? throw new InvalidOperationException("Failed to deserialize RSA parameters");
 
         return new RSAParameters

@@ -90,7 +90,8 @@ public static class EndSessionEndpoint
 
                         try
                         {
-                            var logoutToken = CreateBackChannelLogoutToken(tc.Issuer, clientIdGrant, subjectId, km);
+                            var tokenSid = c.BackChannelLogoutSessionRequired ? sessionId : null;
+                            var logoutToken = CreateBackChannelLogoutToken(tc.Issuer, clientIdGrant, subjectId, tokenSid, km);
                             var client = hcf.CreateClient("BackChannelLogout");
                             client.Timeout = TimeSpan.FromSeconds(10);
                             await client.PostAsync(c.BackChannelLogoutUri,
@@ -207,22 +208,28 @@ public static class EndSessionEndpoint
     }
 
     private static string CreateBackChannelLogoutToken(
-        string issuer, string clientId, string subjectId, Authagonal.Core.Services.IKeyManager keyManager)
+        string issuer, string clientId, string subjectId, string? sessionId,
+        Authagonal.Core.Services.IKeyManager keyManager)
     {
+        var claims = new Dictionary<string, object>
+        {
+            ["sub"] = subjectId,
+            ["events"] = new Dictionary<string, object>
+            {
+                ["http://schemas.openid.net/event/backchannel-logout"] = new { }
+            },
+            ["jti"] = Guid.NewGuid().ToString("N")
+        };
+
+        if (!string.IsNullOrEmpty(sessionId))
+            claims["sid"] = sessionId;
+
         var descriptor = new SecurityTokenDescriptor
         {
             Issuer = issuer,
             Audience = clientId,
             IssuedAt = DateTime.UtcNow,
-            Claims = new Dictionary<string, object>
-            {
-                ["sub"] = subjectId,
-                ["events"] = new Dictionary<string, object>
-                {
-                    ["http://schemas.openid.net/event/backchannel-logout"] = new { }
-                },
-                ["jti"] = Guid.NewGuid().ToString("N")
-            },
+            Claims = claims,
             SigningCredentials = keyManager.GetSigningCredentials()
         };
 

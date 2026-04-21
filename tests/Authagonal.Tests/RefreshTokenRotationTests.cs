@@ -1,8 +1,8 @@
 using System.Security.Cryptography;
 using System.Text;
-using Authagonal.Core.Models;
-using Authagonal.Core.Services;
 using Authagonal.Core.Stores;
+using Authagonal.Protocol;
+using Authagonal.Protocol.Services;
 using Authagonal.Server.Services;
 using Authagonal.Tests.Infrastructure;
 using Microsoft.Extensions.DependencyInjection;
@@ -14,8 +14,9 @@ namespace Authagonal.Tests;
 ///   * strict default (reuse revokes family)
 ///   * opt-in grace window (retry within window is idempotent)
 ///   * session cap clamping and preservation across rotations
-/// These drive ITokenService directly so we can exercise behaviour that would be
-/// awkward to express via HTTP (e.g. mutating AuthOptions or inspecting grant state).
+/// These drive <see cref="IProtocolTokenService"/> directly so we can exercise behaviour
+/// that would be awkward to express via HTTP (e.g. mutating AuthOptions or inspecting
+/// grant state).
 /// </summary>
 public sealed class RefreshTokenRotationTests
 {
@@ -28,10 +29,13 @@ public sealed class RefreshTokenRotationTests
         await factory.SeedTestDataAsync();
         var user = await factory.SeedTestUserAsync();
 
-        var tokens = factory.Services.GetRequiredService<ITokenService>();
+        using var scope = factory.Services.CreateScope();
+        var tokens = scope.ServiceProvider.GetRequiredService<IProtocolTokenService>();
+        var resolver = scope.ServiceProvider.GetRequiredService<UserStoreOidcSubjectResolver>();
         var client = (await factory.Services.GetRequiredService<IClientStore>().GetAsync(ClientId))!;
+        var subject = await resolver.BuildSubjectAsync(user, client);
 
-        var handle = await tokens.CreateRefreshTokenAsync(user, client, ["openid", "offline_access"]);
+        var handle = await tokens.CreateRefreshTokenAsync(subject, client, ["openid", "offline_access"]);
 
         // First rotation succeeds.
         var first = await tokens.HandleRefreshTokenAsync(handle, ClientId);
@@ -57,10 +61,13 @@ public sealed class RefreshTokenRotationTests
         await factory.SeedTestDataAsync();
         var user = await factory.SeedTestUserAsync();
 
-        var tokens = factory.Services.GetRequiredService<ITokenService>();
+        using var scope = factory.Services.CreateScope();
+        var tokens = scope.ServiceProvider.GetRequiredService<IProtocolTokenService>();
+        var resolver = scope.ServiceProvider.GetRequiredService<UserStoreOidcSubjectResolver>();
         var client = (await factory.Services.GetRequiredService<IClientStore>().GetAsync(ClientId))!;
+        var subject = await resolver.BuildSubjectAsync(user, client);
 
-        var handle = await tokens.CreateRefreshTokenAsync(user, client, ["openid", "offline_access"]);
+        var handle = await tokens.CreateRefreshTokenAsync(subject, client, ["openid", "offline_access"]);
 
         // First refresh rotates cleanly.
         var first = await tokens.HandleRefreshTokenAsync(handle, ClientId);
@@ -88,10 +95,13 @@ public sealed class RefreshTokenRotationTests
         await factory.SeedTestDataAsync();
         var user = await factory.SeedTestUserAsync();
 
-        var tokens = factory.Services.GetRequiredService<ITokenService>();
+        using var scope = factory.Services.CreateScope();
+        var tokens = scope.ServiceProvider.GetRequiredService<IProtocolTokenService>();
+        var resolver = scope.ServiceProvider.GetRequiredService<UserStoreOidcSubjectResolver>();
         var client = (await factory.Services.GetRequiredService<IClientStore>().GetAsync(ClientId))!;
+        var subject = await resolver.BuildSubjectAsync(user, client);
 
-        var handle = await tokens.CreateRefreshTokenAsync(user, client, ["openid", "offline_access"]);
+        var handle = await tokens.CreateRefreshTokenAsync(subject, client, ["openid", "offline_access"]);
 
         var first = await tokens.HandleRefreshTokenAsync(handle, ClientId);
         var second = await tokens.HandleRefreshTokenAsync(first.RefreshToken!, ClientId);
@@ -113,13 +123,15 @@ public sealed class RefreshTokenRotationTests
         await factory.SeedTestDataAsync();
         var user = await factory.SeedTestUserAsync();
 
-        var tokens = factory.Services.GetRequiredService<ITokenService>();
+        using var scope = factory.Services.CreateScope();
+        var tokens = scope.ServiceProvider.GetRequiredService<IProtocolTokenService>();
+        var resolver = scope.ServiceProvider.GetRequiredService<UserStoreOidcSubjectResolver>();
         var client = (await factory.Services.GetRequiredService<IClientStore>().GetAsync(ClientId))!;
 
         // Cap the session at 10 minutes from now — well below the default refresh lifetime.
         var cap = DateTimeOffset.UtcNow.AddMinutes(10);
-        var handle = await tokens.CreateRefreshTokenAsync(
-            user, client, ["openid", "offline_access"], sessionMaxExpiresAt: cap);
+        var subject = await resolver.BuildSubjectAsync(user, client, sessionMaxExpiresAt: cap);
+        var handle = await tokens.CreateRefreshTokenAsync(subject, client, ["openid", "offline_access"]);
 
         var grant = await factory.GrantStore.GetAsync(handle);
         Assert.NotNull(grant);
@@ -135,12 +147,14 @@ public sealed class RefreshTokenRotationTests
         await factory.SeedTestDataAsync();
         var user = await factory.SeedTestUserAsync();
 
-        var tokens = factory.Services.GetRequiredService<ITokenService>();
+        using var scope = factory.Services.CreateScope();
+        var tokens = scope.ServiceProvider.GetRequiredService<IProtocolTokenService>();
+        var resolver = scope.ServiceProvider.GetRequiredService<UserStoreOidcSubjectResolver>();
         var client = (await factory.Services.GetRequiredService<IClientStore>().GetAsync(ClientId))!;
 
         var cap = DateTimeOffset.UtcNow.AddMinutes(10);
-        var handle = await tokens.CreateRefreshTokenAsync(
-            user, client, ["openid", "offline_access"], sessionMaxExpiresAt: cap);
+        var subject = await resolver.BuildSubjectAsync(user, client, sessionMaxExpiresAt: cap);
+        var handle = await tokens.CreateRefreshTokenAsync(subject, client, ["openid", "offline_access"]);
 
         var rotated = await tokens.HandleRefreshTokenAsync(handle, ClientId);
 
@@ -158,21 +172,24 @@ public sealed class RefreshTokenRotationTests
         await factory.SeedTestDataAsync();
         var user = await factory.SeedTestUserAsync();
 
-        var authCode = factory.Services.GetRequiredService<AuthorizationCodeService>();
-        var tokens = factory.Services.GetRequiredService<ITokenService>();
+        using var scope = factory.Services.CreateScope();
+        var authCode = scope.ServiceProvider.GetRequiredService<ProtocolAuthorizationCodeService>();
+        var tokens = scope.ServiceProvider.GetRequiredService<IProtocolTokenService>();
+        var resolver = scope.ServiceProvider.GetRequiredService<UserStoreOidcSubjectResolver>();
+        var client = (await factory.Services.GetRequiredService<IClientStore>().GetAsync(ClientId))!;
 
         var (verifier, challenge) = GeneratePkce();
         var cap = DateTimeOffset.UtcNow.AddMinutes(10);
+        var subject = await resolver.BuildSubjectAsync(user, client, sessionMaxExpiresAt: cap);
         var code = await authCode.CreateCodeAsync(
             clientId: ClientId,
-            subjectId: user.Id,
+            subject: subject,
             redirectUri: "https://app.test/callback",
             scopes: ["openid", "offline_access"],
             codeChallenge: challenge,
             codeChallengeMethod: "S256",
             nonce: null,
-            resources: null,
-            sessionMaxExpiresAt: cap);
+            resources: null);
 
         var response = await tokens.HandleAuthorizationCodeAsync(
             code, ClientId, "https://app.test/callback", codeVerifier: verifier);
