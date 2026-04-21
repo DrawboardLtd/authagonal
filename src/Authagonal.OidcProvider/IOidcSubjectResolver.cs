@@ -4,16 +4,15 @@ namespace Authagonal.OidcProvider;
 
 /// <summary>
 /// The single extension point consumers must implement. Given a principal authenticated
-/// by the host application (typically via cookie auth), return the subject payload used
-/// to mint id_token / access_token claims and — when offline_access is granted — the
-/// refresh token.
-///
-/// Return <c>null</c> to reject the request; the authorize endpoint will respond with
-/// <c>login_required</c> so the client can retry interactive login.
+/// by the host application (typically via cookie auth), return either an
+/// <see cref="OidcSubjectResult.Allowed"/> with the subject to mint, or an
+/// <see cref="OidcSubjectResult.Rejected"/> carrying the OIDC error to surface back to
+/// the client (for example, <see cref="OidcRejection.ConsentRequired"/> when the user
+/// is authenticated but additional interaction is required).
 /// </summary>
 public interface IOidcSubjectResolver
 {
-    Task<OidcSubject?> ResolveAsync(
+    Task<OidcSubjectResult> ResolveAsync(
         ClaimsPrincipal authenticatedPrincipal,
         OidcSubjectResolutionContext context,
         CancellationToken ct = default);
@@ -23,6 +22,39 @@ public sealed record OidcSubjectResolutionContext(
     string ClientId,
     IReadOnlyList<string> RequestedScopes,
     IReadOnlyList<string> RequestedResources);
+
+public abstract record OidcSubjectResult
+{
+    private OidcSubjectResult() { }
+
+    public static OidcSubjectResult Allow(OidcSubject subject) => new Allowed(subject);
+
+    public static OidcSubjectResult Reject(OidcRejection reason, string? description = null) =>
+        new Rejected(reason, description);
+
+    public sealed record Allowed(OidcSubject Subject) : OidcSubjectResult;
+
+    public sealed record Rejected(OidcRejection Reason, string? Description) : OidcSubjectResult;
+}
+
+/// <summary>
+/// OIDC error codes the subject resolver may surface. Maps to the standard
+/// <c>error</c> value in the authorize response.
+/// </summary>
+public enum OidcRejection
+{
+    /// <summary>User must re-authenticate. Maps to <c>login_required</c>.</summary>
+    LoginRequired,
+
+    /// <summary>User has not consented to the requested scopes. Maps to <c>consent_required</c>.</summary>
+    ConsentRequired,
+
+    /// <summary>Multiple accounts are available and the user must pick one. Maps to <c>account_selection_required</c>.</summary>
+    AccountSelectionRequired,
+
+    /// <summary>Authenticated user is not permitted for this request. Maps to <c>access_denied</c>.</summary>
+    AccessDenied,
+}
 
 public sealed class OidcSubject
 {
@@ -42,8 +74,10 @@ public sealed class OidcSubject
     public IReadOnlyDictionary<string, string>? AdditionalClaims { get; init; }
 
     /// <summary>
-    /// Optional session cap. When set, refresh token lifetimes issued from this subject
-    /// are clamped so the session cannot outlive this moment.
+    /// Optional session cap. When set, access / id / refresh token lifetimes issued from
+    /// this subject are clamped so no token — including those minted from rotations —
+    /// outlives this moment. Typically sourced from an upstream IdP's <c>exp</c>-style
+    /// claim so federation-anchored sessions can't be extended indefinitely.
     /// </summary>
     public DateTimeOffset? SessionMaxExpiresAt { get; init; }
 }

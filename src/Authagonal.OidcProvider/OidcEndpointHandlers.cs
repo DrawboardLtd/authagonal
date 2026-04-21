@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Security.Claims;
 using Microsoft.AspNetCore;
 using Microsoft.AspNetCore.Authentication;
@@ -11,6 +12,14 @@ namespace Authagonal.OidcProvider;
 
 internal static class OidcEndpointHandlers
 {
+    /// <summary>
+    /// Private claim carrying the session cap as Unix seconds. Persisted through
+    /// authorization code → refresh token rotations so the cap cannot be extended by
+    /// refreshing. Destinations are empty — this claim never lands on an access or
+    /// id token.
+    /// </summary>
+    internal const string SessionMaxExpClaim = "session_max_exp";
+
     public static async Task HandleAuthorizeAsync(HttpContext http)
     {
         var request = http.GetOpenIddictServerRequest()
@@ -32,7 +41,7 @@ internal static class OidcEndpointHandlers
         var scopes = request.GetScopes();
         var resources = request.GetResources();
 
-        var subject = await resolver.ResolveAsync(
+        var result = await resolver.ResolveAsync(
             auth.Principal,
             new OidcSubjectResolutionContext(
                 ClientId: request.ClientId ?? "",
@@ -40,19 +49,13 @@ internal static class OidcEndpointHandlers
                 RequestedResources: resources),
             http.RequestAborted);
 
-        if (subject is null)
+        if (result is OidcSubjectResult.Rejected rejected)
         {
-            await http.ForbidAsync(
-                OpenIddictServerAspNetCoreDefaults.AuthenticationScheme,
-                new AuthenticationProperties(new Dictionary<string, string?>
-                {
-                    [OpenIddictServerAspNetCoreConstants.Properties.Error] =
-                        OpenIddictConstants.Errors.LoginRequired,
-                    [OpenIddictServerAspNetCoreConstants.Properties.ErrorDescription] =
-                        "The subject resolver rejected the request.",
-                }));
+            await RejectAsync(http, rejected);
             return;
         }
+
+        var subject = ((OidcSubjectResult.Allowed)result).Subject;
 
         var identity = BuildIdentity(subject);
         identity.SetScopes(scopes);
@@ -63,6 +66,8 @@ internal static class OidcEndpointHandlers
         }
 
         var principal = new ClaimsPrincipal(identity);
+        ApplySessionCap(principal, subject.SessionMaxExpiresAt);
+
         await http.SignInAsync(OpenIddictServerAspNetCoreDefaults.AuthenticationScheme, principal);
     }
 
@@ -86,7 +91,27 @@ internal static class OidcEndpointHandlers
                 return;
             }
 
-            await http.SignInAsync(OpenIddictServerAspNetCoreDefaults.AuthenticationScheme, auth.Principal);
+            var principal = auth.Principal;
+            var cap = ReadSessionCap(principal);
+
+            // If the cap has already passed, refuse to rotate/issue — the federated
+            // session this token chain was anchored to has ended.
+            if (cap.HasValue && cap.Value <= DateTimeOffset.UtcNow)
+            {
+                await http.ForbidAsync(
+                    OpenIddictServerAspNetCoreDefaults.AuthenticationScheme,
+                    new AuthenticationProperties(new Dictionary<string, string?>
+                    {
+                        [OpenIddictServerAspNetCoreConstants.Properties.Error] =
+                            OpenIddictConstants.Errors.InvalidGrant,
+                        [OpenIddictServerAspNetCoreConstants.Properties.ErrorDescription] =
+                            "The upstream session has ended.",
+                    }));
+                return;
+            }
+
+            ApplySessionCap(principal, cap);
+            await http.SignInAsync(OpenIddictServerAspNetCoreDefaults.AuthenticationScheme, principal);
             return;
         }
 
@@ -135,6 +160,43 @@ internal static class OidcEndpointHandlers
         await http.Response.WriteAsJsonAsync(claims);
     }
 
+    public static async Task HandleEndSessionAsync(HttpContext http)
+    {
+        var opts = http.RequestServices.GetRequiredService<IOptions<AuthagonalOidcProviderOptions>>().Value;
+
+        await http.SignOutAsync(opts.AuthenticationScheme);
+
+        // OpenIddict's sign-out result takes care of validating post_logout_redirect_uri
+        // against the registered client and redirecting there if it's allowed.
+        await http.SignOutAsync(
+            OpenIddictServerAspNetCoreDefaults.AuthenticationScheme,
+            new AuthenticationProperties
+            {
+                RedirectUri = "/",
+            });
+    }
+
+    private static async Task RejectAsync(HttpContext http, OidcSubjectResult.Rejected rejected)
+    {
+        var error = rejected.Reason switch
+        {
+            OidcRejection.LoginRequired => OpenIddictConstants.Errors.LoginRequired,
+            OidcRejection.ConsentRequired => OpenIddictConstants.Errors.ConsentRequired,
+            OidcRejection.AccountSelectionRequired => OpenIddictConstants.Errors.AccountSelectionRequired,
+            OidcRejection.AccessDenied => OpenIddictConstants.Errors.AccessDenied,
+            _ => OpenIddictConstants.Errors.LoginRequired,
+        };
+
+        await http.ForbidAsync(
+            OpenIddictServerAspNetCoreDefaults.AuthenticationScheme,
+            new AuthenticationProperties(new Dictionary<string, string?>
+            {
+                [OpenIddictServerAspNetCoreConstants.Properties.Error] = error,
+                [OpenIddictServerAspNetCoreConstants.Properties.ErrorDescription] =
+                    rejected.Description ?? "The subject resolver rejected the request.",
+            }));
+    }
+
     private static ClaimsIdentity BuildIdentity(OidcSubject subject)
     {
         var identity = new ClaimsIdentity(
@@ -178,7 +240,66 @@ internal static class OidcEndpointHandlers
             }
         }
 
+        if (subject.SessionMaxExpiresAt is { } cap)
+        {
+            // Stored as a claim with no token destinations, so it survives code →
+            // refresh rotations via OpenIddict's principal round-trip but never leaks
+            // into an access/id token.
+            var unix = cap.ToUnixTimeSeconds().ToString(CultureInfo.InvariantCulture);
+            identity.AddClaim(new Claim(SessionMaxExpClaim, unix));
+        }
+
         return identity;
+    }
+
+    /// <summary>
+    /// Clamps issued token lifetimes so no rotation — however many — can push a
+    /// chain of tokens past <paramref name="cap"/>. Equivalent in spirit to the
+    /// refresh-expiry clamp in <c>Authagonal.Server.TokenService</c>.
+    /// </summary>
+    private static void ApplySessionCap(ClaimsPrincipal principal, DateTimeOffset? cap)
+    {
+        if (cap is not { } deadline)
+        {
+            return;
+        }
+
+        var remaining = deadline - DateTimeOffset.UtcNow;
+        if (remaining <= TimeSpan.Zero)
+        {
+            // Zero or negative would be rejected outright; caller should have already
+            // short-circuited. Defensive clamp to a tiny positive value in case we
+            // somehow hit this path.
+            remaining = TimeSpan.FromSeconds(1);
+        }
+
+        principal.SetAccessTokenLifetime(Min(principal.GetAccessTokenLifetime(), remaining));
+        principal.SetIdentityTokenLifetime(Min(principal.GetIdentityTokenLifetime(), remaining));
+        principal.SetRefreshTokenLifetime(Min(principal.GetRefreshTokenLifetime(), remaining));
+        principal.SetAuthorizationCodeLifetime(Min(principal.GetAuthorizationCodeLifetime(), remaining));
+    }
+
+    private static DateTimeOffset? ReadSessionCap(ClaimsPrincipal principal)
+    {
+        var raw = principal.FindFirst(SessionMaxExpClaim)?.Value;
+        if (string.IsNullOrEmpty(raw))
+        {
+            return null;
+        }
+        if (!long.TryParse(raw, NumberStyles.Integer, CultureInfo.InvariantCulture, out var unix))
+        {
+            return null;
+        }
+        return DateTimeOffset.FromUnixTimeSeconds(unix);
+    }
+
+    private static TimeSpan Min(TimeSpan? configured, TimeSpan remaining)
+    {
+        if (configured is null)
+        {
+            return remaining;
+        }
+        return configured.Value < remaining ? configured.Value : remaining;
     }
 
     private static IEnumerable<string> DestinationsFor(Claim claim, IReadOnlyCollection<string> scopes)

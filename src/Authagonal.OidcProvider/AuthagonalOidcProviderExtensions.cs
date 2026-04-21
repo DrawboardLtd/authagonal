@@ -47,7 +47,8 @@ public static class AuthagonalOidcProviderExtensions
             server.UseAspNetCore()
                   .EnableAuthorizationEndpointPassthrough()
                   .EnableTokenEndpointPassthrough()
-                  .EnableUserInfoEndpointPassthrough();
+                  .EnableUserInfoEndpointPassthrough()
+                  .EnableEndSessionEndpointPassthrough();
         });
 
         return builder;
@@ -75,6 +76,11 @@ public static class AuthagonalOidcProviderExtensions
             ["GET", "POST"],
             OidcEndpointHandlers.HandleUserinfoAsync);
 
+        endpoints.MapMethods(
+            opts.EndSessionEndpointPath,
+            ["GET", "POST"],
+            OidcEndpointHandlers.HandleEndSessionAsync);
+
         return endpoints;
     }
 
@@ -99,6 +105,9 @@ public static class AuthagonalOidcProviderExtensions
 
             server.UserInfoEndpointUris.Clear();
             server.UserInfoEndpointUris.Add(new Uri(o.UserinfoEndpointPath, UriKind.Relative));
+
+            server.EndSessionEndpointUris.Clear();
+            server.EndSessionEndpointUris.Add(new Uri(o.EndSessionEndpointPath, UriKind.Relative));
 
             server.JsonWebKeySetEndpointUris.Clear();
             server.JsonWebKeySetEndpointUris.Add(new Uri(o.JwksEndpointPath, UriKind.Relative));

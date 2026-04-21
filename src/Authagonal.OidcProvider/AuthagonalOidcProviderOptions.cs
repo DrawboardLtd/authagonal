@@ -11,6 +11,7 @@ public sealed class AuthagonalOidcProviderOptions
     public string AuthorizationEndpointPath { get; set; } = "/connect/authorize";
     public string TokenEndpointPath { get; set; } = "/connect/token";
     public string UserinfoEndpointPath { get; set; } = "/connect/userinfo";
+    public string EndSessionEndpointPath { get; set; } = "/connect/logout";
     public string JwksEndpointPath { get; set; } = "/.well-known/jwks";
 
     /// <summary>

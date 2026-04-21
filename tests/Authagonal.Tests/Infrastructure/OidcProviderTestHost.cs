@@ -26,25 +26,37 @@ internal sealed class OidcTestDbContext(DbContextOptions<OidcTestDbContext> opti
 
 internal sealed class TestSubjectResolver : IOidcSubjectResolver
 {
-    public Task<OidcSubject?> ResolveAsync(
+    /// <summary>When set, the resolver applies this cap on the returned subject.</summary>
+    public DateTimeOffset? SessionMaxExpiresAt { get; set; }
+
+    /// <summary>When set, resolver returns a rejection instead of a subject.</summary>
+    public OidcRejection? RejectWith { get; set; }
+
+    public Task<OidcSubjectResult> ResolveAsync(
         ClaimsPrincipal principal,
         OidcSubjectResolutionContext context,
         CancellationToken ct = default)
     {
+        if (RejectWith is { } rejection)
+        {
+            return Task.FromResult(OidcSubjectResult.Reject(rejection, "test rejection"));
+        }
+
         var sub = principal.FindFirstValue(ClaimTypes.NameIdentifier)
                   ?? principal.FindFirstValue(OpenIddictConstants.Claims.Subject);
         if (string.IsNullOrEmpty(sub))
         {
-            return Task.FromResult<OidcSubject?>(null);
+            return Task.FromResult(OidcSubjectResult.Reject(OidcRejection.LoginRequired));
         }
 
-        return Task.FromResult<OidcSubject?>(new OidcSubject
+        return Task.FromResult(OidcSubjectResult.Allow(new OidcSubject
         {
             SubjectId = sub,
             Email = $"{sub}@test.local",
             EmailVerified = true,
             Name = $"Test {sub}",
-        });
+            SessionMaxExpiresAt = SessionMaxExpiresAt,
+        }));
     }
 }
 
@@ -108,7 +120,8 @@ internal sealed class OidcProviderTestHost : IAsyncDisposable
                         validation.UseAspNetCore();
                     });
 
-                    services.AddScoped<IOidcSubjectResolver, TestSubjectResolver>();
+                    services.AddSingleton<TestSubjectResolver>();
+                    services.AddScoped<IOidcSubjectResolver>(sp => sp.GetRequiredService<TestSubjectResolver>());
 
                     services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme)
                             .AddCookie(o =>
@@ -162,6 +175,8 @@ internal sealed class OidcProviderTestHost : IAsyncDisposable
 
         _host.Start();
     }
+
+    public TestSubjectResolver Resolver => _host.Services.GetRequiredService<TestSubjectResolver>();
 
     public HttpClient CreateClient()
     {

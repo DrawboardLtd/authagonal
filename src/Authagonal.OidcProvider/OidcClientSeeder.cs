@@ -69,6 +69,7 @@ internal sealed class OidcClientSeeder(
 
         d.Permissions.Add(OpenIddictConstants.Permissions.Endpoints.Authorization);
         d.Permissions.Add(OpenIddictConstants.Permissions.Endpoints.Token);
+        d.Permissions.Add(OpenIddictConstants.Permissions.Endpoints.EndSession);
         d.Permissions.Add(OpenIddictConstants.Permissions.GrantTypes.AuthorizationCode);
         d.Permissions.Add(OpenIddictConstants.Permissions.ResponseTypes.Code);
         d.Permissions.Add(OpenIddictConstants.Permissions.Scopes.Profile);
