@@ -69,6 +69,9 @@ public sealed class AuthagonalTestFactory : IAsyncDisposable
     /// <summary>Set to an Azurite connection string to enable SAML/OIDC state storage.</summary>
     public string? AzuriteConnectionString { get; set; }
 
+    /// <summary>Optional mutator applied to AuthOptions at DI configuration time.</summary>
+    public Action<AuthOptions>? ConfigureAuthOptions { get; set; }
+
     private WebApplication? _app;
     private bool _started;
 
@@ -262,7 +265,10 @@ public sealed class AuthagonalTestFactory : IAsyncDisposable
         services.AddSingleton<ISecretProvider>(new PlaintextSecretProvider());
 
         // Options (mirrors AddAuthagonal)
-        services.Configure<AuthOptions>(_ => { });
+        services.Configure<AuthOptions>(o =>
+        {
+            ConfigureAuthOptions?.Invoke(o);
+        });
         services.Configure<CacheOptions>(_ => { });
         services.Configure<BackgroundServiceOptions>(_ => { });
 

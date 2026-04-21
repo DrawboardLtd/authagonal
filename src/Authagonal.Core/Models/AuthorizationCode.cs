@@ -13,4 +13,12 @@ public sealed class AuthorizationCode
     public string? Nonce { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset ExpiresAt { get; set; }
+
+    /// <summary>
+    /// Upper bound on how long tokens issued from this code may live, derived from a
+    /// session_max_exp cookie claim set during upstream federation (e.g. an SSO IdP that
+    /// caps subject sessions). Preserved through rotation so refresh tokens cannot outlive
+    /// the original federated session.
+    /// </summary>
+    public DateTimeOffset? SessionMaxExpiresAt { get; set; }
 }

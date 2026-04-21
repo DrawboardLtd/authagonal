@@ -179,6 +179,7 @@ public sealed class TokenService(
         IEnumerable<string> scopes,
         IEnumerable<string>? resources = null,
         DateTimeOffset? originalCreatedAt = null,
+        DateTimeOffset? sessionMaxExpiresAt = null,
         CancellationToken ct = default)
     {
         var handle = GenerateRefreshTokenHandle();
@@ -198,6 +199,11 @@ public sealed class TokenService(
             _ => absoluteCap,
         };
 
+        // Clamp by upstream session cap when present so tokens cannot outlive the
+        // federated session (e.g. an SSO IdP that caps subject sessions).
+        if (sessionMaxExpiresAt is { } sessionCap && sessionCap < expiresAt)
+            expiresAt = sessionCap;
+
         var grant = new PersistedGrant
         {
             Key = handle,
@@ -212,6 +218,7 @@ public sealed class TokenService(
                 ClientId = client.ClientId,
                 CreatedAt = now,
                 OriginalCreatedAt = origin,
+                SessionMaxExpiresAt = sessionMaxExpiresAt,
             }, AuthagonalJsonContext.Default.RefreshTokenData),
             CreatedAt = now,
             ExpiresAt = expiresAt,
@@ -280,7 +287,9 @@ public sealed class TokenService(
         string? refreshToken = null;
         if (authCode.Scopes.Contains(StandardScopes.OfflineAccess) && client.AllowOfflineAccess)
         {
-            refreshToken = await CreateRefreshTokenAsync(user, client, authCode.Scopes, authCode.Resources, ct: ct);
+            refreshToken = await CreateRefreshTokenAsync(
+                user, client, authCode.Scopes, authCode.Resources,
+                sessionMaxExpiresAt: authCode.SessionMaxExpiresAt, ct: ct);
         }
 
         logger.LogInformation(
@@ -317,12 +326,34 @@ public sealed class TokenService(
         if (grant.ExpiresAt <= now)
             throw new InvalidOperationException("Refresh token has expired");
 
-        // Check if token has been consumed (one-time rotation)
+        var data = JsonSerializer.Deserialize(grant.Data, AuthagonalJsonContext.Default.RefreshTokenData)
+            ?? throw new InvalidOperationException("Failed to deserialize refresh token data");
+
+        // Consumed-token handling:
+        //   * grace window disabled (default) → any reuse of a consumed token is treated
+        //     as replay and revokes the family (safest posture)
+        //   * grace window enabled → a reuse within N seconds of consumption, when the
+        //     successor still exists and is unconsumed, is treated as an idempotent retry
+        //     and we re-issue fresh access/id tokens pointing at the same successor handle.
+        //     Anything outside the window, a missing/consumed successor, or a replay after
+        //     successful rotation still triggers the revoke-all policy.
         if (grant.ConsumedAt.HasValue)
         {
-            // Token replay attack — consumed token is being reused.
-            // Even within a grace window, issuing new tokens is unsafe (both attacker
-            // and client get valid tokens). Revoke everything for this subject+client.
+            var graceWindow = RefreshTokenReuseGraceWindow;
+            if (graceWindow > TimeSpan.Zero &&
+                !string.IsNullOrEmpty(data.SuccessorKey) &&
+                now - grant.ConsumedAt.Value <= graceWindow)
+            {
+                var successor = await grantStore.GetAsync(data.SuccessorKey, ct);
+                if (successor is not null &&
+                    successor.Type == "refresh_token" &&
+                    !successor.ConsumedAt.HasValue &&
+                    successor.ExpiresAt > now)
+                {
+                    return await ReissueFromSuccessorAsync(successor, resources, ct);
+                }
+            }
+
             logger.LogError(
                 "Refresh token replay detected! Revoking all tokens for subject. Client: {ClientId}, Subject: {SubjectId}",
                 clientId, grant.SubjectId);
@@ -334,9 +365,6 @@ public sealed class TokenService(
 
             throw new InvalidOperationException("Refresh token has been revoked (replay detected)");
         }
-
-        var data = JsonSerializer.Deserialize(grant.Data, AuthagonalJsonContext.Default.RefreshTokenData)
-            ?? throw new InvalidOperationException("Failed to deserialize refresh token data");
 
         var client = await clientStore.GetAsync(clientId, ct)
             ?? throw new InvalidOperationException($"Client '{clientId}' not found");
@@ -367,19 +395,20 @@ public sealed class TokenService(
             tokenResources = data.Resources;
         }
 
-        // Consume the old token (mark as used)
-        if (!grant.ConsumedAt.HasValue)
-        {
-            await grantStore.ConsumeAsync(refreshToken, ct);
-        }
-
-        // Issue new refresh token (one-time rotation) — preserve the original grant's resources
-        // so future refreshes keep the same ceiling even if this call narrowed the access token.
-        // Pass OriginalCreatedAt through so the absolute cap stays anchored to first issuance,
-        // not the most recent rotation (falls back to CreatedAt for pre-upgrade tokens).
+        // Rotation order: issue the successor first, then atomically mark the old grant as
+        // consumed and record the successor handle via a single upsert. If the client retries
+        // with the original handle inside the grace window, the consumed-branch above can then
+        // locate the successor and replay the exact same successor to them.
+        // Pass OriginalCreatedAt so the absolute cap stays anchored to first issuance and
+        // SessionMaxExpiresAt so any upstream federation cap survives rotations.
         var originalCreatedAt = data.OriginalCreatedAt ?? data.CreatedAt;
         var newRefreshToken = await CreateRefreshTokenAsync(
-            user, client, data.Scopes, data.Resources, originalCreatedAt, ct);
+            user, client, data.Scopes, data.Resources, originalCreatedAt, data.SessionMaxExpiresAt, ct);
+
+        data.SuccessorKey = newRefreshToken;
+        grant.ConsumedAt = now;
+        grant.Data = JsonSerializer.Serialize(data, AuthagonalJsonContext.Default.RefreshTokenData);
+        await grantStore.StoreAsync(grant, ct);
 
         // Issue new access token (narrowed to requested resources, if any)
         var accessToken = await CreateAccessTokenAsync(user, client, data.Scopes, resources: tokenResources, ct: ct);
@@ -401,6 +430,67 @@ public sealed class TokenService(
             ExpiresIn = client.AccessTokenLifetimeSeconds,
             IdToken = idToken,
             RefreshToken = newRefreshToken,
+            Scope = string.Join(' ', data.Scopes)
+        };
+    }
+
+    /// <summary>
+    /// Idempotent re-delivery for a retry arriving inside the grace window: mint a fresh
+    /// access token (and id token, if the original grant was OIDC) anchored to the successor
+    /// grant, but keep the successor handle and its expiry unchanged. No second rotation.
+    /// </summary>
+    private async Task<TokenResponse> ReissueFromSuccessorAsync(
+        PersistedGrant successor,
+        IEnumerable<string>? resources,
+        CancellationToken ct)
+    {
+        var data = JsonSerializer.Deserialize(successor.Data, AuthagonalJsonContext.Default.RefreshTokenData)
+            ?? throw new InvalidOperationException("Failed to deserialize successor refresh token data");
+
+        var client = await clientStore.GetAsync(successor.ClientId, ct)
+            ?? throw new InvalidOperationException($"Client '{successor.ClientId}' not found");
+
+        var user = await userStore.GetAsync(data.SubjectId, ct)
+            ?? throw new InvalidOperationException($"User '{data.SubjectId}' not found");
+
+        if (!user.IsActive)
+            throw new InvalidOperationException("User account has been deactivated");
+
+        var requestedResources = resources?.Where(r => !string.IsNullOrWhiteSpace(r)).ToList();
+        List<string>? tokenResources;
+        if (requestedResources is { Count: > 0 })
+        {
+            var allowed = data.Resources is { Count: > 0 } ? data.Resources : client.Audiences;
+            foreach (var r in requestedResources)
+            {
+                if (!allowed.Contains(r, StringComparer.Ordinal))
+                    throw new InvalidOperationException($"Resource '{r}' is not permitted for this refresh token");
+            }
+            tokenResources = requestedResources;
+        }
+        else
+        {
+            tokenResources = data.Resources;
+        }
+
+        var accessToken = await CreateAccessTokenAsync(user, client, data.Scopes, resources: tokenResources, ct: ct);
+
+        string? idToken = null;
+        if (data.Scopes.Contains(StandardScopes.OpenId))
+        {
+            idToken = await CreateIdTokenAsync(user, client, data.Scopes, ct: ct);
+        }
+
+        logger.LogInformation(
+            "Refresh token retry served from grace window. Client: {ClientId}, Subject: {SubjectId}",
+            successor.ClientId, data.SubjectId);
+
+        return new TokenResponse
+        {
+            AccessToken = accessToken,
+            ExpiresIn = client.AccessTokenLifetimeSeconds,
+            IdToken = idToken,
+            RefreshToken = successor.Key,
             Scope = string.Join(' ', data.Scopes)
         };
     }
@@ -540,5 +630,13 @@ public sealed class TokenService(
         // Tracks first issuance so the absolute refresh lifetime cap survives rotations.
         // Nullable so pre-upgrade grants deserialize cleanly; rotation falls back to CreatedAt.
         public DateTimeOffset? OriginalCreatedAt { get; set; }
+        // Handle of the refresh token that superseded this one. Set at rotation time
+        // alongside ConsumedAt so a retry arriving within the grace window can locate
+        // the successor and idempotently re-issue fresh access/id tokens.
+        public string? SuccessorKey { get; set; }
+        // Upper bound on token lifetime driven by an upstream federated session
+        // (e.g. SSO IdP max session). Preserved across rotations so the cap cannot be
+        // lifted by refreshing. Null means no cap.
+        public DateTimeOffset? SessionMaxExpiresAt { get; set; }
     }
 }

@@ -24,7 +24,17 @@ public sealed class AuthOptions
     public int Pbkdf2Iterations { get; set; } = 100_000;
 
     // --- Refresh tokens ---
-    public int RefreshTokenReuseGraceSeconds { get; set; } = 10;
+    /// <summary>
+    /// Opt-in retry-race tolerance for refresh token rotation. When > 0, a consumed
+    /// refresh token presented within this window of its consumption is treated as
+    /// an idempotent retry: the successor tokens are re-delivered instead of
+    /// triggering the replay-revoke policy. Set to 0 (default) to keep the strict
+    /// "any reuse of a consumed token revokes everything" behaviour, which is the
+    /// safer posture but causes user-visible logouts for clients that occasionally
+    /// fire a second refresh with the same token (typically mobile apps with
+    /// connectivity flaps). Matches Duende's ConsumedTokenUsageWindow concept.
+    /// </summary>
+    public int RefreshTokenReuseGraceSeconds { get; set; } = 0;
 
     // --- Signing keys ---
     public int SigningKeyLifetimeDays { get; set; } = 90;

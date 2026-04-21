@@ -163,6 +163,15 @@ public static class AuthorizeEndpoint
                 }
             }
 
+            // Carry the upstream-federation session cap (if any) into the auth code so the
+            // resulting refresh token cannot outlive the IdP session. Value is Unix seconds.
+            DateTimeOffset? sessionMaxExpiresAt = null;
+            var sessionMaxExpClaim = httpContext.User.FindFirstValue("session_max_exp");
+            if (!string.IsNullOrEmpty(sessionMaxExpClaim) && long.TryParse(sessionMaxExpClaim, out var sessionMaxExpSeconds))
+            {
+                sessionMaxExpiresAt = DateTimeOffset.FromUnixTimeSeconds(sessionMaxExpSeconds);
+            }
+
             // Create authorization code
             var code = await authCodeService.CreateCodeAsync(
                 clientId,
@@ -173,6 +182,7 @@ public static class AuthorizeEndpoint
                 codeChallengeMethod,
                 nonce,
                 resources.Length > 0 ? resources : null,
+                sessionMaxExpiresAt,
                 ct);
 
             // Build redirect URI with code and state

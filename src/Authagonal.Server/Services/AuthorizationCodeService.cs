@@ -24,6 +24,7 @@ public sealed class AuthorizationCodeService(
         string? codeChallengeMethod,
         string? nonce,
         IEnumerable<string>? resources = null,
+        DateTimeOffset? sessionMaxExpiresAt = null,
         CancellationToken ct = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(clientId);
@@ -51,7 +52,8 @@ public sealed class AuthorizationCodeService(
             CodeChallengeMethod = codeChallengeMethod,
             Nonce = nonce,
             CreatedAt = now,
-            ExpiresAt = expiresAt
+            ExpiresAt = expiresAt,
+            SessionMaxExpiresAt = sessionMaxExpiresAt
         };
 
         var grant = new PersistedGrant

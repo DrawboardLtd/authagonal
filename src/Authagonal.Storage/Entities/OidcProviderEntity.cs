@@ -20,6 +20,8 @@ public sealed class OidcProviderEntity : ITableEntity
     public required string ClientSecret { get; set; }
     public required string RedirectUrl { get; set; }
     public required string AllowedDomainsJson { get; set; }
+    public bool DisableJitProvisioning { get; set; }
+    public string? SessionExpClaim { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset? UpdatedAt { get; set; }
 
@@ -33,6 +35,8 @@ public sealed class OidcProviderEntity : ITableEntity
         ClientSecret = config.ClientSecret,
         RedirectUrl = config.RedirectUrl,
         AllowedDomainsJson = JsonSerializer.Serialize(config.AllowedDomains, StorageJsonContext.Default.ListString),
+        DisableJitProvisioning = config.DisableJitProvisioning,
+        SessionExpClaim = config.SessionExpClaim,
         CreatedAt = config.CreatedAt,
         UpdatedAt = config.UpdatedAt,
     };
@@ -46,6 +50,8 @@ public sealed class OidcProviderEntity : ITableEntity
         ClientSecret = ClientSecret,
         RedirectUrl = RedirectUrl,
         AllowedDomains = JsonSerializer.Deserialize(AllowedDomainsJson, StorageJsonContext.Default.ListString) ?? [],
+        DisableJitProvisioning = DisableJitProvisioning,
+        SessionExpClaim = SessionExpClaim,
         CreatedAt = CreatedAt,
         UpdatedAt = UpdatedAt,
     };

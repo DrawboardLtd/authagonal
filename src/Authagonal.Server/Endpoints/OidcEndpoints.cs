@@ -342,6 +342,24 @@ public static class OidcEndpoints
         if (!string.IsNullOrWhiteSpace(user.OrganizationId))
             claims.Add(new Claim("org_id", user.OrganizationId));
 
+        // If the connection configures a session-cap claim, carry the upstream value through as
+        // "session_max_exp" (Unix seconds). AuthorizeEndpoint reads this and persists it onto
+        // the auth code so refresh tokens cannot outlive the federated session.
+        if (!string.IsNullOrWhiteSpace(config.SessionExpClaim))
+        {
+            var sessionExp = ReadUnixSecondsClaim(validationResult.Claims, config.SessionExpClaim);
+            if (sessionExp is { } exp)
+            {
+                claims.Add(new Claim("session_max_exp", exp.ToString()));
+            }
+            else
+            {
+                logger.LogWarning(
+                    "OIDC connection {ConnectionId} configured SessionExpClaim '{Claim}' but claim was missing or unparseable",
+                    stateData.ConnectionId, config.SessionExpClaim);
+            }
+        }
+
         var identity = new ClaimsIdentity(claims, CookieAuthenticationDefaults.AuthenticationScheme);
         var principal = new ClaimsPrincipal(identity);
 
@@ -443,6 +461,26 @@ public static class OidcEndpoints
 
     private static object? ClaimObj(IDictionary<string, object> claims, string key)
         => claims.TryGetValue(key, out var v) ? v : null;
+
+    /// <summary>
+    /// Read a numeric (or numeric-string) claim as Unix seconds. Returns null when absent or
+    /// unparseable — JsonWebTokenHandler may surface a numeric JSON claim as long/int/string
+    /// depending on its parse path, so accept each shape.
+    /// </summary>
+    private static long? ReadUnixSecondsClaim(IDictionary<string, object> claims, string key)
+    {
+        if (!claims.TryGetValue(key, out var raw) || raw is null)
+            return null;
+
+        return raw switch
+        {
+            long l => l,
+            int i => i,
+            double d => (long)d,
+            string s when long.TryParse(s, out var parsed) => parsed,
+            _ => null
+        };
+    }
 
     private static string? ExtractEmail(IDictionary<string, object> claims)
     {
