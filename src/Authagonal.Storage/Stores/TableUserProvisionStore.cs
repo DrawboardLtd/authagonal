@@ -7,13 +7,14 @@ using Authagonal.Storage.Entities;
 
 namespace Authagonal.Storage.Stores;
 
-public sealed class TableUserProvisionStore(TableClient tableClient, ITombstoneWriter? tombstoneWriter = null) : IUserProvisionStore
+public sealed class TableUserProvisionStore(TableClient tableClient, EnvPartitioner partitioner, ITombstoneWriter? tombstoneWriter = null) : IUserProvisionStore
 {
     public async Task<IReadOnlyList<UserProvision>> GetByUserAsync(string userId, CancellationToken ct = default)
     {
+        var pk = partitioner.PK(userId);
         var results = new List<UserProvision>();
         await foreach (var entity in tableClient.QueryAsync<UserProvisionEntity>(
-            e => e.PartitionKey == userId, cancellationToken: ct))
+            e => e.PartitionKey == pk, cancellationToken: ct))
         {
             results.Add(entity.ToModel());
         }
@@ -23,16 +24,18 @@ public sealed class TableUserProvisionStore(TableClient tableClient, ITombstoneW
     public async Task StoreAsync(UserProvision provision, CancellationToken ct = default)
     {
         var entity = UserProvisionEntity.FromModel(provision);
+        entity.PartitionKey = partitioner.PK(entity.PartitionKey);
         await tableClient.UpsertEntityAsync(entity, TableUpdateMode.Replace, ct);
     }
 
     public async Task RemoveAsync(string userId, string appId, CancellationToken ct = default)
     {
+        var pk = partitioner.PK(userId);
         try
         {
-            await tableClient.DeleteEntityAsync(userId, appId, cancellationToken: ct);
+            await tableClient.DeleteEntityAsync(pk, appId, cancellationToken: ct);
             if (tombstoneWriter is not null)
-                await tombstoneWriter.WriteAsync("UserProvisions", userId, appId, ct);
+                await tombstoneWriter.WriteAsync("UserProvisions", pk, appId, ct);
         }
         catch (RequestFailedException ex) when (ex.Status == 404)
         {
@@ -42,9 +45,10 @@ public sealed class TableUserProvisionStore(TableClient tableClient, ITombstoneW
 
     public async Task RemoveAllByUserAsync(string userId, CancellationToken ct = default)
     {
+        var pk = partitioner.PK(userId);
         var tombstones = new List<(string, string)>();
         await foreach (var entity in tableClient.QueryAsync<UserProvisionEntity>(
-            e => e.PartitionKey == userId, cancellationToken: ct))
+            e => e.PartitionKey == pk, cancellationToken: ct))
         {
             try
             {

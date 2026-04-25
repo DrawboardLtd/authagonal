@@ -14,6 +14,7 @@ public sealed class TableGrantStore(
     TableClient grantsTable,
     TableClient grantsBySubjectTable,
     TableClient grantsByExpiryTable,
+    EnvPartitioner partitioner,
     ILogger<TableGrantStore> logger,
     ITombstoneWriter? tombstoneWriter = null) : IGrantStore
 {
@@ -22,11 +23,13 @@ public sealed class TableGrantStore(
         var hashedKey = HashKey(grant.Key);
 
         var grantEntity = GrantEntity.FromModel(grant, hashedKey);
+        grantEntity.PartitionKey = partitioner.PK(grantEntity.PartitionKey);
         await grantsTable.UpsertEntityAsync(grantEntity, TableUpdateMode.Replace, ct);
 
         if (!string.IsNullOrEmpty(grant.SubjectId))
         {
             var subjectEntity = GrantBySubjectEntity.FromModel(grant, hashedKey);
+            subjectEntity.PartitionKey = partitioner.PK(subjectEntity.PartitionKey);
             try
             {
                 await grantsBySubjectTable.UpsertEntityAsync(subjectEntity, TableUpdateMode.Replace, ct);
@@ -38,7 +41,7 @@ public sealed class TableGrantStore(
 
                 try
                 {
-                    await grantsTable.DeleteEntityAsync(hashedKey, GrantEntity.GrantRowKey, cancellationToken: ct);
+                    await grantsTable.DeleteEntityAsync(partitioner.PK(hashedKey), GrantEntity.GrantRowKey, cancellationToken: ct);
                 }
                 catch (Exception compensateEx) when (compensateEx is not OperationCanceledException)
                 {
@@ -54,7 +57,7 @@ public sealed class TableGrantStore(
         // Write expiry index for efficient cleanup queries
         var expiryEntity = new GrantByExpiryEntity
         {
-            PartitionKey = GrantByExpiryEntity.GetPartitionKey(grant.ExpiresAt, hashedKey),
+            PartitionKey = partitioner.PK(GrantByExpiryEntity.GetPartitionKey(grant.ExpiresAt, hashedKey)),
             RowKey = hashedKey,
             SubjectId = grant.SubjectId,
             Type = grant.Type,
@@ -77,7 +80,7 @@ public sealed class TableGrantStore(
         try
         {
             var response = await grantsTable.GetEntityAsync<GrantEntity>(
-                hashedKey, GrantEntity.GrantRowKey, cancellationToken: ct);
+                partitioner.PK(hashedKey), GrantEntity.GrantRowKey, cancellationToken: ct);
             return response.Value.ToModel();
         }
         catch (RequestFailedException ex) when (ex.Status == 404)
@@ -92,7 +95,7 @@ public sealed class TableGrantStore(
         try
         {
             var response = await grantsTable.GetEntityAsync<GrantEntity>(
-                hashedKey, GrantEntity.GrantRowKey, cancellationToken: ct);
+                partitioner.PK(hashedKey), GrantEntity.GrantRowKey, cancellationToken: ct);
 
             var entity = response.Value;
             entity.ConsumedAt = DateTimeOffset.UtcNow;
@@ -105,7 +108,7 @@ public sealed class TableGrantStore(
                 try
                 {
                     var subjectResponse = await grantsBySubjectTable.GetEntityAsync<GrantBySubjectEntity>(
-                        entity.SubjectId, subjectRk, cancellationToken: ct);
+                        partitioner.PK(entity.SubjectId), subjectRk, cancellationToken: ct);
 
                     var subjectEntity = subjectResponse.Value;
                     subjectEntity.ConsumedAt = entity.ConsumedAt;
@@ -124,20 +127,21 @@ public sealed class TableGrantStore(
     public async Task RemoveAsync(string key, CancellationToken ct = default)
     {
         var hashedKey = HashKey(key);
+        var hashedKeyPk = partitioner.PK(hashedKey);
 
         // Get the grant first to find subject info for index cleanup
         try
         {
             var response = await grantsTable.GetEntityAsync<GrantEntity>(
-                hashedKey, GrantEntity.GrantRowKey, cancellationToken: ct);
+                hashedKeyPk, GrantEntity.GrantRowKey, cancellationToken: ct);
 
             var entity = response.Value;
 
             // Delete from primary table
-            await grantsTable.DeleteEntityAsync(hashedKey, GrantEntity.GrantRowKey, cancellationToken: ct);
+            await grantsTable.DeleteEntityAsync(hashedKeyPk, GrantEntity.GrantRowKey, cancellationToken: ct);
 
             // Delete from expiry index
-            var expiryPartition = GrantByExpiryEntity.GetPartitionKey(entity.ExpiresAt, hashedKey);
+            var expiryPartition = partitioner.PK(GrantByExpiryEntity.GetPartitionKey(entity.ExpiresAt, hashedKey));
             try
             {
                 await grantsByExpiryTable.DeleteEntityAsync(expiryPartition, hashedKey, cancellationToken: ct);
@@ -148,19 +152,21 @@ public sealed class TableGrantStore(
             if (!string.IsNullOrEmpty(entity.SubjectId))
             {
                 var subjectRk = $"{entity.Type}|{hashedKey}";
+                var subjectPk = partitioner.PK(entity.SubjectId);
                 try
                 {
-                    await grantsBySubjectTable.DeleteEntityAsync(entity.SubjectId, subjectRk, cancellationToken: ct);
+                    await grantsBySubjectTable.DeleteEntityAsync(subjectPk, subjectRk, cancellationToken: ct);
                 }
                 catch (RequestFailedException ex) when (ex.Status == 404) { }
+
+                if (tombstoneWriter is not null)
+                    await tombstoneWriter.WriteAsync("GrantsBySubject", subjectPk, subjectRk, ct);
             }
 
             if (tombstoneWriter is not null)
             {
-                await tombstoneWriter.WriteAsync("Grants", hashedKey, GrantEntity.GrantRowKey, ct);
+                await tombstoneWriter.WriteAsync("Grants", hashedKeyPk, GrantEntity.GrantRowKey, ct);
                 await tombstoneWriter.WriteAsync("GrantsByExpiry", expiryPartition, hashedKey, ct);
-                if (!string.IsNullOrEmpty(entity.SubjectId))
-                    await tombstoneWriter.WriteAsync("GrantsBySubject", entity.SubjectId, $"{entity.Type}|{hashedKey}", ct);
             }
         }
         catch (RequestFailedException ex) when (ex.Status == 404) { }
@@ -168,9 +174,10 @@ public sealed class TableGrantStore(
 
     public async Task RemoveAllBySubjectAsync(string subjectId, CancellationToken ct = default)
     {
+        var subjectPk = partitioner.PK(subjectId);
         var entities = new List<GrantBySubjectEntity>();
         var query = grantsBySubjectTable.QueryAsync<GrantBySubjectEntity>(
-            e => e.PartitionKey == subjectId,
+            e => e.PartitionKey == subjectPk,
             cancellationToken: ct);
 
         await foreach (var entity in query)
@@ -184,16 +191,17 @@ public sealed class TableGrantStore(
 
         foreach (var entity in entities)
         {
+            var grantPk = partitioner.PK(entity.HashedKey);
             // Delete from primary grants table
             try
             {
-                await grantsTable.DeleteEntityAsync(entity.HashedKey, GrantEntity.GrantRowKey, cancellationToken: ct);
-                grantTombstones.Add((entity.HashedKey, GrantEntity.GrantRowKey));
+                await grantsTable.DeleteEntityAsync(grantPk, GrantEntity.GrantRowKey, cancellationToken: ct);
+                grantTombstones.Add((grantPk, GrantEntity.GrantRowKey));
             }
             catch (RequestFailedException ex) when (ex.Status == 404) { }
 
             // Delete from expiry index
-            var expiryPartition = GrantByExpiryEntity.GetPartitionKey(entity.ExpiresAt, entity.HashedKey);
+            var expiryPartition = partitioner.PK(GrantByExpiryEntity.GetPartitionKey(entity.ExpiresAt, entity.HashedKey));
             try
             {
                 await grantsByExpiryTable.DeleteEntityAsync(expiryPartition, entity.HashedKey, cancellationToken: ct);
@@ -201,7 +209,7 @@ public sealed class TableGrantStore(
             }
             catch (RequestFailedException ex) when (ex.Status == 404) { }
 
-            // Delete from subject index
+            // Delete from subject index — entity.PartitionKey already env-prefixed
             try
             {
                 await grantsBySubjectTable.DeleteEntityAsync(entity.PartitionKey, entity.RowKey, cancellationToken: ct);
@@ -220,9 +228,10 @@ public sealed class TableGrantStore(
 
     public async Task RemoveAllBySubjectAndClientAsync(string subjectId, string clientId, CancellationToken ct = default)
     {
+        var subjectPk = partitioner.PK(subjectId);
         var entities = new List<GrantBySubjectEntity>();
         var query = grantsBySubjectTable.QueryAsync<GrantBySubjectEntity>(
-            e => e.PartitionKey == subjectId && e.ClientId == clientId,
+            e => e.PartitionKey == subjectPk && e.ClientId == clientId,
             cancellationToken: ct);
 
         await foreach (var entity in query)
@@ -236,16 +245,17 @@ public sealed class TableGrantStore(
 
         foreach (var entity in entities)
         {
+            var grantPk = partitioner.PK(entity.HashedKey);
             // Delete from primary grants table
             try
             {
-                await grantsTable.DeleteEntityAsync(entity.HashedKey, GrantEntity.GrantRowKey, cancellationToken: ct);
-                grantTombstones.Add((entity.HashedKey, GrantEntity.GrantRowKey));
+                await grantsTable.DeleteEntityAsync(grantPk, GrantEntity.GrantRowKey, cancellationToken: ct);
+                grantTombstones.Add((grantPk, GrantEntity.GrantRowKey));
             }
             catch (RequestFailedException ex) when (ex.Status == 404) { }
 
             // Delete from expiry index
-            var expiryPartition = GrantByExpiryEntity.GetPartitionKey(entity.ExpiresAt, entity.HashedKey);
+            var expiryPartition = partitioner.PK(GrantByExpiryEntity.GetPartitionKey(entity.ExpiresAt, entity.HashedKey));
             try
             {
                 await grantsByExpiryTable.DeleteEntityAsync(expiryPartition, entity.HashedKey, cancellationToken: ct);
@@ -253,7 +263,7 @@ public sealed class TableGrantStore(
             }
             catch (RequestFailedException ex) when (ex.Status == 404) { }
 
-            // Delete from subject index
+            // Delete from subject index — entity.PartitionKey already env-prefixed
             try
             {
                 await grantsBySubjectTable.DeleteEntityAsync(entity.PartitionKey, entity.RowKey, cancellationToken: ct);
@@ -272,9 +282,10 @@ public sealed class TableGrantStore(
 
     public async Task<IReadOnlyList<PersistedGrant>> GetBySubjectAsync(string subjectId, CancellationToken ct = default)
     {
+        var subjectPk = partitioner.PK(subjectId);
         var results = new List<PersistedGrant>();
         var query = grantsBySubjectTable.QueryAsync<GrantBySubjectEntity>(
-            e => e.PartitionKey == subjectId,
+            e => e.PartitionKey == subjectPk,
             cancellationToken: ct);
 
         await foreach (var entity in query)
@@ -290,12 +301,18 @@ public sealed class TableGrantStore(
         // Query expiry index for entries in date buckets up to the cutoff.
         // PK format is "yyyy-MM-dd_N" (date-first, hash-spread across N slots),
         // so a single lexicographic range scan still captures all partitions up to cutoff.
+        // For sandbox env, cap the scan to this env's prefix range so other envs'
+        // expiries are untouched.
         var cutoffUpperBound = GrantByExpiryEntity.GetCutoffUpperBound(cutoff);
         var expiredEntries = new List<GrantByExpiryEntity>();
 
+        var range = partitioner.RangeForEnv();
+        var filter = range is null
+            ? $"PartitionKey le '{cutoffUpperBound}'"
+            : $"PartitionKey ge '{range.Value.Low}' and PartitionKey le '{partitioner.PK(cutoffUpperBound)}'";
+
         var query = grantsByExpiryTable.QueryAsync<GrantByExpiryEntity>(
-            filter: $"PartitionKey le '{cutoffUpperBound}'",
-            cancellationToken: ct);
+            filter: filter, cancellationToken: ct);
 
         await foreach (var entity in query)
         {
@@ -309,7 +326,7 @@ public sealed class TableGrantStore(
         {
             try
             {
-                await grantsTable.DeleteEntityAsync(entry.RowKey, GrantEntity.GrantRowKey, cancellationToken: ct);
+                await grantsTable.DeleteEntityAsync(partitioner.PK(entry.RowKey), GrantEntity.GrantRowKey, cancellationToken: ct);
             }
             catch (RequestFailedException ex) when (ex.Status == 404) { }
 
@@ -318,7 +335,7 @@ public sealed class TableGrantStore(
                 var subjectRk = $"{entry.Type}|{entry.RowKey}";
                 try
                 {
-                    await grantsBySubjectTable.DeleteEntityAsync(entry.SubjectId, subjectRk, cancellationToken: ct);
+                    await grantsBySubjectTable.DeleteEntityAsync(partitioner.PK(entry.SubjectId), subjectRk, cancellationToken: ct);
                 }
                 catch (RequestFailedException ex) when (ex.Status == 404) { }
             }

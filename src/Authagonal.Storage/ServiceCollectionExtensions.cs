@@ -1,5 +1,6 @@
 using Azure.Core;
 using Azure.Data.Tables;
+using Authagonal.Core.Services;
 using Authagonal.Core.Stores;
 using Authagonal.Storage.Stores;
 using Microsoft.Extensions.DependencyInjection;
@@ -77,21 +78,23 @@ public static class ServiceCollectionExtensions
 
         // Register store implementations as singletons.
         // TryAdd allows multi-tenant hosts to register scoped stores first.
-        services.TryAddSingleton<IUserStore>(new TableUserStore(users, userEmails, userLogins, userExternalIds, userFirstNames, userLastNames));
-        services.TryAddSingleton<IClientStore>(new TableClientStore(clients));
+        // Single-tenant hosts only ever serve the live env, so use the live partitioner.
+        var live = EnvPartitioner.Live;
+        services.TryAddSingleton<IUserStore>(new TableUserStore(users, userEmails, userLogins, userExternalIds, userFirstNames, userLastNames, live));
+        services.TryAddSingleton<IClientStore>(new TableClientStore(clients, live));
         services.TryAddSingleton<IGrantStore>(sp =>
-            new TableGrantStore(grants, grantsBySubject, grantsByExpiry, sp.GetRequiredService<ILoggerFactory>().CreateLogger<TableGrantStore>()));
-        services.TryAddSingleton<ISigningKeyStore>(new TableSigningKeyStore(signingKeys));
-        services.TryAddSingleton<ISsoDomainStore>(new TableSsoDomainStore(ssoDomains));
-        services.TryAddSingleton<ISamlProviderStore>(new TableSamlProviderStore(samlProviders));
-        services.TryAddSingleton<IOidcProviderStore>(new TableOidcProviderStore(oidcProviders));
-        services.TryAddSingleton<IUserProvisionStore>(new TableUserProvisionStore(userProvisions));
-        services.TryAddSingleton<IMfaStore>(new TableMfaStore(mfaCredentials, mfaChallenges, mfaWebAuthnIndex));
-        services.TryAddSingleton<IScimTokenStore>(new TableScimTokenStore(scimTokens));
-        services.TryAddSingleton<IScimGroupStore>(new TableScimGroupStore(scimGroups, scimGroupExternalIds));
-        services.TryAddSingleton<IRoleStore>(new TableRoleStore(roles));
-        services.TryAddSingleton<IScopeStore>(new TableScopeStore(scopes));
-        services.TryAddSingleton<IRevokedTokenStore>(new TableRevokedTokenStore(revokedTokens));
+            new TableGrantStore(grants, grantsBySubject, grantsByExpiry, live, sp.GetRequiredService<ILoggerFactory>().CreateLogger<TableGrantStore>()));
+        services.TryAddSingleton<ISigningKeyStore>(new TableSigningKeyStore(signingKeys, live));
+        services.TryAddSingleton<ISsoDomainStore>(new TableSsoDomainStore(ssoDomains, live));
+        services.TryAddSingleton<ISamlProviderStore>(new TableSamlProviderStore(samlProviders, live));
+        services.TryAddSingleton<IOidcProviderStore>(new TableOidcProviderStore(oidcProviders, live));
+        services.TryAddSingleton<IUserProvisionStore>(new TableUserProvisionStore(userProvisions, live));
+        services.TryAddSingleton<IMfaStore>(new TableMfaStore(mfaCredentials, mfaChallenges, mfaWebAuthnIndex, live));
+        services.TryAddSingleton<IScimTokenStore>(new TableScimTokenStore(scimTokens, live));
+        services.TryAddSingleton<IScimGroupStore>(new TableScimGroupStore(scimGroups, scimGroupExternalIds, live));
+        services.TryAddSingleton<IRoleStore>(new TableRoleStore(roles, live));
+        services.TryAddSingleton<IScopeStore>(new TableScopeStore(scopes, live));
+        services.TryAddSingleton<IRevokedTokenStore>(new TableRevokedTokenStore(revokedTokens, live));
 
         // Register grant table clients as keyed singletons for the reconciliation service.
         services.AddKeyedSingleton("Grants", grants);

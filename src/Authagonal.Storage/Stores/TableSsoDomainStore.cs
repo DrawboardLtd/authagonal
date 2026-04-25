@@ -7,7 +7,7 @@ using Authagonal.Storage.Entities;
 
 namespace Authagonal.Storage.Stores;
 
-public sealed class TableSsoDomainStore(TableClient ssoDomainsTable, ITombstoneWriter? tombstoneWriter = null) : ISsoDomainStore
+public sealed class TableSsoDomainStore(TableClient ssoDomainsTable, EnvPartitioner partitioner, ITombstoneWriter? tombstoneWriter = null) : ISsoDomainStore
 {
     public async Task<SsoDomain?> GetAsync(string domain, CancellationToken ct = default)
     {
@@ -15,7 +15,7 @@ public sealed class TableSsoDomainStore(TableClient ssoDomainsTable, ITombstoneW
         try
         {
             var response = await ssoDomainsTable.GetEntityAsync<SsoDomainEntity>(
-                normalizedDomain, SsoDomainEntity.MappingRowKey, cancellationToken: ct);
+                partitioner.PK(normalizedDomain), SsoDomainEntity.MappingRowKey, cancellationToken: ct);
             return response.Value.ToModel();
         }
         catch (RequestFailedException ex) when (ex.Status == 404)
@@ -27,9 +27,15 @@ public sealed class TableSsoDomainStore(TableClient ssoDomainsTable, ITombstoneW
     public async Task<IReadOnlyList<SsoDomain>> GetAllAsync(CancellationToken ct = default)
     {
         var results = new List<SsoDomain>();
-        var query = ssoDomainsTable.QueryAsync<SsoDomainEntity>(
-            e => e.RowKey == SsoDomainEntity.MappingRowKey,
-            cancellationToken: ct);
+        var range = partitioner.RangeForEnv();
+        var query = range is null
+            ? ssoDomainsTable.QueryAsync<SsoDomainEntity>(
+                e => e.RowKey == SsoDomainEntity.MappingRowKey, cancellationToken: ct)
+            : ssoDomainsTable.QueryAsync<SsoDomainEntity>(
+                e => e.PartitionKey.CompareTo(range.Value.Low) >= 0
+                     && e.PartitionKey.CompareTo(range.Value.High) < 0
+                     && e.RowKey == SsoDomainEntity.MappingRowKey,
+                cancellationToken: ct);
 
         await foreach (var entity in query)
         {
@@ -42,18 +48,18 @@ public sealed class TableSsoDomainStore(TableClient ssoDomainsTable, ITombstoneW
     public async Task UpsertAsync(SsoDomain domain, CancellationToken ct = default)
     {
         var entity = SsoDomainEntity.FromModel(domain);
+        entity.PartitionKey = partitioner.PK(entity.PartitionKey);
         await ssoDomainsTable.UpsertEntityAsync(entity, TableUpdateMode.Replace, ct);
     }
 
     public async Task DeleteAsync(string domain, CancellationToken ct = default)
     {
-        var normalizedDomain = domain.ToLowerInvariant();
+        var pk = partitioner.PK(domain.ToLowerInvariant());
         try
         {
-            await ssoDomainsTable.DeleteEntityAsync(
-                normalizedDomain, SsoDomainEntity.MappingRowKey, cancellationToken: ct);
+            await ssoDomainsTable.DeleteEntityAsync(pk, SsoDomainEntity.MappingRowKey, cancellationToken: ct);
             if (tombstoneWriter is not null)
-                await tombstoneWriter.WriteAsync("SsoDomains", normalizedDomain, SsoDomainEntity.MappingRowKey, ct);
+                await tombstoneWriter.WriteAsync("SsoDomains", pk, SsoDomainEntity.MappingRowKey, ct);
         }
         catch (RequestFailedException ex) when (ex.Status == 404) { }
     }
@@ -61,9 +67,17 @@ public sealed class TableSsoDomainStore(TableClient ssoDomainsTable, ITombstoneW
     public async Task DeleteByConnectionAsync(string connectionId, CancellationToken ct = default)
     {
         var entities = new List<SsoDomainEntity>();
-        var query = ssoDomainsTable.QueryAsync<SsoDomainEntity>(
-            e => e.RowKey == SsoDomainEntity.MappingRowKey && e.ConnectionId == connectionId,
-            cancellationToken: ct);
+        var range = partitioner.RangeForEnv();
+        var query = range is null
+            ? ssoDomainsTable.QueryAsync<SsoDomainEntity>(
+                e => e.RowKey == SsoDomainEntity.MappingRowKey && e.ConnectionId == connectionId,
+                cancellationToken: ct)
+            : ssoDomainsTable.QueryAsync<SsoDomainEntity>(
+                e => e.PartitionKey.CompareTo(range.Value.Low) >= 0
+                     && e.PartitionKey.CompareTo(range.Value.High) < 0
+                     && e.RowKey == SsoDomainEntity.MappingRowKey
+                     && e.ConnectionId == connectionId,
+                cancellationToken: ct);
 
         await foreach (var entity in query)
         {
@@ -75,6 +89,7 @@ public sealed class TableSsoDomainStore(TableClient ssoDomainsTable, ITombstoneW
         {
             try
             {
+                // entity.PartitionKey is already env-prefixed when read back (sandbox).
                 await ssoDomainsTable.DeleteEntityAsync(entity.PartitionKey, entity.RowKey, cancellationToken: ct);
                 tombstones.Add((entity.PartitionKey, entity.RowKey));
             }

@@ -7,12 +7,13 @@ using Authagonal.Storage.Entities;
 
 namespace Authagonal.Storage.Stores;
 
-public sealed class TableSigningKeyStore(TableClient signingKeysTable, ITombstoneWriter? tombstoneWriter = null) : ISigningKeyStore
+public sealed class TableSigningKeyStore(TableClient signingKeysTable, EnvPartitioner partitioner, ITombstoneWriter? tombstoneWriter = null) : ISigningKeyStore
 {
     public async Task<SigningKeyInfo?> GetActiveKeyAsync(CancellationToken ct = default)
     {
+        var pk = partitioner.PK(SigningKeyEntity.SigningPartitionKey);
         var query = signingKeysTable.QueryAsync<SigningKeyEntity>(
-            e => e.PartitionKey == SigningKeyEntity.SigningPartitionKey && e.IsActive,
+            e => e.PartitionKey == pk && e.IsActive,
             cancellationToken: ct);
 
         await foreach (var entity in query)
@@ -25,9 +26,10 @@ public sealed class TableSigningKeyStore(TableClient signingKeysTable, ITombston
 
     public async Task<IReadOnlyList<SigningKeyInfo>> GetAllAsync(CancellationToken ct = default)
     {
+        var pk = partitioner.PK(SigningKeyEntity.SigningPartitionKey);
         var results = new List<SigningKeyInfo>();
         var query = signingKeysTable.QueryAsync<SigningKeyEntity>(
-            e => e.PartitionKey == SigningKeyEntity.SigningPartitionKey,
+            e => e.PartitionKey == pk,
             cancellationToken: ct);
 
         await foreach (var entity in query)
@@ -41,15 +43,17 @@ public sealed class TableSigningKeyStore(TableClient signingKeysTable, ITombston
     public async Task StoreAsync(SigningKeyInfo key, CancellationToken ct = default)
     {
         var entity = SigningKeyEntity.FromModel(key);
+        entity.PartitionKey = partitioner.PK(entity.PartitionKey);
         await signingKeysTable.UpsertEntityAsync(entity, TableUpdateMode.Replace, ct);
     }
 
     public async Task DeactivateKeyAsync(string keyId, CancellationToken ct = default)
     {
+        var pk = partitioner.PK(SigningKeyEntity.SigningPartitionKey);
         try
         {
             var response = await signingKeysTable.GetEntityAsync<SigningKeyEntity>(
-                SigningKeyEntity.SigningPartitionKey, keyId, cancellationToken: ct);
+                pk, keyId, cancellationToken: ct);
 
             var entity = response.Value;
             entity.IsActive = false;
@@ -60,12 +64,12 @@ public sealed class TableSigningKeyStore(TableClient signingKeysTable, ITombston
 
     public async Task DeleteAsync(string keyId, CancellationToken ct = default)
     {
+        var pk = partitioner.PK(SigningKeyEntity.SigningPartitionKey);
         try
         {
-            await signingKeysTable.DeleteEntityAsync(
-                SigningKeyEntity.SigningPartitionKey, keyId, cancellationToken: ct);
+            await signingKeysTable.DeleteEntityAsync(pk, keyId, cancellationToken: ct);
             if (tombstoneWriter is not null)
-                await tombstoneWriter.WriteAsync("SigningKeys", SigningKeyEntity.SigningPartitionKey, keyId, ct);
+                await tombstoneWriter.WriteAsync("SigningKeys", pk, keyId, ct);
         }
         catch (RequestFailedException ex) when (ex.Status == 404) { }
     }

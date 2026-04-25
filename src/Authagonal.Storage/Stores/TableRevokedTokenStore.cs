@@ -1,11 +1,12 @@
 using Azure;
 using Azure.Data.Tables;
+using Authagonal.Core.Services;
 using Authagonal.Core.Stores;
 using Authagonal.Storage.Entities;
 
 namespace Authagonal.Storage.Stores;
 
-public sealed class TableRevokedTokenStore(TableClient revokedTokensTable) : IRevokedTokenStore
+public sealed class TableRevokedTokenStore(TableClient revokedTokensTable, EnvPartitioner partitioner) : IRevokedTokenStore
 {
     public async Task AddAsync(string jti, DateTimeOffset expiresAt, string? clientId = null, CancellationToken ct = default)
     {
@@ -13,7 +14,7 @@ public sealed class TableRevokedTokenStore(TableClient revokedTokensTable) : IRe
 
         var entity = new RevokedTokenEntity
         {
-            PartitionKey = RevokedTokenEntity.RevokedPartition,
+            PartitionKey = partitioner.PK(RevokedTokenEntity.RevokedPartition),
             RowKey = jti,
             ExpiresAt = expiresAt,
             ClientId = clientId,
@@ -30,7 +31,7 @@ public sealed class TableRevokedTokenStore(TableClient revokedTokensTable) : IRe
         try
         {
             var response = await revokedTokensTable.GetEntityAsync<RevokedTokenEntity>(
-                RevokedTokenEntity.RevokedPartition, jti, cancellationToken: ct);
+                partitioner.PK(RevokedTokenEntity.RevokedPartition), jti, cancellationToken: ct);
             // Entries remain until the token would have expired anyway; if we're past that,
             // the token is already invalid for lifetime reasons and we can ignore the entry.
             return response.Value.ExpiresAt > DateTimeOffset.UtcNow;

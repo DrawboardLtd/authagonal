@@ -10,6 +10,7 @@ namespace Authagonal.Storage.Stores;
 public sealed class TableScimGroupStore(
     TableClient scimGroupsTable,
     TableClient scimGroupExternalIdsTable,
+    EnvPartitioner partitioner,
     ITombstoneWriter? tombstoneWriter = null) : IScimGroupStore
 {
     public async Task<ScimGroup?> GetAsync(string groupId, CancellationToken ct = default)
@@ -17,7 +18,7 @@ public sealed class TableScimGroupStore(
         try
         {
             var response = await scimGroupsTable.GetEntityAsync<ScimGroupEntity>(
-                groupId, ScimGroupEntity.GroupRowKey, cancellationToken: ct);
+                partitioner.PK(groupId), ScimGroupEntity.GroupRowKey, cancellationToken: ct);
             return response.Value.ToModel();
         }
         catch (RequestFailedException ex) when (ex.Status == 404)
@@ -31,7 +32,7 @@ public sealed class TableScimGroupStore(
         try
         {
             var indexEntity = await scimGroupExternalIdsTable.GetEntityAsync<ScimGroupExternalIdEntity>(
-                $"{organizationId}|{externalId}", ScimGroupEntity.GroupLookupRowKey, cancellationToken: ct);
+                partitioner.PK($"{organizationId}|{externalId}"), ScimGroupEntity.GroupLookupRowKey, cancellationToken: ct);
             return await GetAsync(indexEntity.Value.GroupId, ct);
         }
         catch (RequestFailedException ex) when (ex.Status == 404)
@@ -43,9 +44,15 @@ public sealed class TableScimGroupStore(
     public async Task<IReadOnlyList<ScimGroup>> GetGroupsByUserIdAsync(string userId, CancellationToken ct = default)
     {
         var groups = new List<ScimGroup>();
-        var query = scimGroupsTable.QueryAsync<ScimGroupEntity>(
-            e => e.RowKey == ScimGroupEntity.GroupRowKey,
-            cancellationToken: ct);
+        var range = partitioner.RangeForEnv();
+        var query = range is null
+            ? scimGroupsTable.QueryAsync<ScimGroupEntity>(
+                e => e.RowKey == ScimGroupEntity.GroupRowKey, cancellationToken: ct)
+            : scimGroupsTable.QueryAsync<ScimGroupEntity>(
+                e => e.PartitionKey.CompareTo(range.Value.Low) >= 0
+                     && e.PartitionKey.CompareTo(range.Value.High) < 0
+                     && e.RowKey == ScimGroupEntity.GroupRowKey,
+                cancellationToken: ct);
 
         await foreach (var entity in query)
         {
@@ -63,9 +70,15 @@ public sealed class TableScimGroupStore(
         string? organizationId, int startIndex, int count, CancellationToken ct = default)
     {
         var allGroups = new List<ScimGroup>();
-        var query = scimGroupsTable.QueryAsync<ScimGroupEntity>(
-            e => e.RowKey == ScimGroupEntity.GroupRowKey,
-            cancellationToken: ct);
+        var range = partitioner.RangeForEnv();
+        var query = range is null
+            ? scimGroupsTable.QueryAsync<ScimGroupEntity>(
+                e => e.RowKey == ScimGroupEntity.GroupRowKey, cancellationToken: ct)
+            : scimGroupsTable.QueryAsync<ScimGroupEntity>(
+                e => e.PartitionKey.CompareTo(range.Value.Low) >= 0
+                     && e.PartitionKey.CompareTo(range.Value.High) < 0
+                     && e.RowKey == ScimGroupEntity.GroupRowKey,
+                cancellationToken: ct);
 
         await foreach (var entity in query)
         {
@@ -89,11 +102,13 @@ public sealed class TableScimGroupStore(
     public async Task CreateAsync(ScimGroup group, CancellationToken ct = default)
     {
         var entity = ScimGroupEntity.FromModel(group);
+        entity.PartitionKey = partitioner.PK(entity.PartitionKey);
         await scimGroupsTable.AddEntityAsync(entity, ct);
 
         if (!string.IsNullOrEmpty(group.ExternalId) && !string.IsNullOrEmpty(group.OrganizationId))
         {
             var indexEntity = ScimGroupEntity.CreateExternalIdIndex(group.OrganizationId, group.ExternalId, group.Id);
+            indexEntity.PartitionKey = partitioner.PK(indexEntity.PartitionKey);
             await scimGroupExternalIdsTable.UpsertEntityAsync(indexEntity, TableUpdateMode.Replace, ct);
         }
     }
@@ -104,12 +119,13 @@ public sealed class TableScimGroupStore(
         try
         {
             var existing = await scimGroupsTable.GetEntityAsync<ScimGroupEntity>(
-                group.Id, ScimGroupEntity.GroupRowKey, cancellationToken: ct);
+                partitioner.PK(group.Id), ScimGroupEntity.GroupRowKey, cancellationToken: ct);
 
             var oldExternalId = existing.Value.ExternalId;
             var oldOrgId = existing.Value.OrganizationId;
 
             var entity = ScimGroupEntity.FromModel(group);
+            entity.PartitionKey = partitioner.PK(entity.PartitionKey);
             await scimGroupsTable.UpsertEntityAsync(entity, TableUpdateMode.Replace, ct);
 
             // Update external ID index if changed
@@ -118,7 +134,7 @@ public sealed class TableScimGroupStore(
                 if (!string.Equals(oldExternalId, group.ExternalId, StringComparison.Ordinal) ||
                     !string.Equals(oldOrgId, group.OrganizationId, StringComparison.Ordinal))
                 {
-                    var oldIndexPk = $"{oldOrgId}|{oldExternalId}";
+                    var oldIndexPk = partitioner.PK($"{oldOrgId}|{oldExternalId}");
                     try
                     {
                         await scimGroupExternalIdsTable.DeleteEntityAsync(
@@ -133,6 +149,7 @@ public sealed class TableScimGroupStore(
             if (!string.IsNullOrEmpty(group.ExternalId) && !string.IsNullOrEmpty(group.OrganizationId))
             {
                 var indexEntity = ScimGroupEntity.CreateExternalIdIndex(group.OrganizationId, group.ExternalId, group.Id);
+                indexEntity.PartitionKey = partitioner.PK(indexEntity.PartitionKey);
                 await scimGroupExternalIdsTable.UpsertEntityAsync(indexEntity, TableUpdateMode.Replace, ct);
             }
         }
@@ -144,17 +161,18 @@ public sealed class TableScimGroupStore(
 
     public async Task DeleteAsync(string groupId, CancellationToken ct = default)
     {
+        var groupPk = partitioner.PK(groupId);
         try
         {
             var existing = await scimGroupsTable.GetEntityAsync<ScimGroupEntity>(
-                groupId, ScimGroupEntity.GroupRowKey, cancellationToken: ct);
+                groupPk, ScimGroupEntity.GroupRowKey, cancellationToken: ct);
 
             var group = existing.Value.ToModel();
 
             // Remove external ID index
             if (!string.IsNullOrEmpty(group.ExternalId) && !string.IsNullOrEmpty(group.OrganizationId))
             {
-                var indexPk = $"{group.OrganizationId}|{group.ExternalId}";
+                var indexPk = partitioner.PK($"{group.OrganizationId}|{group.ExternalId}");
                 try
                 {
                     await scimGroupExternalIdsTable.DeleteEntityAsync(
@@ -166,9 +184,9 @@ public sealed class TableScimGroupStore(
             }
 
             // Delete the group
-            await scimGroupsTable.DeleteEntityAsync(groupId, ScimGroupEntity.GroupRowKey, cancellationToken: ct);
+            await scimGroupsTable.DeleteEntityAsync(groupPk, ScimGroupEntity.GroupRowKey, cancellationToken: ct);
             if (tombstoneWriter is not null)
-                await tombstoneWriter.WriteAsync("ScimGroups", groupId, ScimGroupEntity.GroupRowKey, ct);
+                await tombstoneWriter.WriteAsync("ScimGroups", groupPk, ScimGroupEntity.GroupRowKey, ct);
         }
         catch (RequestFailedException ex) when (ex.Status == 404)
         {
