@@ -115,6 +115,16 @@ public sealed class OidcSubject
     public IReadOnlyDictionary<string, string>? CustomAttributes { get; init; }
 
     /// <summary>
+    /// Per-session claims sourced from an upstream OIDC IdP during federation. Same
+    /// scope-gated emission rules as <see cref="CustomAttributes"/>, but distinct so
+    /// they survive across refresh rotations without bleeding into the per-user record.
+    /// On refresh, the host carries this set forward unchanged from the prior subject;
+    /// <see cref="CustomAttributes"/> is re-read fresh from the user store. Federation
+    /// values win on key collision.
+    /// </summary>
+    public IReadOnlyDictionary<string, string>? FederationClaims { get; init; }
+
+    /// <summary>
     /// Additional claims to force onto the access token regardless of scope gating.
     /// Used by hosts with a short-lived, bounded-scope use case (e.g. share-link
     /// tokens carrying <c>link_share_token</c>) where the claim is the whole point of

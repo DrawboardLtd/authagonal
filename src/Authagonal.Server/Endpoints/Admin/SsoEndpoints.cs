@@ -181,6 +181,7 @@ public static class SsoEndpoints
             ClientSecret = protectedSecret,
             RedirectUrl = request.RedirectUrl,
             AllowedDomains = request.AllowedDomains ?? [],
+            PassthroughParams = request.PassthroughParams ?? [],
             CreatedAt = now
         };
 
@@ -261,5 +262,6 @@ public static class SsoEndpoints
         public string ClientSecret { get; set; } = "";
         public string RedirectUrl { get; set; } = "";
         public List<string>? AllowedDomains { get; set; }
+        public List<string>? PassthroughParams { get; set; }
     }
 }

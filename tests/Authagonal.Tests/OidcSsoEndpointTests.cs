@@ -194,4 +194,94 @@ public sealed class OidcSsoEndpointTests : IAsyncLifetime
         var json = await response.Content.ReadFromJsonAsync<JsonElement>();
         Assert.True(json.GetProperty("ssoRequired").GetBoolean());
     }
+
+    [Fact]
+    public async Task OidcLogin_ForwardsScopeFromReturnUrl()
+    {
+        // returnUrl is the original /authorize URL — its scope param is the
+        // contract for what claims should ride through. Federation should ask
+        // upstream for the same scopes the downstream RP requested.
+        var originalAuthorize = "/connect/authorize?client_id=foo&scope=openid+projects-api.read&response_type=code";
+        var encoded = Uri.EscapeDataString(originalAuthorize);
+        var response = await _client.GetAsync($"/oidc/{_connectionId}/login?returnUrl={encoded}");
+
+        Assert.Equal(HttpStatusCode.Redirect, response.StatusCode);
+        var qs = HttpUtility.ParseQueryString(new Uri(response.Headers.Location!.ToString()).Query);
+        var upstreamScope = qs["scope"]!;
+        var scopes = upstreamScope.Split(' ');
+        Assert.Contains("openid", scopes);
+        Assert.Contains("projects-api.read", scopes);
+    }
+
+    [Fact]
+    public async Task OidcLogin_NoReturnUrlScope_FallsBackToBaseline()
+    {
+        var response = await _client.GetAsync($"/oidc/{_connectionId}/login?returnUrl=/dashboard");
+
+        Assert.Equal(HttpStatusCode.Redirect, response.StatusCode);
+        var qs = HttpUtility.ParseQueryString(new Uri(response.Headers.Location!.ToString()).Query);
+        Assert.Equal("openid profile email", qs["scope"]);
+    }
+
+    [Fact]
+    public async Task OidcLogin_ForwardedScope_AlwaysIncludesOpenid()
+    {
+        // If the downstream RP somehow asked for scopes without openid (e.g. a
+        // pure access-token-only flow), upstream still needs openid to mint an
+        // id_token we can validate. We add it back.
+        var originalAuthorize = "/connect/authorize?client_id=foo&scope=projects-api.read&response_type=code";
+        var encoded = Uri.EscapeDataString(originalAuthorize);
+        var response = await _client.GetAsync($"/oidc/{_connectionId}/login?returnUrl={encoded}");
+
+        Assert.Equal(HttpStatusCode.Redirect, response.StatusCode);
+        var qs = HttpUtility.ParseQueryString(new Uri(response.Headers.Location!.ToString()).Query);
+        var scopes = qs["scope"]!.Split(' ');
+        Assert.Contains("openid", scopes);
+        Assert.Contains("projects-api.read", scopes);
+    }
+
+    [Fact]
+    public async Task OidcLogin_ForwardsWhitelistedPassthroughParam()
+    {
+        // Configure a separate connection with link_token in PassthroughParams.
+        // Admin API doesn't expose PUT for OIDC connections so we create a fresh one.
+        var createResponse = await _client.SendAsync(AdminRequest(HttpMethod.Post, "/api/v1/oidc/connections",
+            new
+            {
+                connectionName = "Test OIDC IdP With Passthrough",
+                metadataLocation = $"{_oidcMock.Issuer}/.well-known/openid-configuration",
+                clientId = "test-oidc-client",
+                clientSecret = "test-oidc-secret",
+                redirectUrl = $"{AuthagonalTestFactory.TestIssuer}/oidc/callback",
+                allowedDomains = Array.Empty<string>(),
+                passthroughParams = new[] { "link_token" }
+            }));
+        createResponse.EnsureSuccessStatusCode();
+        var passthroughConnId = (await createResponse.Content.ReadFromJsonAsync<JsonElement>())
+            .GetProperty("connectionId").GetString()!;
+
+        // Original /authorize URL carries link_token=tok-123. /oidc/login should
+        // pull it off the returnUrl and forward to the upstream authorize URL.
+        var originalAuthorize = "/connect/authorize?client_id=foo&scope=openid&link_token=tok-123";
+        var encoded = Uri.EscapeDataString(originalAuthorize);
+        var response = await _client.GetAsync($"/oidc/{passthroughConnId}/login?returnUrl={encoded}");
+
+        Assert.Equal(HttpStatusCode.Redirect, response.StatusCode);
+        var qs = HttpUtility.ParseQueryString(new Uri(response.Headers.Location!.ToString()).Query);
+        Assert.Equal("tok-123", qs["link_token"]);
+    }
+
+    [Fact]
+    public async Task OidcLogin_DropsNonWhitelistedParams()
+    {
+        // Default connection has no passthroughParams. An incoming `link_token`
+        // should NOT reach the upstream URL — only the whitelist flows through.
+        var originalAuthorize = "/connect/authorize?client_id=foo&scope=openid&link_token=secret-leak";
+        var encoded = Uri.EscapeDataString(originalAuthorize);
+        var response = await _client.GetAsync($"/oidc/{_connectionId}/login?returnUrl={encoded}");
+
+        Assert.Equal(HttpStatusCode.Redirect, response.StatusCode);
+        var qs = HttpUtility.ParseQueryString(new Uri(response.Headers.Location!.ToString()).Query);
+        Assert.Null(qs["link_token"]);
+    }
 }

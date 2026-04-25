@@ -102,14 +102,29 @@ internal static class AuthorizeEndpoint
                     return BuildErrorRedirect(redirectUri, "invalid_request", "code_challenge_method must be S256", state);
             }
 
-            // Authenticate — if the caller isn't already, challenge the host's registered scheme.
+            // Authenticate — if the caller isn't already, either route them through the
+            // hinted upstream IdP (for federation) or challenge the host's registered scheme.
             var authScheme = protocolOptions.Value.AuthenticationScheme;
             if (httpContext.User.Identity?.IsAuthenticated != true)
             {
+                var originalUrl = $"{httpContext.Request.Path}{httpContext.Request.QueryString}";
+
+                // RP-specified upstream IdP. The hint is a connection id understood by
+                // the host's federation surface (see Authagonal.Server's /oidc/{conn}/login).
+                // We don't validate the connection here — if it's unknown, that endpoint
+                // returns 404 and surfaces a real error rather than a silent fallback.
+                var idpHint = source.Get("idp_hint");
+                if (!string.IsNullOrWhiteSpace(idpHint))
+                {
+                    var federationLoginUrl = $"/oidc/{Uri.EscapeDataString(idpHint)}/login" +
+                        $"?returnUrl={Uri.EscapeDataString(originalUrl)}";
+                    return Results.Redirect(federationLoginUrl);
+                }
+
                 return Results.Challenge(
                     new AuthenticationProperties
                     {
-                        RedirectUri = $"{httpContext.Request.Path}{httpContext.Request.QueryString}"
+                        RedirectUri = originalUrl
                     },
                     [authScheme]);
             }

@@ -75,6 +75,14 @@ public sealed class ProtocolTokenService(
             MergeCustomClaims(claims, subject.CustomAttributes, allowedCustomClaims, overwriteExisting: false);
         }
 
+        // Federation claims layered on top — same scope gate, but federation values
+        // win on collision because they describe the authoritative state of the
+        // upstream-issued session.
+        if (subject?.FederationClaims is not null)
+        {
+            MergeCustomClaims(claims, subject.FederationClaims, allowedCustomClaims, overwriteExisting: true);
+        }
+
         // Ungated additional claims — forced onto the token regardless of scope. Used for
         // bounded-scope tokens where the claim is the whole point (e.g. share-link tokens).
         if (subject?.AdditionalClaims is not null)
@@ -180,6 +188,10 @@ public sealed class ProtocolTokenService(
         if (subject.CustomAttributes is not null)
         {
             MergeCustomClaims(claims, subject.CustomAttributes, allowedCustomClaims, overwriteExisting: false);
+        }
+        if (subject.FederationClaims is not null)
+        {
+            MergeCustomClaims(claims, subject.FederationClaims, allowedCustomClaims, overwriteExisting: true);
         }
 
         var expires = now.AddSeconds(client.IdentityTokenLifetimeSeconds);

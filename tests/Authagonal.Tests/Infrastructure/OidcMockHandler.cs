@@ -26,6 +26,10 @@ public sealed class OidcMockHandler : HttpMessageHandler
     /// <summary>Set this to the nonce from the authorization request. The mock will include it in the ID token.</summary>
     public string? Nonce { get; set; }
 
+    /// <summary>Extra claims to release on the id_token, simulating an upstream IdP that
+    /// scope-gates custom claims. Tests use this to verify federation flow-through.</summary>
+    public Dictionary<string, object> ExtraIdTokenClaims { get; } = new();
+
     public static string KeyId => "test-oidc-key-1";
 
     protected override Task<HttpResponseMessage> SendAsync(
@@ -105,6 +109,9 @@ public sealed class OidcMockHandler : HttpMessageHandler
         // Include nonce if set (must match the one from the authorization request)
         if (Nonce is not null)
             claims["nonce"] = Nonce;
+
+        foreach (var (k, v) in ExtraIdTokenClaims)
+            claims[k] = v;
 
         var idTokenDescriptor = new SecurityTokenDescriptor
         {

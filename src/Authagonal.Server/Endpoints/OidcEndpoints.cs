@@ -25,6 +25,7 @@ public static class OidcEndpoints
     }
 
     private static async Task<IResult> LoginAsync(
+        HttpContext httpContext,
         string connectionId,
         string? returnUrl,
         IOidcProviderStore oidcStore,
@@ -61,15 +62,37 @@ public static class OidcEndpoints
         var baseUrl = tenantContext.Issuer;
         var redirectUri = $"{baseUrl}/oidc/callback";
 
+        // Forward the originally-requested scopes from the downstream RP so the upstream
+        // releases the same claim set. Scope rides in the /authorize URL preserved as
+        // returnUrl when the host's auth middleware challenges the cookie scheme. If
+        // returnUrl isn't an /authorize URL or has no scope, fall back to the OIDC baseline.
+        var upstreamScope = ExtractScopeFromReturnUrl(effectiveReturnUrl)
+            ?? "openid profile email";
+
         var authorizationUrl = $"{discovery.AuthorizationEndpoint}" +
             $"?client_id={Uri.EscapeDataString(config.ClientId)}" +
             $"&redirect_uri={Uri.EscapeDataString(redirectUri)}" +
             $"&response_type=code" +
-            $"&scope={Uri.EscapeDataString("openid profile email")}" +
+            $"&scope={Uri.EscapeDataString(upstreamScope)}" +
             $"&state={Uri.EscapeDataString(state)}" +
             $"&nonce={Uri.EscapeDataString(nonce)}" +
             $"&code_challenge={Uri.EscapeDataString(codeChallenge)}" +
             $"&code_challenge_method=S256";
+
+        // Whitelisted passthroughs from the downstream /authorize request to upstream.
+        // Source order: returnUrl query first (canonical, since returnUrl IS the
+        // original /authorize URL), then this endpoint's own query as a fallback so
+        // ad-hoc callers can pass values directly. The whitelist is the OidcProviderConfig
+        // contract — anything not on it is dropped.
+        if (config.PassthroughParams.Count > 0)
+        {
+            var passthroughs = CollectPassthroughs(
+                config.PassthroughParams, effectiveReturnUrl, httpContext.Request.Query);
+            foreach (var (key, value) in passthroughs)
+            {
+                authorizationUrl += $"&{Uri.EscapeDataString(key)}={Uri.EscapeDataString(value)}";
+            }
+        }
 
         logger.LogInformation("OIDC login initiated for connection {ConnectionId}, returnUrl={ReturnUrl}", connectionId, effectiveReturnUrl);
 
@@ -361,6 +384,21 @@ public static class OidcEndpoints
             }
         }
 
+        // Federation claim flow-through: every non-protocol upstream id_token claim
+        // rides through as `federated:<name>` on the cookie, so when this user later
+        // hits /connect/authorize the resolver can promote them into OidcSubject.CustomAttributes
+        // and ProtocolTokenService's scope-gated emission re-releases them on Authagonal-issued
+        // tokens. Scope is the only switch — no per-connection allowlist.
+        foreach (var (claimName, claimValue) in validationResult.Claims)
+        {
+            if (FederationProtocolReservedClaims.Contains(claimName))
+                continue;
+            var stringValue = ConvertClaimValueToString(claimValue);
+            if (stringValue is null)
+                continue;
+            claims.Add(new Claim($"federated:{claimName}", stringValue));
+        }
+
         var identity = new ClaimsIdentity(claims, CookieAuthenticationDefaults.AuthenticationScheme);
         var principal = new ClaimsPrincipal(identity);
 
@@ -545,6 +583,94 @@ public static class OidcEndpoints
             return "/login";
 
         return url;
+    }
+
+    /// <summary>
+    /// Claim names we never propagate as federation claims because they're protocol
+    /// machinery (issuer/audience/timestamps), already extracted as identity (sub,
+    /// email, name fields), or already handled separately (session_max_exp, sid).
+    /// Anything else flows through scope-gated emission.
+    /// </summary>
+    private static readonly HashSet<string> FederationProtocolReservedClaims = new(StringComparer.Ordinal)
+    {
+        "iss", "sub", "aud", "exp", "nbf", "iat", "jti",
+        "scope", "client_id", "nonce", "auth_time", "acr", "amr", "sid",
+        "at_hash", "c_hash", "azp",
+        "email", "email_verified", "name", "given_name", "family_name", "phone_number",
+    };
+
+    private static string? ConvertClaimValueToString(object? value)
+    {
+        return value switch
+        {
+            null => null,
+            string s => s,
+            bool b => b ? "true" : "false",
+            int or long or double or float or decimal => Convert.ToString(value, System.Globalization.CultureInfo.InvariantCulture),
+            JsonElement el => el.ValueKind switch
+            {
+                JsonValueKind.String => el.GetString(),
+                JsonValueKind.Number => el.GetRawText(),
+                JsonValueKind.True => "true",
+                JsonValueKind.False => "false",
+                JsonValueKind.Null => null,
+                _ => el.GetRawText(),
+            },
+            _ => value.ToString(),
+        };
+    }
+
+    /// <summary>
+    /// Collects whitelisted passthrough query values to forward to the upstream IdP.
+    /// Tries the returnUrl's query string first (canonical — that's the original
+    /// /authorize request), then the LoginAsync request's own query as a fallback.
+    /// Whitelist keys are matched ordinally; missing keys are silently skipped.
+    /// </summary>
+    private static IEnumerable<KeyValuePair<string, string>> CollectPassthroughs(
+        IReadOnlyList<string> whitelist,
+        string? returnUrl,
+        IQueryCollection currentQuery)
+    {
+        System.Collections.Specialized.NameValueCollection? returnUrlQuery = null;
+        if (!string.IsNullOrWhiteSpace(returnUrl))
+        {
+            var queryStart = returnUrl.IndexOf('?');
+            if (queryStart >= 0)
+                returnUrlQuery = System.Web.HttpUtility.ParseQueryString(returnUrl[queryStart..]);
+        }
+
+        foreach (var key in whitelist)
+        {
+            var value = returnUrlQuery?[key];
+            if (string.IsNullOrEmpty(value))
+                value = currentQuery[key].FirstOrDefault();
+            if (string.IsNullOrEmpty(value)) continue;
+            yield return new KeyValuePair<string, string>(key, value);
+        }
+    }
+
+    /// <summary>
+    /// Pulls the <c>scope</c> query parameter off the original /authorize URL we were
+    /// asked to bring the user back to after federation. Returns null if returnUrl
+    /// doesn't carry one (e.g. login UI redirected here directly with returnUrl="/").
+    /// Always ensures <c>openid</c> is present — OIDC requires it.
+    /// </summary>
+    private static string? ExtractScopeFromReturnUrl(string? returnUrl)
+    {
+        if (string.IsNullOrWhiteSpace(returnUrl)) return null;
+
+        var queryStart = returnUrl.IndexOf('?');
+        if (queryStart < 0) return null;
+
+        var query = System.Web.HttpUtility.ParseQueryString(returnUrl[queryStart..]);
+        var scope = query["scope"];
+        if (string.IsNullOrWhiteSpace(scope)) return null;
+
+        var scopes = scope.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (!scopes.Contains("openid", StringComparer.Ordinal))
+            scopes = [.. scopes, "openid"];
+
+        return string.Join(' ', scopes);
     }
 
     private static string Base64UrlEncode(byte[] bytes)

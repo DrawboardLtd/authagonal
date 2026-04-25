@@ -47,8 +47,31 @@ public sealed class UserStoreOidcSubjectResolver(
 
         var sessionId = authenticatedPrincipal.FindFirstValue("sid");
 
-        var subject = await BuildSubjectAsync(user, client, sessionMaxExpiresAt, sessionId, ct);
+        // Federation claims captured at the OIDC callback ride on the cookie as
+        // `federated:<name>` claims. Pass them through OidcSubject.FederationClaims
+        // so ProtocolTokenService's scope-gated emission re-releases them on the
+        // Authagonal-issued token, and so they survive refresh rotations distinct
+        // from per-user CustomAttributes (which we re-read fresh on refresh).
+        var federationClaims = ExtractFederationClaims(authenticatedPrincipal);
+
+        var subject = await BuildSubjectAsync(user, client, sessionMaxExpiresAt, sessionId, federationClaims, ct);
         return OidcSubjectResult.Allow(subject);
+    }
+
+    private const string FederationClaimPrefix = "federated:";
+
+    private static Dictionary<string, string> ExtractFederationClaims(ClaimsPrincipal principal)
+    {
+        var result = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var claim in principal.Claims)
+        {
+            if (!claim.Type.StartsWith(FederationClaimPrefix, StringComparison.Ordinal))
+                continue;
+            var name = claim.Type[FederationClaimPrefix.Length..];
+            if (string.IsNullOrEmpty(name)) continue;
+            result[name] = claim.Value;
+        }
+        return result;
     }
 
     public async Task<OidcSubjectResult> ResolveRefreshAsync(
@@ -62,10 +85,16 @@ public sealed class UserStoreOidcSubjectResolver(
 
         var client = await clientStore.GetAsync(context.ClientId, ct);
 
-        // Preserve the federation cap and session id across rotations — the resolver can't
-        // re-read either from the cookie at refresh time, and both must survive rotations
-        // so the cap can't be lifted and back-channel logouts can still correlate.
-        var subject = await BuildSubjectAsync(user, client, priorSubject.SessionMaxExpiresAt, priorSubject.SessionId, ct);
+        // Preserve the federation cap, session id, and federation claims across rotations
+        // — the resolver can't re-read any of them from the cookie at refresh time, and
+        // they must survive rotations so the cap can't be lifted, back-channel logouts can
+        // correlate, and federation-derived claims keep flowing onto refreshed tokens.
+        var subject = await BuildSubjectAsync(
+            user, client,
+            priorSubject.SessionMaxExpiresAt,
+            priorSubject.SessionId,
+            priorSubject.FederationClaims,
+            ct);
         return OidcSubjectResult.Allow(subject);
     }
 
@@ -79,6 +108,7 @@ public sealed class UserStoreOidcSubjectResolver(
         OAuthClient? client,
         DateTimeOffset? sessionMaxExpiresAt = null,
         string? sessionId = null,
+        IReadOnlyDictionary<string, string>? federationClaims = null,
         CancellationToken ct = default)
     {
         IReadOnlyList<string>? groups = null;
@@ -103,6 +133,7 @@ public sealed class UserStoreOidcSubjectResolver(
             CustomAttributes = user.CustomAttributes.Count > 0
                 ? user.CustomAttributes.ToDictionary(kv => kv.Key, kv => kv.Value)
                 : null,
+            FederationClaims = federationClaims is { Count: > 0 } ? federationClaims : null,
             SessionMaxExpiresAt = sessionMaxExpiresAt,
             SessionId = sessionId,
         };

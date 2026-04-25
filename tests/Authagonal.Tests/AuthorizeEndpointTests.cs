@@ -234,6 +234,40 @@ public sealed class AuthorizeEndpointTests : IAsyncLifetime
         return (accessToken, refreshToken);
     }
 
+    [Fact]
+    public async Task Authorize_UnauthIdpHint_RedirectsToFederationLogin()
+    {
+        // Fresh client — no cookie. idp_hint should route the unauth request
+        // through /oidc/{hint}/login rather than challenging the cookie scheme.
+        using var freshClient = _factory.CreateClient(new() { AllowAutoRedirect = false });
+
+        var url = BuildAuthorizeUrl() + "&idp_hint=guest-share-link";
+        var response = await freshClient.GetAsync(url);
+
+        Assert.Equal(HttpStatusCode.Redirect, response.StatusCode);
+        var location = response.Headers.Location!.ToString();
+        Assert.StartsWith("/oidc/guest-share-link/login", location);
+        Assert.Contains("returnUrl=", location);
+        // returnUrl preserves the original /authorize URL so the user lands
+        // back at this endpoint with their requested scope after federation.
+        Assert.Contains(Uri.EscapeDataString("/connect/authorize"), location);
+    }
+
+    [Fact]
+    public async Task Authorize_UnauthNoIdpHint_ChallengesAuthScheme()
+    {
+        using var freshClient = _factory.CreateClient(new() { AllowAutoRedirect = false });
+
+        var url = BuildAuthorizeUrl();
+        var response = await freshClient.GetAsync(url);
+
+        // Cookie scheme challenge — typically a 302 to the host's login UI.
+        // Just assert it's not redirecting to /oidc/, which would mean the
+        // hint path fired without a hint being supplied.
+        var location = response.Headers.Location?.ToString() ?? "";
+        Assert.DoesNotContain("/oidc/", location);
+    }
+
     private static string[] ReadAudClaim(string jwt)
     {
         var handler = new JwtSecurityTokenHandler();

@@ -114,8 +114,21 @@ public static class AuthorizeEndpoint
             // Check authentication
             if (httpContext.User.Identity?.IsAuthenticated != true)
             {
-                var loginAppUrl = configuration["LoginAppUrl"] ?? "/login";
                 var authorizeRelativeUrl = $"{httpContext.Request.Path}{httpContext.Request.QueryString}";
+
+                // RP-specified upstream IdP. The hint is an OIDC connection id understood
+                // by the host's federation surface (/oidc/{conn}/login). We don't validate
+                // it here — if it's unknown, that endpoint surfaces a 404 rather than
+                // silently falling back to the login UI.
+                var idpHint = Get("idp_hint");
+                if (!string.IsNullOrWhiteSpace(idpHint))
+                {
+                    var federationLoginUrl = $"/oidc/{Uri.EscapeDataString(idpHint)}/login" +
+                        $"?returnUrl={Uri.EscapeDataString(authorizeRelativeUrl)}";
+                    return Results.Redirect(federationLoginUrl);
+                }
+
+                var loginAppUrl = configuration["LoginAppUrl"] ?? "/login";
                 var loginUrl = $"{loginAppUrl}?returnUrl={Uri.EscapeDataString(authorizeRelativeUrl)}";
 
                 var loginHint = Get("login_hint");

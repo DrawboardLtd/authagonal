@@ -22,6 +22,7 @@ public sealed class OidcProviderEntity : ITableEntity
     public required string AllowedDomainsJson { get; set; }
     public bool DisableJitProvisioning { get; set; }
     public string? SessionExpClaim { get; set; }
+    public string? PassthroughParamsJson { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset? UpdatedAt { get; set; }
 
@@ -37,6 +38,9 @@ public sealed class OidcProviderEntity : ITableEntity
         AllowedDomainsJson = JsonSerializer.Serialize(config.AllowedDomains, StorageJsonContext.Default.ListString),
         DisableJitProvisioning = config.DisableJitProvisioning,
         SessionExpClaim = config.SessionExpClaim,
+        PassthroughParamsJson = config.PassthroughParams.Count > 0
+            ? JsonSerializer.Serialize(config.PassthroughParams, StorageJsonContext.Default.ListString)
+            : null,
         CreatedAt = config.CreatedAt,
         UpdatedAt = config.UpdatedAt,
     };
@@ -52,6 +56,9 @@ public sealed class OidcProviderEntity : ITableEntity
         AllowedDomains = JsonSerializer.Deserialize(AllowedDomainsJson, StorageJsonContext.Default.ListString) ?? [],
         DisableJitProvisioning = DisableJitProvisioning,
         SessionExpClaim = SessionExpClaim,
+        PassthroughParams = string.IsNullOrEmpty(PassthroughParamsJson)
+            ? []
+            : JsonSerializer.Deserialize(PassthroughParamsJson, StorageJsonContext.Default.ListString) ?? [],
         CreatedAt = CreatedAt,
         UpdatedAt = UpdatedAt,
     };
