@@ -18,7 +18,8 @@ public sealed class ConfigProvisioningAppProvider(IConfiguration configuration) 
             var callbackUrl = child["CallbackUrl"];
             if (string.IsNullOrWhiteSpace(callbackUrl)) continue;
 
-            apps.Add(new ProvisioningApp(child.Key, callbackUrl, child["ApiKey"]));
+            var tryTimeout = int.TryParse(child["TryTimeoutSeconds"], out var t) ? t : (int?)null;
+            apps.Add(new ProvisioningApp(child.Key, callbackUrl, child["ApiKey"], tryTimeout));
         }
 
         return Task.FromResult<IReadOnlyList<ProvisioningApp>>(apps);

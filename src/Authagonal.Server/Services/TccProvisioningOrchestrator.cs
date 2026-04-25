@@ -14,6 +14,12 @@ public sealed class TccProvisioningOrchestrator(
     IProvisioningAppProvider appProvider,
     ILogger<TccProvisioningOrchestrator> logger) : IProvisioningOrchestrator
 {
+    // Try can do real work (routing slips, org provisioning) so tolerate
+    // seconds of latency. Confirm and Cancel must be cheap — hold them to a
+    // fixed short budget so a slow downstream can't block the signup path.
+    private const int DefaultTryTimeoutSeconds = 60;
+    private const int ShortPhaseTimeoutSeconds = 10;
+
     private IUserProvisionStore GetProvisionStore() =>
         httpContextAccessor.HttpContext?.RequestServices.GetRequiredService<IUserProvisionStore>()
         ?? throw new InvalidOperationException("UserProvisionStore requires an active HTTP request");
@@ -31,7 +37,7 @@ public sealed class TccProvisioningOrchestrator(
 
         var appIds = provisioningApps.Select(a => a.AppId).ToList();
         // Cache app configs for lookup during TCC phases
-        _resolvedApps = provisioningApps.ToDictionary(a => a.AppId, a => new AppConfig(a.CallbackUrl, a.ApiKey), StringComparer.OrdinalIgnoreCase);
+        _resolvedApps = provisioningApps.ToDictionary(a => a.AppId, a => new AppConfig(a.CallbackUrl, a.ApiKey, a.TryTimeoutSeconds), StringComparer.OrdinalIgnoreCase);
 
         await ProvisionAsync(user, appIds, ct);
         _resolvedApps = null;
@@ -181,17 +187,48 @@ public sealed class TccProvisioningOrchestrator(
             Email = user.Email,
             FirstName = user.FirstName,
             LastName = user.LastName,
-            OrganizationId = user.OrganizationId
+            OrganizationId = user.OrganizationId,
+            CustomAttributes = user.CustomAttributes.Count > 0
+                ? new Dictionary<string, string>(user.CustomAttributes)
+                : null
         };
 
-        return await PostAsync<TryResponse>(app, url, payload, ct)
+        var timeout = TimeSpan.FromSeconds(app.TryTimeoutSeconds ?? DefaultTryTimeoutSeconds);
+        var response = await PostAsync<TryResponse>(app, url, payload, timeout, ct)
             ?? new TryResponse { Approved = true };
+
+        if (response.Approved)
+            MergeIntoUser(user, response);
+
+        return response;
+    }
+
+    private static void MergeIntoUser(AuthUser user, TryResponse response)
+    {
+        // A downstream app can only assign OrganizationId if the user doesn't
+        // have one yet. Later apps in the same transaction see the earlier
+        // assignment and don't overwrite it.
+        if (!string.IsNullOrWhiteSpace(response.OrganizationId) &&
+            string.IsNullOrWhiteSpace(user.OrganizationId))
+        {
+            user.OrganizationId = response.OrganizationId;
+        }
+
+        if (response.CustomAttributes is { Count: > 0 })
+        {
+            foreach (var kvp in response.CustomAttributes)
+            {
+                if (string.IsNullOrWhiteSpace(kvp.Key)) continue;
+                user.CustomAttributes[kvp.Key] = kvp.Value;
+            }
+        }
     }
 
     private async Task ConfirmAsync(AppConfig app, string transactionId, CancellationToken ct)
     {
         var url = app.CallbackUrl.TrimEnd('/') + "/confirm";
-        await PostAsync(app, url, new TransactionRequest { TransactionId = transactionId }, ct);
+        await PostAsync(app, url, new TransactionRequest { TransactionId = transactionId },
+            TimeSpan.FromSeconds(ShortPhaseTimeoutSeconds), ct);
     }
 
     private async Task CancelAllAsync(
@@ -205,7 +242,8 @@ public sealed class TccProvisioningOrchestrator(
             {
                 var url = apps[appId].CallbackUrl.TrimEnd('/') + "/cancel";
                 await PostAsync(apps[appId], url,
-                    new TransactionRequest { TransactionId = transactionId }, CancellationToken.None);
+                    new TransactionRequest { TransactionId = transactionId },
+                    TimeSpan.FromSeconds(ShortPhaseTimeoutSeconds), CancellationToken.None);
             }
             catch (Exception ex)
             {
@@ -225,7 +263,9 @@ public sealed class TccProvisioningOrchestrator(
         if (!string.IsNullOrWhiteSpace(app.ApiKey))
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", app.ApiKey);
 
-        using var response = await client.SendAsync(request, ct);
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        cts.CancelAfter(TimeSpan.FromSeconds(ShortPhaseTimeoutSeconds));
+        using var response = await client.SendAsync(request, cts.Token);
         logger.LogInformation(
             "Deprovision user {UserId}: HTTP {StatusCode}", userId, (int)response.StatusCode);
     }
@@ -240,16 +280,16 @@ public sealed class TccProvisioningOrchestrator(
         var app = appProvider.GetAppsAsync().GetAwaiter().GetResult()
             .FirstOrDefault(a => string.Equals(a.AppId, appId, StringComparison.OrdinalIgnoreCase));
 
-        return app is not null ? new AppConfig(app.CallbackUrl, app.ApiKey) : null;
+        return app is not null ? new AppConfig(app.CallbackUrl, app.ApiKey, app.TryTimeoutSeconds) : null;
     }
 
     // ── HTTP helpers ──────────────────────────────────────────────────
 
     [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("Trimming", "IL2026", Justification = "Provisioning payloads are polymorphic external contracts")]
     private async Task<T?> PostAsync<T>(
-        AppConfig app, string url, object payload, CancellationToken ct) where T : class
+        AppConfig app, string url, object payload, TimeSpan timeout, CancellationToken ct) where T : class
     {
-        using var response = await SendPostAsync(app, url, payload, ct);
+        using var response = await SendPostAsync(app, url, payload, timeout, ct);
         var body = await response.Content.ReadAsStringAsync(ct);
 
         if (!response.IsSuccessStatusCode)
@@ -261,9 +301,9 @@ public sealed class TccProvisioningOrchestrator(
     }
 
     private async Task PostAsync(
-        AppConfig app, string url, object payload, CancellationToken ct)
+        AppConfig app, string url, object payload, TimeSpan timeout, CancellationToken ct)
     {
-        using var response = await SendPostAsync(app, url, payload, ct);
+        using var response = await SendPostAsync(app, url, payload, timeout, ct);
 
         if (!response.IsSuccessStatusCode)
         {
@@ -275,7 +315,7 @@ public sealed class TccProvisioningOrchestrator(
 
     [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("Trimming", "IL2026", Justification = "Provisioning payloads are polymorphic external contracts")]
     private async Task<HttpResponseMessage> SendPostAsync(
-        AppConfig app, string url, object payload, CancellationToken ct)
+        AppConfig app, string url, object payload, TimeSpan timeout, CancellationToken ct)
     {
         var client = httpClientFactory.CreateClient("Provisioning");
         using var request = new HttpRequestMessage(HttpMethod.Post, url)
@@ -289,12 +329,14 @@ public sealed class TccProvisioningOrchestrator(
         if (!string.IsNullOrWhiteSpace(app.ApiKey))
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", app.ApiKey);
 
-        return await client.SendAsync(request, ct);
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        cts.CancelAfter(timeout);
+        return await client.SendAsync(request, cts.Token);
     }
 
     // ── DTOs ──────────────────────────────────────────────────────────
 
-    private sealed record AppConfig(string CallbackUrl, string? ApiKey);
+    private sealed record AppConfig(string CallbackUrl, string? ApiKey, int? TryTimeoutSeconds);
 
     private sealed record TryRequest
     {
@@ -304,6 +346,7 @@ public sealed class TccProvisioningOrchestrator(
         public string? FirstName { get; init; }
         public string? LastName { get; init; }
         public string? OrganizationId { get; init; }
+        public Dictionary<string, string>? CustomAttributes { get; init; }
     }
 
     private sealed record TransactionRequest
@@ -315,5 +358,14 @@ public sealed class TccProvisioningOrchestrator(
     {
         public bool Approved { get; init; } = true;
         public string? Reason { get; init; }
+        // When the downstream app provisions a new organization (or resolves an
+        // existing one) for this user, it returns the org id here. The
+        // orchestrator merges it onto AuthUser.OrganizationId, and it flows
+        // onto tokens as the standard org_id claim.
+        public string? OrganizationId { get; init; }
+        // Downstream-assigned product-level attributes (e.g. org_role).
+        // Merged into AuthUser.CustomAttributes; emitted on tokens via scope
+        // UserClaims configuration.
+        public Dictionary<string, string>? CustomAttributes { get; init; }
     }
 }

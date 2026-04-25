@@ -12,4 +12,15 @@ public interface IProvisioningAppProvider
 /// <summary>
 /// A downstream app that participates in user provisioning via TCC (try/confirm/cancel).
 /// </summary>
-public sealed record ProvisioningApp(string AppId, string CallbackUrl, string? ApiKey);
+/// <param name="TryTimeoutSeconds">
+/// Maximum time to wait for the /try callback. Null falls back to the
+/// orchestrator default (60s). Raise this when the downstream app does real
+/// work during Try (e.g. a routing slip that spins up an organization).
+/// Confirm/Cancel/Deprovision always use a short fixed timeout and are not
+/// tunable — they should always be cheap.
+/// </param>
+public sealed record ProvisioningApp(
+    string AppId,
+    string CallbackUrl,
+    string? ApiKey,
+    int? TryTimeoutSeconds = null);

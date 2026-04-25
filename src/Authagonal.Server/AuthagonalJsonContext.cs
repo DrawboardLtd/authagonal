@@ -81,6 +81,7 @@ namespace Authagonal.Server;
 [JsonSerializable(typeof(MfaVerifyRequest))]
 [JsonSerializable(typeof(TotpConfirmRequest))]
 [JsonSerializable(typeof(WebAuthnConfirmRequest))]
+[JsonSerializable(typeof(Dictionary<string, string>))]
 internal partial class AuthagonalJsonContext : JsonSerializerContext
 {
 }

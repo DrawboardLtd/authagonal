@@ -304,11 +304,16 @@ public static class AuthEndpoints
             LockoutEnabled = true,
             SecurityStamp = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32)),
             CreatedAt = DateTimeOffset.UtcNow,
+            CustomAttributes = request.CustomAttributes is { Count: > 0 }
+                ? new Dictionary<string, string>(request.CustomAttributes)
+                : [],
         };
 
         await userStore.CreateAsync(user, ct);
 
-        // Provision to downstream apps (TCC)
+        // Provision to downstream apps (TCC). Try handlers may return an
+        // OrganizationId and/or CustomAttributes that the orchestrator merges
+        // onto the user — persist that merge so those values land on tokens.
         try
         {
             await provisioning.ProvisionAsync(user, ct);
@@ -319,6 +324,9 @@ public static class AuthEndpoints
             logger.LogWarning(ex, "Provisioning rejected registration for {Email}", user.Email);
             return TypedResults.Json(new ErrorInfoResponse { Error = "provisioning_rejected", Message = ex.Message }, AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 422);
         }
+
+        user.UpdatedAt = DateTimeOffset.UtcNow;
+        await userStore.UpdateAsync(user, ct);
 
         // Send verification email
         var expiresAt = DateTimeOffset.UtcNow.AddHours(ao.EmailVerificationExpiryHours).ToUnixTimeSeconds();
@@ -630,6 +638,7 @@ public sealed class RegisterRequest
     public string? Password { get; set; }
     public string? FirstName { get; set; }
     public string? LastName { get; set; }
+    public Dictionary<string, string>? CustomAttributes { get; set; }
 }
 
 public sealed class ConfirmEmailRequest
