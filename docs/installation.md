@@ -99,14 +99,14 @@ app.MapFallbackToFile("index.html");
 app.Run();
 ```
 
-See [Extensibility](extensibility) for all override points and [demos/custom-server/](https://github.com/DrawboardLtd/authagonal/tree/master/demos/custom-server) for a complete example.
+See [Extensibility](extensibility) for all override points and [demos/custom-server/](https://github.com/authagonal/authagonal/tree/master/demos/custom-server) for a complete example.
 
 ## Login SPA (npm)
 
 The login UI is published as an npm package for customization:
 
 ```bash
-npm install @drawboard/authagonal-login
+npm install @authagonal/login
 ```
 
 The package ships compiled JS and CSS — import components and styles directly in your own React app. See [Custom Server](custom-server) for a full walkthrough.

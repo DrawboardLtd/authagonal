@@ -52,4 +52,4 @@ Client App                    Authagonal                         IdP (Azure AD, 
     │ ◄─ { access_token, ... } ──┤                                    │
 ```
 
-Get started with the [Installation](installation) guide or jump straight to the [Quick Start](quickstart). To host Authagonal in your own project, see [Extensibility](extensibility). For data management, see [Backup & Restore](backup-restore). For the full change history, see the [Changelog](https://github.com/DrawboardLtd/authagonal/blob/master/CHANGELOG.md).
+Get started with the [Installation](installation) guide or jump straight to the [Quick Start](quickstart). To host Authagonal in your own project, see [Extensibility](extensibility). For data management, see [Backup & Restore](backup-restore). For the full change history, see the [Changelog](https://github.com/authagonal/authagonal/blob/master/CHANGELOG.md).

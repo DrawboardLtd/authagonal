@@ -192,5 +192,5 @@ public sealed class SmtpEmailService(SmtpClient smtp) : IEmailService
 
 ## 另请参阅
 
-- [demos/custom-server/](https://github.com/DrawboardLtd/authagonal/tree/master/demos/custom-server) -- 完整的可运行示例
-- [demos/sample-app/](https://github.com/DrawboardLtd/authagonal/tree/master/demos/sample-app) -- 客户端应用示例
+- [demos/custom-server/](https://github.com/authagonal/authagonal/tree/master/demos/custom-server) -- 完整的可运行示例
+- [demos/sample-app/](https://github.com/authagonal/authagonal/tree/master/demos/sample-app) -- 客户端应用示例

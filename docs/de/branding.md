@@ -110,7 +110,7 @@ body {
 |---|---|---|
 | **Nur Konfiguration** | `branding.json` + Logo montieren | Nahtlos -- Docker-Image aktualisieren, Ihre Mounts behalten |
 | **Konfiguration + CSS** | `customCssUrl` mit Stil-Ueberschreibungen hinzufuegen | Gleich -- CSS-Klassen sind stabil |
-| **npm-Paket** | `npm install @drawboard/authagonal-login`, `branding.json` anpassen, in `wwwroot/` erstellen | Aktualisierbar -- `npm update` zieht neue Versionen |
+| **npm-Paket** | `npm install @authagonal/login`, `branding.json` anpassen, in `wwwroot/` erstellen | Aktualisierbar -- `npm update` zieht neue Versionen |
 | **SPA forken** | `login-app/` klonen, Quellcode aendern, eigene Version erstellen | Sie besitzen die Oberflaeche -- Server-Updates sind unabhaengig |
 | **Eigene schreiben** | Vollstaendig benutzerdefiniertes Frontend gegen die Auth-API erstellen | Volle Kontrolle -- siehe [Auth-API](auth-api) fuer die Schnittstellenspezifikation |
 

@@ -100,14 +100,14 @@ app.MapFallbackToFile("index.html");
 app.Run();
 ```
 
-有关所有覆盖点，请参阅[扩展性](extensibility)；完整示例请参阅 [demos/custom-server/](https://github.com/DrawboardLtd/authagonal/tree/master/demos/custom-server)。
+有关所有覆盖点，请参阅[扩展性](extensibility)；完整示例请参阅 [demos/custom-server/](https://github.com/authagonal/authagonal/tree/master/demos/custom-server)。
 
 ## 登录 SPA（npm）
 
 登录界面作为 npm 包发布，方便自定义：
 
 ```bash
-npm install @drawboard/authagonal-login
+npm install @authagonal/login
 ```
 
 该包提供编译后的 JS 和 CSS -- 可在您自己的 React 应用中直接导入组件和样式。完整演练请参阅[自定义服务器](custom-server)。

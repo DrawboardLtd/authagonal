@@ -94,7 +94,7 @@ Antwort:
 
 ## Funktionsfaehige Demo
 
-Das Verzeichnis `demos/sample-app/` enthaelt eine vollstaendige React SPA + API, die den gesamten oben beschriebenen OIDC-Ablauf implementiert. Anweisungen finden Sie in der [demos README](https://github.com/DrawboardLtd/authagonal/tree/master/demos).
+Das Verzeichnis `demos/sample-app/` enthaelt eine vollstaendige React SPA + API, die den gesamten oben beschriebenen OIDC-Ablauf implementiert. Anweisungen finden Sie in der [demos README](https://github.com/authagonal/authagonal/tree/master/demos).
 
 ## Naechste Schritte
 

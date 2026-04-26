@@ -71,6 +71,10 @@ public interface IAuthHook
         string? clientId = null, CancellationToken ct = default);
     Task OnUserCreatedAsync(string userId, string email, string createdVia,
         CancellationToken ct = default);
+    Task OnUserUpdatedAsync(string userId, string email, string updatedVia,
+        CancellationToken ct = default);
+    Task OnUserDeletedAsync(string userId, string email, string deletedVia,
+        CancellationToken ct = default);
     Task OnLoginFailedAsync(string email, string reason,
         CancellationToken ct = default);
     Task OnTokenIssuedAsync(string? subjectId, string clientId, string grantType,
@@ -84,10 +88,12 @@ public interface IAuthHook
 
 ### Parameters
 
-| Method | `method` / `createdVia` values |
+| Method | `method` / `createdVia` / `updatedVia` / `deletedVia` values |
 |---|---|
 | `OnUserAuthenticatedAsync` | `"password"`, `"saml"`, `"oidc"` |
-| `OnUserCreatedAsync` | `"admin"`, `"saml"`, `"oidc"` |
+| `OnUserCreatedAsync` | `"admin"`, `"saml"`, `"oidc"`, `"portal"` |
+| `OnUserUpdatedAsync` | `"admin"`, `"portal"`, `"scim"`, `"self-service"` |
+| `OnUserDeletedAsync` | `"admin"`, `"portal"`, `"scim"` |
 | `OnLoginFailedAsync` | `"invalid_password"`, `"locked_out"`, etc. |
 | `OnTokenIssuedAsync` | Grant types: `"authorization_code"`, `"refresh_token"`, `"client_credentials"` |
 | `ResolveMfaPolicyAsync` | Returns the effective MFA policy for a user. Default: return `clientPolicy` unchanged. |
@@ -225,5 +231,5 @@ public sealed class SmtpEmailService(SmtpClient smtp) : IEmailService
 
 ## See Also
 
-- [demos/custom-server/](https://github.com/DrawboardLtd/authagonal/tree/master/demos/custom-server) — complete working example
-- [demos/sample-app/](https://github.com/DrawboardLtd/authagonal/tree/master/demos/sample-app) — client app example
+- [demos/custom-server/](https://github.com/authagonal/authagonal/tree/master/demos/custom-server) — complete working example
+- [demos/sample-app/](https://github.com/authagonal/authagonal/tree/master/demos/sample-app) — client app example

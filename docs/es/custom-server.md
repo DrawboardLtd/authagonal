@@ -190,14 +190,14 @@ El servidor se inicia en la URL configurada, sirviendo el documento de descubrim
 
 ## Parte 2: Interfaz de inicio de sesion personalizada
 
-La SPA de inicio de sesion predeterminada funciona de inmediato, pero puede reemplazarla con su propia aplicacion React que importa componentes y clientes API del paquete npm `@drawboard/authagonal-login`.
+La SPA de inicio de sesion predeterminada funciona de inmediato, pero puede reemplazarla con su propia aplicacion React que importa componentes y clientes API del paquete npm `@authagonal/login`.
 
 ### Preparar el frontend
 
 ```bash
 mkdir login-app && cd login-app
 npm init -y
-npm install react react-dom react-router-dom @drawboard/authagonal-login
+npm install react react-dom react-router-dom @authagonal/login
 npm install -D vite @vitejs/plugin-react typescript @types/react @types/react-dom
 ```
 
@@ -214,12 +214,12 @@ import {
   MfaSetupPage,
   RegisterPage,
   App,              // Standalone SPA with full routing
-} from '@drawboard/authagonal-login';
+} from '@authagonal/login';
 
 // UI primitives
 import {
   Button, Input, Label, Card, Alert, Separator, cn,
-} from '@drawboard/authagonal-login';
+} from '@authagonal/login';
 
 // API clients — call from your custom pages
 import {
@@ -229,25 +229,25 @@ import {
   mfaWebAuthnSetup, mfaWebAuthnConfirm, mfaRecoveryGenerate,
   mfaDeleteCredential,
   ApiRequestError,
-} from '@drawboard/authagonal-login';
+} from '@authagonal/login';
 
 // Branding
 import {
   loadBranding, useBranding, BrandingContext, resolveLocalized,
-} from '@drawboard/authagonal-login';
+} from '@authagonal/login';
 
 // i18n — always import from this package, not react-i18next directly
-import { useTranslation, i18n } from '@drawboard/authagonal-login';
+import { useTranslation, i18n } from '@authagonal/login';
 
 // Styles
-import '@drawboard/authagonal-login/styles.css';
+import '@authagonal/login/styles.css';
 
 // Types
 import type {
   BrandingConfig, LocalizedString, LoginResponse,
   SessionResponse, ExternalProvider, PasswordPolicyResponse,
   MfaStatusResponse, MfaTotpSetupResponse,
-} from '@drawboard/authagonal-login';
+} from '@authagonal/login';
 ```
 
 ### Punto de entrada (main.tsx)
@@ -256,8 +256,8 @@ Cargue la configuracion de marca desde el servidor y envuelva su aplicacion en e
 
 ```tsx
 import { createRoot } from 'react-dom/client';
-import { loadBranding, BrandingContext } from '@drawboard/authagonal-login';
-import '@drawboard/authagonal-login/styles.css';
+import { loadBranding, BrandingContext } from '@authagonal/login';
+import '@authagonal/login/styles.css';
 import App from './App';
 
 loadBranding().then((config) => {
@@ -276,7 +276,7 @@ Combine paginas personalizadas con las paginas del paquete base:
 
 ```tsx
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
-import { ForgotPasswordPage, ResetPasswordPage } from '@drawboard/authagonal-login';
+import { ForgotPasswordPage, ResetPasswordPage } from '@authagonal/login';
 import MyLoginPage from './MyLoginPage';
 import MyLayout from './MyLayout';
 
@@ -302,7 +302,7 @@ Construya su propio formulario de inicio de sesion usando los clientes API del p
 
 ```tsx
 import { useState } from 'react';
-import { login, ssoCheck, ApiRequestError, useBranding } from '@drawboard/authagonal-login';
+import { login, ssoCheck, ApiRequestError, useBranding } from '@authagonal/login';
 
 export default function MyLoginPage() {
   const branding = useBranding();
@@ -353,7 +353,7 @@ export default function MyLoginPage() {
 Envuelva el `AuthLayout` base para agregar su propia marca:
 
 ```tsx
-import { AuthLayout } from '@drawboard/authagonal-login';
+import { AuthLayout } from '@authagonal/login';
 
 export default function MyLayout({ children }: { children: React.ReactNode }) {
   return (

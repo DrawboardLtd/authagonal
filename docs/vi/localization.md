@@ -106,10 +106,10 @@ Giao dien dang nhap dich cac nhan yeu cau mat khau phia may khach dua tren khoa 
 
 ### Nguoi dung goi npm
 
-Neu ban su dung ung dung dang nhap thong qua `@drawboard/authagonal-login`, phien ban i18n duoc xuat:
+Neu ban su dung ung dung dang nhap thong qua `@authagonal/login`, phien ban i18n duoc xuat:
 
 ```typescript
-import { i18n } from '@drawboard/authagonal-login';
+import { i18n } from '@authagonal/login';
 
 // Change language programmatically
 i18n.changeLanguage('de');

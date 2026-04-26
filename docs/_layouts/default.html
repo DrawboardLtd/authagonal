@@ -229,6 +229,7 @@
         <div class="nav-section">{{ t.api_reference }}</div>
         <a href="{{ locale_prefix | append: 'auth-api' | relative_url }}" {% if pg == 'auth-api' %}class="active"{% endif %}>{{ t.auth_api }}</a>
         <a href="{{ locale_prefix | append: 'admin-api' | relative_url }}" {% if pg == 'admin-api' %}class="active"{% endif %}>{{ t.admin_api }}</a>
+        <a href="{{ locale_prefix | append: 'par' | relative_url }}" {% if pg == 'par' %}class="active"{% endif %}>{{ t.par }}</a>
 
         <div class="nav-section">{{ t.operations }}</div>
         <a href="{{ locale_prefix | append: 'scaling' | relative_url }}" {% if pg == 'scaling' %}class="active"{% endif %}>{{ t.scaling }}</a>

@@ -106,10 +106,10 @@ A interface de login traduz os rótulos dos requisitos de senha do lado do clien
 
 ### Consumidores do pacote npm
 
-Se consumir a aplicação de login via `@drawboard/authagonal-login`, a instância i18n é exportada:
+Se consumir a aplicação de login via `@authagonal/login`, a instância i18n é exportada:
 
 ```typescript
-import { i18n } from '@drawboard/authagonal-login';
+import { i18n } from '@authagonal/login';
 
 // Change language programmatically
 i18n.changeLanguage('de');

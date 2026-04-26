@@ -94,7 +94,7 @@ curl -X POST http://localhost:8080/connect/token \
 
 ## 示例演示
 
-`demos/sample-app/` 目录包含一个完整的 React SPA + API，实现了上述完整的 OIDC 流程。请参阅 [demos README](https://github.com/DrawboardLtd/authagonal/tree/master/demos) 了解使用说明。
+`demos/sample-app/` 目录包含一个完整的 React SPA + API，实现了上述完整的 OIDC 流程。请参阅 [demos README](https://github.com/authagonal/authagonal/tree/master/demos) 了解使用说明。
 
 ## 后续步骤
 

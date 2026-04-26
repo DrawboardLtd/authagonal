@@ -105,10 +105,10 @@ The login UI translates password requirement labels client-side based on the `ru
 
 ### npm package consumers
 
-If you consume the login app via `@drawboard/authagonal-login`, the i18n instance is exported:
+If you consume the login app via `@authagonal/login`, the i18n instance is exported:
 
 ```typescript
-import { i18n } from '@drawboard/authagonal-login';
+import { i18n } from '@authagonal/login';
 
 // Change language programmatically
 i18n.changeLanguage('de');

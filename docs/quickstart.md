@@ -93,7 +93,7 @@ Response:
 
 ## Working Demo
 
-The `demos/sample-app/` directory contains a complete React SPA + API that implements the full OIDC flow above. See the [demos README](https://github.com/DrawboardLtd/authagonal/tree/master/demos) for instructions.
+The `demos/sample-app/` directory contains a complete React SPA + API that implements the full OIDC flow above. See the [demos README](https://github.com/authagonal/authagonal/tree/master/demos) for instructions.
 
 ## Next Steps
 

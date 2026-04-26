@@ -94,7 +94,7 @@ Reponse :
 
 ## Demo fonctionnelle
 
-Le repertoire `demos/sample-app/` contient une SPA React complete + API qui implemente le flux OIDC complet ci-dessus. Consultez le [README des demos](https://github.com/DrawboardLtd/authagonal/tree/master/demos) pour les instructions.
+Le repertoire `demos/sample-app/` contient une SPA React complete + API qui implemente le flux OIDC complet ci-dessus. Consultez le [README des demos](https://github.com/authagonal/authagonal/tree/master/demos) pour les instructions.
 
 ## Prochaines etapes
 

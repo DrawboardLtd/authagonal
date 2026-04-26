@@ -100,14 +100,14 @@ app.MapFallbackToFile("index.html");
 app.Run();
 ```
 
-Xem [Khả năng mở rộng](extensibility) để biết tất cả các điểm tùy chỉnh và [demos/custom-server/](https://github.com/DrawboardLtd/authagonal/tree/master/demos/custom-server) để xem ví dụ hoàn chỉnh.
+Xem [Khả năng mở rộng](extensibility) để biết tất cả các điểm tùy chỉnh và [demos/custom-server/](https://github.com/authagonal/authagonal/tree/master/demos/custom-server) để xem ví dụ hoàn chỉnh.
 
 ## SPA đăng nhập (npm)
 
 Giao diện đăng nhập được phát hành dưới dạng gói npm để tùy chỉnh:
 
 ```bash
-npm install @drawboard/authagonal-login
+npm install @authagonal/login
 ```
 
 Gói đã bao gồm JS và CSS đã biên dịch — nhập trực tiếp các component và style vào ứng dụng React của bạn. Xem [Máy chủ tùy chỉnh](custom-server) để biết hướng dẫn đầy đủ.

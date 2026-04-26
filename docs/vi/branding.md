@@ -110,7 +110,7 @@ body {
 |---|---|---|
 | **Chỉ cấu hình** | Mount `branding.json` + logo | Mượt mà — cập nhật Docker image, giữ nguyên mount |
 | **Cấu hình + CSS** | Thêm `customCssUrl` với các ghi đè style | Tương tự — các lớp CSS ổn định |
-| **Gói npm** | `npm install @drawboard/authagonal-login`, tùy chỉnh `branding.json`, build vào `wwwroot/` | Có thể cập nhật — `npm update` tải phiên bản mới |
+| **Gói npm** | `npm install @authagonal/login`, tùy chỉnh `branding.json`, build vào `wwwroot/` | Có thể cập nhật — `npm update` tải phiên bản mới |
 | **Fork SPA** | Clone `login-app/`, chỉnh sửa mã nguồn, build riêng | Bạn sở hữu giao diện — cập nhật máy chủ độc lập |
 | **Viết giao diện riêng** | Xây dựng frontend hoàn toàn tùy chỉnh dựa trên API xác thực | Toàn quyền kiểm soát — xem [API Xác thực](auth-api) cho hợp đồng |
 

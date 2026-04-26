@@ -94,7 +94,7 @@ Phản hồi:
 
 ## Demo hoạt động
 
-Thư mục `demos/sample-app/` chứa một ứng dụng React SPA + API hoàn chỉnh triển khai đầy đủ luồng OIDC ở trên. Xem [README của demos](https://github.com/DrawboardLtd/authagonal/tree/master/demos) để biết hướng dẫn.
+Thư mục `demos/sample-app/` chứa một ứng dụng React SPA + API hoàn chỉnh triển khai đầy đủ luồng OIDC ở trên. Xem [README của demos](https://github.com/authagonal/authagonal/tree/master/demos) để biết hướng dẫn.
 
 ## Bước tiếp theo
 

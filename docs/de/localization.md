@@ -106,10 +106,10 @@ Die Login-Oberflache ubersetzt Passwortanforderungs-Labels clientseitig basieren
 
 ### npm-Paketnutzer
 
-Wenn Sie die Login-App uber `@drawboard/authagonal-login` nutzen, wird die i18n-Instanz exportiert:
+Wenn Sie die Login-App uber `@authagonal/login` nutzen, wird die i18n-Instanz exportiert:
 
 ```typescript
-import { i18n } from '@drawboard/authagonal-login';
+import { i18n } from '@authagonal/login';
 
 // Change language programmatically
 i18n.changeLanguage('de');

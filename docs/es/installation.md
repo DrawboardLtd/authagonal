@@ -100,14 +100,14 @@ app.MapFallbackToFile("index.html");
 app.Run();
 ```
 
-Consulte [Extensibilidad](extensibility) para todos los puntos de sustitucion y [demos/custom-server/](https://github.com/DrawboardLtd/authagonal/tree/master/demos/custom-server) para un ejemplo completo.
+Consulte [Extensibilidad](extensibility) para todos los puntos de sustitucion y [demos/custom-server/](https://github.com/authagonal/authagonal/tree/master/demos/custom-server) para un ejemplo completo.
 
 ## SPA de inicio de sesion (npm)
 
 La interfaz de inicio de sesion se publica como un paquete npm para personalizacion:
 
 ```bash
-npm install @drawboard/authagonal-login
+npm install @authagonal/login
 ```
 
 El paquete incluye JS y CSS compilados — importe componentes y estilos directamente en su propia aplicacion React. Consulte [Servidor personalizado](custom-server) para una guia completa.

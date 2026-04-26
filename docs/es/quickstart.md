@@ -94,7 +94,7 @@ Respuesta:
 
 ## Demo funcional
 
-El directorio `demos/sample-app/` contiene una SPA React completa + API que implementa el flujo OIDC completo descrito anteriormente. Consulte el [README de demos](https://github.com/DrawboardLtd/authagonal/tree/master/demos) para las instrucciones.
+El directorio `demos/sample-app/` contiene una SPA React completa + API que implementa el flujo OIDC completo descrito anteriormente. Consulte el [README de demos](https://github.com/authagonal/authagonal/tree/master/demos) para las instrucciones.
 
 ## Proximos pasos
 

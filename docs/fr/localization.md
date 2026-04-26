@@ -106,10 +106,10 @@ L'interface de connexion traduit les labels des exigences de mot de passe cote c
 
 ### Consommateurs du paquet npm
 
-Si vous utilisez l'application de connexion via `@drawboard/authagonal-login`, l'instance i18n est exportee :
+Si vous utilisez l'application de connexion via `@authagonal/login`, l'instance i18n est exportee :
 
 ```typescript
-import { i18n } from '@drawboard/authagonal-login';
+import { i18n } from '@authagonal/login';
 
 // Change language programmatically
 i18n.changeLanguage('de');

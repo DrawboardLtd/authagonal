@@ -110,7 +110,7 @@ body {
 |---|---|---|
 | **仅配置** | 挂载 `branding.json` + 徽标 | 无缝 -- 更新 Docker 镜像，保留您的挂载 |
 | **配置 + CSS** | 添加 `customCssUrl` 进行样式覆盖 | 相同 -- CSS 类是稳定的 |
-| **npm 包** | `npm install @drawboard/authagonal-login`，自定义 `branding.json`，构建到 `wwwroot/` | 可更新 -- `npm update` 拉取新版本 |
+| **npm 包** | `npm install @authagonal/login`，自定义 `branding.json`，构建到 `wwwroot/` | 可更新 -- `npm update` 拉取新版本 |
 | **Fork SPA** | 克隆 `login-app/`，修改源代码，构建您自己的版本 | 您拥有界面 -- 服务器更新是独立的 |
 | **自行编写** | 针对认证 API 构建完全自定义的前端 | 完全控制 -- 参阅 [Auth API](auth-api) 了解接口规范 |
 

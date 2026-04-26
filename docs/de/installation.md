@@ -100,14 +100,14 @@ app.MapFallbackToFile("index.html");
 app.Run();
 ```
 
-Alle Erweiterungspunkte finden Sie unter [Erweiterbarkeit](extensibility). Ein vollstaendiges Beispiel finden Sie unter [demos/custom-server/](https://github.com/DrawboardLtd/authagonal/tree/master/demos/custom-server).
+Alle Erweiterungspunkte finden Sie unter [Erweiterbarkeit](extensibility). Ein vollstaendiges Beispiel finden Sie unter [demos/custom-server/](https://github.com/authagonal/authagonal/tree/master/demos/custom-server).
 
 ## Login-SPA (npm)
 
 Die Login-Oberflaeche wird als npm-Paket zur Anpassung veroeffentlicht:
 
 ```bash
-npm install @drawboard/authagonal-login
+npm install @authagonal/login
 ```
 
 Das Paket liefert kompiliertes JS und CSS -- importieren Sie Komponenten und Stile direkt in Ihre eigene React-App. Siehe [Benutzerdefinierter Server](custom-server) fuer eine vollstaendige Anleitung.

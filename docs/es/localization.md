@@ -106,10 +106,10 @@ La interfaz de inicio de sesion traduce las etiquetas de requisitos de contrasen
 
 ### Consumidores del paquete npm
 
-Si consume la aplicacion de inicio de sesion a traves de `@drawboard/authagonal-login`, la instancia de i18n esta exportada:
+Si consume la aplicacion de inicio de sesion a traves de `@authagonal/login`, la instancia de i18n esta exportada:
 
 ```typescript
-import { i18n } from '@drawboard/authagonal-login';
+import { i18n } from '@authagonal/login';
 
 // Change language programmatically
 i18n.changeLanguage('de');

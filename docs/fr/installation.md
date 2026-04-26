@@ -100,14 +100,14 @@ app.MapFallbackToFile("index.html");
 app.Run();
 ```
 
-Consultez [Extensibilite](extensibility) pour tous les points de substitution et [demos/custom-server/](https://github.com/DrawboardLtd/authagonal/tree/master/demos/custom-server) pour un exemple complet.
+Consultez [Extensibilite](extensibility) pour tous les points de substitution et [demos/custom-server/](https://github.com/authagonal/authagonal/tree/master/demos/custom-server) pour un exemple complet.
 
 ## SPA de connexion (npm)
 
 L'interface de connexion est publiee en tant que package npm pour la personnalisation :
 
 ```bash
-npm install @drawboard/authagonal-login
+npm install @authagonal/login
 ```
 
 Le package fournit du JS et du CSS compiles -- importez les composants et les styles directement dans votre propre application React. Consultez [Serveur personnalise](custom-server) pour un guide complet.

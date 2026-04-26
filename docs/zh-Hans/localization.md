@@ -106,10 +106,10 @@ i18n/
 
 ### npm 包使用者
 
-如果你通过 `@drawboard/authagonal-login` 使用登录应用，i18n 实例已导出：
+如果你通过 `@authagonal/login` 使用登录应用，i18n 实例已导出：
 
 ```typescript
-import { i18n } from '@drawboard/authagonal-login';
+import { i18n } from '@authagonal/login';
 
 // Change language programmatically
 i18n.changeLanguage('de');

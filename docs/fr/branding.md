@@ -110,7 +110,7 @@ body {
 |---|---|---|
 | **Configuration seule** | Montez `branding.json` + logo | Transparent -- mettez a jour l'image Docker, gardez vos montages |
 | **Configuration + CSS** | Ajoutez `customCssUrl` avec des substitutions de style | Idem -- les classes CSS sont stables |
-| **Package npm** | `npm install @drawboard/authagonal-login`, personnalisez `branding.json`, compilez dans `wwwroot/` | Mise a jour possible -- `npm update` recupere les nouvelles versions |
+| **Package npm** | `npm install @authagonal/login`, personnalisez `branding.json`, compilez dans `wwwroot/` | Mise a jour possible -- `npm update` recupere les nouvelles versions |
 | **Forker la SPA** | Clonez `login-app/`, modifiez les sources, compilez votre propre version | Vous possedez l'interface -- les mises a jour du serveur sont independantes |
 | **Ecrire la votre** | Construisez un frontend entierement personnalise contre l'API d'authentification | Controle total -- voir [API d'authentification](auth-api) pour le contrat |
 
