@@ -1,3 +1,4 @@
+using Authagonal.Core.Services;
 using Authagonal.Core.Stores;
 using Authagonal.Storage.Stores;
 using Azure.Data.Tables;
@@ -32,14 +33,16 @@ internal sealed class StoreFactory
         var oidcProviders = EnsureTable(serviceClient, "OidcProviders");
         var userExternalIds = EnsureTable(serviceClient, "UserExternalIds");
 
+        var partitioner = EnvPartitioner.Live;
+
         return new StoreFactory
         {
-            UserStore = new TableUserStore(users, userEmails, userLogins, userExternalIds, userFirstNames, userLastNames),
-            ClientStore = new TableClientStore(clients),
-            GrantStore = new TableGrantStore(grants, grantsBySubject, grantsByExpiry, NullLogger<TableGrantStore>.Instance),
-            SsoDomainStore = new TableSsoDomainStore(ssoDomains),
-            SamlProviderStore = new TableSamlProviderStore(samlProviders),
-            OidcProviderStore = new TableOidcProviderStore(oidcProviders)
+            UserStore = new TableUserStore(users, userEmails, userLogins, userExternalIds, userFirstNames, userLastNames, partitioner),
+            ClientStore = new TableClientStore(clients, partitioner),
+            GrantStore = new TableGrantStore(grants, grantsBySubject, grantsByExpiry, partitioner, NullLogger<TableGrantStore>.Instance),
+            SsoDomainStore = new TableSsoDomainStore(ssoDomains, partitioner),
+            SamlProviderStore = new TableSamlProviderStore(samlProviders, partitioner),
+            OidcProviderStore = new TableOidcProviderStore(oidcProviders, partitioner)
         };
     }
 

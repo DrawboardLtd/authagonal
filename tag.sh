@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Find the latest v0.1.x tag and compute the next one
-latest=$(git tag -l 'v0.1.*' | sort -V | tail -1)
+# Find the latest v0.2.x tag and compute the next one
+latest=$(git tag -l 'v0.2.*' | sort -V | tail -1)
 if [ -z "$latest" ]; then
-  next="v0.1.0"
+  next="v0.2.0"
 else
-  patch=${latest##*0.1.}
-  next="v0.1.$((patch + 1))"
+  patch=${latest##*0.2.}
+  next="v0.2.$((patch + 1))"
 fi
 version=${next#v}
 
@@ -16,9 +16,9 @@ echo "Next tag:   $next ($version)"
 echo ""
 
 # Update package references
-sed -i "s/\"version\": \"0\.1\.[0-9]*\"/\"version\": \"$version\"/" login-app/package.json
-sed -i "s|\"@authagonal/login\": \"0\.1\.[0-9]*\"|\"@authagonal/login\": \"$version\"|" demos/custom-server/login-app/package.json
-sed -i "s/Version=\"0\.1\.[0-9]*\"/Version=\"$version\"/g" demos/custom-server/CustomAuthServer.csproj
+sed -i "s/\"version\": \"0\.[0-9]*\.[0-9]*\"/\"version\": \"$version\"/" login-app/package.json
+sed -i "s|\"@authagonal/login\": \"0\.[0-9]*\.[0-9]*\"|\"@authagonal/login\": \"$version\"|" demos/custom-server/login-app/package.json
+sed -i "s/Version=\"0\.[0-9]*\.[0-9]*\"/Version=\"$version\"/g" demos/custom-server/CustomAuthServer.csproj
 
 echo "Updated package references:"
 grep '"version"' login-app/package.json
