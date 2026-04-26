@@ -34,6 +34,8 @@ public sealed class TestAuthHook : IAuthHook
     public List<(string Email, string Reason)> LoginFailures { get; } = [];
     public List<(string? SubjectId, string ClientId, string GrantType)> TokenIssuances { get; } = [];
     public List<(string UserId, string Email, string MfaMethod)> MfaVerifications { get; } = [];
+    public List<(string UserId, string Email, string UpdatedVia)> UserUpdates { get; } = [];
+    public List<(string UserId, string Email, string DeletedVia)> UserDeletions { get; } = [];
 
     /// <summary>Set to override MFA policy resolution. Null = return clientPolicy unchanged.</summary>
     public Func<string, string, MfaPolicy, string, MfaPolicy>? MfaPolicyOverride { get; set; }
@@ -71,6 +73,18 @@ public sealed class TestAuthHook : IAuthHook
     public Task OnMfaVerifiedAsync(string userId, string email, string mfaMethod, CancellationToken ct = default)
     {
         MfaVerifications.Add((userId, email, mfaMethod));
+        return Task.CompletedTask;
+    }
+
+    public Task OnUserUpdatedAsync(string userId, string email, string updatedVia, CancellationToken ct = default)
+    {
+        UserUpdates.Add((userId, email, updatedVia));
+        return Task.CompletedTask;
+    }
+
+    public Task OnUserDeletedAsync(string userId, string email, string deletedVia, CancellationToken ct = default)
+    {
+        UserDeletions.Add((userId, email, deletedVia));
         return Task.CompletedTask;
     }
 }

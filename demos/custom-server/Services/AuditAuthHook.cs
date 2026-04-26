@@ -65,4 +65,22 @@ public sealed class AuditAuthHook(ILogger<AuditAuthHook> logger) : IAuthHook
 
         return Task.CompletedTask;
     }
+
+    public Task OnUserUpdatedAsync(string userId, string email, string updatedVia, CancellationToken ct)
+    {
+        logger.LogInformation(
+            "[AUDIT] User updated: userId={UserId}, email={Email}, via={UpdatedVia}",
+            userId, email, updatedVia);
+
+        return Task.CompletedTask;
+    }
+
+    public Task OnUserDeletedAsync(string userId, string email, string deletedVia, CancellationToken ct)
+    {
+        logger.LogInformation(
+            "[AUDIT] User deleted: userId={UserId}, email={Email}, via={DeletedVia}",
+            userId, email, deletedVia);
+
+        return Task.CompletedTask;
+    }
 }

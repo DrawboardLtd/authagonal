@@ -36,6 +36,16 @@ public interface IAuthHook
     /// <summary>Called after a user successfully completes MFA verification.</summary>
     /// <param name="mfaMethod">One of "totp", "webauthn", or "recovery".</param>
     Task OnMfaVerifiedAsync(string userId, string email, string mfaMethod, CancellationToken ct = default);
+
+    /// <summary>Called after a user record is updated (profile fields, organization, active status, etc.).
+    /// Notification only — the update has already happened.</summary>
+    /// <param name="updatedVia">Origin of the update, e.g. "portal", "scim", "self-service".</param>
+    Task OnUserUpdatedAsync(string userId, string email, string updatedVia, CancellationToken ct = default);
+
+    /// <summary>Called after a user record is deleted. Notification only — implementations
+    /// must not assume the record is still readable.</summary>
+    /// <param name="deletedVia">Origin of the deletion, e.g. "portal", "scim".</param>
+    Task OnUserDeletedAsync(string userId, string email, string deletedVia, CancellationToken ct = default);
 }
 
 /// <summary>
@@ -79,5 +89,17 @@ public static class AuthHookExtensions
     {
         foreach (var hook in hooks)
             await hook.OnMfaVerifiedAsync(userId, email, mfaMethod, ct);
+    }
+
+    public static async Task RunOnUserUpdatedAsync(this IEnumerable<IAuthHook> hooks, string userId, string email, string updatedVia, CancellationToken ct = default)
+    {
+        foreach (var hook in hooks)
+            await hook.OnUserUpdatedAsync(userId, email, updatedVia, ct);
+    }
+
+    public static async Task RunOnUserDeletedAsync(this IEnumerable<IAuthHook> hooks, string userId, string email, string deletedVia, CancellationToken ct = default)
+    {
+        foreach (var hook in hooks)
+            await hook.OnUserDeletedAsync(userId, email, deletedVia, ct);
     }
 }

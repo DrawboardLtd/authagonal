@@ -154,6 +154,7 @@ public static class UserEndpoints
         UpdateUserRequest request,
         IUserStore userStore,
         IGrantStore grantStore,
+        IEnumerable<IAuthHook> authHooks,
         IStringLocalizer<SharedMessages> localizer,
         CancellationToken ct)
     {
@@ -182,6 +183,7 @@ public static class UserEndpoints
         }
 
         await userStore.UpdateAsync(user, ct);
+        await authHooks.RunOnUserUpdatedAsync(user.Id, user.Email, "admin", ct);
 
         return TypedResults.Json(new UserUpdateResponse
         {
@@ -202,6 +204,7 @@ public static class UserEndpoints
         IUserStore userStore,
         IGrantStore grantStore,
         IProvisioningOrchestrator provisioningOrchestrator,
+        IEnumerable<IAuthHook> authHooks,
         IStringLocalizer<SharedMessages> localizer,
         CancellationToken ct)
     {
@@ -216,6 +219,7 @@ public static class UserEndpoints
         await provisioningOrchestrator.DeprovisionAllAsync(userId, ct);
 
         await userStore.DeleteAsync(userId, ct);
+        await authHooks.RunOnUserDeletedAsync(userId, user.Email, "admin", ct);
 
         return Results.NoContent();
     }

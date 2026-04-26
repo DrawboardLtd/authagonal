@@ -14,4 +14,6 @@ public sealed class NullAuthHook : IAuthHook
     public Task OnTokenIssuedAsync(string? subjectId, string clientId, string grantType, CancellationToken ct) => Task.CompletedTask;
     public Task<MfaPolicy> ResolveMfaPolicyAsync(string userId, string email, MfaPolicy clientPolicy, string clientId, CancellationToken ct) => Task.FromResult(clientPolicy);
     public Task OnMfaVerifiedAsync(string userId, string email, string mfaMethod, CancellationToken ct) => Task.CompletedTask;
+    public Task OnUserUpdatedAsync(string userId, string email, string updatedVia, CancellationToken ct) => Task.CompletedTask;
+    public Task OnUserDeletedAsync(string userId, string email, string deletedVia, CancellationToken ct) => Task.CompletedTask;
 }
