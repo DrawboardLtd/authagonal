@@ -1,4 +1,4 @@
-import { AuthLayout } from '@drawboard/authagonal-login';
+import { AuthLayout } from '@authagonal/login';
 import type { ReactNode } from 'react';
 
 // Wraps the base AuthLayout to add a branded footer with legal links.

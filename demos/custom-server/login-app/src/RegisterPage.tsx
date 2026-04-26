@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import { useTranslation, Button, Input, Label, Alert, CardTitle, CardFooter } from '@drawboard/authagonal-login';
+import { useTranslation, Button, Input, Label, Alert, CardTitle, CardFooter } from '@authagonal/login';
 
 const API_URL = import.meta.env.VITE_API_URL || '';
 
@@ -81,7 +81,7 @@ export default function RegisterPage() {
               id="firstName"
               type="text"
               value={firstName}
-              onChange={(e) => setFirstName(e.target.value)}
+              onChange={(e: React.ChangeEvent<HTMLInputElement>) => setFirstName(e.target.value)}
               placeholder="Jane"
               autoComplete="given-name"
               maxLength={100}
@@ -93,7 +93,7 @@ export default function RegisterPage() {
               id="lastName"
               type="text"
               value={lastName}
-              onChange={(e) => setLastName(e.target.value)}
+              onChange={(e: React.ChangeEvent<HTMLInputElement>) => setLastName(e.target.value)}
               placeholder="Doe"
               autoComplete="family-name"
               maxLength={100}
@@ -107,7 +107,7 @@ export default function RegisterPage() {
             id="email"
             type="email"
             value={email}
-            onChange={(e) => setEmail(e.target.value)}
+            onChange={(e: React.ChangeEvent<HTMLInputElement>) => setEmail(e.target.value)}
             placeholder={t('emailPlaceholder')}
             autoComplete="email"
             autoFocus
@@ -122,7 +122,7 @@ export default function RegisterPage() {
             id="password"
             type="password"
             value={password}
-            onChange={(e) => setPassword(e.target.value)}
+            onChange={(e: React.ChangeEvent<HTMLInputElement>) => setPassword(e.target.value)}
             placeholder="At least 8 characters"
             autoComplete="new-password"
             minLength={8}

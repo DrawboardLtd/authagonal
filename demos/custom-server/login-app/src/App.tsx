@@ -1,5 +1,5 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
-import { ForgotPasswordPage, ResetPasswordPage, MfaChallengePage, MfaSetupPage } from '@drawboard/authagonal-login';
+import { ForgotPasswordPage, ResetPasswordPage, MfaChallengePage, MfaSetupPage } from '@authagonal/login';
 import AcmeAuthLayout from './AcmeAuthLayout';
 import AcmeLoginPage from './AcmeLoginPage';
 import RegisterPage from './RegisterPage';
