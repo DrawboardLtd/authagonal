@@ -28,9 +28,9 @@ jobs:
       - name: Pack
         run: |
           dotnet pack src/Authagonal.Core/Authagonal.Core.csproj -c Release -p:Version=${{ steps.version.outputs.version }} -o nupkgs
+          dotnet pack src/Authagonal.Protocol/Authagonal.Protocol.csproj -c Release -p:Version=${{ steps.version.outputs.version }} -o nupkgs
           dotnet pack src/Authagonal.Storage/Authagonal.Storage.csproj -c Release -p:Version=${{ steps.version.outputs.version }} -o nupkgs
           dotnet pack src/Authagonal.Server/Authagonal.Server.csproj -c Release -p:Version=${{ steps.version.outputs.version }} -o nupkgs
-          dotnet pack src/Authagonal.OidcProvider/Authagonal.OidcProvider.csproj -c Release -p:Version=${{ steps.version.outputs.version }} -o nupkgs
           dotnet pack src/Authagonal.Backup/Authagonal.Backup.csproj -c Release -p:Version=${{ steps.version.outputs.version }} -o nupkgs
 
       - name: Push to NuGet
@@ -53,6 +53,9 @@ jobs:
 
   publish-npm:
     runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
     defaults:
       run:
         working-directory: login-app
@@ -70,16 +73,14 @@ jobs:
       - name: Set version from tag
         run: npm version "${GITHUB_REF_NAME#v}" --no-git-tag-version --allow-same-version
 
-      - run: npm publish --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - run: npm publish --access public --provenance
 
       - name: Wait for npm indexing
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
-          echo "Waiting for @drawboard/authagonal-login@$VERSION on npm..."
+          echo "Waiting for @authagonal/login@$VERSION on npm..."
           for i in $(seq 1 20); do
-            if npm view "@drawboard/authagonal-login@$VERSION" version 2>/dev/null | grep -q "$VERSION"; then
+            if npm view "@authagonal/login@$VERSION" version 2>/dev/null | grep -q "$VERSION"; then
               echo "Package indexed after ~$(( i * 5 )) seconds"
               exit 0
             fi

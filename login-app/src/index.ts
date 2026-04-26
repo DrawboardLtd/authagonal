@@ -1,7 +1,7 @@
-// Public API — consumers import from '@drawboard/authagonal-login'
+// Public API — consumers import from '@authagonal/login'
 //
 // Usage:
-//   import { AuthLayout, LoginPage, useBranding } from '@drawboard/authagonal-login';
+//   import { AuthLayout, LoginPage, useBranding } from '@authagonal/login';
 
 // Components
 export { default as AuthLayout } from './components/AuthLayout';
@@ -40,5 +40,5 @@ export { default as i18n } from './i18n';
 export { useTranslation } from 'react-i18next';
 
 // Styles — bundled into dist/style.css via the side-effect import below.
-// Consumers: import '@drawboard/authagonal-login/styles.css'
+// Consumers: import '@authagonal/login/styles.css'
 import './styles.css';
