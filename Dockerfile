@@ -11,6 +11,7 @@ FROM mcr.microsoft.com/dotnet/sdk:10.0 AS backend
 WORKDIR /src
 COPY *.slnx ./
 COPY src/Authagonal.Core/*.csproj src/Authagonal.Core/
+COPY src/Authagonal.Protocol/*.csproj src/Authagonal.Protocol/
 COPY src/Authagonal.Storage/*.csproj src/Authagonal.Storage/
 COPY src/Authagonal.Server/*.csproj src/Authagonal.Server/
 RUN dotnet restore src/Authagonal.Server/
