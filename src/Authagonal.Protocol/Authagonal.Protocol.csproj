@@ -10,8 +10,8 @@
     <Description>Embeddable OIDC / OAuth 2.0 protocol surface extracted from Authagonal.Server. Plug in your own user identity via IOidcSubjectResolver and storage via IClientStore / IGrantStore / IScopeStore / ISigningKeyStore — no user store, no SAML, no admin UI.</Description>
     <Authors>Drawboard</Authors>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
-    <PackageProjectUrl>https://github.com/DrawboardLtd/authagonal</PackageProjectUrl>
-    <RepositoryUrl>https://github.com/DrawboardLtd/authagonal</RepositoryUrl>
+    <PackageProjectUrl>https://github.com/authagonal/authagonal</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/authagonal/authagonal</RepositoryUrl>
     <PackageReadmeFile>README.md</PackageReadmeFile>
   </PropertyGroup>
 

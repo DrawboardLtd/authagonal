@@ -41,10 +41,11 @@ To use a different backend (SQL, MongoDB, Cosmos DB, etc.), implement the interf
 | Package | Description |
 |---------|-------------|
 | [Authagonal.Core](https://www.nuget.org/packages/Authagonal.Core) | Core models, interfaces, and abstractions |
+| [Authagonal.Protocol](https://www.nuget.org/packages/Authagonal.Protocol) | Embeddable OIDC/OAuth 2.0 protocol surface (no UI, no user store) |
 | **Authagonal.Storage** | Azure Table Storage backend |
 | [Authagonal.Server](https://www.nuget.org/packages/Authagonal.Server) | Full auth server — endpoints, middleware, services, login UI |
 
 ## Links
 
-- [GitHub](https://github.com/DrawboardLtd/authagonal)
-- [Documentation](https://drawboardltd.github.io/authagonal)
+- [GitHub](https://github.com/authagonal/authagonal)
+- [Documentation](https://authagonal.github.io/authagonal)

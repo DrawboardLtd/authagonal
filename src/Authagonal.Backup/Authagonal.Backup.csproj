@@ -10,8 +10,8 @@
     <Description>Backup, restore, merge and rollup for Authagonal Table Storage data.</Description>
     <Authors>Drawboard</Authors>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
-    <PackageProjectUrl>https://github.com/DrawboardLtd/authagonal</PackageProjectUrl>
-    <RepositoryUrl>https://github.com/DrawboardLtd/authagonal</RepositoryUrl>
+    <PackageProjectUrl>https://github.com/authagonal/authagonal</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/authagonal/authagonal</RepositoryUrl>
   </PropertyGroup>
 
   <ItemGroup>

@@ -88,11 +88,12 @@ builder.Services.AddAuthagonal(builder.Configuration);
 | Package | Description |
 |---------|-------------|
 | **Authagonal.Server** | Full auth server — endpoints, middleware, services, login UI |
+| [Authagonal.Protocol](https://www.nuget.org/packages/Authagonal.Protocol) | Embeddable OIDC/OAuth 2.0 protocol surface (no UI, no user store) |
 | [Authagonal.Storage](https://www.nuget.org/packages/Authagonal.Storage) | Azure Table Storage backend |
 | [Authagonal.Core](https://www.nuget.org/packages/Authagonal.Core) | Core models, interfaces, and abstractions |
 
 ## Links
 
-- [GitHub](https://github.com/DrawboardLtd/authagonal)
-- [Documentation](https://drawboardltd.github.io/authagonal)
+- [GitHub](https://github.com/authagonal/authagonal)
+- [Documentation](https://authagonal.github.io/authagonal)
 - [Live demo](https://demo.authagonal.drawboard.com)

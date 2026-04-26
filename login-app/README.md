@@ -1,13 +1,13 @@
-# @drawboard/authagonal-login
+# @authagonal/login
 
-Default login UI for [Authagonal](https://github.com/DrawboardLtd/authagonal) — an OAuth 2.0 / OpenID Connect authentication server backed by Azure Table Storage.
+Default login UI for [Authagonal](https://github.com/authagonal/authagonal) — an OAuth 2.0 / OpenID Connect authentication server backed by Azure Table Storage.
 
 Use as a standalone app (built into the Authagonal Docker image) or as an npm package to build a custom login experience while reusing the API client, branding, i18n, and base components.
 
 ## Installation
 
 ```bash
-npm install @drawboard/authagonal-login
+npm install @authagonal/login
 ```
 
 `react`, `react-dom`, and `react-router-dom` are externalized at build time — your app must provide them.
@@ -18,8 +18,8 @@ Import the base components and styles, then mount the router:
 
 ```tsx
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
-import { AuthLayout, LoginPage, ForgotPasswordPage, ResetPasswordPage } from '@drawboard/authagonal-login';
-import '@drawboard/authagonal-login/styles.css';
+import { AuthLayout, LoginPage, ForgotPasswordPage, ResetPasswordPage } from '@authagonal/login';
+import '@authagonal/login/styles.css';
 
 function App() {
   return (
@@ -41,9 +41,9 @@ function App() {
 Override individual pages while keeping the rest. Your custom page has access to the same API client, branding hooks, and i18n as the built-in pages:
 
 ```tsx
-import { AuthLayout, ForgotPasswordPage, ResetPasswordPage } from '@drawboard/authagonal-login';
-import { login, useBranding, useTranslation, ApiRequestError } from '@drawboard/authagonal-login';
-import '@drawboard/authagonal-login/styles.css';
+import { AuthLayout, ForgotPasswordPage, ResetPasswordPage } from '@authagonal/login';
+import { login, useBranding, useTranslation, ApiRequestError } from '@authagonal/login';
+import '@authagonal/login/styles.css';
 
 function MyLoginPage() {
   const { t } = useTranslation();
@@ -78,14 +78,14 @@ function App() {
 }
 ```
 
-See [`demos/custom-server/login-app`](https://github.com/DrawboardLtd/authagonal/tree/master/demos/custom-server/login-app) for a complete working example with a Terms of Service checkbox and branded footer.
+See [`demos/custom-server/login-app`](https://github.com/authagonal/authagonal/tree/master/demos/custom-server/login-app) for a complete working example with a Terms of Service checkbox and branded footer.
 
 ## API client
 
 All functions call the Authagonal auth API with cookie credentials. Set `VITE_API_URL` to point to a different origin during development.
 
 ```ts
-import { login, logout, forgotPassword, resetPassword, getSession, ssoCheck, getProviders, getPasswordPolicy, ApiRequestError } from '@drawboard/authagonal-login';
+import { login, logout, forgotPassword, resetPassword, getSession, ssoCheck, getProviders, getPasswordPolicy, ApiRequestError } from '@authagonal/login';
 
 // Password login — sets a session cookie
 await login('user@example.com', 'password');
@@ -175,7 +175,7 @@ Place a `branding.json` in your public directory. The `AuthLayout` component loa
 Use `resolveLocalized()` to resolve these in your own components:
 
 ```ts
-import { resolveLocalized, useBranding, useTranslation } from '@drawboard/authagonal-login';
+import { resolveLocalized, useBranding, useTranslation } from '@authagonal/login';
 
 const branding = useBranding();
 const { i18n } = useTranslation();
@@ -199,11 +199,11 @@ Built-in support for 8 languages:
 
 Language is auto-detected from the browser and persisted to `localStorage`. Force a language via query string: `?lng=es`.
 
-The `useTranslation` hook is re-exported from this package to avoid React context duplication. Always import it from `@drawboard/authagonal-login`, not directly from `react-i18next`:
+The `useTranslation` hook is re-exported from this package to avoid React context duplication. Always import it from `@authagonal/login`, not directly from `react-i18next`:
 
 ```ts
 // Correct
-import { useTranslation } from '@drawboard/authagonal-login';
+import { useTranslation } from '@authagonal/login';
 
 // Wrong — will get a different i18n instance
 import { useTranslation } from 'react-i18next';

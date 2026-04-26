@@ -10,8 +10,8 @@
     <Description>Core models, interfaces, and abstractions for the Authagonal authentication server.</Description>
     <Authors>Drawboard</Authors>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
-    <PackageProjectUrl>https://github.com/DrawboardLtd/authagonal</PackageProjectUrl>
-    <RepositoryUrl>https://github.com/DrawboardLtd/authagonal</RepositoryUrl>
+    <PackageProjectUrl>https://github.com/authagonal/authagonal</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/authagonal/authagonal</RepositoryUrl>
     <PackageReadmeFile>README.md</PackageReadmeFile>
   </PropertyGroup>
 
