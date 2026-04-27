@@ -7,7 +7,7 @@
     "build": "tsc -b && vite build"
   },
   "dependencies": {
-    "@authagonal/login": "0.2.3",
+    "@authagonal/login": "0.2.4",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
     "react-router-dom": "^7.13.2"

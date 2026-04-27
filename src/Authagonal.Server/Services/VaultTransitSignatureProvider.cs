@@ -1,10 +1,14 @@
+using System.Security.Cryptography;
 using Microsoft.IdentityModel.Tokens;
 
 namespace Authagonal.Server.Services;
 
 /// <summary>
-/// SignatureProvider that delegates signing to HashiCorp Vault Transit.
-/// Private key never leaves Vault — signing happens remotely via the Transit API.
+/// SignatureProvider that delegates ES256 signing to HashiCorp Vault Transit.
+/// Private key never leaves Vault. Vault is asked for JWS-marshaled signatures
+/// (raw R‖S, each 32 bytes) so the bytes can be returned directly to
+/// <see cref="System.IdentityModel.Tokens.Jwt"/> without DER→P1363 conversion.
+/// Verification uses the cached public key locally to avoid a round-trip.
 /// </summary>
 public sealed class VaultTransitSignatureProvider : SignatureProvider
 {
@@ -37,12 +41,10 @@ public sealed class VaultTransitSignatureProvider : SignatureProvider
 
     public override bool Verify(byte[] input, byte[] signature)
     {
-        // Verify locally using the cached public key — no need to call Vault
-        using var rsa = System.Security.Cryptography.RSA.Create();
-        rsa.ImportParameters(_key.PublicKeyParameters);
-        return rsa.VerifyData(input, signature,
-            System.Security.Cryptography.HashAlgorithmName.SHA256,
-            System.Security.Cryptography.RSASignaturePadding.Pkcs1);
+        using var ecdsa = ECDsa.Create(_key.PublicKeyParameters);
+        return ecdsa.VerifyData(input, signature,
+            HashAlgorithmName.SHA256,
+            DSASignatureFormat.IeeeP1363FixedFieldConcatenation);
     }
 
     public override bool Verify(byte[] input, int inputOffset, int inputLength,

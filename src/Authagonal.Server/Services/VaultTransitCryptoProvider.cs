@@ -11,7 +11,7 @@ public sealed class VaultTransitCryptoProvider : ICryptoProvider
 {
     public bool IsSupportedAlgorithm(string algorithm, params object[] args)
     {
-        return algorithm == SecurityAlgorithms.RsaSha256
+        return algorithm == SecurityAlgorithms.EcdsaSha256
             && args.Length > 0
             && args[0] is VaultTransitSecurityKey;
     }
