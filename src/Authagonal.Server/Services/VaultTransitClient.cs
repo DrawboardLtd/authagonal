@@ -2,6 +2,7 @@ using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Microsoft.IdentityModel.Tokens;
 
 namespace Authagonal.Server.Services;
 
@@ -39,19 +40,21 @@ public class VaultTransitClient
         var sig = result?.Data?.Signature
             ?? throw new InvalidOperationException($"Vault Transit sign returned no signature for key '{keyName}'");
 
-        // Vault returns "vault:v{version}:{base64sig}"
+        // Vault returns "vault:v{version}:{base64urlsig}" — with marshaling_algorithm=jws
+        // the signature is base64url-encoded (per JWS spec), not standard base64.
         var parts = sig.Split(':');
         if (parts.Length != 3)
             throw new InvalidOperationException($"Unexpected Vault signature format: {sig}");
 
-        return Convert.FromBase64String(parts[2]);
+        return Base64UrlEncoder.DecodeBytes(parts[2]);
     }
 
     /// <summary>Verify a signature using a Transit key. <paramref name="signature"/> must be JWS-marshaled (raw R‖S).</summary>
     public virtual async Task<bool> VerifyAsync(string keyName, byte[] data, byte[] signature, CancellationToken ct = default)
     {
         var input = Convert.ToBase64String(data);
-        var sig = $"vault:v1:{Convert.ToBase64String(signature)}";
+        // jws marshaling expects the signature back in base64url
+        var sig = $"vault:v1:{Base64UrlEncoder.Encode(signature)}";
         var payload = JsonSerializer.Serialize(
             new VaultVerifyRequest { Input = input, Signature = sig, HashAlgorithm = "sha2-256", MarshalingAlgorithm = "jws" },
             AuthagonalJsonContext.Default.VaultVerifyRequest);

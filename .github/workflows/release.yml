@@ -36,20 +36,14 @@ jobs:
       - name: Push to NuGet
         run: dotnet nuget push nupkgs/*.nupkg --api-key ${{ secrets.NUGET_API_KEY }} --source https://api.nuget.org/v3/index.json --skip-duplicate
 
-      - name: Wait for NuGet indexing
-        run: |
-          VERSION="${{ steps.version.outputs.version }}"
-          echo "Waiting for Authagonal.Server $VERSION to appear on NuGet..."
-          for i in $(seq 1 30); do
-            if curl -sf "https://api.nuget.org/v3-flatcontainer/authagonal.server/index.json" | grep -q "\"$VERSION\""; then
-              echo "Package indexed after ~$(( i * 10 )) seconds"
-              exit 0
-            fi
-            echo "  attempt $i/30 — not yet indexed, waiting 10s..."
-            sleep 10
-          done
-          echo "::error::Timed out waiting for NuGet indexing (5 minutes)"
-          exit 1
+      # Hand the just-built nupkgs to the docker job so it can restore them
+      # locally instead of waiting 4–6 min for nuget.org indexing.
+      - name: Upload nupkgs
+        uses: actions/upload-artifact@v4
+        with:
+          name: nupkgs
+          path: nupkgs/*.nupkg
+          retention-days: 1
 
   publish-npm:
     runs-on: ubuntu-latest
@@ -95,6 +89,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+
+      # Pull in the freshly-published nupkgs so the demo Dockerfile's
+      # dotnet restore picks them up via ./NuGet.Config without needing
+      # nuget.org to have indexed them yet.
+      - name: Download nupkgs
+        uses: actions/download-artifact@v4
+        with:
+          name: nupkgs
+          path: nupkgs
 
       - uses: docker/setup-buildx-action@v4
 

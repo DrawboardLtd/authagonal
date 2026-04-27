@@ -6,9 +6,13 @@ RUN npm install
 COPY demos/custom-server/login-app/ ./
 RUN npm run build
 
-# Stage 2: Build .NET (packages come from nuget.org)
+# Stage 2: Build .NET (packages come from nuget.org, with the just-released
+# Authagonal.* nupkgs preferred from ./nupkgs when present — see NuGet.Config.
+# This avoids the 4–6 min wait for nuget.org indexing during a release build.)
 FROM mcr.microsoft.com/dotnet/sdk:10.0 AS backend
 WORKDIR /src
+COPY NuGet.Config ./
+COPY nupkgs/ ./nupkgs/
 COPY demos/custom-server/CustomAuthServer.csproj demos/custom-server/
 RUN dotnet restore demos/custom-server/
 COPY demos/custom-server/*.cs demos/custom-server/
