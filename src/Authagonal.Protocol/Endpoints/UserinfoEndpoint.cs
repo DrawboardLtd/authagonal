@@ -25,18 +25,9 @@ internal static class UserinfoEndpoint
                 return Results.Unauthorized();
 
             var issuer = tenantContext.Issuer;
-            var keys = keyManager.GetSecurityKeys()
-                .Select(jwk =>
-                {
-                    var rsaKey = new RsaSecurityKey(new System.Security.Cryptography.RSAParameters
-                    {
-                        Modulus = Base64UrlEncoder.DecodeBytes(jwk.N),
-                        Exponent = Base64UrlEncoder.DecodeBytes(jwk.E)
-                    })
-                    { KeyId = jwk.Kid };
-                    return (SecurityKey)rsaKey;
-                })
-                .ToList();
+            // JsonWebKey already implements SecurityKey — no conversion needed,
+            // and this works for both EC and RSA without algorithm-specific handling.
+            var keys = keyManager.GetSecurityKeys().Select(Authagonal.Protocol.Services.ProtocolSigningKeyOps.JwkToSecurityKey).ToList();
 
             var validationParams = new TokenValidationParameters
             {

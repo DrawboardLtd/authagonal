@@ -14,7 +14,7 @@ public sealed class SigningKeyEntity : ITableEntity
     public const string SigningPartitionKey = "signing";
 
     public required string Algorithm { get; set; }
-    public required string RsaParametersJson { get; set; }
+    public required string KeyMaterialJson { get; set; }
     public bool IsActive { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset ExpiresAt { get; set; }
@@ -24,7 +24,7 @@ public sealed class SigningKeyEntity : ITableEntity
         PartitionKey = SigningPartitionKey,
         RowKey = key.KeyId,
         Algorithm = key.Algorithm,
-        RsaParametersJson = key.RsaParametersJson,
+        KeyMaterialJson = key.KeyMaterialJson,
         IsActive = key.IsActive,
         CreatedAt = key.CreatedAt,
         ExpiresAt = key.ExpiresAt,
@@ -34,7 +34,7 @@ public sealed class SigningKeyEntity : ITableEntity
     {
         KeyId = RowKey,
         Algorithm = Algorithm,
-        RsaParametersJson = RsaParametersJson,
+        KeyMaterialJson = KeyMaterialJson,
         IsActive = IsActive,
         CreatedAt = CreatedAt,
         ExpiresAt = ExpiresAt,

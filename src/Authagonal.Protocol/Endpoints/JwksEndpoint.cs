@@ -21,6 +21,9 @@ internal static class JwksEndpoint
                     Use = k.Use,
                     Kid = k.Kid,
                     Alg = k.Alg,
+                    Crv = k.Crv,
+                    X = k.X,
+                    Y = k.Y,
                     N = k.N,
                     E = k.E,
                 }).ToList()

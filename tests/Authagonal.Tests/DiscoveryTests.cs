@@ -55,10 +55,11 @@ public sealed class DiscoveryTests : IAsyncLifetime
         Assert.True(keys.GetArrayLength() > 0, "JWKS should contain at least one key");
 
         var firstKey = keys[0];
-        Assert.Equal("RSA", firstKey.GetProperty("kty").GetString());
+        Assert.Equal("EC", firstKey.GetProperty("kty").GetString());
         Assert.Equal("sig", firstKey.GetProperty("use").GetString());
-        Assert.Equal("RS256", firstKey.GetProperty("alg").GetString());
-        Assert.NotNull(firstKey.GetProperty("n").GetString());
-        Assert.NotNull(firstKey.GetProperty("e").GetString());
+        Assert.Equal("ES256", firstKey.GetProperty("alg").GetString());
+        Assert.Equal("P-256", firstKey.GetProperty("crv").GetString());
+        Assert.NotNull(firstKey.GetProperty("x").GetString());
+        Assert.NotNull(firstKey.GetProperty("y").GetString());
     }
 }

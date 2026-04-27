@@ -8,13 +8,17 @@ using Microsoft.IdentityModel.Tokens;
 namespace Authagonal.Protocol.Services;
 
 /// <summary>
-/// Signing-key operations — generation, rotation checks, JWKS assembly, RSA serialization.
+/// Signing-key operations — generation, rotation checks, JWKS assembly, EC key serialization.
 /// Public so host-side rotation services (e.g. cluster-aware rotation) can reuse them.
+///
+/// Authagonal signs JWTs with ES256 (ECDSA P-256 + SHA-256). Per-token signing cost is roughly
+/// an order of magnitude lower than RSA-2048; tokens and JWKS are smaller. Historical RSA keys
+/// in storage are ignored at refresh time and replaced.
 /// </summary>
 public static class ProtocolSigningKeyOps
 {
-    public const int RsaKeySizeInBits = 2048;
-    public const string Algorithm = SecurityAlgorithms.RsaSha256;
+    public const string Algorithm = SecurityAlgorithms.EcdsaSha256;
+    private const string CurveName = "P-256";
 
     public static async Task<SigningKeyInfo> EnsureActiveKeyAsync(
         ISigningKeyStore keyStore, int keyLifetimeDays, ILogger logger, CancellationToken ct = default)
@@ -22,9 +26,9 @@ public static class ProtocolSigningKeyOps
         var now = DateTimeOffset.UtcNow;
         var activeKey = await keyStore.GetActiveKeyAsync(ct);
 
-        if (activeKey is null || activeKey.ExpiresAt <= now)
+        if (activeKey is null || activeKey.ExpiresAt <= now || !IsSupportedAlgorithm(activeKey.Algorithm))
         {
-            logger.LogInformation("Active signing key is missing or expired. Generating new RSA key pair");
+            logger.LogInformation("Active signing key missing/expired/unsupported algorithm. Generating new ES256 key");
 
             if (activeKey is not null)
                 await keyStore.DeactivateKeyAsync(activeKey.KeyId, ct);
@@ -73,10 +77,9 @@ public static class ProtocolSigningKeyOps
 
     public static SigningCredentials BuildSigningCredentials(SigningKeyInfo key)
     {
-        var rsaParams = DeserializeRsaParameters(key.RsaParametersJson);
-        var rsa = RSA.Create();
-        rsa.ImportParameters(rsaParams);
-        var securityKey = new RsaSecurityKey(rsa) { KeyId = key.KeyId };
+        var ecParams = DeserializeEcParameters(key.KeyMaterialJson);
+        var ecdsa = ECDsa.Create(ecParams);
+        var securityKey = new ECDsaSecurityKey(ecdsa) { KeyId = key.KeyId };
         return new SigningCredentials(securityKey, Algorithm);
     }
 
@@ -90,15 +93,22 @@ public static class ProtocolSigningKeyOps
         foreach (var keyInfo in allKeys)
         {
             if (keyInfo.ExpiresAt <= now) continue;
+            if (!IsSupportedAlgorithm(keyInfo.Algorithm)) continue;
 
-            var rsaParams = DeserializeRsaParameters(keyInfo.RsaParametersJson);
-            using var rsa = RSA.Create();
-            rsa.ImportParameters(rsaParams);
-
-            var securityKey = new RsaSecurityKey(rsa) { KeyId = keyInfo.KeyId };
-            var jwk = JsonWebKeyConverter.ConvertFromRSASecurityKey(securityKey);
-            jwk.Use = JsonWebKeyUseNames.Sig;
-            jwk.Alg = Algorithm;
+            // Hand-build the JWK rather than using JsonWebKeyConverter — older versions of
+            // Microsoft.IdentityModel don't reliably populate Crv from an in-memory ECDsa
+            // when the curve was attached via ECParameters (vs. from a key file).
+            var ecParams = DeserializeEcParameters(keyInfo.KeyMaterialJson);
+            var jwk = new JsonWebKey
+            {
+                Kty = "EC",
+                Crv = CurveName,
+                X = ecParams.Q.X is null ? null : Base64UrlEncoder.Encode(ecParams.Q.X),
+                Y = ecParams.Q.Y is null ? null : Base64UrlEncoder.Encode(ecParams.Q.Y),
+                Kid = keyInfo.KeyId,
+                Use = JsonWebKeyUseNames.Sig,
+                Alg = Algorithm,
+            };
             validKeys.Add(jwk);
         }
 
@@ -107,49 +117,82 @@ public static class ProtocolSigningKeyOps
 
     public static SigningKeyInfo GenerateNewKey(DateTimeOffset now, int lifetimeDays)
     {
-        using var rsa = RSA.Create(RsaKeySizeInBits);
-        var rsaParams = rsa.ExportParameters(includePrivateParameters: true);
+        using var ecdsa = ECDsa.Create(ECCurve.NamedCurves.nistP256);
+        var ecParams = ecdsa.ExportParameters(includePrivateParameters: true);
 
         return new SigningKeyInfo
         {
             KeyId = Guid.NewGuid().ToString("N"),
             Algorithm = Algorithm,
-            RsaParametersJson = SerializeRsaParameters(rsaParams),
+            KeyMaterialJson = SerializeEcParameters(ecParams),
             IsActive = true,
             CreatedAt = now,
             ExpiresAt = now.AddDays(lifetimeDays)
         };
     }
 
-    private static string SerializeRsaParameters(RSAParameters p)
+    private static bool IsSupportedAlgorithm(string algorithm) =>
+        string.Equals(algorithm, Algorithm, StringComparison.Ordinal);
+
+    /// <summary>
+    /// Converts a <see cref="JsonWebKey"/> back to a typed <see cref="SecurityKey"/>
+    /// so JwtBearer's signature-validation pipeline can resolve a CryptoProviderFactory
+    /// reliably. Used wherever we need to validate tokens against the keys advertised
+    /// in the JWKS.
+    /// </summary>
+    public static SecurityKey JwkToSecurityKey(JsonWebKey jwk) => jwk.Kty switch
     {
-        var dict = new Dictionary<string, string>();
-        if (p.Modulus is not null) dict["Modulus"] = Convert.ToBase64String(p.Modulus);
-        if (p.Exponent is not null) dict["Exponent"] = Convert.ToBase64String(p.Exponent);
+        "EC" => new ECDsaSecurityKey(ECDsa.Create(new ECParameters
+        {
+            Curve = jwk.Crv switch
+            {
+                "P-256" => ECCurve.NamedCurves.nistP256,
+                "P-384" => ECCurve.NamedCurves.nistP384,
+                "P-521" => ECCurve.NamedCurves.nistP521,
+                _ => throw new InvalidOperationException($"Unsupported EC curve: {jwk.Crv}"),
+            },
+            Q = new ECPoint
+            {
+                X = Base64UrlEncoder.DecodeBytes(jwk.X),
+                Y = Base64UrlEncoder.DecodeBytes(jwk.Y),
+            }
+        }))
+        { KeyId = jwk.Kid },
+        "RSA" => new RsaSecurityKey(new RSAParameters
+        {
+            Modulus = Base64UrlEncoder.DecodeBytes(jwk.N),
+            Exponent = Base64UrlEncoder.DecodeBytes(jwk.E),
+        })
+        { KeyId = jwk.Kid },
+        _ => jwk,
+    };
+
+    private static string SerializeEcParameters(ECParameters p)
+    {
+        var dict = new Dictionary<string, string> { ["Curve"] = CurveName };
         if (p.D is not null) dict["D"] = Convert.ToBase64String(p.D);
-        if (p.P is not null) dict["P"] = Convert.ToBase64String(p.P);
-        if (p.Q is not null) dict["Q"] = Convert.ToBase64String(p.Q);
-        if (p.DP is not null) dict["DP"] = Convert.ToBase64String(p.DP);
-        if (p.DQ is not null) dict["DQ"] = Convert.ToBase64String(p.DQ);
-        if (p.InverseQ is not null) dict["InverseQ"] = Convert.ToBase64String(p.InverseQ);
+        if (p.Q.X is not null) dict["QX"] = Convert.ToBase64String(p.Q.X);
+        if (p.Q.Y is not null) dict["QY"] = Convert.ToBase64String(p.Q.Y);
         return JsonSerializer.Serialize(dict, ProtocolJsonContext.Default.DictionaryStringString);
     }
 
-    private static RSAParameters DeserializeRsaParameters(string json)
+    private static ECParameters DeserializeEcParameters(string json)
     {
         var dict = JsonSerializer.Deserialize(json, ProtocolJsonContext.Default.DictionaryStringString)
-            ?? throw new InvalidOperationException("Failed to deserialize RSA parameters");
+            ?? throw new InvalidOperationException("Failed to deserialize EC parameters");
 
-        return new RSAParameters
+        if (!dict.TryGetValue("QX", out var qx) || !dict.TryGetValue("QY", out var qy))
+            throw new InvalidOperationException("EC parameter blob missing QX/QY (legacy RSA key?)");
+
+        return new ECParameters
         {
-            Modulus = Convert.FromBase64String(dict["Modulus"]),
-            Exponent = Convert.FromBase64String(dict["Exponent"]),
+            Curve = ECCurve.NamedCurves.nistP256,
             D = dict.TryGetValue("D", out var d) ? Convert.FromBase64String(d) : null,
-            P = dict.TryGetValue("P", out var p) ? Convert.FromBase64String(p) : null,
-            Q = dict.TryGetValue("Q", out var q) ? Convert.FromBase64String(q) : null,
-            DP = dict.TryGetValue("DP", out var dp) ? Convert.FromBase64String(dp) : null,
-            DQ = dict.TryGetValue("DQ", out var dq) ? Convert.FromBase64String(dq) : null,
-            InverseQ = dict.TryGetValue("InverseQ", out var iq) ? Convert.FromBase64String(iq) : null
+            Q = new ECPoint
+            {
+                X = Convert.FromBase64String(qx),
+                Y = Convert.FromBase64String(qy),
+            }
         };
     }
 }

@@ -78,18 +78,7 @@ public static class RevocationEndpoint
         try
         {
             var handler = new JsonWebTokenHandler();
-            var keys = keyManager.GetSecurityKeys()
-                .Select(jwk =>
-                {
-                    var rsaKey = new RsaSecurityKey(new System.Security.Cryptography.RSAParameters
-                    {
-                        Modulus = Base64UrlEncoder.DecodeBytes(jwk.N),
-                        Exponent = Base64UrlEncoder.DecodeBytes(jwk.E),
-                    })
-                    { KeyId = jwk.Kid };
-                    return (SecurityKey)rsaKey;
-                })
-                .ToList();
+            var keys = keyManager.GetSecurityKeys().Select(Authagonal.Protocol.Services.ProtocolSigningKeyOps.JwkToSecurityKey).ToList();
 
             var result = await handler.ValidateTokenAsync(token, new TokenValidationParameters
             {

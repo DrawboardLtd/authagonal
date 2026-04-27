@@ -252,7 +252,7 @@ public class EntityRoundtripTests
         {
             KeyId = "key-2025",
             Algorithm = "RS256",
-            RsaParametersJson = "{\"n\":\"abc\",\"e\":\"AQAB\"}",
+            KeyMaterialJson = "{\"n\":\"abc\",\"e\":\"AQAB\"}",
             IsActive = true,
             CreatedAt = new DateTimeOffset(2025, 1, 1, 0, 0, 0, TimeSpan.Zero),
             ExpiresAt = new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero),
@@ -263,7 +263,7 @@ public class EntityRoundtripTests
 
         Assert.Equal(key.KeyId, result.KeyId);
         Assert.Equal(key.Algorithm, result.Algorithm);
-        Assert.Equal(key.RsaParametersJson, result.RsaParametersJson);
+        Assert.Equal(key.KeyMaterialJson, result.KeyMaterialJson);
         Assert.Equal(key.IsActive, result.IsActive);
         Assert.Equal(key.CreatedAt, result.CreatedAt);
         Assert.Equal(key.ExpiresAt, result.ExpiresAt);
@@ -276,7 +276,7 @@ public class EntityRoundtripTests
         {
             KeyId = "key-2025",
             Algorithm = "RS256",
-            RsaParametersJson = "{}",
+            KeyMaterialJson = "{}",
         };
 
         var entity = SigningKeyEntity.FromModel(key);

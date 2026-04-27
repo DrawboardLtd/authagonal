@@ -167,18 +167,7 @@ public static class EndSessionEndpoint
             var handler = new JsonWebTokenHandler();
             // Read without full validation — we just need the client_id/aud claim.
             // The token may be expired (user is logging out), so skip lifetime validation.
-            var keys = keyManager.GetSecurityKeys()
-                .Select(jwk =>
-                {
-                    var rsaKey = new RsaSecurityKey(new System.Security.Cryptography.RSAParameters
-                    {
-                        Modulus = Base64UrlEncoder.DecodeBytes(jwk.N),
-                        Exponent = Base64UrlEncoder.DecodeBytes(jwk.E)
-                    })
-                    { KeyId = jwk.Kid };
-                    return (SecurityKey)rsaKey;
-                })
-                .ToList();
+            var keys = keyManager.GetSecurityKeys().Select(Authagonal.Protocol.Services.ProtocolSigningKeyOps.JwkToSecurityKey).ToList();
 
             var result = handler.ValidateTokenAsync(idToken, new TokenValidationParameters
             {

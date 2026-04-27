@@ -32,8 +32,15 @@ public sealed class JwkKey
     [JsonPropertyName("use")] public string Use { get; set; } = "";
     [JsonPropertyName("kid")] public string Kid { get; set; } = "";
     [JsonPropertyName("alg")] public string Alg { get; set; } = "";
-    [JsonPropertyName("n")] public string N { get; set; } = "";
-    [JsonPropertyName("e")] public string E { get; set; } = "";
+
+    // EC fields (ES256/384/521)
+    [JsonPropertyName("crv"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public string? Crv { get; set; }
+    [JsonPropertyName("x"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public string? X { get; set; }
+    [JsonPropertyName("y"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public string? Y { get; set; }
+
+    // RSA fields (RS256, retained for legacy / interop)
+    [JsonPropertyName("n"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public string? N { get; set; }
+    [JsonPropertyName("e"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public string? E { get; set; }
 }
 
 internal sealed class OAuthErrorResponse

@@ -124,12 +124,13 @@ public sealed class TokenEdgeCaseTests : IAsyncLifetime
         Assert.True(keys.GetArrayLength() > 0);
 
         var key = keys[0];
-        Assert.Equal("RSA", key.GetProperty("kty").GetString());
+        Assert.Equal("EC", key.GetProperty("kty").GetString());
         Assert.Equal("sig", key.GetProperty("use").GetString());
-        Assert.Equal("RS256", key.GetProperty("alg").GetString());
+        Assert.Equal("ES256", key.GetProperty("alg").GetString());
         Assert.NotNull(key.GetProperty("kid").GetString());
-        Assert.NotNull(key.GetProperty("n").GetString());
-        Assert.NotNull(key.GetProperty("e").GetString());
+        Assert.Equal("P-256", key.GetProperty("crv").GetString());
+        Assert.NotNull(key.GetProperty("x").GetString());
+        Assert.NotNull(key.GetProperty("y").GetString());
     }
 
     [Fact]

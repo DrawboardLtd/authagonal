@@ -527,16 +527,7 @@ public sealed class JwtBearerKeyResolverPostConfigure(IServiceProvider rootProvi
             var sp = httpContextAccessor.HttpContext?.RequestServices ?? rootProvider;
             var keyManager = sp.GetRequiredService<Authagonal.Core.Services.IKeyManager>();
             return keyManager.GetSecurityKeys()
-                .Select(jwk =>
-                {
-                    var rsaKey = new RsaSecurityKey(new System.Security.Cryptography.RSAParameters
-                    {
-                        Modulus = Base64UrlEncoder.DecodeBytes(jwk.N),
-                        Exponent = Base64UrlEncoder.DecodeBytes(jwk.E)
-                    })
-                    { KeyId = jwk.Kid };
-                    return (SecurityKey)rsaKey;
-                })
+                .Select(Authagonal.Protocol.Services.ProtocolSigningKeyOps.JwkToSecurityKey)
                 .ToList();
         };
     }

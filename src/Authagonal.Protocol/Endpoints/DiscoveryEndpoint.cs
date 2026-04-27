@@ -44,7 +44,7 @@ internal static class DiscoveryEndpoint
                 ResponseTypesSupported = ["code"],
                 GrantTypesSupported = ["authorization_code", "refresh_token", "client_credentials"],
                 SubjectTypesSupported = ["public"],
-                IdTokenSigningAlgValuesSupported = ["RS256"],
+                IdTokenSigningAlgValuesSupported = ["ES256"],
                 TokenEndpointAuthMethodsSupported = ["client_secret_basic", "client_secret_post"],
                 CodeChallengeMethodsSupported = ["S256"],
                 ClaimsSupported = ["sub", "iss", "aud", "exp", "iat", "auth_time", "email", "email_verified", "name", "given_name", "family_name", "phone_number", "roles", "groups", "org_id"],
