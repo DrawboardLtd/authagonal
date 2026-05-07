@@ -16,12 +16,18 @@ public sealed class TableUserStore(
     TableClient userEmailsTable,
     TableClient userLoginsTable,
     TableClient userExternalIdsTable,
-    TableClient userFirstNamesTable,
-    TableClient userLastNamesTable,
+    TableClient? userFirstNamesTable,
+    TableClient? userLastNamesTable,
     EnvPartitioner partitioner,
     ITombstoneWriter? tombstoneWriter = null) : IUserStore
 {
     private readonly EnvPartitioner _partitioner = partitioner; // Phase B2 will wrap PartitionKeys with _partitioner.PK
+    // Name-index tables are optional. When null (Storage:NameIndexesEnabled=false),
+    // CreateAsync/UpdateAsync/DeleteAsync skip the index writes entirely and
+    // SearchAsync degrades from "email + name prefix" to "email prefix only".
+    // The index entities all share PartitionKey="all", so at multi-million-user
+    // scale the writes go through a single hot partition — disabling them is the
+    // right call when name search isn't a product feature.
 
     private static string? Normalize(string? name)
     {
@@ -71,7 +77,7 @@ public sealed class TableUserStore(
         await userEmailsTable.UpsertEntityAsync(emailEntity, TableUpdateMode.Replace, ct);
 
         var normFirst = Normalize(user.FirstName);
-        if (normFirst is not null)
+        if (normFirst is not null && userFirstNamesTable is not null)
         {
             var firstEntity = UserFirstNameEntity.Create(normFirst, user.Id);
             firstEntity.PartitionKey = _partitioner.PK(firstEntity.PartitionKey);
@@ -79,7 +85,7 @@ public sealed class TableUserStore(
         }
 
         var normLast = Normalize(user.LastName);
-        if (normLast is not null)
+        if (normLast is not null && userLastNamesTable is not null)
         {
             var lastEntity = UserLastNameEntity.Create(normLast, user.Id);
             lastEntity.PartitionKey = _partitioner.PK(lastEntity.PartitionKey);
@@ -123,17 +129,17 @@ public sealed class TableUserStore(
 
             var oldFirst = Normalize(existing.Value.FirstName);
             var newFirst = Normalize(user.FirstName);
-            if (!string.Equals(oldFirst, newFirst, StringComparison.Ordinal))
+            if (userFirstNamesTable is not null && !string.Equals(oldFirst, newFirst, StringComparison.Ordinal))
             {
                 if (oldFirst is not null)
                 {
+                    var oldPk = _partitioner.PK(UserFirstNameEntity.GetPartitionKey(oldFirst));
                     var oldRk = UserFirstNameEntity.MakeRowKey(oldFirst, user.Id);
                     try
                     {
-                        await userFirstNamesTable.DeleteEntityAsync(
-                            _partitioner.PK(UserFirstNameEntity.AllPartitionKey), oldRk, cancellationToken: ct);
+                        await userFirstNamesTable.DeleteEntityAsync(oldPk, oldRk, cancellationToken: ct);
                         if (tombstoneWriter is not null)
-                            await tombstoneWriter.WriteAsync("UserFirstNames", _partitioner.PK(UserFirstNameEntity.AllPartitionKey), oldRk, ct);
+                            await tombstoneWriter.WriteAsync("UserFirstNames", oldPk, oldRk, ct);
                     }
                     catch (RequestFailedException ex) when (ex.Status == 404) { }
                 }
@@ -148,17 +154,17 @@ public sealed class TableUserStore(
 
             var oldLast = Normalize(existing.Value.LastName);
             var newLast = Normalize(user.LastName);
-            if (!string.Equals(oldLast, newLast, StringComparison.Ordinal))
+            if (userLastNamesTable is not null && !string.Equals(oldLast, newLast, StringComparison.Ordinal))
             {
                 if (oldLast is not null)
                 {
+                    var oldPk = _partitioner.PK(UserLastNameEntity.GetPartitionKey(oldLast));
                     var oldRk = UserLastNameEntity.MakeRowKey(oldLast, user.Id);
                     try
                     {
-                        await userLastNamesTable.DeleteEntityAsync(
-                            _partitioner.PK(UserLastNameEntity.AllPartitionKey), oldRk, cancellationToken: ct);
+                        await userLastNamesTable.DeleteEntityAsync(oldPk, oldRk, cancellationToken: ct);
                         if (tombstoneWriter is not null)
-                            await tombstoneWriter.WriteAsync("UserLastNames", _partitioner.PK(UserLastNameEntity.AllPartitionKey), oldRk, ct);
+                            await tombstoneWriter.WriteAsync("UserLastNames", oldPk, oldRk, ct);
                     }
                     catch (RequestFailedException ex) when (ex.Status == 404) { }
                 }
@@ -198,30 +204,30 @@ public sealed class TableUserStore(
 
             // Delete first-name index
             var normFirst = Normalize(existing.Value.FirstName);
-            if (normFirst is not null)
+            if (normFirst is not null && userFirstNamesTable is not null)
             {
+                var pk = _partitioner.PK(UserFirstNameEntity.GetPartitionKey(normFirst));
                 var rk = UserFirstNameEntity.MakeRowKey(normFirst, userId);
                 try
                 {
-                    await userFirstNamesTable.DeleteEntityAsync(
-                        _partitioner.PK(UserFirstNameEntity.AllPartitionKey), rk, cancellationToken: ct);
+                    await userFirstNamesTable.DeleteEntityAsync(pk, rk, cancellationToken: ct);
                     if (tombstoneWriter is not null)
-                        await tombstoneWriter.WriteAsync("UserFirstNames", _partitioner.PK(UserFirstNameEntity.AllPartitionKey), rk, ct);
+                        await tombstoneWriter.WriteAsync("UserFirstNames", pk, rk, ct);
                 }
                 catch (RequestFailedException ex) when (ex.Status == 404) { }
             }
 
             // Delete last-name index
             var normLast = Normalize(existing.Value.LastName);
-            if (normLast is not null)
+            if (normLast is not null && userLastNamesTable is not null)
             {
+                var pk = _partitioner.PK(UserLastNameEntity.GetPartitionKey(normLast));
                 var rk = UserLastNameEntity.MakeRowKey(normLast, userId);
                 try
                 {
-                    await userLastNamesTable.DeleteEntityAsync(
-                        _partitioner.PK(UserLastNameEntity.AllPartitionKey), rk, cancellationToken: ct);
+                    await userLastNamesTable.DeleteEntityAsync(pk, rk, cancellationToken: ct);
                     if (tombstoneWriter is not null)
-                        await tombstoneWriter.WriteAsync("UserLastNames", _partitioner.PK(UserLastNameEntity.AllPartitionKey), rk, ct);
+                        await tombstoneWriter.WriteAsync("UserLastNames", pk, rk, ct);
                 }
                 catch (RequestFailedException ex) when (ex.Status == 404) { }
             }
@@ -393,28 +399,41 @@ public sealed class TableUserStore(
         // queries stay within this env's slice of the shared sandbox tables.
         var emailLo = _partitioner.PK(prefix);
         var emailHi = _partitioner.PK(prefixEnd);
-        var firstNamesPK = _partitioner.PK(UserFirstNameEntity.AllPartitionKey);
-        var lastNamesPK = _partitioner.PK(UserLastNameEntity.AllPartitionKey);
-
         var emailTask = CollectUserIdsAsync(
             userEmailsTable.QueryAsync<UserEmailEntity>(
                 e => e.PartitionKey.CompareTo(emailLo) >= 0 && e.PartitionKey.CompareTo(emailHi) < 0,
                 cancellationToken: ct),
             e => e.UserId, maxResults, ct);
 
-        var firstNameTask = CollectUserIdsAsync(
-            userFirstNamesTable.QueryAsync<UserFirstNameEntity>(
-                e => e.PartitionKey == firstNamesPK
-                     && e.RowKey.CompareTo(prefix) >= 0 && e.RowKey.CompareTo(prefixEnd) < 0,
-                cancellationToken: ct),
-            e => e.UserId, maxResults, ct);
+        // Name indexes are optional and partition-bucketed by name prefix. A query
+        // shorter than UserFirstNameEntity.PartitionKeyLength would have to fan out
+        // across many partitions, so we only consult the indexes once the query is
+        // long enough to land in a single partition (admin search UIs should require
+        // at least this many chars). Email prefix search is always available; users
+        // can find e.g. "j" by emails containing "j*".
+        var firstNamePk = prefix.Length >= UserFirstNameEntity.PartitionKeyLength
+            ? _partitioner.PK(UserFirstNameEntity.GetPartitionKey(prefix))
+            : null;
+        var firstNameTask = (userFirstNamesTable is null || firstNamePk is null)
+            ? Task.FromResult(new List<string>())
+            : CollectUserIdsAsync(
+                userFirstNamesTable.QueryAsync<UserFirstNameEntity>(
+                    e => e.PartitionKey == firstNamePk
+                         && e.RowKey.CompareTo(prefix) >= 0 && e.RowKey.CompareTo(prefixEnd) < 0,
+                    cancellationToken: ct),
+                e => e.UserId, maxResults, ct);
 
-        var lastNameTask = CollectUserIdsAsync(
-            userLastNamesTable.QueryAsync<UserLastNameEntity>(
-                e => e.PartitionKey == lastNamesPK
-                     && e.RowKey.CompareTo(prefix) >= 0 && e.RowKey.CompareTo(prefixEnd) < 0,
-                cancellationToken: ct),
-            e => e.UserId, maxResults, ct);
+        var lastNamePk = prefix.Length >= UserLastNameEntity.PartitionKeyLength
+            ? _partitioner.PK(UserLastNameEntity.GetPartitionKey(prefix))
+            : null;
+        var lastNameTask = (userLastNamesTable is null || lastNamePk is null)
+            ? Task.FromResult(new List<string>())
+            : CollectUserIdsAsync(
+                userLastNamesTable.QueryAsync<UserLastNameEntity>(
+                    e => e.PartitionKey == lastNamePk
+                         && e.RowKey.CompareTo(prefix) >= 0 && e.RowKey.CompareTo(prefixEnd) < 0,
+                    cancellationToken: ct),
+                e => e.UserId, maxResults, ct);
 
         await Task.WhenAll(emailTask, firstNameTask, lastNameTask);
 

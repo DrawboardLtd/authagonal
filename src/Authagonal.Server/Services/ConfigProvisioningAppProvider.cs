@@ -3,8 +3,15 @@ using Authagonal.Core.Services;
 namespace Authagonal.Server.Services;
 
 /// <summary>
-/// Default IProvisioningAppProvider that reads from IConfiguration.
-/// Apps are configured under ProvisioningApps:{appId}:CallbackUrl and ProvisioningApps:{appId}:ApiKey.
+/// Default <see cref="IProvisioningAppProvider"/> for hosts that drive provisioning
+/// apps from <see cref="IConfiguration"/> and don't need runtime mutation. Apps are
+/// configured under <c>ProvisioningApps:{appId}:CallbackUrl</c> /
+/// <c>:ApiKey</c> / <c>:TryTimeoutSeconds</c>.
+///
+/// Hosts that want runtime CRUD via <c>/api/v1/provisioning/apps</c> register
+/// <see cref="StoreProvisioningAppProvider"/> explicitly (it reads from
+/// <see cref="Authagonal.Core.Stores.IProvisioningAppStore"/>); since this default
+/// is registered with <c>TryAdd</c>, the explicit registration wins.
 /// </summary>
 public sealed class ConfigProvisioningAppProvider(IConfiguration configuration) : IProvisioningAppProvider
 {

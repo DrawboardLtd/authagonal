@@ -37,22 +37,51 @@ public static class ServiceCollectionExtensions
     private const string RolesTableName = "Roles";
     private const string ScopesTableName = "Scopes";
     private const string RevokedTokensTableName = "RevokedTokens";
+    private const string ProvisioningAppsTableName = "ProvisioningApps";
 
-    public static IServiceCollection AddTableStorage(this IServiceCollection services, string connectionString)
+    public static IServiceCollection AddTableStorage(this IServiceCollection services, string connectionString, bool nameIndexesEnabled = true)
+    {
+        var serviceClient = new TableServiceClient(connectionString, BuildClientOptions());
+        return AddTableStorage(services, serviceClient, nameIndexesEnabled);
+    }
+
+    /// <summary>
+    /// Managed-identity-friendly overload. Hosts running in AKS / Azure App Service
+    /// pass the table service URI (<c>https://{account}.table.core.windows.net/</c>)
+    /// and a <see cref="TokenCredential"/> (typically <c>DefaultAzureCredential</c>)
+    /// so the storage account never needs an access key in any K8s secret.
+    /// </summary>
+    /// <param name="nameIndexesEnabled">
+    /// When false, <c>UserFirstNames</c> / <c>UserLastNames</c> tables are not
+    /// created and writes are skipped. <see cref="IUserStore.SearchAsync"/>
+    /// degrades from "email + name prefix" to "email prefix only". Disable when
+    /// admin name-prefix search isn't a product feature — these indexes
+    /// currently use a single hot partition (<c>PartitionKey = "all"</c>) which
+    /// caps writes at ~2k ops/sec and limits scale.
+    /// </param>
+    public static IServiceCollection AddTableStorage(this IServiceCollection services, Uri tableServiceUri, TokenCredential credential, bool nameIndexesEnabled = true)
+    {
+        var serviceClient = new TableServiceClient(tableServiceUri, credential, BuildClientOptions());
+        return AddTableStorage(services, serviceClient, nameIndexesEnabled);
+    }
+
+    private static TableClientOptions BuildClientOptions()
     {
         var clientOptions = new TableClientOptions();
         clientOptions.Retry.MaxRetries = 5;
         clientOptions.Retry.Delay = TimeSpan.FromMilliseconds(500);
         clientOptions.Retry.MaxDelay = TimeSpan.FromSeconds(30);
         clientOptions.Retry.Mode = RetryMode.Exponential;
+        return clientOptions;
+    }
 
-        var serviceClient = new TableServiceClient(connectionString, clientOptions);
-
+    private static IServiceCollection AddTableStorage(IServiceCollection services, TableServiceClient serviceClient, bool nameIndexesEnabled = true)
+    {
         // Eagerly create all table clients (and auto-create tables).
         var users = EnsureTable(serviceClient, UsersTableName);
         var userEmails = EnsureTable(serviceClient, UserEmailsTableName);
-        var userFirstNames = EnsureTable(serviceClient, UserFirstNamesTableName);
-        var userLastNames = EnsureTable(serviceClient, UserLastNamesTableName);
+        var userFirstNames = nameIndexesEnabled ? EnsureTable(serviceClient, UserFirstNamesTableName) : null;
+        var userLastNames = nameIndexesEnabled ? EnsureTable(serviceClient, UserLastNamesTableName) : null;
         var userLogins = EnsureTable(serviceClient, UserLoginsTableName);
         var clients = EnsureTable(serviceClient, ClientsTableName);
         var grants = EnsureTable(serviceClient, GrantsTableName);
@@ -75,6 +104,7 @@ public static class ServiceCollectionExtensions
         var roles = EnsureTable(serviceClient, RolesTableName);
         var scopes = EnsureTable(serviceClient, ScopesTableName);
         var revokedTokens = EnsureTable(serviceClient, RevokedTokensTableName);
+        var provisioningApps = EnsureTable(serviceClient, ProvisioningAppsTableName);
 
         // Register store implementations as singletons.
         // TryAdd allows multi-tenant hosts to register scoped stores first.
@@ -95,6 +125,7 @@ public static class ServiceCollectionExtensions
         services.TryAddSingleton<IRoleStore>(new TableRoleStore(roles, live));
         services.TryAddSingleton<IScopeStore>(new TableScopeStore(scopes, live));
         services.TryAddSingleton<IRevokedTokenStore>(new TableRevokedTokenStore(revokedTokens, live));
+        services.TryAddSingleton<IProvisioningAppStore>(new TableProvisioningAppStore(provisioningApps, live));
 
         // Register grant table clients as keyed singletons for the reconciliation service.
         services.AddKeyedSingleton("Grants", grants);

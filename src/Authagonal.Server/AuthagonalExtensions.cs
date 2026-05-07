@@ -53,15 +53,35 @@ public static class AuthagonalExtensions
         services.AddAuthagonalCore(configuration);
 
         // ---------------------------------------------------------------------------
-        // Single-tenant storage
+        // Single-tenant storage. Two configuration paths:
+        //   - Storage:ConnectionString — connection string with AccountKey (dev / Azurite)
+        //   - Storage:TableServiceUri  — managed-identity URI like
+        //     https://{account}.table.core.windows.net/. The host is responsible for
+        //     granting the workload's identity Storage Table Data Contributor.
+        // The MI path is preferred in production; access keys never need to land in
+        // a K8s secret.
         // ---------------------------------------------------------------------------
         var storageConnectionString = configuration["Storage:ConnectionString"];
+        var tableServiceUri = configuration["Storage:TableServiceUri"];
+        // Default true to keep existing config-driven deployments working unchanged.
+        // Set false on hosts that don't expose admin name-prefix search to skip
+        // the UserFirstNames / UserLastNames index writes (which use a single hot
+        // partition and cap throughput at ~2k ops/sec at scale).
+        var nameIndexesEnabled = configuration.GetValue("Storage:NameIndexesEnabled", true);
         if (!services.Any(d => d.ServiceType == typeof(Authagonal.Core.Stores.IUserStore)))
         {
-            if (string.IsNullOrWhiteSpace(storageConnectionString))
-                throw new InvalidOperationException("Storage:ConnectionString is not configured");
-
-            services.AddTableStorage(storageConnectionString);
+            if (!string.IsNullOrWhiteSpace(tableServiceUri))
+            {
+                services.AddTableStorage(new Uri(tableServiceUri), new Azure.Identity.DefaultAzureCredential(), nameIndexesEnabled);
+            }
+            else if (!string.IsNullOrWhiteSpace(storageConnectionString))
+            {
+                services.AddTableStorage(storageConnectionString, nameIndexesEnabled);
+            }
+            else
+            {
+                throw new InvalidOperationException("Either Storage:ConnectionString or Storage:TableServiceUri must be configured");
+            }
         }
 
         // Data protection
@@ -200,6 +220,9 @@ public static class AuthagonalExtensions
 
         // Extensibility points — TryAdd so custom registrations take precedence
         services.TryAddSingleton<IEmailService, NullEmailService>();
+        services.TryAddSingleton<IAuditLogger, NullAuditLogger>();
+        services.TryAddSingleton<IClientScopeGuard, AllowAllClientScopeGuard>();
+        services.TryAddSingleton<IProvisioningAppQuota, UnlimitedProvisioningAppQuota>();
         services.TryAddScoped<IProvisioningAppProvider, ConfigProvisioningAppProvider>();
         services.TryAddScoped<IProvisioningOrchestrator, TccProvisioningOrchestrator>();
         // Auth hooks — multiple IAuthHook implementations can be registered and all will run.
@@ -485,6 +508,8 @@ public static class AuthagonalExtensions
             app.MapUserAdminEndpoints();
             app.MapRoleAdminEndpoints();
             app.MapScopeAdminEndpoints();
+            app.MapClientAdminEndpoints();
+            app.MapProvisioningAdminEndpoints();
             app.MapSsoAdminEndpoints();
             app.MapTokenAdminEndpoints();
             app.MapMfaAdminEndpoints();

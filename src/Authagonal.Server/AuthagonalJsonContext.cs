@@ -61,6 +61,15 @@ namespace Authagonal.Server;
 [JsonSerializable(typeof(UserRolesResponse))]
 [JsonSerializable(typeof(ScopeListResponse))]
 [JsonSerializable(typeof(Scope))]
+[JsonSerializable(typeof(OAuthClient))]
+[JsonSerializable(typeof(List<OAuthClient>))]
+[JsonSerializable(typeof(Authagonal.Server.Endpoints.Admin.ProvisioningAppRequest))]
+[JsonSerializable(typeof(Authagonal.Server.Endpoints.Admin.ProvisioningAppView))]
+[JsonSerializable(typeof(List<Authagonal.Server.Endpoints.Admin.ProvisioningAppView>))]
+[JsonSerializable(typeof(Authagonal.Server.Endpoints.Admin.ProvisioningTestPayload))]
+[JsonSerializable(typeof(Authagonal.Server.Endpoints.Admin.ProvisioningTestResult))]
+[JsonSerializable(typeof(Authagonal.Server.Endpoints.Admin.ProvisioningAppListResponse))]
+[JsonSerializable(typeof(Authagonal.Server.Endpoints.Admin.ProvisioningAppDeleteResponse))]
 [JsonSerializable(typeof(ClientRegistrationRequest))]
 [JsonSerializable(typeof(ClientRegistrationResponse))]
 [JsonSerializable(typeof(ScimTokenCreatedResponse))]
@@ -82,6 +91,7 @@ namespace Authagonal.Server;
 [JsonSerializable(typeof(TotpConfirmRequest))]
 [JsonSerializable(typeof(WebAuthnConfirmRequest))]
 [JsonSerializable(typeof(Dictionary<string, string>))]
+[JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]
 internal partial class AuthagonalJsonContext : JsonSerializerContext
 {
 }
