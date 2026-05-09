@@ -18,6 +18,12 @@ public sealed class SamlProviderEntity : ITableEntity
     public required string EntityId { get; set; }
     public required string MetadataLocation { get; set; }
     public required string AllowedDomainsJson { get; set; }
+    /// <summary>
+    /// Mirrors <see cref="SamlProviderConfig.DisableJitProvisioning"/>. Nullable
+    /// for back-compat with rows written before this column existed; ToModel()
+    /// coerces null → false to preserve the prior behaviour (JIT enabled).
+    /// </summary>
+    public bool? DisableJitProvisioning { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset? UpdatedAt { get; set; }
 
@@ -29,6 +35,7 @@ public sealed class SamlProviderEntity : ITableEntity
         EntityId = config.EntityId,
         MetadataLocation = config.MetadataLocation,
         AllowedDomainsJson = JsonSerializer.Serialize(config.AllowedDomains, StorageJsonContext.Default.ListString),
+        DisableJitProvisioning = config.DisableJitProvisioning,
         CreatedAt = config.CreatedAt,
         UpdatedAt = config.UpdatedAt,
     };
@@ -40,6 +47,7 @@ public sealed class SamlProviderEntity : ITableEntity
         EntityId = EntityId,
         MetadataLocation = MetadataLocation,
         AllowedDomains = JsonSerializer.Deserialize(AllowedDomainsJson, StorageJsonContext.Default.ListString) ?? [],
+        DisableJitProvisioning = DisableJitProvisioning ?? false,
         CreatedAt = CreatedAt,
         UpdatedAt = UpdatedAt,
     };

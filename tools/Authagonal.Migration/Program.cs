@@ -23,10 +23,58 @@ var tableStorageConnectionString = config["Target:ConnectionString"]
 var dryRun = config.GetValue("DryRun", false);
 var migrateRefreshTokens = config.GetValue("MigrateRefreshTokens", false);
 
+// Source AspNetUserClaims claim-type lookups. Keys are OpenID Connect Core 1.0
+// §5.1 standard claim names plus a couple of common custom ones (company,
+// org_id) that map onto AuthUser fields. Values are the actual ClaimType
+// strings the tool reads from AspNetUserClaims rows. Defaults assume an
+// OIDC-spec-compliant Duende source; sources that stored claims under custom
+// names override individual entries via:
+//
+//   --Source:ClaimMap:given_name=FirstName
+//   --Source:ClaimMap:org_id=OrganizationId
+//
+// Only entries marked [used] below are extracted by this tool today; the rest
+// are reserved so future widening of the migration SELECT inherits any
+// operator overrides without a separate API roll-out.
+var claimMap = new Dictionary<string, string>(StringComparer.Ordinal)
+{
+    ["given_name"]            = "given_name",            // [used] → AuthUser.FirstName
+    ["family_name"]           = "family_name",           // [used] → AuthUser.LastName
+    ["company"]               = "company",               // [used] → AuthUser.CompanyName
+    ["org_id"]                = "org_id",                // [used] → AuthUser.OrganizationId
+    ["name"]                  = "name",
+    ["middle_name"]           = "middle_name",
+    ["nickname"]              = "nickname",
+    ["preferred_username"]    = "preferred_username",
+    ["profile"]               = "profile",
+    ["picture"]               = "picture",
+    ["website"]               = "website",
+    ["email_verified"]        = "email_verified",
+    ["gender"]                = "gender",
+    ["birthdate"]             = "birthdate",
+    ["zoneinfo"]              = "zoneinfo",
+    ["locale"]                = "locale",
+    ["phone_number"]          = "phone_number",
+    ["phone_number_verified"] = "phone_number_verified",
+    ["address"]               = "address",
+    ["updated_at"]            = "updated_at",
+};
+foreach (var key in claimMap.Keys.ToList())
+{
+    var ov = config[$"Source:ClaimMap:{key}"];
+    if (!string.IsNullOrWhiteSpace(ov)) claimMap[key] = ov;
+}
+
 Console.WriteLine($"Source: SQL Server");
 Console.WriteLine($"Target: Azure Table Storage");
 Console.WriteLine($"Dry run: {dryRun}");
 Console.WriteLine($"Migrate refresh tokens: {migrateRefreshTokens}");
+Console.WriteLine("Claim type overrides:");
+foreach (var (key, value) in claimMap.OrderBy(kv => kv.Key, StringComparer.Ordinal))
+{
+    var marker = value == key ? "  " : " *";  // mark non-default entries
+    Console.WriteLine($"{marker} {key,-25} → {value}");
+}
 Console.WriteLine();
 
 // ---------------------------------------------------------------------------
@@ -55,11 +103,15 @@ await using (var cmd = sql.CreateCommand())
                cn.ClaimValue AS CompanyName,
                oid.ClaimValue AS OrganizationId
         FROM AspNetUsers u
-        LEFT JOIN AspNetUserClaims fn  ON fn.UserId = u.Id  AND fn.ClaimType = 'given_name'
-        LEFT JOIN AspNetUserClaims ln  ON ln.UserId = u.Id  AND ln.ClaimType = 'family_name'
-        LEFT JOIN AspNetUserClaims cn  ON cn.UserId = u.Id  AND cn.ClaimType = 'company'
-        LEFT JOIN AspNetUserClaims oid ON oid.UserId = u.Id AND oid.ClaimType = 'org_id'
+        LEFT JOIN AspNetUserClaims fn  ON fn.UserId = u.Id  AND fn.ClaimType = @firstName
+        LEFT JOIN AspNetUserClaims ln  ON ln.UserId = u.Id  AND ln.ClaimType = @lastName
+        LEFT JOIN AspNetUserClaims cn  ON cn.UserId = u.Id  AND cn.ClaimType = @company
+        LEFT JOIN AspNetUserClaims oid ON oid.UserId = u.Id AND oid.ClaimType = @orgId
         """;
+    cmd.Parameters.AddWithValue("@firstName", claimMap["given_name"]);
+    cmd.Parameters.AddWithValue("@lastName", claimMap["family_name"]);
+    cmd.Parameters.AddWithValue("@company", claimMap["company"]);
+    cmd.Parameters.AddWithValue("@orgId", claimMap["org_id"]);
 
     await using var reader = await cmd.ExecuteReaderAsync();
     while (await reader.ReadAsync())

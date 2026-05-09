@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Find the latest v0.2.x tag and compute the next one
-latest=$(git tag -l 'v0.2.*' | sort -V | tail -1)
+# Find the latest v0.3.x tag and compute the next one
+latest=$(git tag -l 'v0.3.*' | sort -V | tail -1)
 if [ -z "$latest" ]; then
-  next="v0.2.0"
+  next="v0.3.0"
 else
-  patch=${latest##*0.2.}
-  next="v0.2.$((patch + 1))"
+  patch=${latest##*0.3.}
+  next="v0.3.$((patch + 1))"
 fi
 version=${next#v}
 

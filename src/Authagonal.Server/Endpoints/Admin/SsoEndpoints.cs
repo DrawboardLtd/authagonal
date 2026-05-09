@@ -59,6 +59,7 @@ public static class SsoEndpoints
             EntityId = request.EntityId,
             MetadataLocation = request.MetadataLocation,
             AllowedDomains = request.AllowedDomains ?? [],
+            DisableJitProvisioning = request.DisableJitProvisioning,
             CreatedAt = now
         };
 
@@ -93,7 +94,7 @@ public static class SsoEndpoints
 
     private static async Task<IResult> UpdateSamlConnection(
         string connectionId,
-        UpdateSamlDomainsRequest request,
+        UpdateSamlRequest request,
         ISamlProviderStore samlStore,
         ISsoDomainStore ssoDomainStore,
         CancellationToken ct)
@@ -102,24 +103,34 @@ public static class SsoEndpoints
         if (config is null)
             return Results.NotFound(new { error = "not_found", error_description = $"SAML connection '{connectionId}' not found" });
 
-        // Remove old domain mappings
-        await ssoDomainStore.DeleteByConnectionAsync(connectionId, ct);
-
-        // Update domains
-        config.AllowedDomains = request.AllowedDomains ?? [];
+        // Partial update — only fields supplied on the wire are modified.
+        var domainsChanged = request.AllowedDomains is not null;
+        if (domainsChanged)
+        {
+            config.AllowedDomains = request.AllowedDomains!;
+        }
+        if (request.DisableJitProvisioning.HasValue)
+        {
+            config.DisableJitProvisioning = request.DisableJitProvisioning.Value;
+        }
         config.UpdatedAt = DateTimeOffset.UtcNow;
         await samlStore.UpsertAsync(config, ct);
 
-        // Register new domain mappings
-        foreach (var domain in config.AllowedDomains)
+        // Re-register domain mappings only when the domain list actually changed —
+        // toggling JIT shouldn't churn the SsoDomain table.
+        if (domainsChanged)
         {
-            await ssoDomainStore.UpsertAsync(new SsoDomain
+            await ssoDomainStore.DeleteByConnectionAsync(connectionId, ct);
+            foreach (var domain in config.AllowedDomains)
             {
-                Domain = domain.ToLowerInvariant(),
-                ProviderType = "saml",
-                ConnectionId = connectionId,
-                Scheme = $"saml-{connectionId}"
-            }, ct);
+                await ssoDomainStore.UpsertAsync(new SsoDomain
+                {
+                    Domain = domain.ToLowerInvariant(),
+                    ProviderType = "saml",
+                    ConnectionId = connectionId,
+                    Scheme = $"saml-{connectionId}"
+                }, ct);
+            }
         }
 
         return Results.Ok(config);
@@ -247,11 +258,22 @@ public static class SsoEndpoints
         public string EntityId { get; set; } = "";
         public string MetadataLocation { get; set; } = "";
         public List<string>? AllowedDomains { get; set; }
+
+        /// <summary>
+        /// When true, unknown users authenticating via this SAML connection are
+        /// rejected instead of being auto-created. Default false (JIT enabled).
+        /// </summary>
+        public bool DisableJitProvisioning { get; set; }
     }
 
-    public sealed class UpdateSamlDomainsRequest
+    /// <summary>
+    /// Partial update — fields left null on the wire are not modified.
+    /// Replaces the legacy <c>UpdateSamlDomainsRequest</c>.
+    /// </summary>
+    public sealed class UpdateSamlRequest
     {
         public List<string>? AllowedDomains { get; set; }
+        public bool? DisableJitProvisioning { get; set; }
     }
 
     public sealed class CreateOidcRequest
