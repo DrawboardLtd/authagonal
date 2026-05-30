@@ -21,6 +21,9 @@ export { default as ForgotPasswordPage } from './pages/ForgotPasswordPage';
 export { default as ResetPasswordPage } from './pages/ResetPasswordPage';
 export { default as MfaChallengePage } from './pages/MfaChallengePage';
 export { default as MfaSetupPage } from './pages/MfaSetupPage';
+export { default as ConsentPage } from './pages/ConsentPage';
+export { default as DevicePage } from './pages/DevicePage';
+export { default as GrantsPage } from './pages/GrantsPage';
 
 // App — standalone SPA with routing (for consumers that want the full app)
 export { default as App } from './App';
@@ -30,10 +33,10 @@ export { loadBranding, BrandingContext, useBranding, resolveLocalized } from './
 export type { BrandingConfig, LocalizedString } from './branding';
 
 // API client
-export { login, logout, forgotPassword, resetPassword, getSession, ssoCheck, getProviders, getPasswordPolicy, mfaVerify, mfaStatus, mfaTotpSetup, mfaTotpConfirm, mfaWebAuthnSetup, mfaWebAuthnConfirm, mfaRecoveryGenerate, mfaDeleteCredential, ApiRequestError } from './api';
+export { login, register, logout, forgotPassword, resetPassword, getSession, ssoCheck, getProviders, getPasswordPolicy, mfaVerify, mfaStatus, mfaTotpSetup, mfaTotpConfirm, mfaWebAuthnSetup, mfaWebAuthnConfirm, mfaRecoveryGenerate, mfaDeleteCredential, ApiRequestError } from './api';
 
 // Types
-export type { LoginResponse, ApiError, SessionResponse, SsoCheckResponse, ExternalProvider, ProvidersResponse, PasswordPolicyRule, PasswordPolicyResponse, MfaLoginResponse, MfaVerifyResponse, MfaStatusResponse, MfaMethod, MfaTotpSetupResponse, MfaRecoveryGenerateResponse, MfaWebAuthnSetupResponse, MfaWebAuthnConfirmResponse } from './types';
+export type { LoginResponse, RegisterResponse, ApiError, SessionResponse, SsoCheckResponse, ExternalProvider, ProvidersResponse, PasswordPolicyRule, PasswordPolicyResponse, MfaLoginResponse, MfaVerifyResponse, MfaStatusResponse, MfaMethod, MfaTotpSetupResponse, MfaRecoveryGenerateResponse, MfaWebAuthnSetupResponse, MfaWebAuthnConfirmResponse } from './types';
 
 // i18n — re-export so consumers use the same react-i18next instance
 export { default as i18n } from './i18n';
