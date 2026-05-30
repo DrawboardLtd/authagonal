@@ -301,7 +301,7 @@ public static class AuthEndpoints
             PasswordHash = passwordHasher.HashPassword(request.Password),
             FirstName = request.FirstName?.Trim(),
             LastName = request.LastName?.Trim(),
-            EmailConfirmed = email.EndsWith("@example.com", StringComparison.OrdinalIgnoreCase),
+            EmailConfirmed = IsAutoConfirmedDomain(email, ao.AutoConfirmEmailDomains),
             LockoutEnabled = true,
             SecurityStamp = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32)),
             CreatedAt = DateTimeOffset.UtcNow,
@@ -623,6 +623,19 @@ public static class AuthEndpoints
             .TrimEnd('=')
             .Replace('+', '-')
             .Replace('/', '_');
+    }
+
+    // Auto-confirm a registration's email only when its domain is explicitly allow-listed
+    // (Auth:AutoConfirmEmailDomains). Empty list (the default) means every registration must verify.
+    private static bool IsAutoConfirmedDomain(string email, List<string> autoConfirmDomains)
+    {
+        if (autoConfirmDomains.Count == 0)
+            return false;
+        var at = email.LastIndexOf('@');
+        if (at < 0 || at == email.Length - 1)
+            return false;
+        var domain = email[(at + 1)..];
+        return autoConfirmDomains.Any(d => string.Equals(d, domain, StringComparison.OrdinalIgnoreCase));
     }
 
 }

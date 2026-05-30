@@ -40,11 +40,11 @@ Un pequeno numero de valores de lectura frecuente y cambio lento se almacenan en
 
 | Datos | Duracion del cache | Impacto de la obsolescencia |
 |---|---|---|
-| Documentos de descubrimiento OIDC | 60 minutos | Conciencia retrasada de la rotacion de claves del IdP |
-| Metadatos de SAML IdP | 60 minutos | Igual |
-| Origenes CORS permitidos | 60 minutos | Los nuevos origenes tardan hasta una hora en propagarse |
+| Documentos de descubrimiento OIDC | 60 minutos (configurable) | Conciencia retrasada de la rotacion de claves del IdP |
+| Metadatos de SAML IdP | 60 minutos (configurable) | Igual |
+| Origenes CORS permitidos | 60 minutos (configurable) | Los nuevos origenes tardan hasta una hora en propagarse |
 
-Estos caches son aceptables para uso en produccion. Si necesita propagacion inmediata, reinicie las instancias afectadas.
+Estos caches son aceptables para uso en produccion. Todas las duraciones son configurables mediante la seccion de configuracion `Cache`; ver [Configuracion](configuration). Si necesita propagacion inmediata, reinicie las instancias afectadas.
 
 ## Limitacion de velocidad
 
@@ -60,7 +60,7 @@ Esto significa que los limites de velocidad se aplican globalmente: si un client
 
 Cada instancia genera un identificador de nodo hexadecimal aleatorio al inicio (por ejemplo, `a3f1b2`). Este identificador identifica la instancia en los mensajes de gossip y el estado de limites de velocidad. No se persiste — se genera uno nuevo en cada reinicio.
 
-Un `ClusterLeaderService` se ejecuta en cada instancia, eligiendo un unico lider entre los pares descubiertos (el identificador de nodo mas bajo gana). El liderazgo se transfiere automaticamente cuando el lider muere. La eleccion de lider esta disponible para tareas de coordinacion a nivel de cluster que solo deben ejecutarse en un nodo.
+Un `ClusterLeaderService` se ejecuta en cada instancia, eligiendo un unico lider entre los pares descubiertos (el identificador de nodo mas bajo gana). El liderazgo se transfiere automaticamente cuando el lider muere. El lider se utiliza para la coordinacion a nivel de cluster: actualmente, la rotacion de claves de firma (cuando esta habilitada) se ejecuta solo en el lider para evitar la generacion concurrente de claves.
 
 ### Configuracion del cluster
 
@@ -98,6 +98,17 @@ Consulte la pagina de [Configuracion](configuration) para todas las opciones del
 ### Despliegues multi-tenant
 
 En el modo multi-tenant (`AddAuthagonalCore()`), los servicios en segundo plano como `GrantReconciliationService` y `SigningKeyRotationService` no se registran — el host los gestiona por tenant. Solo `TokenCleanupService` se ejecuta incondicionalmente.
+
+## Particion caliente del indice de nombres
+
+La busqueda de nombres por prefijo del administrador se respalda en las tablas de indice `UserFirstNames` / `UserLastNames`, que usan una **unica particion caliente**. A escala, esto limita el rendimiento de escritura del indice a aproximadamente 2.000 operaciones/seg, lo que puede convertirse en un cuello de botella en la creacion/actualizacion de usuarios bajo carga intensa. Si no expone la busqueda de nombres del administrador, establezca `Storage:NameIndexesEnabled = false` para omitir estas escrituras por completo. Ver [Configuracion](configuration).
+
+## Proxy de confianza y endpoints internos
+
+Al ejecutar multiples instancias detras de un balanceador de carga:
+
+- **Encabezados reenviados** — la limitacion de velocidad y el bloqueo se basan en la IP del cliente, resuelta desde `X-Forwarded-For`. Establezca `ForwardedHeaders:KnownNetworks` con el CIDR de su ingress / pod para que la IP del cliente no pueda suplantarse entre instancias. `ForwardedHeaders:ForwardLimit` tiene el valor predeterminado `1`. Ver [Configuracion](configuration#forwarded-headers-trusted-proxy).
+- **Endpoints internos** — `/_internal/cluster/gossip` y `/_internal/backchannel-logout` estan protegidos por IP de origen (solo loopback / privada) a menos que se establezca `Cluster:Secret`. Cuando el gossip se enruta a traves de un balanceador de carga (`Cluster:InternalUrl`), el LB reescribe la IP de origen, por lo que debe establecer `Cluster:Secret` y el llamador de gossip lo presentara en el encabezado `X-Cluster-Secret`.
 
 ## Recomendaciones de escalabilidad
 

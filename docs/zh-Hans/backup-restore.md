@@ -43,7 +43,11 @@ backups/
     _manifest.json
 ```
 
-每个 `.jsonl` 文件每行包含一个 JSON 对象（每个表实体一个）。使用 `--gzip` 时，文件将压缩为 `.jsonl.gz`。`_manifest.json` 记录备份时间戳、模式、压缩状态和实体计数。
+每个 `.jsonl` 文件每行包含一个 JSON 对象（每个表实体一个）。使用 `--gzip` 时，文件将压缩为 `.jsonl.gz`。`_manifest.json` 记录备份时间戳、模式、压缩状态、实体计数，以及用于完整性验证的 SHA-256 文件哈希。
+
+### 完整性验证
+
+每个备份清单包含一个 `FileHashes` 字典，将文件名映射到其 SHA-256 哈希。恢复期间，在写入任何数据之前，会自动根据这些哈希验证文件完整性。如果检测到哈希不匹配，恢复将中止并报错。
 
 ### 增量备份
 
@@ -55,9 +59,17 @@ backups/
 
 备份工具默认包含所有 Authagonal 表：
 
-`Users`、`UserEmails`、`UserLogins`、`UserExternalIds`、`Clients`、`Grants`、`GrantsBySubject`、`GrantsByExpiry`、`SigningKeys`、`SsoDomains`、`SamlProviders`、`OidcProviders`、`UserProvisions`、`MfaCredentials`、`MfaChallenges`、`MfaWebAuthnIndex`、`ScimTokens`、`ScimGroups`、`ScimGroupExternalIds`、`Roles`
+`Users`、`UserEmails`、`UserLogins`、`UserExternalIds`、`Clients`、`Grants`、`GrantsBySubject`、`GrantsByExpiry`、`SsoDomains`、`SamlProviders`、`OidcProviders`、`UserProvisions`、`MfaCredentials`、`MfaChallenges`、`MfaWebAuthnIndex`、`ScimTokens`、`ScimGroups`、`ScimGroupExternalIds`、`Roles`
 
 临时表（`SamlReplayCache`、`OidcStateStore`）默认排除——如需要，请使用 `--tables` 明确包含。
+
+### 签名密钥默认排除
+
+`SigningKeys` 表**默认从备份中排除**（`Backup:IncludeSigningKeys` 默认为 `false`）。对于使用本地（表存储）密钥源的宿主，此表保存着 JWT 签名**私钥**——将其写入纯文本备份文件会让任何读取该备份的人都能伪造令牌。（通过 HashiCorp Vault Transit 签名的宿主不会在表中保留私钥，因此此问题不适用于它们。）
+
+> ⚠️ 仅当备份目标本身静态加密且受访问控制时，才通过 `Backup:IncludeSigningKeys` 选择启用。这同样适用于备份的其余部分：使用默认的**纯文本**密钥提供者时，备份还会以明文包含上游 OIDC 客户端密钥和 TOTP / MFA 种子——参见[配置 → 密钥提供者](configuration#secret-provider)。
+
+恢复时，在写入任何数据之前，会根据清单的 SHA-256 哈希验证文件完整性（参见[完整性验证](#integrity-verification)）；哈希不匹配将中止恢复。
 
 ## 恢复
 

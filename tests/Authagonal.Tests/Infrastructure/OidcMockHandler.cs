@@ -19,6 +19,7 @@ public sealed class OidcMockHandler : HttpMessageHandler
     public string Issuer { get; set; } = "https://oidc-idp.test";
     public string Subject { get; set; } = "oidc-user-123";
     public string Email { get; set; } = "oidcuser@example.com";
+    public bool EmailVerified { get; set; } = true;
     public string Name { get; set; } = "OIDC User";
     public bool FailTokenExchange { get; set; }
     public bool ReturnExpiredToken { get; set; }
@@ -103,7 +104,7 @@ public sealed class OidcMockHandler : HttpMessageHandler
         {
             ["sub"] = Subject,
             ["email"] = Email,
-            ["email_verified"] = true,
+            ["email_verified"] = EmailVerified,
             ["name"] = Name,
         };
 
@@ -149,7 +150,7 @@ public sealed class OidcMockHandler : HttpMessageHandler
         {
             sub = Subject,
             email = Email,
-            email_verified = true,
+            email_verified = EmailVerified,
             name = Name,
             given_name = "OIDC",
             family_name = "User",

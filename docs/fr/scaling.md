@@ -40,11 +40,11 @@ Un petit nombre de valeurs frequemment lues et changeant lentement sont mises en
 
 | Donnees | Duree du cache | Impact de l'obsolescence |
 |---|---|---|
-| Documents de decouverte OIDC | 60 minutes | Prise de conscience retardee de la rotation des cles IdP |
-| Metadonnees SAML IdP | 60 minutes | Idem |
-| Origines CORS autorisees | 60 minutes | Les nouvelles origines mettent jusqu'a une heure a se propager |
+| Documents de decouverte OIDC | 60 minutes (configurable) | Prise de conscience retardee de la rotation des cles IdP |
+| Metadonnees SAML IdP | 60 minutes (configurable) | Idem |
+| Origines CORS autorisees | 60 minutes (configurable) | Les nouvelles origines mettent jusqu'a une heure a se propager |
 
-Ces caches sont acceptables pour une utilisation en production. Si vous avez besoin d'une propagation immediate, redemarrez les instances concernees.
+Ces caches sont acceptables pour une utilisation en production. Toutes les durees sont configurables via la section de configuration `Cache` — voir [Configuration](configuration). Si vous avez besoin d'une propagation immediate, redemarrez les instances concernees.
 
 ## Limitation du debit
 
@@ -60,7 +60,7 @@ Cela signifie que les limites de debit sont appliquees globalement : si un clien
 
 Chaque instance genere un identifiant de noeud hexadecimal aleatoire au demarrage (par exemple, `a3f1b2`). Cet identifiant identifie l'instance dans les messages gossip et l'etat de limitation du debit. Il n'est pas persiste -- un nouvel identifiant est genere a chaque redemarrage.
 
-Un `ClusterLeaderService` s'execute sur chaque instance, elisant un leader unique parmi les pairs decouverts (l'identifiant de noeud le plus bas l'emporte). Le leadership est transfere automatiquement lorsque le leader tombe en panne. L'election du leader est disponible pour les taches de coordination a l'echelle du cluster qui ne doivent s'executer que sur un seul noeud.
+Un `ClusterLeaderService` s'execute sur chaque instance, elisant un leader unique parmi les pairs decouverts (l'identifiant de noeud le plus bas l'emporte). Le leadership est transfere automatiquement lorsque le leader tombe en panne. Le leader sert a la coordination a l'echelle du cluster — actuellement, la rotation des cles de signature (lorsqu'elle est activee) ne s'execute que sur le leader pour eviter la generation simultanee de cles.
 
 ### Configuration du cluster
 
@@ -98,6 +98,17 @@ Consultez la page [Configuration](configuration) pour tous les parametres du clu
 ### Deploiements multi-tenant
 
 En mode multi-tenant (`AddAuthagonalCore()`), les services d'arriere-plan comme `GrantReconciliationService` et `SigningKeyRotationService` ne sont pas enregistres -- l'hote les gere par tenant. Seul `TokenCleanupService` s'execute inconditionnellement.
+
+## Partition chaude de l'index de noms
+
+La recherche par prefixe de nom dans l'administration s'appuie sur les tables d'index `UserFirstNames` / `UserLastNames`, qui utilisent une **partition chaude unique**. A grande echelle, cela plafonne le debit d'ecriture de l'index a environ 2 000 ops/sec, ce qui peut devenir un goulot d'etranglement lors de la creation/mise a jour d'utilisateurs sous forte charge. Si vous n'exposez pas la recherche de noms dans l'administration, definissez `Storage:NameIndexesEnabled = false` pour ignorer entierement ces ecritures. Voir [Configuration](configuration).
+
+## Proxy de confiance et points d'acces internes
+
+Lors de l'execution de plusieurs instances derriere un equilibreur de charge :
+
+- **En-tetes transferes** — la limitation de debit et le verrouillage se basent sur l'IP du client, resolue depuis `X-Forwarded-For`. Definissez `ForwardedHeaders:KnownNetworks` sur le CIDR de votre ingress / de vos pods afin que l'IP du client ne puisse pas etre usurpee entre les instances. `ForwardedHeaders:ForwardLimit` vaut `1` par defaut. Voir [Configuration](configuration#forwarded-headers-trusted-proxy).
+- **Points d'acces internes** — `/_internal/cluster/gossip` et `/_internal/backchannel-logout` sont proteges par l'IP source (boucle locale / privee uniquement) sauf si `Cluster:Secret` est defini. Lorsque le gossip est achemine via un equilibreur de charge (`Cluster:InternalUrl`), l'equilibreur reecrit l'IP source ; definissez donc `Cluster:Secret` et l'appelant du gossip le presentera dans l'en-tete `X-Cluster-Secret`.
 
 ## Recommandations de mise a l'echelle
 

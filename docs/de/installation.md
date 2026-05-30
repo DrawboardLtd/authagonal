@@ -112,6 +112,16 @@ npm install @authagonal/login
 
 Das Paket liefert kompiliertes JS und CSS -- importieren Sie Komponenten und Stile direkt in Ihre eigene React-App. Siehe [Benutzerdefinierter Server](custom-server) fuer eine vollstaendige Anleitung.
 
+## Sicherheits-Checkliste fuer die Produktion
+
+Bevor Sie Authagonal echtem Datenverkehr aussetzen, bestaetigen Sie Folgendes. Jeder Punkt wird auf der Seite [Konfiguration](configuration) ausfuehrlich beschrieben.
+
+- **Hinter einem TLS-terminierenden Proxy betreiben.** Authagonal muss hinter einem Reverse-Proxy / Ingress laufen, der TLS terminiert. Das Sitzungs-Cookie verwendet `SecurePolicy = SameAsRequest`, und HSTS wird nur bei HTTPS gesendet, sodass der Proxy `X-Forwarded-Proto: https` weiterleiten muss. Setzen Sie `ForwardedHeaders:KnownNetworks` (oder `KnownProxies`) auf Ihr Ingress- / Pod-CIDR, damit Client-IP und Schema nicht gefaelscht werden koennen; `ForwardedHeaders:ForwardLimit` ist standardmaessig `1` (nur dem letzten Hop vertrauen).
+- **`SecretProvider:VaultUri` setzen.** Der Standard-Geheimnis-Anbieter speichert im **Klartext** — ohne Key Vault werden Geheimnisse von vorgelagerten OIDC-Clients sowie TOTP-/MFA-Seeds im Klartext in Table Storage (und in Sicherungen) gespeichert. Konfigurieren Sie Key Vault fuer jedes Produktions-Deployment.
+- **Die Admin-API absichern.** `AdminApi:Enabled` ist standardmaessig **true**. Der Admin-Scope (`AdminApi:Scope`, Standard `authagonal-admin`) gewaehrt vollstaendige Verwaltung und Benutzer-Imitation. Beschraenken Sie die `/api/v1/*`-Admin-Routen auf Netzwerkebene und kontrollieren Sie streng, wem der Admin-Scope ausgestellt wird, oder setzen Sie `AdminApi:Enabled = false`, falls nicht verwendet.
+- **Interne Endpunkte schuetzen.** Setzen Sie `Cluster:Secret`, damit `/_internal/cluster/gossip` und `/_internal/backchannel-logout` den Header `X-Cluster-Secret` erfordern — besonders, wenn Gossip ueber einen Load Balancer via `Cluster:InternalUrl` geleitet wird.
+- **Sicherungen verschluesseln.** Mit dem Klartext-Geheimnis-Anbieter enthalten Sicherungen Geheimnisse. Die Tabelle `SigningKeys` ist standardmaessig von Sicherungen ausgeschlossen; wenn Sie sich ueber `Backup:IncludeSigningKeys` dafuer entscheiden, muss das Sicherungsziel verschluesselt im Ruhezustand sein. Siehe [Sicherung & Wiederherstellung](backup-restore).
+
 ## Migrationstool
 
 Fuer die Migration von Duende IdentityServer + SQL Server:

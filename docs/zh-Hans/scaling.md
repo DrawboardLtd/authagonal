@@ -44,7 +44,7 @@ ASP.NET Core 的 Data Protection 密钥在使用真实 Azure Storage 连接字�
 | SAML IdP 元数据 | 60 分钟 | 同上 |
 | CORS 允许来源 | 60 分钟 | 新来源最多需要一小时才能生效 |
 
-这些缓存适用于生产环境。如果需要立即生效，请重启受影响的实例。
+这些缓存适用于生产环境。所有时长都可通过 `Cache` 配置节配置——参见[配置](configuration)。如果需要立即生效，请重启受影响的实例。
 
 ## 速率限制
 
@@ -60,7 +60,7 @@ ASP.NET Core 的 Data Protection 密钥在使用真实 Azure Storage 连接字�
 
 每个实例在启动时生成一个随机的十六进制节点 ID（例如 `a3f1b2`）。此 ID 用于在 gossip 消息和速率限制状态中标识实例。它不会持久化 -- 每次重启都会生成新的 ID。
 
-`ClusterLeaderService` 在每个实例上运行，在已发现的对等节点中选举单个领导者（最小节点 ID 获胜）。当领导者下线时，领导权自动转移。领导者选举可用于应仅在一个节点上运行的集群范围协调任务。
+`ClusterLeaderService` 在每个实例上运行，在已发现的对等节点中选举单个领导者（最小节点 ID 获胜）。当领导者下线时，领导权自动转移。领导者用于集群范围的协调——目前，签名密钥轮换（启用时）仅在领导者上运行，以避免并发的密钥生成。
 
 ### 集群配置
 
@@ -98,6 +98,17 @@ ASP.NET Core 的 Data Protection 密钥在使用真实 Azure Storage 连接字�
 ### 多租户部署
 
 在多租户模式下（`AddAuthagonalCore()`），后台服务如 `GrantReconciliationService` 和 `SigningKeyRotationService` 不会被注册 -- 由宿主按租户管理这些服务。只有 `TokenCleanupService` 会无条件运行。
+
+## 姓名索引热分区
+
+管理员姓名前缀搜索由 `UserFirstNames` / `UserLastNames` 索引表支撑，这些表使用**单个热分区**。在规模化时，这会将索引写入吞吐量限制在大约 2,000 ops/秒，在高负载下可能成为用户创建/更新的瓶颈。如果您不向外暴露管理员姓名搜索，请设置 `Storage:NameIndexesEnabled = false` 以完全跳过这些写入。参见[配置](configuration)。
+
+## 受信任代理与内部端点
+
+在负载均衡器后面运行多个实例时：
+
+- **转发头** — 速率限制和锁定以客户端 IP 为键，该 IP 从 `X-Forwarded-For` 解析。将 `ForwardedHeaders:KnownNetworks` 设为您的入口 / Pod CIDR，使客户端 IP 无法跨实例被伪造。`ForwardedHeaders:ForwardLimit` 默认为 `1`。参见[配置](configuration#forwarded-headers-trusted-proxy)。
+- **内部端点** — `/_internal/cluster/gossip` 和 `/_internal/backchannel-logout` 受源 IP 保护（仅环回 / 私有），除非设置了 `Cluster:Secret`。当 gossip 通过负载均衡器路由（`Cluster:InternalUrl`）时，负载均衡器会改写源 IP，因此请设置 `Cluster:Secret`，gossip 调用方将在 `X-Cluster-Secret` 请求头中提供它。
 
 ## 扩展建议
 

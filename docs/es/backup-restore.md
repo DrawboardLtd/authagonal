@@ -43,7 +43,11 @@ backups/
     _manifest.json
 ```
 
-Cada archivo `.jsonl` contiene un objeto JSON por linea (uno por entidad de tabla). Con `--gzip`, los archivos se comprimen como `.jsonl.gz`. El archivo `_manifest.json` registra la marca de tiempo de la copia de seguridad, el modo, la compresion y el recuento de entidades.
+Cada archivo `.jsonl` contiene un objeto JSON por linea (uno por entidad de tabla). Con `--gzip`, los archivos se comprimen como `.jsonl.gz`. El archivo `_manifest.json` registra la marca de tiempo de la copia de seguridad, el modo, la compresion, el recuento de entidades y los hashes SHA-256 de los archivos para la verificacion de integridad.
+
+### Verificacion de integridad
+
+Cada manifiesto de copia de seguridad incluye un diccionario `FileHashes` que asigna los nombres de archivo a sus hashes SHA-256. Durante la restauracion, la integridad de los archivos se verifica automaticamente contra estos hashes antes de escribir cualquier dato. Si se detecta una discrepancia de hash, la restauracion se aborta con un error.
 
 ### Copias de seguridad incrementales
 
@@ -55,9 +59,17 @@ Si no existe un archivo `.lastbackup`, la primera ejecucion incremental realiza 
 
 La herramienta de copia de seguridad incluye todas las tablas de Authagonal de forma predeterminada:
 
-`Users`, `UserEmails`, `UserLogins`, `UserExternalIds`, `Clients`, `Grants`, `GrantsBySubject`, `GrantsByExpiry`, `SigningKeys`, `SsoDomains`, `SamlProviders`, `OidcProviders`, `UserProvisions`, `MfaCredentials`, `MfaChallenges`, `MfaWebAuthnIndex`, `ScimTokens`, `ScimGroups`, `ScimGroupExternalIds`, `Roles`
+`Users`, `UserEmails`, `UserLogins`, `UserExternalIds`, `Clients`, `Grants`, `GrantsBySubject`, `GrantsByExpiry`, `SsoDomains`, `SamlProviders`, `OidcProviders`, `UserProvisions`, `MfaCredentials`, `MfaChallenges`, `MfaWebAuthnIndex`, `ScimTokens`, `ScimGroups`, `ScimGroupExternalIds`, `Roles`
 
 Las tablas transitorias (`SamlReplayCache`, `OidcStateStore`) se excluyen de forma predeterminada; incluyalas explicitamente con `--tables` si es necesario.
+
+### Las claves de firma se excluyen de forma predeterminada
+
+La tabla `SigningKeys` **se excluye de las copias de seguridad de forma predeterminada** (`Backup:IncludeSigningKeys` es `false` por defecto). Para hosts que usan la fuente de claves local (almacenada en tabla), esta tabla contiene la **clave privada** de firma de los JWT; escribirla en un archivo de copia de seguridad en texto plano permitiria que cualquiera que lea la copia de seguridad falsifique tokens. (Los hosts que firman mediante HashiCorp Vault Transit no guardan ninguna clave privada en la tabla, por lo que esta consideracion no les aplica.)
+
+> ⚠️ Opte por incluirla mediante `Backup:IncludeSigningKeys` solo cuando el destino de la copia de seguridad este cifrado en reposo y tenga control de acceso. Lo mismo aplica al resto de la copia de seguridad: con el proveedor de secretos de **texto plano** predeterminado, las copias de seguridad tambien contienen secretos de clientes OIDC upstream y semillas TOTP / MFA en texto claro; ver [Configuracion → Proveedor de secretos](configuration#secret-provider).
+
+En la restauracion, la integridad de los archivos se verifica contra los hashes SHA-256 del manifiesto antes de escribir cualquier dato (ver [Verificacion de integridad](#verificacion-de-integridad)); una discrepancia de hash aborta la restauracion.
 
 ## Restauracion
 

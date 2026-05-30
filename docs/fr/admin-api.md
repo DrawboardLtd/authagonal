@@ -144,6 +144,106 @@ DELETE /api/v1/oidc/connections/{connectionId}     # Supprimer
 GET    /api/v1/sso/domains                 # Lister tous
 ```
 
+## Clients
+
+Gerez les clients OAuth a l'execution. Toutes les routes necessitent la politique `IdentityAdmin` (le scope d'administration).
+
+```
+GET    /api/v1/clients              # Lister tous les clients
+GET    /api/v1/clients/{clientId}   # Obtenir un client
+POST   /api/v1/clients              # Creer un client
+PUT    /api/v1/clients/{clientId}   # Mettre a jour un client
+DELETE /api/v1/clients/{clientId}   # Supprimer un client
+```
+
+### Creer / Mettre a jour un client
+
+```
+POST /api/v1/clients
+Content-Type: application/json
+
+{
+  "clientId": "my-app",
+  "clientName": "My Application",
+  "allowedGrantTypes": ["authorization_code"],
+  "redirectUris": ["https://app.example.com/callback"],
+  "allowedScopes": ["openid", "profile", "email"]
+}
+```
+
+`POST` renvoie `409` si le client existe deja. `PUT` met a jour un client existant (`404` s'il est introuvable) ; lors de la mise a jour, seuls les scopes nouvellement ajoutes font l'objet d'une verification d'escalade.
+
+Remarques :
+
+- **Les empreintes de secret ne sont jamais renvoyees.** `clientSecretHashes` est retire de chaque reponse (liste, obtention, creation, mise a jour). Lors de la mise a jour, omettre `clientSecretHashes` conserve le secret stocke ; fournir de nouvelles empreintes le fait tourner.
+- **Le scope d'administration ne peut pas etre accorde a un client.** Demander `AdminApi:Scope` (par defaut `authagonal-admin`) dans `allowedScopes` renvoie `403 forbidden_scope` — aucun client ne peut detenir le scope d'administration, sinon un client `client_credentials` pourrait emettre des jetons d'administration indefiniment.
+- Ajouter des scopes que l'appelant n'est pas autorise a accorder renvoie `403`.
+
+## Scopes
+
+Gerez les scopes OAuth personnalises a l'execution. Voir [Scopes OAuth](scopes) pour le modele de scope complet.
+
+```
+GET    /api/v1/scopes           # Lister tous les scopes
+GET    /api/v1/scopes/{name}    # Obtenir un scope
+POST   /api/v1/scopes           # Creer un scope
+PUT    /api/v1/scopes/{name}    # Mettre a jour un scope (seuls les champs fournis changent)
+DELETE /api/v1/scopes/{name}    # Supprimer un scope
+```
+
+```
+POST /api/v1/scopes
+Content-Type: application/json
+
+{
+  "name": "billing.read",
+  "displayName": "Billing — read-only",
+  "description": "View invoices and payment history",
+  "userClaims": ["billing_plan"]
+}
+```
+
+Renvoie `201` a la creation (`409` si le scope existe deja), le JSON du scope a l'obtention/mise a jour, et `204` a la suppression.
+
+## Applications de provisionnement
+
+Gerez les cibles de provisionnement en aval a l'execution. Toutes les routes necessitent la politique `IdentityAdmin`.
+
+```
+GET    /api/v1/provisioning/apps               # Lister les applications (renvoie aussi la limite configuree)
+POST   /api/v1/provisioning/apps               # Creer une application
+PUT    /api/v1/provisioning/apps/{appId}       # Mettre a jour une application
+DELETE /api/v1/provisioning/apps/{appId}       # Supprimer une application
+POST   /api/v1/provisioning/apps/{appId}/test  # Envoyer un appel /try de test vers le callback de l'application
+```
+
+### Creer / Mettre a jour une application de provisionnement
+
+```
+POST /api/v1/provisioning/apps
+Content-Type: application/json
+
+{
+  "name": "Backend",
+  "callbackUrl": "https://api.example.com/provisioning",
+  "apiKey": "secret-api-key",
+  "tryTimeoutSeconds": 30
+}
+```
+
+- `name` et `callbackUrl` sont requis ; `callbackUrl` doit etre une URL `http(s)` absolue.
+- `tryTimeoutSeconds` est borne a la plage 5–300.
+- **La cle API n'est jamais renvoyee.** Les reponses exposent `hasApiKey` (un booleen) au lieu de la cle elle-meme. Lors de la mise a jour, omettre `apiKey` la laisse inchangee, une chaine vide l'efface, et une valeur la remplace.
+- La creation est soumise a un quota configurable par deploiement (`IProvisioningAppQuota`) ; le depassement renvoie `400 provisioning_app_limit`. La reponse de liste inclut la `limit` actuelle.
+
+### Tester une application de provisionnement
+
+```
+POST /api/v1/provisioning/apps/{appId}/test
+```
+
+Envoie un `POST {callbackUrl}/try` synthetique avec une charge utile d'exemple (et la cle API de l'application comme jeton bearer si elle est definie) et renvoie `{ success, statusCode, body }` afin que vous puissiez verifier la connectivite depuis l'interface d'administration.
+
 ## Roles
 
 ### Lister les roles
@@ -252,7 +352,20 @@ DELETE /api/v1/scim/tokens/{tokenId}?clientId=client-id
 ### Usurper l'identite d'un utilisateur
 
 ```
-POST /api/v1/token?clientId=client-id&userId=user-id&scopes=openid,profile
+POST /api/v1/token?clientId=client-id&userId=user-id&scopes=openid%20profile
 ```
 
-Emet des jetons au nom d'un utilisateur sans necessiter ses identifiants. Utile pour les tests et le support. Les parametres sont passes en tant que chaines de requete. Le parametre optionnel `refreshTokenLifetime` controle la validite du jeton de rafraichissement.
+Emet des jetons (acces, rafraichissement, et — lorsque `openid` est demande — jeton d'identite) au nom d'un utilisateur sans necessiter ses identifiants. Utile pour les tests et le support. Les parametres sont passes en tant que chaines de requete.
+
+| Parametre de requete | Requis | Description |
+|---|---|---|
+| `clientId` | Oui | Le client pour lequel les jetons sont emis. Les durees de vie des jetons proviennent de la configuration de ce client. |
+| `userId` | Oui | L'utilisateur a usurper. |
+| `scopes` | Non | Liste de scopes **separes par des espaces** (encodez les espaces en URL). Par defaut, les `AllowedScopes` du client lorsqu'il est omis. |
+
+Restrictions :
+
+- Les scopes sont limites aux `AllowedScopes` du client — demander un scope que le client ne pourrait pas lui-meme demander renvoie `400 invalid_scope`.
+- Le scope d'administration (`AdminApi:Scope`, par defaut `authagonal-admin`) **ne peut pas** etre emis via ce point d'acces ; le demander renvoie `403 forbidden_scope`. Cela empeche un jeton d'administration (eventuellement a duree limitee) d'emettre un jeton d'acces/rafraichissement d'administration de longue duree.
+
+La reponse est une reponse de jeton standard avec `access_token`, `refresh_token`, `id_token` optionnel, `expires_in`, et le `scope` accorde (separe par des espaces).

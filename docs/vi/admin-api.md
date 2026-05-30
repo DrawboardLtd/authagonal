@@ -144,6 +144,106 @@ DELETE /api/v1/oidc/connections/{connectionId}     # Xóa
 GET    /api/v1/sso/domains                 # Liệt kê tất cả
 ```
 
+## Client
+
+Quản lý các OAuth client tại thời điểm chạy. Tất cả route yêu cầu policy `IdentityAdmin` (scope quản trị).
+
+```
+GET    /api/v1/clients              # Liệt kê tất cả client
+GET    /api/v1/clients/{clientId}   # Lấy một client
+POST   /api/v1/clients              # Tạo một client
+PUT    /api/v1/clients/{clientId}   # Cập nhật một client
+DELETE /api/v1/clients/{clientId}   # Xóa một client
+```
+
+### Tạo / Cập nhật Client
+
+```
+POST /api/v1/clients
+Content-Type: application/json
+
+{
+  "clientId": "my-app",
+  "clientName": "My Application",
+  "allowedGrantTypes": ["authorization_code"],
+  "redirectUris": ["https://app.example.com/callback"],
+  "allowedScopes": ["openid", "profile", "email"]
+}
+```
+
+`POST` trả về `409` nếu client đã tồn tại. `PUT` cập nhật một client hiện có (`404` nếu không tìm thấy); khi cập nhật, chỉ các scope mới được thêm vào mới bị kiểm tra leo thang đặc quyền.
+
+Lưu ý:
+
+- **Hash bí mật không bao giờ được trả về.** `clientSecretHashes` bị loại bỏ khỏi mọi phản hồi (liệt kê, lấy, tạo, cập nhật). Khi cập nhật, việc bỏ qua `clientSecretHashes` sẽ giữ nguyên bí mật đã lưu; cung cấp hash mới sẽ xoay vòng nó.
+- **Scope quản trị không thể được cấp cho một client.** Yêu cầu `AdminApi:Scope` (mặc định `authagonal-admin`) trong `allowedScopes` sẽ trả về `403 forbidden_scope` — không client nào được giữ scope quản trị, nếu không một client `client_credentials` có thể cấp token quản trị vô thời hạn.
+- Thêm các scope mà người gọi không được phép cấp sẽ trả về `403`.
+
+## Scope
+
+Quản lý các OAuth scope tùy chỉnh tại thời điểm chạy. Xem [OAuth Scopes](scopes) để biết mô hình scope đầy đủ.
+
+```
+GET    /api/v1/scopes           # Liệt kê tất cả scope
+GET    /api/v1/scopes/{name}    # Lấy một scope
+POST   /api/v1/scopes           # Tạo một scope
+PUT    /api/v1/scopes/{name}    # Cập nhật một scope (chỉ các trường được cung cấp mới thay đổi)
+DELETE /api/v1/scopes/{name}    # Xóa một scope
+```
+
+```
+POST /api/v1/scopes
+Content-Type: application/json
+
+{
+  "name": "billing.read",
+  "displayName": "Billing — read-only",
+  "description": "View invoices and payment history",
+  "userClaims": ["billing_plan"]
+}
+```
+
+Trả về `201` khi tạo (`409` nếu scope đã tồn tại), JSON của scope khi lấy/cập nhật, và `204` khi xóa.
+
+## Ứng dụng cấp phát
+
+Quản lý các đích cấp phát phía sau tại thời điểm chạy. Tất cả route yêu cầu policy `IdentityAdmin`.
+
+```
+GET    /api/v1/provisioning/apps               # Liệt kê các app (cũng trả về giới hạn đã cấu hình)
+POST   /api/v1/provisioning/apps               # Tạo một app
+PUT    /api/v1/provisioning/apps/{appId}       # Cập nhật một app
+DELETE /api/v1/provisioning/apps/{appId}       # Xóa một app
+POST   /api/v1/provisioning/apps/{appId}/test  # Gửi một lệnh gọi /try thử nghiệm đến callback của app
+```
+
+### Tạo / Cập nhật Ứng dụng cấp phát
+
+```
+POST /api/v1/provisioning/apps
+Content-Type: application/json
+
+{
+  "name": "Backend",
+  "callbackUrl": "https://api.example.com/provisioning",
+  "apiKey": "secret-api-key",
+  "tryTimeoutSeconds": 30
+}
+```
+
+- `name` và `callbackUrl` là bắt buộc; `callbackUrl` phải là một URL `http(s)` tuyệt đối.
+- `tryTimeoutSeconds` bị giới hạn trong khoảng 5–300.
+- **Khóa API không bao giờ được trả về.** Các phản hồi hiển thị `hasApiKey` (một boolean) thay vì chính khóa đó. Khi cập nhật, việc bỏ qua `apiKey` sẽ giữ nguyên nó, một chuỗi rỗng sẽ xóa nó, và một giá trị sẽ thay thế nó.
+- Việc tạo phải tuân theo một hạn ngạch cấu hình được theo từng triển khai (`IProvisioningAppQuota`); vượt quá nó sẽ trả về `400 provisioning_app_limit`. Phản hồi liệt kê bao gồm `limit` hiện tại.
+
+### Thử nghiệm một Ứng dụng cấp phát
+
+```
+POST /api/v1/provisioning/apps/{appId}/test
+```
+
+Gửi một `POST {callbackUrl}/try` tổng hợp với payload mẫu (và khóa API của app dưới dạng bearer token nếu được đặt) và trả về `{ success, statusCode, body }` để bạn có thể xác minh khả năng kết nối từ giao diện quản trị.
+
 ## Vai trò
 
 ### Liệt kê vai trò
@@ -252,7 +352,20 @@ DELETE /api/v1/scim/tokens/{tokenId}?clientId=client-id
 ### Giả mạo người dùng
 
 ```
-POST /api/v1/token?clientId=client-id&userId=user-id&scopes=openid,profile
+POST /api/v1/token?clientId=client-id&userId=user-id&scopes=openid%20profile
 ```
 
-Cấp token thay mặt người dùng mà không cần thông tin đăng nhập của họ. Hữu ích cho kiểm thử và hỗ trợ. Các tham số được truyền dưới dạng query string. Tham số `refreshTokenLifetime` tùy chọn điều khiển thời hạn refresh token.
+Cấp token (access, refresh, và — khi `openid` được yêu cầu — id token) thay mặt người dùng mà không cần thông tin đăng nhập của họ. Hữu ích cho kiểm thử và hỗ trợ. Các tham số được truyền dưới dạng query string.
+
+| Tham số query | Bắt buộc | Mô tả |
+|---|---|---|
+| `clientId` | Có | Client mà token được cấp cho. Thời hạn token đến từ cấu hình của client này. |
+| `userId` | Có | Người dùng cần giả mạo. |
+| `scopes` | Không | Danh sách scope **phân cách bằng dấu cách** (mã hóa URL các dấu cách). Mặc định là `AllowedScopes` của client khi bỏ qua. |
+
+Hạn chế:
+
+- Các scope bị giới hạn trong `AllowedScopes` của client — yêu cầu bất kỳ scope nào mà chính client không thể tự yêu cầu sẽ trả về `400 invalid_scope`.
+- Scope quản trị (`AdminApi:Scope`, mặc định `authagonal-admin`) **không thể** được cấp qua endpoint này; yêu cầu nó sẽ trả về `403 forbidden_scope`. Điều này ngăn một token quản trị (có thể có thời hạn giới hạn) cấp một access/refresh token quản trị tồn tại lâu dài.
+
+Phản hồi là một phản hồi token tiêu chuẩn với `access_token`, `refresh_token`, `id_token` tùy chọn, `expires_in`, và `scope` được cấp (phân cách bằng dấu cách).

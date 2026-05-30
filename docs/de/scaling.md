@@ -40,11 +40,11 @@ Eine kleine Anzahl von haeufig gelesenen, sich langsam aendernden Werten wird pr
 
 | Daten | Cache-Dauer | Auswirkung bei Veralterung |
 |---|---|---|
-| OIDC Discovery-Dokumente | 60 Minuten | Verzoegerte Erkennung von IdP-Schluesselrotation |
-| SAML IdP-Metadaten | 60 Minuten | Gleich |
-| CORS erlaubte Origins | 60 Minuten | Neue Origins benoetigen bis zu einer Stunde zur Verbreitung |
+| OIDC Discovery-Dokumente | 60 Minuten (konfigurierbar) | Verzoegerte Erkennung von IdP-Schluesselrotation |
+| SAML IdP-Metadaten | 60 Minuten (konfigurierbar) | Gleich |
+| CORS erlaubte Origins | 60 Minuten (konfigurierbar) | Neue Origins benoetigen bis zu einer Stunde zur Verbreitung |
 
-Diese Caches sind fuer den Produktionseinsatz akzeptabel. Wenn Sie eine sofortige Verbreitung benoetigen, starten Sie die betroffenen Instanzen neu.
+Diese Caches sind fuer den Produktionseinsatz akzeptabel. Alle Dauern sind ueber den Konfigurationsabschnitt `Cache` konfigurierbar — siehe [Konfiguration](configuration). Wenn Sie eine sofortige Verbreitung benoetigen, starten Sie die betroffenen Instanzen neu.
 
 ## Ratenbegrenzung
 
@@ -60,7 +60,7 @@ Das bedeutet, dass Ratenbegrenzungen global durchgesetzt werden: Wenn ein Client
 
 Jede Instanz generiert beim Start eine zufaellige hexadezimale Knoten-ID (z.B. `a3f1b2`). Diese ID identifiziert die Instanz in Gossip-Nachrichten und dem Ratenbegrenzungsstatus. Sie wird nicht persistiert -- bei jedem Neustart wird eine neue ID generiert.
 
-Ein `ClusterLeaderService` laeuft auf jeder Instanz und waehlt einen einzelnen Leader unter den entdeckten Peers (niedrigste Knoten-ID gewinnt). Die Fuehrung wird automatisch uebertragen, wenn der Leader ausfaellt. Die Leader-Wahl steht fuer cluster-weite Koordinationsaufgaben zur Verfuegung, die nur auf einem Knoten ausgefuehrt werden sollen.
+Ein `ClusterLeaderService` laeuft auf jeder Instanz und waehlt einen einzelnen Leader unter den entdeckten Peers (niedrigste Knoten-ID gewinnt). Die Fuehrung wird automatisch uebertragen, wenn der Leader ausfaellt. Der Leader wird fuer cluster-weite Koordination verwendet — derzeit laeuft die Signaturschluesselrotation (wenn aktiviert) nur auf dem Leader, um gleichzeitige Schluesselerzeugung zu vermeiden.
 
 ### Cluster-Konfiguration
 
@@ -98,6 +98,17 @@ Siehe die Seite [Konfiguration](configuration) fuer alle Cluster-Einstellungen.
 ### Multi-Mandanten-Deployments
 
 Im Multi-Mandanten-Modus (`AddAuthagonalCore()`) werden Hintergrunddienste wie `GrantReconciliationService` und `SigningKeyRotationService` nicht registriert -- der Host verwaltet diese pro Mandant. Nur `TokenCleanupService` laeuft bedingungslos.
+
+## Heisse Partition des Namensindex
+
+Die Admin-Namenspraefixsuche wird durch die Indextabellen `UserFirstNames` / `UserLastNames` gestuetzt, die eine **einzige heisse Partition** verwenden. Bei Skalierung begrenzt dies den Index-Schreibdurchsatz auf etwa 2.000 Operationen/Sek., was bei hoher Last zu einem Engpass beim Erstellen/Aktualisieren von Benutzern werden kann. Wenn Sie keine Admin-Namenssuche anbieten, setzen Sie `Storage:NameIndexesEnabled = false`, um diese Schreibvorgaenge vollstaendig zu vermeiden. Siehe [Konfiguration](configuration).
+
+## Vertrauenswuerdiger Proxy und interne Endpunkte
+
+Beim Betrieb mehrerer Instanzen hinter einem Load Balancer:
+
+- **Weitergeleitete Header** — Ratenbegrenzung und Kontosperre basieren auf der Client-IP, die aus `X-Forwarded-For` aufgeloest wird. Setzen Sie `ForwardedHeaders:KnownNetworks` auf Ihr Ingress- / Pod-CIDR, damit die Client-IP nicht ueber Instanzen hinweg gefaelscht werden kann. `ForwardedHeaders:ForwardLimit` ist standardmaessig `1`. Siehe [Konfiguration](configuration#forwarded-headers-trusted-proxy).
+- **Interne Endpunkte** — `/_internal/cluster/gossip` und `/_internal/backchannel-logout` werden anhand der Quell-IP geschuetzt (nur Loopback / privat), sofern nicht `Cluster:Secret` gesetzt ist. Wenn Gossip ueber einen Load Balancer geleitet wird (`Cluster:InternalUrl`), schreibt der LB die Quell-IP um, daher setzen Sie `Cluster:Secret`, und der Gossip-Aufrufer praesentiert es im Header `X-Cluster-Secret`.
 
 ## Skalierungsempfehlungen
 

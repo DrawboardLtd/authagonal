@@ -44,7 +44,7 @@ Um pequeno número de valores lidos com frequência e que mudam lentamente são 
 | Metadados do SAML IdP | 60 minutos | Mesmo |
 | Origens CORS permitidas | 60 minutos | Novas origens levam até uma hora para propagar |
 
-Esses caches são aceitáveis para uso em produção. Se você precisar de propagação imediata, reinicie as instâncias afetadas.
+Esses caches são aceitáveis para uso em produção. Todas as durações são configuráveis através da seção de configuração `Cache` — consulte [Configuração](configuration). Se você precisar de propagação imediata, reinicie as instâncias afetadas.
 
 ## Limitação de taxa
 
@@ -60,7 +60,7 @@ Isso significa que os limites de taxa são aplicados globalmente: se um cliente 
 
 Cada instância gera um ID de nó hexadecimal aleatório na inicialização (ex.: `a3f1b2`). Este ID identifica a instância nas mensagens de gossip e no estado de limitação de taxa. Não é persistido — um novo ID é gerado a cada reinicialização.
 
-Um `ClusterLeaderService` executa em cada instância, elegendo um único líder entre os peers descobertos (o ID de nó mais baixo vence). A liderança é transferida automaticamente quando o líder morre. A eleição de líder está disponível para tarefas de coordenação ao nível do cluster que devem ser executadas em apenas um nó.
+Um `ClusterLeaderService` executa em cada instância, elegendo um único líder entre os peers descobertos (o ID de nó mais baixo vence). A liderança é transferida automaticamente quando o líder morre. O líder é usado para coordenação ao nível do cluster — atualmente, a rotação de chaves de assinatura (quando habilitada) é executada apenas no líder para evitar a geração concorrente de chaves.
 
 ### Configuração do cluster
 
@@ -98,6 +98,17 @@ Consulte a página de [Configuração](configuration) para todas as configuraç�
 ### Implantações multi-tenant
 
 No modo multi-tenant (`AddAuthagonalCore()`), serviços em segundo plano como `GrantReconciliationService` e `SigningKeyRotationService` não são registados — o host gere-os por tenant. Apenas o `TokenCleanupService` é executado incondicionalmente.
+
+## Partição quente do índice de nomes
+
+A pesquisa por prefixo de nome no admin é suportada pelas tabelas de índice `UserFirstNames` / `UserLastNames`, que usam uma **única partição quente**. Em escala, isto limita o débito de escrita do índice a cerca de 2.000 ops/seg, o que pode tornar-se um estrangulamento na criação/atualização de utilizadores sob carga pesada. Se não expuser a pesquisa de nomes no admin, defina `Storage:NameIndexesEnabled = false` para evitar completamente essas gravações. Consulte [Configuração](configuration).
+
+## Proxy confiável e endpoints internos
+
+Ao executar múltiplas instâncias atrás de um balanceador de carga:
+
+- **Cabeçalhos encaminhados** — a limitação de taxa e o bloqueio indexam pelo IP do cliente, resolvido a partir de `X-Forwarded-For`. Defina `ForwardedHeaders:KnownNetworks` para o CIDR do seu ingress / pod para que o IP do cliente não possa ser falsificado entre instâncias. `ForwardedHeaders:ForwardLimit` tem por padrão `1`. Consulte [Configuração](configuration#forwarded-headers-trusted-proxy).
+- **Endpoints internos** — `/_internal/cluster/gossip` e `/_internal/backchannel-logout` são protegidos por IP de origem (apenas loopback / privado) a menos que `Cluster:Secret` esteja definido. Quando o gossip é roteado através de um balanceador de carga (`Cluster:InternalUrl`), o LB reescreve o IP de origem, portanto defina `Cluster:Secret` e o chamador do gossip apresentá-lo-á no cabeçalho `X-Cluster-Secret`.
 
 ## Recomendações de escalabilidade
 

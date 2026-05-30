@@ -10,10 +10,22 @@ Authagonal được cấu hình qua `appsettings.json` hoặc biến môi trư�
 
 ## Cài đặt bắt buộc
 
+Bộ lưu trữ có thể được cấu hình theo một trong hai cách — cung cấp **một trong hai** `Storage:ConnectionString` **hoặc** `Storage:TableServiceUri` (đường dẫn managed-identity, được ưu tiên trong production).
+
 | Cài đặt | Biến môi trường | Mô tả |
 |---|---|---|
-| `Storage:ConnectionString` | `Storage__ConnectionString` | Chuỗi kết nối Azure Table Storage |
+| `Storage:ConnectionString` | `Storage__ConnectionString` | Chuỗi kết nối Azure Table Storage với account key. Phù hợp cho dev / Azurite. |
+| `Storage:TableServiceUri` | `Storage__TableServiceUri` | Endpoint Table Storage dùng managed-identity, ví dụ `https://{account}.table.core.windows.net/`. Thay thế cho `Storage:ConnectionString` và **được ưu tiên trong production** — xác thực qua `DefaultAzureCredential` nên không có access key nào lọt vào một bí mật. Host phải cấp cho workload identity vai trò **Storage Table Data Contributor**. |
 | `Issuer` | `Issuer` | URL công khai gốc của máy chủ này (ví dụ: `https://auth.example.com`) |
+
+## Bộ lưu trữ
+
+| Cài đặt | Biến môi trường | Mặc định | Mô tả |
+|---|---|---|---|
+| `Storage:ConnectionString` | `Storage__ConnectionString` | *(không có)* | Chuỗi kết nối với account key (xem Cài đặt bắt buộc). |
+| `Storage:TableServiceUri` | `Storage__TableServiceUri` | *(không có)* | URI Table Storage dùng managed-identity (xem Cài đặt bắt buộc). Được ưu tiên hơn `Storage:ConnectionString` khi cả hai cùng được đặt. |
+| `Storage:NameIndexesEnabled` | `Storage__NameIndexesEnabled` | `true` | Có duy trì các bảng chỉ mục tìm kiếm theo tiền tố `UserFirstNames` / `UserLastNames` (hỗ trợ tìm kiếm theo tiền tố tên trong trang quản trị) hay không. Đặt `false` trên các host không cung cấp tìm kiếm theo tên trong trang quản trị để bỏ qua các lượt ghi đó. **Lưu ý về mở rộng:** các chỉ mục này dùng một phân vùng nóng duy nhất và giới hạn thông lượng ở khoảng 2.000 thao tác/giây ở quy mô lớn — hãy vô hiệu hóa chúng nếu bạn không cần tìm kiếm theo tên. |
+| `LoginAppUrl` | `LoginAppUrl` | `/login` | URL gốc mà endpoint `/connect/authorize` chuyển hướng đến cho SPA đăng nhập (màn hình đăng nhập, step-up và đồng ý). Đặt giá trị này khi giao diện đăng nhập được phục vụ từ một origin khác với máy chủ; mặc định là đường dẫn tương đối `/login` do SPA tích hợp phục vụ. |
 
 ## Xác thực
 
@@ -29,9 +41,13 @@ Authagonal được cấu hình qua `appsettings.json` hoặc biến môi trư�
 | `Auth:MfaChallengeExpiryMinutes` | `5` | Thời gian hiệu lực token xác thực MFA |
 | `Auth:MfaSetupTokenExpiryMinutes` | `15` | Thời gian hiệu lực token thiết lập MFA (cho đăng ký bắt buộc) |
 | `Auth:Pbkdf2Iterations` | `100000` | Số lần lặp PBKDF2 cho băm mật khẩu |
-| `Auth:RefreshTokenReuseGraceSeconds` | `60` | Cửa sổ cho phép sử dụng lại refresh token đồng thời |
+| `Auth:RefreshTokenReuseGraceSeconds` | `0` | Cửa sổ ân hạn (giây) tùy chọn cho việc sử dụng lại refresh token đồng thời. `0` (mặc định) giữ thế phòng thủ nghiêm ngặt: bất kỳ lần sử dụng lại nào của một refresh token đã tiêu thụ đều thu hồi tất cả token của người dùng+client đó. Đặt giá trị `> 0` để coi một lần sử dụng lại trong cửa sổ như một lần thử lại idempotent (cấp lại các token kế thừa) — hữu ích cho các client di động có kết nối chập chờn. |
+| `Auth:DynamicClientRegistrationEnabled` | `false` | Bật endpoint đăng ký client động `POST /connect/register` (RFC 7591). Tắt theo mặc định vì đăng ký mở có thể bị lạm dụng trong các triển khai đa tenant. Xem [Đăng ký Client động](client-registration). |
 | `Auth:SigningKeyLifetimeDays` | `90` | Thời gian hiệu lực khóa ký RSA trước khi tự động xoay vòng |
 | `Auth:SigningKeyCacheRefreshMinutes` | `60` | Tần suất tải lại khóa ký từ bộ lưu trữ |
+| `Auth:KeyRotationEnabled` | `false` | Bật tự động xoay vòng khóa ký |
+| `Auth:KeyRotationCheckIntervalMinutes` | `360` | Tần suất kiểm tra xem khóa đang hoạt động có cần xoay vòng hay không |
+| `Auth:KeyRotationLeadTimeDays` | `14` | Xoay vòng khi khóa đang hoạt động hết hạn trong vòng số ngày này |
 | `Auth:SecurityStampRevalidationMinutes` | `30` | Khoảng cách giữa các lần kiểm tra dấu bảo mật cookie |
 | `DataProtection:BlobUri` | *(không có)* | Azure Blob URI để lưu trữ bền vững các khóa Data Protection giữa các instance |
 
@@ -82,6 +98,8 @@ Các client được định nghĩa trong mảng `Clients` và được khởi t
       "SlidingRefreshTokenLifetimeSeconds": 1296000,
       "RefreshTokenUsage": "OneTime",
       "MfaPolicy": "Enabled",
+      "RequireConsent": false,
+      "BackChannelLogoutUri": "https://app.example.com/logout-callback",
       "ProvisioningApps": ["my-backend"]
     }
   ]
@@ -95,12 +113,13 @@ Các client được định nghĩa trong mảng `Clients` và được khởi t
 | `authorization_code` | Đăng nhập tương tác người dùng (ứng dụng web, SPA, di động) |
 | `client_credentials` | Giao tiếp giữa các dịch vụ |
 | `refresh_token` | Gia hạn token (yêu cầu `AllowOfflineAccess: true`) |
+| `urn:ietf:params:oauth:grant-type:device_code` | Device authorization grant (RFC 8628) cho các thiết bị hạn chế đầu vào |
 
 ### Sử dụng Refresh Token
 
 | Giá trị | Hành vi |
 |---|---|
-| `OneTime` (mặc định) | Mỗi lần làm mới sẽ cấp một refresh token mới. Token cũ bị vô hiệu hóa với cửa sổ cho phép 60 giây cho các yêu cầu đồng thời. Sử dụng lại sau cửa sổ cho phép sẽ thu hồi tất cả token của người dùng+client đó. |
+| `OneTime` (mặc định) | Mỗi lần làm mới sẽ cấp một refresh token mới và vô hiệu hóa token cũ. Theo mặc định (`Auth:RefreshTokenReuseGraceSeconds = 0`) bất kỳ lần sử dụng lại nào của một token đã tiêu thụ sẽ ngay lập tức thu hồi tất cả token của người dùng+client đó — **không có** cửa sổ ân hạn nào được bật theo mặc định. Đặt `Auth:RefreshTokenReuseGraceSeconds` thành một giá trị dương để tùy chọn bật cửa sổ dung sai cho việc thử lại. |
 | `ReUse` | Cùng một refresh token được sử dụng lại cho đến khi hết hạn. |
 
 ### Ứng dụng cấp phát
@@ -258,25 +277,67 @@ Chính sách được áp dụng khi đặt lại mật khẩu và đăng ký ng
 
 ## Nhà cung cấp bí mật
 
-Bí mật của client và nhà cung cấp OIDC có thể được lưu trữ tùy chọn trong Azure Key Vault:
+Bí mật của client OIDC thượng nguồn và seed TOTP / MFA có thể được lưu trữ trong Azure Key Vault thay vì ở dạng văn bản thuần:
 
 | Cài đặt | Mô tả |
 |---|---|
-| `SecretProvider:VaultUri` | URI Key Vault (ví dụ: `https://my-vault.vault.azure.net/`). Nếu không đặt, bí mật được xử lý dạng văn bản thuần. |
+| `SecretProvider:VaultUri` | URI Key Vault (ví dụ: `https://my-vault.vault.azure.net/`). Nếu không đặt, nhà cung cấp **văn bản thuần** sẽ được sử dụng và các bí mật được lưu nguyên trạng trong Table Storage. |
 
 Khi được cấu hình, các giá trị bí mật trông giống tham chiếu Key Vault sẽ được giải quyết tại thời điểm chạy. Sử dụng `DefaultAzureCredential` để xác thực.
 
+> ⚠️ **Production: hãy đặt `SecretProvider:VaultUri`.** Nhà cung cấp bí mật mặc định là **văn bản thuần**. Khi `SecretProvider:VaultUri` không được đặt, bí mật của client OIDC thượng nguồn và seed TOTP / MFA được ghi vào Azure Table Storage dưới dạng văn bản rõ — và do đó xuất hiện dưới dạng văn bản rõ trong bất kỳ [bản sao lưu](backup-restore) nào. Đối với bất kỳ triển khai production nào, hãy cấu hình `SecretProvider:VaultUri` để các bí mật này được lưu trong Key Vault.
+
+## API Quản trị
+
+| Cài đặt | Mặc định | Mô tả |
+|---|---|---|
+| `AdminApi:Enabled` | `true` | **Được bật theo mặc định.** Đặt thành `false` để vô hiệu hóa tất cả endpoint quản trị (chúng sẽ không được đăng ký). |
+| `AdminApi:Scope` | `authagonal-admin` | Scope JWT cần thiết để truy cập các endpoint quản trị. Thay đổi giá trị này để khớp với tên scope hiện có của bạn (ví dụ: `projects-identity-admin` cho việc di chuyển từ IdentityServer). |
+
+> ⚠️ **API quản trị được bật theo mặc định và có đặc quyền rất cao.** Scope quản trị cấp toàn quyền quản lý và giả mạo người dùng — bất kỳ ai nắm giữ token có `AdminApi:Scope` đều có thể cấp token cho bất kỳ người dùng nào, quản lý client, và đọc/ghi toàn bộ cấu hình. Hãy giới hạn mạng cho các endpoint quản trị (các route quản trị `/api/v1/*`), và kiểm soát chặt chẽ ai có thể được cấp scope quản trị. Như một biện pháp phòng thủ theo chiều sâu, scope này được *dành riêng*: nó không bao giờ có thể được cấp cho một OAuth client (xem [API Quản trị](admin-api)) và không thể được cấp qua endpoint giả mạo. Hãy đặt `AdminApi:Enabled = false` hoàn toàn nếu không sử dụng API quản trị.
+
+## Đồng ý
+
+Đồng ý theo từng client có thể được bật với thuộc tính `RequireConsent`:
+
+| Giá trị | Hành vi |
+|---|---|
+| `false` (mặc định) | Việc ủy quyền tiến hành ngay sau khi xác thực |
+| `true` | Người dùng được hiển thị màn hình đồng ý liệt kê các scope được yêu cầu. Đồng ý được lưu trong 5 năm và chỉ hỏi lại khi có scope mới được yêu cầu. |
+
+Người dùng có thể xem và thu hồi các cấp quyền đồng ý của họ tại `GET /consent/grants` và `DELETE /consent/grants/{clientId}`.
+
+## Back-Channel Logout
+
+Đăng ký một `BackChannelLogoutUri` trên một client để nhận thông báo OIDC Back-Channel Logout 1.0. Khi một người dùng đăng xuất, Authagonal gửi một logout token đã ký (JWT) đến URI đã đăng ký của mỗi client.
+
+```json
+{
+  "Clients": [
+    {
+      "ClientId": "my-app",
+      "BackChannelLogoutUri": "https://app.example.com/logout-callback"
+    }
+  ]
+}
+```
+
 ## Email
 
-Mặc định, Authagonal sử dụng dịch vụ email no-op bỏ qua tất cả email. Để bật gửi email, đăng ký triển khai `IEmailService` trước khi gọi `AddAuthagonal()`. Dịch vụ tích hợp `EmailService` sử dụng SendGrid.
+Mặc định, Authagonal sử dụng dịch vụ email no-op âm thầm bỏ qua tất cả email. Để bật gửi email, đăng ký triển khai `IEmailService` trước khi gọi `AddAuthagonal()`.
+
+Dịch vụ tích hợp `EmailService` sử dụng [Resend](https://resend.com). Để dùng nó, hãy đăng ký một cách rõ ràng:
+
+```csharp
+services.AddSingleton<IEmailService, EmailService>();
+services.AddAuthagonal(configuration);
+```
 
 | Cài đặt | Mô tả |
 |---|---|
-| `Email:SendGridApiKey` | Khóa API SendGrid để gửi email |
+| `Email:ResendApiKey` | Khóa API Resend để gửi email |
 | `Email:SenderEmail` | Địa chỉ email người gửi |
-| `Email:SenderName` | Tên hiển thị người gửi |
-| `Email:VerificationTemplateId` | ID mẫu động SendGrid cho xác minh email |
-| `Email:PasswordResetTemplateId` | ID mẫu động SendGrid cho đặt lại mật khẩu |
+| `Email:SenderName` | Tên hiển thị người gửi (mặc định là `"Authagonal"`) |
 
 Email gửi đến địa chỉ `@example.com` sẽ được bỏ qua im lặng (hữu ích cho kiểm thử).
 
@@ -290,7 +351,7 @@ Các instance Authagonal tự động hình thành cụm để chia sẻ trạng
 | `Cluster:MulticastGroup` | `Cluster__MulticastGroup` | `239.42.42.42` | Nhóm UDP multicast để khám phá peer |
 | `Cluster:MulticastPort` | `Cluster__MulticastPort` | `19847` | Cổng UDP multicast để khám phá peer |
 | `Cluster:InternalUrl` | `Cluster__InternalUrl` | *(không có)* | URL cân bằng tải dự phòng cho gossip khi multicast không khả dụng |
-| `Cluster:Secret` | `Cluster__Secret` | *(không có)* | Bí mật dùng chung để xác thực endpoint gossip (khuyến nghị khi `InternalUrl` được đặt) |
+| `Cluster:Secret` | `Cluster__Secret` | *(không có)* | Bí mật dùng chung bắt buộc trên các endpoint nội bộ (`/_internal/cluster/gossip` và `/_internal/backchannel-logout`). Khi được đặt, người gọi phải xuất trình nó trong header `X-Cluster-Secret` (so sánh trong thời gian hằng số). Khi **không được đặt**, các endpoint đó chỉ có thể truy cập từ các IP nguồn loopback / riêng tư (RFC 1918 / link-local / ULA) — một yêu cầu bên ngoài mang IP công khai sẽ bị từ chối. Khuyến nghị mỗi khi `InternalUrl` định tuyến gossip qua bộ cân bằng tải. |
 | `Cluster:GossipIntervalSeconds` | `Cluster__GossipIntervalSeconds` | `5` | Tần suất các instance trao đổi trạng thái giới hạn tốc độ |
 | `Cluster:DiscoveryIntervalSeconds` | `Cluster__DiscoveryIntervalSeconds` | `10` | Tần suất các instance thông báo qua multicast |
 | `Cluster:PeerStaleAfterSeconds` | `Cluster__PeerStaleAfterSeconds` | `30` | Loại bỏ peer không phản hồi sau số giây này |
@@ -320,6 +381,28 @@ Các instance Authagonal tự động hình thành cụm để chia sẻ trạng
 
 Xem [Mở rộng](scaling) để biết thêm chi tiết về cách giới hạn tốc độ phân tán hoạt động.
 
+## Forwarded Headers (proxy tin cậy)
+
+Authagonal lập khóa giới hạn tốc độ và khóa tài khoản dựa trên IP của client, và chỉ phát HSTS trên các yêu cầu HTTPS. Phía sau một reverse proxy / ingress, IP thực và scheme thực của client đến trong các header `X-Forwarded-For` / `X-Forwarded-Proto`. Các cài đặt này kiểm soát **hop proxy nào được tin cậy** để đặt các giá trị đó, để người gọi không thể giả mạo `X-Forwarded-For` nhằm làm giả IP của client.
+
+| Cài đặt | Biến môi trường | Mặc định | Mô tả |
+|---|---|---|---|
+| `ForwardedHeaders:ForwardLimit` | `ForwardedHeaders__ForwardLimit` | `1` | Số hop proxy được tôn trọng tính từ bên phải của chuỗi `X-Forwarded-For`. Giá trị mặc định `1` chỉ tin cậy đúng một hop mà ingress của bạn nối thêm và bỏ qua mọi thứ xa hơn về bên trái trong chuỗi. |
+| `ForwardedHeaders:KnownNetworks` | `ForwardedHeaders__KnownNetworks__0` (mảng) | *(rỗng)* | Các dải CIDR (mảng chuỗi, ví dụ `"10.0.0.0/8"`) được phép đặt forwarded header. **Đảm bảo mạnh nhất:** đặt giá trị này thành CIDR của ingress / pod của bạn để chỉ mạng đó mới có thể đặt IP của client. |
+| `ForwardedHeaders:KnownProxies` | `ForwardedHeaders__KnownProxies__0` (mảng) | *(rỗng)* | Các địa chỉ IP proxy riêng lẻ (mảng chuỗi) được phép đặt forwarded header. Dùng cùng với hoặc thay cho `KnownNetworks`. |
+
+```json
+{
+  "ForwardedHeaders": {
+    "ForwardLimit": 1,
+    "KnownNetworks": ["10.244.0.0/16"],
+    "KnownProxies": []
+  }
+}
+```
+
+> ⚠️ **Yêu cầu proxy kết thúc TLS.** Authagonal phải chạy phía sau một reverse proxy kết thúc TLS. Cookie phiên sử dụng `SecurePolicy = SameAsRequest` và HSTS (`Strict-Transport-Security`) chỉ được phát trên các yêu cầu HTTPS, nên proxy phải chuyển tiếp `X-Forwarded-Proto: https` để cookie được đánh dấu `Secure` và HSTS được gửi. Hãy cấu hình `ForwardedHeaders:KnownNetworks` / `ForwardedHeaders:KnownProxies` cho proxy tin cậy của bạn để scheme và IP của client không thể bị giả mạo.
+
 ## Giới hạn tốc độ
 
 Giới hạn tốc độ theo IP tích hợp sẵn được áp dụng trên tất cả các instance thông qua giao thức gossip của cụm:
@@ -334,14 +417,22 @@ Khi clustering được bật, các giới hạn này được tổng hợp trê
 
 CORS được cấu hình động. Các origin từ `AllowedCorsOrigins` của tất cả client đã đăng ký được tự động cho phép, với bộ nhớ đệm 60 phút.
 
+## HashiCorp Vault Transit
+
+Authagonal có thể ký JWT bằng công cụ secrets Transit của HashiCorp Vault. Khóa riêng không bao giờ rời khỏi Vault — chỉ thao tác ký được ủy quyền từ xa. Khóa công khai được lưu trong bộ nhớ đệm cục bộ để xác minh.
+
+Điều này được cấu hình bằng lập trình khi host dưới dạng thư viện. Xem [Khả năng mở rộng](extensibility) để biết chi tiết.
+
 ## Ví dụ đầy đủ
 
 ```json
 {
   "Storage": {
-    "ConnectionString": "DefaultEndpointsProtocol=https;AccountName=...;AccountKey=...;TableEndpoint=https://..."
+    "TableServiceUri": "https://myaccount.table.core.windows.net/",
+    "NameIndexesEnabled": true
   },
   "Issuer": "https://auth.example.com",
+  "LoginAppUrl": "/login",
   "Auth": {
     "MaxFailedAttempts": 5,
     "LockoutDurationMinutes": 10,
@@ -350,10 +441,20 @@ CORS được cấu hình động. Các origin từ `AllowedCorsOrigins` của t
     "EmailVerificationExpiryHours": 24,
     "PasswordResetExpiryMinutes": 60,
     "Pbkdf2Iterations": 100000,
+    "RefreshTokenReuseGraceSeconds": 0,
+    "DynamicClientRegistrationEnabled": false,
     "SigningKeyLifetimeDays": 90
   },
+  "SecretProvider": {
+    "VaultUri": "https://my-vault.vault.azure.net/"
+  },
+  "ForwardedHeaders": {
+    "ForwardLimit": 1,
+    "KnownNetworks": ["10.244.0.0/16"]
+  },
   "Cluster": {
-    "Enabled": true
+    "Enabled": true,
+    "Secret": "shared-secret-here"
   },
   "AdminApi": {
     "Enabled": true,
@@ -370,11 +471,9 @@ CORS được cấu hình động. Các origin từ `AllowedCorsOrigins` của t
     "RequireSpecialChar": true
   },
   "Email": {
-    "SendGridApiKey": "SG.xxx",
+    "ResendApiKey": "re_xxx",
     "SenderEmail": "noreply@example.com",
-    "SenderName": "Example Auth",
-    "VerificationTemplateId": "d-xxx",
-    "PasswordResetTemplateId": "d-yyy"
+    "SenderName": "Example Auth"
   },
   "SamlProviders": [
     {
@@ -415,6 +514,8 @@ CORS được cấu hình động. Các origin từ `AllowedCorsOrigins` của t
       "RequireClientSecret": false,
       "AllowOfflineAccess": true,
       "MfaPolicy": "Enabled",
+      "RequireConsent": false,
+      "BackChannelLogoutUri": "https://app.example.com/logout-callback",
       "ProvisioningApps": ["backend"]
     }
   ]

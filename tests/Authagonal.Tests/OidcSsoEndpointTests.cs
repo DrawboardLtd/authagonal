@@ -172,6 +172,25 @@ public sealed class OidcSsoEndpointTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task OidcCallback_UnverifiedEmail_ExistingUser_NotLinked()
+    {
+        _oidcMock.EmailVerified = false;
+        await _factory.SeedTestUserAsync(email: _oidcMock.Email);
+
+        var loginResponse = await _client.GetAsync($"/oidc/{_connectionId}/login");
+        var qs = HttpUtility.ParseQueryString(new Uri(loginResponse.Headers.Location!.ToString()).Query);
+        _oidcMock.Nonce = qs["nonce"]!;
+        var state = qs["state"]!;
+
+        await _client.GetAsync($"/oidc/callback?code=test-auth-code&state={Uri.EscapeDataString(state)}");
+
+        // An unverified upstream email must NOT be auto-linked onto a pre-existing local account.
+        var user = await _factory.UserStore.FindByEmailAsync(_oidcMock.Email);
+        var logins = await _factory.UserStore.GetLoginsAsync(user!.Id);
+        Assert.DoesNotContain(logins, l => l.Provider.StartsWith("oidc:"));
+    }
+
+    [Fact]
     public async Task OidcCallback_TokenExchangeFails_RedirectsWithError()
     {
         _oidcMock.FailTokenExchange = true;

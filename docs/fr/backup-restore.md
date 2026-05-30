@@ -43,7 +43,11 @@ backups/
     _manifest.json
 ```
 
-Chaque fichier `.jsonl` contient un objet JSON par ligne (un par entite de table). Avec `--gzip`, les fichiers sont compresses en `.jsonl.gz`. Le fichier `_manifest.json` enregistre l'horodatage de la sauvegarde, le mode, la compression et le nombre d'entites.
+Chaque fichier `.jsonl` contient un objet JSON par ligne (un par entite de table). Avec `--gzip`, les fichiers sont compresses en `.jsonl.gz`. Le fichier `_manifest.json` enregistre l'horodatage de la sauvegarde, le mode, la compression, le nombre d'entites et les empreintes SHA-256 des fichiers pour la verification d'integrite.
+
+### Verification d'integrite
+
+Chaque manifeste de sauvegarde inclut un dictionnaire `FileHashes` associant les noms de fichiers a leurs empreintes SHA-256. Lors de la restauration, l'integrite des fichiers est automatiquement verifiee par rapport a ces empreintes avant l'ecriture de toute donnee. Si une incoherence d'empreinte est detectee, la restauration est interrompue avec une erreur.
 
 ### Sauvegardes incrementales
 
@@ -55,9 +59,17 @@ Si aucun fichier `.lastbackup` n'existe, la premiere execution incrementale effe
 
 L'outil de sauvegarde inclut toutes les tables Authagonal par defaut :
 
-`Users`, `UserEmails`, `UserLogins`, `UserExternalIds`, `Clients`, `Grants`, `GrantsBySubject`, `GrantsByExpiry`, `SigningKeys`, `SsoDomains`, `SamlProviders`, `OidcProviders`, `UserProvisions`, `MfaCredentials`, `MfaChallenges`, `MfaWebAuthnIndex`, `ScimTokens`, `ScimGroups`, `ScimGroupExternalIds`, `Roles`
+`Users`, `UserEmails`, `UserLogins`, `UserExternalIds`, `Clients`, `Grants`, `GrantsBySubject`, `GrantsByExpiry`, `SsoDomains`, `SamlProviders`, `OidcProviders`, `UserProvisions`, `MfaCredentials`, `MfaChallenges`, `MfaWebAuthnIndex`, `ScimTokens`, `ScimGroups`, `ScimGroupExternalIds`, `Roles`
 
 Les tables transitoires (`SamlReplayCache`, `OidcStateStore`) sont exclues par defaut — incluez-les explicitement avec `--tables` si necessaire.
+
+### Les cles de signature sont exclues par defaut
+
+La table `SigningKeys` est **exclue des sauvegardes par defaut** (`Backup:IncludeSigningKeys` vaut `false` par defaut). Pour les hotes utilisant la source de cles locale (stockee en table), cette table contient la **cle privee** de signature JWT — l'ecrire dans un fichier de sauvegarde en texte brut permettrait a quiconque lit la sauvegarde de forger des jetons. (Les hotes qui signent via HashiCorp Vault Transit ne conservent aucune cle privee dans la table, donc cette preoccupation ne les concerne pas.)
+
+> ⚠️ N'activez `Backup:IncludeSigningKeys` que lorsque la cible de sauvegarde est elle-meme chiffree au repos et a acces controle. Il en va de meme pour le reste de la sauvegarde : avec le fournisseur de secrets **en texte brut** par defaut, les sauvegardes contiennent egalement les secrets des clients OIDC en amont et les graines TOTP / MFA en clair — voir [Configuration → Fournisseur de secrets](configuration#secret-provider).
+
+Lors de la restauration, l'integrite des fichiers est verifiee par rapport aux empreintes SHA-256 du manifeste avant l'ecriture de toute donnee (voir [Verification d'integrite](#verification-dintegrite)) ; une incoherence d'empreinte interrompt la restauration.
 
 ## Restauration
 

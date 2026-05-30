@@ -8,6 +8,7 @@ namespace Authagonal.Tests.Infrastructure;
 public sealed class InMemoryUserStore : IUserStore
 {
     private readonly ConcurrentDictionary<string, AuthUser> _users = new();
+    private readonly ConcurrentDictionary<string, string> _emailToId = new(); // normalizedEmail -> userId (models the Table email index)
     private readonly ConcurrentDictionary<string, ExternalLoginInfo> _logins = new(); // key: provider|providerKey
     private readonly ConcurrentDictionary<string, string> _externalIds = new(); // key: clientId|externalId -> userId
 
@@ -16,26 +17,36 @@ public sealed class InMemoryUserStore : IUserStore
 
     public Task<AuthUser?> FindByEmailAsync(string email, CancellationToken ct = default)
     {
+        // Index-based lookup (mirrors the Table store), so an in-flight, not-yet-persisted mutation
+        // to a user object can't change which user currently "owns" an email.
         var normalized = email.ToUpperInvariant();
-        var user = _users.Values.FirstOrDefault(u => u.NormalizedEmail == normalized);
-        return Task.FromResult(user);
+        if (_emailToId.TryGetValue(normalized, out var id) && _users.TryGetValue(id, out var user))
+            return Task.FromResult<AuthUser?>(user);
+        return Task.FromResult<AuthUser?>(null);
     }
 
     public Task CreateAsync(AuthUser user, CancellationToken ct = default)
     {
         _users[user.Id] = user;
+        _emailToId[user.NormalizedEmail] = user.Id;
         return Task.CompletedTask;
     }
 
     public Task UpdateAsync(AuthUser user, CancellationToken ct = default)
     {
         _users[user.Id] = user;
+        // Re-home the email index: drop any stale mapping for this user, then claim the current one.
+        foreach (var stale in _emailToId.Where(e => e.Value == user.Id && e.Key != user.NormalizedEmail).Select(e => e.Key).ToList())
+            _emailToId.TryRemove(stale, out _);
+        _emailToId[user.NormalizedEmail] = user.Id;
         return Task.CompletedTask;
     }
 
     public Task DeleteAsync(string userId, CancellationToken ct = default)
     {
         _users.TryRemove(userId, out _);
+        foreach (var key in _emailToId.Where(e => e.Value == userId).Select(e => e.Key).ToList())
+            _emailToId.TryRemove(key, out _);
         return Task.CompletedTask;
     }
 

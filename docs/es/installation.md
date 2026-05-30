@@ -112,6 +112,16 @@ npm install @authagonal/login
 
 El paquete incluye JS y CSS compilados — importe componentes y estilos directamente en su propia aplicacion React. Consulte [Servidor personalizado](custom-server) para una guia completa.
 
+## Lista de verificacion de seguridad para produccion
+
+Antes de exponer Authagonal a trafico real, confirme lo siguiente. Cada elemento se detalla en la pagina de [Configuracion](configuration).
+
+- **Ejecute detras de un proxy que termine TLS.** Authagonal debe situarse detras de un proxy inverso / ingress que termine TLS. El cookie de sesion usa `SecurePolicy = SameAsRequest` y HSTS solo se emite en HTTPS, por lo que el proxy debe reenviar `X-Forwarded-Proto: https`. Establezca `ForwardedHeaders:KnownNetworks` (o `KnownProxies`) con el CIDR de su ingress / pod para que la IP del cliente y el esquema no puedan ser suplantados; `ForwardedHeaders:ForwardLimit` tiene el valor predeterminado `1` (confiar solo en el ultimo salto).
+- **Establezca `SecretProvider:VaultUri`.** El proveedor de secretos predeterminado es **texto plano**: sin Key Vault, los secretos de clientes OIDC upstream y las semillas TOTP / MFA se almacenan en texto claro en Table Storage (y en las copias de seguridad). Configure Key Vault para cualquier despliegue de produccion.
+- **Restrinja la API de administracion.** `AdminApi:Enabled` tiene el valor predeterminado **true**. El scope de administracion (`AdminApi:Scope`, predeterminado `authagonal-admin`) otorga gestion completa y suplantacion de usuarios. Restrinja por red las rutas de administracion `/api/v1/*` y controle estrictamente a quien se le emite el scope de administracion, o establezca `AdminApi:Enabled = false` si no se usa.
+- **Proteja los endpoints internos.** Establezca `Cluster:Secret` para que `/_internal/cluster/gossip` y `/_internal/backchannel-logout` requieran el encabezado `X-Cluster-Secret`, especialmente cuando el gossip se enruta a traves de un balanceador de carga mediante `Cluster:InternalUrl`.
+- **Cifre las copias de seguridad.** Con el proveedor de secretos de texto plano, las copias de seguridad contienen secretos. La tabla `SigningKeys` se excluye de las copias de seguridad de forma predeterminada; si opta por incluirla mediante `Backup:IncludeSigningKeys`, el destino de la copia de seguridad debe estar cifrado en reposo. Ver [Copia de seguridad y restauracion](backup-restore).
+
 ## Herramienta de migracion
 
 Para migrar desde Duende IdentityServer + SQL Server:

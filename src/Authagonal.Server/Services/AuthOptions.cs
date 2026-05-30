@@ -14,6 +14,13 @@ public sealed class AuthOptions
     public int MaxRegistrationsPerIp { get; set; } = 5;
     public int RegistrationWindowMinutes { get; set; } = 60;
 
+    /// <summary>
+    /// Email domains whose self-service registrations are auto-confirmed (skip the verification
+    /// email). Empty by default — every registration must verify its email. Intended only for
+    /// dev/test (e.g. <c>["example.com"]</c>); never list a domain that can receive real mail.
+    /// </summary>
+    public List<string> AutoConfirmEmailDomains { get; set; } = [];
+
     // --- Token / link expiry ---
     public int EmailVerificationExpiryHours { get; set; } = 24;
     public int PasswordResetExpiryMinutes { get; set; } = 60;

@@ -112,6 +112,16 @@ npm install @authagonal/login
 
 O pacote inclui JS e CSS compilados — importe componentes e estilos diretamente na sua própria aplicação React. Consulte [Servidor Personalizado](custom-server) para um guia completo.
 
+## Checklist de segurança para produção
+
+Antes de expor o Authagonal a tráfego real, confirme o seguinte. Cada item é detalhado na página de [Configuração](configuration).
+
+- **Execute atrás de um proxy com terminação TLS.** O Authagonal deve ficar atrás de um proxy reverso / ingress que termina o TLS. O cookie de sessão usa `SecurePolicy = SameAsRequest` e o HSTS só é emitido em HTTPS, portanto o proxy deve encaminhar `X-Forwarded-Proto: https`. Defina `ForwardedHeaders:KnownNetworks` (ou `KnownProxies`) para o CIDR do seu ingress / pod para que o IP do cliente e o esquema não possam ser falsificados; `ForwardedHeaders:ForwardLimit` tem por padrão `1` (confiar apenas no último salto).
+- **Defina `SecretProvider:VaultUri`.** O provedor de segredos padrão é **texto simples** — sem o Key Vault, os segredos de clientes OIDC upstream e as sementes TOTP / MFA são armazenados em texto claro no Table Storage (e nos backups). Configure o Key Vault para qualquer implantação em produção.
+- **Bloqueie a API de administração.** `AdminApi:Enabled` tem por padrão **true**. O scope de administração (`AdminApi:Scope`, padrão `authagonal-admin`) concede gestão total e impersonação de utilizadores. Restrinja a nível de rede as rotas de administração `/api/v1/*` e controle rigorosamente quem recebe o scope de administração, ou defina `AdminApi:Enabled = false` se não for usado.
+- **Proteja os endpoints internos.** Defina `Cluster:Secret` para que `/_internal/cluster/gossip` e `/_internal/backchannel-logout` exijam o cabeçalho `X-Cluster-Secret` — especialmente quando o gossip é roteado através de um balanceador de carga via `Cluster:InternalUrl`.
+- **Criptografe os backups.** Com o provedor de segredos de texto simples, os backups contêm segredos. A tabela `SigningKeys` é excluída dos backups por padrão; se optar por incluí-la via `Backup:IncludeSigningKeys`, o alvo do backup deve estar criptografado em repouso. Consulte [Backup e Restauração](backup-restore).
+
 ## Ferramenta de Migração
 
 Para migrar do Duende IdentityServer + SQL Server:

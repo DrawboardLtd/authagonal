@@ -102,4 +102,18 @@ public class TotpServiceTests
         Assert.Contains("digits=6", uri);
         Assert.Contains("period=30", uri);
     }
+
+    [Fact]
+    public void GetMatchingStep_ReplayedStep_IsRejected()
+    {
+        var secret = _sut.GenerateSecret();
+        var step = DateTimeOffset.UtcNow.ToUnixTimeSeconds() / 30;
+        var code = _sut.GenerateCode(secret, step);
+
+        var matched = _sut.GetMatchingStep(secret, code);
+        Assert.Equal(step, matched);
+
+        // Replaying the same code once its step is recorded as used is rejected.
+        Assert.Null(_sut.GetMatchingStep(secret, code, minExclusiveStep: matched!.Value));
+    }
 }

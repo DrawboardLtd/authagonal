@@ -10,10 +10,22 @@ Authagonal se configura mediante `appsettings.json` o variables de entorno. Las 
 
 ## Ajustes requeridos
 
+El almacenamiento puede configurarse de dos maneras: proporcione **o bien** `Storage:ConnectionString` **o bien** `Storage:TableServiceUri` (la ruta de identidad administrada, preferida en produccion).
+
 | Ajuste | Variable de entorno | Descripcion |
 |---|---|---|
-| `Storage:ConnectionString` | `Storage__ConnectionString` | Cadena de conexion de Azure Table Storage |
+| `Storage:ConnectionString` | `Storage__ConnectionString` | Cadena de conexion de Azure Table Storage con una clave de cuenta. Adecuada para desarrollo / Azurite. |
+| `Storage:TableServiceUri` | `Storage__TableServiceUri` | Endpoint de Table Storage con identidad administrada, por ejemplo `https://{account}.table.core.windows.net/`. Alternativa a `Storage:ConnectionString` y **preferida en produccion**: se autentica mediante `DefaultAzureCredential`, por lo que ninguna clave de acceso queda nunca en un secreto. El host debe otorgar a la identidad de la carga de trabajo el rol **Storage Table Data Contributor**. |
 | `Issuer` | `Issuer` | La URL publica base de este servidor (por ejemplo, `https://auth.example.com`) |
+
+## Almacenamiento
+
+| Ajuste | Variable de entorno | Predeterminado | Descripcion |
+|---|---|---|---|
+| `Storage:ConnectionString` | `Storage__ConnectionString` | *(ninguno)* | Cadena de conexion con clave de cuenta (ver Ajustes requeridos). |
+| `Storage:TableServiceUri` | `Storage__TableServiceUri` | *(ninguno)* | URI de Table Storage con identidad administrada (ver Ajustes requeridos). Tiene prioridad sobre `Storage:ConnectionString` cuando ambos estan establecidos. |
+| `Storage:NameIndexesEnabled` | `Storage__NameIndexesEnabled` | `true` | Si se deben mantener las tablas de indice de busqueda por prefijo `UserFirstNames` / `UserLastNames` que respaldan la busqueda de nombres por prefijo del administrador. Establezca `false` en hosts que no exponen la busqueda de nombres del administrador para omitir esas escrituras. **Nota sobre escalabilidad:** estos indices usan una unica particion caliente y limitan el rendimiento a aproximadamente 2.000 operaciones/seg a escala; deshabilitelos si no necesita la busqueda por nombre. |
+| `LoginAppUrl` | `LoginAppUrl` | `/login` | URL base a la que el endpoint `/connect/authorize` redirige para la SPA de inicio de sesion (pantallas de inicio de sesion, step-up y consentimiento). Establezca esto cuando la interfaz de inicio de sesion se sirva desde un origen distinto al del servidor; el valor predeterminado es la ruta relativa `/login` servida por la SPA integrada. |
 
 ## Autenticacion
 
@@ -29,9 +41,13 @@ Authagonal se configura mediante `appsettings.json` o variables de entorno. Las 
 | `Auth:MfaChallengeExpiryMinutes` | `5` | Tiempo de vida del token de verificacion MFA |
 | `Auth:MfaSetupTokenExpiryMinutes` | `15` | Tiempo de vida del token de configuracion MFA (para inscripcion forzada) |
 | `Auth:Pbkdf2Iterations` | `100000` | Numero de iteraciones PBKDF2 para el hashing de contrasenas |
-| `Auth:RefreshTokenReuseGraceSeconds` | `60` | Ventana de gracia para la reutilizacion concurrente del token de actualizacion |
+| `Auth:RefreshTokenReuseGraceSeconds` | `0` | Ventana de gracia opcional (en segundos) para la reutilizacion concurrente del token de actualizacion. `0` (predeterminado) mantiene la postura estricta: cualquier reutilizacion de un token de actualizacion ya consumido revoca todos los tokens de ese usuario+cliente. Establezca `> 0` para tratar una reutilizacion dentro de la ventana como un reintento idempotente (vuelve a entregar los tokens sucesores), util para clientes moviles con cortes de conectividad. |
+| `Auth:DynamicClientRegistrationEnabled` | `false` | Habilita el endpoint de registro dinamico de clientes `POST /connect/register` (RFC 7591). Deshabilitado por defecto porque el registro abierto puede ser objeto de abuso en despliegues multi-tenant. Ver [Registro dinamico de clientes](client-registration). |
 | `Auth:SigningKeyLifetimeDays` | `90` | Tiempo de vida de la clave de firma RSA antes de la rotacion automatica |
 | `Auth:SigningKeyCacheRefreshMinutes` | `60` | Frecuencia de recarga de claves de firma desde el almacenamiento |
+| `Auth:KeyRotationEnabled` | `false` | Habilita la rotacion automatica de claves de firma |
+| `Auth:KeyRotationCheckIntervalMinutes` | `360` | Frecuencia con la que se comprueba si la clave activa necesita rotacion |
+| `Auth:KeyRotationLeadTimeDays` | `14` | Rotar cuando la clave activa expire dentro de esta cantidad de dias |
 | `Auth:SecurityStampRevalidationMinutes` | `30` | Intervalo entre verificaciones del sello de seguridad del cookie |
 | `DataProtection:BlobUri` | *(ninguno)* | URI de blob de Azure para persistir las claves de Data Protection entre instancias |
 
@@ -82,6 +98,8 @@ Los clientes se definen en el arreglo `Clients` y se inyectan al inicio. Cada cl
       "SlidingRefreshTokenLifetimeSeconds": 1296000,
       "RefreshTokenUsage": "OneTime",
       "MfaPolicy": "Enabled",
+      "RequireConsent": false,
+      "BackChannelLogoutUri": "https://app.example.com/logout-callback",
       "ProvisioningApps": ["my-backend"]
     }
   ]
@@ -95,12 +113,13 @@ Los clientes se definen en el arreglo `Clients` y se inyectan al inicio. Cada cl
 | `authorization_code` | Inicio de sesion interactivo del usuario (aplicaciones web, SPA, movil) |
 | `client_credentials` | Comunicacion servicio a servicio |
 | `refresh_token` | Renovacion de token (requiere `AllowOfflineAccess: true`) |
+| `urn:ietf:params:oauth:grant-type:device_code` | Concesion de autorizacion de dispositivo (RFC 8628) para dispositivos con entrada limitada |
 
 ### Uso del token de actualizacion
 
 | Valor | Comportamiento |
 |---|---|
-| `OneTime` (predeterminado) | Cada actualizacion emite un nuevo token de actualizacion. El anterior se invalida con una ventana de gracia de 60 segundos para solicitudes concurrentes. La reutilizacion despues de la ventana de gracia revoca todos los tokens para ese usuario+cliente. |
+| `OneTime` (predeterminado) | Cada actualizacion emite un nuevo token de actualizacion e invalida el anterior. De forma predeterminada (`Auth:RefreshTokenReuseGraceSeconds = 0`) cualquier reutilizacion de un token ya consumido revoca de inmediato todos los tokens de ese usuario+cliente; **no** hay ventana de gracia activada por defecto. Establezca `Auth:RefreshTokenReuseGraceSeconds` en un valor positivo para optar por una ventana de tolerancia a reintentos. |
 | `ReUse` | El mismo token de actualizacion se reutiliza hasta su expiracion. |
 
 ### Aplicaciones de aprovisionamiento
@@ -258,25 +277,67 @@ Defina los proveedores de identidad OIDC en la configuracion. Estos se inyectan 
 
 ## Proveedor de secretos
 
-Los secretos de clientes y proveedores OIDC pueden almacenarse opcionalmente en Azure Key Vault:
+Los secretos de clientes OIDC upstream y las semillas TOTP / MFA pueden almacenarse en Azure Key Vault en lugar de en texto plano:
 
 | Ajuste | Descripcion |
 |---|---|
-| `SecretProvider:VaultUri` | URI del Key Vault (por ejemplo, `https://my-vault.vault.azure.net/`). Si no se establece, los secretos se tratan como texto plano. |
+| `SecretProvider:VaultUri` | URI del Key Vault (por ejemplo, `https://my-vault.vault.azure.net/`). Si no se establece, se usa el proveedor de **texto plano** y los secretos se almacenan tal cual en Table Storage. |
 
 Cuando esta configurado, los valores de secretos que parecen referencias de Key Vault se resuelven en tiempo de ejecucion. Usa `DefaultAzureCredential` para la autenticacion.
 
+> ⚠️ **Produccion: establezca `SecretProvider:VaultUri`.** El proveedor de secretos predeterminado es **texto plano**. Cuando `SecretProvider:VaultUri` no esta establecido, los secretos de clientes OIDC upstream y las semillas TOTP / MFA se escriben en Azure Table Storage en texto claro, y por lo tanto aparecen en texto claro en cualquier [copia de seguridad](backup-restore). Para cualquier despliegue de produccion, configure `SecretProvider:VaultUri` para que estos secretos se almacenen en Key Vault.
+
+## API de administracion
+
+| Ajuste | Predeterminado | Descripcion |
+|---|---|---|
+| `AdminApi:Enabled` | `true` | **Habilitada por defecto.** Establezca en `false` para deshabilitar todos los endpoints de administracion (no se registraran). |
+| `AdminApi:Scope` | `authagonal-admin` | Scope JWT requerido para acceder a los endpoints de administracion. Cambielo para que coincida con el nombre de su scope existente (por ejemplo, `projects-identity-admin` para migraciones de IdentityServer). |
+
+> ⚠️ **La API de administracion esta habilitada por defecto y es altamente privilegiada.** El scope de administracion otorga gestion completa y suplantacion de usuarios: cualquiera que posea un token con `AdminApi:Scope` puede emitir tokens para cualquier usuario, gestionar clientes y leer/escribir toda la configuracion. Restrinja por red los endpoints de administracion (las rutas de administracion `/api/v1/*`) y controle estrictamente a quien se le puede emitir el scope de administracion. Como medida de defensa en profundidad, el scope esta *reservado*: nunca puede otorgarse a un cliente OAuth (ver [API de administracion](admin-api)) ni puede emitirse a traves del endpoint de suplantacion. Establezca `AdminApi:Enabled = false` por completo si la API de administracion no se usa.
+
+## Consentimiento
+
+El consentimiento por cliente puede habilitarse con la propiedad `RequireConsent`:
+
+| Valor | Comportamiento |
+|---|---|
+| `false` (predeterminado) | La autorizacion procede de inmediato despues de la autenticacion |
+| `true` | Se muestra al usuario una pantalla de consentimiento con los scopes solicitados. El consentimiento se persiste durante 5 anos y solo se vuelve a solicitar cuando se solicitan nuevos scopes. |
+
+Los usuarios pueden ver y revocar sus otorgamientos de consentimiento en `GET /consent/grants` y `DELETE /consent/grants/{clientId}`.
+
+## Cierre de sesion por canal trasero (Back-Channel Logout)
+
+Registre un `BackChannelLogoutUri` en un cliente para recibir notificaciones de OIDC Back-Channel Logout 1.0. Cuando un usuario cierra sesion, Authagonal envia un token de cierre de sesion firmado (JWT) a la URI registrada de cada cliente.
+
+```json
+{
+  "Clients": [
+    {
+      "ClientId": "my-app",
+      "BackChannelLogoutUri": "https://app.example.com/logout-callback"
+    }
+  ]
+}
+```
+
 ## Correo electronico
 
-Por defecto, Authagonal usa un servicio de email no-op que descarta silenciosamente todos los emails. Para habilitar el envio de emails, registre una implementacion de `IEmailService` antes de llamar a `AddAuthagonal()`. El servicio integrado `EmailService` usa SendGrid.
+Por defecto, Authagonal usa un servicio de email no-op que descarta silenciosamente todos los emails. Para habilitar el envio de emails, registre una implementacion de `IEmailService` antes de llamar a `AddAuthagonal()`.
+
+El servicio integrado `EmailService` usa [Resend](https://resend.com). Para usarlo, registrelo explicitamente:
+
+```csharp
+services.AddSingleton<IEmailService, EmailService>();
+services.AddAuthagonal(configuration);
+```
 
 | Ajuste | Descripcion |
 |---|---|
-| `Email:SendGridApiKey` | Clave API de SendGrid para enviar correos |
+| `Email:ResendApiKey` | Clave API de Resend para enviar correos |
 | `Email:SenderEmail` | Direccion de correo del remitente |
-| `Email:SenderName` | Nombre para mostrar del remitente |
-| `Email:VerificationTemplateId` | ID de plantilla dinamica de SendGrid para verificacion de correo |
-| `Email:PasswordResetTemplateId` | ID de plantilla dinamica de SendGrid para restablecimiento de contrasena |
+| `Email:SenderName` | Nombre para mostrar del remitente (predeterminado: `"Authagonal"`) |
 
 Los correos a direcciones `@example.com` se omiten silenciosamente (util para pruebas).
 
@@ -290,7 +351,7 @@ Las instancias de Authagonal forman automaticamente un cluster para compartir el
 | `Cluster:MulticastGroup` | `Cluster__MulticastGroup` | `239.42.42.42` | Grupo de multicast UDP para descubrimiento de pares |
 | `Cluster:MulticastPort` | `Cluster__MulticastPort` | `19847` | Puerto de multicast UDP para descubrimiento de pares |
 | `Cluster:InternalUrl` | `Cluster__InternalUrl` | *(ninguno)* | URL con balanceo de carga como alternativa para gossip cuando el multicast no esta disponible |
-| `Cluster:Secret` | `Cluster__Secret` | *(ninguno)* | Secreto compartido para la autenticacion del endpoint de gossip (recomendado cuando se establece `InternalUrl`) |
+| `Cluster:Secret` | `Cluster__Secret` | *(ninguno)* | Secreto compartido requerido en los endpoints de uso interno (`/_internal/cluster/gossip` y `/_internal/backchannel-logout`). Cuando se establece, los llamadores deben presentarlo en el encabezado `X-Cluster-Secret` (comparado en tiempo constante). Cuando **no** se establece, esos endpoints solo son accesibles desde IPs de origen de loopback / privadas (RFC 1918 / link-local / ULA); una solicitud externa que lleve una IP publica se rechaza. Recomendado siempre que `InternalUrl` enrute el gossip a traves de un balanceador de carga. |
 | `Cluster:GossipIntervalSeconds` | `Cluster__GossipIntervalSeconds` | `5` | Frecuencia con la que las instancias intercambian el estado de limites de velocidad |
 | `Cluster:DiscoveryIntervalSeconds` | `Cluster__DiscoveryIntervalSeconds` | `10` | Frecuencia con la que las instancias se anuncian mediante multicast |
 | `Cluster:PeerStaleAfterSeconds` | `Cluster__PeerStaleAfterSeconds` | `30` | Descartar pares de los que no se ha recibido respuesta despues de esta cantidad de segundos |
@@ -320,6 +381,28 @@ Las instancias de Authagonal forman automaticamente un cluster para compartir el
 
 Ver [Escalabilidad](scaling) para mas detalles sobre como funciona la limitacion de velocidad distribuida.
 
+## Encabezados reenviados (proxy de confianza)
+
+Authagonal basa la limitacion de velocidad y el bloqueo de cuenta en la IP del cliente, y solo emite HSTS en solicitudes HTTPS. Detras de un proxy inverso / ingress, la IP real del cliente y el esquema llegan en los encabezados `X-Forwarded-For` / `X-Forwarded-Proto`. Estos ajustes controlan **que saltos de proxy son de confianza** para establecer esos valores, de modo que un llamador no pueda falsificar `X-Forwarded-For` para suplantar la IP del cliente.
+
+| Ajuste | Variable de entorno | Predeterminado | Descripcion |
+|---|---|---|---|
+| `ForwardedHeaders:ForwardLimit` | `ForwardedHeaders__ForwardLimit` | `1` | Numero de saltos de proxy a respetar desde la derecha de la cadena `X-Forwarded-For`. El valor predeterminado de `1` confia solo en el unico salto que anade su ingress e ignora cualquier cosa mas a la izquierda en la cadena. |
+| `ForwardedHeaders:KnownNetworks` | `ForwardedHeaders__KnownNetworks__0` (arreglo) | *(vacio)* | Rangos CIDR (arreglo de cadenas, por ejemplo `"10.0.0.0/8"`) autorizados a establecer los encabezados reenviados. **Garantia mas solida:** establezca esto en el CIDR de su ingress / pod para que solo esa red pueda establecer la IP del cliente. |
+| `ForwardedHeaders:KnownProxies` | `ForwardedHeaders__KnownProxies__0` (arreglo) | *(vacio)* | Direcciones IP de proxy individuales (arreglo de cadenas) autorizadas a establecer los encabezados reenviados. Use junto con o en lugar de `KnownNetworks`. |
+
+```json
+{
+  "ForwardedHeaders": {
+    "ForwardLimit": 1,
+    "KnownNetworks": ["10.244.0.0/16"],
+    "KnownProxies": []
+  }
+}
+```
+
+> ⚠️ **Se requiere un proxy que termine TLS.** Authagonal debe ejecutarse detras de un proxy inverso que termine TLS. El cookie de sesion usa `SecurePolicy = SameAsRequest` y HSTS (`Strict-Transport-Security`) solo se emite en solicitudes HTTPS, por lo que el proxy debe reenviar `X-Forwarded-Proto: https` para que los cookies se marquen como `Secure` y se envie HSTS. Configure `ForwardedHeaders:KnownNetworks` / `ForwardedHeaders:KnownProxies` con su proxy de confianza para que el esquema y la IP del cliente no puedan ser suplantados.
+
 ## Limitacion de velocidad
 
 Limites de velocidad integrados por IP aplicados en todas las instancias mediante el protocolo de gossip del cluster:
@@ -334,14 +417,22 @@ Cuando la agrupacion esta habilitada, estos limites se consolidan entre todas la
 
 CORS se configura dinamicamente. Los origenes de todos los `AllowedCorsOrigins` de los clientes registrados se permiten automaticamente, con un cache de 60 minutos.
 
+## HashiCorp Vault Transit
+
+Authagonal puede firmar JWTs usando el motor de secretos Transit de HashiCorp Vault. Las claves privadas nunca salen de Vault: solo la operacion de firma se delega de forma remota. Las claves publicas se almacenan en cache localmente para la verificacion.
+
+Esto se configura programaticamente al alojarlo como biblioteca. Ver [Extensibilidad](extensibility) para mas detalles.
+
 ## Ejemplo completo
 
 ```json
 {
   "Storage": {
-    "ConnectionString": "DefaultEndpointsProtocol=https;AccountName=...;AccountKey=...;TableEndpoint=https://..."
+    "TableServiceUri": "https://myaccount.table.core.windows.net/",
+    "NameIndexesEnabled": true
   },
   "Issuer": "https://auth.example.com",
+  "LoginAppUrl": "/login",
   "Auth": {
     "MaxFailedAttempts": 5,
     "LockoutDurationMinutes": 10,
@@ -350,10 +441,20 @@ CORS se configura dinamicamente. Los origenes de todos los `AllowedCorsOrigins` 
     "EmailVerificationExpiryHours": 24,
     "PasswordResetExpiryMinutes": 60,
     "Pbkdf2Iterations": 100000,
+    "RefreshTokenReuseGraceSeconds": 0,
+    "DynamicClientRegistrationEnabled": false,
     "SigningKeyLifetimeDays": 90
   },
+  "SecretProvider": {
+    "VaultUri": "https://my-vault.vault.azure.net/"
+  },
+  "ForwardedHeaders": {
+    "ForwardLimit": 1,
+    "KnownNetworks": ["10.244.0.0/16"]
+  },
   "Cluster": {
-    "Enabled": true
+    "Enabled": true,
+    "Secret": "shared-secret-here"
   },
   "AdminApi": {
     "Enabled": true,
@@ -370,11 +471,9 @@ CORS se configura dinamicamente. Los origenes de todos los `AllowedCorsOrigins` 
     "RequireSpecialChar": true
   },
   "Email": {
-    "SendGridApiKey": "SG.xxx",
+    "ResendApiKey": "re_xxx",
     "SenderEmail": "noreply@example.com",
-    "SenderName": "Example Auth",
-    "VerificationTemplateId": "d-xxx",
-    "PasswordResetTemplateId": "d-yyy"
+    "SenderName": "Example Auth"
   },
   "SamlProviders": [
     {
@@ -415,6 +514,8 @@ CORS se configura dinamicamente. Los origenes de todos los `AllowedCorsOrigins` 
       "RequireClientSecret": false,
       "AllowOfflineAccess": true,
       "MfaPolicy": "Enabled",
+      "RequireConsent": false,
+      "BackChannelLogoutUri": "https://app.example.com/logout-callback",
       "ProvisioningApps": ["backend"]
     }
   ]

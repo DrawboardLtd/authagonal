@@ -53,7 +53,9 @@ A follow-up branch off `security-fixes-top8` addressed the rest. Build clean, 36
 - **§13.1** DCR restricts `grant_types` to `authorization_code`/`refresh_token`, reserves the admin scope, and is rate-limited; **§13.2** the dead redirect-scheme check now rejects `javascript:`/`data:`/`file:`.
 - **§15.1** TOTP records the last-accepted time-step and rejects replay within the window; **§15.2** credential deletion requires a real session (setup tokens can't downgrade MFA); **§15.3** WebAuthn assertion failures / clone regressions return 401 instead of 500; **§15.6** discovery advertises `ES256`; **§15.7** consent POST requires authorization and stores only `AllowedScopes`-bounded scopes.
 
-Still open (LOW, noted): §13.4 device-flow `interval` field (RFC nicety; needs a response-model + AOT-context change), and §15.3's WebAuthn registration credential-ID uniqueness callback (narrow collision risk). Regression tests for the new behaviours (TOTP replay, SCIM collision, atomic code consume, federation strictness) are not yet added.
+Also in this branch: **§9.3** registration email-auto-confirm is now config-gated (`Auth:AutoConfirmEmailDomains`, empty by default — verification is required for everyone unless a domain is explicitly allow-listed for dev/test). **§15.3** WebAuthn registration credential-ID uniqueness is enforced (rejects a credential ID already owned by another user). The 5 changed English docs were synced across all 6 locales (de/es/fr/pt/vi/zh-Hans). Regression tests added: TOTP replay rejection, SCIM email-change collision, OIDC unverified-email non-linking (370/370 tests pass); the in-memory test user store was made index-based so it faithfully models the Table email index.
+
+Still open (LOW, noted): §13.4 device-flow `interval` is advertised (=5) but `slow_down` poll-rate *enforcement* is not implemented (low value — the device code is single-use after approval).
 
 ---
 
@@ -181,7 +183,7 @@ id_token validation is correct — signature vs. discovery JWKS, `iss`, `aud == 
 ### 9.2 — Login: account enumeration (status codes + timing) and no IP throttle — **MEDIUM**
 `AuthEndpoints.cs:74-113`. Distinct responses leak existence (`401 invalid_credentials` vs `403 account_disabled` / `423 locked_out` / `403 email_not_confirmed`, plus `409 email_already_registered` on register). Timing leaks too: unknown users return before any password hash; existing users run PBKDF2 (forgot-password added a delay, login did not). No rate limiter on `/api/auth/login` or `/api/auth/mfa/verify` (only per-account lockout) → password-spraying across accounts and account-lockout DoS (anyone who knows a victim's email can lock them out). Add an IP+account limiter (mind §4.1), uniform responses, dummy-hash the unknown-user path.
 
-### 9.3 — `EmailConfirmed = email.EndsWith("@example.com")` at registration — **MEDIUM (footgun)**
+### 9.3 — `EmailConfirmed = email.EndsWith("@example.com")` at registration — **MEDIUM (footgun)** — ✅ FIXED (`security-fixes-remaining`)
 `AuthEndpoints.cs:303`. Auto-confirms any `@example.com` registration, bypassing email verification. `example.com` is non-routable so impact is limited, but it's a suffix-based trust backdoor — config-gate or remove before GA.
 
 ### 9.4 — Positives

@@ -44,7 +44,7 @@ Một số lượng nhỏ các giá trị được đọc nhiều, thay đổi c
 | Metadata SAML IdP | 60 phút | Tương tự |
 | Các origin CORS được phép | 60 phút | Origin mới mất tối đa một giờ để lan truyền |
 
-Các bộ nhớ đệm này phù hợp cho môi trường production. Nếu bạn cần lan truyền ngay lập tức, hãy khởi động lại các instance bị ảnh hưởng.
+Các bộ nhớ đệm này phù hợp cho môi trường production. Tất cả thời lượng đều có thể cấu hình qua phần cấu hình `Cache` — xem [Cấu hình](configuration). Nếu bạn cần lan truyền ngay lập tức, hãy khởi động lại các instance bị ảnh hưởng.
 
 ## Giới hạn tốc độ
 
@@ -60,7 +60,7 @@ Mỗi instance duy trì bộ đếm riêng trong bộ nhớ bằng CRDT G-Counte
 
 Mỗi instance tạo một ID node hex ngẫu nhiên khi khởi động (ví dụ: `a3f1b2`). ID này xác định instance trong các thông điệp gossip và trạng thái giới hạn tốc độ. Nó không được lưu trữ bền vững — một ID mới được tạo mỗi lần khởi động lại.
 
-Một `ClusterLeaderService` chạy trên mỗi instance, bầu chọn một leader duy nhất trong số các peer được phát hiện (ID node thấp nhất thắng). Quyền leader được chuyển giao tự động khi leader ngừng hoạt động. Bầu cử leader có sẵn cho các tác vụ phối hợp trên toàn cụm chỉ nên chạy trên một node.
+Một `ClusterLeaderService` chạy trên mỗi instance, bầu chọn một leader duy nhất trong số các peer được phát hiện (ID node thấp nhất thắng). Quyền leader được chuyển giao tự động khi leader ngừng hoạt động. Leader được sử dụng cho việc phối hợp trên toàn cụm — hiện tại, xoay vòng khóa ký (khi được bật) chỉ chạy trên leader để tránh việc sinh khóa đồng thời.
 
 ### Cấu hình cluster
 
@@ -98,6 +98,17 @@ Xem trang [Cấu hình](configuration) để biết tất cả các thiết lậ
 ### Triển khai đa tenant
 
 Trong chế độ đa tenant (`AddAuthagonalCore()`), các dịch vụ nền như `GrantReconciliationService` và `SigningKeyRotationService` không được đăng ký — host quản lý chúng theo từng tenant. Chỉ `TokenCleanupService` chạy vô điều kiện.
+
+## Phân vùng nóng của chỉ mục tên
+
+Tìm kiếm theo tiền tố tên trong trang quản trị được hỗ trợ bởi các bảng chỉ mục `UserFirstNames` / `UserLastNames`, vốn sử dụng một **phân vùng nóng duy nhất**. Ở quy mô lớn, điều này giới hạn thông lượng ghi chỉ mục ở khoảng 2.000 thao tác/giây, có thể trở thành nút thắt cổ chai khi tạo/cập nhật người dùng dưới tải nặng. Nếu bạn không cung cấp tìm kiếm theo tên trong trang quản trị, hãy đặt `Storage:NameIndexesEnabled = false` để bỏ qua hoàn toàn các lượt ghi này. Xem [Cấu hình](configuration).
+
+## Proxy tin cậy và các endpoint nội bộ
+
+Khi chạy nhiều instance phía sau một bộ cân bằng tải:
+
+- **Forwarded headers** — giới hạn tốc độ và khóa tài khoản lập khóa dựa trên IP của client, được phân giải từ `X-Forwarded-For`. Hãy đặt `ForwardedHeaders:KnownNetworks` thành CIDR của ingress / pod của bạn để IP của client không thể bị giả mạo giữa các instance. `ForwardedHeaders:ForwardLimit` mặc định là `1`. Xem [Cấu hình](configuration#forwarded-headers-proxy-tin-cậy).
+- **Các endpoint nội bộ** — `/_internal/cluster/gossip` và `/_internal/backchannel-logout` được bảo vệ bằng IP nguồn (chỉ loopback / riêng tư) trừ khi `Cluster:Secret` được đặt. Khi gossip được định tuyến qua một bộ cân bằng tải (`Cluster:InternalUrl`), LB ghi đè IP nguồn, nên hãy đặt `Cluster:Secret` và người gọi gossip sẽ xuất trình nó trong header `X-Cluster-Secret`.
 
 ## Khuyến nghị mở rộng quy mô
 

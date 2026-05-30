@@ -10,10 +10,22 @@ Authagonal 通过 `appsettings.json` 或环境变量进行配置。环境变量�
 
 ## 必需设置
 
+存储可以通过两种方式之一配置——提供 **`Storage:ConnectionString`** **或** **`Storage:TableServiceUri`**（托管标识路径，生产环境首选）。
+
 | 设置 | 环境变量 | 描述 |
 |---|---|---|
-| `Storage:ConnectionString` | `Storage__ConnectionString` | Azure Table Storage 连接字符串 |
+| `Storage:ConnectionString` | `Storage__ConnectionString` | 带有账户密钥的 Azure Table Storage 连接字符串。适用于开发 / Azurite。 |
+| `Storage:TableServiceUri` | `Storage__TableServiceUri` | 托管标识的 Table Storage 终结点，例如 `https://{account}.table.core.windows.net/`。作为 `Storage:ConnectionString` 的替代方案，且**在生产环境中首选**——通过 `DefaultAzureCredential` 进行认证，因此不会有任何访问密钥落入机密中。宿主必须授予工作负载标识 **Storage Table Data Contributor** 角色。 |
 | `Issuer` | `Issuer` | 此服务器的公共基础 URL（例如 `https://auth.example.com`） |
+
+## 存储
+
+| 设置 | 环境变量 | 默认值 | 描述 |
+|---|---|---|---|
+| `Storage:ConnectionString` | `Storage__ConnectionString` | *（无）* | 带有账户密钥的连接字符串（参见“必需设置”）。 |
+| `Storage:TableServiceUri` | `Storage__TableServiceUri` | *（无）* | 托管标识的 Table Storage URI（参见“必需设置”）。当两者都设置时，优先于 `Storage:ConnectionString`。 |
+| `Storage:NameIndexesEnabled` | `Storage__NameIndexesEnabled` | `true` | 是否维护支撑管理员姓名前缀搜索的 `UserFirstNames` / `UserLastNames` 前缀搜索索引表。在不向外暴露管理员姓名搜索的宿主上设为 `false` 以跳过这些写入。**扩展注意事项：** 这些索引使用单个热分区，在规模化时将吞吐量限制在大约 2,000 ops/秒——如果不需要姓名搜索，请禁用它们。 |
+| `LoginAppUrl` | `LoginAppUrl` | `/login` | `/connect/authorize` 端点重定向到登录 SPA（登录、升级验证和同意界面）的基础 URL。当登录 UI 由与服务器不同的源提供时，请设置此项；默认为内置 SPA 提供的相对路径 `/login`。 |
 
 ## 认证
 
@@ -29,9 +41,13 @@ Authagonal 通过 `appsettings.json` 或环境变量进行配置。环境变量�
 | `Auth:MfaChallengeExpiryMinutes` | `5` | MFA 验证令牌有效期 |
 | `Auth:MfaSetupTokenExpiryMinutes` | `15` | MFA 设置令牌有效期（用于强制注册） |
 | `Auth:Pbkdf2Iterations` | `100000` | 密码哈希的 PBKDF2 迭代次数 |
-| `Auth:RefreshTokenReuseGraceSeconds` | `60` | 并发刷新令牌重用的宽限窗口 |
+| `Auth:RefreshTokenReuseGraceSeconds` | `0` | 并发刷新令牌重用的可选宽限窗口（秒）。`0`（默认）保持严格姿态：对已消费刷新令牌的任何重用都会撤销该用户+客户端的所有令牌。设为 `> 0` 则将窗口内的重用视为幂等重试（重新下发后继令牌）——对于网络连接不稳定的移动客户端很有用。 |
+| `Auth:DynamicClientRegistrationEnabled` | `false` | 启用 `POST /connect/register` 动态客户端注册端点（RFC 7591）。默认关闭，因为在多租户部署中开放注册可能被滥用。参见[动态客户端注册](client-registration)。 |
 | `Auth:SigningKeyLifetimeDays` | `90` | RSA 签名密钥在自动轮换前的有效期 |
 | `Auth:SigningKeyCacheRefreshMinutes` | `60` | 从存储重新加载签名密钥的频率 |
+| `Auth:KeyRotationEnabled` | `false` | 启用签名密钥自动轮换 |
+| `Auth:KeyRotationCheckIntervalMinutes` | `360` | 检查活动密钥是否需要轮换的频率 |
+| `Auth:KeyRotationLeadTimeDays` | `14` | 当活动密钥在此天数内过期时进行轮换 |
 | `Auth:SecurityStampRevalidationMinutes` | `30` | Cookie 安全标记检查间隔 |
 | `DataProtection:BlobUri` | *（无）* | 用于跨实例持久化 Data Protection 密钥的 Azure Blob URI |
 
@@ -82,6 +98,8 @@ Authagonal 通过 `appsettings.json` 或环境变量进行配置。环境变量�
       "SlidingRefreshTokenLifetimeSeconds": 1296000,
       "RefreshTokenUsage": "OneTime",
       "MfaPolicy": "Enabled",
+      "RequireConsent": false,
+      "BackChannelLogoutUri": "https://app.example.com/logout-callback",
       "ProvisioningApps": ["my-backend"]
     }
   ]
@@ -95,12 +113,13 @@ Authagonal 通过 `appsettings.json` 或环境变量进行配置。环境变量�
 | `authorization_code` | 交互式用户登录（Web 应用、SPA、移动端） |
 | `client_credentials` | 服务间通信 |
 | `refresh_token` | 令牌续期（需要 `AllowOfflineAccess: true`） |
+| `urn:ietf:params:oauth:grant-type:device_code` | 用于输入受限设备的设备授权许可（RFC 8628） |
 
 ### 刷新令牌用法
 
 | 值 | 行为 |
 |---|---|
-| `OneTime`（默认） | 每次刷新都会签发新的刷新令牌。旧令牌失效，但有 60 秒的宽限窗口以支持并发请求。宽限窗口过后的重放将撤销该用户+客户端的所有令牌。 |
+| `OneTime`（默认） | 每次刷新都会签发新的刷新令牌，并使旧令牌失效。默认情况下（`Auth:RefreshTokenReuseGraceSeconds = 0`），对已消费令牌的任何重用都会立即撤销该用户+客户端的所有令牌——默认**不**启用宽限窗口。将 `Auth:RefreshTokenReuseGraceSeconds` 设为正值以启用重试容忍窗口。 |
 | `ReUse` | 同一刷新令牌在过期前可重复使用。 |
 
 ### 预配应用
@@ -258,19 +277,56 @@ public Task<MfaPolicy> ResolveMfaPolicyAsync(
 
 ## 密钥提供者
 
-客户端密钥和 OIDC 提供者密钥可以选择存储在 Azure Key Vault 中：
+上游 OIDC 客户端密钥和 TOTP / MFA 种子可以存储在 Azure Key Vault 中，而非以纯文本形式保存：
 
 | 设置 | 描述 |
 |---|---|
-| `SecretProvider:VaultUri` | Key Vault URI（例如 `https://my-vault.vault.azure.net/`）。如未设置，密钥将被视为纯文本。 |
+| `SecretProvider:VaultUri` | Key Vault URI（例如 `https://my-vault.vault.azure.net/`）。如未设置，将使用**纯文本**提供者，密钥会原样存储在 Table Storage 中。 |
 
 配置后，看起来像 Key Vault 引用的密钥值会在运行时解析。使用 `DefaultAzureCredential` 进行认证。
+
+> ⚠️ **生产环境：请设置 `SecretProvider:VaultUri`。** 默认密钥提供者为**纯文本**。当 `SecretProvider:VaultUri` 未设置时，上游 OIDC 客户端密钥和 TOTP / MFA 种子会以明文写入 Azure Table Storage——因此也会以明文出现在任何[备份](backup-restore)中。对于任何生产部署，请配置 `SecretProvider:VaultUri`，以便这些密钥存储在 Key Vault 中。
+
+## 管理 API
+
+| 设置 | 默认值 | 描述 |
+|---|---|---|
+| `AdminApi:Enabled` | `true` | **默认启用。** 设为 `false` 以禁用所有管理端点（它们将不会被注册）。 |
+| `AdminApi:Scope` | `authagonal-admin` | 访问管理端点所需的 JWT 作用域。将其更改为与您现有的作用域名称匹配（例如，对于 IdentityServer 迁移使用 `projects-identity-admin`）。 |
+
+> ⚠️ **管理 API 默认启用且具有高度特权。** 管理作用域授予完整的管理权限和用户模拟能力——任何持有带 `AdminApi:Scope` 令牌的人都可以为任意用户铸造令牌、管理客户端，以及读写所有配置。请对管理端点（`/api/v1/*` 管理路由）进行网络限制，并严格控制谁能被签发管理作用域。作为纵深防御措施，该作用域是*保留的*：它永远不能授予给某个 OAuth 客户端（参见[管理 API](admin-api)），也不能通过模拟端点签发。如果不使用管理 API，请直接设置 `AdminApi:Enabled = false`。
+
+## 同意
+
+可以通过 `RequireConsent` 属性启用按客户端的同意：
+
+| 值 | 行为 |
+|---|---|
+| `false`（默认） | 认证后立即继续授权 |
+| `true` | 向用户显示列出所请求作用域的同意界面。同意会持久化 5 年，仅在请求新作用域时才重新提示。 |
+
+用户可以在 `GET /consent/grants` 查看其同意授权，并在 `DELETE /consent/grants/{clientId}` 撤销它们。
+
+## 后通道注销
+
+在客户端上注册 `BackChannelLogoutUri` 以接收 OIDC Back-Channel Logout 1.0 通知。当用户注销时，Authagonal 会向每个客户端注册的 URI 发送一个签名的注销令牌（JWT）。
+
+```json
+{
+  "Clients": [
+    {
+      "ClientId": "my-app",
+      "BackChannelLogoutUri": "https://app.example.com/logout-callback"
+    }
+  ]
+}
+```
 
 ## 电子邮件
 
 默认情况下，Authagonal 使用空操作邮件服务，静默丢弃所有邮件。要启用邮件发送，请在调用 `AddAuthagonal()` 之前注册 `IEmailService` 实现。
 
-内置的 `EmailService` 使用 SendGrid。要使用它，请显式注册：
+内置的 `EmailService` 使用 [Resend](https://resend.com)。要使用它，请显式注册：
 
 ```csharp
 services.AddSingleton<IEmailService, EmailService>();
@@ -279,11 +335,9 @@ services.AddAuthagonal(configuration);
 
 | 设置 | 描述 |
 |---|---|
-| `Email:SendGridApiKey` | 用于发送邮件的 SendGrid API 密钥 |
+| `Email:ResendApiKey` | 用于发送邮件的 Resend API 密钥 |
 | `Email:SenderEmail` | 发件人电子邮件地址 |
-| `Email:SenderName` | 发件人显示名称 |
-| `Email:VerificationTemplateId` | 用于邮箱验证的 SendGrid 动态模板 ID |
-| `Email:PasswordResetTemplateId` | 用于密码重置的 SendGrid 动态模板 ID |
+| `Email:SenderName` | 发件人显示名称（默认为 `"Authagonal"`） |
 
 发送到 `@example.com` 地址的邮件会被静默跳过（便于测试）。
 
@@ -297,7 +351,7 @@ Authagonal 实例自动组成集群以共享速率限制状态。集群功能默
 | `Cluster:MulticastGroup` | `Cluster__MulticastGroup` | `239.42.42.42` | 用于对等发现的 UDP 多播组 |
 | `Cluster:MulticastPort` | `Cluster__MulticastPort` | `19847` | 用于对等发现的 UDP 多播端口 |
 | `Cluster:InternalUrl` | `Cluster__InternalUrl` | *（无）* | 多播不可用时用于 gossip 的负载均衡回退 URL |
-| `Cluster:Secret` | `Cluster__Secret` | *（无）* | gossip 端点认证的共享密钥（设置 `InternalUrl` 时建议配置） |
+| `Cluster:Secret` | `Cluster__Secret` | *（无）* | 内部专用端点（`/_internal/cluster/gossip` 和 `/_internal/backchannel-logout`）所需的共享密钥。设置后，调用方必须在 `X-Cluster-Secret` 请求头中提供它（以恒定时间比较）。**未设置**时，这些端点仅可从环回 / 私有（RFC 1918 / 链路本地 / ULA）源 IP 访问——携带公网 IP 的外部请求将被拒绝。当 `InternalUrl` 通过负载均衡器路由 gossip 时建议配置。 |
 | `Cluster:GossipIntervalSeconds` | `Cluster__GossipIntervalSeconds` | `5` | 实例交换速率限制状态的频率（秒） |
 | `Cluster:DiscoveryIntervalSeconds` | `Cluster__DiscoveryIntervalSeconds` | `10` | 实例通过多播宣告自身的频率（秒） |
 | `Cluster:PeerStaleAfterSeconds` | `Cluster__PeerStaleAfterSeconds` | `30` | 超过此秒数未响应的对等节点将被移除 |
@@ -327,6 +381,28 @@ Authagonal 实例自动组成集群以共享速率限制状态。集群功能默
 
 详情请参阅[扩展](scaling)了解分布式速率限制的工作原理。
 
+## 转发头（受信任代理）
+
+Authagonal 以客户端 IP 作为速率限制和账户锁定的键，并且仅在 HTTPS 请求上发出 HSTS。在反向代理 / 入口（ingress）后面，真实的客户端 IP 和协议（scheme）通过 `X-Forwarded-For` / `X-Forwarded-Proto` 头到达。这些设置控制**哪些代理跳点受信任**来设置这些值，从而防止调用方伪造 `X-Forwarded-For` 来冒充客户端 IP。
+
+| 设置 | 环境变量 | 默认值 | 描述 |
+|---|---|---|---|
+| `ForwardedHeaders:ForwardLimit` | `ForwardedHeaders__ForwardLimit` | `1` | 从 `X-Forwarded-For` 链右侧起信任的代理跳点数量。默认值 `1` 仅信任您的入口追加的那一跳，忽略链中更靠左的任何内容。 |
+| `ForwardedHeaders:KnownNetworks` | `ForwardedHeaders__KnownNetworks__0`（数组） | *（空）* | 允许设置转发头的 CIDR 范围（字符串数组，例如 `"10.0.0.0/8"`）。**最强保证：** 将其设为您的入口 / Pod CIDR，使得只有该网络可以设置客户端 IP。 |
+| `ForwardedHeaders:KnownProxies` | `ForwardedHeaders__KnownProxies__0`（数组） | *（空）* | 允许设置转发头的单个代理 IP 地址（字符串数组）。可与 `KnownNetworks` 一起使用或替代之。 |
+
+```json
+{
+  "ForwardedHeaders": {
+    "ForwardLimit": 1,
+    "KnownNetworks": ["10.244.0.0/16"],
+    "KnownProxies": []
+  }
+}
+```
+
+> ⚠️ **需要 TLS 终止代理。** Authagonal 必须运行在 TLS 终止反向代理后面。会话 cookie 使用 `SecurePolicy = SameAsRequest`，且 HSTS（`Strict-Transport-Security`）仅在 HTTPS 请求上发出，因此代理必须转发 `X-Forwarded-Proto: https`，cookie 才会被标记为 `Secure` 并发送 HSTS。请将 `ForwardedHeaders:KnownNetworks` / `ForwardedHeaders:KnownProxies` 配置为您的受信任代理，使协议和客户端 IP 无法被伪造。
+
 ## 速率限制
 
 内置的按 IP 速率限制通过集群 gossip 协议在所有实例间同步执行：
@@ -341,14 +417,22 @@ Authagonal 实例自动组成集群以共享速率限制状态。集群功能默
 
 CORS 动态配置。所有已注册客户端的 `AllowedCorsOrigins` 中的来源自动被允许，缓存 60 分钟。
 
+## HashiCorp Vault Transit
+
+Authagonal 可以使用 HashiCorp Vault 的 Transit 机密引擎签名 JWT。私钥永远不会离开 Vault——只有签名操作被远程委托。公钥在本地缓存以供验证。
+
+这是在作为库托管时以编程方式配置的。详情请参阅[扩展性](extensibility)。
+
 ## 完整示例
 
 ```json
 {
   "Storage": {
-    "ConnectionString": "DefaultEndpointsProtocol=https;AccountName=...;AccountKey=...;TableEndpoint=https://..."
+    "TableServiceUri": "https://myaccount.table.core.windows.net/",
+    "NameIndexesEnabled": true
   },
   "Issuer": "https://auth.example.com",
+  "LoginAppUrl": "/login",
   "Auth": {
     "MaxFailedAttempts": 5,
     "LockoutDurationMinutes": 10,
@@ -357,10 +441,20 @@ CORS 动态配置。所有已注册客户端的 `AllowedCorsOrigins` 中的来�
     "EmailVerificationExpiryHours": 24,
     "PasswordResetExpiryMinutes": 60,
     "Pbkdf2Iterations": 100000,
+    "RefreshTokenReuseGraceSeconds": 0,
+    "DynamicClientRegistrationEnabled": false,
     "SigningKeyLifetimeDays": 90
   },
+  "SecretProvider": {
+    "VaultUri": "https://my-vault.vault.azure.net/"
+  },
+  "ForwardedHeaders": {
+    "ForwardLimit": 1,
+    "KnownNetworks": ["10.244.0.0/16"]
+  },
   "Cluster": {
-    "Enabled": true
+    "Enabled": true,
+    "Secret": "shared-secret-here"
   },
   "AdminApi": {
     "Enabled": true,
@@ -377,11 +471,9 @@ CORS 动态配置。所有已注册客户端的 `AllowedCorsOrigins` 中的来�
     "RequireSpecialChar": true
   },
   "Email": {
-    "SendGridApiKey": "SG.xxx",
+    "ResendApiKey": "re_xxx",
     "SenderEmail": "noreply@example.com",
-    "SenderName": "Example Auth",
-    "VerificationTemplateId": "d-xxx",
-    "PasswordResetTemplateId": "d-yyy"
+    "SenderName": "Example Auth"
   },
   "SamlProviders": [
     {
@@ -422,6 +514,8 @@ CORS 动态配置。所有已注册客户端的 `AllowedCorsOrigins` 中的来�
       "RequireClientSecret": false,
       "AllowOfflineAccess": true,
       "MfaPolicy": "Enabled",
+      "RequireConsent": false,
+      "BackChannelLogoutUri": "https://app.example.com/logout-callback",
       "ProvisioningApps": ["backend"]
     }
   ]

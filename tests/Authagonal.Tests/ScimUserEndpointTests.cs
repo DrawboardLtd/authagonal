@@ -190,6 +190,34 @@ public sealed class ScimUserEndpointTests : IAsyncDisposable
     }
 
     [Fact]
+    public async Task PatchUser_ChangeEmailToExistingUser_Returns409()
+    {
+        await _factory.SeedTestDataAsync();
+        var (_, rawToken) = await _factory.SeedScimClientAsync();
+        var client = _factory.CreateClient();
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", rawToken);
+
+        await client.PostAsJsonAsync("/scim/v2/Users", new { userName = "victim2@example.com", name = new { givenName = "Victim" } });
+        var attackerResp = await client.PostAsJsonAsync("/scim/v2/Users", new { userName = "attacker2@example.com", name = new { givenName = "Attacker" } });
+        var attackerId = (await attackerResp.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetString();
+
+        // Repointing one record's email onto another existing user's email must be rejected, not
+        // allowed to clobber the global email index.
+        var patchContent = new StringContent(
+            JsonSerializer.Serialize(new
+            {
+                schemas = new[] { "urn:ietf:params:scim:api:messages:2.0:PatchOp" },
+                Operations = new[]
+                {
+                    new { op = "replace", path = "userName", value = "victim2@example.com" }
+                }
+            }), Encoding.UTF8, "application/scim+json");
+
+        var response = await client.PatchAsync($"/scim/v2/Users/{attackerId}", patchContent);
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+    }
+
+    [Fact]
     public async Task PutUser_ReplacesUser()
     {
         await _factory.SeedTestDataAsync();

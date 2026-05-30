@@ -295,16 +295,26 @@ public static class MfaSetupEndpoints
             return JsonResults.Error("attestation_failed");
         }
 
+        var credData = JsonSerializer.Deserialize(credential.PublicKeyJson!, AuthagonalJsonContext.Default.WebAuthnCredentialData);
+        var credentialIdBytes = credData is not null ? Convert.FromBase64String(credData.CredentialId) : null;
+
+        // Credential-ID uniqueness: reject a credential ID already registered to a DIFFERENT user, so
+        // one user's passkey index entry can't be overwritten/hijacked by another's registration.
+        if (credentialIdBytes is not null)
+        {
+            var existingOwner = await mfaStore.FindByWebAuthnCredentialIdAsync(credentialIdBytes, ct);
+            if (existingOwner is { } owner && !string.Equals(owner.UserId, userId, StringComparison.Ordinal))
+                return JsonResults.Error("credential_already_registered", 409);
+        }
+
         // Delete the pending setup credential and create the real one
         await mfaStore.DeleteCredentialAsync(userId, request.SetupToken, ct);
         await mfaStore.CreateCredentialAsync(credential, ct);
 
         // Store WebAuthn credential ID mapping for discovery
-        var credData = JsonSerializer.Deserialize(credential.PublicKeyJson!, AuthagonalJsonContext.Default.WebAuthnCredentialData);
-        if (credData is not null)
+        if (credentialIdBytes is not null)
         {
-            await mfaStore.StoreWebAuthnCredentialIdMappingAsync(
-                Convert.FromBase64String(credData.CredentialId), userId, credential.Id, ct);
+            await mfaStore.StoreWebAuthnCredentialIdMappingAsync(credentialIdBytes, userId, credential.Id, ct);
         }
 
         // Set MfaEnabled on user

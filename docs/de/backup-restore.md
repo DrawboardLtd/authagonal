@@ -33,7 +33,7 @@ Jede Sicherung erstellt ein Verzeichnis mit Zeitstempel:
 ```
 backups/
   20260329-120000/          (full backup)
-  Users.jsonl
+    Users.jsonl
     Clients.jsonl
     Grants.jsonl
     ...
@@ -43,7 +43,11 @@ backups/
     _manifest.json
 ```
 
-Jede `.jsonl`-Datei enthaelt ein JSON-Objekt pro Zeile (eines pro Tabellenentitaet). Mit `--gzip` werden Dateien als `.jsonl.gz` komprimiert. Die Datei `_manifest.json` zeichnet den Sicherungszeitstempel, den Modus, die Komprimierung und die Anzahl der Entitaeten auf.
+Jede `.jsonl`-Datei enthaelt ein JSON-Objekt pro Zeile (eines pro Tabellenentitaet). Mit `--gzip` werden Dateien als `.jsonl.gz` komprimiert. Die Datei `_manifest.json` zeichnet den Sicherungszeitstempel, den Modus, die Komprimierung, die Anzahl der Entitaeten und SHA-256-Dateihashes zur Integritaetspruefung auf.
+
+### Integritaetspruefung
+
+Jedes Sicherungsmanifest enthaelt ein `FileHashes`-Verzeichnis, das Dateinamen ihren SHA-256-Hashes zuordnet. Waehrend der Wiederherstellung wird die Dateiintegritaet automatisch anhand dieser Hashes verifiziert, bevor Daten geschrieben werden. Wird eine Hash-Abweichung erkannt, bricht die Wiederherstellung mit einem Fehler ab.
 
 ### Inkrementelle Sicherungen
 
@@ -55,9 +59,17 @@ Wenn keine `.lastbackup`-Datei existiert, fuehrt der erste inkrementelle Lauf ei
 
 Das Sicherungstool schliesst standardmaessig alle Authagonal-Tabellen ein:
 
-`Users`, `UserEmails`, `UserLogins`, `UserExternalIds`, `Clients`, `Grants`, `GrantsBySubject`, `GrantsByExpiry`, `SigningKeys`, `SsoDomains`, `SamlProviders`, `OidcProviders`, `UserProvisions`, `MfaCredentials`, `MfaChallenges`, `MfaWebAuthnIndex`, `ScimTokens`, `ScimGroups`, `ScimGroupExternalIds`, `Roles`
+`Users`, `UserEmails`, `UserLogins`, `UserExternalIds`, `Clients`, `Grants`, `GrantsBySubject`, `GrantsByExpiry`, `SsoDomains`, `SamlProviders`, `OidcProviders`, `UserProvisions`, `MfaCredentials`, `MfaChallenges`, `MfaWebAuthnIndex`, `ScimTokens`, `ScimGroups`, `ScimGroupExternalIds`, `Roles`
 
 Transiente Tabellen (`SamlReplayCache`, `OidcStateStore`) sind standardmaessig ausgeschlossen — fuegen Sie diese bei Bedarf explizit mit `--tables` hinzu.
+
+### Signaturschluessel sind standardmaessig ausgeschlossen
+
+Die Tabelle `SigningKeys` ist **standardmaessig von Sicherungen ausgeschlossen** (`Backup:IncludeSigningKeys` ist standardmaessig `false`). Bei Hosts, die die lokale (in der Tabelle gespeicherte) Schluesselquelle verwenden, enthaelt diese Tabelle den **privaten** JWT-Signaturschluessel — ihn in eine Klartext-Sicherungsdatei zu schreiben, wuerde es jedem, der die Sicherung liest, ermoeglichen, Token zu faelschen. (Hosts, die ueber HashiCorp Vault Transit signieren, halten keinen privaten Schluessel in der Tabelle, sodass dieses Problem fuer sie nicht gilt.)
+
+> ⚠️ Aktivieren Sie `Backup:IncludeSigningKeys` nur, wenn das Sicherungsziel selbst im Ruhezustand verschluesselt und zugriffskontrolliert ist. Dasselbe gilt fuer den Rest der Sicherung: Mit dem standardmaessigen **Klartext**-Geheimnis-Anbieter enthalten Sicherungen auch Geheimnisse von vorgelagerten OIDC-Clients sowie TOTP-/MFA-Seeds im Klartext — siehe [Konfiguration → Geheimnis-Anbieter](configuration#secret-provider).
+
+Bei der Wiederherstellung wird die Dateiintegritaet anhand der SHA-256-Hashes des Manifests verifiziert, bevor Daten geschrieben werden (siehe [Integritaetspruefung](#integritaetspruefung)); eine Hash-Abweichung bricht die Wiederherstellung ab.
 
 ## Wiederherstellung
 

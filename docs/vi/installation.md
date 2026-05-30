@@ -112,6 +112,16 @@ npm install @authagonal/login
 
 Gói đã bao gồm JS và CSS đã biên dịch — nhập trực tiếp các component và style vào ứng dụng React của bạn. Xem [Máy chủ tùy chỉnh](custom-server) để biết hướng dẫn đầy đủ.
 
+## Danh sách kiểm tra bảo mật cho production
+
+Trước khi đưa Authagonal ra lưu lượng thực, hãy xác nhận những điều sau. Mỗi mục được trình bày chi tiết trên trang [Cấu hình](configuration).
+
+- **Chạy phía sau một proxy kết thúc TLS.** Authagonal phải nằm sau một reverse proxy / ingress kết thúc TLS. Cookie phiên sử dụng `SecurePolicy = SameAsRequest` và HSTS chỉ được phát trên HTTPS, nên proxy phải chuyển tiếp `X-Forwarded-Proto: https`. Hãy đặt `ForwardedHeaders:KnownNetworks` (hoặc `KnownProxies`) thành CIDR của ingress / pod của bạn để IP và scheme của client không thể bị giả mạo; `ForwardedHeaders:ForwardLimit` mặc định là `1` (chỉ tin cậy hop cuối cùng).
+- **Đặt `SecretProvider:VaultUri`.** Nhà cung cấp bí mật mặc định là **văn bản thuần** — nếu không có Key Vault, bí mật của client OIDC thượng nguồn và seed TOTP / MFA được lưu dưới dạng văn bản rõ trong Table Storage (và trong các bản sao lưu). Hãy cấu hình Key Vault cho bất kỳ triển khai production nào.
+- **Khóa chặt API quản trị.** `AdminApi:Enabled` mặc định là **true**. Scope quản trị (`AdminApi:Scope`, mặc định `authagonal-admin`) cấp toàn quyền quản lý và giả mạo người dùng. Hãy giới hạn mạng cho các route quản trị `/api/v1/*` và kiểm soát chặt chẽ ai được cấp scope quản trị, hoặc đặt `AdminApi:Enabled = false` nếu không sử dụng.
+- **Bảo vệ các endpoint nội bộ.** Đặt `Cluster:Secret` để `/_internal/cluster/gossip` và `/_internal/backchannel-logout` yêu cầu header `X-Cluster-Secret` — đặc biệt khi gossip được định tuyến qua bộ cân bằng tải bằng `Cluster:InternalUrl`.
+- **Mã hóa các bản sao lưu.** Với nhà cung cấp bí mật văn bản thuần, các bản sao lưu chứa bí mật. Bảng `SigningKeys` bị loại trừ khỏi các bản sao lưu theo mặc định; nếu bạn tùy chọn bật qua `Backup:IncludeSigningKeys`, đích sao lưu phải được mã hóa khi lưu trữ. Xem [Sao lưu & Khôi phục](backup-restore).
+
 ## Công cụ di chuyển
 
 Để di chuyển từ Duende IdentityServer + SQL Server:

@@ -112,6 +112,16 @@ npm install @authagonal/login
 
 Le package fournit du JS et du CSS compiles -- importez les composants et les styles directement dans votre propre application React. Consultez [Serveur personnalise](custom-server) pour un guide complet.
 
+## Liste de controle de securite pour la production
+
+Avant d'exposer Authagonal a du trafic reel, verifiez les points suivants. Chaque point est detaille sur la page [Configuration](configuration).
+
+- **Executez derriere un proxy terminant le TLS.** Authagonal doit etre place derriere un reverse proxy / ingress qui termine le TLS. Le cookie de session utilise `SecurePolicy = SameAsRequest` et HSTS n'est emis que sur HTTPS, le proxy doit donc transferer `X-Forwarded-Proto: https`. Definissez `ForwardedHeaders:KnownNetworks` (ou `KnownProxies`) sur le CIDR de votre ingress / de vos pods afin que l'IP du client et le schema ne puissent pas etre usurpes ; `ForwardedHeaders:ForwardLimit` vaut `1` par defaut (ne faire confiance qu'au dernier saut).
+- **Definissez `SecretProvider:VaultUri`.** Le fournisseur de secrets par defaut est **en texte brut** — sans Key Vault, les secrets des clients OIDC en amont et les graines TOTP / MFA sont stockes en clair dans Table Storage (et dans les sauvegardes). Configurez Key Vault pour tout deploiement en production.
+- **Verrouillez l'API d'administration.** `AdminApi:Enabled` vaut **true** par defaut. Le scope d'administration (`AdminApi:Scope`, par defaut `authagonal-admin`) accorde la gestion complete et l'usurpation d'identite des utilisateurs. Restreignez l'acces reseau aux routes d'administration `/api/v1/*` et controlez strictement a qui le scope d'administration est emis, ou definissez `AdminApi:Enabled = false` s'il n'est pas utilise.
+- **Protegez les points d'acces internes.** Definissez `Cluster:Secret` pour que `/_internal/cluster/gossip` et `/_internal/backchannel-logout` exigent l'en-tete `X-Cluster-Secret` — en particulier lorsque le gossip est achemine via un equilibreur de charge avec `Cluster:InternalUrl`.
+- **Chiffrez les sauvegardes.** Avec le fournisseur de secrets en texte brut, les sauvegardes contiennent des secrets. La table `SigningKeys` est exclue des sauvegardes par defaut ; si vous l'activez via `Backup:IncludeSigningKeys`, la cible de sauvegarde doit etre chiffree au repos. Voir [Sauvegarde et restauration](backup-restore).
+
 ## Outil de migration
 
 Pour migrer depuis Duende IdentityServer + SQL Server :

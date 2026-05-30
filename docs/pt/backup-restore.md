@@ -43,7 +43,11 @@ backups/
     _manifest.json
 ```
 
-Cada arquivo `.jsonl` contem um objeto JSON por linha (um por entidade de tabela). Com `--gzip`, os arquivos sao compactados como `.jsonl.gz`. O arquivo `_manifest.json` registra o carimbo de data/hora do backup, o modo, a compressao e a contagem de entidades.
+Cada arquivo `.jsonl` contem um objeto JSON por linha (um por entidade de tabela). Com `--gzip`, os arquivos sao compactados como `.jsonl.gz`. O arquivo `_manifest.json` registra o carimbo de data/hora do backup, o modo, a compressao, a contagem de entidades e os hashes SHA-256 dos arquivos para verificacao de integridade.
+
+### Verificacao de integridade
+
+Cada manifesto de backup inclui um dicionario `FileHashes` que mapeia nomes de arquivos para os seus hashes SHA-256. Durante a restauracao, a integridade dos arquivos e automaticamente verificada contra esses hashes antes de quaisquer dados serem gravados. Se uma incompatibilidade de hash for detectada, a restauracao e abortada com um erro.
 
 ### Backups incrementais
 
@@ -55,9 +59,17 @@ Se nenhum arquivo `.lastbackup` existir, a primeira execucao incremental realiza
 
 A ferramenta de backup inclui todas as tabelas do Authagonal por padrao:
 
-`Users`, `UserEmails`, `UserLogins`, `UserExternalIds`, `Clients`, `Grants`, `GrantsBySubject`, `GrantsByExpiry`, `SigningKeys`, `SsoDomains`, `SamlProviders`, `OidcProviders`, `UserProvisions`, `MfaCredentials`, `MfaChallenges`, `MfaWebAuthnIndex`, `ScimTokens`, `ScimGroups`, `ScimGroupExternalIds`, `Roles`
+`Users`, `UserEmails`, `UserLogins`, `UserExternalIds`, `Clients`, `Grants`, `GrantsBySubject`, `GrantsByExpiry`, `SsoDomains`, `SamlProviders`, `OidcProviders`, `UserProvisions`, `MfaCredentials`, `MfaChallenges`, `MfaWebAuthnIndex`, `ScimTokens`, `ScimGroups`, `ScimGroupExternalIds`, `Roles`
 
 Tabelas transitorias (`SamlReplayCache`, `OidcStateStore`) sao excluidas por padrao — inclua-as explicitamente com `--tables` se necessario.
+
+### As chaves de assinatura sao excluidas por padrao
+
+A tabela `SigningKeys` e **excluida dos backups por padrao** (`Backup:IncludeSigningKeys` tem por padrao `false`). Para hosts que usam a fonte de chaves local (armazenada em tabela), esta tabela contem a **chave privada** de assinatura JWT — grava-la num arquivo de backup em texto simples permitiria que qualquer pessoa que leia o backup forjasse tokens. (Hosts que assinam via HashiCorp Vault Transit nao mantem nenhuma chave privada na tabela, portanto esta preocupacao nao se aplica a eles.)
+
+> ⚠️ So opte por incluir via `Backup:IncludeSigningKeys` quando o alvo do backup estiver ele proprio criptografado em repouso e com acesso controlado. O mesmo se aplica ao resto do backup: com o provedor de segredos de **texto simples** padrao, os backups tambem contem os segredos de clientes OIDC upstream e as sementes TOTP / MFA em texto claro — consulte [Configuracao → Provedor de Segredos](configuration#secret-provider).
+
+Na restauracao, a integridade dos arquivos e verificada contra os hashes SHA-256 do manifesto antes de quaisquer dados serem gravados (consulte [Verificacao de integridade](#verificacao-de-integridade)); uma incompatibilidade de hash aborta a restauracao.
 
 ## Restauracao
 
