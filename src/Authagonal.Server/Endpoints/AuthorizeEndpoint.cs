@@ -5,6 +5,8 @@ using Authagonal.Core.Stores;
 using Authagonal.Protocol;
 using Authagonal.Protocol.Services;
 using Authagonal.Server.Services;
+using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.Authentication.Cookies;
 
 namespace Authagonal.Server.Endpoints;
 
@@ -143,6 +145,20 @@ public static class AuthorizeEndpoint
 
             if (string.IsNullOrWhiteSpace(subjectId))
                 return BuildErrorRedirect(redirectUri, "server_error", "Unable to determine user identity", state);
+
+            // MFA enforcement (defence-in-depth): an MFA-enrolled user's session MUST have completed
+            // MFA (local challenge) or have been established via an external IdP. After the login fix
+            // every normal session satisfies this; a session lacking the marker is forced back through
+            // authentication rather than being silently honoured for code issuance.
+            var authenticatedUser = await userStore.GetAsync(subjectId, ct);
+            if (authenticatedUser is { MfaEnabled: true } &&
+                httpContext.User.FindFirst(CookieSignInHelper.MfaAuthenticatedClaim)?.Value != "true")
+            {
+                await httpContext.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
+                var stepUpLoginUrl = configuration["LoginAppUrl"] ?? "/login";
+                var stepUpReturn = $"{httpContext.Request.Path}{httpContext.Request.QueryString}";
+                return Results.Redirect($"{stepUpLoginUrl}?returnUrl={Uri.EscapeDataString(stepUpReturn)}");
+            }
 
             // Check consent (if required by this client)
             if (client.RequireConsent)

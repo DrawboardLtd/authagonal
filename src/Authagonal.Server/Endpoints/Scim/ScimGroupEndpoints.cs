@@ -27,6 +27,16 @@ public static class ScimGroupEndpoints
     private static string GetBaseUrl(Authagonal.Core.Services.ITenantContext tenantContext) =>
         tenantContext.Issuer;
 
+    // SCIM groups are owned by the SCIM client that created them (stored in OrganizationId).
+    // Every read/write must verify the caller owns the group, otherwise one SCIM client could
+    // read, modify the membership of, or delete another client's groups.
+    private static string? CallerClientId(HttpContext httpContext) =>
+        httpContext.User.FindFirst("client_id")?.Value;
+
+    private static bool OwnedByCaller(ScimGroup group, HttpContext httpContext) =>
+        !string.IsNullOrEmpty(group.OrganizationId) &&
+        string.Equals(group.OrganizationId, CallerClientId(httpContext), StringComparison.Ordinal);
+
     private static async Task<IResult> ListGroupsAsync(
         HttpContext httpContext,
         IScimGroupStore groupStore,
@@ -40,7 +50,8 @@ public static class ScimGroupEndpoints
         var start = startIndex ?? 1;
         var pageSize = Math.Min(count ?? 100, 200);
 
-        var (groups, totalCount) = await groupStore.ListAsync(null, 0, int.MaxValue, ct);
+        // Scope enumeration to groups owned by the calling SCIM client.
+        var (groups, _) = await groupStore.ListAsync(CallerClientId(httpContext), 0, int.MaxValue, ct);
 
         // Apply filter
         var parsed = ScimFilterParser.Parse(filter);
@@ -72,12 +83,13 @@ public static class ScimGroupEndpoints
 
     private static async Task<IResult> GetGroupAsync(
         string id,
+        HttpContext httpContext,
         IScimGroupStore groupStore,
         Authagonal.Core.Services.ITenantContext tenantContext,
         CancellationToken ct)
     {
         var group = await groupStore.GetAsync(id, ct);
-        if (group is null)
+        if (group is null || !OwnedByCaller(group, httpContext))
             return ScimResults.NotFound($"Group '{id}' not found");
 
         var baseUrl = GetBaseUrl(tenantContext);
@@ -102,12 +114,17 @@ public static class ScimGroupEndpoints
             .Where(v => !string.IsNullOrEmpty(v))
             .ToList() ?? [];
 
+        var clientId = CallerClientId(httpContext);
+        if (string.IsNullOrEmpty(clientId))
+            return ScimResults.BadRequest("Unable to determine the calling SCIM client");
+
         var group = new ScimGroup
         {
             Id = Guid.NewGuid().ToString("N"),
             DisplayName = request.DisplayName,
             ExternalId = request.ExternalId,
             MemberUserIds = memberIds,
+            OrganizationId = clientId, // owning SCIM client — enforced on all subsequent reads/writes
             CreatedAt = DateTimeOffset.UtcNow,
         };
 
@@ -121,6 +138,7 @@ public static class ScimGroupEndpoints
     private static async Task<IResult> ReplaceGroupAsync(
         string id,
         ScimCreateGroupRequest request,
+        HttpContext httpContext,
         IScimGroupStore groupStore,
         Authagonal.Core.Services.ITenantContext tenantContext,
         CancellationToken ct)
@@ -128,7 +146,7 @@ public static class ScimGroupEndpoints
         var baseUrl = GetBaseUrl(tenantContext);
 
         var group = await groupStore.GetAsync(id, ct);
-        if (group is null)
+        if (group is null || !OwnedByCaller(group, httpContext))
             return ScimResults.NotFound($"Group '{id}' not found");
 
         if (string.IsNullOrWhiteSpace(request.DisplayName))
@@ -150,6 +168,7 @@ public static class ScimGroupEndpoints
     private static async Task<IResult> PatchGroupAsync(
         string id,
         ScimPatchRequest request,
+        HttpContext httpContext,
         IScimGroupStore groupStore,
         Authagonal.Core.Services.ITenantContext tenantContext,
         ILogger<Program> logger,
@@ -158,7 +177,7 @@ public static class ScimGroupEndpoints
         var baseUrl = GetBaseUrl(tenantContext);
 
         var group = await groupStore.GetAsync(id, ct);
-        if (group is null)
+        if (group is null || !OwnedByCaller(group, httpContext))
             return ScimResults.NotFound($"Group '{id}' not found");
 
         var operations = request.Operations
@@ -177,12 +196,13 @@ public static class ScimGroupEndpoints
 
     private static async Task<IResult> DeleteGroupAsync(
         string id,
+        HttpContext httpContext,
         IScimGroupStore groupStore,
         ILogger<Program> logger,
         CancellationToken ct)
     {
         var group = await groupStore.GetAsync(id, ct);
-        if (group is null)
+        if (group is null || !OwnedByCaller(group, httpContext))
             return ScimResults.NotFound($"Group '{id}' not found");
 
         await groupStore.DeleteAsync(id, ct);

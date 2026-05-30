@@ -6,15 +6,15 @@ public sealed class FileSystemBackupTarget(string rootDirectory) : IBackupTarget
 {
     public Task<Stream> OpenWriteAsync(string backupId, string fileName, CancellationToken ct = default)
     {
-        var dir = Path.Combine(rootDirectory, backupId);
+        var dir = Path.Combine(rootDirectory, BackupPath.Safe(backupId, nameof(backupId)));
         Directory.CreateDirectory(dir);
-        var stream = (Stream)new FileStream(Path.Combine(dir, fileName), FileMode.Create, FileAccess.Write);
+        var stream = (Stream)new FileStream(Path.Combine(dir, BackupPath.Safe(fileName, nameof(fileName))), FileMode.Create, FileAccess.Write);
         return Task.FromResult(stream);
     }
 
     public async Task WriteManifestAsync(string backupId, BackupManifest manifest, CancellationToken ct = default)
     {
-        var dir = Path.Combine(rootDirectory, backupId);
+        var dir = Path.Combine(rootDirectory, BackupPath.Safe(backupId, nameof(backupId)));
         Directory.CreateDirectory(dir);
         var path = Path.Combine(dir, "_manifest.json");
         var json = JsonSerializer.Serialize(manifest, BackupJsonContext.Default.BackupManifest);

@@ -16,13 +16,16 @@ public static class ClusterEndpoints
 
     private static IResult HandleGossipAsync(
         GossipMessage message,
+        HttpContext httpContext,
         ClusterNode clusterNode,
         DistributedRateLimiter rateLimiter,
         IOptions<ClusterOptions> options)
     {
-        // Validate shared secret if configured
-        // Note: HttpContext is not injected here; secret validation uses the header
-        // For simplicity we rely on the endpoint being internal-only (not exposed via ingress)
+        // Reject external callers: require the shared secret when configured, otherwise only
+        // accept internal (pod-to-pod) source addresses. Without this an attacker who can reach
+        // the endpoint could inflate rate-limit counters to lock out arbitrary IPs/clients.
+        if (!InternalEndpointGuard.IsAuthorized(httpContext, options.Value.Secret))
+            return Results.NotFound();
 
         // Detect self-gossip
         if (string.Equals(message.NodeId, clusterNode.NodeId, StringComparison.OrdinalIgnoreCase))

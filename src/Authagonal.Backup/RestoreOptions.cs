@@ -21,6 +21,16 @@ public sealed class RestoreOptions
     /// If true, parse backup files but don't write anything.
     /// </summary>
     public bool DryRun { get; set; }
+
+    /// <summary>
+    /// Verify each data file's SHA-256 against the manifest's recorded hash before applying any of
+    /// its entities. On (default) true a hash mismatch, or a data file absent from the manifest,
+    /// aborts the restore — preventing a tampered backup from injecting entities (e.g. an admin
+    /// client, a reset password hash, or an attacker-controlled signing key → token forgery).
+    /// Backups written before integrity hashing existed (no FileHashes in the manifest) cannot be
+    /// verified and are allowed through with a warning.
+    /// </summary>
+    public bool VerifyIntegrity { get; set; } = true;
 }
 
 public enum RestoreMode

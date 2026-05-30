@@ -13,7 +13,7 @@ public class MfaEndpointTests : IAsyncDisposable
     public async ValueTask DisposeAsync() => await _factory.DisposeAsync();
 
     [Fact]
-    public async Task Login_MfaDisabled_SignsCookieDirectly()
+    public async Task Login_MfaEnrolledUser_IsChallenged_EvenWhenClientPolicyDisabled()
     {
         await _factory.SeedTestDataAsync();
         var user = await _factory.SeedTestUserAsync();
@@ -23,14 +23,16 @@ public class MfaEndpointTests : IAsyncDisposable
         // Enroll TOTP for user
         await EnrollTotpForUser(user.Id);
 
-        // Client has MfaPolicy=Disabled (default)
+        // Client has MfaPolicy=Disabled (default). An enrolled user MUST still be challenged —
+        // MFA is a property of the user/session, not of the (returnUrl-derived) client. This is the
+        // regression guard for the MFA-bypass fix.
         var client = _factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
         var response = await client.PostAsJsonAsync("/api/auth/login", new { email = "test@example.com", password = "Test1234!" });
         response.EnsureSuccessStatusCode();
 
         var json = await response.Content.ReadFromJsonAsync<JsonElement>();
-        Assert.True(json.TryGetProperty("userId", out _));
-        Assert.False(json.TryGetProperty("mfaRequired", out _));
+        Assert.True(json.TryGetProperty("challengeId", out _));
+        Assert.False(json.TryGetProperty("userId", out _));
     }
 
     [Fact]

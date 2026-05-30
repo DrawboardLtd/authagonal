@@ -147,10 +147,13 @@ public class MfaSetupEndpointTests : IAsyncDisposable
     {
         await _factory.SeedTestDataAsync();
         var user = await _factory.SeedTestUserAsync();
+
+        // Authenticate BEFORE enrolling MFA — an already-enrolled user would be challenged at login.
+        var client = await LoginAndGetAuthenticatedClient();
+
+        // Now enable MFA and enroll a TOTP factor for the signed-in user.
         user.MfaEnabled = true;
         await _factory.UserStore.UpdateAsync(user);
-
-        // Enroll TOTP
         var credId = Guid.NewGuid().ToString("N");
         await _factory.MfaStore.CreateCredentialAsync(new MfaCredential
         {
@@ -162,11 +165,10 @@ public class MfaSetupEndpointTests : IAsyncDisposable
             CreatedAt = DateTimeOffset.UtcNow,
         });
 
-        var client = await LoginAndGetAuthenticatedClient();
         var response = await client.DeleteAsync($"/api/auth/mfa/credentials/{credId}");
         response.EnsureSuccessStatusCode();
 
-        // MfaEnabled should be false now
+        // MfaEnabled should be false now (last strong factor removed)
         var updatedUser = await _factory.UserStore.GetAsync(user.Id);
         Assert.False(updatedUser!.MfaEnabled);
     }

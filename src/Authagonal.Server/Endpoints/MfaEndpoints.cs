@@ -162,8 +162,8 @@ public static class MfaEndpoints
                 return JsonResults.Error("unsupported_method");
         }
 
-        // MFA verified — sign cookie
-        await CookieSignInHelper.SignInAsync(httpContext, user);
+        // MFA verified — sign cookie with the MFA marker.
+        await CookieSignInHelper.SignInAsync(httpContext, user, mfaAuthenticated: true);
 
         var name = CookieSignInHelper.GetDisplayName(user);
         logger.LogInformation("User {UserId} ({Email}) signed in via MFA ({Method})", user.Id, user.Email, request.Method);

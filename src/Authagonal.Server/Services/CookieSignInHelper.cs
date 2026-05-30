@@ -7,7 +7,12 @@ namespace Authagonal.Server.Services;
 
 public static class CookieSignInHelper
 {
-    public static async Task SignInAsync(HttpContext httpContext, AuthUser user)
+    /// <summary>Cookie claim asserting the session completed multi-factor authentication (or was
+    /// established via an external IdP that owns authentication). Required at /connect/authorize for
+    /// MFA-enrolled users.</summary>
+    public const string MfaAuthenticatedClaim = "mfa_authenticated";
+
+    public static async Task SignInAsync(HttpContext httpContext, AuthUser user, bool mfaAuthenticated = false)
     {
         var name = $"{user.FirstName} {user.LastName}".Trim();
         var claims = new List<Claim>
@@ -19,6 +24,9 @@ public static class CookieSignInHelper
             new("security_stamp", user.SecurityStamp ?? ""),
             new("sid", Guid.NewGuid().ToString("N"))
         };
+
+        if (mfaAuthenticated)
+            claims.Add(new Claim(MfaAuthenticatedClaim, "true"));
 
         if (!string.IsNullOrWhiteSpace(user.OrganizationId))
             claims.Add(new Claim("org_id", user.OrganizationId));

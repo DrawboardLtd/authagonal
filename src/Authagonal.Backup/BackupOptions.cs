@@ -26,4 +26,12 @@ public sealed class BackupOptions
     /// If true, enumerate entities but don't write anything.
     /// </summary>
     public bool DryRun { get; set; }
+
+    /// <summary>
+    /// Whether to include the <c>SigningKeys</c> table. Off by default: for hosts using the local
+    /// (table-stored) key source this table contains the JWT signing PRIVATE key, so a plaintext
+    /// backup file would let anyone who reads it forge tokens. Only enable when the backup target is
+    /// itself encrypted/access-controlled. (Vault Transit hosts keep no private key in the table.)
+    /// </summary>
+    public bool IncludeSigningKeys { get; set; }
 }

@@ -3,6 +3,8 @@ using Authagonal.Core.Models;
 using Authagonal.Core.Services;
 using Authagonal.Core.Stores;
 using Authagonal.Server.Services;
+using Authagonal.Server.Services.Cluster;
+using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.JsonWebTokens;
 using Microsoft.IdentityModel.Tokens;
 
@@ -28,14 +30,21 @@ public static class BackChannelLogoutEndpoint
 
     private static async Task<IResult> HandleAsync(
         BackChannelLogoutRequest request,
+        HttpContext httpContext,
         IClientStore clientStore,
         IGrantStore grantStore,
         IKeyManager keyManager,
         ITenantContext tenantContext,
         IHttpClientFactory httpClientFactory,
+        IOptions<ClusterOptions> clusterOptions,
         ILogger<Program> logger,
         CancellationToken ct)
     {
+        // Internal-only: this endpoint revokes every grant for a subject. Without a guard, anyone
+        // who can reach it could force-logout arbitrary users (session DoS) and probe their sessions.
+        if (!InternalEndpointGuard.IsAuthorized(httpContext, clusterOptions.Value.Secret))
+            return Results.NotFound();
+
         if (string.IsNullOrEmpty(request.SubjectId))
             return TypedResults.Json(new ErrorInfoResponse { Error = "subject_id_required" }, AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 400);
 

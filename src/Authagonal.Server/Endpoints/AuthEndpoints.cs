@@ -138,70 +138,71 @@ public static class AuthEndpoints
         var clientPolicy = client?.MfaPolicy ?? MfaPolicy.Disabled;
         var effectivePolicy = await authHooks.RunResolveMfaPolicyAsync(user.Id, user.Email, clientPolicy, clientId ?? "", ct);
 
-        if (effectivePolicy != MfaPolicy.Disabled)
+        // An MFA-enrolled user is ALWAYS challenged, regardless of the client resolved from the
+        // (attacker-controllable) returnUrl or the client's MfaPolicy. MFA is a property of the
+        // user/session, not of the requesting client — this closes the returnUrl-driven MFA bypass.
+        if (user.MfaEnabled)
         {
-            if (effectivePolicy == MfaPolicy.Required && !user.MfaEnabled)
-            {
-                // User must set up MFA — issue a setup token (reuses MfaChallenge with longer TTL)
-                var setupChallenge = new MfaChallenge
-                {
-                    ChallengeId = Convert.ToHexString(RandomNumberGenerator.GetBytes(32)).ToLowerInvariant(),
-                    UserId = user.Id,
-                    ClientId = clientId,
-                    ReturnUrl = returnUrl,
-                    CreatedAt = DateTimeOffset.UtcNow,
-                    ExpiresAt = DateTimeOffset.UtcNow.AddMinutes(authOptions.Value.MfaSetupTokenExpiryMinutes),
-                };
-                await mfaStore.StoreChallengeAsync(setupChallenge, ct);
+            // Create MFA challenge
+            var credentials = await mfaStore.GetCredentialsAsync(user.Id, ct);
+            var methods = credentials
+                .Where(c => !c.IsConsumed)
+                .Select(c => c.Type)
+                .Distinct()
+                .Select(t => t.ToString().ToLowerInvariant())
+                .ToList();
 
-                return TypedResults.Json(new MfaSetupRequiredResponse { SetupToken = setupChallenge.ChallengeId }, AuthagonalJsonContext.Default.MfaSetupRequiredResponse);
+            var challenge = new MfaChallenge
+            {
+                ChallengeId = Convert.ToHexString(RandomNumberGenerator.GetBytes(32)).ToLowerInvariant(),
+                UserId = user.Id,
+                ClientId = clientId,
+                ReturnUrl = returnUrl,
+                CreatedAt = DateTimeOffset.UtcNow,
+                ExpiresAt = DateTimeOffset.UtcNow.AddMinutes(authOptions.Value.MfaChallengeExpiryMinutes),
+            };
+
+            // Generate WebAuthn assertion options if the user has passkeys
+            object? webAuthnOptions = null;
+            var webAuthnCreds = credentials.Where(c => c.Type == MfaCredentialType.WebAuthn).ToList();
+            if (webAuthnCreds.Count > 0)
+            {
+                var assertionOptions = webAuthnService.CreateAssertionOptions(webAuthnCreds);
+                challenge.WebAuthnChallenge = assertionOptions.ToJson();
+                webAuthnOptions = assertionOptions;
             }
 
-            if (user.MfaEnabled)
+            await mfaStore.StoreChallengeAsync(challenge, ct);
+
+            logger.LogInformation("MFA challenge created for user {UserId}", user.Id);
+
+            return TypedResults.Json(new MfaRequiredResponse
             {
-                // Create MFA challenge
-                var credentials = await mfaStore.GetCredentialsAsync(user.Id, ct);
-                var methods = credentials
-                    .Where(c => !c.IsConsumed)
-                    .Select(c => c.Type)
-                    .Distinct()
-                    .Select(t => t.ToString().ToLowerInvariant())
-                    .ToList();
-
-                var challenge = new MfaChallenge
-                {
-                    ChallengeId = Convert.ToHexString(RandomNumberGenerator.GetBytes(32)).ToLowerInvariant(),
-                    UserId = user.Id,
-                    ClientId = clientId,
-                    ReturnUrl = returnUrl,
-                    CreatedAt = DateTimeOffset.UtcNow,
-                    ExpiresAt = DateTimeOffset.UtcNow.AddMinutes(authOptions.Value.MfaChallengeExpiryMinutes),
-                };
-
-                // Generate WebAuthn assertion options if the user has passkeys
-                object? webAuthnOptions = null;
-                var webAuthnCreds = credentials.Where(c => c.Type == MfaCredentialType.WebAuthn).ToList();
-                if (webAuthnCreds.Count > 0)
-                {
-                    var assertionOptions = webAuthnService.CreateAssertionOptions(webAuthnCreds);
-                    challenge.WebAuthnChallenge = assertionOptions.ToJson();
-                    webAuthnOptions = assertionOptions;
-                }
-
-                await mfaStore.StoreChallengeAsync(challenge, ct);
-
-                logger.LogInformation("MFA challenge created for user {UserId}", user.Id);
-
-                return TypedResults.Json(new MfaRequiredResponse
-                {
-                    ChallengeId = challenge.ChallengeId,
-                    Methods = methods,
-                    WebAuthn = webAuthnOptions,
-                }, AuthagonalJsonContext.Default.MfaRequiredResponse);
-            }
+                ChallengeId = challenge.ChallengeId,
+                Methods = methods,
+                WebAuthn = webAuthnOptions,
+            }, AuthagonalJsonContext.Default.MfaRequiredResponse);
         }
 
-        // No MFA — sign cookie directly
+        // Not enrolled, but policy requires MFA → force enrollment before any session is issued.
+        if (effectivePolicy == MfaPolicy.Required)
+        {
+            // Issue a setup token (reuses MfaChallenge with longer TTL)
+            var setupChallenge = new MfaChallenge
+            {
+                ChallengeId = Convert.ToHexString(RandomNumberGenerator.GetBytes(32)).ToLowerInvariant(),
+                UserId = user.Id,
+                ClientId = clientId,
+                ReturnUrl = returnUrl,
+                CreatedAt = DateTimeOffset.UtcNow,
+                ExpiresAt = DateTimeOffset.UtcNow.AddMinutes(authOptions.Value.MfaSetupTokenExpiryMinutes),
+            };
+            await mfaStore.StoreChallengeAsync(setupChallenge, ct);
+
+            return TypedResults.Json(new MfaSetupRequiredResponse { SetupToken = setupChallenge.ChallengeId }, AuthagonalJsonContext.Default.MfaSetupRequiredResponse);
+        }
+
+        // No MFA — sign cookie directly (session carries no MFA marker).
         await CookieSignInHelper.SignInAsync(httpContext, user);
 
         var name = CookieSignInHelper.GetDisplayName(user);
@@ -209,8 +210,8 @@ public static class AuthEndpoints
 
         await authHooks.RunOnUserAuthenticatedAsync(user.Id, user.Email, "password", ct: ct);
 
-        // If Enabled but user hasn't enrolled, hint that MFA is available
-        var mfaAvailable = effectivePolicy == MfaPolicy.Enabled && !user.MfaEnabled;
+        // If Enabled but user hasn't enrolled, hint that MFA is available (user is not enrolled here)
+        var mfaAvailable = effectivePolicy == MfaPolicy.Enabled;
 
         return TypedResults.Json(new LoginSuccessResponse { UserId = user.Id, Email = user.Email, Name = name, MfaAvailable = mfaAvailable, ClientId = mfaAvailable ? clientId : null }, AuthagonalJsonContext.Default.LoginSuccessResponse);
     }

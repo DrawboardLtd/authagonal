@@ -6,7 +6,7 @@ public sealed class FileSystemBackupSource(string rootDirectory) : IBackupSource
 {
     public async Task<BackupManifest?> ReadManifestAsync(string backupId, CancellationToken ct = default)
     {
-        var path = Path.Combine(rootDirectory, backupId, "_manifest.json");
+        var path = Path.Combine(rootDirectory, BackupPath.Safe(backupId, nameof(backupId)), "_manifest.json");
         if (!File.Exists(path)) return null;
 
         var json = await File.ReadAllTextAsync(path, ct);
@@ -15,7 +15,7 @@ public sealed class FileSystemBackupSource(string rootDirectory) : IBackupSource
 
     public Task<Stream?> OpenReadAsync(string backupId, string fileName, CancellationToken ct = default)
     {
-        var path = Path.Combine(rootDirectory, backupId, fileName);
+        var path = Path.Combine(rootDirectory, BackupPath.Safe(backupId, nameof(backupId)), BackupPath.Safe(fileName, nameof(fileName)));
         if (!File.Exists(path)) return Task.FromResult<Stream?>(null);
 
         return Task.FromResult<Stream?>(new FileStream(path, FileMode.Open, FileAccess.Read));
@@ -37,7 +37,7 @@ public sealed class FileSystemBackupSource(string rootDirectory) : IBackupSource
 
     public Task<IReadOnlyList<string>> ListFilesAsync(string backupId, CancellationToken ct = default)
     {
-        var dir = Path.Combine(rootDirectory, backupId);
+        var dir = Path.Combine(rootDirectory, BackupPath.Safe(backupId, nameof(backupId)));
         if (!Directory.Exists(dir))
             return Task.FromResult<IReadOnlyList<string>>(Array.Empty<string>());
 
@@ -51,7 +51,7 @@ public sealed class FileSystemBackupSource(string rootDirectory) : IBackupSource
 
     public Task DeleteBackupAsync(string backupId, CancellationToken ct = default)
     {
-        var dir = Path.Combine(rootDirectory, backupId);
+        var dir = Path.Combine(rootDirectory, BackupPath.Safe(backupId, nameof(backupId)));
         if (Directory.Exists(dir))
             Directory.Delete(dir, recursive: true);
 

@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.IO.Compression;
+using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Azure;
@@ -19,6 +20,10 @@ public sealed class BackupService(TableServiceClient serviceClient, IBackupTarge
     public async Task<BackupManifest> RunAsync(CancellationToken ct = default)
     {
         var tables = options.Tables ?? BackupDefaults.Tables;
+        // Exclude the signing-key table by default — for local-key-source hosts its rows hold the
+        // JWT signing private key, which must not be written to a plaintext backup file.
+        if (!options.IncludeSigningKeys)
+            tables = tables.Where(t => !string.Equals(t, "SigningKeys", StringComparison.OrdinalIgnoreCase)).ToArray();
         var prefix = options.TablePrefix ?? "";
 
         // Determine incremental watermark
@@ -57,9 +62,11 @@ public sealed class BackupService(TableServiceClient serviceClient, IBackupTarge
             }
 
             long count = 0;
+            string? fileName = null;
             StreamWriter? writer = null;
             Stream? outputStream = null;
             Stream? gzipStream = null;
+            HashingStream? hashingStream = null;
 
             try
             {
@@ -70,15 +77,18 @@ public sealed class BackupService(TableServiceClient serviceClient, IBackupTarge
                     if (writer is null && !options.DryRun)
                     {
                         var ext = options.Gzip ? ".jsonl.gz" : ".jsonl";
-                        outputStream = await target.OpenWriteAsync(backupId, $"{tableName}{ext}", ct);
+                        fileName = $"{tableName}{ext}";
+                        outputStream = await target.OpenWriteAsync(backupId, fileName, ct);
+                        // Hash the exact bytes written to the target so restore can verify integrity.
+                        hashingStream = new HashingStream(outputStream);
                         if (options.Gzip)
                         {
-                            gzipStream = new GZipStream(outputStream, CompressionLevel.Optimal);
+                            gzipStream = new GZipStream(hashingStream, CompressionLevel.Optimal);
                             writer = new StreamWriter(gzipStream, System.Text.Encoding.UTF8);
                         }
                         else
                         {
-                            writer = new StreamWriter(outputStream, System.Text.Encoding.UTF8);
+                            writer = new StreamWriter(hashingStream, System.Text.Encoding.UTF8);
                         }
                     }
 
@@ -100,6 +110,12 @@ public sealed class BackupService(TableServiceClient serviceClient, IBackupTarge
             {
                 if (writer is not null) await writer.DisposeAsync();
                 if (gzipStream is not null) await gzipStream.DisposeAsync();
+                if (hashingStream is not null)
+                {
+                    // writer + gzip are disposed, so every byte has flushed through the hash.
+                    if (fileName is not null) manifest.FileHashes[fileName] = hashingStream.GetHashHex();
+                    await hashingStream.DisposeAsync();
+                }
                 if (outputStream is not null) await outputStream.DisposeAsync();
             }
 
@@ -214,5 +230,54 @@ public sealed class BackupService(TableServiceClient serviceClient, IBackupTarge
         }
 
         return dict;
+    }
+
+    /// <summary>
+    /// Write-only pass-through that SHA-256-hashes everything written to the inner stream. Does not
+    /// own the inner stream (the caller disposes it), so it can sit between the gzip/writer chain and
+    /// the backup target while the target stream is disposed separately.
+    /// </summary>
+    private sealed class HashingStream(Stream inner) : Stream
+    {
+        private readonly IncrementalHash _hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+
+        public override bool CanWrite => true;
+        public override bool CanRead => false;
+        public override bool CanSeek => false;
+        public override long Length => throw new NotSupportedException();
+        public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+
+        public override void Flush() => inner.Flush();
+        public override Task FlushAsync(CancellationToken cancellationToken) => inner.FlushAsync(cancellationToken);
+
+        public override void Write(byte[] buffer, int offset, int count)
+        {
+            _hash.AppendData(buffer, offset, count);
+            inner.Write(buffer, offset, count);
+        }
+
+        public override void Write(ReadOnlySpan<byte> buffer)
+        {
+            _hash.AppendData(buffer);
+            inner.Write(buffer);
+        }
+
+        public override async ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            _hash.AppendData(buffer.Span);
+            await inner.WriteAsync(buffer, cancellationToken);
+        }
+
+        public string GetHashHex() => Convert.ToHexStringLower(_hash.GetHashAndReset());
+
+        public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing) _hash.Dispose();
+            base.Dispose(disposing);
+        }
     }
 }

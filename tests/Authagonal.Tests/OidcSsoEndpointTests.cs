@@ -29,6 +29,8 @@ public sealed class OidcSsoEndpointTests : IAsyncLifetime
 
     public async Task InitializeAsync()
     {
+        // Mock IdP asserts an address within the connection's allowed domain (configured below).
+        _oidcMock.Email = "oidcuser@oidctest.com";
         _client = _factory.CreateClient(new() { AllowAutoRedirect = false });
         await _factory.SeedTestDataAsync();
         _adminToken = await _factory.GetAdminTokenAsync(_client);

@@ -1,4 +1,5 @@
 using System.IO.Compression;
+using System.Security.Cryptography;
 using System.Text.Json;
 using Azure;
 using Azure.Data.Tables;
@@ -13,6 +14,16 @@ public sealed class RestoreService(TableServiceClient serviceClient, IBackupSour
         var files = await source.ListFilesAsync(backupId, ct);
         var result = new RestoreResult();
 
+        var manifest = await source.ReadManifestAsync(backupId, ct);
+        var canVerify = options.VerifyIntegrity && manifest?.FileHashes is { Count: > 0 };
+        if (options.VerifyIntegrity && !canVerify)
+        {
+            // Manifest missing or predates integrity hashing — cannot verify. Don't hard-fail
+            // (so legacy backups remain restorable), but make the gap loud.
+            Console.Error.WriteLine(
+                "WARNING: backup has no recorded file hashes; integrity cannot be verified. Restoring unverified data.");
+        }
+
         foreach (var fileName in files)
         {
             if (fileName.StartsWith("_")) continue; // Skip metadata files (manifest, tombstones)
@@ -22,6 +33,20 @@ public sealed class RestoreService(TableServiceClient serviceClient, IBackupSour
 
             if (options.Tables is not null && !options.Tables.Contains(tableName, StringComparer.OrdinalIgnoreCase))
                 continue;
+
+            // Verify the entire file against the manifest BEFORE applying any of its entities, so a
+            // tampered backup can't inject an admin client, reset a password hash, or plant a
+            // signing key. A file absent from the manifest is treated as tampering.
+            if (canVerify)
+            {
+                if (!manifest!.FileHashes.TryGetValue(fileName, out var expectedHash))
+                    throw new InvalidOperationException(
+                        $"Backup integrity check failed: '{fileName}' is not listed in the manifest.");
+                var actualHash = await ComputeFileHashAsync(backupId, fileName, ct);
+                if (actualHash is null || !string.Equals(actualHash, expectedHash, StringComparison.OrdinalIgnoreCase))
+                    throw new InvalidOperationException(
+                        $"Backup integrity check failed: '{fileName}' hash does not match the manifest.");
+            }
 
             var physicalName = prefix + tableName;
             var tableClient = serviceClient.GetTableClient(physicalName);
@@ -75,6 +100,17 @@ public sealed class RestoreService(TableServiceClient serviceClient, IBackupSour
         }
 
         return result;
+    }
+
+    private async Task<string?> ComputeFileHashAsync(string backupId, string fileName, CancellationToken ct)
+    {
+        var stream = await source.OpenReadAsync(backupId, fileName, ct);
+        if (stream is null) return null;
+        await using (stream)
+        {
+            var hash = await SHA256.HashDataAsync(stream, ct);
+            return Convert.ToHexStringLower(hash);
+        }
     }
 
     private static async Task CleanTableAsync(TableClient tableClient, CancellationToken ct)

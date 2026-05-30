@@ -6,6 +6,7 @@ using System.Text.Json;
 using Authagonal.Core.Models;
 using Authagonal.Core.Services;
 using Authagonal.Core.Stores;
+using Authagonal.Server.Services;
 using Authagonal.Server.Services.Oidc;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
@@ -222,6 +223,8 @@ public static class OidcEndpoints
         // Extract claims from validated id_token
         var sub = Claim(validationResult.Claims, "sub");
         var email = ExtractEmail(validationResult.Claims);
+        var emailVerified = validationResult.Claims.TryGetValue("email_verified", out var evClaim)
+            && (evClaim is bool evBool ? evBool : bool.TryParse(evClaim?.ToString(), out var evParsed) && evParsed);
         var name = Claim(validationResult.Claims, "name");
         var givenName = Claim(validationResult.Claims, "given_name");
         var familyName = Claim(validationResult.Claims, "family_name");
@@ -232,7 +235,13 @@ public static class OidcEndpoints
             try
             {
                 var userinfoClaims = await FetchUserinfoAsync(httpClientFactory, discovery.UserinfoEndpoint, accessToken, ct);
-                email ??= ExtractEmailFromJson(userinfoClaims);
+                var userinfoEmail = ExtractEmailFromJson(userinfoClaims);
+                if (string.IsNullOrEmpty(email) && !string.IsNullOrEmpty(userinfoEmail))
+                {
+                    email = userinfoEmail;
+                    emailVerified = userinfoClaims.TryGetValue("email_verified", out var uev)
+                        && (uev is bool uevBool ? uevBool : bool.TryParse(uev?.ToString(), out var uevParsed) && uevParsed);
+                }
                 name ??= userinfoClaims.GetValueOrDefault("name") as string;
                 givenName ??= userinfoClaims.GetValueOrDefault("given_name") as string;
                 familyName ??= userinfoClaims.GetValueOrDefault("family_name") as string;
@@ -266,8 +275,39 @@ public static class OidcEndpoints
             familyName ??= parts.Length > 1 ? parts[1] : null;
         }
 
-        // Find or create user (same pattern as SamlEndpoints ACS)
-        var user = await userStore.FindByEmailAsync(email, ct);
+        // Enforce the connection's allowed email domains (when configured): a connection may only
+        // assert identities within its own domain(s). Closes cross-connection account takeover.
+        var emailDomain = email.Contains('@') ? email[(email.LastIndexOf('@') + 1)..] : "";
+        if (config.AllowedDomains is { Count: > 0 } &&
+            !config.AllowedDomains.Any(d => string.Equals(d, emailDomain, StringComparison.OrdinalIgnoreCase)))
+        {
+            logger.LogWarning("OIDC email domain '{Domain}' not permitted for connection {ConnectionId}", emailDomain, stateData.ConnectionId);
+            return Results.Redirect($"{returnUrl}?error=access_denied&error_description={Uri.EscapeDataString("Your email domain is not permitted for this connection.")}");
+        }
+
+        // Resolve a returning user by their STABLE federated identity (provider + subject) — never by
+        // email alone, which an upstream could spoof.
+        var provider = $"oidc:{stateData.ConnectionId}";
+        var providerKey = sub;
+        var existingLogin = await userStore.FindLoginAsync(provider, providerKey, ct);
+        var user = existingLogin is not null ? await userStore.GetAsync(existingLogin.UserId, ct) : null;
+
+        // Fall back to matching an existing local account by email ONLY when the upstream asserts the
+        // email is verified — otherwise a malicious/permissive IdP could claim someone else's address.
+        if (user is null)
+        {
+            var existingByEmail = await userStore.FindByEmailAsync(email, ct);
+            if (existingByEmail is not null)
+            {
+                if (!emailVerified)
+                {
+                    logger.LogWarning("OIDC login rejected: unverified email {Email} matches an existing account on connection {ConnectionId}", email, stateData.ConnectionId);
+                    return Results.Redirect($"{returnUrl}?error=access_denied&error_description={Uri.EscapeDataString("This email already belongs to an account and could not be verified. Contact your administrator.")}");
+                }
+                user = existingByEmail;
+            }
+        }
+
         if (user is null)
         {
             if (config.DisableJitProvisioning)
@@ -281,7 +321,7 @@ public static class OidcEndpoints
                 Id = Guid.NewGuid().ToString("N"),
                 Email = email,
                 NormalizedEmail = email.ToUpperInvariant(),
-                EmailConfirmed = true,
+                EmailConfirmed = emailVerified,
                 FirstName = givenName,
                 LastName = familyName,
                 CreatedAt = DateTimeOffset.UtcNow,
@@ -333,10 +373,7 @@ public static class OidcEndpoints
             return Results.Redirect($"{returnUrl}?error=account_disabled&error_description={Uri.EscapeDataString("Account has been deactivated.")}");
         }
 
-        // Ensure external login link
-        var provider = $"oidc:{stateData.ConnectionId}";
-        var providerKey = sub;
-        var existingLogin = await userStore.FindLoginAsync(provider, providerKey, ct);
+        // Establish the federated identity link on first sign-in (provider/providerKey resolved above).
         if (existingLogin is null)
         {
             await userStore.AddLoginAsync(new ExternalLoginInfo
@@ -360,7 +397,9 @@ public static class OidcEndpoints
             new(ClaimTypes.Email, user.Email),
             new(ClaimTypes.Name, string.IsNullOrWhiteSpace(displayName) ? user.Email : displayName),
             new("security_stamp", user.SecurityStamp ?? ""),
-            new("sid", Guid.NewGuid().ToString("N"))
+            new("sid", Guid.NewGuid().ToString("N")),
+            // Federation satisfies the local MFA requirement — the upstream IdP owns authentication.
+            new(CookieSignInHelper.MfaAuthenticatedClaim, "true")
         };
 
         if (!string.IsNullOrWhiteSpace(user.OrganizationId))

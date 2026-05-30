@@ -22,6 +22,7 @@ public static class TokenEndpoints
         IClientStore clientStore,
         IUserStore userStore,
         UserStoreOidcSubjectResolver subjectResolver,
+        IConfiguration configuration,
         CancellationToken ct)
     {
         var query = httpContext.Request.Query;
@@ -47,6 +48,19 @@ public static class TokenEndpoints
         var scopes = string.IsNullOrWhiteSpace(scopesParam)
             ? client.AllowedScopes
             : scopesParam.Split(' ', StringSplitOptions.RemoveEmptyEntries).ToList();
+
+        // Constrain to the client's registered scopes — this endpoint must not mint scopes the
+        // client itself couldn't request.
+        var disallowed = scopes.Except(client.AllowedScopes, StringComparer.OrdinalIgnoreCase).ToArray();
+        if (disallowed.Length > 0)
+            return Results.BadRequest(new { error = "invalid_scope", error_description = $"Scopes not allowed for client '{clientId}': {string.Join(", ", disallowed)}" });
+
+        // Never issue the admin scope through this impersonation endpoint — otherwise a (possibly
+        // time-limited) admin token can mint a long-lived admin access+refresh token, defeating
+        // rotation/revocation.
+        var adminScope = configuration["AdminApi:Scope"] ?? "authagonal-admin";
+        if (scopes.Contains(adminScope, StringComparer.OrdinalIgnoreCase))
+            return Results.Json(new { error = "forbidden_scope", error_description = $"The '{adminScope}' scope cannot be issued via this endpoint" }, statusCode: 403);
 
         var subject = await subjectResolver.BuildSubjectAsync(user, client, ct: ct);
 

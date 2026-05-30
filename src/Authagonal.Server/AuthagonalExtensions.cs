@@ -408,13 +408,34 @@ public static class AuthagonalExtensions
     /// </summary>
     public static WebApplication UseAuthagonal(this WebApplication app)
     {
-        app.UseForwardedHeaders(new ForwardedHeadersOptions
+        // Forwarded-header trust is config-driven so X-Forwarded-For can't be spoofed to forge the
+        // client IP that rate-limiting / lockout keys on. Defaults: ForwardLimit=1 (honour only the
+        // single hop the ingress appends; ignore anything further left in the chain). For the
+        // strongest guarantee set ForwardedHeaders:KnownNetworks to the ingress/pod CIDR (and/or
+        // ForwardedHeaders:KnownProxies) so only that proxy may set the client IP.
+        var fhOptions = new ForwardedHeadersOptions
         {
             ForwardedHeaders = Microsoft.AspNetCore.HttpOverrides.ForwardedHeaders.XForwardedFor
                              | Microsoft.AspNetCore.HttpOverrides.ForwardedHeaders.XForwardedProto,
-            // Trust all proxies in container environments (Azure Container Apps, k8s, etc.)
-            KnownIPNetworks = { new System.Net.IPNetwork(System.Net.IPAddress.Any, 0) },
-        });
+            ForwardLimit = app.Configuration.GetValue("ForwardedHeaders:ForwardLimit", 1),
+        };
+        // Start from an empty trust set (the framework default of loopback-only would ignore XFF
+        // entirely behind a non-loopback ingress).
+        fhOptions.KnownProxies.Clear();
+        fhOptions.KnownIPNetworks.Clear();
+        foreach (var proxy in app.Configuration.GetSection("ForwardedHeaders:KnownProxies").Get<string[]>() ?? [])
+        {
+            if (System.Net.IPAddress.TryParse(proxy, out var ip))
+                fhOptions.KnownProxies.Add(ip);
+        }
+        foreach (var network in app.Configuration.GetSection("ForwardedHeaders:KnownNetworks").Get<string[]>() ?? [])
+        {
+            var parts = network.Split('/');
+            if (parts.Length == 2 && System.Net.IPAddress.TryParse(parts[0], out var prefix) &&
+                int.TryParse(parts[1], out var prefixLength))
+                fhOptions.KnownIPNetworks.Add(new System.Net.IPNetwork(prefix, prefixLength));
+        }
+        app.UseForwardedHeaders(fhOptions);
 
         app.UseExceptionHandlingMiddleware();
 

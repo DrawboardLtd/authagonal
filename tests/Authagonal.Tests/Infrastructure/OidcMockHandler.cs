@@ -103,6 +103,7 @@ public sealed class OidcMockHandler : HttpMessageHandler
         {
             ["sub"] = Subject,
             ["email"] = Email,
+            ["email_verified"] = true,
             ["name"] = Name,
         };
 
@@ -148,6 +149,7 @@ public sealed class OidcMockHandler : HttpMessageHandler
         {
             sub = Subject,
             email = Email,
+            email_verified = true,
             name = Name,
             given_name = "OIDC",
             family_name = "User",

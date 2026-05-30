@@ -2,6 +2,7 @@ using System.Security.Claims;
 using Authagonal.Core.Models;
 using Authagonal.Core.Services;
 using Authagonal.Core.Stores;
+using Microsoft.Extensions.Configuration;
 
 namespace Authagonal.Server.Endpoints.Admin;
 
@@ -25,15 +26,19 @@ public static class ClientEndpoints
     private static async Task<IResult> ListClients(IClientStore store, CancellationToken ct)
     {
         var clients = await store.GetAllAsync(ct);
-        return TypedResults.Json(clients.ToList(), AuthagonalJsonContext.Default.ListOAuthClient);
+        var list = clients.ToList();
+        // Secret hashes must never leave the server.
+        foreach (var c in list) c.ClientSecretHashes = [];
+        return TypedResults.Json(list, AuthagonalJsonContext.Default.ListOAuthClient);
     }
 
     private static async Task<IResult> GetClient(string clientId, IClientStore store, CancellationToken ct)
     {
         var client = await store.GetAsync(clientId, ct);
-        return client is null
-            ? Results.NotFound()
-            : TypedResults.Json(client, AuthagonalJsonContext.Default.OAuthClient);
+        if (client is null)
+            return Results.NotFound();
+        client.ClientSecretHashes = []; // never expose secret hashes
+        return TypedResults.Json(client, AuthagonalJsonContext.Default.OAuthClient);
     }
 
     private static async Task<IResult> CreateClient(
@@ -41,6 +46,7 @@ public static class ClientEndpoints
         IClientStore store,
         IClientScopeGuard scopeGuard,
         IAuditLogger audit,
+        IConfiguration configuration,
         HttpContext http,
         CancellationToken ct)
     {
@@ -50,12 +56,18 @@ public static class ClientEndpoints
         if (scopeGuard.FindUngrantableScope(http.User, client.AllowedScopes) is not null)
             return Results.Forbid();
 
+        // Reserve the admin scope: no client may hold it, otherwise an admin could mint a
+        // client_credentials client that issues admin tokens indefinitely (privilege persistence).
+        if (IsAdminScopeRequested(client.AllowedScopes, configuration))
+            return TypedResults.Json(new ErrorInfoResponse { Error = "forbidden_scope", ErrorDescription = "The administrative scope cannot be granted to a client" }, AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 403);
+
         var existing = await store.GetAsync(client.ClientId, ct);
         if (existing is not null)
             return TypedResults.Json(new ErrorInfoResponse { Error = "client_exists", ErrorDescription = $"Client '{client.ClientId}' already exists" }, AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 409);
 
         await store.UpsertAsync(client, ct);
         await audit.LogAsync(Actor(http), "client.created", "client", client.ClientId, client.ClientName, ct);
+        client.ClientSecretHashes = []; // don't echo secret hashes back to the caller
         return Results.Created($"/api/v1/clients/{client.ClientId}", client);
     }
 
@@ -65,6 +77,7 @@ public static class ClientEndpoints
         IClientStore store,
         IClientScopeGuard scopeGuard,
         IAuditLogger audit,
+        IConfiguration configuration,
         HttpContext http,
         CancellationToken ct)
     {
@@ -77,10 +90,25 @@ public static class ClientEndpoints
         if (scopeGuard.FindUngrantableScope(http.User, newlyAdded) is not null)
             return Results.Forbid();
 
+        // Reserve the admin scope: a client may never hold it.
+        if (IsAdminScopeRequested(client.AllowedScopes, configuration))
+            return TypedResults.Json(new ErrorInfoResponse { Error = "forbidden_scope", ErrorDescription = "The administrative scope cannot be granted to a client" }, AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 403);
+
         client.ClientId = clientId;
+        // Preserve the stored secret when the update omits hashes; never echo them back. (A rotation
+        // that explicitly supplies new hashes is still honoured.)
+        if (client.ClientSecretHashes is not { Count: > 0 })
+            client.ClientSecretHashes = existing.ClientSecretHashes;
         await store.UpsertAsync(client, ct);
         await audit.LogAsync(Actor(http), "client.updated", "client", clientId, null, ct);
+        client.ClientSecretHashes = []; // don't echo secret hashes back to the caller
         return TypedResults.Json(client, AuthagonalJsonContext.Default.OAuthClient);
+    }
+
+    private static bool IsAdminScopeRequested(IEnumerable<string> scopes, IConfiguration configuration)
+    {
+        var adminScope = configuration["AdminApi:Scope"] ?? "authagonal-admin";
+        return scopes.Contains(adminScope, StringComparer.OrdinalIgnoreCase);
     }
 
     private static async Task<IResult> DeleteClient(

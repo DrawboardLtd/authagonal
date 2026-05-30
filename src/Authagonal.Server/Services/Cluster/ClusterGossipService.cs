@@ -57,7 +57,7 @@ public sealed class ClusterGossipService(
         var peers = peerRegistry.GetPeers();
         foreach (var peer in peers)
         {
-            await GossipToPeerAsync(peer.HttpAddress, localState, ct);
+            await GossipToPeerAsync(peer.HttpAddress, localState, opts.Secret, ct);
         }
 
         // Also gossip through InternalUrl if configured (LB fallback)
@@ -70,14 +70,21 @@ public sealed class ClusterGossipService(
         rateLimiter.Prune(TimeSpan.FromSeconds(opts.PeerStaleAfterSeconds));
     }
 
-    private async Task GossipToPeerAsync(string peerAddress, GossipMessage localState, CancellationToken ct)
+    private async Task GossipToPeerAsync(string peerAddress, GossipMessage localState, string? secret, CancellationToken ct)
     {
         try
         {
             var client = httpClientFactory.CreateClient("ClusterGossip");
             var url = $"{peerAddress.TrimEnd('/')}/_internal/cluster/gossip";
 
-            var response = await client.PostAsJsonAsync(url, localState, AuthagonalJsonContext.Default.GossipMessage, ct);
+            using var request = new HttpRequestMessage(HttpMethod.Post, url)
+            {
+                Content = JsonContent.Create(localState, AuthagonalJsonContext.Default.GossipMessage)
+            };
+            if (!string.IsNullOrWhiteSpace(secret))
+                request.Headers.Add(InternalEndpointGuard.SecretHeader, secret);
+
+            var response = await client.SendAsync(request, ct);
 
             if (response.IsSuccessStatusCode)
             {

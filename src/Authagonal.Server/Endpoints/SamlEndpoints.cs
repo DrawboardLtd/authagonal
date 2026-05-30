@@ -154,18 +154,25 @@ public static class SamlEndpoints
             return Results.Redirect($"{relayState}?error=saml_error&error_description={Uri.EscapeDataString(parseResult.Error ?? "Unknown error")}");
         }
 
-        // Replay protection for IdP-initiated flows (no InResponseTo).
-        // SP-initiated flows are already protected by the request ID replay cache above.
-        // For IdP-initiated, check the assertion ID to prevent assertion replay.
-        if (expectedInResponseTo is null && !string.IsNullOrEmpty(parseResult.AssertionId))
+        // Enforce assertion single-use for EVERY accepted assertion, regardless of flow.
+        // The SP-initiated request-ID check above keys off the <Response> InResponseTo attribute,
+        // which is NOT covered when an IdP signs only the <Assertion> (the common case). An attacker
+        // who captures such a response can strip the unsigned InResponseTo to reach the
+        // "IdP-initiated" branch and replay it. Storing the assertion ID unconditionally closes that:
+        // the ID lives inside the signed assertion, so it cannot be altered without breaking the
+        // signature, and a second presentation of the same assertion is rejected.
+        if (string.IsNullOrEmpty(parseResult.AssertionId))
         {
-            var isNew = await replayCache.CheckAndStoreAssertionIdAsync(parseResult.AssertionId, ct);
-            if (!isNew)
-            {
-                logger.LogWarning("SAML IdP-initiated assertion replay detected: AssertionId={AssertionId}, ConnectionId={ConnectionId}",
-                    parseResult.AssertionId, connectionId);
-                return Results.BadRequest(new { error = "saml_replay", error_description = "SAML assertion replay detected." });
-            }
+            logger.LogWarning("SAML assertion has no ID; cannot guarantee single-use. ConnectionId={ConnectionId}", connectionId);
+            return Results.BadRequest(new { error = "saml_invalid", error_description = "SAML assertion is missing an ID." });
+        }
+
+        var isNewAssertion = await replayCache.CheckAndStoreAssertionIdAsync(parseResult.AssertionId, ct);
+        if (!isNewAssertion)
+        {
+            logger.LogWarning("SAML assertion replay detected: AssertionId={AssertionId}, ConnectionId={ConnectionId}",
+                parseResult.AssertionId, connectionId);
+            return Results.BadRequest(new { error = "saml_replay", error_description = "SAML assertion replay detected." });
         }
 
         // Map claims
@@ -179,9 +186,43 @@ public static class SamlEndpoints
         }
 
         var email = userInfo.Email.ToLowerInvariant();
+        var emailDomain = email.Contains('@') ? email[(email.LastIndexOf('@') + 1)..] : "";
 
-        // Find or create user
-        var user = await userStore.FindByEmailAsync(email, ct);
+        // A SAML assertion has no standard "email verified" flag; the connection's AllowedDomains is
+        // the admin's explicit statement of which domains this IdP is authorised to assert. Enforce it
+        // (when configured) to stop one connection asserting another's domain or a local user's email.
+        var domainAllowed = config.AllowedDomains is { Count: > 0 } &&
+            config.AllowedDomains.Any(d => string.Equals(d, emailDomain, StringComparison.OrdinalIgnoreCase));
+        if (config.AllowedDomains is { Count: > 0 } && !domainAllowed)
+        {
+            logger.LogWarning("SAML email domain '{Domain}' not permitted for connection {ConnectionId}", emailDomain, connectionId);
+            return Results.Redirect($"{relayState}?error=access_denied&error_description={Uri.EscapeDataString("Your email domain is not permitted for this connection.")}");
+        }
+
+        // Resolve a returning user by their STABLE federated identity (provider + NameID) first —
+        // never by email alone.
+        var provider = $"saml:{connectionId}";
+        var providerKey = parseResult.NameId!;
+        var existingLogin = await userStore.FindLoginAsync(provider, providerKey, ct);
+        var user = existingLogin is not null ? await userStore.GetAsync(existingLogin.UserId, ct) : null;
+
+        // Match an existing local account by email only when the connection is explicitly authorised
+        // for that email's domain (AllowedDomains vouches the IdP owns it). Without that vouching we
+        // refuse to attach this IdP to a pre-existing account, preventing account takeover.
+        if (user is null)
+        {
+            var existingByEmail = await userStore.FindByEmailAsync(email, ct);
+            if (existingByEmail is not null)
+            {
+                if (!domainAllowed)
+                {
+                    logger.LogWarning("SAML login rejected: email {Email} matches an existing account but connection {ConnectionId} is not authorised for its domain", email, connectionId);
+                    return Results.Redirect($"{relayState}?error=access_denied&error_description={Uri.EscapeDataString("This email already belongs to an account. Contact your administrator to link it.")}");
+                }
+                user = existingByEmail;
+            }
+        }
+
         if (user is null)
         {
             if (config.DisableJitProvisioning)
@@ -248,10 +289,7 @@ public static class SamlEndpoints
             return Results.Redirect($"{relayState}?error=account_disabled&error_description={Uri.EscapeDataString("Account has been deactivated.")}");
         }
 
-        // Ensure external login link
-        var provider = $"saml:{connectionId}";
-        var providerKey = parseResult.NameId!;
-        var existingLogin = await userStore.FindLoginAsync(provider, providerKey, ct);
+        // Establish the federated identity link on first sign-in (provider/providerKey resolved above).
         if (existingLogin is null)
         {
             await userStore.AddLoginAsync(new ExternalLoginInfo
@@ -275,7 +313,9 @@ public static class SamlEndpoints
             new(ClaimTypes.Email, user.Email),
             new(ClaimTypes.Name, string.IsNullOrWhiteSpace(displayName) ? user.Email : displayName),
             new("security_stamp", user.SecurityStamp ?? ""),
-            new("sid", Guid.NewGuid().ToString("N"))
+            new("sid", Guid.NewGuid().ToString("N")),
+            // Federation satisfies the local MFA requirement — the upstream IdP owns authentication.
+            new(CookieSignInHelper.MfaAuthenticatedClaim, "true")
         };
 
         if (!string.IsNullOrWhiteSpace(user.OrganizationId))
