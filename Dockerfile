@@ -16,7 +16,7 @@ COPY src/Authagonal.Storage/*.csproj src/Authagonal.Storage/
 COPY src/Authagonal.Server/*.csproj src/Authagonal.Server/
 RUN dotnet restore src/Authagonal.Server/
 COPY src/ src/
-RUN dotnet publish src/Authagonal.Server/ -c Release -o /app/publish --no-restore
+RUN dotnet publish src/Authagonal.Server/ -f net10.0 -c Release -o /app/publish --no-restore
 
 # Stage 3: Runtime
 FROM mcr.microsoft.com/dotnet/aspnet:10.0
