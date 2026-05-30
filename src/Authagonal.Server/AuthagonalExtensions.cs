@@ -443,7 +443,11 @@ public static class AuthagonalExtensions
         // Start from an empty trust set (the framework default of loopback-only would ignore XFF
         // entirely behind a non-loopback ingress).
         fhOptions.KnownProxies.Clear();
+#if NET10_0_OR_GREATER
         fhOptions.KnownIPNetworks.Clear();
+#else
+        fhOptions.KnownNetworks.Clear();
+#endif
         foreach (var proxy in app.Configuration.GetSection("ForwardedHeaders:KnownProxies").Get<string[]>() ?? [])
         {
             if (System.Net.IPAddress.TryParse(proxy, out var ip))
@@ -454,7 +458,11 @@ public static class AuthagonalExtensions
             var parts = network.Split('/');
             if (parts.Length == 2 && System.Net.IPAddress.TryParse(parts[0], out var prefix) &&
                 int.TryParse(parts[1], out var prefixLength))
+#if NET10_0_OR_GREATER
                 fhOptions.KnownIPNetworks.Add(new System.Net.IPNetwork(prefix, prefixLength));
+#else
+                fhOptions.KnownNetworks.Add(new Microsoft.AspNetCore.HttpOverrides.IPNetwork(prefix, prefixLength));
+#endif
         }
         app.UseForwardedHeaders(fhOptions);
 
