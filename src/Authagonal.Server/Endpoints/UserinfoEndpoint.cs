@@ -15,6 +15,7 @@ public static class UserinfoEndpoint
             Authagonal.Core.Services.IKeyManager keyManager,
             IUserStore userStore,
             IScimGroupStore scimGroupStore,
+            IRevokedTokenStore revokedTokenStore,
             Authagonal.Core.Services.ITenantContext tenantContext,
             CancellationToken ct) =>
         {
@@ -38,6 +39,7 @@ public static class UserinfoEndpoint
                 ValidateAudience = true,
                 AudienceValidator = (audiences, _, _) => audiences?.Any() == true,
                 ValidateLifetime = true,
+                ValidAlgorithms = ["ES256"],
                 IssuerSigningKeys = keys,
                 ValidateIssuerSigningKey = true,
                 ClockSkew = TimeSpan.FromSeconds(60)
@@ -53,29 +55,40 @@ public static class UserinfoEndpoint
             if (string.IsNullOrWhiteSpace(subjectId))
                 return Results.Unauthorized();
 
+            // Reject revoked access tokens (the JWT may still be unexpired).
+            var jti = result.Claims.TryGetValue("jti", out var jtiObj) ? jtiObj?.ToString() : null;
+            if (!string.IsNullOrWhiteSpace(jti) && await revokedTokenStore.IsRevokedAsync(jti, ct))
+                return Results.Unauthorized();
+
             var user = await userStore.GetAsync(subjectId, ct);
             if (user is null)
                 return Results.Unauthorized();
 
-            var claims = new Dictionary<string, object?>
+            // Scope-gate claims (OIDC §5.3.2): `sub` is always returned; profile/email/phone claims
+            // are released only when the corresponding scope was granted to the access token.
+            var scopeClaim = result.Claims.TryGetValue("scope", out var scObj) ? scObj?.ToString() ?? "" : "";
+            var scopes = scopeClaim.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+
+            var claims = new Dictionary<string, object?> { ["sub"] = user.Id };
+
+            if (scopes.Contains("email", StringComparer.Ordinal))
             {
-                ["sub"] = user.Id,
-                ["email"] = user.Email,
-                ["email_verified"] = user.EmailConfirmed
-            };
+                claims["email"] = user.Email;
+                claims["email_verified"] = user.EmailConfirmed;
+            }
 
-            if (!string.IsNullOrWhiteSpace(user.FirstName))
-                claims["given_name"] = user.FirstName;
-
-            if (!string.IsNullOrWhiteSpace(user.LastName))
-                claims["family_name"] = user.LastName;
-
-            var fullName = $"{user.FirstName} {user.LastName}".Trim();
-            if (!string.IsNullOrWhiteSpace(fullName))
-                claims["name"] = fullName;
-
-            if (!string.IsNullOrWhiteSpace(user.Phone))
-                claims["phone_number"] = user.Phone;
+            if (scopes.Contains("profile", StringComparer.Ordinal))
+            {
+                if (!string.IsNullOrWhiteSpace(user.FirstName))
+                    claims["given_name"] = user.FirstName;
+                if (!string.IsNullOrWhiteSpace(user.LastName))
+                    claims["family_name"] = user.LastName;
+                var fullName = $"{user.FirstName} {user.LastName}".Trim();
+                if (!string.IsNullOrWhiteSpace(fullName))
+                    claims["name"] = fullName;
+                if (!string.IsNullOrWhiteSpace(user.Phone))
+                    claims["phone_number"] = user.Phone;
+            }
 
             if (!string.IsNullOrWhiteSpace(user.OrganizationId))
                 claims["org_id"] = user.OrganizationId;

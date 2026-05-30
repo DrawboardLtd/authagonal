@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using Authagonal.Core.Models;
+using Authagonal.Core.Services;
 using Authagonal.Core.Stores;
 using Authagonal.Server.Services;
 using Microsoft.Extensions.Options;
@@ -20,11 +21,19 @@ public static class ClientRegistrationEndpoint
         return app;
     }
 
+    // Open self-service registration must not be able to mint machine-to-machine or interactive
+    // grant types that bypass a user — only the code + refresh flow.
+    private static readonly HashSet<string> RegistrableGrantTypes =
+        new(["authorization_code", "refresh_token"], StringComparer.Ordinal);
+
     private static async Task<IResult> HandleAsync(
         ClientRegistrationRequest request,
+        HttpContext httpContext,
         IClientStore clientStore,
         IScopeStore scopeStore,
         PasswordHasher passwordHasher,
+        IRateLimiter rateLimiter,
+        IConfiguration configuration,
         IOptions<AuthOptions> authOptions,
         CancellationToken ct)
     {
@@ -33,13 +42,32 @@ public static class ClientRegistrationEndpoint
                 new ErrorInfoResponse { Error = "not_supported", ErrorDescription = "Dynamic client registration is not enabled" },
                 AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 403);
 
+        // Rate-limit anonymous registration to prevent client-record flooding.
+        var ip = httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+        if (await rateLimiter.IsRateLimitedAsync($"dcr|{ip}", 10, TimeSpan.FromMinutes(60), ct))
+            return TypedResults.Json(
+                new ErrorInfoResponse { Error = "rate_limited", ErrorDescription = "Too many registration attempts. Try again later." },
+                AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 429);
+
         var redirectUris = request.RedirectUris ?? [];
         var grantTypes = request.GrantTypes ?? ["authorization_code"];
 
+        // Restrict to user-mediated grant types; never allow open DCR to register a
+        // client_credentials/implicit/device client.
+        foreach (var gt in grantTypes)
+        {
+            if (!RegistrableGrantTypes.Contains(gt))
+                return TypedResults.Json(
+                    new ErrorInfoResponse { Error = "invalid_client_metadata", ErrorDescription = $"grant_type '{gt}' may not be registered via dynamic client registration" },
+                    AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 400);
+        }
+
         foreach (var uri in redirectUris)
         {
+            // Require an absolute URI and reject script/data/file pseudo-schemes; http(s) and native
+            // custom schemes (mobile deep links) remain valid.
             if (!Uri.TryCreate(uri, UriKind.Absolute, out var parsed) ||
-                (parsed.Scheme != "http" && parsed.Scheme != "https" && !parsed.IsAbsoluteUri))
+                parsed.Scheme is "javascript" or "data" or "vbscript" or "file")
             {
                 return TypedResults.Json(
                     new ErrorInfoResponse { Error = "invalid_redirect_uri", ErrorDescription = $"Invalid redirect_uri: {uri}" },
@@ -67,6 +95,13 @@ public static class ClientRegistrationEndpoint
         var storeScopes = await scopeStore.ListAsync(ct);
         var knownScopes = new HashSet<string>(storeScopes.Select(s => s.Name), StringComparer.Ordinal);
         knownScopes.UnionWith(builtInScopes);
+
+        // The administrative scope is never grantable through open registration.
+        var adminScope = configuration["AdminApi:Scope"] ?? "authagonal-admin";
+        if (requestedScopes.Contains(adminScope, StringComparer.OrdinalIgnoreCase))
+            return TypedResults.Json(
+                new ErrorInfoResponse { Error = "invalid_scope", ErrorDescription = "The administrative scope cannot be registered" },
+                AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 403);
 
         foreach (var s in requestedScopes)
         {

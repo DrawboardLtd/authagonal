@@ -354,7 +354,7 @@ export default function MfaSetupPage() {
       )}
 
       {/* Back to app link — shown when navigating from an external app */}
-      {backUrl && (
+      {backUrl && isSafeReturnUrl(backUrl) && (
         <div className="mt-6 text-center pt-4 border-t border-gray-200 dark:border-gray-800">
           <a href={backUrl} className="text-sm text-primary no-underline hover:underline">
             &larr; {t('mfaBackToApp')}

@@ -36,17 +36,22 @@ public sealed class TccProvisioningOrchestrator(
         if (provisioningApps.Count == 0) return;
 
         var appIds = provisioningApps.Select(a => a.AppId).ToList();
-        // Cache app configs for lookup during TCC phases
-        _resolvedApps = provisioningApps.ToDictionary(a => a.AppId, a => new AppConfig(a.CallbackUrl, a.ApiKey, a.TryTimeoutSeconds), StringComparer.OrdinalIgnoreCase);
+        // Resolved app configs are threaded through the call chain — never stored thread-static,
+        // which bled across requests and was lost across awaits.
+        var resolved = provisioningApps.ToDictionary(
+            a => a.AppId,
+            a => new AppConfig(a.CallbackUrl, a.ApiKey, a.TryTimeoutSeconds),
+            StringComparer.OrdinalIgnoreCase);
 
-        await ProvisionAsync(user, appIds, ct);
-        _resolvedApps = null;
+        await ProvisionInternalAsync(user, appIds, resolved, ct);
     }
 
-    // App configs resolved from the provider (set during ProvisionAsync(user) call)
-    [ThreadStatic] private static Dictionary<string, AppConfig>? _resolvedApps;
+    public Task ProvisionAsync(AuthUser user, IReadOnlyList<string> requiredAppIds, CancellationToken ct = default)
+        => ProvisionInternalAsync(user, requiredAppIds, resolvedApps: null, ct);
 
-    public async Task ProvisionAsync(AuthUser user, IReadOnlyList<string> requiredAppIds, CancellationToken ct = default)
+    private async Task ProvisionInternalAsync(
+        AuthUser user, IReadOnlyList<string> requiredAppIds,
+        IReadOnlyDictionary<string, AppConfig>? resolvedApps, CancellationToken ct)
     {
         if (requiredAppIds.Count == 0)
             return;
@@ -63,7 +68,7 @@ public sealed class TccProvisioningOrchestrator(
         var apps = new Dictionary<string, AppConfig>();
         foreach (var appId in appsToProvision)
         {
-            var appConfig = GetAppConfig(appId)
+            var appConfig = await GetAppConfigAsync(appId, resolvedApps, ct)
                 ?? throw new ProvisioningException(appId, $"Provisioning app '{appId}' is not configured");
             apps[appId] = appConfig;
         }
@@ -134,7 +139,7 @@ public sealed class TccProvisioningOrchestrator(
 
         foreach (var provision in provisions)
         {
-            var appConfig = GetAppConfig(provision.AppId);
+            var appConfig = await GetAppConfigAsync(provision.AppId, null, ct);
             if (appConfig is null)
             {
                 logger.LogWarning(
@@ -270,16 +275,16 @@ public sealed class TccProvisioningOrchestrator(
             "Deprovision user {UserId}: HTTP {StatusCode}", userId, (int)response.StatusCode);
     }
 
-    private AppConfig? GetAppConfig(string appId)
+    private async Task<AppConfig?> GetAppConfigAsync(
+        string appId, IReadOnlyDictionary<string, AppConfig>? resolvedApps, CancellationToken ct)
     {
-        // Check resolved apps from provider (set during ProvisionAsync(user) call)
-        if (_resolvedApps?.TryGetValue(appId, out var resolved) == true)
+        // Prefer the configs resolved for this operation.
+        if (resolvedApps?.TryGetValue(appId, out var resolved) == true)
             return resolved;
 
-        // Fall back to async provider lookup (for legacy per-client app ID calls)
-        var app = appProvider.GetAppsAsync().GetAwaiter().GetResult()
-            .FirstOrDefault(a => string.Equals(a.AppId, appId, StringComparison.OrdinalIgnoreCase));
-
+        // Fall back to a provider lookup (per-client app-id calls / deprovision).
+        var apps = await appProvider.GetAppsAsync(ct);
+        var app = apps.FirstOrDefault(a => string.Equals(a.AppId, appId, StringComparison.OrdinalIgnoreCase));
         return app is not null ? new AppConfig(app.CallbackUrl, app.ApiKey, app.TryTimeoutSeconds) : null;
     }
 

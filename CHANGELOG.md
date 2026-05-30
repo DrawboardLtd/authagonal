@@ -1,5 +1,76 @@
 # Changelog
 
+## [Unreleased]
+
+### Security
+
+Hardening from a full security review:
+
+- **MFA always challenges** — enrolled users are always challenged; closes a path where MFA could be bypassed.
+- **Federation account-takeover prevention** — upstream logins now require `email_verified` and enforce the provider's `AllowedDomains` before linking or provisioning, preventing takeover via unverified or out-of-domain emails.
+- **SAML assertion replay fix** — incoming SAML assertions are checked against the replay cache so a captured assertion cannot be re-submitted.
+- **SCIM group isolation** — SCIM group access is scoped to the requesting client, closing a cross-client IDOR.
+- **Admin scope reservation** — the admin scope (`AdminApi:Scope`) can no longer be granted to an OAuth client nor issued through the impersonation endpoint, preventing privilege persistence.
+- **Forwarded-header trust config** — `ForwardedHeaders:ForwardLimit` / `KnownNetworks` / `KnownProxies` control which proxy hops may set the client IP, so `X-Forwarded-For` can't be spoofed to forge the IP used for rate limiting and lockout.
+- **Internal-endpoint authentication** — `/_internal/cluster/gossip` and `/_internal/backchannel-logout` require the `X-Cluster-Secret` header when `Cluster:Secret` is set, and otherwise only accept loopback / private source IPs.
+- **Backup signing-key exclusion + restore integrity** — the `SigningKeys` table is excluded from backups by default (`Backup:IncludeSigningKeys` to opt in), and restores verify file SHA-256 hashes against the manifest before writing.
+
+## [0.3.0] — 2026-05
+
+### Added
+
+- **JIT provisioning control** — just-in-time user provisioning on federated login is now configurable.
+- **Partial SAML connection updates** — `PUT /api/v1/saml/connections/{connectionId}` supports partial updates of SAML provider configuration.
+
+## [0.2.6]
+
+### Added
+
+- **Client admin API** — runtime CRUD for OAuth clients under `/api/v1/clients`, guarded by an `IClientScopeGuard` so callers can only grant scopes they are entitled to. Secret hashes are never returned.
+- **Provisioning app admin API** — runtime CRUD for downstream provisioning apps under `/api/v1/provisioning/apps`, with a configurable per-deployment quota (`IProvisioningAppQuota`) and a `/test` connectivity check.
+
+## [0.2.5]
+
+### Fixed
+
+- **JWT signature encoding** — corrected signature encoding for issued tokens.
+
+### Changed
+
+- **Release workflow** — optimized the build/release pipeline.
+
+## [0.2.4] — 2026
+
+### Changed
+
+- **Vault Transit ES256** — refactored the HashiCorp Vault Transit signing integration for proper ES256 (ECDSA P-256) support.
+
+## [0.2.3]
+
+### Changed
+
+- Version bump across packages and demos.
+
+## [0.2.2]
+
+### Changed
+
+- **ES256 signing** — migrated JWT signing from RS256 (RSA-2048) to ES256 (ECDSA P-256).
+- **`@authagonal` package scope** — npm packages published under the `@authagonal` scope; added TypeScript type annotations.
+
+## [0.2.1]
+
+### Changed
+
+- **Table store partitioning** — integrated the environment-aware partitioner into the table stores for sandbox table isolation.
+
+## [0.2.0]
+
+### Added
+
+- **Pushed Authorization Requests (PAR, RFC 9126)** — clients can POST authorize parameters to `/connect/par` and receive a short-lived `request_uri`. Per-client enforcement via `RequirePushedAuthorizationRequests`. See [PAR](par).
+- **OIDC federation** — extended upstream OIDC federation: upstream claim propagation, scope forwarding, and upstream session caps.
+
 ## [0.1.86] — 2026-04-17
 
 ### Added

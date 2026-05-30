@@ -98,6 +98,17 @@ See the [Configuration](configuration) page for all cluster settings.
 
 In multi-tenant mode (`AddAuthagonalCore()`), background services like `GrantReconciliationService` and `SigningKeyRotationService` are not registered — the host manages these per-tenant. Only `TokenCleanupService` runs unconditionally.
 
+## Name-index hot partition
+
+Admin name-prefix search is backed by the `UserFirstNames` / `UserLastNames` index tables, which use a **single hot partition**. At scale this caps index-write throughput at roughly 2,000 ops/sec, which can become a bottleneck on user create/update under heavy load. If you don't expose admin name search, set `Storage:NameIndexesEnabled = false` to skip these writes entirely. See [Configuration](configuration).
+
+## Trusted-proxy and internal endpoints
+
+When running multiple instances behind a load balancer:
+
+- **Forwarded headers** — rate limiting and lockout key on the client IP, resolved from `X-Forwarded-For`. Set `ForwardedHeaders:KnownNetworks` to your ingress / pod CIDR so the client IP can't be spoofed across instances. `ForwardedHeaders:ForwardLimit` defaults to `1`. See [Configuration](configuration#forwarded-headers-trusted-proxy).
+- **Internal endpoints** — `/_internal/cluster/gossip` and `/_internal/backchannel-logout` are guarded by source IP (loopback / private only) unless `Cluster:Secret` is set. When gossip is routed through a load balancer (`Cluster:InternalUrl`), the LB rewrites the source IP, so set `Cluster:Secret` and the gossip caller will present it in the `X-Cluster-Secret` header.
+
 ## Scaling recommendations
 
 **Vertical scaling** — increase CPU and memory on a single instance. Useful for handling more concurrent requests per instance.

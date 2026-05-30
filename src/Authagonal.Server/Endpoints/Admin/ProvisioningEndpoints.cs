@@ -5,6 +5,7 @@ using System.Text.Json;
 using Authagonal.Core.Models;
 using Authagonal.Core.Services;
 using Authagonal.Core.Stores;
+using Authagonal.Server.Services;
 
 namespace Authagonal.Server.Endpoints.Admin;
 
@@ -133,6 +134,9 @@ public static class ProvisioningEndpoints
         if (app is null)
             return TypedResults.Json(new ErrorInfoResponse { Error = "app_not_found" }, AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 404);
 
+        if (!OutboundUrlValidator.IsSafe(app.CallbackUrl))
+            return TypedResults.Json(new ProvisioningTestResult { Success = false, StatusCode = 0, Body = "Callback URL is not an allowed external host." }, AuthagonalJsonContext.Default.ProvisioningTestResult);
+
         var http = httpClientFactory.CreateClient("Provisioning");
         http.Timeout = TimeSpan.FromSeconds(10);
 
@@ -182,6 +186,8 @@ public static class ProvisioningEndpoints
             return TypedResults.Json(new ErrorInfoResponse { Error = "invalid_request", ErrorDescription = "callbackUrl is required" }, AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 400);
         if (!Uri.TryCreate(request.CallbackUrl, UriKind.Absolute, out var uri) || (uri.Scheme != "https" && uri.Scheme != "http"))
             return TypedResults.Json(new ErrorInfoResponse { Error = "invalid_request", ErrorDescription = "callbackUrl must be an absolute http(s) URL" }, AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 400);
+        if (!OutboundUrlValidator.IsSafe(request.CallbackUrl))
+            return TypedResults.Json(new ErrorInfoResponse { Error = "invalid_request", ErrorDescription = "callbackUrl must be an external host (internal/loopback addresses are not allowed)" }, AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 400);
         return null;
     }
 

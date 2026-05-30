@@ -20,6 +20,10 @@ public sealed class MfaCredential
     /// <summary>WebAuthn clone detection counter.</summary>
     public uint SignCount { get; set; }
 
+    /// <summary>TOTP only: the last time-step a code was accepted at, to reject replay of an
+    /// already-used code within its validity window. Null until the first successful verification.</summary>
+    public long? LastTotpStep { get; set; }
+
     /// <summary>Recovery codes only: true once the code has been used.</summary>
     public bool IsConsumed { get; set; }
 

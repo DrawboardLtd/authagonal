@@ -44,7 +44,7 @@ public static class DiscoveryEndpoint
                 ResponseTypesSupported = ["code"],
                 GrantTypesSupported = ["authorization_code", "refresh_token", "client_credentials", "urn:ietf:params:oauth:grant-type:device_code"],
                 SubjectTypesSupported = ["public"],
-                IdTokenSigningAlgValuesSupported = ["RS256"],
+                IdTokenSigningAlgValuesSupported = ["ES256"],
                 TokenEndpointAuthMethodsSupported = ["client_secret_basic", "client_secret_post"],
                 CodeChallengeMethodsSupported = ["S256"],
                 BackchannelLogoutSupported = true,

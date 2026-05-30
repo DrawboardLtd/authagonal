@@ -276,7 +276,10 @@ public sealed class ProtocolTokenService(
         if (grant is null || grant.Type != "authorization_code")
             throw new InvalidOperationException("Invalid authorization code");
 
-        await grantStore.RemoveAsync(code, ct);
+        // Atomic single-use: only the request that wins the conditional delete may redeem the code,
+        // so two concurrent token requests with the same code can't both succeed.
+        if (!await grantStore.TryConsumeAsync(code, ct))
+            throw new InvalidOperationException("Authorization code has already been used");
 
         if (grant.ExpiresAt <= DateTimeOffset.UtcNow)
             throw new InvalidOperationException("Authorization code has expired");

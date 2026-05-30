@@ -32,23 +32,36 @@ public sealed class TotpService
     }
 
     public bool VerifyCode(byte[] secret, string code, int window = 1)
+        => GetMatchingStep(secret, code, window: window) is not null;
+
+    /// <summary>
+    /// Returns the time-step the code matched at (within ±<paramref name="window"/>), or null if it
+    /// doesn't match. Steps at or below <paramref name="minExclusiveStep"/> are skipped, so a caller
+    /// that records the last-accepted step can reject replays of an already-used code within its
+    /// validity window.
+    /// </summary>
+    public long? GetMatchingStep(byte[] secret, string code, long minExclusiveStep = long.MinValue, int window = 1)
     {
         if (string.IsNullOrWhiteSpace(code) || code.Length != CodeDigits)
-            return false;
+            return null;
 
         var currentStep = GetCurrentTimeStep();
         for (var i = -window; i <= window; i++)
         {
-            var expected = GenerateCode(secret, currentStep + i);
+            var step = currentStep + i;
+            if (step <= minExclusiveStep)
+                continue;
+
+            var expected = GenerateCode(secret, step);
             if (CryptographicOperations.FixedTimeEquals(
                 System.Text.Encoding.UTF8.GetBytes(expected),
                 System.Text.Encoding.UTF8.GetBytes(code)))
             {
-                return true;
+                return step;
             }
         }
 
-        return false;
+        return null;
     }
 
     public string GetOtpAuthUri(string email, byte[] secret, string issuer = "Authagonal")

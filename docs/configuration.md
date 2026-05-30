@@ -9,10 +9,22 @@ Authagonal is configured via `appsettings.json` or environment variables. Enviro
 
 ## Required Settings
 
+Storage can be configured one of two ways — supply **either** `Storage:ConnectionString` **or** `Storage:TableServiceUri` (the managed-identity path, preferred in production).
+
 | Setting | Env Variable | Description |
 |---|---|---|
-| `Storage:ConnectionString` | `Storage__ConnectionString` | Azure Table Storage connection string |
+| `Storage:ConnectionString` | `Storage__ConnectionString` | Azure Table Storage connection string with an account key. Suitable for dev / Azurite. |
+| `Storage:TableServiceUri` | `Storage__TableServiceUri` | Managed-identity Table Storage endpoint, e.g. `https://{account}.table.core.windows.net/`. Alternative to `Storage:ConnectionString` and **preferred in production** — authenticates via `DefaultAzureCredential` so no access key ever lands in a secret. The host must grant the workload identity the **Storage Table Data Contributor** role. |
 | `Issuer` | `Issuer` | The public base URL of this server (e.g., `https://auth.example.com`) |
+
+## Storage
+
+| Setting | Env Variable | Default | Description |
+|---|---|---|---|
+| `Storage:ConnectionString` | `Storage__ConnectionString` | *(none)* | Connection string with account key (see Required Settings). |
+| `Storage:TableServiceUri` | `Storage__TableServiceUri` | *(none)* | Managed-identity Table Storage URI (see Required Settings). Takes precedence over `Storage:ConnectionString` when both are set. |
+| `Storage:NameIndexesEnabled` | `Storage__NameIndexesEnabled` | `true` | Whether to maintain the `UserFirstNames` / `UserLastNames` prefix-search index tables that back admin name-prefix search. Set `false` on hosts that don't expose admin name search to skip those writes. **Scaling note:** these indexes use a single hot partition and cap throughput at roughly 2,000 ops/sec at scale — disable them if you don't need name search. |
+| `LoginAppUrl` | `LoginAppUrl` | `/login` | Base URL the `/connect/authorize` endpoint redirects to for the login SPA (login, step-up, and consent screens). Set this when the login UI is served from a different origin than the server; defaults to the relative `/login` path served by the bundled SPA. |
 
 ## Authentication
 
@@ -27,8 +39,9 @@ Authagonal is configured via `appsettings.json` or environment variables. Enviro
 | `Auth:PasswordResetExpiryMinutes` | `60` | Password reset link lifetime |
 | `Auth:MfaChallengeExpiryMinutes` | `5` | MFA challenge token lifetime |
 | `Auth:MfaSetupTokenExpiryMinutes` | `15` | MFA setup token lifetime (for forced enrollment) |
-| `Auth:Pbkdf2Iterations` | `50000` | PBKDF2 iteration count for password hashing |
-| `Auth:RefreshTokenReuseGraceSeconds` | `60` | Grace window for concurrent refresh token reuse |
+| `Auth:Pbkdf2Iterations` | `100000` | PBKDF2 iteration count for password hashing |
+| `Auth:RefreshTokenReuseGraceSeconds` | `0` | Opt-in grace window (seconds) for concurrent refresh token reuse. `0` (default) keeps the strict posture: any reuse of a consumed refresh token revokes all tokens for that user+client. Set `> 0` to treat a reuse within the window as an idempotent retry (re-delivers the successor tokens) — useful for mobile clients with connectivity flaps. |
+| `Auth:DynamicClientRegistrationEnabled` | `false` | Enable the `POST /connect/register` dynamic client registration endpoint (RFC 7591). Off by default because open registration can be abused in multi-tenant deployments. See [Dynamic Client Registration](client-registration). |
 | `Auth:SigningKeyLifetimeDays` | `90` | RSA signing key lifetime before automatic rotation |
 | `Auth:SigningKeyCacheRefreshMinutes` | `60` | How often signing keys are reloaded from storage |
 | `Auth:KeyRotationEnabled` | `false` | Enable automatic signing key rotation |
@@ -105,7 +118,7 @@ Clients are defined in the `Clients` array and seeded on startup. Each client ca
 
 | Value | Behavior |
 |---|---|
-| `OneTime` (default) | Each refresh issues a new refresh token. Old one is invalidated with a 60-second grace window for concurrent requests. Replay after the grace window revokes all tokens for that user+client. |
+| `OneTime` (default) | Each refresh issues a new refresh token and invalidates the old one. By default (`Auth:RefreshTokenReuseGraceSeconds = 0`) any reuse of a consumed token immediately revokes all tokens for that user+client — there is **no** grace window on by default. Set `Auth:RefreshTokenReuseGraceSeconds` to a positive value to opt into a retry-tolerance window. |
 | `ReUse` | Same refresh token is reused until expiry. |
 
 ### Provisioning Apps
@@ -263,20 +276,24 @@ Define OIDC identity providers in configuration. These are seeded on startup:
 
 ## Secret Provider
 
-Client secrets and OIDC provider secrets can optionally be stored in Azure Key Vault:
+Upstream OIDC client secrets and TOTP / MFA seeds can be stored in Azure Key Vault instead of in plaintext:
 
 | Setting | Description |
 |---|---|
-| `SecretProvider:VaultUri` | Key Vault URI (e.g., `https://my-vault.vault.azure.net/`). If not set, secrets are treated as plaintext. |
+| `SecretProvider:VaultUri` | Key Vault URI (e.g., `https://my-vault.vault.azure.net/`). If not set, the **plaintext** provider is used and secrets are stored as-is in Table Storage. |
 
 When configured, secret values that look like Key Vault references are resolved at runtime. Uses `DefaultAzureCredential` for authentication.
+
+> ⚠️ **Production: set `SecretProvider:VaultUri`.** The default secret provider is **plaintext**. When `SecretProvider:VaultUri` is unset, upstream OIDC client secrets and TOTP / MFA seeds are written to Azure Table Storage in cleartext — and therefore appear in cleartext in any [backup](backup-restore). For any production deployment, configure `SecretProvider:VaultUri` so these secrets are stored in Key Vault.
 
 ## Admin API
 
 | Setting | Default | Description |
 |---|---|---|
-| `AdminApi:Enabled` | `true` | Set to `false` to disable all admin endpoints (they won't be registered) |
+| `AdminApi:Enabled` | `true` | **Enabled by default.** Set to `false` to disable all admin endpoints (they won't be registered). |
 | `AdminApi:Scope` | `authagonal-admin` | JWT scope required to access admin endpoints. Change this to match your existing scope name (e.g., `projects-identity-admin` for IdentityServer migrations). |
+
+> ⚠️ **The admin API is enabled by default and is highly privileged.** The admin scope grants full management and user impersonation — anyone holding a token with `AdminApi:Scope` can mint tokens for any user, manage clients, and read/write all configuration. Network-restrict the admin endpoints (the `/api/v1/*` admin routes), and tightly control who can be issued the admin scope. As a defence-in-depth measure the scope is *reserved*: it can never be granted to an OAuth client (see [Admin API](admin-api)) and cannot be issued through the impersonation endpoint. Set `AdminApi:Enabled = false` entirely if the admin API is not used.
 
 ## Consent
 
@@ -333,7 +350,7 @@ Authagonal instances automatically form a cluster to share rate limit state. Clu
 | `Cluster:MulticastGroup` | `Cluster__MulticastGroup` | `239.42.42.42` | UDP multicast group for peer discovery |
 | `Cluster:MulticastPort` | `Cluster__MulticastPort` | `19847` | UDP multicast port for peer discovery |
 | `Cluster:InternalUrl` | `Cluster__InternalUrl` | *(none)* | Load-balanced fallback URL for gossip when multicast is unavailable |
-| `Cluster:Secret` | `Cluster__Secret` | *(none)* | Shared secret for gossip endpoint authentication (recommended when `InternalUrl` is set) |
+| `Cluster:Secret` | `Cluster__Secret` | *(none)* | Shared secret required on the internal-only endpoints (`/_internal/cluster/gossip` and `/_internal/backchannel-logout`). When set, callers must present it in the `X-Cluster-Secret` header (compared in constant time). When **unset**, those endpoints are reachable only from loopback / private (RFC 1918 / link-local / ULA) source IPs — an external request carrying a public IP is rejected. Recommended whenever `InternalUrl` routes gossip through a load balancer. |
 | `Cluster:GossipIntervalSeconds` | `Cluster__GossipIntervalSeconds` | `5` | How often instances exchange rate limit state |
 | `Cluster:DiscoveryIntervalSeconds` | `Cluster__DiscoveryIntervalSeconds` | `10` | How often instances announce themselves via multicast |
 | `Cluster:PeerStaleAfterSeconds` | `Cluster__PeerStaleAfterSeconds` | `30` | Drop peers not heard from after this many seconds |
@@ -363,6 +380,28 @@ Authagonal instances automatically form a cluster to share rate limit state. Clu
 
 See [Scaling](scaling) for more details on how distributed rate limiting works.
 
+## Forwarded Headers (trusted proxy)
+
+Authagonal keys rate limiting and account lockout on the client IP, and only emits HSTS on HTTPS requests. Behind a reverse proxy / ingress, the real client IP and scheme arrive in the `X-Forwarded-For` / `X-Forwarded-Proto` headers. These settings control **which proxy hops are trusted** to set those values, so a caller can't spoof `X-Forwarded-For` to forge the client IP.
+
+| Setting | Env Variable | Default | Description |
+|---|---|---|---|
+| `ForwardedHeaders:ForwardLimit` | `ForwardedHeaders__ForwardLimit` | `1` | Number of proxy hops to honour from the right of the `X-Forwarded-For` chain. The default of `1` trusts only the single hop your ingress appends and ignores anything further left in the chain. |
+| `ForwardedHeaders:KnownNetworks` | `ForwardedHeaders__KnownNetworks__0` (array) | *(empty)* | CIDR ranges (string array, e.g. `"10.0.0.0/8"`) permitted to set forwarded headers. **Strongest guarantee:** set this to your ingress / pod CIDR so only that network may set the client IP. |
+| `ForwardedHeaders:KnownProxies` | `ForwardedHeaders__KnownProxies__0` (array) | *(empty)* | Individual proxy IP addresses (string array) permitted to set forwarded headers. Use alongside or instead of `KnownNetworks`. |
+
+```json
+{
+  "ForwardedHeaders": {
+    "ForwardLimit": 1,
+    "KnownNetworks": ["10.244.0.0/16"],
+    "KnownProxies": []
+  }
+}
+```
+
+> ⚠️ **TLS-terminating proxy required.** Authagonal must run behind a TLS-terminating reverse proxy. The session cookie uses `SecurePolicy = SameAsRequest` and HSTS (`Strict-Transport-Security`) is only emitted on HTTPS requests, so the proxy must forward `X-Forwarded-Proto: https` for cookies to be marked `Secure` and HSTS to be sent. Configure `ForwardedHeaders:KnownNetworks` / `ForwardedHeaders:KnownProxies` to your trusted proxy so the scheme and client IP cannot be spoofed.
+
 ## Rate Limiting
 
 Built-in per-IP rate limits are enforced across all instances via the cluster gossip protocol:
@@ -388,9 +427,11 @@ This is configured programmatically when hosting as a library. See [Extensibilit
 ```json
 {
   "Storage": {
-    "ConnectionString": "DefaultEndpointsProtocol=https;AccountName=...;AccountKey=...;TableEndpoint=https://..."
+    "TableServiceUri": "https://myaccount.table.core.windows.net/",
+    "NameIndexesEnabled": true
   },
   "Issuer": "https://auth.example.com",
+  "LoginAppUrl": "/login",
   "Auth": {
     "MaxFailedAttempts": 5,
     "LockoutDurationMinutes": 10,
@@ -398,11 +439,21 @@ This is configured programmatically when hosting as a library. See [Extensibilit
     "RegistrationWindowMinutes": 60,
     "EmailVerificationExpiryHours": 24,
     "PasswordResetExpiryMinutes": 60,
-    "Pbkdf2Iterations": 50000,
+    "Pbkdf2Iterations": 100000,
+    "RefreshTokenReuseGraceSeconds": 0,
+    "DynamicClientRegistrationEnabled": false,
     "SigningKeyLifetimeDays": 90
   },
+  "SecretProvider": {
+    "VaultUri": "https://my-vault.vault.azure.net/"
+  },
+  "ForwardedHeaders": {
+    "ForwardLimit": 1,
+    "KnownNetworks": ["10.244.0.0/16"]
+  },
   "Cluster": {
-    "Enabled": true
+    "Enabled": true,
+    "Secret": "shared-secret-here"
   },
   "AdminApi": {
     "Enabled": true,

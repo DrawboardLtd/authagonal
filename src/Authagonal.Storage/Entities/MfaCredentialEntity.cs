@@ -16,6 +16,7 @@ public sealed class MfaCredentialEntity : ITableEntity
     public string? SecretProtected { get; set; }
     public string? PublicKeyJson { get; set; }
     public long SignCount { get; set; }
+    public long? LastTotpStep { get; set; }
     public bool IsConsumed { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset? LastUsedAt { get; set; }
@@ -29,6 +30,7 @@ public sealed class MfaCredentialEntity : ITableEntity
         SecretProtected = cred.SecretProtected,
         PublicKeyJson = cred.PublicKeyJson,
         SignCount = cred.SignCount,
+        LastTotpStep = cred.LastTotpStep,
         IsConsumed = cred.IsConsumed,
         CreatedAt = cred.CreatedAt,
         LastUsedAt = cred.LastUsedAt,
@@ -43,6 +45,7 @@ public sealed class MfaCredentialEntity : ITableEntity
         SecretProtected = SecretProtected,
         PublicKeyJson = PublicKeyJson,
         SignCount = (uint)SignCount,
+        LastTotpStep = LastTotpStep,
         IsConsumed = IsConsumed,
         CreatedAt = CreatedAt,
         LastUsedAt = LastUsedAt,

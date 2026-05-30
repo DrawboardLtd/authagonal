@@ -171,6 +171,9 @@ public sealed class InMemoryGrantStore : IGrantStore
         return Task.CompletedTask;
     }
 
+    public Task<bool> TryConsumeAsync(string key, CancellationToken ct = default)
+        => Task.FromResult(_grants.TryRemove(key, out _)); // atomic single-use
+
     public Task RemoveAsync(string key, CancellationToken ct = default)
     {
         _grants.TryRemove(key, out _);

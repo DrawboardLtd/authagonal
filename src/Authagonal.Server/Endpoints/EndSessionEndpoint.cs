@@ -175,6 +175,7 @@ public static class EndSessionEndpoint
                 ValidateIssuer = true,
                 ValidateAudience = false,
                 ValidateLifetime = false, // token may be expired
+                ValidAlgorithms = ["ES256"],
                 IssuerSigningKeys = keys,
                 ValidateIssuerSigningKey = true
             }).GetAwaiter().GetResult();

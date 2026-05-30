@@ -38,6 +38,23 @@ All eight top findings are fixed on branch `security-fixes-top8` (build clean, 3
 
 Not addressed (outside the top 8 — candidates for a follow-up pass): §6.2 SCIM email-change clobber, §12.1 revoked-access-token enforcement, §12.2 introspection cross-client, §12.3 userinfo scope-gating, §13.1 DCR grant_types, §15.1 TOTP replay window, §15.2 MFA-DELETE step-up, §15.3 WebAuthn assertion error handling, and the documentation items in §11/§14.
 
+## Remediation status — branch `security-fixes-remaining` (all remaining findings)
+
+A follow-up branch off `security-fixes-top8` addressed the rest. Build clean, 367/367 tests pass.
+
+- **§2.1** auth-code single-use is now atomic (`IGrantStore.TryConsumeAsync` — conditional ETag delete; concurrent redemptions can't both win).
+- **§3.1** JWT validation pins `ValidAlgorithms = ["ES256"]` (JwtBearer + introspection/revocation/userinfo/end-session).
+- **§4.2** CORS origin cache is now keyed per tenant; **§4.3** cookie `Secure` is config-forceable (`Authentication:AlwaysSecureCookie`); **§4.4** the temporary SCIM request-logging middleware was removed.
+- **§5.3** SSRF guard (`OutboundUrlValidator`) on OIDC discovery + discovery-derived JWKS/token/userinfo URLs, SAML metadata, and provisioning callbacks (blocks loopback/link-local/RFC1918/ULA + `localhost`/`.local`/`.internal`). **§5.4** OIDC client secret is never returned by the admin API. **§5.5/§13.3** `TccProvisioningOrchestrator` no longer uses `[ThreadStatic]` — configs are threaded through the call chain. **§5.6** SSO domains are format-validated and can't be hijacked from another connection.
+- **§6.2** SCIM PUT/PATCH email changes re-check the global index and reject cross-account collisions.
+- **§10.1/§10.2** login-app: `backUrl` gated by `isSafeReturnUrl`; tenant `customCssUrl` restricted to same-origin and `primaryColor` validated.
+- **§11** docs: config defaults corrected (`Pbkdf2Iterations`=100000, `RefreshTokenReuseGraceSeconds`=0), new/undocumented keys documented, plaintext-secret/admin-API/forwarded-proxy/TLS security warnings added, admin-API doc completed (Clients/Scopes/Provisioning + `POST /api/v1/token` fixes), CHANGELOG brought to 0.3.0 + Unreleased, and the 5 untranslated docs stubbed into all 6 locales.
+- **§12.1** revoked access tokens are rejected at the JwtBearer pipeline and userinfo (not just introspection). **§12.2** introspection rejects disabled clients and owner-scopes opaque refresh tokens (JWT introspection remains open to any enabled client — the holder can already decode the JWT). **§12.3** userinfo scope-gates email/profile/phone claims.
+- **§13.1** DCR restricts `grant_types` to `authorization_code`/`refresh_token`, reserves the admin scope, and is rate-limited; **§13.2** the dead redirect-scheme check now rejects `javascript:`/`data:`/`file:`.
+- **§15.1** TOTP records the last-accepted time-step and rejects replay within the window; **§15.2** credential deletion requires a real session (setup tokens can't downgrade MFA); **§15.3** WebAuthn assertion failures / clone regressions return 401 instead of 500; **§15.6** discovery advertises `ES256`; **§15.7** consent POST requires authorization and stores only `AllowedScopes`-bounded scopes.
+
+Still open (LOW, noted): §13.4 device-flow `interval` field (RFC nicety; needs a response-model + AOT-context change), and §15.3's WebAuthn registration credential-ID uniqueness callback (narrow collision risk). Regression tests for the new behaviours (TOTP replay, SCIM collision, atomic code consume, federation strictness) are not yet added.
+
 ---
 
 ## 1. SAML
@@ -133,7 +150,7 @@ SCIM tokens are 256-bit random, SHA-256-hashed at rest, checked for revoked/expi
 ### 6.1 — SCIM Groups: no cross-client isolation at all — **HIGH (Critical [Cloud-amplified])** — ✅ FIXED (`security-fixes-top8`)
 `Scim/ScimGroupEndpoints.cs:30-193` *(verified)*. No group handler reads `client_id`; `CreateGroupAsync` never sets an owner; `ListGroupsAsync` calls `groupStore.ListAsync(null,…)` → all groups in the environment; `Get/Replace/Patch/Delete` operate on any id with no ownership check. Any SCIM token can enumerate, read, rewrite membership of, or delete any other client's groups (cross-tenant in Cloud). Fix: stamp an owner on create from the caller's `client_id`; enforce ownership on every read/write; pass `clientId` (not `null`) to `ListAsync`; validate members reference users owned by the caller; add a rate limit (Group endpoints have none).
 
-### 6.2 — Email-change on PUT/PATCH clobbers the global email index — **HIGH** — ⬜ OPEN (not in top-8)
+### 6.2 — Email-change on PUT/PATCH clobbers the global email index — **HIGH** — ✅ FIXED (`security-fixes-remaining`)
 `Scim/ScimUserEndpoints.cs:225-230`, `ScimPatchApplier.cs:61-67`, `TableUserStore.UpdateAsync:111-128`. The create collision check rejects duplicates, but email change on update does **not** re-check — `UpdateAsync` blindly re-points the email→userId index. A SCIM client can PATCH a user it owns to a victim's email → repoints global lookup at the attacker-owned record → account takeover at next `FindByEmailAsync`. Re-run the collision check on email change; constrain to authorized domains.
 
 ---
@@ -218,7 +235,7 @@ No token storage (cookie-only, `credentials:'include'`); no `dangerouslySetInner
 ### 13.2 — DCR redirect-URI scheme check is a no-op — **LOW**
 `ClientRegistrationEndpoint.cs:41-42`: `(parsed.Scheme != "http" && parsed.Scheme != "https" && !parsed.IsAbsoluteUri)` — since `Uri.TryCreate(…, Absolute)` guarantees `IsAbsoluteUri`, the third conjunct is always false, so the whole condition is always false and **no scheme is ever rejected** (e.g. `javascript:` registers). Limited impact (authorize requires exact match and 302-`Location` doesn't execute `javascript:`), but the intended validation doesn't run. Fix: validate scheme as the first clause, don't `&&` it with the always-false `IsAbsoluteUri`.
 
-### 13.3 — §5.5 confirmed: `TccProvisioningOrchestrator._resolvedApps` is `[ThreadStatic]` — **HIGH (correctness; data-bleed [Cloud-amplified])** — ⬜ OPEN (not in top-8)
+### 13.3 — §5.5 confirmed: `TccProvisioningOrchestrator._resolvedApps` is `[ThreadStatic]` — **HIGH (correctness; data-bleed [Cloud-amplified])** — ✅ FIXED (`security-fixes-remaining`)
 `TccProvisioningOrchestrator.cs:40,43,47,55,66,276,280` *(now directly verified)*. `_resolvedApps` is set on the calling thread (line 40) immediately before `await ProvisionAsync(user, appIds, ct)`, whose first `await` (line 55) can resume `GetAppConfig` (line 276) on a **different** pooled thread where `_resolvedApps` is null/stale → the cache miss falls through to `appProvider.GetAppsAsync().GetAwaiter().GetResult()` (line 280, **sync-over-async** → thread-pool starvation under load), and `_resolvedApps = null` (line 43) runs on yet another thread so the setter thread is never cleared. Single-tenant impact is the blocking fallback; in the Cloud host where apps are per-tenant, a stale `_resolvedApps` from a prior request on the reused thread can resolve the **wrong tenant's `CallbackUrl`/`ApiKey`** for this user — cross-tenant misdirection / API-key leak. **Fix:** thread the resolved dictionary through the call chain as a parameter (or `AsyncLocal`), never `[ThreadStatic]` mutated around awaits.
 
 ### 13.4 — Device approval relies on SameSite for CSRF; no poll interval — **LOW**

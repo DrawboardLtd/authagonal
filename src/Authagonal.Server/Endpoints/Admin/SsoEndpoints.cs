@@ -63,6 +63,9 @@ public static class SsoEndpoints
             CreatedAt = now
         };
 
+        if (await ValidateDomainsAsync(config.AllowedDomains, connectionId, ssoDomainStore, ct) is { } domainError)
+            return domainError;
+
         await samlStore.UpsertAsync(config, ct);
 
         // Register SSO domains
@@ -108,6 +111,8 @@ public static class SsoEndpoints
         if (domainsChanged)
         {
             config.AllowedDomains = request.AllowedDomains!;
+            if (await ValidateDomainsAsync(config.AllowedDomains, connectionId, ssoDomainStore, ct) is { } domainError)
+                return domainError;
         }
         if (request.DisableJitProvisioning.HasValue)
         {
@@ -196,6 +201,9 @@ public static class SsoEndpoints
             CreatedAt = now
         };
 
+        if (await ValidateDomainsAsync(config.AllowedDomains, connectionId, ssoDomainStore, ct) is { } domainError)
+            return domainError;
+
         await oidcStore.UpsertAsync(config, ct);
 
         foreach (var domain in config.AllowedDomains)
@@ -209,7 +217,9 @@ public static class SsoEndpoints
             }, ct);
         }
 
-        return Results.Created($"/api/v1/oidc/connections/{connectionId}", config);
+        // Return a copy with the secret stripped — never mutate the stored/returned config itself
+        // (some stores hand back the cached instance, which would wipe the real secret).
+        return Results.Created($"/api/v1/oidc/connections/{connectionId}", WithoutSecret(config));
     }
 
     private static async Task<IResult> GetOidcConnection(
@@ -221,7 +231,8 @@ public static class SsoEndpoints
         if (config is null)
             return Results.NotFound(new { error = "not_found", error_description = $"OIDC connection '{connectionId}' not found" });
 
-        return Results.Ok(config);
+        // Copy with the secret stripped — never mutate the stored/returned instance.
+        return Results.Ok(WithoutSecret(config));
     }
 
     private static async Task<IResult> DeleteOidcConnection(
@@ -249,6 +260,34 @@ public static class SsoEndpoints
         var domains = await ssoDomainStore.GetAllAsync(ct);
         return Results.Ok(domains);
     }
+
+    // Reject malformed domains and domains already mapped to a DIFFERENT connection, so one
+    // connection can't hijack SSO routing for a domain another connection already owns.
+    private static async Task<IResult?> ValidateDomainsAsync(
+        IEnumerable<string> domains, string connectionId, ISsoDomainStore ssoDomainStore, CancellationToken ct)
+    {
+        foreach (var raw in domains)
+        {
+            var domain = raw.Trim().ToLowerInvariant();
+            if (!IsValidDomain(domain))
+                return Results.BadRequest(new { error = "invalid_domain", error_description = $"Invalid domain: '{raw}'" });
+
+            var existing = await ssoDomainStore.GetAsync(domain, ct);
+            if (existing is not null && !string.Equals(existing.ConnectionId, connectionId, StringComparison.Ordinal))
+                return Results.BadRequest(new { error = "domain_claimed", error_description = $"Domain '{domain}' is already mapped to another SSO connection" });
+        }
+        return null;
+    }
+
+    private static bool IsValidDomain(string domain) =>
+        domain.Length is > 0 and <= 253
+        && domain.Contains('.')
+        && !domain.StartsWith('.') && !domain.EndsWith('.') && !domain.Contains("..")
+        && domain.All(c => char.IsAsciiLetterOrDigit(c) || c is '.' or '-');
+
+    // Copy with the client secret cleared, for safe return to admins without mutating the
+    // stored/cached instance.
+    private static OidcProviderConfig WithoutSecret(OidcProviderConfig config) => config with { ClientSecret = "" };
 
     // Request DTOs
 

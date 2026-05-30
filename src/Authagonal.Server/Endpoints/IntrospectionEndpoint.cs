@@ -42,6 +42,9 @@ public static class IntrospectionEndpoint
         if (client is null)
             return InactiveResponse();
 
+        if (!client.Enabled)
+            return InactiveResponse();
+
         if (client.RequireClientSecret)
         {
             if (string.IsNullOrWhiteSpace(clientSecret))
@@ -75,6 +78,7 @@ public static class IntrospectionEndpoint
                 ValidateIssuer = true,
                 ValidateAudience = false, // introspection checks any token
                 ValidateLifetime = true,
+                ValidAlgorithms = ["ES256"],
                 IssuerSigningKeys = keys,
                 ValidateIssuerSigningKey = true,
                 ClockSkew = TimeSpan.FromSeconds(60)
@@ -83,6 +87,10 @@ public static class IntrospectionEndpoint
             if (!result.IsValid)
                 return InactiveResponse();
 
+            // Note: any enabled, authenticated client may introspect a JWT access token it presents —
+            // this is the resource-server pattern, and the JWT is self-describing to whoever holds it,
+            // so introspection discloses nothing the caller couldn't already decode. (Opaque refresh
+            // tokens are owner-scoped below, since those are not self-describing.)
             var jti = result.Claims.TryGetValue("jti", out var jtiObj) ? jtiObj?.ToString() : null;
             if (!string.IsNullOrWhiteSpace(jti) && await revokedTokenStore.IsRevokedAsync(jti, ct))
                 return InactiveResponse();
@@ -112,7 +120,9 @@ public static class IntrospectionEndpoint
         {
             // Not a valid JWT — check if it's a refresh token (opaque)
             var grant = await grantStore.GetAsync(token, ct);
-            if (grant is not null && grant.Type == "refresh_token" && grant.ConsumedAt is null && grant.ExpiresAt > DateTimeOffset.UtcNow)
+            if (grant is not null && grant.Type == "refresh_token" && grant.ConsumedAt is null &&
+                grant.ExpiresAt > DateTimeOffset.UtcNow &&
+                string.Equals(grant.ClientId, clientId, StringComparison.Ordinal))
             {
                 return Results.Ok(new Dictionary<string, object>
                 {

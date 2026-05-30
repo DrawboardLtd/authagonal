@@ -86,6 +86,7 @@ public static class RevocationEndpoint
                 ValidateIssuer = true,
                 ValidateAudience = false,
                 ValidateLifetime = true,
+                ValidAlgorithms = ["ES256"],
                 IssuerSigningKeys = keys,
                 ValidateIssuerSigningKey = true,
                 ClockSkew = TimeSpan.FromSeconds(60),

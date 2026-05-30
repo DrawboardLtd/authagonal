@@ -111,6 +111,16 @@ npm install @authagonal/login
 
 The package ships compiled JS and CSS — import components and styles directly in your own React app. See [Custom Server](custom-server) for a full walkthrough.
 
+## Production security checklist
+
+Before exposing Authagonal to real traffic, confirm the following. Each item is detailed on the [Configuration](configuration) page.
+
+- **Run behind a TLS-terminating proxy.** Authagonal must sit behind a reverse proxy / ingress that terminates TLS. The session cookie uses `SecurePolicy = SameAsRequest` and HSTS is only emitted on HTTPS, so the proxy must forward `X-Forwarded-Proto: https`. Set `ForwardedHeaders:KnownNetworks` (or `KnownProxies`) to your ingress / pod CIDR so the client IP and scheme cannot be spoofed; `ForwardedHeaders:ForwardLimit` defaults to `1` (trust only the last hop).
+- **Set `SecretProvider:VaultUri`.** The default secret provider is **plaintext** — without Key Vault, upstream OIDC client secrets and TOTP / MFA seeds are stored in cleartext in Table Storage (and in backups). Configure Key Vault for any production deployment.
+- **Lock down the admin API.** `AdminApi:Enabled` defaults to **true**. The admin scope (`AdminApi:Scope`, default `authagonal-admin`) grants full management and user impersonation. Network-restrict the `/api/v1/*` admin routes and tightly control who is issued the admin scope, or set `AdminApi:Enabled = false` if unused.
+- **Protect internal endpoints.** Set `Cluster:Secret` so `/_internal/cluster/gossip` and `/_internal/backchannel-logout` require the `X-Cluster-Secret` header — especially when gossip is routed through a load balancer via `Cluster:InternalUrl`.
+- **Encrypt backups.** With the plaintext secret provider, backups contain secrets. The `SigningKeys` table is excluded from backups by default; if you opt in via `Backup:IncludeSigningKeys`, the backup target must be encrypted at rest. See [Backup & Restore](backup-restore).
+
 ## Migration Tool
 
 For migrating from Duende IdentityServer + SQL Server:

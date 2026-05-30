@@ -1,3 +1,5 @@
+using System.Collections.Concurrent;
+using Authagonal.Core.Services;
 using Authagonal.Core.Stores;
 using Microsoft.AspNetCore.Cors.Infrastructure;
 using Microsoft.Extensions.Options;
@@ -11,8 +13,9 @@ public sealed class DynamicCorsPolicyProvider(
 {
 
     private readonly SemaphoreSlim _semaphore = new(1, 1);
-    private string[]? _cachedOrigins;
-    private DateTimeOffset _cacheExpiry = DateTimeOffset.MinValue;
+    // Per-tenant cache: single-tenant hosts hold one "default" entry; multi-tenant hosts must not
+    // serve one tenant's allowed origins to another, so the cache is keyed by tenant.
+    private readonly ConcurrentDictionary<string, (string[] Origins, DateTimeOffset Expiry)> _cache = new();
 
     public async Task<CorsPolicy?> GetPolicyAsync(HttpContext context, string? policyName)
     {
@@ -42,15 +45,17 @@ public sealed class DynamicCorsPolicyProvider(
 
     private async Task<string[]> GetAllowedOriginsAsync(HttpContext context)
     {
-        if (_cachedOrigins is not null && DateTimeOffset.UtcNow < _cacheExpiry)
-            return _cachedOrigins;
+        var tenantId = context.RequestServices.GetService<ITenantContext>()?.TenantId ?? "default";
+
+        if (_cache.TryGetValue(tenantId, out var entry) && DateTimeOffset.UtcNow < entry.Expiry)
+            return entry.Origins;
 
         await _semaphore.WaitAsync();
         try
         {
             // Double-check after acquiring the lock.
-            if (_cachedOrigins is not null && DateTimeOffset.UtcNow < _cacheExpiry)
-                return _cachedOrigins;
+            if (_cache.TryGetValue(tenantId, out entry) && DateTimeOffset.UtcNow < entry.Expiry)
+                return entry.Origins;
 
             var staticOrigins = configuration.GetSection("AllowedCorsOrigins").Get<string[]>() ?? [];
 
@@ -70,17 +75,15 @@ public sealed class DynamicCorsPolicyProvider(
                 logger.LogError(ex, "Failed to load client CORS origins; using static origins only");
             }
 
-            _cachedOrigins = staticOrigins
+            var origins = staticOrigins
                 .Concat(clientOrigins)
                 .Where(o => !string.IsNullOrWhiteSpace(o))
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToArray();
 
-            _cacheExpiry = DateTimeOffset.UtcNow.AddMinutes(cacheOptions.Value.CorsCacheMinutes);
-
-            logger.LogDebug("CORS origins cache refreshed with {Count} origins", _cachedOrigins.Length);
-
-            return _cachedOrigins;
+            _cache[tenantId] = (origins, DateTimeOffset.UtcNow.AddMinutes(cacheOptions.Value.CorsCacheMinutes));
+            logger.LogDebug("CORS origins cache refreshed for tenant {Tenant} with {Count} origins", tenantId, origins.Length);
+            return origins;
         }
         finally
         {

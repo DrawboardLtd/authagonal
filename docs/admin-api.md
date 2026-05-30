@@ -143,6 +143,106 @@ DELETE /api/v1/oidc/connections/{connectionId}     # Delete
 GET    /api/v1/sso/domains                 # List all
 ```
 
+## Clients
+
+Manage OAuth clients at runtime. All routes require the `IdentityAdmin` policy (the admin scope).
+
+```
+GET    /api/v1/clients              # List all clients
+GET    /api/v1/clients/{clientId}   # Get one client
+POST   /api/v1/clients              # Create a client
+PUT    /api/v1/clients/{clientId}   # Update a client
+DELETE /api/v1/clients/{clientId}   # Delete a client
+```
+
+### Create / Update Client
+
+```
+POST /api/v1/clients
+Content-Type: application/json
+
+{
+  "clientId": "my-app",
+  "clientName": "My Application",
+  "allowedGrantTypes": ["authorization_code"],
+  "redirectUris": ["https://app.example.com/callback"],
+  "allowedScopes": ["openid", "profile", "email"]
+}
+```
+
+`POST` returns `409` if the client already exists. `PUT` updates an existing client (`404` if not found); on update, only newly-added scopes are escalation-checked.
+
+Notes:
+
+- **Secret hashes are never returned.** `clientSecretHashes` is stripped from every response (list, get, create, update). On update, omitting `clientSecretHashes` preserves the stored secret; supplying new hashes rotates it.
+- **The admin scope cannot be granted to a client.** Requesting `AdminApi:Scope` (default `authagonal-admin`) in `allowedScopes` returns `403 forbidden_scope` — no client may hold the admin scope, otherwise a `client_credentials` client could mint admin tokens indefinitely.
+- Adding scopes the caller is not permitted to grant returns `403`.
+
+## Scopes
+
+Manage custom OAuth scopes at runtime. See [OAuth Scopes](scopes) for the full scope model.
+
+```
+GET    /api/v1/scopes           # List all scopes
+GET    /api/v1/scopes/{name}    # Get one scope
+POST   /api/v1/scopes           # Create a scope
+PUT    /api/v1/scopes/{name}    # Update a scope (only supplied fields change)
+DELETE /api/v1/scopes/{name}    # Delete a scope
+```
+
+```
+POST /api/v1/scopes
+Content-Type: application/json
+
+{
+  "name": "billing.read",
+  "displayName": "Billing — read-only",
+  "description": "View invoices and payment history",
+  "userClaims": ["billing_plan"]
+}
+```
+
+Returns `201` on create (`409` if the scope already exists), the scope JSON on get/update, and `204` on delete.
+
+## Provisioning Apps
+
+Manage downstream provisioning targets at runtime. All routes require the `IdentityAdmin` policy.
+
+```
+GET    /api/v1/provisioning/apps               # List apps (also returns the configured limit)
+POST   /api/v1/provisioning/apps               # Create an app
+PUT    /api/v1/provisioning/apps/{appId}       # Update an app
+DELETE /api/v1/provisioning/apps/{appId}       # Delete an app
+POST   /api/v1/provisioning/apps/{appId}/test  # Send a test /try call to the app's callback
+```
+
+### Create / Update Provisioning App
+
+```
+POST /api/v1/provisioning/apps
+Content-Type: application/json
+
+{
+  "name": "Backend",
+  "callbackUrl": "https://api.example.com/provisioning",
+  "apiKey": "secret-api-key",
+  "tryTimeoutSeconds": 30
+}
+```
+
+- `name` and `callbackUrl` are required; `callbackUrl` must be an absolute `http(s)` URL.
+- `tryTimeoutSeconds` is clamped to the range 5–300.
+- **The API key is never returned.** Responses expose `hasApiKey` (a boolean) instead of the key itself. On update, omitting `apiKey` leaves it unchanged, an empty string clears it, and a value replaces it.
+- Creation is subject to a configurable per-deployment quota (`IProvisioningAppQuota`); exceeding it returns `400 provisioning_app_limit`. The list response includes the current `limit`.
+
+### Test a Provisioning App
+
+```
+POST /api/v1/provisioning/apps/{appId}/test
+```
+
+Sends a synthetic `POST {callbackUrl}/try` with a sample payload (and the app's API key as a bearer token if set) and returns `{ success, statusCode, body }` so you can verify connectivity from the admin UI.
+
 ## Roles
 
 ### List Roles
@@ -251,7 +351,20 @@ DELETE /api/v1/scim/tokens/{tokenId}?clientId=client-id
 ### Impersonate User
 
 ```
-POST /api/v1/token?clientId=client-id&userId=user-id&scopes=openid,profile
+POST /api/v1/token?clientId=client-id&userId=user-id&scopes=openid%20profile
 ```
 
-Issues tokens on behalf of a user without requiring their credentials. Useful for testing and support. Parameters are passed as query strings. Optional `refreshTokenLifetime` parameter controls refresh token validity.
+Issues tokens (access, refresh, and — when `openid` is requested — id token) on behalf of a user without requiring their credentials. Useful for testing and support. Parameters are passed as query strings.
+
+| Query parameter | Required | Description |
+|---|---|---|
+| `clientId` | Yes | The client the tokens are issued for. Token lifetimes come from this client's configuration. |
+| `userId` | Yes | The user to impersonate. |
+| `scopes` | No | **Space-separated** list of scopes (URL-encode the spaces). Defaults to the client's `AllowedScopes` when omitted. |
+
+Restrictions:
+
+- Scopes are constrained to the client's `AllowedScopes` — requesting any scope the client could not itself request returns `400 invalid_scope`.
+- The admin scope (`AdminApi:Scope`, default `authagonal-admin`) **cannot** be issued through this endpoint; requesting it returns `403 forbidden_scope`. This prevents a (possibly time-limited) admin token from minting a long-lived admin access/refresh token.
+
+The response is a standard token response with `access_token`, `refresh_token`, optional `id_token`, `expires_in`, and the granted `scope` (space-separated).

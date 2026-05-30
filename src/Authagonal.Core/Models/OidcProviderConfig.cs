@@ -1,6 +1,6 @@
 namespace Authagonal.Core.Models;
 
-public sealed class OidcProviderConfig
+public sealed record OidcProviderConfig
 {
     public string ConnectionId { get; set; } = "";
     public string ConnectionName { get; set; } = "";

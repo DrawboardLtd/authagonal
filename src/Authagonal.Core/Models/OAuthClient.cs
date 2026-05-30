@@ -1,6 +1,6 @@
 namespace Authagonal.Core.Models;
 
-public sealed class OAuthClient
+public sealed record OAuthClient
 {
     public string ClientId { get; set; } = "";
     public string ClientName { get; set; } = "";

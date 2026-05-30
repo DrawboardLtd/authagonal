@@ -41,11 +41,20 @@ public sealed class SamlResponseParser(ILogger<SamlResponseParser> logger)
             return Fail("Invalid Base64 encoding in SAML response.");
         }
 
-        // 2. Load into XmlDocument (PreserveWhitespace = true is critical for signature validation)
+        // 2. Load into XmlDocument (PreserveWhitespace = true is critical for signature validation).
+        // DTDs are prohibited to block XXE and internal entity-expansion DoS on this attacker-supplied XML.
         var doc = new XmlDocument { PreserveWhitespace = true, XmlResolver = null };
         try
         {
-            doc.LoadXml(System.Text.Encoding.UTF8.GetString(responseBytes));
+            var readerSettings = new XmlReaderSettings
+            {
+                DtdProcessing = DtdProcessing.Prohibit,
+                XmlResolver = null,
+                MaxCharactersFromEntities = 0,
+            };
+            using var stringReader = new System.IO.StringReader(System.Text.Encoding.UTF8.GetString(responseBytes));
+            using var xmlReader = XmlReader.Create(stringReader, readerSettings);
+            doc.Load(xmlReader);
         }
         catch (XmlException ex)
         {
@@ -114,45 +123,44 @@ public sealed class SamlResponseParser(ILogger<SamlResponseParser> logger)
             return Fail("No valid signature found on Response or Assertion.");
         }
 
-        // 8. Validate Assertion Conditions
+        // 8. Validate Assertion Conditions — required, and must bind the audience to this SP so an
+        // assertion minted for a different audience can't be replayed here. Fail closed if absent.
         var conditionsNode = assertionElement.SelectSingleNode("saml:Conditions", nsManager);
-        if (conditionsNode is XmlElement conditionsElement)
+        if (conditionsNode is not XmlElement conditionsElement)
+            return Fail("Assertion is missing the required Conditions element.");
+
+        var now = DateTimeOffset.UtcNow;
+
+        var notBeforeStr = conditionsElement.Attributes?["NotBefore"]?.Value;
+        if (notBeforeStr is not null && DateTimeOffset.TryParse(notBeforeStr, out var notBefore))
         {
-            var now = DateTimeOffset.UtcNow;
-
-            var notBeforeStr = conditionsElement.Attributes?["NotBefore"]?.Value;
-            if (notBeforeStr is not null && DateTimeOffset.TryParse(notBeforeStr, out var notBefore))
+            if (now + context.ClockSkew < notBefore)
             {
-                if (now + context.ClockSkew < notBefore)
-                {
-                    logger.LogWarning("Assertion not yet valid: NotBefore={NotBefore}, Now={Now}",
-                        notBefore, now);
-                    return Fail("Assertion is not yet valid (NotBefore condition).");
-                }
+                logger.LogWarning("Assertion not yet valid: NotBefore={NotBefore}, Now={Now}", notBefore, now);
+                return Fail("Assertion is not yet valid (NotBefore condition).");
             }
+        }
 
-            var notOnOrAfterStr = conditionsElement.Attributes?["NotOnOrAfter"]?.Value;
-            if (notOnOrAfterStr is not null && DateTimeOffset.TryParse(notOnOrAfterStr, out var notOnOrAfter))
+        var notOnOrAfterStr = conditionsElement.Attributes?["NotOnOrAfter"]?.Value;
+        if (notOnOrAfterStr is not null && DateTimeOffset.TryParse(notOnOrAfterStr, out var notOnOrAfter))
+        {
+            if (now - context.ClockSkew >= notOnOrAfter)
             {
-                if (now - context.ClockSkew >= notOnOrAfter)
-                {
-                    logger.LogWarning("Assertion expired: NotOnOrAfter={NotOnOrAfter}, Now={Now}",
-                        notOnOrAfter, now);
-                    return Fail("Assertion has expired (NotOnOrAfter condition).");
-                }
+                logger.LogWarning("Assertion expired: NotOnOrAfter={NotOnOrAfter}, Now={Now}", notOnOrAfter, now);
+                return Fail("Assertion has expired (NotOnOrAfter condition).");
             }
+        }
 
-            // Validate AudienceRestriction
-            var audienceNode = conditionsElement.SelectSingleNode(
-                "saml:AudienceRestriction/saml:Audience", nsManager);
-            var audience = audienceNode?.InnerText?.Trim();
-            if (!string.IsNullOrEmpty(audience) &&
-                !string.Equals(audience, context.ExpectedAudience, StringComparison.OrdinalIgnoreCase))
-            {
-                logger.LogWarning("Audience mismatch: expected={Expected}, actual={Actual}",
-                    context.ExpectedAudience, audience);
-                return Fail("Assertion audience does not match the expected audience.");
-            }
+        var audienceNode = conditionsElement.SelectSingleNode(
+            "saml:AudienceRestriction/saml:Audience", nsManager);
+        var audience = audienceNode?.InnerText?.Trim();
+        if (string.IsNullOrEmpty(audience))
+            return Fail("Assertion is missing the required AudienceRestriction/Audience.");
+        if (!string.Equals(audience, context.ExpectedAudience, StringComparison.OrdinalIgnoreCase))
+        {
+            logger.LogWarning("Audience mismatch: expected={Expected}, actual={Actual}",
+                context.ExpectedAudience, audience);
+            return Fail("Assertion audience does not match the expected audience.");
         }
 
         // 9. Validate SubjectConfirmation
@@ -184,7 +192,6 @@ public sealed class SamlResponseParser(ILogger<SamlResponseParser> logger)
                 if (dataNotOnOrAfterStr is not null &&
                     DateTimeOffset.TryParse(dataNotOnOrAfterStr, out var dataNotOnOrAfter))
                 {
-                    var now = DateTimeOffset.UtcNow;
                     if (now - context.ClockSkew >= dataNotOnOrAfter)
                     {
                         logger.LogWarning("SubjectConfirmationData expired: NotOnOrAfter={NotOnOrAfter}, Now={Now}",

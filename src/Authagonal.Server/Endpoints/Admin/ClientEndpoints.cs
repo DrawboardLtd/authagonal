@@ -26,9 +26,9 @@ public static class ClientEndpoints
     private static async Task<IResult> ListClients(IClientStore store, CancellationToken ct)
     {
         var clients = await store.GetAllAsync(ct);
-        var list = clients.ToList();
-        // Secret hashes must never leave the server.
-        foreach (var c in list) c.ClientSecretHashes = [];
+        // Secret hashes must never leave the server — project to copies with them stripped (never
+        // mutate the returned instances; some stores hand back the cached objects).
+        var list = clients.Select(Redacted).ToList();
         return TypedResults.Json(list, AuthagonalJsonContext.Default.ListOAuthClient);
     }
 
@@ -37,8 +37,7 @@ public static class ClientEndpoints
         var client = await store.GetAsync(clientId, ct);
         if (client is null)
             return Results.NotFound();
-        client.ClientSecretHashes = []; // never expose secret hashes
-        return TypedResults.Json(client, AuthagonalJsonContext.Default.OAuthClient);
+        return TypedResults.Json(Redacted(client), AuthagonalJsonContext.Default.OAuthClient);
     }
 
     private static async Task<IResult> CreateClient(
@@ -67,8 +66,7 @@ public static class ClientEndpoints
 
         await store.UpsertAsync(client, ct);
         await audit.LogAsync(Actor(http), "client.created", "client", client.ClientId, client.ClientName, ct);
-        client.ClientSecretHashes = []; // don't echo secret hashes back to the caller
-        return Results.Created($"/api/v1/clients/{client.ClientId}", client);
+        return Results.Created($"/api/v1/clients/{client.ClientId}", Redacted(client));
     }
 
     private static async Task<IResult> UpdateClient(
@@ -101,8 +99,7 @@ public static class ClientEndpoints
             client.ClientSecretHashes = existing.ClientSecretHashes;
         await store.UpsertAsync(client, ct);
         await audit.LogAsync(Actor(http), "client.updated", "client", clientId, null, ct);
-        client.ClientSecretHashes = []; // don't echo secret hashes back to the caller
-        return TypedResults.Json(client, AuthagonalJsonContext.Default.OAuthClient);
+        return TypedResults.Json(Redacted(client), AuthagonalJsonContext.Default.OAuthClient);
     }
 
     private static bool IsAdminScopeRequested(IEnumerable<string> scopes, IConfiguration configuration)
@@ -110,6 +107,10 @@ public static class ClientEndpoints
         var adminScope = configuration["AdminApi:Scope"] ?? "authagonal-admin";
         return scopes.Contains(adminScope, StringComparer.OrdinalIgnoreCase);
     }
+
+    // Copy of a client with secret hashes stripped, for safe return to admins. Never mutate the
+    // passed-in instance — stores may hand back (and retain) the cached object.
+    private static OAuthClient Redacted(OAuthClient c) => c with { ClientSecretHashes = [] };
 
     private static async Task<IResult> DeleteClient(
         string clientId,

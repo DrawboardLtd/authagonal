@@ -75,11 +75,16 @@ public static class ConsentEndpoint
                 return TypedResults.Json(new RedirectResponse { Redirect = "/" }, AuthagonalJsonContext.Default.RedirectResponse);
             }
 
-            // Persist consent
+            // Persist consent — store only scopes the client is actually allowed to request, so a
+            // tampered consent body can't record (and later silently satisfy) scopes beyond the
+            // client's AllowedScopes.
             var consentKey = $"consent:{subjectId}:{request.ClientId}";
+            var grantedScopes = (request.Scopes ?? [])
+                .Where(s => client.AllowedScopes.Contains(s, StringComparer.OrdinalIgnoreCase))
+                .ToList();
             var consentData = new AuthorizeEndpoint.ConsentData
             {
-                Scopes = request.Scopes?.ToList() ?? [],
+                Scopes = grantedScopes,
                 ConsentedAt = DateTimeOffset.UtcNow,
             };
 
@@ -96,7 +101,7 @@ public static class ConsentEndpoint
 
             // Redirect back to authorize endpoint to complete the flow
             return TypedResults.Json(new RedirectResponse { Redirect = request.ReturnUrl ?? "/" }, AuthagonalJsonContext.Default.RedirectResponse);
-        });
+        }).RequireAuthorization();
 
         // List all consent grants for the current user
         app.MapGet("/consent/grants", async (

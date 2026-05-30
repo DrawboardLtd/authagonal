@@ -362,8 +362,14 @@ public static class MfaSetupEndpoints
         IUserStore userStore,
         CancellationToken ct)
     {
-        var (userId, _) = await ResolveUserIdAsync(httpContext, mfaStore, ct);
+        var (userId, setupChallenge) = await ResolveUserIdAsync(httpContext, mfaStore, ct);
         if (userId is null) return Results.Unauthorized();
+
+        // Setup tokens exist only to add a FIRST factor. Removing/managing factors (which can
+        // disable MFA) requires a real authenticated session — otherwise a leaked setup token could
+        // downgrade a user's MFA.
+        if (setupChallenge is not null)
+            return JsonResults.Error("session_required", 403);
 
         var cred = await mfaStore.GetCredentialAsync(userId, credentialId, ct);
         if (cred is null)

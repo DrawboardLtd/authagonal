@@ -274,7 +274,11 @@ public static class AuthagonalExtensions
             options.SlidingExpiration = true;
             options.Cookie.HttpOnly = true;
             options.Cookie.SameSite = SameSiteMode.Lax;
-            options.Cookie.SecurePolicy = CookieSecurePolicy.SameAsRequest;
+            // Behind a TLS-terminating proxy that forwards X-Forwarded-Proto, SameAsRequest already
+            // yields a Secure cookie. Operators can force Secure unconditionally via config.
+            options.Cookie.SecurePolicy = configuration.GetValue("Authentication:AlwaysSecureCookie", false)
+                ? CookieSecurePolicy.Always
+                : CookieSecurePolicy.SameAsRequest;
 
             options.Events.OnValidatePrincipal = async context =>
             {
@@ -329,8 +333,25 @@ public static class AuthagonalExtensions
                 ValidateAudience = true,
                 AudienceValidator = (audiences, _, _) => audiences?.Any() == true,
                 ValidateLifetime = true,
+                ValidAlgorithms = ["ES256"], // pin the signing alg (defence-in-depth vs alg confusion)
                 ClockSkew = TimeSpan.FromSeconds(60),
                 ValidateIssuerSigningKey = true
+            };
+
+            // Enforce access-token revocation: a token whose jti is in the revoked store is rejected
+            // even though it is still cryptographically valid and unexpired.
+            options.Events = new JwtBearerEvents
+            {
+                OnTokenValidated = async ctx =>
+                {
+                    var jti = ctx.Principal?.FindFirst("jti")?.Value;
+                    if (!string.IsNullOrEmpty(jti))
+                    {
+                        var revoked = ctx.HttpContext.RequestServices.GetRequiredService<IRevokedTokenStore>();
+                        if (await revoked.IsRevokedAsync(jti, ctx.HttpContext.RequestAborted))
+                            ctx.Fail("Token has been revoked");
+                    }
+                }
             };
         })
         .AddScheme<AuthenticationSchemeOptions, ScimBearerAuthenticationHandler>("ScimBearer", null);
@@ -438,35 +459,6 @@ public static class AuthagonalExtensions
         app.UseForwardedHeaders(fhOptions);
 
         app.UseExceptionHandlingMiddleware();
-
-        // SCIM request logging — temporary diagnostic to trace Entra provisioning requests
-        app.Use(async (context, next) =>
-        {
-            if (context.Request.Path.StartsWithSegments("/scim"))
-            {
-                var logger = context.RequestServices.GetRequiredService<ILoggerFactory>().CreateLogger("ScimRequestLog");
-                var hasAuth = context.Request.Headers.Authorization.Count > 0;
-                logger.LogWarning("SCIM request: {Method} {Path}{Query} | Auth={HasAuth} | Host={Host} | UA={UserAgent}",
-                    context.Request.Method,
-                    context.Request.Path,
-                    context.Request.QueryString,
-                    hasAuth,
-                    context.Request.Host,
-                    context.Request.Headers.UserAgent.ToString());
-
-                await next();
-
-                logger.LogWarning("SCIM response: {Method} {Path} => {StatusCode} | ContentType={ContentType}",
-                    context.Request.Method,
-                    context.Request.Path,
-                    context.Response.StatusCode,
-                    context.Response.ContentType);
-            }
-            else
-            {
-                await next();
-            }
-        });
 
         // Request localization
         var supportedCultures = new[] { "en", "zh-Hans", "de", "fr", "es", "vi", "pt" };

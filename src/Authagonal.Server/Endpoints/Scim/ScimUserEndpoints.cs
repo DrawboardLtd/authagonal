@@ -225,6 +225,14 @@ public static class ScimUserEndpoints
         if (!string.IsNullOrWhiteSpace(email))
         {
             email = email.ToLowerInvariant();
+            if (!string.Equals(email, user.Email, StringComparison.OrdinalIgnoreCase))
+            {
+                // Re-check the global email index so an email change can't repoint another account's
+                // email at this record (account-takeover via email-index clobber).
+                var collision = await userStore.FindByEmailAsync(email, ct);
+                if (collision is not null && !string.Equals(collision.Id, user.Id, StringComparison.Ordinal))
+                    return ScimResults.Conflict($"User with userName '{email}' already exists");
+            }
             user.Email = email;
             user.NormalizedEmail = email.ToUpperInvariant();
         }
@@ -274,12 +282,22 @@ public static class ScimUserEndpoints
 
         var wasActive = user.IsActive;
         var oldExternalId = user.ExternalId;
+        var oldEmail = user.Email;
 
         var operations = request.Operations
             .Select(o => new ScimPatchApplier.PatchOperation(o.Op, o.Path, o.Value))
             .ToList();
 
         ScimPatchApplier.ApplyToUser(user, operations);
+
+        // If the patch changed the email, re-check the global index BEFORE persisting so it can't
+        // repoint another account's email→userId mapping at this record (account-takeover clobber).
+        if (!string.Equals(oldEmail, user.Email, StringComparison.OrdinalIgnoreCase))
+        {
+            var collision = await userStore.FindByEmailAsync(user.Email, ct);
+            if (collision is not null && !string.Equals(collision.Id, user.Id, StringComparison.Ordinal))
+                return ScimResults.Conflict($"User with userName '{user.Email}' already exists");
+        }
 
         // Update externalId index if changed
         if (!string.Equals(oldExternalId, user.ExternalId, StringComparison.Ordinal))

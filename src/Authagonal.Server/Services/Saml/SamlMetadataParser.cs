@@ -15,6 +15,9 @@ public sealed class SamlMetadataParser(IHttpClientFactory httpClientFactory)
 
     public async Task<SamlIdpMetadata> ParseFromUrlAsync(string metadataUrl, CancellationToken ct = default)
     {
+        if (!OutboundUrlValidator.IsSafe(metadataUrl))
+            throw new InvalidOperationException("SAML metadata URL is not an allowed external endpoint.");
+
         var client = httpClientFactory.CreateClient("SamlMetadata");
         var response = await client.GetStringAsync(metadataUrl, ct);
         return Parse(response);

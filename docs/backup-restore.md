@@ -59,9 +59,17 @@ If no `.lastbackup` file exists, the first incremental run performs a full backu
 
 The backup tool includes all Authagonal tables by default:
 
-`Users`, `UserEmails`, `UserLogins`, `UserExternalIds`, `Clients`, `Grants`, `GrantsBySubject`, `GrantsByExpiry`, `SigningKeys`, `SsoDomains`, `SamlProviders`, `OidcProviders`, `UserProvisions`, `MfaCredentials`, `MfaChallenges`, `MfaWebAuthnIndex`, `ScimTokens`, `ScimGroups`, `ScimGroupExternalIds`, `Roles`
+`Users`, `UserEmails`, `UserLogins`, `UserExternalIds`, `Clients`, `Grants`, `GrantsBySubject`, `GrantsByExpiry`, `SsoDomains`, `SamlProviders`, `OidcProviders`, `UserProvisions`, `MfaCredentials`, `MfaChallenges`, `MfaWebAuthnIndex`, `ScimTokens`, `ScimGroups`, `ScimGroupExternalIds`, `Roles`
 
 Transient tables (`SamlReplayCache`, `OidcStateStore`) are excluded by default — include them explicitly with `--tables` if needed.
+
+### Signing keys are excluded by default
+
+The `SigningKeys` table is **excluded from backups by default** (`Backup:IncludeSigningKeys` defaults to `false`). For hosts using the local (table-stored) key source, this table holds the JWT signing **private key** — writing it to a plaintext backup file would let anyone who reads the backup forge tokens. (Hosts that sign via HashiCorp Vault Transit keep no private key in the table, so this concern doesn't apply to them.)
+
+> ⚠️ Only opt in via `Backup:IncludeSigningKeys` when the backup target is itself encrypted at rest and access-controlled. The same applies to the rest of the backup: with the default **plaintext** secret provider, backups also contain upstream OIDC client secrets and TOTP / MFA seeds in cleartext — see [Configuration → Secret Provider](configuration#secret-provider).
+
+On restore, file integrity is verified against the manifest's SHA-256 hashes before any data is written (see [Integrity verification](#integrity-verification)); a hash mismatch aborts the restore.
 
 ## Restore
 

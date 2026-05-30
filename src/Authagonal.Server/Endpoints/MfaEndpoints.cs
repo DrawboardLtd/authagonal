@@ -63,9 +63,12 @@ public static class MfaEndpoints
                 var secretBase64 = await secretProvider.ResolveAsync(totpCred.SecretProtected!, ct);
                 var secret = Convert.FromBase64String(secretBase64);
 
-                if (!totpService.VerifyCode(secret, request.Code))
+                // Reject a code whose time-step was already used (replay within the validity window).
+                var matchedStep = totpService.GetMatchingStep(secret, request.Code, totpCred.LastTotpStep ?? long.MinValue);
+                if (matchedStep is null)
                     return JsonResults.Error("invalid_code", 401);
 
+                totpCred.LastTotpStep = matchedStep;
                 totpCred.LastUsedAt = DateTimeOffset.UtcNow;
                 await mfaStore.UpdateCredentialAsync(totpCred, ct);
 
@@ -144,8 +147,19 @@ public static class MfaEndpoints
                     return JsonResults.Error("credential_not_found", 401);
 
                 var storedPublicKey = Convert.FromBase64String(credData.PublicKey);
-                var (success, _, newSignCount) = await webAuthnService.CompleteAssertionAsync(
-                    assertionOptions, assertionResponse, storedPublicKey, matchedWebAuthnCred.SignCount, ct);
+                bool success;
+                uint newSignCount;
+                try
+                {
+                    (success, _, newSignCount) = await webAuthnService.CompleteAssertionAsync(
+                        assertionOptions, assertionResponse, storedPublicKey, matchedWebAuthnCred.SignCount, ct);
+                }
+                catch (Fido2VerificationException)
+                {
+                    // Fido2NetLib throws on a failed/forged assertion or a sign-count regression
+                    // (cloned authenticator). Surface it as a clean 401, not an unhandled 500.
+                    return JsonResults.Error("assertion_failed", 401);
+                }
 
                 if (!success)
                     return JsonResults.Error("assertion_failed", 401);

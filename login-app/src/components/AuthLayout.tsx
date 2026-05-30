@@ -13,6 +13,12 @@ interface AuthLayoutProps {
   children: ReactNode;
 }
 
+// Accept only hex (#rgb/#rrggbb/#rrggbbaa) or rgb()/rgba()/hsl()/hsla() forms.
+function isSafeCssColor(color: string): boolean {
+  return /^#(?:[0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{8})$/i.test(color)
+    || /^(?:rgb|rgba|hsl|hsla)\([0-9.,%\s/]+\)$/i.test(color);
+}
+
 const ALL_LANGUAGES: { code: string; label: string }[] = [
   { code: 'en', label: 'English' },
   { code: 'zh-Hans', label: '中文' },
@@ -60,15 +66,24 @@ export default function AuthLayout({ children }: AuthLayoutProps) {
   useDarkMode();
 
   useEffect(() => {
-    document.documentElement.style.setProperty('--brand-primary', branding.primaryColor);
+    if (branding.primaryColor && isSafeCssColor(branding.primaryColor)) {
+      document.documentElement.style.setProperty('--brand-primary', branding.primaryColor);
+    }
 
     if (branding.customCssUrl) {
-      const link = document.createElement('link');
-      link.rel = 'stylesheet';
-      link.href = branding.customCssUrl;
-      link.id = 'branding-css';
-      document.head.appendChild(link);
-      return () => { link.remove(); };
+      try {
+        const parsed = new URL(branding.customCssUrl, window.location.origin);
+        if (parsed.origin === window.location.origin) {
+          const link = document.createElement('link');
+          link.rel = 'stylesheet';
+          link.href = branding.customCssUrl;
+          link.id = 'branding-css';
+          document.head.appendChild(link);
+          return () => { link.remove(); };
+        }
+      } catch {
+        // Invalid URL — skip injecting custom CSS.
+      }
     }
   }, [branding]);
 

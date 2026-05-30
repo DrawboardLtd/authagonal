@@ -23,6 +23,9 @@ public sealed class OidcDiscoveryClient(IHttpClientFactory httpClientFactory, IM
         if (memoryCache.TryGetValue<OidcDiscoveryDocument>(cacheKey, out var cached) && cached is not null)
             return cached;
 
+        if (!OutboundUrlValidator.IsSafe(metadataUrl))
+            throw new InvalidOperationException("OIDC metadata URL is not an allowed external endpoint.");
+
         var client = httpClientFactory.CreateClient("OidcDiscovery");
 
         // Fetch the discovery document
@@ -45,6 +48,12 @@ public sealed class OidcDiscoveryClient(IHttpClientFactory httpClientFactory, IM
         string? userinfoEndpoint = null;
         if (root.TryGetProperty("userinfo_endpoint", out var userinfoElement))
             userinfoEndpoint = userinfoElement.GetString();
+
+        // The discovery document is attacker-influenced (it comes from whatever the metadata URL
+        // resolves to), so the endpoints WE later fetch must also pass the SSRF guard.
+        if (!OutboundUrlValidator.IsSafe(jwksUri) || !OutboundUrlValidator.IsSafe(tokenEndpoint)
+            || (userinfoEndpoint is not null && !OutboundUrlValidator.IsSafe(userinfoEndpoint)))
+            throw new InvalidOperationException("OIDC discovery document referenced a disallowed endpoint URL.");
 
         // Fetch JWKS
         var jwksJson = await client.GetStringAsync(jwksUri, ct);

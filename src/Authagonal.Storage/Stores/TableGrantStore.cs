@@ -124,6 +124,65 @@ public sealed class TableGrantStore(
         catch (RequestFailedException ex) when (ex.Status == 404) { }
     }
 
+    public async Task<bool> TryConsumeAsync(string key, CancellationToken ct = default)
+    {
+        var hashedKey = HashKey(key);
+        var hashedKeyPk = partitioner.PK(hashedKey);
+
+        GrantEntity entity;
+        try
+        {
+            var response = await grantsTable.GetEntityAsync<GrantEntity>(
+                hashedKeyPk, GrantEntity.GrantRowKey, cancellationToken: ct);
+            entity = response.Value;
+        }
+        catch (RequestFailedException ex) when (ex.Status == 404)
+        {
+            return false;
+        }
+
+        // Atomic single-use: only the caller whose conditional (ETag) delete matches the current
+        // row wins. A racing redemption gets 412/404 and loses.
+        try
+        {
+            await grantsTable.DeleteEntityAsync(hashedKeyPk, GrantEntity.GrantRowKey, entity.ETag, ct);
+        }
+        catch (RequestFailedException ex) when (ex.Status is 412 or 404)
+        {
+            return false;
+        }
+
+        // Best-effort index cleanup (mirrors RemoveAsync).
+        var expiryPartition = partitioner.PK(GrantByExpiryEntity.GetPartitionKey(entity.ExpiresAt, hashedKey));
+        try
+        {
+            await grantsByExpiryTable.DeleteEntityAsync(expiryPartition, hashedKey, cancellationToken: ct);
+        }
+        catch (RequestFailedException ex) when (ex.Status == 404) { }
+
+        if (!string.IsNullOrEmpty(entity.SubjectId))
+        {
+            var subjectRk = $"{entity.Type}|{hashedKey}";
+            var subjectPk = partitioner.PK(entity.SubjectId);
+            try
+            {
+                await grantsBySubjectTable.DeleteEntityAsync(subjectPk, subjectRk, cancellationToken: ct);
+            }
+            catch (RequestFailedException ex) when (ex.Status == 404) { }
+
+            if (tombstoneWriter is not null)
+                await tombstoneWriter.WriteAsync("GrantsBySubject", subjectPk, subjectRk, ct);
+        }
+
+        if (tombstoneWriter is not null)
+        {
+            await tombstoneWriter.WriteAsync("Grants", hashedKeyPk, GrantEntity.GrantRowKey, ct);
+            await tombstoneWriter.WriteAsync("GrantsByExpiry", expiryPartition, hashedKey, ct);
+        }
+
+        return true;
+    }
+
     public async Task RemoveAsync(string key, CancellationToken ct = default)
     {
         var hashedKey = HashKey(key);
