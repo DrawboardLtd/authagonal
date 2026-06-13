@@ -74,6 +74,7 @@
   <data name="Admin_EmailRequired" xml:space="preserve"><value>E-Mail ist erforderlich</value></data>
   <data name="Admin_PasswordRequired" xml:space="preserve"><value>Passwort ist erforderlich</value></data>
   <data name="Admin_UserExists" xml:space="preserve"><value>Ein Benutzer mit dieser E-Mail-Adresse existiert bereits</value></data>
+  <data name="Admin_UserIdInUse" xml:space="preserve"><value>Ein Benutzer mit dieser ID existiert bereits</value></data>
   <data name="Admin_UserIdRequired" xml:space="preserve"><value>Benutzer-ID ist erforderlich</value></data>
   <data name="Admin_TokenRequired" xml:space="preserve"><value>Token ist erforderlich</value></data>
   <data name="Admin_InvalidTokenFormat" xml:space="preserve"><value>Ungültiges Token-Format</value></data>

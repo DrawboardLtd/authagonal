@@ -74,6 +74,7 @@
   <data name="Admin_EmailRequired" xml:space="preserve"><value>电子邮件是必需的</value></data>
   <data name="Admin_PasswordRequired" xml:space="preserve"><value>密码是必需的</value></data>
   <data name="Admin_UserExists" xml:space="preserve"><value>使用此电子邮件的用户已存在</value></data>
+  <data name="Admin_UserIdInUse" xml:space="preserve"><value>已存在使用此 ID 的用户</value></data>
   <data name="Admin_UserIdRequired" xml:space="preserve"><value>用户ID是必需的</value></data>
   <data name="Admin_TokenRequired" xml:space="preserve"><value>令牌是必需的</value></data>
   <data name="Admin_InvalidTokenFormat" xml:space="preserve"><value>令牌格式无效</value></data>

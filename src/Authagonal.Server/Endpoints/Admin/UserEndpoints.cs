@@ -17,6 +17,7 @@ public static class UserEndpoints
             .WithTags("Admin - Users");
 
         group.MapGet("/{userId}", GetUser);
+        group.MapGet("/{userId}/exists", UserExists);
         group.MapPost("/", RegisterUser);
         group.MapPut("/", UpdateUser);
         group.MapDelete("/{userId}", DeleteUser);
@@ -63,6 +64,15 @@ public static class UserEndpoints
         }, AuthagonalJsonContext.Default.UserDetailResponse);
     }
 
+    private static async Task<IResult> UserExists(
+        string userId,
+        IUserStore userStore,
+        CancellationToken ct)
+    {
+        var user = await userStore.GetAsync(userId, ct);
+        return user is null ? Results.NotFound() : Results.NoContent();
+    }
+
     private static async Task<IResult> RegisterUser(
         RegisterUserRequest request,
         IUserStore userStore,
@@ -91,7 +101,20 @@ public static class UserEndpoints
         if (existing is not null)
             return TypedResults.Json(new ErrorInfoResponse { Error = "user_exists", ErrorDescription = localizer["Admin_UserExists"].Value }, AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 409);
 
-        var userId = Guid.NewGuid().ToString("N");
+        // Caller may supply the id (trusted admin endpoint, e.g. a bullclip-initiated creation that
+        // keys the user by its own id); reject collisions. Otherwise generate one.
+        string userId;
+        if (!string.IsNullOrWhiteSpace(request.UserId))
+        {
+            if (await userStore.GetAsync(request.UserId, ct) is not null)
+                return TypedResults.Json(new ErrorInfoResponse { Error = "user_id_in_use", ErrorDescription = localizer["Admin_UserIdInUse"].Value }, AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 409);
+            userId = request.UserId;
+        }
+        else
+        {
+            userId = Guid.NewGuid().ToString("N");
+        }
+
         var now = DateTimeOffset.UtcNow;
         var securityStamp = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
 
@@ -101,12 +124,18 @@ public static class UserEndpoints
             Email = request.Email,
             NormalizedEmail = request.Email.ToUpperInvariant(),
             PasswordHash = passwordHasher.HashPassword(request.Password),
-            EmailConfirmed = false,
+            EmailConfirmed = request.EmailConfirmed,
             FirstName = request.FirstName,
             LastName = request.LastName,
+            CompanyName = request.CompanyName,
+            OrganizationId = request.OrganizationId,
+            Phone = request.Phone,
             LockoutEnabled = true,
             SecurityStamp = securityStamp,
-            CreatedAt = now
+            CreatedAt = now,
+            CustomAttributes = request.CustomAttributes is { Count: > 0 }
+                ? new Dictionary<string, string>(request.CustomAttributes)
+                : [],
         };
 
         await userStore.CreateAsync(user, ct);
@@ -123,20 +152,23 @@ public static class UserEndpoints
 
         await authHooks.RunOnUserCreatedAsync(userId, request.Email, "admin", ct);
 
-        // Send verification email
-        var issuer = tenantContext.Issuer;
-        var expiresAt = DateTimeOffset.UtcNow.AddHours(authOptions.Value.EmailVerificationExpiryHours).ToUnixTimeSeconds();
-        var tokenData = $"{securityStamp}||{user.Email}||{expiresAt}";
-        var encodedToken = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(tokenData));
-        var callbackUrl = $"{issuer}/api/v1/profile/confirm-email?token={Uri.EscapeDataString(encodedToken)}";
+        // Send a verification email unless the admin created the user already confirmed.
+        if (!user.EmailConfirmed)
+        {
+            var issuer = tenantContext.Issuer;
+            var expiresAt = DateTimeOffset.UtcNow.AddHours(authOptions.Value.EmailVerificationExpiryHours).ToUnixTimeSeconds();
+            var tokenData = $"{securityStamp}||{user.Email}||{expiresAt}";
+            var encodedToken = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(tokenData));
+            var callbackUrl = $"{issuer}/api/v1/profile/confirm-email?token={Uri.EscapeDataString(encodedToken)}";
 
-        try
-        {
-            await emailService.SendVerificationEmailAsync(user.Email, callbackUrl, ct);
-        }
-        catch
-        {
-            // Don't fail registration if email sending fails
+            try
+            {
+                await emailService.SendVerificationEmailAsync(user.Email, callbackUrl, ct);
+            }
+            catch
+            {
+                // Don't fail registration if email sending fails
+            }
         }
 
         return Results.Created($"/api/v1/profile/{userId}", new
@@ -379,6 +411,25 @@ public static class UserEndpoints
         public string Password { get; set; } = "";
         public string? FirstName { get; set; }
         public string? LastName { get; set; }
+
+        /// <summary>
+        /// Admin-only: caller-supplied user id (e.g. a bullclip-initiated creation that keys the user
+        /// by its own id). Rejected with 409 if already in use; a fresh id is generated when omitted.
+        /// </summary>
+        public string? UserId { get; set; }
+
+        /// <summary>Admin-only: create the user already email-confirmed, skipping the verification email.</summary>
+        public bool EmailConfirmed { get; set; }
+
+        public string? CompanyName { get; set; }
+        public string? OrganizationId { get; set; }
+        public string? Phone { get; set; }
+
+        /// <summary>
+        /// Arbitrary attributes persisted on the user and forwarded to provisioning targets
+        /// (and emitted as scope-gated claims), mirroring the self-registration endpoint.
+        /// </summary>
+        public Dictionary<string, string>? CustomAttributes { get; set; }
     }
 
     public sealed class UpdateUserRequest

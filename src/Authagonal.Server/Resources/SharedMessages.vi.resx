@@ -74,6 +74,7 @@
   <data name="Admin_EmailRequired" xml:space="preserve"><value>Email là bắt buộc</value></data>
   <data name="Admin_PasswordRequired" xml:space="preserve"><value>Mật khẩu là bắt buộc</value></data>
   <data name="Admin_UserExists" xml:space="preserve"><value>Người dùng với email này đã tồn tại</value></data>
+  <data name="Admin_UserIdInUse" xml:space="preserve"><value>Người dùng với ID này đã tồn tại</value></data>
   <data name="Admin_UserIdRequired" xml:space="preserve"><value>UserId là bắt buộc</value></data>
   <data name="Admin_TokenRequired" xml:space="preserve"><value>Mã xác thực là bắt buộc</value></data>
   <data name="Admin_InvalidTokenFormat" xml:space="preserve"><value>Định dạng mã xác thực không hợp lệ</value></data>

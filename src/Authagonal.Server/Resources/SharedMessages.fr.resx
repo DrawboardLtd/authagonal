@@ -74,6 +74,7 @@
   <data name="Admin_EmailRequired" xml:space="preserve"><value>L'adresse e-mail est requise</value></data>
   <data name="Admin_PasswordRequired" xml:space="preserve"><value>Le mot de passe est requis</value></data>
   <data name="Admin_UserExists" xml:space="preserve"><value>Un utilisateur avec cette adresse e-mail existe déjà</value></data>
+  <data name="Admin_UserIdInUse" xml:space="preserve"><value>Un utilisateur avec cet identifiant existe déjà</value></data>
   <data name="Admin_UserIdRequired" xml:space="preserve"><value>L'identifiant utilisateur est requis</value></data>
   <data name="Admin_TokenRequired" xml:space="preserve"><value>Le jeton est requis</value></data>
   <data name="Admin_InvalidTokenFormat" xml:space="preserve"><value>Format de jeton invalide</value></data>

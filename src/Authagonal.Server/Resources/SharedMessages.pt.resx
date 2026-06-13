@@ -74,6 +74,7 @@
   <data name="Admin_EmailRequired" xml:space="preserve"><value>O e-mail &#xE9; obrigat&#xF3;rio</value></data>
   <data name="Admin_PasswordRequired" xml:space="preserve"><value>A senha &#xE9; obrigat&#xF3;ria</value></data>
   <data name="Admin_UserExists" xml:space="preserve"><value>J&#xE1; existe um utilizador com este e-mail</value></data>
+  <data name="Admin_UserIdInUse" xml:space="preserve"><value>J&#xE1; existe um utilizador com este ID</value></data>
   <data name="Admin_UserIdRequired" xml:space="preserve"><value>O UserId &#xE9; obrigat&#xF3;rio</value></data>
   <data name="Admin_TokenRequired" xml:space="preserve"><value>O token &#xE9; obrigat&#xF3;rio</value></data>
   <data name="Admin_InvalidTokenFormat" xml:space="preserve"><value>Formato de token inv&#xE1;lido</value></data>
