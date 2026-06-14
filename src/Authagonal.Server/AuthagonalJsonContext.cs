@@ -74,9 +74,6 @@ namespace Authagonal.Server;
 [JsonSerializable(typeof(ClientRegistrationResponse))]
 [JsonSerializable(typeof(ScimTokenCreatedResponse))]
 [JsonSerializable(typeof(ScimTokenListResponse))]
-// Cluster gossip
-[JsonSerializable(typeof(GossipMessage))]
-[JsonSerializable(typeof(GossipResponse))]
 // Email
 [JsonSerializable(typeof(ResendEmailRequest))]
 // Token response

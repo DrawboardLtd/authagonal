@@ -255,10 +255,8 @@ public sealed class AuthagonalTestFactory : IAsyncDisposable
         services.AddSingleton<Authagonal.Core.Services.ITenantContext>(
             new TestTenantContext(TestIssuer));
 
-        // Rate limiter (in-memory, local-only for tests)
-        var testNode = new ClusterNode("test-node");
-        services.AddSingleton(testNode);
-        services.AddSingleton<IRateLimiter>(new DistributedRateLimiter(testNode));
+        // Rate limiter (in-process, local-only for tests)
+        services.AddSingleton<IRateLimiter>(new Authagonal.Core.Services.InProcessRateLimiter());
 
         // Extensibility test doubles
         services.AddSingleton<IEmailService>(EmailService);

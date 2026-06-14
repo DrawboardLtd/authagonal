@@ -1,57 +1,20 @@
+using Authagonal.Core.Clustering;
+
 namespace Authagonal.Server.Services.Cluster;
 
 /// <summary>
-/// Simple leader election built on top of the existing gossip protocol.
-/// The node with the lexicographically lowest NodeId among all live peers is the leader.
-/// Since gossip prunes stale peers, leadership transfers automatically when the leader dies.
-/// On a single-node cluster, this node is always the leader.
+/// Compatibility façade over <see cref="ILeaderElection"/>. Leader-gated background services
+/// keep depending on this type and calling <see cref="IsLeader"/>; the actual election now runs
+/// through the pluggable lease backend (in-process or Azure blob lease).
 /// </summary>
-public sealed class ClusterLeaderService
+public sealed class ClusterLeaderService(ILeaderElection election)
 {
-    private readonly ClusterNode _node;
-    private readonly PeerRegistry _peerRegistry;
+    /// <summary>This node's identifier.</summary>
+    public string NodeId => election.NodeId;
 
-    public ClusterLeaderService(ClusterNode node, PeerRegistry peerRegistry)
-    {
-        _node = node;
-        _peerRegistry = peerRegistry;
-    }
+    /// <summary>True if this node currently holds cluster leadership.</summary>
+    public bool IsLeader() => election.IsLeader;
 
-    /// <summary>The local node's ID.</summary>
-    public string NodeId => _node.NodeId;
-
-    /// <summary>
-    /// Returns true if this node is the current cluster leader.
-    /// Leader = lowest NodeId among all known live nodes (self + peers).
-    /// </summary>
-    public bool IsLeader()
-    {
-        var myId = _node.NodeId;
-        var peers = _peerRegistry.GetPeers();
-
-        foreach (var peer in peers)
-        {
-            if (string.Compare(peer.NodeId, myId, StringComparison.Ordinal) < 0)
-                return false;
-        }
-
-        return true;
-    }
-
-    /// <summary>
-    /// Returns the NodeId of the current leader.
-    /// </summary>
-    public string GetLeaderId()
-    {
-        var leaderId = _node.NodeId;
-        var peers = _peerRegistry.GetPeers();
-
-        foreach (var peer in peers)
-        {
-            if (string.Compare(peer.NodeId, leaderId, StringComparison.Ordinal) < 0)
-                leaderId = peer.NodeId;
-        }
-
-        return leaderId;
-    }
+    /// <summary>The current leader's id (this node when it holds the lease; otherwise its own id as a fallback).</summary>
+    public string GetLeaderId() => election.LeaderId ?? election.NodeId;
 }

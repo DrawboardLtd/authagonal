@@ -1,3 +1,4 @@
+using Authagonal.Core.Clustering;
 using Authagonal.Core.Models;
 using Authagonal.Core.Services;
 using Authagonal.Core.Stores;
@@ -142,7 +143,7 @@ public static class AuthagonalExtensions
     /// Does NOT register stores, KeyManager, background services, or anything that depends on
     /// singleton store resolution. Multi-tenant hosts call this and register their own equivalents.
     /// </summary>
-    public static IServiceCollection AddAuthagonalCore(this IServiceCollection services, IConfiguration configuration)
+    public static IServiceCollection AddAuthagonalCore(this IServiceCollection services, IConfiguration configuration, Action<ClusteringBuilder>? configureClustering = null)
     {
         // ---------------------------------------------------------------------------
         // Localization
@@ -395,29 +396,14 @@ public static class AuthagonalExtensions
         services.AddSingleton<ICorsPolicyProvider, DynamicCorsPolicyProvider>();
 
         // ---------------------------------------------------------------------------
-        // Cluster — node identity, gossip, leader election, distributed rate limiting
+        // Cluster — leader election + cross-node event bus (pluggable backend).
+        // Defaults to single-node in-process; the cloud swaps in the Azure-storage backend
+        // via configureClustering (UseAzureStorage / UseAzureStorageBus).
         // ---------------------------------------------------------------------------
-        services.Configure<ClusterOptions>(configuration.GetSection("Cluster"));
+        services.AddAuthagonalClustering(configuration, configureClustering);
 
-        var clusterNode = new ClusterNode(Convert.ToHexString(RandomNumberGenerator.GetBytes(6)).ToLowerInvariant());
-        services.AddSingleton(clusterNode);
-        services.AddSingleton<PeerRegistry>();
-        services.AddSingleton<ClusterLeaderService>();
-
-        var rateLimiter = new DistributedRateLimiter(clusterNode);
-        services.AddSingleton(rateLimiter);
-        services.AddSingleton<IRateLimiter>(rateLimiter);
-
-        var clusterEnabled = configuration.GetValue("Cluster:Enabled", true);
-        if (clusterEnabled)
-        {
-            services.AddHostedService<ClusterDiscoveryService>();
-            services.AddHostedService<ClusterGossipService>();
-            services.AddHttpClient("ClusterGossip", client =>
-            {
-                client.Timeout = TimeSpan.FromSeconds(3);
-            });
-        }
+        // Rate limiting is in-process per node; the authoritative global limit is enforced at the edge.
+        services.TryAddSingleton<IRateLimiter, InProcessRateLimiter>();
 
         return services;
     }
@@ -546,11 +532,6 @@ public static class AuthagonalExtensions
         app.MapMfaSetupEndpoints();
         app.MapSamlEndpoints();
         app.MapOidcEndpoints();
-
-        if (app.Configuration.GetValue("Cluster:Enabled", true))
-        {
-            app.MapClusterEndpoints();
-        }
 
         return app;
     }
