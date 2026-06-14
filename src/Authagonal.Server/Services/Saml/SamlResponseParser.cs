@@ -311,12 +311,20 @@ public sealed class SamlResponseParser(ILogger<SamlResponseParser> logger)
             return false;
         }
 
-        // Try each trusted certificate
+        // Try each trusted certificate. Verify against the certificate's explicitly
+        // extracted public key — NOT SignedXml.CheckSignature(X509Certificate2, ...), whose
+        // overload routes through the legacy X509Certificate2.PublicKey.Key accessor and
+        // throws NullReferenceException for RSA-SHA256 signatures on .NET/Linux (which is
+        // exactly what Entra emits). CheckSignature(AsymmetricAlgorithm) verifies the
+        // signature only (no chain) — trust is already established by pinning the IdP's
+        // metadata signing certificates.
         foreach (var cert in trustedCertificates)
         {
             try
             {
-                if (signedXml.CheckSignature(cert, verifySignatureOnly: true))
+                using var publicKey = (System.Security.Cryptography.AsymmetricAlgorithm?)cert.GetRSAPublicKey()
+                                      ?? cert.GetECDsaPublicKey();
+                if (publicKey is not null && signedXml.CheckSignature(publicKey))
                 {
                     logger.LogDebug("Signature validated against certificate: {Thumbprint}",
                         cert.Thumbprint);
