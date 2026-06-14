@@ -9,17 +9,11 @@ public static class SamlRequestBuilder
     {
         var issueInstant = DateTime.UtcNow.ToString("o");
 
-        var subjectXml = "";
-        if (!string.IsNullOrWhiteSpace(loginHint))
-        {
-            var escapedHint = System.Security.SecurityElement.Escape(loginHint);
-            subjectXml = $"""
-                          <saml:Subject xmlns:saml="{SamlConstants.Saml2Assertion}">
-                            <saml:NameID Format="{SamlConstants.NameIdEmail}">{escapedHint}</saml:NameID>
-                          </saml:Subject>
-                """;
-        }
-
+        // Do NOT embed a <saml:Subject> in the AuthnRequest. It's optional per the
+        // SAML spec, and Entra rejects any AuthnRequest that carries one
+        // (AADSTS900236: "The SAML authentication request property 'Subject' is not
+        // supported and must not be set."). The login hint is conveyed via the
+        // login_hint query parameter below instead, which Entra (and Google) honour.
         var xml = $"""
             <samlp:AuthnRequest
                 xmlns:samlp="{SamlConstants.Saml2Protocol}"
@@ -30,7 +24,7 @@ public static class SamlRequestBuilder
                 AssertionConsumerServiceURL="{acsUrl}"
                 ProtocolBinding="{SamlConstants.HttpPostBinding}">
               <saml:Issuer xmlns:saml="{SamlConstants.Saml2Assertion}">{issuer}</saml:Issuer>
-              {subjectXml}<samlp:NameIDPolicy Format="{SamlConstants.NameIdEmail}" AllowCreate="true" />
+              <samlp:NameIDPolicy Format="{SamlConstants.NameIdEmail}" AllowCreate="true" />
             </samlp:AuthnRequest>
             """;
 
