@@ -66,17 +66,17 @@ export function logout(): Promise<{ success: true }> {
   });
 }
 
-export function forgotPassword(email: string): Promise<{ success: true }> {
+export function forgotPassword(email: string, turnstileToken?: string): Promise<{ success: true }> {
   return api<{ success: true }>('/api/auth/forgot-password', {
     method: 'POST',
-    body: JSON.stringify({ email }),
+    body: JSON.stringify({ email, turnstileToken }),
   });
 }
 
-export function resetPassword(token: string, newPassword: string): Promise<{ success: true }> {
+export function resetPassword(token: string, newPassword: string, turnstileToken?: string): Promise<{ success: true }> {
   return api<{ success: true }>('/api/auth/reset-password', {
     method: 'POST',
-    body: JSON.stringify({ token, newPassword }),
+    body: JSON.stringify({ token, newPassword, turnstileToken }),
   });
 }
 

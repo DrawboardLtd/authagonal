@@ -1,7 +1,8 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useSearchParams, Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { forgotPassword } from '../api';
+import { forgotPassword, getProviders } from '../api';
+import { Turnstile } from '../components/Turnstile';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -17,6 +18,16 @@ export default function ForgotPasswordPage() {
   const [loading, setLoading] = useState(false);
   const [submitted, setSubmitted] = useState(false);
   const [error, setError] = useState('');
+  const [turnstileSiteKey, setTurnstileSiteKey] = useState<string | undefined>(undefined);
+  const [turnstileToken, setTurnstileToken] = useState<string | null>(null);
+  const [turnstileKey, setTurnstileKey] = useState(0); // bump to re-mount the widget for a fresh challenge
+
+  // Surface the Turnstile site key (opt-in; empty when not configured for the tenant).
+  useEffect(() => {
+    getProviders()
+      .then((res) => setTurnstileSiteKey(res.turnstileSiteKey))
+      .catch(() => {});
+  }, []);
 
   const loginLink = returnUrl
     ? `/login?returnUrl=${encodeURIComponent(returnUrl)}`
@@ -28,11 +39,16 @@ export default function ForgotPasswordPage() {
     setLoading(true);
 
     try {
-      await forgotPassword(email);
+      await forgotPassword(email, turnstileToken || undefined);
       setSubmitted(true);
     } catch {
       // The API always returns 200 for anti-enumeration, but handle errors just in case
       setError(t('errorUnexpected'));
+      // Turnstile tokens are single-use — reset so a retry gets a fresh challenge.
+      if (turnstileSiteKey) {
+        setTurnstileToken(null);
+        setTurnstileKey((k) => k + 1);
+      }
     } finally {
       setLoading(false);
     }
@@ -75,7 +91,13 @@ export default function ForgotPasswordPage() {
           />
         </div>
 
-        <Button type="submit" loading={loading}>
+        {turnstileSiteKey && (
+          <div className="mb-4">
+            <Turnstile key={turnstileKey} siteKey={turnstileSiteKey} onToken={setTurnstileToken} />
+          </div>
+        )}
+
+        <Button type="submit" loading={loading} disabled={!!turnstileSiteKey && !turnstileToken}>
           {loading ? t('sending') : t('sendResetLink')}
         </Button>
 

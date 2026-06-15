@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react';
 import { useSearchParams, Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { resetPassword, ApiRequestError } from '../api';
+import { resetPassword, getProviders, ApiRequestError } from '../api';
+import { Turnstile } from '../components/Turnstile';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -57,12 +58,22 @@ export default function ResetPasswordPage() {
   const [success, setSuccess] = useState(false);
   const [validationError, setValidationError] = useState('');
   const [rules, setRules] = useState<PasswordRule[]>(defaultRules);
+  const [turnstileSiteKey, setTurnstileSiteKey] = useState<string | undefined>(undefined);
+  const [turnstileToken, setTurnstileToken] = useState<string | null>(null);
+  const [turnstileKey, setTurnstileKey] = useState(0); // bump to re-mount the widget for a fresh challenge
 
   useEffect(() => {
     fetch(`${API_URL}/api/auth/password-policy`)
       .then((r) => r.ok ? r.json() : null)
       .then((data) => { if (data?.rules) setRules(data.rules); })
       .catch(() => { /* use defaults */ });
+  }, []);
+
+  // Surface the Turnstile site key (opt-in; empty when not configured for the tenant).
+  useEffect(() => {
+    getProviders()
+      .then((res) => setTurnstileSiteKey(res.turnstileSiteKey))
+      .catch(() => {});
   }, []);
 
   function getRuleLabel(rule: PasswordRule): string {
@@ -102,7 +113,7 @@ export default function ResetPasswordPage() {
     setLoading(true);
 
     try {
-      await resetPassword(token, newPassword);
+      await resetPassword(token, newPassword, turnstileToken || undefined);
       setSuccess(true);
     } catch (err) {
       if (err instanceof ApiRequestError) {
@@ -117,11 +128,19 @@ export default function ResetPasswordPage() {
           case 'password_required':
             setError(t('errorPasswordRequired'));
             break;
+          case 'captcha_failed':
+            setError(t('errorUnexpected'));
+            break;
           default:
             setError(err.message || t('errorUnexpected'));
         }
       } else {
         setError(t('errorUnexpected'));
+      }
+      // Turnstile tokens are single-use — reset so a retry gets a fresh challenge.
+      if (turnstileSiteKey) {
+        setTurnstileToken(null);
+        setTurnstileKey((k) => k + 1);
       }
     } finally {
       setLoading(false);
@@ -204,7 +223,13 @@ export default function ResetPasswordPage() {
           />
         </div>
 
-        <Button type="submit" loading={loading} disabled={!allRequirementsMet}>
+        {turnstileSiteKey && (
+          <div className="mb-4">
+            <Turnstile key={turnstileKey} siteKey={turnstileSiteKey} onToken={setTurnstileToken} />
+          </div>
+        )}
+
+        <Button type="submit" loading={loading} disabled={!allRequirementsMet || (!!turnstileSiteKey && !turnstileToken)}>
           {loading ? t('resetting') : t('resetPassword')}
         </Button>
 

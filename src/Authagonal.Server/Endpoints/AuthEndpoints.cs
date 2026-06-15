@@ -426,14 +426,21 @@ public static class AuthEndpoints
 
     private static async Task<IResult> ForgotPasswordAsync(
         ForgotPasswordRequest request,
+        HttpContext httpContext,
         IUserStore userStore,
         IGrantStore grantStore,
         IEmailService emailService,
         ITenantContext tenantContext,
+        TurnstileVerifier turnstile,
         IOptions<AuthOptions> authOptions,
         ILogger<Program> logger,
         CancellationToken ct)
     {
+        // Cloudflare Turnstile (opt-in): reject bots before issuing reset tokens / sending mail.
+        // A captcha result is independent of account existence, so this leaks no enumeration signal.
+        if (turnstile.Enabled && !await turnstile.VerifyAsync(request.TurnstileToken, httpContext.Connection.RemoteIpAddress?.ToString(), ct))
+            return JsonResults.Error("captcha_failed", 400);
+
         // Always return success to prevent email enumeration
         if (string.IsNullOrWhiteSpace(request.Email))
             return TypedResults.Json(new SuccessResponse(), AuthagonalJsonContext.Default.SuccessResponse);
@@ -484,15 +491,21 @@ public static class AuthEndpoints
 
     private static async Task<IResult> ResetPasswordAsync(
         ResetPasswordRequest request,
+        HttpContext httpContext,
         IUserStore userStore,
         IGrantStore grantStore,
         PasswordHasher passwordHasher,
         PasswordValidator passwordValidator,
         PasswordPolicy passwordPolicy,
+        TurnstileVerifier turnstile,
         IStringLocalizer<SharedMessages> localizer,
         ILogger<Program> logger,
         CancellationToken ct)
     {
+        // Cloudflare Turnstile (opt-in): gate the token-redemption path against automated abuse.
+        if (turnstile.Enabled && !await turnstile.VerifyAsync(request.TurnstileToken, httpContext.Connection.RemoteIpAddress?.ToString(), ct))
+            return JsonResults.Error("captcha_failed", 400);
+
         if (string.IsNullOrWhiteSpace(request.Token))
             return JsonResults.Error("invalid_token", localizer["Auth_ResetTokenRequired"].Value);
 
@@ -681,10 +694,14 @@ public sealed class ConfirmEmailRequest
 public sealed class ForgotPasswordRequest
 {
     public string? Email { get; set; }
+    /// <summary>Cloudflare Turnstile token; verified only when Turnstile is configured.</summary>
+    public string? TurnstileToken { get; set; }
 }
 
 public sealed class ResetPasswordRequest
 {
     public string? Token { get; set; }
     public string? NewPassword { get; set; }
+    /// <summary>Cloudflare Turnstile token; verified only when Turnstile is configured.</summary>
+    public string? TurnstileToken { get; set; }
 }
