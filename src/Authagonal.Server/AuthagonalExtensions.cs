@@ -468,13 +468,24 @@ public static class AuthagonalExtensions
             options.ApplyCurrentCultureToResponseHeaders = true;
         });
 
-        // Security headers
+        // Security headers. When Cloudflare Turnstile is configured, the CSP must allow its
+        // script and challenge iframe (challenges.cloudflare.com); otherwise the widget is
+        // blocked and Turnstile-gated forms (login/register/forgot/reset) can never produce a
+        // token, leaving their submit buttons permanently disabled. Tight default otherwise.
+        var turnstileConfigured = !string.IsNullOrWhiteSpace(
+            app.Services.GetService<IOptions<TurnstileOptions>>()?.Value.SiteKey);
+        var csp = turnstileConfigured
+            ? "default-src 'self'; script-src 'self' https://challenges.cloudflare.com; " +
+              "frame-src https://challenges.cloudflare.com; img-src 'self' data: https:; " +
+              "style-src 'self' 'unsafe-inline'; frame-ancestors 'none'; object-src 'none'"
+            : "default-src 'self'; img-src 'self' data: https:; style-src 'self' 'unsafe-inline'; frame-ancestors 'none'; object-src 'none'";
+
         app.Use(async (context, next) =>
         {
             context.Response.Headers["X-Content-Type-Options"] = "nosniff";
             context.Response.Headers["X-Frame-Options"] = "DENY";
             context.Response.Headers["Referrer-Policy"] = "strict-origin-when-cross-origin";
-            context.Response.Headers["Content-Security-Policy"] = "default-src 'self'; img-src 'self' data: https:; style-src 'self' 'unsafe-inline'; frame-ancestors 'none'; object-src 'none'";
+            context.Response.Headers["Content-Security-Policy"] = csp;
             if (context.Request.IsHttps)
             {
                 context.Response.Headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains";
