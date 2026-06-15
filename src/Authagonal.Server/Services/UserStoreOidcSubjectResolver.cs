@@ -16,6 +16,7 @@ namespace Authagonal.Server.Services;
 public sealed class UserStoreOidcSubjectResolver(
     IUserStore userStore,
     IScimGroupStore scimGroupStore,
+    IScimGroupRoleMappingStore groupRoleMappingStore,
     IClientStore clientStore) : IOidcSubjectResolver
 {
     public async Task<OidcSubjectResult> ResolveAsync(
@@ -111,12 +112,25 @@ public sealed class UserStoreOidcSubjectResolver(
         IReadOnlyDictionary<string, string>? federationClaims = null,
         CancellationToken ct = default)
     {
+        // SCIM group → role mappings (empty store = no-op). Fetch the user's groups once,
+        // used for both the optional groups claim and effective-role resolution.
+        var mappings = await groupRoleMappingStore.GetAllAsync(ct);
+        IReadOnlyList<ScimGroup>? scimGroups = null;
+        if (mappings.Count > 0 || client is { IncludeGroupsInTokens: true })
+            scimGroups = await scimGroupStore.GetGroupsByUserIdAsync(user.Id, ct);
+
         IReadOnlyList<string>? groups = null;
-        if (client is { IncludeGroupsInTokens: true })
+        if (client is { IncludeGroupsInTokens: true } && scimGroups is { Count: > 0 })
+            groups = scimGroups.Select(g => g.DisplayName).ToList();
+
+        // Effective roles = directly-assigned ∪ roles granted by the user's group memberships.
+        var roles = new HashSet<string>(user.Roles, StringComparer.Ordinal);
+        if (mappings.Count > 0 && scimGroups is { Count: > 0 })
         {
-            var scimGroups = await scimGroupStore.GetGroupsByUserIdAsync(user.Id, ct);
-            if (scimGroups.Count > 0)
-                groups = scimGroups.Select(g => g.DisplayName).ToList();
+            var memberGroupIds = scimGroups.Select(g => g.Id).ToHashSet(StringComparer.Ordinal);
+            foreach (var m in mappings)
+                if (memberGroupIds.Contains(m.GroupId))
+                    roles.Add(m.Role);
         }
 
         return new OidcSubject
@@ -128,7 +142,7 @@ public sealed class UserStoreOidcSubjectResolver(
             FamilyName = user.LastName,
             Phone = user.Phone,
             OrganizationId = user.OrganizationId,
-            Roles = user.Roles.Count > 0 ? user.Roles.ToList() : null,
+            Roles = roles.Count > 0 ? roles.ToList() : null,
             Groups = groups,
             CustomAttributes = user.CustomAttributes.Count > 0
                 ? user.CustomAttributes.ToDictionary(kv => kv.Key, kv => kv.Value)

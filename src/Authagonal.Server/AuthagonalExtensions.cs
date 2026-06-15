@@ -228,6 +228,8 @@ public static class AuthagonalExtensions
         services.TryAddSingleton<IAuditLogger, NullAuditLogger>();
         services.TryAddSingleton<IClientScopeGuard, AllowAllClientScopeGuard>();
         services.TryAddSingleton<IProvisioningAppQuota, UnlimitedProvisioningAppQuota>();
+        // SCIM group → role mappings (empty default; the cloud registers a per-tenant store).
+        services.TryAddSingleton<IScimGroupRoleMappingStore, InMemoryScimGroupRoleMappingStore>();
         services.TryAddScoped<IProvisioningAppProvider, ConfigProvisioningAppProvider>();
         services.TryAddScoped<IProvisioningOrchestrator, TccProvisioningOrchestrator>();
         // Auth hooks — multiple IAuthHook implementations can be registered and all will run.

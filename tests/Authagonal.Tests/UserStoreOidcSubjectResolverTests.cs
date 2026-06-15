@@ -18,7 +18,7 @@ public sealed class UserStoreOidcSubjectResolverTests
     {
         var users = new InMemoryUserStore();
         users.CreateAsync(user).GetAwaiter().GetResult();
-        return new UserStoreOidcSubjectResolver(users, new InMemoryScimGroupStore(), new InMemoryClientStore());
+        return new UserStoreOidcSubjectResolver(users, new InMemoryScimGroupStore(), new InMemoryScimGroupRoleMappingStore(), new InMemoryClientStore());
     }
 
     private static ClaimsPrincipal Principal(string subjectId, params (string type, string value)[] extra)

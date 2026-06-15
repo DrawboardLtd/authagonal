@@ -34,6 +34,7 @@ public static class ServiceCollectionExtensions
     private const string ScimTokensTableName = "ScimTokens";
     private const string ScimGroupsTableName = "ScimGroups";
     private const string ScimGroupExternalIdsTableName = "ScimGroupExternalIds";
+    private const string ScimGroupRoleMappingsTableName = "ScimGroupRoleMappings";
     private const string RolesTableName = "Roles";
     private const string ScopesTableName = "Scopes";
     private const string RevokedTokensTableName = "RevokedTokens";
@@ -101,6 +102,7 @@ public static class ServiceCollectionExtensions
         var scimTokens = EnsureTable(serviceClient, ScimTokensTableName);
         var scimGroups = EnsureTable(serviceClient, ScimGroupsTableName);
         var scimGroupExternalIds = EnsureTable(serviceClient, ScimGroupExternalIdsTableName);
+        var scimGroupRoleMappings = EnsureTable(serviceClient, ScimGroupRoleMappingsTableName);
         var roles = EnsureTable(serviceClient, RolesTableName);
         var scopes = EnsureTable(serviceClient, ScopesTableName);
         var revokedTokens = EnsureTable(serviceClient, RevokedTokensTableName);
@@ -122,6 +124,7 @@ public static class ServiceCollectionExtensions
         services.TryAddSingleton<IMfaStore>(new TableMfaStore(mfaCredentials, mfaChallenges, mfaWebAuthnIndex, live));
         services.TryAddSingleton<IScimTokenStore>(new TableScimTokenStore(scimTokens, live));
         services.TryAddSingleton<IScimGroupStore>(new TableScimGroupStore(scimGroups, scimGroupExternalIds, live));
+        services.TryAddSingleton<IScimGroupRoleMappingStore>(new TableScimGroupRoleMappingStore(scimGroupRoleMappings, live));
         services.TryAddSingleton<IRoleStore>(new TableRoleStore(roles, live));
         services.TryAddSingleton<IScopeStore>(new TableScopeStore(scopes, live));
         services.TryAddSingleton<IRevokedTokenStore>(new TableRevokedTokenStore(revokedTokens, live));
