@@ -331,17 +331,22 @@ public sealed class TableUserStore(
         var skipped = 0;
         var start = Math.Max(0, startIndex);
 
+        // Azure Table caps page size at 1000. Callers (the SCIM list endpoint) pass
+        // int.MaxValue to mean "all rows", so count + 1 would overflow to a negative
+        // maxPerPage and the service rejects it with 400 InvalidInput. Clamp with a
+        // widening cast; the async enumerable still pages through every result.
+        var pageSize = (int)Math.Min((long)count + 1, 1000);
         var range = _partitioner.RangeForEnv();
         var query = range is null
             ? usersTable.QueryAsync<UserEntity>(
                 e => e.RowKey == UserEntity.ProfileRowKey && e.ScimProvisionedByClientId == scimClientId,
-                maxPerPage: count + 1, cancellationToken: ct)
+                maxPerPage: pageSize, cancellationToken: ct)
             : usersTable.QueryAsync<UserEntity>(
                 e => e.PartitionKey.CompareTo(range.Value.Low) >= 0
                      && e.PartitionKey.CompareTo(range.Value.High) < 0
                      && e.RowKey == UserEntity.ProfileRowKey
                      && e.ScimProvisionedByClientId == scimClientId,
-                maxPerPage: count + 1, cancellationToken: ct);
+                maxPerPage: pageSize, cancellationToken: ct);
 
         await foreach (var entity in query)
         {
