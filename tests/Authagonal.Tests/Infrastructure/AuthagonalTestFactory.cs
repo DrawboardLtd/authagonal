@@ -279,6 +279,11 @@ public sealed class AuthagonalTestFactory : IAsyncDisposable
         services.AddSingleton(new PasswordPolicy());
         services.AddSingleton<PasswordHasher>();
         services.AddSingleton<PasswordValidator>();
+        // Turnstile is opt-in; left unconfigured here so it's disabled (no token required).
+        // Must still be registered so the /login + /register handlers' TurnstileVerifier
+        // parameter resolves as a service rather than being inferred as a body param.
+        services.Configure<TurnstileOptions>(_ => { });
+        services.AddHttpClient<TurnstileVerifier>();
 
         // Protocol wiring — map AuthOptions onto AuthagonalProtocolOptions, plug in the
         // PasswordHasher-backed secret verifier so bcrypt/pbkdf2 client secrets verify
