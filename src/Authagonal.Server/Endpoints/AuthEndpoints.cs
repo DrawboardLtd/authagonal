@@ -45,6 +45,7 @@ public static class AuthEndpoints
         IMfaStore mfaStore,
         PasswordHasher passwordHasher,
         WebAuthnService webAuthnService,
+        TurnstileVerifier turnstile,
         IEnumerable<IAuthHook> authHooks,
         IOptions<AuthOptions> authOptions,
         ILogger<Program> logger,
@@ -70,6 +71,11 @@ public static class AuthEndpoints
                 return TypedResults.Json(new SsoRedirectError { Error = "sso_required", RedirectUrl = ssoRedirectUrl }, AuthagonalJsonContext.Default.SsoRedirectError, statusCode: 409);
             }
         }
+
+        // Cloudflare Turnstile (opt-in): gate the password path before the user lookup so a
+        // failed challenge can't be used to probe whether an account exists.
+        if (turnstile.Enabled && !await turnstile.VerifyAsync(request.TurnstileToken, httpContext.Connection.RemoteIpAddress?.ToString(), ct))
+            return JsonResults.Error("captcha_failed", 400);
 
         var user = await userStore.FindByEmailAsync(request.Email, ct);
         if (user is null)
@@ -264,6 +270,7 @@ public static class AuthEndpoints
         ITenantContext tenantContext,
         IRateLimiter rateLimiter,
         IProvisioningOrchestrator provisioning,
+        TurnstileVerifier turnstile,
         IOptions<AuthOptions> authOptions,
         ILogger<Program> logger,
         CancellationToken ct)
@@ -274,6 +281,10 @@ public static class AuthEndpoints
         var rateLimited = await rateLimiter.IsRateLimitedAsync($"register|{ip}", ao.MaxRegistrationsPerIp, TimeSpan.FromMinutes(ao.RegistrationWindowMinutes), ct);
         if (rateLimited)
             return JsonResults.Error("rate_limited", "Too many registration attempts. Please try again later.", 429);
+
+        // Cloudflare Turnstile (opt-in) — gate registration when configured.
+        if (turnstile.Enabled && !await turnstile.VerifyAsync(request.TurnstileToken, ip, ct))
+            return JsonResults.Error("captcha_failed", 400);
 
         if (string.IsNullOrWhiteSpace(request.Email) || string.IsNullOrWhiteSpace(request.Password))
             return JsonResults.Error("email_and_password_required");
@@ -576,6 +587,7 @@ public static class AuthEndpoints
 
     private static async Task<IResult> GetProvidersAsync(
         IOidcProviderStore oidcStore,
+        IOptions<TurnstileOptions> turnstileOptions,
         CancellationToken ct)
     {
         var providers = await oidcStore.GetAllAsync(ct);
@@ -585,7 +597,9 @@ public static class AuthEndpoints
             Name = p.ConnectionName,
             LoginUrl = $"/oidc/{p.ConnectionId}/login"
         });
-        return TypedResults.Json(new SsoProviderListResponse { Providers = result }, AuthagonalJsonContext.Default.SsoProviderListResponse);
+        return TypedResults.Json(
+            new SsoProviderListResponse { Providers = result, TurnstileSiteKey = turnstileOptions.Value.SiteKey },
+            AuthagonalJsonContext.Default.SsoProviderListResponse);
     }
 
     private static async Task<IResult> SsoCheckAsync(
@@ -644,6 +658,8 @@ public sealed class LoginRequest
 {
     public string? Email { get; set; }
     public string? Password { get; set; }
+    /// <summary>Cloudflare Turnstile token; verified only when Turnstile is configured.</summary>
+    public string? TurnstileToken { get; set; }
 }
 
 public sealed class RegisterRequest
@@ -653,6 +669,8 @@ public sealed class RegisterRequest
     public string? FirstName { get; set; }
     public string? LastName { get; set; }
     public Dictionary<string, string>? CustomAttributes { get; set; }
+    /// <summary>Cloudflare Turnstile token; verified only when Turnstile is configured.</summary>
+    public string? TurnstileToken { get; set; }
 }
 
 public sealed class ConfirmEmailRequest

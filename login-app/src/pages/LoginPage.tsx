@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { useSearchParams, Link, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { login, logout, ssoCheck, getProviders, getSession, ApiRequestError } from '../api';
+import { Turnstile } from '../components/Turnstile';
 import { useBranding } from '../branding';
 import type { ExternalProvider } from '../types';
 import { Button } from '@/components/ui/button';
@@ -45,6 +46,9 @@ export default function LoginPage() {
   const [ssoChecked, setSsoChecked] = useState(false);
   const [ssoChecking, setSsoChecking] = useState(false);
   const [providers, setProviders] = useState<ExternalProvider[]>([]);
+  const [turnstileSiteKey, setTurnstileSiteKey] = useState<string | undefined>(undefined);
+  const [turnstileToken, setTurnstileToken] = useState<string | null>(null);
+  const [turnstileKey, setTurnstileKey] = useState(0); // bump to re-mount the widget for a fresh challenge
   const [session, setSession] = useState<{ name: string; email: string } | null>(null);
   const [mfaPrompt, setMfaPrompt] = useState<{ returnUrl: string; userId: string; clientId: string } | null>(null);
 
@@ -92,7 +96,10 @@ export default function LoginPage() {
   // Fetch available external providers
   useEffect(() => {
     getProviders()
-      .then((res) => setProviders(res.providers ?? []))
+      .then((res) => {
+        setProviders(res.providers ?? []);
+        setTurnstileSiteKey(res.turnstileSiteKey);
+      })
       .catch(() => {});
   }, []);
 
@@ -148,7 +155,7 @@ export default function LoginPage() {
     setLoading(true);
 
     try {
-      const result = await login(email, password, returnUrl || undefined);
+      const result = await login(email, password, returnUrl || undefined, turnstileToken || undefined);
 
       if (result.mfaRequired && result.challengeId) {
         // Redirect to MFA challenge page
@@ -216,11 +223,19 @@ export default function LoginPage() {
           case 'password_required':
             setError(t('errorPasswordRequired'));
             break;
+          case 'captcha_failed':
+            setError(t('errorUnexpected'));
+            break;
           default:
             setError(err.message || t('errorUnexpected'));
         }
       } else {
         setError(t('errorUnexpected'));
+      }
+      // Turnstile tokens are single-use — reset so a retry gets a fresh challenge.
+      if (turnstileSiteKey) {
+        setTurnstileToken(null);
+        setTurnstileKey((k) => k + 1);
       }
     } finally {
       setLoading(false);
@@ -393,7 +408,13 @@ export default function LoginPage() {
               />
             </div>
 
-            <Button type="submit" loading={loading} data-auth="submit-button">
+            {turnstileSiteKey && (
+              <div className="mb-4">
+                <Turnstile key={turnstileKey} siteKey={turnstileSiteKey} onToken={setTurnstileToken} />
+              </div>
+            )}
+
+            <Button type="submit" loading={loading} disabled={!!turnstileSiteKey && !turnstileToken} data-auth="submit-button">
               {loading ? t('signingIn') : t('signIn')}
             </Button>
 

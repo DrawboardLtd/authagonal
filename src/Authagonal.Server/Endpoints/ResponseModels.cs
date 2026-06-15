@@ -113,6 +113,9 @@ public sealed class SsoProviderInfo
 public sealed class SsoProviderListResponse
 {
     [JsonPropertyName("providers")] public IEnumerable<SsoProviderInfo> Providers { get; set; } = [];
+
+    /// <summary>Cloudflare Turnstile site key when configured; null = Turnstile disabled (UI renders no widget).</summary>
+    [JsonPropertyName("turnstileSiteKey")] public string? TurnstileSiteKey { get; set; }
 }
 
 // --- Password Policy ---

@@ -1,8 +1,9 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useSearchParams, Link, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { register, getPasswordPolicy, ApiRequestError } from '../api';
+import { register, getPasswordPolicy, getProviders, ApiRequestError } from '../api';
 import type { PasswordPolicyRule } from '../types';
+import { Turnstile } from '../components/Turnstile';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -23,6 +24,16 @@ export default function RegisterPage() {
   const [loading, setLoading] = useState(false);
   const [policyRules, setPolicyRules] = useState<PasswordPolicyRule[]>([]);
   const [policyLoaded, setPolicyLoaded] = useState(false);
+  const [turnstileSiteKey, setTurnstileSiteKey] = useState<string | undefined>(undefined);
+  const [turnstileToken, setTurnstileToken] = useState<string | null>(null);
+  const [turnstileKey, setTurnstileKey] = useState(0);
+
+  // Turnstile site key is surfaced on /providers; absent = Turnstile disabled.
+  useEffect(() => {
+    getProviders()
+      .then((res) => setTurnstileSiteKey(res.turnstileSiteKey))
+      .catch(() => {});
+  }, []);
 
   function loadPolicy() {
     if (policyLoaded) return;
@@ -38,7 +49,7 @@ export default function RegisterPage() {
     setLoading(true);
 
     try {
-      await register(email, password, firstName || undefined, lastName || undefined);
+      await register(email, password, firstName || undefined, lastName || undefined, turnstileToken || undefined);
 
       // Redirect to login with success message
       const params = new URLSearchParams();
@@ -58,11 +69,19 @@ export default function RegisterPage() {
           case 'email_and_password_required':
             setError(t('errorEmailAndPasswordRequired'));
             break;
+          case 'captcha_failed':
+            setError(t('errorRegistrationFailed'));
+            break;
           default:
             setError(err.message || t('errorRegistrationFailed'));
         }
       } else {
         setError(t('errorRegistrationFailed'));
+      }
+      // Turnstile tokens are single-use — reset so a retry gets a fresh challenge.
+      if (turnstileSiteKey) {
+        setTurnstileToken(null);
+        setTurnstileKey((k) => k + 1);
       }
     } finally {
       setLoading(false);
@@ -145,7 +164,13 @@ export default function RegisterPage() {
           </ul>
         )}
 
-        <Button type="submit" loading={loading}>
+        {turnstileSiteKey && (
+          <div className="mb-4">
+            <Turnstile key={turnstileKey} siteKey={turnstileSiteKey} onToken={setTurnstileToken} />
+          </div>
+        )}
+
+        <Button type="submit" loading={loading} disabled={!!turnstileSiteKey && !turnstileToken}>
           {loading ? t('registering') : t('registerButton')}
         </Button>
 

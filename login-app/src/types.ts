@@ -33,6 +33,8 @@ export interface ExternalProvider {
 
 export interface ProvidersResponse {
   providers: ExternalProvider[];
+  /** Cloudflare Turnstile site key when configured; absent = Turnstile disabled (render no widget). */
+  turnstileSiteKey?: string;
 }
 
 export interface PasswordPolicyRule {

@@ -45,18 +45,18 @@ function setupTokenHeaders(token?: string): Record<string, string> {
   return token ? { 'X-MFA-Setup-Token': token } : {};
 }
 
-export function login(email: string, password: string, returnUrl?: string): Promise<MfaLoginResponse> {
+export function login(email: string, password: string, returnUrl?: string, turnstileToken?: string): Promise<MfaLoginResponse> {
   const url = returnUrl ? `/api/auth/login?returnUrl=${encodeURIComponent(returnUrl)}` : '/api/auth/login';
   return api<MfaLoginResponse>(url, {
     method: 'POST',
-    body: JSON.stringify({ email, password }),
+    body: JSON.stringify({ email, password, turnstileToken }),
   });
 }
 
-export function register(email: string, password: string, firstName?: string, lastName?: string): Promise<RegisterResponse> {
+export function register(email: string, password: string, firstName?: string, lastName?: string, turnstileToken?: string): Promise<RegisterResponse> {
   return api<RegisterResponse>('/api/auth/register', {
     method: 'POST',
-    body: JSON.stringify({ email, password, firstName, lastName }),
+    body: JSON.stringify({ email, password, firstName, lastName, turnstileToken }),
   });
 }
 

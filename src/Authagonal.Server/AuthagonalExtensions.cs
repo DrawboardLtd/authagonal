@@ -172,6 +172,10 @@ public static class AuthagonalExtensions
         services.Configure<AuthOptions>(configuration.GetSection("Auth"));
         services.Configure<CacheOptions>(configuration.GetSection("Cache"));
         services.Configure<BackgroundServiceOptions>(configuration.GetSection("BackgroundServices"));
+        // Cloudflare Turnstile — opt-in: verification on /login and /register is enforced
+        // only when Turnstile:SecretKey is configured; otherwise the flow is unchanged.
+        services.Configure<TurnstileOptions>(configuration.GetSection("Turnstile"));
+        services.AddHttpClient<TurnstileVerifier>();
 
         // ---------------------------------------------------------------------------
         // Application services
