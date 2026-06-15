@@ -16,6 +16,7 @@
   "errorEmailRequired": "Email is required",
   "errorPasswordRequired": "Password is required",
   "errorUnexpected": "An unexpected error occurred. Please try again.",
+  "captchaFailed": "Verification failed. Please try again.",
   "resetYourPassword": "Reset your password",
   "resetSubtitle": "Enter your email address and we'll send you a link to reset your password.",
   "sending": "Sending...",

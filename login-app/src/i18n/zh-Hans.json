@@ -16,6 +16,7 @@
   "errorEmailRequired": "电子邮件为必填项",
   "errorPasswordRequired": "密码为必填项",
   "errorUnexpected": "发生意外错误，请重试。",
+  "captchaFailed": "验证失败，请重试。",
   "resetYourPassword": "重置密码",
   "resetSubtitle": "输入您的电子邮件地址，我们将向您发送重置密码的链接。",
   "sending": "正在发送...",

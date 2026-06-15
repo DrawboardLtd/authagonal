@@ -16,6 +16,7 @@
   "errorEmailRequired": "Email là bắt buộc",
   "errorPasswordRequired": "Mật khẩu là bắt buộc",
   "errorUnexpected": "Đã xảy ra lỗi không mong muốn. Vui lòng thử lại.",
+  "captchaFailed": "Xác minh không thành công. Vui lòng thử lại.",
   "resetYourPassword": "Đặt lại mật khẩu",
   "resetSubtitle": "Nhập địa chỉ email của bạn và chúng tôi sẽ gửi cho bạn liên kết để đặt lại mật khẩu.",
   "sending": "Đang gửi...",

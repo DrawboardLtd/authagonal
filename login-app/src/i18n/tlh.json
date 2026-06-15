@@ -16,6 +16,7 @@
   "errorEmailRequired": "QIn nab nIteb nISlu'",
   "errorPasswordRequired": "mu'wIj pegh nIteb nISlu'",
   "errorUnexpected": "Qagh qaS. yInIDqa'.",
+  "captchaFailed": "ngu' luj. yInIDqa'.",
   "resetYourPassword": "mu'wIj pegh yIchoH",
   "resetSubtitle": "QIn nab yIngu'. mu'wIj pegh choHmeH lIngwI' DangeH.",
   "sending": "ngeHmeH...",

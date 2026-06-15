@@ -70,7 +70,7 @@ export default function RegisterPage() {
             setError(t('errorEmailAndPasswordRequired'));
             break;
           case 'captcha_failed':
-            setError(t('errorRegistrationFailed'));
+            setError(t('captchaFailed'));
             break;
           default:
             setError(err.message || t('errorRegistrationFailed'));

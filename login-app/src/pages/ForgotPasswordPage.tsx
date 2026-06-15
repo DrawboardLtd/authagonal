@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useSearchParams, Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { forgotPassword, getProviders } from '../api';
+import { forgotPassword, getProviders, ApiRequestError } from '../api';
 import { Turnstile } from '../components/Turnstile';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -41,9 +41,14 @@ export default function ForgotPasswordPage() {
     try {
       await forgotPassword(email, turnstileToken || undefined);
       setSubmitted(true);
-    } catch {
-      // The API always returns 200 for anti-enumeration, but handle errors just in case
-      setError(t('errorUnexpected'));
+    } catch (err) {
+      // The API always returns 200 for anti-enumeration; the only expected error is a
+      // failed captcha (handled explicitly), otherwise a generic message.
+      if (err instanceof ApiRequestError && err.error === 'captcha_failed') {
+        setError(t('captchaFailed'));
+      } else {
+        setError(t('errorUnexpected'));
+      }
       // Turnstile tokens are single-use — reset so a retry gets a fresh challenge.
       if (turnstileSiteKey) {
         setTurnstileToken(null);

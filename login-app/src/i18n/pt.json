@@ -16,6 +16,7 @@
   "errorEmailRequired": "O e-mail é obrigatório",
   "errorPasswordRequired": "A senha é obrigatória",
   "errorUnexpected": "Ocorreu um erro inesperado. Tente novamente.",
+  "captchaFailed": "Falha na verificação. Tente novamente.",
   "resetYourPassword": "Redefinir a sua senha",
   "resetSubtitle": "Introduza o seu endereço de e-mail e enviaremos um link para redefinir a sua senha.",
   "sending": "A enviar...",

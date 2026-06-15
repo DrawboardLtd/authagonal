@@ -16,6 +16,7 @@
   "errorEmailRequired": "L'e-mail est requis",
   "errorPasswordRequired": "Le mot de passe est requis",
   "errorUnexpected": "Une erreur inattendue s'est produite. Veuillez réessayer.",
+  "captchaFailed": "Échec de la vérification. Veuillez réessayer.",
   "resetYourPassword": "Réinitialiser votre mot de passe",
   "resetSubtitle": "Entrez votre adresse e-mail et nous vous enverrons un lien pour réinitialiser votre mot de passe.",
   "sending": "Envoi en cours...",

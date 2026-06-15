@@ -224,7 +224,7 @@ export default function LoginPage() {
             setError(t('errorPasswordRequired'));
             break;
           case 'captcha_failed':
-            setError(t('errorUnexpected'));
+            setError(t('captchaFailed'));
             break;
           default:
             setError(err.message || t('errorUnexpected'));
