@@ -153,7 +153,7 @@ export default function ResetPasswordPage() {
         <CardTitle>{t('passwordResetSuccess')}</CardTitle>
         <Alert variant="success">{t('passwordResetSuccessMessage')}</Alert>
         <CardFooter>
-          <Link to="/login" className="text-sm font-medium text-primary hover:underline no-underline">
+          <Link to="/" className="text-sm font-medium text-primary hover:underline no-underline">
             {t('signIn')}
           </Link>
         </CardFooter>
@@ -234,7 +234,7 @@ export default function ResetPasswordPage() {
         </Button>
 
         <CardFooter>
-          <Link to="/login" className="text-sm font-medium text-primary hover:underline no-underline">
+          <Link to="/" className="text-sm font-medium text-primary hover:underline no-underline">
             {t('backToSignIn')}
           </Link>
         </CardFooter>
