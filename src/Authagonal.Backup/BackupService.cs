@@ -81,14 +81,18 @@ public sealed class BackupService(TableServiceClient serviceClient, IBackupTarge
                         outputStream = await target.OpenWriteAsync(backupId, fileName, ct);
                         // Hash the exact bytes written to the target so restore can verify integrity.
                         hashingStream = new HashingStream(outputStream);
+                        // leaveOpen: true on both layers — otherwise disposing the writer cascades
+                        // (writer → gzip → hashingStream → IncrementalHash), disposing the hash BEFORE
+                        // GetHashHex() reads it below, which throws ObjectDisposedException. We dispose
+                        // hashingStream explicitly after reading the hash.
                         if (options.Gzip)
                         {
-                            gzipStream = new GZipStream(hashingStream, CompressionLevel.Optimal);
-                            writer = new StreamWriter(gzipStream, System.Text.Encoding.UTF8);
+                            gzipStream = new GZipStream(hashingStream, CompressionLevel.Optimal, leaveOpen: true);
+                            writer = new StreamWriter(gzipStream, System.Text.Encoding.UTF8, bufferSize: 8192, leaveOpen: true);
                         }
                         else
                         {
-                            writer = new StreamWriter(hashingStream, System.Text.Encoding.UTF8);
+                            writer = new StreamWriter(hashingStream, System.Text.Encoding.UTF8, bufferSize: 8192, leaveOpen: true);
                         }
                     }
 
