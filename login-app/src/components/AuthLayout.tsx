@@ -88,7 +88,7 @@ export default function AuthLayout({ children }: AuthLayoutProps) {
   }, [branding]);
 
   return (
-    <main className="min-h-screen flex items-center justify-center p-4" data-auth="page" style={{ background: 'var(--auth-bg)' }}>
+    <main className="min-h-screen min-w-[20rem] flex items-center justify-center p-4" data-auth="page" style={{ background: 'var(--auth-bg)' }}>
       <Card style={{ background: 'var(--auth-card-bg)', borderRadius: 'var(--auth-radius, 0.5rem)', fontFamily: 'var(--auth-font, inherit)' }}>
         <div className="text-center mb-6" data-auth="header">
           {branding.logoUrl ? (
