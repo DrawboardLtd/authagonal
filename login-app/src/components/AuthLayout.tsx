@@ -45,15 +45,15 @@ function ThemeToggle() {
           type="button"
           onClick={() => setTheme(value)}
           className={cn(
-            'p-1 rounded cursor-pointer border-none bg-transparent transition-colors',
+            'p-2 rounded cursor-pointer border-none bg-transparent transition-colors',
             theme === value
               ? 'text-gray-700 dark:text-gray-200'
-              : 'text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300'
+              : 'text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-gray-100'
           )}
           title={value}
           aria-label={`${value} theme`}
         >
-          <Icon className="h-3.5 w-3.5" />
+          <Icon className="h-4 w-4" />
         </button>
       ))}
     </div>
@@ -88,7 +88,7 @@ export default function AuthLayout({ children }: AuthLayoutProps) {
   }, [branding]);
 
   return (
-    <div className="min-h-screen flex items-center justify-center p-4" data-auth="page" style={{ background: 'var(--auth-bg)' }}>
+    <main className="min-h-screen flex items-center justify-center p-4" data-auth="page" style={{ background: 'var(--auth-bg)' }}>
       <Card style={{ background: 'var(--auth-card-bg)', borderRadius: 'var(--auth-radius, 0.5rem)', fontFamily: 'var(--auth-font, inherit)' }}>
         <div className="text-center mb-6" data-auth="header">
           {branding.logoUrl ? (
@@ -98,16 +98,16 @@ export default function AuthLayout({ children }: AuthLayoutProps) {
           )}
         </div>
         <div data-auth="content">{children}</div>
-        <div className="flex flex-wrap justify-center gap-1 mt-6 pt-4 border-t border-gray-200 dark:border-gray-800" data-auth="languages">
+        <div className="flex flex-wrap justify-center gap-2 mt-6 pt-4 border-t border-gray-200 dark:border-gray-800" data-auth="languages">
           {(branding.languages ?? ALL_LANGUAGES).map((lang) => (
             <button
               key={lang.code}
               type="button"
               className={cn(
-                'bg-transparent border-none px-2 py-1 text-xs rounded cursor-pointer transition-colors',
+                'inline-flex items-center min-h-[36px] bg-transparent border-none px-2.5 py-2 text-xs rounded cursor-pointer transition-colors',
                 i18n.language === lang.code || i18n.language?.startsWith(lang.code)
                   ? 'text-primary font-semibold'
-                  : 'text-gray-400 dark:text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800'
+                  : 'text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-800'
               )}
               onClick={() => i18n.changeLanguage(lang.code)}
             >
@@ -117,6 +117,6 @@ export default function AuthLayout({ children }: AuthLayoutProps) {
         </div>
         <ThemeToggle />
       </Card>
-    </div>
+    </main>
   );
 }

@@ -329,7 +329,7 @@ export default function LoginPage() {
       )}
 
       {providers.length > 0 && showPasswordField && (
-        <div className="flex items-center gap-3 mb-4 text-gray-400 dark:text-gray-500 text-[13px]">
+        <div className="flex items-center gap-3 mb-4 text-gray-600 dark:text-gray-300 text-[13px]">
           <div className="flex-1 h-px bg-gray-200 dark:bg-gray-800" />
           <button
             type="button"

@@ -137,7 +137,7 @@ export default function ConsentPage() {
       </div>
 
       <CardFooter>
-        <p className="text-xs text-gray-400 dark:text-gray-500">{t('consent.hint')}</p>
+        <p className="text-xs text-gray-600 dark:text-gray-300">{t('consent.hint')}</p>
       </CardFooter>
     </AuthLayout>
   );
