@@ -34,6 +34,10 @@ internal static class UserinfoEndpoint
                 ValidIssuer = issuer,
                 ValidateIssuer = true,
                 ValidateAudience = true,
+                // userinfo is the OP's own endpoint: any valid access token this OP issued (correct
+                // issuer + signature + lifetime, with the openid scope) may call it, regardless of the
+                // client it was minted for. So "any audience present" is correct here — unlike a
+                // resource server, which pins its own audience.
                 AudienceValidator = (audiences, _, _) => audiences?.Any() == true,
                 ValidateLifetime = true,
                 IssuerSigningKeys = keys,

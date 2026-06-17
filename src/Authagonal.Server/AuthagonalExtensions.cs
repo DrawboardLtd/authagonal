@@ -333,17 +333,30 @@ public static class AuthagonalExtensions
         {
             var issuer = configuration["Issuer"]!;
 
+            // Expected audience(s) for resources protected by this scheme. When configured (Audience
+            // and/or an Audiences array), tokens MUST carry a matching aud — so a token minted for a
+            // different client in the same tenant can't be replayed against this resource. When unset,
+            // fall back to "any audience present" (backward-compatible — but resource servers should
+            // set Audience to close cross-client audience confusion).
+            var expectedAudiences = new List<string>();
+            if (configuration["Audience"] is { Length: > 0 } aud) expectedAudiences.Add(aud);
+            expectedAudiences.AddRange(configuration.GetSection("Audiences").Get<string[]>() ?? []);
+
             options.TokenValidationParameters = new TokenValidationParameters
             {
                 ValidIssuer = issuer,
                 ValidateIssuer = true,
                 ValidateAudience = true,
-                AudienceValidator = (audiences, _, _) => audiences?.Any() == true,
                 ValidateLifetime = true,
                 ValidAlgorithms = ["ES256"], // pin the signing alg (defence-in-depth vs alg confusion)
                 ClockSkew = TimeSpan.FromSeconds(60),
                 ValidateIssuerSigningKey = true
             };
+
+            if (expectedAudiences.Count > 0)
+                options.TokenValidationParameters.ValidAudiences = expectedAudiences;
+            else
+                options.TokenValidationParameters.AudienceValidator = (audiences, _, _) => audiences?.Any() == true;
 
             // Enforce access-token revocation: a token whose jti is in the revoked store is rejected
             // even though it is still cryptographically valid and unexpired.
