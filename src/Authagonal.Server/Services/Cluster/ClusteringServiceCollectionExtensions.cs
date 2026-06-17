@@ -9,7 +9,7 @@ namespace Authagonal.Server;
 /// <summary>
 /// Registration for the pluggable clustering layer — leader election + a cross-node event bus.
 /// Defaults to single-node in-process behaviour (always leader, local-only bus). A backend such as
-/// <c>UseAzureStorage</c> / <c>UseAzureStorageBus</c> (from <c>Authagonal.Storage</c>) swaps in real
+/// <c>UseAzureStorage</c> / <c>UseAzureStorageBus</c> (from <c>Authagonal.AzureProvider</c>) swaps in real
 /// implementations.
 /// </summary>
 public static class ClusteringServiceCollectionExtensions

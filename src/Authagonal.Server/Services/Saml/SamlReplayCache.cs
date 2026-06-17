@@ -3,7 +3,7 @@ using Microsoft.Extensions.Options;
 
 namespace Authagonal.Server.Services.Saml;
 
-public sealed class SamlReplayCache(TableClient tableClient, IOptions<CacheOptions> cacheOptions)
+public sealed class SamlReplayCache(TableClient tableClient, IOptions<CacheOptions> cacheOptions) : Authagonal.Core.Services.ISamlReplayCache
 {
 
     /// <summary>

@@ -1,15 +1,10 @@
+using Authagonal.Core.Services;
 using Azure.Data.Tables;
 using Microsoft.Extensions.Options;
 
 namespace Authagonal.Server.Services.Oidc;
 
-public sealed record OidcStateData(
-    string ConnectionId,
-    string ReturnUrl,
-    string CodeVerifier,
-    string Nonce);
-
-public sealed class OidcStateStore(TableClient tableClient, IOptions<CacheOptions> cacheOptions)
+public sealed class OidcStateStore(TableClient tableClient, IOptions<CacheOptions> cacheOptions) : IOidcStateStore
 {
 
     /// <summary>

@@ -1,6 +1,6 @@
 using Azure;
 using Azure.Data.Tables;
-using Authagonal.Storage.Entities;
+using Authagonal.AzureProvider.Entities;
 using Microsoft.Extensions.Options;
 
 namespace Authagonal.Server.Services;

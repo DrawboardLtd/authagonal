@@ -1,0 +1,39 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\Authagonal.Core\Authagonal.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="AWSSDK.DynamoDBv2" Version="4.*" />
+    <PackageReference Include="AWSSDK.S3" Version="4.*" />
+    <PackageReference Include="AWSSDK.SecretsManager" Version="4.*" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.9" />
+    <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" Version="10.0.9" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.9" />
+    <!-- For the S3 DataProtection key-ring repository (IXmlRepository / KeyManagementOptions). Per-TFM
+         so the major tracks the runtime. -->
+    <PackageReference Include="Microsoft.AspNetCore.DataProtection" Version="9.*" Condition="'$(TargetFramework)' == 'net9.0'" />
+    <PackageReference Include="Microsoft.AspNetCore.DataProtection" Version="10.*" Condition="'$(TargetFramework)' == 'net10.0'" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <TargetFrameworks>net9.0;net10.0</TargetFrameworks>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsTrimmable>true</IsTrimmable>
+    <IsPackable>true</IsPackable>
+    <PackageId>Authagonal.AwsProvider</PackageId>
+    <Description>AWS (DynamoDB / S3 / Secrets Manager) implementation for Authagonal stores and clustering.</Description>
+    <Authors>Drawboard</Authors>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageProjectUrl>https://github.com/authagonal/authagonal</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/authagonal/authagonal</RepositoryUrl>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+
+</Project>

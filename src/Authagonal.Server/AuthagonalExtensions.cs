@@ -13,7 +13,7 @@ using Authagonal.Server.Services;
 using Authagonal.Server.Services.Cluster;
 using Authagonal.Server.Services.Oidc;
 using Authagonal.Server.Services.Saml;
-using Authagonal.Storage;
+using Authagonal.AzureProvider;
 using Azure.Data.Tables;
 using Azure.Storage.Blobs;
 using Fido2NetLib;
@@ -49,9 +49,9 @@ public static class AuthagonalExtensions
     /// Full single-tenant registration. Calls <see cref="AddAuthagonalCore"/> and adds
     /// singleton stores, KeyManager, background services, and other single-tenant infrastructure.
     /// </summary>
-    public static IServiceCollection AddAuthagonal(this IServiceCollection services, IConfiguration configuration)
+    public static IServiceCollection AddAuthagonal(this IServiceCollection services, IConfiguration configuration, Action<ClusteringBuilder>? configureClustering = null)
     {
-        services.AddAuthagonalCore(configuration);
+        services.AddAuthagonalCore(configuration, configureClustering);
 
         // ---------------------------------------------------------------------------
         // Single-tenant storage. Two configuration paths:
@@ -114,22 +114,24 @@ public static class AuthagonalExtensions
 
         // Background services that depend on keyed TableClient or singleton stores
         services.AddHostedService<TokenCleanupService>();
-        services.AddHostedService<GrantReconciliationService>();
+        // Grant reconciliation scans the raw grant index tables directly (keyed TableClients), so it's
+        // Azure-only; register it only when the Azure backend provided those clients. On other backends,
+        // expiry cleanup is handled by TokenCleanupService via IGrantStore.RemoveExpiredAsync.
+        if (services.Any(d => d.IsKeyedService && (d.ServiceKey as string) == "Grants"))
+            services.AddHostedService<GrantReconciliationService>();
         services.AddHostedService<SigningKeyRotationService>();
         services.AddHostedService<ClientSeedService>();
         services.AddHostedService<ProviderSeedService>();
 
-        // SAML replay cache + OIDC state store (keyed TableClient singletons)
-        services.AddSingleton<SamlReplayCache>(sp =>
-        {
-            var tableClient = sp.GetRequiredKeyedService<TableClient>("SamlReplayCache");
-            return new SamlReplayCache(tableClient, sp.GetRequiredService<IOptions<CacheOptions>>());
-        });
-        services.AddSingleton<OidcStateStore>(sp =>
-        {
-            var tableClient = sp.GetRequiredKeyedService<TableClient>("OidcStateStore");
-            return new OidcStateStore(tableClient, sp.GetRequiredService<IOptions<CacheOptions>>());
-        });
+        // SAML replay cache + OIDC state store live behind the ISamlReplayCache / IOidcStateStore seams.
+        // The Azure backend exposes keyed TableClients; when present, wire the Table-backed impls. An AWS
+        // host pre-registers the DynamoDB impls (AddDynamoStorage), so these gated TryAdds are no-ops there.
+        if (services.Any(d => d.IsKeyedService && (d.ServiceKey as string) == "SamlReplayCache"))
+            services.TryAddSingleton<ISamlReplayCache>(sp =>
+                new SamlReplayCache(sp.GetRequiredKeyedService<TableClient>("SamlReplayCache"), sp.GetRequiredService<IOptions<CacheOptions>>()));
+        if (services.Any(d => d.IsKeyedService && (d.ServiceKey as string) == "OidcStateStore"))
+            services.TryAddSingleton<IOidcStateStore>(sp =>
+                new OidcStateStore(sp.GetRequiredKeyedService<TableClient>("OidcStateStore"), sp.GetRequiredService<IOptions<CacheOptions>>()));
 
         // Health check (depends on ISigningKeyStore singleton)
         services.AddHealthChecks()

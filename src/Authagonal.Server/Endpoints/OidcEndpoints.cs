@@ -31,7 +31,7 @@ public static class OidcEndpoints
         string? returnUrl,
         IOidcProviderStore oidcStore,
         OidcDiscoveryClient discoveryClient,
-        OidcStateStore stateStore,
+        Authagonal.Core.Services.IOidcStateStore stateStore,
         Authagonal.Core.Services.ITenantContext tenantContext,
         ILogger<Program> logger,
         CancellationToken ct)
@@ -106,7 +106,7 @@ public static class OidcEndpoints
         IUserStore userStore,
         IEnumerable<IAuthHook> authHooks,
         OidcDiscoveryClient discoveryClient,
-        OidcStateStore stateStore,
+        Authagonal.Core.Services.IOidcStateStore stateStore,
         IHttpClientFactory httpClientFactory,
         ISecretProvider secretProvider,
         Authagonal.Core.Services.ITenantContext tenantContext,
