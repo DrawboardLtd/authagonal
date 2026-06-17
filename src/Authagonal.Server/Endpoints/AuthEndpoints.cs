@@ -114,7 +114,9 @@ public static class AuthEndpoints
                 await userStore.UpdateAsync(user, ct);
             }
 
-            await authHooks.RunOnLoginFailedAsync(request.Email!, "invalid_credentials", ct);
+            // The audit-hook reason stays granular (internal only — never reaches the caller); the
+            // HTTP response is a uniform invalid_credentials so the client can't distinguish them.
+            await authHooks.RunOnLoginFailedAsync(request.Email!, user is null ? "user_not_found" : "invalid_password", ct);
 
             return JsonResults.Error("invalid_credentials", 401);
         }
@@ -469,6 +471,7 @@ public static class AuthEndpoints
         IEmailService emailService,
         ITenantContext tenantContext,
         TurnstileVerifier turnstile,
+        IRateLimiter rateLimiter,
         IOptions<AuthOptions> authOptions,
         ILogger<Program> logger,
         CancellationToken ct)
@@ -488,6 +491,16 @@ public static class AuthEndpoints
             logger.LogInformation("Password reset requested for non-existent email: {Email}", request.Email);
             // Artificial delay to prevent timing-based email enumeration
             await Task.Delay(TimeSpan.FromMilliseconds(100 + RandomNumberGenerator.GetInt32(200)), ct);
+            return TypedResults.Json(new SuccessResponse(), AuthagonalJsonContext.Default.SuccessResponse);
+        }
+
+        // Per-email rate limit so a single address can't be flooded with reset emails regardless of
+        // source IP (the per-IP strict limiter alone doesn't bound emails to one victim). Stay
+        // enumeration-neutral: when over the cap, skip sending but return the same success response.
+        var rlOpts = authOptions.Value;
+        if (await rateLimiter.IsRateLimitedAsync($"pwreset|{user.Email}", rlOpts.MaxPasswordResetsPerEmail, TimeSpan.FromMinutes(rlOpts.PasswordResetWindowMinutes), ct))
+        {
+            logger.LogInformation("Password reset rate-limited for {Email}", user.Email);
             return TypedResults.Json(new SuccessResponse(), AuthagonalJsonContext.Default.SuccessResponse);
         }
 

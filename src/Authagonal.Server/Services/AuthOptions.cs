@@ -14,6 +14,11 @@ public sealed class AuthOptions
     public int MaxRegistrationsPerIp { get; set; } = 5;
     public int RegistrationWindowMinutes { get; set; } = 60;
 
+    // --- Password-reset rate limiting (per target email, so one address can't be email-bombed
+    //     regardless of source IP) ---
+    public int MaxPasswordResetsPerEmail { get; set; } = 3;
+    public int PasswordResetWindowMinutes { get; set; } = 60;
+
     /// <summary>
     /// Email domains whose self-service registrations are auto-confirmed (skip the verification
     /// email). Empty by default — every registration must verify its email. Intended only for
