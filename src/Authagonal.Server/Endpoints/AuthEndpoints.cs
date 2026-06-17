@@ -323,7 +323,24 @@ public static class AuthEndpoints
 
         var existing = await userStore.FindByEmailAsync(email, ct);
         if (existing is not null)
-            return JsonResults.Error("email_already_registered", 409);
+        {
+            // Don't reveal that the email is already taken (account enumeration). Notify the real
+            // owner so they can sign in / reset, and return the SAME neutral 201 a brand-new
+            // registration returns. Spend the password-hash cost too, so timing can't distinguish a
+            // taken email from a new one. (UserId is a throwaway here; the client doesn't use it.)
+            _ = passwordHasher.HashPassword(request.Password);
+            try
+            {
+                await emailService.SendAccountExistsEmailAsync(existing.Email, $"{tenantContext.Issuer}/login", ct);
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(ex, "Failed to send account-exists email to {Email}", existing.Email);
+            }
+            logger.LogInformation("Registration attempt for an existing email — neutral response returned");
+            return TypedResults.Json(new RegistrationSuccess { Success = true, UserId = Guid.NewGuid().ToString("D") }, AuthagonalJsonContext.Default.RegistrationSuccess, statusCode: 201);
+        }
+
         var user = new AuthUser
         {
             Id = Guid.NewGuid().ToString("D"),

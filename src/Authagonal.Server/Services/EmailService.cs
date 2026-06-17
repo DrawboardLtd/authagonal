@@ -51,6 +51,27 @@ public sealed class EmailService(IHttpClientFactory httpClientFactory, IConfigur
         await SendAsync(email, subject, html, ct);
     }
 
+    public async Task SendAccountExistsEmailAsync(string email, string signInUrl, CancellationToken ct = default)
+    {
+        if (IsTestEmail(email))
+        {
+            logger.LogInformation("Skipping account-exists email for test address: {Email}", email);
+            return;
+        }
+
+        var subject = "You already have an account";
+        var html = $"""
+            <div style="font-family: sans-serif; max-width: 480px; margin: 0 auto;">
+                <h2>You already have an account</h2>
+                <p>Someone tried to sign up with this email, but an account already exists. Sign in instead — or reset your password if you've forgotten it.</p>
+                <p><a href="{signInUrl}" style="display: inline-block; padding: 12px 24px; background: #2563eb; color: white; text-decoration: none; border-radius: 6px;">Sign in</a></p>
+                <p style="color: #6b7280; font-size: 14px; margin-top: 24px;">If this wasn't you, you can safely ignore this email.</p>
+            </div>
+            """;
+
+        await SendAsync(email, subject, html, ct);
+    }
+
     private async Task SendAsync(string toEmail, string subject, string html, CancellationToken ct)
     {
         var apiKey = configuration[$"{ConfigSection}:ResendApiKey"]
