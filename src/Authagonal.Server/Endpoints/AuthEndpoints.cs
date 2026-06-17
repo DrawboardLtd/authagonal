@@ -78,45 +78,54 @@ public static class AuthEndpoints
             return JsonResults.Error("captcha_failed", 400);
 
         var user = await userStore.FindByEmailAsync(request.Email, ct);
-        if (user is null)
-            return JsonResults.Error("invalid_credentials", 401);
 
-        // Check if account is active
-        if (!user.IsActive)
-            return JsonResults.Error("account_disabled", 403);
-
-        // Check lockout
-        if (user.LockoutEnabled && user.LockoutEnd.HasValue && user.LockoutEnd > DateTimeOffset.UtcNow)
+        // Lockout is the ONLY account state checked before the password hash — it's the brute-force
+        // backstop and must short-circuit the expensive verify. Every other branch (no such user,
+        // disabled, unconfirmed, wrong password) is deferred until AFTER password verification and
+        // returns an identical invalid_credentials, so a wrong-password attempt can't enumerate which
+        // emails exist or what state they're in.
+        if (user is not null && user.LockoutEnabled && user.LockoutEnd.HasValue && user.LockoutEnd > DateTimeOffset.UtcNow)
         {
             var remaining = user.LockoutEnd.Value - DateTimeOffset.UtcNow;
             return TypedResults.Json(new LockedOutError { Error = "locked_out", RetryAfter = (int)remaining.TotalSeconds }, AuthagonalJsonContext.Default.LockedOutError, statusCode: 423);
         }
 
-        // Check email confirmed
-        if (!user.EmailConfirmed)
-            return JsonResults.Error("email_not_confirmed", 403);
+        // Verify the password. For a non-existent user, verify against a fixed dummy hash so the
+        // response timing matches a real account (no user-enumeration via the bcrypt/PBKDF2 cost).
+        var verifyResult = user is not null
+            ? passwordHasher.VerifyPassword(request.Password, user.PasswordHash!)
+            : passwordHasher.VerifyPassword(request.Password, DummyPasswordHash(passwordHasher));
 
-        // Verify password
-        var verifyResult = passwordHasher.VerifyPassword(request.Password, user.PasswordHash!);
-        if (verifyResult == PasswordVerifyResult.Failed)
+        if (user is null || verifyResult == PasswordVerifyResult.Failed)
         {
-            user.AccessFailedCount++;
-
-            var opts = authOptions.Value;
-            if (user.LockoutEnabled && user.AccessFailedCount >= opts.MaxFailedAttempts)
+            if (user is not null)
             {
-                user.LockoutEnd = DateTimeOffset.UtcNow.AddMinutes(opts.LockoutDurationMinutes);
-                user.AccessFailedCount = 0;
-                logger.LogWarning("Account locked out for user {UserId} ({Email})", user.Id, user.Email);
+                user.AccessFailedCount++;
+
+                var opts = authOptions.Value;
+                if (user.LockoutEnabled && user.AccessFailedCount >= opts.MaxFailedAttempts)
+                {
+                    user.LockoutEnd = DateTimeOffset.UtcNow.AddMinutes(opts.LockoutDurationMinutes);
+                    user.AccessFailedCount = 0;
+                    logger.LogWarning("Account locked out for user {UserId} ({Email})", user.Id, user.Email);
+                }
+
+                user.UpdatedAt = DateTimeOffset.UtcNow;
+                await userStore.UpdateAsync(user, ct);
             }
 
-            user.UpdatedAt = DateTimeOffset.UtcNow;
-            await userStore.UpdateAsync(user, ct);
-
-            await authHooks.RunOnLoginFailedAsync(request.Email!, "invalid_password", ct);
+            await authHooks.RunOnLoginFailedAsync(request.Email!, "invalid_credentials", ct);
 
             return JsonResults.Error("invalid_credentials", 401);
         }
+
+        // Password verified — the caller has proven ownership, so surfacing specific account state
+        // here is not enumeration (a wrong password never reaches this point).
+        if (!user.IsActive)
+            return JsonResults.Error("account_disabled", 403);
+
+        if (!user.EmailConfirmed)
+            return JsonResults.Error("email_not_confirmed", 403);
 
         // Successful login - reset lockout counters, record login time
         user.AccessFailedCount = 0;
@@ -225,6 +234,13 @@ public static class AuthEndpoints
 
         return TypedResults.Json(new LoginSuccessResponse { UserId = user.Id, Email = user.Email, Name = name, MfaAvailable = mfaAvailable, ClientId = mfaAvailable ? clientId : null }, AuthagonalJsonContext.Default.LoginSuccessResponse);
     }
+
+    // A process-wide dummy password hash, used to spend the same hashing cost on the no-such-user
+    // path as on a real verification so login timing can't distinguish whether an email exists.
+    // Computed once (lazily) in the configured hash format; no real password ever matches it.
+    private static string? _dummyPasswordHash;
+    private static string DummyPasswordHash(PasswordHasher hasher) =>
+        _dummyPasswordHash ??= hasher.HashPassword("\0unmatchable-enumeration-guard-dummy\0");
 
     internal static string? ExtractClientIdFromReturnUrl(string? returnUrl)
     {
