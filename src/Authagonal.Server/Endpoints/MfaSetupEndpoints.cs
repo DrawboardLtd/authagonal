@@ -200,12 +200,14 @@ public static class MfaSetupEndpoints
             await userStore.UpdateAsync(user, ct);
         }
 
-        // If authenticated via setup token, sign the cookie now (user proved password + TOTP)
+        // If authenticated via setup token, sign the cookie now (user proved password + TOTP).
+        // Run the onUserAuthenticated hook BEFORE signing in, so an enforced hook that rejects the
+        // login prevents the cookie from being issued.
         if (setupChallenge is not null && user is not null)
         {
+            await authHooks.RunOnUserAuthenticatedAsync(user.Id, user.Email, "password", setupChallenge.ClientId, ct);
             await CookieSignInHelper.SignInAsync(httpContext, user);
             await mfaStore.ConsumeChallengeAsync(setupChallenge.ChallengeId, ct);
-            await authHooks.RunOnUserAuthenticatedAsync(user.Id, user.Email, "password", setupChallenge.ClientId, ct);
         }
 
         return TypedResults.Json(new SuccessResponse(), AuthagonalJsonContext.Default.SuccessResponse);
@@ -326,12 +328,13 @@ public static class MfaSetupEndpoints
             await userStore.UpdateAsync(user, ct);
         }
 
-        // If authenticated via setup token, sign the cookie now
+        // If authenticated via setup token, sign the cookie now. Run the onUserAuthenticated hook
+        // BEFORE signing in, so an enforced hook that rejects the login prevents the cookie issue.
         if (setupChallenge is not null && user is not null)
         {
+            await authHooks.RunOnUserAuthenticatedAsync(user.Id, user.Email, "password", setupChallenge.ClientId, ct);
             await CookieSignInHelper.SignInAsync(httpContext, user);
             await mfaStore.ConsumeChallengeAsync(setupChallenge.ChallengeId, ct);
-            await authHooks.RunOnUserAuthenticatedAsync(user.Id, user.Email, "password", setupChallenge.ClientId, ct);
         }
 
         return TypedResults.Json(new WebAuthnConfirmResponse { CredentialId = credential.Id }, AuthagonalJsonContext.Default.WebAuthnConfirmResponse);

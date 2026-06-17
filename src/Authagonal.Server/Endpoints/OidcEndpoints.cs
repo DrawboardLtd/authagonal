@@ -441,12 +441,14 @@ public static class OidcEndpoints
         var identity = new ClaimsIdentity(claims, CookieAuthenticationDefaults.AuthenticationScheme);
         var principal = new ClaimsPrincipal(identity);
 
+        // Run the onUserAuthenticated hook BEFORE establishing the session, so an enforced hook that
+        // rejects the login prevents the cookie from being issued (not a 500 after it's already set).
+        await authHooks.RunOnUserAuthenticatedAsync(user.Id, email, "oidc", ct: ct);
+
         await httpContext.SignInAsync(CookieAuthenticationDefaults.AuthenticationScheme, principal);
 
         logger.LogInformation("User {UserId} ({Email}) signed in via OIDC connection {ConnectionId}",
             user.Id, email, stateData.ConnectionId);
-
-        await authHooks.RunOnUserAuthenticatedAsync(user.Id, email, "oidc", ct: ct);
 
         return Results.Redirect(returnUrl);
     }

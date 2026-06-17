@@ -62,6 +62,10 @@ public static class TokenEndpoint
 
             try
             {
+                // Run the onTokenIssued hook BEFORE minting, so a rejection doesn't mint/persist
+                // orphaned tokens (and never returns a token to the caller).
+                await authHooks.RunOnTokenIssuedAsync(null, clientId, grantType, ct);
+
                 var result = grantType switch
                 {
                     GrantTypes.AuthorizationCode => await HandleAuthorizationCode(form, tokenService, clientId, ct),
@@ -70,8 +74,6 @@ public static class TokenEndpoint
                     GrantTypes.DeviceCode => await HandleDeviceCode(form, tokenService, grantStore, userStore, subjectResolver, client, ct),
                     _ => throw new UnreachableException()
                 };
-
-                await authHooks.RunOnTokenIssuedAsync(null, clientId, grantType, ct);
 
                 return result;
             }

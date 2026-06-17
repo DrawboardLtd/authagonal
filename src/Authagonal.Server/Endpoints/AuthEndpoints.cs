@@ -208,13 +208,17 @@ public static class AuthEndpoints
             return TypedResults.Json(new MfaSetupRequiredResponse { SetupToken = setupChallenge.ChallengeId }, AuthagonalJsonContext.Default.MfaSetupRequiredResponse);
         }
 
-        // No MFA — sign cookie directly (session carries no MFA marker).
+        // Run the onUserAuthenticated hook BEFORE establishing the session. An enforced hook that
+        // rejects the login (throws) must prevent the cookie from ever being issued — previously the
+        // cookie was set first, so a rejection 500'd but still left a usable session for any client
+        // that ignored the error.
+        await authHooks.RunOnUserAuthenticatedAsync(user.Id, user.Email, "password", ct: ct);
+
+        // Not rejected — sign cookie (session carries no MFA marker).
         await CookieSignInHelper.SignInAsync(httpContext, user);
 
         var name = CookieSignInHelper.GetDisplayName(user);
         logger.LogInformation("User {UserId} ({Email}) signed in", user.Id, user.Email);
-
-        await authHooks.RunOnUserAuthenticatedAsync(user.Id, user.Email, "password", ct: ct);
 
         // If Enabled but user hasn't enrolled, hint that MFA is available (user is not enrolled here)
         var mfaAvailable = effectivePolicy == MfaPolicy.Enabled;
