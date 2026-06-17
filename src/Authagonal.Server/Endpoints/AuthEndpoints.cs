@@ -100,18 +100,12 @@ public static class AuthEndpoints
         {
             if (user is not null)
             {
-                user.AccessFailedCount++;
-
+                // Atomic (optimistic-concurrency) increment so parallel wrong-password attempts can't
+                // race the counter and slip past the lockout threshold.
                 var opts = authOptions.Value;
-                if (user.LockoutEnabled && user.AccessFailedCount >= opts.MaxFailedAttempts)
-                {
-                    user.LockoutEnd = DateTimeOffset.UtcNow.AddMinutes(opts.LockoutDurationMinutes);
-                    user.AccessFailedCount = 0;
+                var locked = await userStore.RecordFailedLoginAsync(user.Id, opts.MaxFailedAttempts, TimeSpan.FromMinutes(opts.LockoutDurationMinutes), ct);
+                if (locked)
                     logger.LogWarning("Account locked out for user {UserId} ({Email})", user.Id, user.Email);
-                }
-
-                user.UpdatedAt = DateTimeOffset.UtcNow;
-                await userStore.UpdateAsync(user, ct);
             }
 
             // The audit-hook reason stays granular (internal only — never reaches the caller); the

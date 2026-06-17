@@ -51,6 +51,47 @@ public sealed class TableUserStore(
         }
     }
 
+    public async Task<bool> RecordFailedLoginAsync(string userId, int maxAttempts, TimeSpan lockoutDuration, CancellationToken ct = default)
+    {
+        var pk = _partitioner.PK(userId);
+        for (var attempt = 0; attempt < 5; attempt++)
+        {
+            UserEntity entity;
+            try
+            {
+                entity = (await usersTable.GetEntityAsync<UserEntity>(pk, UserEntity.ProfileRowKey, cancellationToken: ct)).Value;
+            }
+            catch (RequestFailedException ex) when (ex.Status == 404)
+            {
+                return false;
+            }
+
+            entity.AccessFailedCount++;
+            var locked = false;
+            if (entity.LockoutEnabled && entity.AccessFailedCount >= maxAttempts)
+            {
+                entity.LockoutEnd = DateTimeOffset.UtcNow.Add(lockoutDuration);
+                entity.AccessFailedCount = 0;
+                locked = true;
+            }
+            entity.UpdatedAt = DateTimeOffset.UtcNow;
+
+            try
+            {
+                // If-Match on the ETag: a concurrent failed login that wrote first yields 412 — re-read
+                // and retry so no increment is lost (closes the parallel-attempts lockout bypass).
+                await usersTable.UpdateEntityAsync(entity, entity.ETag, TableUpdateMode.Merge, ct);
+                return locked;
+            }
+            catch (RequestFailedException ex) when (ex.Status == 412)
+            {
+                // Lost the race — loop to re-read the fresh count and retry.
+            }
+        }
+
+        return false; // sustained contention; a subsequent attempt will still lock the account
+    }
+
     public async Task<AuthUser?> FindByEmailAsync(string email, CancellationToken ct = default)
     {
         var normalizedEmail = email.ToUpperInvariant();
