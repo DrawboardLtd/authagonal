@@ -219,17 +219,5 @@ jobs:
           cache-from: type=gha,scope=demo-frontend
           cache-to: type=gha,mode=max,scope=demo-frontend
 
-  # The demo is deployed by the authagonal-cloud repo into aks-authagonal-prod.
-  # Notify it that fresh demo images were published so it can roll the demo.
-  notify-cloud:
-    needs: docker
-    runs-on: ubuntu-latest
-    steps:
-      - name: Trigger demo deploy in authagonal-cloud
-        uses: peter-evans/repository-dispatch@v3
-        with:
-          token: ${{ secrets.CLOUD_DISPATCH_TOKEN }}
-          repository: authagonal/authagonal-cloud
-          event-type: demo-image-published
-          client-payload: |
-            { "version": "${{ github.ref_name }}", "sha": "${{ github.sha }}" }
+  # NOTE: the demo is deployed manually by the authagonal-cloud repo
+  # (run its "Demo (deploy to prod)" workflow, or push under k8s/demo/).
