@@ -28,7 +28,7 @@ on:
         default: "30m"
 
 env:
-  BASE_URL: https://sso.demo.authagonal.drawboard.com
+  BASE_URL: https://demo-auth.authagonal.io
 
 jobs:
   smoke:

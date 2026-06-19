@@ -7,9 +7,9 @@ on:
 env:
   DOCKERHUB_SERVER: drawboardci/authagonal
   DOCKERHUB_MIGRATION: drawboardci/authagonal-migration
-  DOCKERHUB_DEMO_SERVER: drawboardci/authagonal-demo-server
-  DOCKERHUB_DEMO_SAMPLE_API: drawboardci/authagonal-demo-sample-api
-  DOCKERHUB_DEMO_FRONTEND: drawboardci/authagonal-demo-frontend
+  DOCKERHUB_DEMO_SERVER: authagonal/authagonal-demo-server
+  DOCKERHUB_DEMO_SAMPLE_API: authagonal/authagonal-demo-sample-api
+  DOCKERHUB_DEMO_FRONTEND: authagonal/authagonal-demo-frontend
 
 jobs:
   publish-nuget:
@@ -179,6 +179,14 @@ jobs:
             type=semver,pattern={{major}}.{{minor}}
             type=sha,format=long
 
+      # Demo images publish to the public `authagonal` Docker Hub org (not drawboardci).
+      # Re-login as the authagonal org for the demo pushes below.
+      - name: Log in to Docker Hub (authagonal org)
+        uses: docker/login-action@v4
+        with:
+          username: authagonal
+          password: ${{ secrets.DOCKERHUB_AUTHAGONAL_TOKEN }}
+
       - name: Build and push demo server image
         uses: docker/build-push-action@v7
         with:
@@ -211,39 +219,17 @@ jobs:
           cache-from: type=gha,scope=demo-frontend
           cache-to: type=gha,mode=max,scope=demo-frontend
 
-  deploy-demo:
+  # The demo is deployed by the authagonal-cloud repo into aks-authagonal-prod.
+  # Notify it that fresh demo images were published so it can roll the demo.
+  notify-cloud:
     needs: docker
     runs-on: ubuntu-latest
-    environment: azure-demo
-    permissions:
-      id-token: write
-      contents: read
-
     steps:
-      - name: Azure Login
-        uses: azure/login@v3
+      - name: Trigger demo deploy in authagonal-cloud
+        uses: peter-evans/repository-dispatch@v3
         with:
-          client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-
-      - name: Deploy auth server
-        uses: azure/container-apps-deploy-action@v2
-        with:
-          resourceGroup: authagonal-demo
-          containerAppName: authagonal-auth
-          imageToDeploy: drawboardci/authagonal-demo-server:sha-${{ github.sha }}
-
-      - name: Deploy sample API
-        uses: azure/container-apps-deploy-action@v2
-        with:
-          resourceGroup: authagonal-demo
-          containerAppName: authagonal-api
-          imageToDeploy: drawboardci/authagonal-demo-sample-api:sha-${{ github.sha }}
-
-      - name: Deploy frontend
-        uses: azure/container-apps-deploy-action@v2
-        with:
-          resourceGroup: authagonal-demo
-          containerAppName: authagonal-frontend
-          imageToDeploy: drawboardci/authagonal-demo-frontend:sha-${{ github.sha }}
+          token: ${{ secrets.CLOUD_DISPATCH_TOKEN }}
+          repository: authagonal/authagonal-cloud
+          event-type: demo-image-published
+          client-payload: |
+            { "version": "${{ github.ref_name }}", "sha": "${{ github.sha }}" }

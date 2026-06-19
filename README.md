@@ -13,7 +13,7 @@
   <a href="https://authagonal.io"><img src="https://img.shields.io/badge/managed%20cloud-authagonal.io-c5362c.svg" alt="Authagonal Cloud"></a>
 </p>
 
-<p align="center"><strong><a href="https://authagonal.github.io/authagonal/">Documentation</a> · <a href="https://demo.authagonal.drawboard.com">Live Demo</a> · <a href="https://authagonal.io">Managed Cloud</a></strong></p>
+<p align="center"><strong><a href="https://authagonal.github.io/authagonal/">Documentation</a> · <a href="https://demo.authagonal.io">Live Demo</a> · <a href="https://authagonal.io">Managed Cloud</a></strong></p>
 
 The open, self-hostable identity server for .NET teams — a fully-featured alternative to Duende IdentityServer and Auth0 that **you** run. API-only ASP.NET Core server + React login SPA, shipped as a single Docker image, or embedded as a library in your own ASP.NET project. Built on a custom OIDC/OAuth2 protocol implementation — no OpenIddict or Duende dependency.
 
