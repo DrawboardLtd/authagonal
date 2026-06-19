@@ -96,4 +96,4 @@ builder.Services.AddAuthagonal(builder.Configuration);
 
 - [GitHub](https://github.com/authagonal/authagonal)
 - [Documentation](https://authagonal.github.io/authagonal)
-- [Live demo](https://demo.authagonal.drawboard.com)
+- [Live demo](https://demo.authagonal.io)
