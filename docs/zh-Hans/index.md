@@ -10,9 +10,11 @@ locale: zh-Hans
 
 # Authagonal
 
-基于 Azure Table Storage 的 OAuth 2.0 / OpenID Connect / SAML 2.0 认证服务器。
+面向 .NET 的 OAuth 2.0 / OpenID Connect / SAML 2.0 认证服务器，采用可插拔的云存储后端 -- Azure Table Storage 或 AWS（DynamoDB / S3 / Secrets Manager）。
 
 单一、自包含的部署。服务器和登录界面作为一个 Docker 镜像发布 -- SPA 与 API 从同一来源提供服务，因此 Cookie 认证、重定向和 CSP 均无需处理跨域复杂性。
+
+> **更想要托管服务？** [Authagonal Cloud](https://authagonal.io) 为你运行这一切 -- 多租户，每个套餐都包含全部功能，且不按连接收取 SSO 费用。→ [authagonal.io](https://authagonal.io)
 
 ## 核心功能
 
@@ -23,7 +25,7 @@ locale: zh-Hans
 - **可定制登录界面** -- 通过 JSON 文件进行运行时配置 -- 徽标、颜色、自定义 CSS -- 无需重新构建
 - **认证钩子** -- `IAuthHook` 扩展性，支持审计日志、自定义验证、Webhook
 - **可组合库** -- `AddAuthagonal()` / `UseAuthagonal()` 可在您自己的项目中托管，并支持自定义服务覆盖
-- **Azure Table Storage** -- 低成本、无服务器友好的存储后端
+- **可插拔的云存储** -- Azure Table Storage 或 AWS（DynamoDB / S3 / Secrets Manager）；低成本、无服务器友好的后端
 - **管理 API** -- 用户 CRUD、SAML/OIDC 提供者管理、SSO 域路由、令牌模拟
 
 ## 架构

@@ -10,9 +10,11 @@ locale: vi
 
 # Authagonal
 
-Máy chủ xác thực OAuth 2.0 / OpenID Connect / SAML 2.0 được hỗ trợ bởi Azure Table Storage.
+Máy chủ xác thực OAuth 2.0 / OpenID Connect / SAML 2.0 cho .NET, được hỗ trợ bởi lưu trữ đám mây có thể thay thế — Azure Table Storage hoặc AWS (DynamoDB / S3 / Secrets Manager).
 
 Một triển khai duy nhất, khép kín. Máy chủ và giao diện đăng nhập được đóng gói thành một Docker image duy nhất — SPA được phục vụ từ cùng origin với API, nên xác thực cookie, chuyển hướng và CSP đều hoạt động mà không cần xử lý phức tạp cross-origin.
+
+> **Thích dịch vụ được quản lý hơn?** [Authagonal Cloud](https://authagonal.io) vận hành tất cả những điều này cho bạn — đa người thuê (multi-tenant), mọi tính năng trên mọi gói, không tính phí SSO theo từng kết nối. → [authagonal.io](https://authagonal.io)
 
 ## Tính năng chính
 
@@ -23,7 +25,7 @@ Một triển khai duy nhất, khép kín. Máy chủ và giao diện đăng nh�
 - **Giao diện đăng nhập tùy chỉnh** — cấu hình tại thời điểm chạy qua tệp JSON — logo, màu sắc, CSS tùy chỉnh — không cần build lại
 - **Auth Hooks** — khả năng mở rộng `IAuthHook` cho ghi nhật ký kiểm tra, xác thực tùy chỉnh, webhooks
 - **Thư viện có thể kết hợp** — `AddAuthagonal()` / `UseAuthagonal()` để tích hợp vào dự án của bạn với các tùy chỉnh dịch vụ
-- **Azure Table Storage** — hệ thống lưu trữ chi phí thấp, thân thiện với serverless
+- **Lưu trữ đám mây có thể thay thế** — Azure Table Storage hoặc AWS (DynamoDB / S3 / Secrets Manager); các backend chi phí thấp, thân thiện với serverless
 - **API Quản trị** — CRUD người dùng, quản lý nhà cung cấp SAML/OIDC, định tuyến tên miền SSO, giả mạo token
 
 ## Kiến trúc

@@ -4,11 +4,21 @@
 
 <h1 align="center">Authagonal</h1>
 
-<p align="center">OAuth 2.0 / OpenID Connect / SAML 2.0 authentication server backed by Azure Table Storage.</p>
+<p align="center">Self-hosted OAuth 2.0 / OpenID Connect / SAML 2.0 authentication server for .NET.<br>Pluggable cloud storage — Azure Table Storage or AWS (DynamoDB / S3 / Secrets Manager).</p>
 
-Architecture: API-only ASP.NET Core server + React login SPA, packaged as a single Docker image. Can also be embedded as a library in your own ASP.NET project.
+<p align="center">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT License"></a>
+  <a href="https://www.nuget.org/packages/Authagonal.Server"><img src="https://img.shields.io/nuget/v/Authagonal.Server.svg" alt="NuGet"></a>
+  <a href="https://authagonal.github.io/authagonal/"><img src="https://img.shields.io/badge/docs-authagonal.github.io-1f6feb.svg" alt="Documentation"></a>
+  <a href="https://authagonal.io"><img src="https://img.shields.io/badge/managed%20cloud-authagonal.io-c5362c.svg" alt="Authagonal Cloud"></a>
+</p>
 
-**[Documentation](https://drawboardltd.github.io/authagonal/)** · **[Live Demo](https://demo.authagonal.drawboard.com)**
+<p align="center"><strong><a href="https://authagonal.github.io/authagonal/">Documentation</a> · <a href="https://demo.authagonal.drawboard.com">Live Demo</a> · <a href="https://authagonal.io">Managed Cloud</a></strong></p>
+
+The open, self-hostable identity server for .NET teams — a fully-featured alternative to Duende IdentityServer and Auth0 that **you** run. API-only ASP.NET Core server + React login SPA, shipped as a single Docker image, or embedded as a library in your own ASP.NET project. Built on a custom OIDC/OAuth2 protocol implementation — no OpenIddict or Duende dependency.
+
+> ### ☁️ Don't want to run it yourself?
+> **[Authagonal Cloud](https://authagonal.io)** is the fully-managed version — multi-tenant SSO, SCIM, MFA, custom domains, and a management portal, with **every feature on every plan and no per-connection SSO fees**. Self-host the OSS here, or let us operate it → **[authagonal.io](https://authagonal.io)**
 
 ## Quick Start
 
@@ -23,10 +33,12 @@ This starts the auth server on `http://localhost:8080` with an Azurite storage e
 | Project | Description |
 |---|---|
 | `src/Authagonal.Core` | Domain models, interfaces, extensibility contracts |
-| `src/Authagonal.Storage` | Azure Table Storage implementations |
-| `src/Authagonal.Backup` | Backup, restore, merge and rollup library for Table Storage data |
+| `src/Authagonal.Protocol` | Embeddable OIDC / OAuth 2.0 protocol surface — bring your own identity (`IOidcSubjectResolver`) and storage (`IClientStore` / `IGrantStore` / `IScopeStore` / `ISigningKeyStore`). No user store, no SAML, no admin UI. |
+| `src/Authagonal.AzureProvider` | Azure Table Storage implementation of the stores (formerly `Authagonal.Storage`) |
+| `src/Authagonal.AwsProvider` | AWS implementation — DynamoDB / S3 / Secrets Manager stores and clustering |
+| `src/Authagonal.Backup` | Backup, restore, merge and rollup library for the storage backends |
 | `src/Authagonal.Server` | ASP.NET Core host — OIDC, SAML, auth API, admin API |
-| `login-app` | React/TypeScript login SPA (Vite), published as `@drawboard/authagonal-login` |
+| `login-app` | React/TypeScript login SPA (Vite), published as `@authagonal/login` |
 | `tools/Authagonal.Migration` | Duende IdentityServer → Table Storage migration tool |
 | `tools/Authagonal.Backup` | Azure Table Storage backup tool (incremental support) |
 | `tools/Authagonal.Restore` | Azure Table Storage restore tool (upsert, merge, clean modes) |
@@ -71,8 +83,9 @@ This starts the auth server on `http://localhost:8080` with an Azurite storage e
 | Option | Description |
 |---|---|
 | **Docker image** | `drawboardci/authagonal` — pre-built, configure via env vars and branding.json |
-| **NuGet library** | Reference `Authagonal.Server` + `Authagonal.Storage`, call `AddAuthagonal()`, override services |
-| **npm package** | `@drawboard/authagonal-login` — the login SPA as a component library; import base components, override what you need |
+| **NuGet library** | Reference `Authagonal.Server` + a provider (`Authagonal.AzureProvider` or `Authagonal.AwsProvider`), call `AddAuthagonal()`, override services |
+| **npm package** | `@authagonal/login` — the login SPA as a component library; import base components, override what you need |
+| **Managed cloud** | [Authagonal Cloud](https://authagonal.io) — we host and operate it for you |
 
 ## Docker
 
@@ -129,7 +142,7 @@ k6 run tests/load/soak.js -e DURATION=30m
 
 ## Configuration
 
-See the [full documentation](https://drawboardltd.github.io/authagonal/) for configuration reference.
+See the [full documentation](https://authagonal.github.io/authagonal/) for configuration reference.
 
 ## License
 

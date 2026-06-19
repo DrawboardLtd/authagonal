@@ -10,9 +10,11 @@ locale: es
 
 # Authagonal
 
-Servidor de autenticacion OAuth 2.0 / OpenID Connect / SAML 2.0 respaldado por Azure Table Storage.
+Servidor de autenticacion OAuth 2.0 / OpenID Connect / SAML 2.0 para .NET, respaldado por almacenamiento en la nube intercambiable -- Azure Table Storage o AWS (DynamoDB / S3 / Secrets Manager).
 
 Un unico despliegue autonomo. El servidor y la interfaz de inicio de sesion se entregan como una sola imagen Docker -- la SPA se sirve desde el mismo origen que la API, por lo que la autenticacion por cookies, las redirecciones y la CSP funcionan sin complejidad de origen cruzado.
+
+> **¿Prefieres un servicio gestionado?** [Authagonal Cloud](https://authagonal.io) lo ejecuta todo por ti -- multiinquilino, todas las funciones en todos los planes, sin tarifas de SSO por conexion. → [authagonal.io](https://authagonal.io)
 
 ## Caracteristicas principales
 
@@ -23,7 +25,7 @@ Un unico despliegue autonomo. El servidor y la interfaz de inicio de sesion se e
 - **Interfaz de inicio de sesion personalizable** -- configurable en tiempo de ejecucion mediante un archivo JSON -- logotipo, colores, CSS personalizado -- sin necesidad de recompilacion
 - **Hooks de autenticacion** -- extensibilidad `IAuthHook` para registro de auditoria, validacion personalizada, webhooks
 - **Biblioteca composable** -- `AddAuthagonal()` / `UseAuthagonal()` para alojar en su propio proyecto con sustituciones de servicios personalizadas
-- **Azure Table Storage** -- almacenamiento backend de bajo costo, compatible con serverless
+- **Almacenamiento en la nube intercambiable** -- Azure Table Storage o AWS (DynamoDB / S3 / Secrets Manager); backends de bajo costo y compatibles con serverless
 - **APIs de administracion** -- CRUD de usuarios, gestion de proveedores SAML/OIDC, enrutamiento de dominios SSO, suplantacion de tokens
 
 ## Arquitectura

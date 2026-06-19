@@ -2,9 +2,70 @@
 
 ## [Unreleased]
 
+## [0.4.0] — 2026-06-17
+
+### Added
+
+- **AWS backend provider** — `Authagonal.AwsProvider` implements all stores and clustering on AWS (DynamoDB / S3 / Secrets Manager). The storage backend is now selectable: run on Azure Table Storage or AWS.
+
+### Changed
+
+- **`Authagonal.Storage` → `Authagonal.AzureProvider`** — the Azure Table Storage implementation moved to a provider-named package alongside `Authagonal.AwsProvider`. Update package references and service registration accordingly.
+
+## [0.3.18] – [0.3.19] — 2026-06-17
+
 ### Security
 
-Hardening from a full security review:
+A second hardening pass:
+
+- **Login & registration enumeration resistance** — responses no longer reveal whether an account exists.
+- **Password-reset rate limiting** — per-email limit to prevent email-bombing.
+- **Atomic lockout counter** — closes a parallel brute-force bypass.
+- **Token audience validation** — issued tokens are validated against the configured `Audience(s)`.
+- **Auth-hook ordering** — `IAuthHook`s now run *before* the session is established.
+
+## [0.3.14] – [0.3.17] — 2026-06-16 → 06-17
+
+### Fixed
+
+- **Accessibility** — `main` landmark, WCAG AA contrast, tap-target sizing, and a sensible min-width on the hosted login layout.
+- **Login routing** — login-app router mounted at basename `/login` so sub-routes resolve.
+- **Backup** — don't dispose the hash before reading it.
+
+## [0.3.8] – [0.3.13] — 2026-06-15
+
+### Added
+
+- **Cloudflare Turnstile** — opt-in CAPTCHA on login, registration, forgot-password, and reset-password; CSP allowance when configured; dedicated `captchaFailed` message across all login-app locales.
+- **SCIM group → role mapping** — resolved at token issuance.
+
+### Fixed
+
+- **SCIM** — fixed user-listing overflow when fetching all users.
+
+## [0.3.4] – [0.3.7] — 2026-06-13 → 06-15
+
+### Added
+
+- **Pluggable event-bus clustering** — replaced gossip-based clustering with a pluggable event-bus architecture.
+- **Admin registration** — custom user IDs, pre-confirmation, and extended attributes on admin-created users.
+
+### Fixed
+
+- **SAML (Entra)** — fixed RSA-SHA256 signature verification on .NET/Linux; removed the unsupported SAML `Subject` from `AuthnRequest`.
+- **Build** — fixed a CS0433 break by bumping Azure.Identity to 1.21.0; net10.0 Docker publish.
+
+## [0.3.1] – [0.3.3] — 2026-05-30 → 05-31
+
+### Added
+
+- **User registration & OAuth screens** — login-app gains self-service registration plus OAuth consent and device-authorization pages.
+- **Multi-framework** — net9.0 and net10.0 target support.
+- **`example.com` auto-confirm config** and **WebAuthn credential-uniqueness** enforcement; expanded security regression tests.
+
+### Security
+
+Hardening from a full security review (the "top 8"):
 
 - **MFA always challenges** — enrolled users are always challenged; closes a path where MFA could be bypassed.
 - **Federation account-takeover prevention** — upstream logins now require `email_verified` and enforce the provider's `AllowedDomains` before linking or provisioning, preventing takeover via unverified or out-of-domain emails.
