@@ -2,7 +2,7 @@ using System.Security.Cryptography;
 using Authagonal.Core.Models;
 using Authagonal.Core.Stores;
 using Authagonal.Migration;
-using Authagonal.Storage;
+using Authagonal.AzureProvider;
 using Microsoft.Data.SqlClient;
 using Microsoft.Extensions.Configuration;
 

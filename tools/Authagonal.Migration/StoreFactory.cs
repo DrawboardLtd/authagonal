@@ -1,6 +1,6 @@
 using Authagonal.Core.Services;
 using Authagonal.Core.Stores;
-using Authagonal.Storage.Stores;
+using Authagonal.AzureProvider.Stores;
 using Azure.Data.Tables;
 using Microsoft.Extensions.Logging.Abstractions;
 

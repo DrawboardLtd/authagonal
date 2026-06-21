@@ -12,7 +12,7 @@ WORKDIR /src
 COPY *.slnx ./
 COPY src/Authagonal.Core/*.csproj src/Authagonal.Core/
 COPY src/Authagonal.Protocol/*.csproj src/Authagonal.Protocol/
-COPY src/Authagonal.Storage/*.csproj src/Authagonal.Storage/
+COPY src/Authagonal.AzureProvider/*.csproj src/Authagonal.AzureProvider/
 COPY src/Authagonal.Server/*.csproj src/Authagonal.Server/
 RUN dotnet restore src/Authagonal.Server/
 COPY src/ src/

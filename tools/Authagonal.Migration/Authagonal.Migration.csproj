@@ -2,7 +2,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\Authagonal.Core\Authagonal.Core.csproj" />
-    <ProjectReference Include="..\..\src\Authagonal.Storage\Authagonal.Storage.csproj" />
+    <ProjectReference Include="..\..\src\Authagonal.AzureProvider\Authagonal.AzureProvider.csproj" />
   </ItemGroup>
 
   <ItemGroup>
