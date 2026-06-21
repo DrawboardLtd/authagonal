@@ -14,6 +14,8 @@ export interface BrandingConfig {
   welcomeTitle: LocalizedString;
   welcomeSubtitle: LocalizedString;
   languages: { code: string; label: string }[] | null;
+  /** When true, show the "Powered by Authagonal" footer on the auth pages. */
+  poweredBy: boolean;
 }
 
 const defaults: BrandingConfig = {
@@ -27,6 +29,7 @@ const defaults: BrandingConfig = {
   welcomeTitle: null,
   welcomeSubtitle: null,
   languages: null,
+  poweredBy: true,
 };
 
 export async function loadBranding(): Promise<BrandingConfig> {

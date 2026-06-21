@@ -1,5 +1,5 @@
 import { useEffect, type ReactNode } from 'react';
-import { useTranslation } from 'react-i18next';
+import { Trans, useTranslation } from 'react-i18next';
 import { useBranding } from '../branding';
 import { useDarkMode } from '../hooks/useDarkMode';
 import { Card } from './ui/card';
@@ -116,6 +116,23 @@ export default function AuthLayout({ children }: AuthLayoutProps) {
           ))}
         </div>
         <ThemeToggle />
+        {branding.poweredBy && (
+          <p className="mt-3 text-center text-xs text-gray-400 dark:text-gray-500" data-auth="powered-by">
+            <Trans
+              i18nKey="poweredBy"
+              components={{
+                brand: (
+                  <a
+                    href="https://authagonal.io"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="font-medium text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
+                  />
+                ),
+              }}
+            />
+          </p>
+        )}
       </Card>
     </main>
   );
