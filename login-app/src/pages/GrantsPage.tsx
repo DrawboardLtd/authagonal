@@ -1,6 +1,5 @@
 import { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
-import AuthLayout from '../components/AuthLayout';
 import { CardTitle } from '../components/ui/card';
 import { Button } from '../components/ui/button';
 import { Alert } from '../components/ui/alert';
@@ -47,7 +46,7 @@ export default function GrantsPage() {
   }
 
   return (
-    <AuthLayout>
+    <>
       <CardTitle>{t('grants.title')}</CardTitle>
       <p className="text-sm text-gray-500 dark:text-gray-400 mb-4">{t('grants.subtitle')}</p>
 
@@ -82,6 +81,6 @@ export default function GrantsPage() {
           ))}
         </div>
       )}
-    </AuthLayout>
+    </>
   );
 }

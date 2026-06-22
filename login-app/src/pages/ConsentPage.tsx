@@ -1,7 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useSearchParams } from 'react-router-dom';
-import AuthLayout from '../components/AuthLayout';
 import { CardTitle, CardFooter } from '../components/ui/card';
 import { Button } from '../components/ui/button';
 import { Alert } from '../components/ui/alert';
@@ -72,14 +71,12 @@ export default function ConsentPage() {
 
   if (loading) {
     return (
-      <AuthLayout>
-        <p className="text-sm text-gray-500 dark:text-gray-400 text-center">{t('consent.loading')}</p>
-      </AuthLayout>
+      <p className="text-sm text-gray-500 dark:text-gray-400 text-center">{t('consent.loading')}</p>
     );
   }
 
   return (
-    <AuthLayout>
+    <>
       {info?.logoUri && (
         <div className="flex justify-center mb-4">
           <img
@@ -139,6 +136,6 @@ export default function ConsentPage() {
       <CardFooter>
         <p className="text-xs text-gray-600 dark:text-gray-300">{t('consent.hint')}</p>
       </CardFooter>
-    </AuthLayout>
+    </>
   );
 }
