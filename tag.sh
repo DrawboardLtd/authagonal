@@ -1,13 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Find the latest v0.3.x tag and compute the next one
-latest=$(git tag -l 'v0.3.*' | sort -V | tail -1)
+# Find the highest vMAJOR.MINOR.PATCH tag and bump the patch. (Was pinned to v0.3.x,
+# which silently stopped tracking the line once releases moved to 0.4.x.)
+latest=$(git tag -l 'v*' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1)
 if [ -z "$latest" ]; then
-  next="v0.3.0"
+  next="v0.0.1"
 else
-  patch=${latest##*0.3.}
-  next="v0.3.$((patch + 1))"
+  ver=${latest#v}
+  major=${ver%%.*}; rest=${ver#*.}; minor=${rest%%.*}; patch=${rest##*.}
+  next="v${major}.${minor}.$((patch + 1))"
 fi
 version=${next#v}
 
