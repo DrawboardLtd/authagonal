@@ -1,5 +1,5 @@
 using Authagonal.Core.Models;
-using Authagonal.Storage.Entities;
+using Authagonal.AzureProvider.Entities;
 
 namespace Authagonal.Tests;
 

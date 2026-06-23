@@ -1,4 +1,4 @@
-using Authagonal.Storage.Stores;
+using Authagonal.AzureProvider.Stores;
 
 namespace Authagonal.Tests;
 

@@ -1,4 +1,4 @@
-using Authagonal.Storage.Clustering;
+using Authagonal.AzureProvider.Clustering;
 using Authagonal.Tests.Infrastructure;
 using Azure.Data.Tables;
 using Azure.Storage.Blobs;

@@ -1,6 +1,6 @@
 using Authagonal.Core.Models;
 using Authagonal.Core.Services;
-using Authagonal.Storage.Stores;
+using Authagonal.AzureProvider.Stores;
 using Authagonal.Tests.Infrastructure;
 using Azure.Data.Tables;
 
