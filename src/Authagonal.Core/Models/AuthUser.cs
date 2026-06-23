@@ -11,6 +11,9 @@ public sealed class AuthUser
     public string? LastName { get; set; }
     public string? CompanyName { get; set; }
     public string? Phone { get; set; }
+    /// <summary>Preferred UI/communication language as a BCP-47 tag (e.g. "de", "zh-Hans"). Captured
+    /// from the request-time UI language at registration; null means no preference (fall back to English).</summary>
+    public string? Locale { get; set; }
     public string? OrganizationId { get; set; }
     public int AccessFailedCount { get; set; }
     public bool LockoutEnabled { get; set; }

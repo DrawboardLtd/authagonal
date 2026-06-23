@@ -22,6 +22,7 @@ public sealed class UserEntity : ITableEntity
     public string? LastName { get; set; }
     public string? CompanyName { get; set; }
     public string? Phone { get; set; }
+    public string? Locale { get; set; }
     public string? OrganizationId { get; set; }
     public int AccessFailedCount { get; set; }
     public bool LockoutEnabled { get; set; }
@@ -49,6 +50,7 @@ public sealed class UserEntity : ITableEntity
         LastName = user.LastName,
         CompanyName = user.CompanyName,
         Phone = user.Phone,
+        Locale = user.Locale,
         OrganizationId = user.OrganizationId,
         AccessFailedCount = user.AccessFailedCount,
         LockoutEnabled = user.LockoutEnabled,
@@ -76,6 +78,7 @@ public sealed class UserEntity : ITableEntity
         LastName = LastName,
         CompanyName = CompanyName,
         Phone = Phone,
+        Locale = Locale,
         OrganizationId = OrganizationId,
         AccessFailedCount = AccessFailedCount,
         LockoutEnabled = LockoutEnabled,

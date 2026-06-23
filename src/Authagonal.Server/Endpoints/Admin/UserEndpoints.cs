@@ -50,6 +50,7 @@ public static class UserEndpoints
             LastName = user.LastName,
             CompanyName = user.CompanyName,
             Phone = user.Phone,
+            Locale = user.Locale,
             OrganizationId = user.OrganizationId,
             LockoutEnabled = user.LockoutEnabled,
             LockoutEnd = user.LockoutEnd,
@@ -130,6 +131,7 @@ public static class UserEndpoints
             CompanyName = request.CompanyName,
             OrganizationId = request.OrganizationId,
             Phone = request.Phone,
+            Locale = request.Locale,
             LockoutEnabled = true,
             SecurityStamp = securityStamp,
             CreatedAt = now,
@@ -204,6 +206,7 @@ public static class UserEndpoints
         if (request.LastName is not null) user.LastName = request.LastName;
         if (request.CompanyName is not null) user.CompanyName = request.CompanyName;
         if (request.Phone is not null) user.Phone = request.Phone;
+        if (request.Locale is not null) user.Locale = request.Locale;
         if (request.OrganizationId is not null) user.OrganizationId = request.OrganizationId;
         user.UpdatedAt = DateTimeOffset.UtcNow;
 
@@ -226,6 +229,7 @@ public static class UserEndpoints
             LastName = user.LastName,
             CompanyName = user.CompanyName,
             Phone = user.Phone,
+            Locale = user.Locale,
             OrganizationId = user.OrganizationId,
             UpdatedAt = user.UpdatedAt ?? user.CreatedAt
         }, AuthagonalJsonContext.Default.UserUpdateResponse);
@@ -424,6 +428,7 @@ public static class UserEndpoints
         public string? CompanyName { get; set; }
         public string? OrganizationId { get; set; }
         public string? Phone { get; set; }
+        public string? Locale { get; set; }
 
         /// <summary>
         /// Arbitrary attributes persisted on the user and forwarded to provisioning targets
@@ -439,6 +444,7 @@ public static class UserEndpoints
         public string? LastName { get; set; }
         public string? CompanyName { get; set; }
         public string? Phone { get; set; }
+        public string? Locale { get; set; }
         public string? OrganizationId { get; set; }
     }
 

@@ -173,6 +173,9 @@ public sealed class ProtocolTokenService(
 
             if (!string.IsNullOrEmpty(subject.Phone))
                 claims["phone_number"] = subject.Phone;
+
+            if (!string.IsNullOrEmpty(subject.Locale))
+                claims["locale"] = subject.Locale;
         }
 
         if (!string.IsNullOrEmpty(subject.OrganizationId))

@@ -141,6 +141,7 @@ public sealed class UserStoreOidcSubjectResolver(
             GivenName = user.FirstName,
             FamilyName = user.LastName,
             Phone = user.Phone,
+            Locale = user.Locale,
             OrganizationId = user.OrganizationId,
             Roles = roles.Count > 0 ? roles.ToList() : null,
             Groups = groups,

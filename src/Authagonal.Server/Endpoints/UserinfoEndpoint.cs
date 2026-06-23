@@ -92,6 +92,8 @@ public static class UserinfoEndpoint
                     claims["name"] = fullName;
                 if (!string.IsNullOrWhiteSpace(user.Phone))
                     claims["phone_number"] = user.Phone;
+                if (!string.IsNullOrWhiteSpace(user.Locale))
+                    claims["locale"] = user.Locale;
             }
 
             if (!string.IsNullOrWhiteSpace(user.OrganizationId))

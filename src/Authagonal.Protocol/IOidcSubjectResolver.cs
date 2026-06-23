@@ -93,6 +93,10 @@ public sealed class OidcSubject
     public string? FamilyName { get; init; }
     public string? Phone { get; init; }
 
+    /// <summary>Preferred language as a BCP-47 tag. Emitted as the standard OIDC <c>locale</c> claim
+    /// under the <c>profile</c> scope.</summary>
+    public string? Locale { get; init; }
+
     /// <summary>
     /// Convenience slot for the <c>org_id</c> claim used across Authagonal's product
     /// line. Hosts that don't use it can leave it null — nothing else reads it.

@@ -29,6 +29,8 @@ public static class AuthEndpoints
         group.MapPost("/forgot-password", ForgotPasswordAsync).AllowAnonymous().DisableAntiforgery();
         group.MapPost("/reset-password", ResetPasswordAsync).AllowAnonymous().DisableAntiforgery();
         group.MapGet("/session", GetSessionAsync).RequireAuthorization();
+        group.MapGet("/profile", GetProfileAsync).RequireAuthorization();
+        group.MapPatch("/profile", UpdateProfileAsync).RequireAuthorization().DisableAntiforgery();
         group.MapGet("/sso-check", SsoCheckAsync).AllowAnonymous();
         group.MapGet("/providers", GetProvidersAsync).AllowAnonymous();
         group.MapGet("/password-policy", GetPasswordPolicy).AllowAnonymous();
@@ -345,6 +347,7 @@ public static class AuthEndpoints
             PasswordHash = passwordHasher.HashPassword(request.Password),
             FirstName = request.FirstName?.Trim(),
             LastName = request.LastName?.Trim(),
+            Locale = NormalizeLocale(request.Locale),
             EmailConfirmed = IsAutoConfirmedDomain(email, ao.AutoConfirmEmailDomains),
             LockoutEnabled = true,
             SecurityStamp = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32)),
@@ -598,6 +601,9 @@ public static class AuthEndpoints
         user.SecurityStamp = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
         user.AccessFailedCount = 0;
         user.LockoutEnd = null;
+        // Refresh the stored locale from the reset page's UI language (optional, no extra write).
+        var resetLocale = NormalizeLocale(request.Locale);
+        if (resetLocale is not null) user.Locale = resetLocale;
         user.UpdatedAt = DateTimeOffset.UtcNow;
         await userStore.UpdateAsync(user, ct);
 
@@ -617,6 +623,60 @@ public static class AuthEndpoints
         var name = httpContext.User.FindFirstValue(ClaimTypes.Name);
 
         return TypedResults.Json(new SessionResponse { UserId = userId, Email = email, Name = name }, AuthagonalJsonContext.Default.SessionResponse);
+    }
+
+    // Self-service profile: the authenticated user reads and updates their own non-sensitive profile
+    // fields (incl. locale). Email, password, roles, active state and org are NOT editable here.
+    private static async Task<IResult> GetProfileAsync(HttpContext httpContext, IUserStore userStore, CancellationToken ct)
+    {
+        var userId = httpContext.User.FindFirstValue(ClaimTypes.NameIdentifier) ?? httpContext.User.FindFirstValue("sub");
+        var user = userId is null ? null : await userStore.GetAsync(userId, ct);
+        if (user is null)
+            return JsonResults.Error("user_not_found", 404);
+
+        return TypedResults.Json(ProfileOf(user), AuthagonalJsonContext.Default.ProfileResponse);
+    }
+
+    private static async Task<IResult> UpdateProfileAsync(ProfileUpdateRequest request, HttpContext httpContext, IUserStore userStore, IEnumerable<IAuthHook> authHooks, CancellationToken ct)
+    {
+        var userId = httpContext.User.FindFirstValue(ClaimTypes.NameIdentifier) ?? httpContext.User.FindFirstValue("sub");
+        var user = userId is null ? null : await userStore.GetAsync(userId, ct);
+        if (user is null)
+            return JsonResults.Error("user_not_found", 404);
+
+        if (request.FirstName is not null) user.FirstName = request.FirstName.Trim();
+        if (request.LastName is not null) user.LastName = request.LastName.Trim();
+        if (request.CompanyName is not null) user.CompanyName = request.CompanyName.Trim();
+        if (request.Phone is not null) user.Phone = request.Phone.Trim();
+        if (request.Locale is not null)
+        {
+            var loc = NormalizeLocale(request.Locale);
+            if (loc is not null) user.Locale = loc;
+        }
+        user.UpdatedAt = DateTimeOffset.UtcNow;
+        await userStore.UpdateAsync(user, ct);
+        await authHooks.RunOnUserUpdatedAsync(user.Id, user.Email, "self", ct);
+
+        return TypedResults.Json(ProfileOf(user), AuthagonalJsonContext.Default.ProfileResponse);
+    }
+
+    private static ProfileResponse ProfileOf(AuthUser user) => new()
+    {
+        Email = user.Email,
+        EmailConfirmed = user.EmailConfirmed,
+        FirstName = user.FirstName,
+        LastName = user.LastName,
+        CompanyName = user.CompanyName,
+        Phone = user.Phone,
+        Locale = user.Locale,
+    };
+
+    /// <summary>Trim a client-supplied locale tag; reject empty or implausibly long values (returns null).</summary>
+    private static string? NormalizeLocale(string? locale)
+    {
+        if (string.IsNullOrWhiteSpace(locale)) return null;
+        var trimmed = locale.Trim();
+        return trimmed.Length <= 35 ? trimmed : null;
     }
 
     private static IResult GetPasswordPolicy(
@@ -725,6 +785,8 @@ public sealed class RegisterRequest
     public string? Password { get; set; }
     public string? FirstName { get; set; }
     public string? LastName { get; set; }
+    /// <summary>Preferred UI language (BCP-47 tag) captured from the registration page; persisted on the user.</summary>
+    public string? Locale { get; set; }
     public Dictionary<string, string>? CustomAttributes { get; set; }
     /// <summary>Cloudflare Turnstile token; verified only when Turnstile is configured.</summary>
     public string? TurnstileToken { get; set; }
@@ -746,6 +808,19 @@ public sealed class ResetPasswordRequest
 {
     public string? Token { get; set; }
     public string? NewPassword { get; set; }
+    /// <summary>Preferred UI language (BCP-47 tag) from the reset page; refreshes the user's stored locale.</summary>
+    public string? Locale { get; set; }
     /// <summary>Cloudflare Turnstile token; verified only when Turnstile is configured.</summary>
     public string? TurnstileToken { get; set; }
+}
+
+/// <summary>Self-service profile update — only the user's own non-sensitive fields. Null fields are unchanged.</summary>
+public sealed class ProfileUpdateRequest
+{
+    public string? FirstName { get; set; }
+    public string? LastName { get; set; }
+    public string? CompanyName { get; set; }
+    public string? Phone { get; set; }
+    /// <summary>Preferred UI/communication language as a BCP-47 tag.</summary>
+    public string? Locale { get; set; }
 }

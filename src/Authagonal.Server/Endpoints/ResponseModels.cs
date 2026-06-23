@@ -247,6 +247,7 @@ public sealed class UserDetailResponse
     [JsonPropertyName("lastName")] public string? LastName { get; set; }
     [JsonPropertyName("companyName")] public string? CompanyName { get; set; }
     [JsonPropertyName("phone")] public string? Phone { get; set; }
+    [JsonPropertyName("locale")] public string? Locale { get; set; }
     [JsonPropertyName("organizationId")] public string? OrganizationId { get; set; }
     [JsonPropertyName("lockoutEnabled")] public bool LockoutEnabled { get; set; }
 
@@ -268,8 +269,21 @@ public sealed class UserUpdateResponse
     [JsonPropertyName("lastName")] public string? LastName { get; set; }
     [JsonPropertyName("companyName")] public string? CompanyName { get; set; }
     [JsonPropertyName("phone")] public string? Phone { get; set; }
+    [JsonPropertyName("locale")] public string? Locale { get; set; }
     [JsonPropertyName("organizationId")] public string? OrganizationId { get; set; }
     [JsonPropertyName("updatedAt")] public DateTimeOffset UpdatedAt { get; set; }
+}
+
+/// <summary>Self-service profile (the authenticated user's own editable fields).</summary>
+public sealed class ProfileResponse
+{
+    [JsonPropertyName("email")] public string? Email { get; set; }
+    [JsonPropertyName("emailConfirmed")] public bool EmailConfirmed { get; set; }
+    [JsonPropertyName("firstName")] public string? FirstName { get; set; }
+    [JsonPropertyName("lastName")] public string? LastName { get; set; }
+    [JsonPropertyName("companyName")] public string? CompanyName { get; set; }
+    [JsonPropertyName("phone")] public string? Phone { get; set; }
+    [JsonPropertyName("locale")] public string? Locale { get; set; }
 }
 
 // --- Admin: Roles ---
