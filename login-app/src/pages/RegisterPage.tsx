@@ -157,7 +157,7 @@ export default function RegisterPage() {
         </div>
 
         {policyRules.length > 0 && (
-          <ul className="text-[13px] text-gray-500 dark:text-gray-400 mb-4 pl-5 list-disc">
+          <ul className="text-[13px] text-gray-500 dark:text-gray-400 mb-4 ps-5 list-disc">
             {policyRules.map((rule) => (
               <li key={rule.rule}>{rule.label}</li>
             ))}
