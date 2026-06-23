@@ -671,13 +671,10 @@ public static class AuthEndpoints
         Locale = user.Locale,
     };
 
-    /// <summary>Trim a client-supplied locale tag; reject empty or implausibly long values (returns null).</summary>
-    private static string? NormalizeLocale(string? locale)
-    {
-        if (string.IsNullOrWhiteSpace(locale)) return null;
-        var trimmed = locale.Trim();
-        return trimmed.Length <= 35 ? trimmed : null;
-    }
+    /// <summary>Trim a client-supplied locale tag; reject empty or implausibly long values (returns null).
+    /// Delegates to the shared <see cref="Services.Locales"/> so registration/reset/profile and SCIM
+    /// provisioning normalize identically.</summary>
+    private static string? NormalizeLocale(string? locale) => Locales.Normalize(locale);
 
     private static IResult GetPasswordPolicy(
         PasswordPolicy policy,

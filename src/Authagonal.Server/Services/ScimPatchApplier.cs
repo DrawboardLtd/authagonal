@@ -95,6 +95,9 @@ public static class ScimPatchApplier
             case "externalid":
                 user.ExternalId = value.GetString();
                 break;
+            case "preferredlanguage" or "locale":
+                user.Locale = Locales.Normalize(value.ValueKind == JsonValueKind.String ? value.GetString() : null);
+                break;
             case null or "":
                 // Value might be the full resource — apply individual fields
                 if (value.ValueKind == JsonValueKind.Object)
@@ -133,6 +136,12 @@ public static class ScimPatchApplier
 
         if (obj.TryGetProperty("externalId", out var extId) && extId.ValueKind == JsonValueKind.String)
             user.ExternalId = extId.GetString();
+
+        // Prefer preferredLanguage; fall back to locale when only that is sent.
+        if (obj.TryGetProperty("preferredLanguage", out var prefLang) && prefLang.ValueKind == JsonValueKind.String)
+            user.Locale = Locales.Normalize(prefLang.GetString());
+        else if (obj.TryGetProperty("locale", out var loc) && loc.ValueKind == JsonValueKind.String)
+            user.Locale = Locales.Normalize(loc.GetString());
     }
 
     private static void ApplyGroupValue(ScimGroup group, string? path, JsonElement value)

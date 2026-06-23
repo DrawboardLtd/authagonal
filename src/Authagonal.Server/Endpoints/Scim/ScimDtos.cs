@@ -33,6 +33,10 @@ public sealed class ScimUserResource
     [JsonPropertyName("active")]
     public bool Active { get; set; }
 
+    [JsonPropertyName("preferredLanguage")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? PreferredLanguage { get; set; }
+
     [JsonPropertyName("meta")]
     public required ScimMeta Meta { get; set; }
 
@@ -44,6 +48,7 @@ public sealed class ScimUserResource
             Id = user.Id,
             ExternalId = user.ExternalId,
             UserName = user.Email,
+            PreferredLanguage = user.Locale,
             Name = new ScimName
             {
                 GivenName = user.FirstName,
@@ -231,6 +236,23 @@ public sealed class ScimCreateUserRequest
 
     [JsonPropertyName("active")]
     public bool Active { get; set; } = true;
+
+    /// <summary>SCIM core attribute (RFC 7643) for the user's preferred written/spoken language —
+    /// the IdP's directory value. Mapped to <c>AuthUser.Locale</c> so SSO/SCIM users (who never see a
+    /// registration page) still get localised emails. We prefer this over <c>locale</c> (which is
+    /// about formatting); accept either via <see cref="PreferredLanguageOrLocale"/>.</summary>
+    [JsonPropertyName("preferredLanguage")]
+    public string? PreferredLanguage { get; set; }
+
+    /// <summary>SCIM core <c>locale</c> attribute — formatting locale; used as a fallback when an IdP
+    /// sends only <c>locale</c> and no <c>preferredLanguage</c>.</summary>
+    [JsonPropertyName("locale")]
+    public string? Locale { get; set; }
+
+    /// <summary>The user-language signal to store, preferring <c>preferredLanguage</c> over <c>locale</c>.</summary>
+    [JsonIgnore]
+    public string? PreferredLanguageOrLocale =>
+        !string.IsNullOrWhiteSpace(PreferredLanguage) ? PreferredLanguage : Locale;
 }
 
 public sealed class ScimCreateGroupRequest

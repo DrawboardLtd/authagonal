@@ -165,6 +165,7 @@ public static class ScimUserEndpoints
             LastName = lastName,
             ExternalId = request.ExternalId,
             IsActive = request.Active,
+            Locale = Locales.Normalize(request.PreferredLanguageOrLocale),
             ScimProvisionedByClientId = clientId,
             LockoutEnabled = true,
             SecurityStamp = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32)),
@@ -240,6 +241,8 @@ public static class ScimUserEndpoints
         user.FirstName = request.Name?.GivenName;
         user.LastName = request.Name?.FamilyName;
         user.IsActive = request.Active;
+        // PUT replaces the whole resource — a missing preferredLanguage clears the stored locale.
+        user.Locale = Locales.Normalize(request.PreferredLanguageOrLocale);
 
         // Update externalId
         var oldExternalId = user.ExternalId;
