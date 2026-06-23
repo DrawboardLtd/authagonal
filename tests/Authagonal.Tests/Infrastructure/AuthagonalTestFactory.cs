@@ -343,6 +343,12 @@ public sealed class AuthagonalTestFactory : IAsyncDisposable
         services.AddSingleton<OidcDiscoveryClient>();
         services.AddSingleton<OidcStateStore>(sp =>
             new OidcStateStore(sp.GetRequiredKeyedService<TableClient>("OidcStateStore"), sp.GetRequiredService<IOptions<CacheOptions>>()));
+        // The SSO endpoint handlers inject the interface seams (ISamlReplayCache / IOidcStateStore),
+        // which production wires via gated TryAdds keyed off the Azure TableClients. This bespoke test
+        // host builds its own graph, so register the seams against the concretes above — without these,
+        // minimal-API binding can't resolve the parameters and every /saml + /oidc/{conn}/login call 400s.
+        services.AddSingleton<Authagonal.Core.Services.ISamlReplayCache>(sp => sp.GetRequiredService<SamlReplayCache>());
+        services.AddSingleton<Authagonal.Core.Services.IOidcStateStore>(sp => sp.GetRequiredService<OidcStateStore>());
 
         // Authentication
         services.AddAuthentication(options =>
