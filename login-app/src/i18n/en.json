@@ -134,5 +134,17 @@
   "grants.grantedOn": "Authorized on {{date}}",
   "grants.revoke": "Revoke",
   "grants.revokeConfirm": "Revoke access for this app? You'll need to re-authorize next time.",
-  "grants.revokeFailed": "Failed to revoke access."
+  "grants.revokeFailed": "Failed to revoke access.",
+  "account.title": "Account",
+  "account.subtitle": "Manage your profile and preferred language.",
+  "account.signInPrompt": "Sign in to manage your account.",
+  "account.loading": "Loading your profile…",
+  "account.loadError": "Couldn't load your profile.",
+  "account.saveError": "Couldn't save your changes. Please try again.",
+  "account.saved": "Your changes have been saved.",
+  "account.companyName": "Company",
+  "account.phone": "Phone",
+  "account.language": "Preferred language",
+  "account.save": "Save changes",
+  "account.saving": "Saving…"
 }

@@ -109,5 +109,17 @@
   "errorEmailAlreadyRegistered": "Ya existe una cuenta con este correo.",
   "errorWeakPassword": "La contraseña no cumple los requisitos.",
   "errorEmailAndPasswordRequired": "El correo y la contraseña son obligatorios.",
-  "errorRegistrationFailed": "Error en el registro. Inténtalo de nuevo."
+  "errorRegistrationFailed": "Error en el registro. Inténtalo de nuevo.",
+  "account.title": "Cuenta",
+  "account.subtitle": "Administra tu perfil y tu idioma preferido.",
+  "account.signInPrompt": "Inicia sesión para administrar tu cuenta.",
+  "account.loading": "Cargando tu perfil…",
+  "account.loadError": "No se pudo cargar tu perfil.",
+  "account.saveError": "No se pudieron guardar los cambios. Inténtalo de nuevo.",
+  "account.saved": "Tus cambios se han guardado.",
+  "account.companyName": "Empresa",
+  "account.phone": "Teléfono",
+  "account.language": "Idioma preferido",
+  "account.save": "Guardar cambios",
+  "account.saving": "Guardando…"
 }

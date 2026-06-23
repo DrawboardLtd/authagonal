@@ -109,5 +109,17 @@
   "errorEmailAlreadyRegistered": "Já existe uma conta com este e-mail.",
   "errorWeakPassword": "A palavra-passe não cumpre os requisitos.",
   "errorEmailAndPasswordRequired": "E-mail e palavra-passe são obrigatórios.",
-  "errorRegistrationFailed": "O registo falhou. Tente novamente."
+  "errorRegistrationFailed": "O registo falhou. Tente novamente.",
+  "account.title": "Conta",
+  "account.subtitle": "Faça a gestão do seu perfil e do seu idioma preferido.",
+  "account.signInPrompt": "Inicie sessão para gerir a sua conta.",
+  "account.loading": "A carregar o seu perfil…",
+  "account.loadError": "Não foi possível carregar o seu perfil.",
+  "account.saveError": "Não foi possível guardar as suas alterações. Tente novamente.",
+  "account.saved": "As suas alterações foram guardadas.",
+  "account.companyName": "Empresa",
+  "account.phone": "Telefone",
+  "account.language": "Idioma preferido",
+  "account.save": "Guardar alterações",
+  "account.saving": "A guardar…"
 }

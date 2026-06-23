@@ -112,3 +112,24 @@ export interface RegisterResponse {
   success: boolean;
   userId: string;
 }
+
+/** The authenticated user's own profile (GET /api/auth/profile). Email is read-only here. */
+export interface ProfileResponse {
+  email?: string;
+  emailConfirmed: boolean;
+  firstName?: string;
+  lastName?: string;
+  companyName?: string;
+  phone?: string;
+  /** Preferred UI/communication language (BCP-47); drives localised emails + the OIDC locale claim. */
+  locale?: string;
+}
+
+/** Self-service profile update (PATCH /api/auth/profile). Omitted fields are left unchanged. */
+export interface ProfileUpdateRequest {
+  firstName?: string;
+  lastName?: string;
+  companyName?: string;
+  phone?: string;
+  locale?: string;
+}

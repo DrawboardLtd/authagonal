@@ -109,5 +109,17 @@
   "errorEmailAlreadyRegistered": "此邮箱已注册。",
   "errorWeakPassword": "密码不符合要求。",
   "errorEmailAndPasswordRequired": "邮箱和密码为必填项。",
-  "errorRegistrationFailed": "注册失败，请重试。"
+  "errorRegistrationFailed": "注册失败，请重试。",
+  "account.title": "账户",
+  "account.subtitle": "管理您的个人资料和首选语言。",
+  "account.signInPrompt": "登录以管理您的账户。",
+  "account.loading": "正在加载您的个人资料…",
+  "account.loadError": "无法加载您的个人资料。",
+  "account.saveError": "无法保存您的更改，请重试。",
+  "account.saved": "您的更改已保存。",
+  "account.companyName": "公司",
+  "account.phone": "电话",
+  "account.language": "首选语言",
+  "account.save": "保存更改",
+  "account.saving": "正在保存…"
 }

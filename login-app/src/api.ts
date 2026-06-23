@@ -1,4 +1,4 @@
-import type { ApiError, SessionResponse, SsoCheckResponse, ProvidersResponse, PasswordPolicyResponse, MfaLoginResponse, MfaVerifyResponse, MfaStatusResponse, MfaTotpSetupResponse, MfaRecoveryGenerateResponse, MfaWebAuthnSetupResponse, MfaWebAuthnConfirmResponse, RegisterResponse } from './types';
+import type { ApiError, SessionResponse, SsoCheckResponse, ProvidersResponse, PasswordPolicyResponse, MfaLoginResponse, MfaVerifyResponse, MfaStatusResponse, MfaTotpSetupResponse, MfaRecoveryGenerateResponse, MfaWebAuthnSetupResponse, MfaWebAuthnConfirmResponse, RegisterResponse, ProfileResponse, ProfileUpdateRequest } from './types';
 
 const API_URL = import.meta.env.VITE_API_URL || '';
 
@@ -63,6 +63,19 @@ export function register(email: string, password: string, firstName?: string, la
 export function logout(): Promise<{ success: true }> {
   return api<{ success: true }>('/api/auth/logout', {
     method: 'POST',
+  });
+}
+
+/** The signed-in user's own profile (requires an authenticated session cookie). */
+export function getProfile(): Promise<ProfileResponse> {
+  return api<ProfileResponse>('/api/auth/profile');
+}
+
+/** Update the signed-in user's own profile. Omitted fields are left unchanged. */
+export function updateProfile(patch: ProfileUpdateRequest): Promise<ProfileResponse> {
+  return api<ProfileResponse>('/api/auth/profile', {
+    method: 'PATCH',
+    body: JSON.stringify(patch),
   });
 }
 

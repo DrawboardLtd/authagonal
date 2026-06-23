@@ -109,5 +109,17 @@
   "errorEmailAlreadyRegistered": "Un compte avec cet e-mail existe déjà.",
   "errorWeakPassword": "Le mot de passe ne respecte pas les exigences.",
   "errorEmailAndPasswordRequired": "L'e-mail et le mot de passe sont requis.",
-  "errorRegistrationFailed": "L'inscription a échoué. Veuillez réessayer."
+  "errorRegistrationFailed": "L'inscription a échoué. Veuillez réessayer.",
+  "account.title": "Compte",
+  "account.subtitle": "Gérez votre profil et votre langue préférée.",
+  "account.signInPrompt": "Connectez-vous pour gérer votre compte.",
+  "account.loading": "Chargement de votre profil…",
+  "account.loadError": "Impossible de charger votre profil.",
+  "account.saveError": "Impossible d'enregistrer vos modifications. Veuillez réessayer.",
+  "account.saved": "Vos modifications ont été enregistrées.",
+  "account.companyName": "Entreprise",
+  "account.phone": "Téléphone",
+  "account.language": "Langue préférée",
+  "account.save": "Enregistrer les modifications",
+  "account.saving": "Enregistrement…"
 }

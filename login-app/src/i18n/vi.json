@@ -109,5 +109,17 @@
   "errorEmailAlreadyRegistered": "Tài khoản với email này đã tồn tại.",
   "errorWeakPassword": "Mật khẩu không đáp ứng yêu cầu.",
   "errorEmailAndPasswordRequired": "Email và mật khẩu là bắt buộc.",
-  "errorRegistrationFailed": "Đăng ký thất bại. Vui lòng thử lại."
+  "errorRegistrationFailed": "Đăng ký thất bại. Vui lòng thử lại.",
+  "account.title": "Tài khoản",
+  "account.subtitle": "Quản lý hồ sơ và ngôn ngữ ưa thích của bạn.",
+  "account.signInPrompt": "Đăng nhập để quản lý tài khoản của bạn.",
+  "account.loading": "Đang tải hồ sơ của bạn…",
+  "account.loadError": "Không thể tải hồ sơ của bạn.",
+  "account.saveError": "Không thể lưu thay đổi của bạn. Vui lòng thử lại.",
+  "account.saved": "Các thay đổi của bạn đã được lưu.",
+  "account.companyName": "Công ty",
+  "account.phone": "Điện thoại",
+  "account.language": "Ngôn ngữ ưa thích",
+  "account.save": "Lưu thay đổi",
+  "account.saving": "Đang lưu…"
 }
