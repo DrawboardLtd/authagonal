@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import AuthLayout from './components/AuthLayout';
 import LoginPage from './pages/LoginPage';
@@ -11,7 +12,12 @@ import ConsentPage from './pages/ConsentPage';
 import GrantsPage from './pages/GrantsPage';
 import AccountPage from './pages/AccountPage';
 
-export default function App() {
+/**
+ * The login SPA. `extraRoutes` lets the host app inject product-specific routes
+ * (e.g. the cloud's /support page) that render inside AuthLayout alongside the
+ * auth routes — so those surfaces live in the consumer, not in this auth library.
+ */
+export default function App({ extraRoutes }: { extraRoutes?: ReactNode }) {
   return (
     <BrowserRouter basename="/login">
       <AuthLayout>
@@ -26,6 +32,7 @@ export default function App() {
           <Route path="/consent" element={<ConsentPage />} />
           <Route path="/grants" element={<GrantsPage />} />
           <Route path="/account" element={<AccountPage />} />
+          {extraRoutes}
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </AuthLayout>
