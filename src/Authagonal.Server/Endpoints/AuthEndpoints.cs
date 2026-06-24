@@ -701,16 +701,36 @@ public static class AuthEndpoints
 
     private static async Task<IResult> GetProvidersAsync(
         IOidcProviderStore oidcStore,
+        ISamlProviderStore samlStore,
         IOptions<TurnstileOptions> turnstileOptions,
         CancellationToken ct)
     {
-        var providers = await oidcStore.GetAllAsync(ct);
-        var result = providers.Select(p => new SsoProviderInfo
-        {
-            ConnectionId = p.ConnectionId,
-            Name = p.ConnectionName,
-            LoginUrl = $"/oidc/{p.ConnectionId}/login"
-        });
+        // Render a "Continue with {name}" button only for connections that are NOT domain-routed.
+        // A connection with AllowedDomains is reached email-first via /sso-check instead, so showing
+        // a button for it would be redundant. Covers both OIDC and SAML uniformly.
+        var oidc = await oidcStore.GetAllAsync(ct);
+        var saml = await samlStore.GetAllAsync(ct);
+        var result = oidc
+            .Where(p => p.AllowedDomains.Count == 0)
+            .Select(p => new SsoProviderInfo
+            {
+                ConnectionId = p.ConnectionId,
+                Name = p.ConnectionName,
+                Type = "oidc",
+                IconUrl = p.IconUrl,
+                LoginUrl = $"/oidc/{p.ConnectionId}/login"
+            })
+            .Concat(saml
+                .Where(p => p.AllowedDomains.Count == 0)
+                .Select(p => new SsoProviderInfo
+                {
+                    ConnectionId = p.ConnectionId,
+                    Name = p.ConnectionName,
+                    Type = "saml",
+                    IconUrl = p.IconUrl,
+                    LoginUrl = $"/saml/{p.ConnectionId}/login"
+                }))
+            .ToList();
         return TypedResults.Json(
             new SsoProviderListResponse { Providers = result, TurnstileSiteKey = turnstileOptions.Value.SiteKey },
             AuthagonalJsonContext.Default.SsoProviderListResponse);

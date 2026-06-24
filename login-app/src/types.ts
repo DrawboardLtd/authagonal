@@ -29,6 +29,10 @@ export interface ExternalProvider {
   connectionId: string;
   name: string;
   loginUrl: string;
+  /** Connection protocol: "oidc" or "saml". */
+  type?: string;
+  /** Optional branding icon URL shown on the "Continue with {name}" button. */
+  iconUrl?: string;
 }
 
 export interface ProvidersResponse {

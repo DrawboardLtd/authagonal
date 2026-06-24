@@ -56,6 +56,7 @@ public static class SsoEndpoints
         {
             ConnectionId = connectionId,
             ConnectionName = request.ConnectionName,
+            IconUrl = request.IconUrl,
             EntityId = request.EntityId,
             MetadataLocation = request.MetadataLocation,
             AllowedDomains = request.AllowedDomains ?? [],
@@ -192,6 +193,7 @@ public static class SsoEndpoints
         {
             ConnectionId = connectionId,
             ConnectionName = request.ConnectionName,
+            IconUrl = request.IconUrl,
             MetadataLocation = request.MetadataLocation,
             ClientId = request.ClientId,
             ClientSecret = protectedSecret,
@@ -294,6 +296,8 @@ public static class SsoEndpoints
     public sealed class CreateSamlRequest
     {
         public string ConnectionName { get; set; } = "";
+        /// <summary>Optional branding icon URL for the "Continue with {name}" login button.</summary>
+        public string? IconUrl { get; set; }
         public string EntityId { get; set; } = "";
         public string MetadataLocation { get; set; } = "";
         public List<string>? AllowedDomains { get; set; }
@@ -318,6 +322,8 @@ public static class SsoEndpoints
     public sealed class CreateOidcRequest
     {
         public string ConnectionName { get; set; } = "";
+        /// <summary>Optional branding icon URL for the "Continue with {name}" login button.</summary>
+        public string? IconUrl { get; set; }
         public string MetadataLocation { get; set; } = "";
         public string ClientId { get; set; } = "";
         public string ClientSecret { get; set; } = "";

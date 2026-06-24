@@ -108,6 +108,10 @@ public sealed class SsoProviderInfo
     [JsonPropertyName("connectionId")] public string ConnectionId { get; set; } = "";
     [JsonPropertyName("name")] public string Name { get; set; } = "";
     [JsonPropertyName("loginUrl")] public string LoginUrl { get; set; } = "";
+    /// <summary>Connection protocol: "oidc" or "saml". Lets the UI vary affordances if needed.</summary>
+    [JsonPropertyName("type")] public string Type { get; set; } = "";
+    /// <summary>Optional branding icon URL for the "Continue with {name}" button.</summary>
+    [JsonPropertyName("iconUrl")] public string? IconUrl { get; set; }
 }
 
 public sealed class SsoProviderListResponse
