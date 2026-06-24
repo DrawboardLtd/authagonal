@@ -50,6 +50,7 @@ public static class AuthEndpoints
         TurnstileVerifier turnstile,
         IEnumerable<IAuthHook> authHooks,
         IOptions<AuthOptions> authOptions,
+        ITenantContext tenantContext,
         ILogger<Program> logger,
         CancellationToken ct)
     {
@@ -122,7 +123,9 @@ public static class AuthEndpoints
         if (!user.IsActive)
             return JsonResults.Error("account_disabled", 403);
 
-        if (!user.EmailConfirmed)
+        // Control-plane (admin) tenants relax this so a freshly provisioned owner can sign in and
+        // verify from inside the portal; every other tenant still blocks unconfirmed logins.
+        if (tenantContext.RequireConfirmedEmailForLogin && !user.EmailConfirmed)
             return JsonResults.Error("email_not_confirmed", 403);
 
         // Successful login - reset lockout counters, record login time
@@ -400,6 +403,7 @@ public static class AuthEndpoints
     private static async Task<IResult> ConfirmEmailAsync(
         HttpContext httpContext,
         IUserStore userStore,
+        IEnumerable<IAuthHook> authHooks,
         ILogger<Program> logger,
         CancellationToken ct)
     {
@@ -450,6 +454,9 @@ public static class AuthEndpoints
         await userStore.UpdateAsync(user, ct);
 
         logger.LogInformation("Email confirmed for user {UserId} ({Email})", user.Id, user.Email);
+
+        // Notify hooks (e.g. the Cloud lifts the unverified-tenant user cap when the owner confirms).
+        await authHooks.RunOnEmailConfirmedAsync(user.Id, user.Email, ct);
 
         return TypedResults.Json(new SuccessMessageResponse { Message = "Email confirmed successfully." }, AuthagonalJsonContext.Default.SuccessMessageResponse);
     }

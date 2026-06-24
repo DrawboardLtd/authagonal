@@ -20,4 +20,13 @@ public interface ITenantContext
 
     /// <summary>Canonical name for the live (production) environment.</summary>
     public const string LiveEnv = "live";
+
+    /// <summary>
+    /// Whether the login endpoint rejects users whose email is not yet confirmed.
+    /// Defaults to <c>true</c> — an unconfirmed user cannot sign in. Multi-tenant
+    /// deployments override this to <c>false</c> for control-plane (admin) tenants,
+    /// where a freshly provisioned owner must be able to sign in and verify from
+    /// inside the portal (the in-app verify banner, not a login wall).
+    /// </summary>
+    bool RequireConfirmedEmailForLogin => true;
 }

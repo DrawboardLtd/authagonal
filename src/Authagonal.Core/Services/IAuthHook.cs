@@ -46,6 +46,11 @@ public interface IAuthHook
     /// must not assume the record is still readable.</summary>
     /// <param name="deletedVia">Origin of the deletion, e.g. "portal", "scim".</param>
     Task OnUserDeletedAsync(string userId, string email, string deletedVia, CancellationToken ct = default);
+
+    /// <summary>Called after a user confirms their email via the verification link.
+    /// Notification only — the confirmation has already been persisted. Default: no-op,
+    /// so existing hooks need no change.</summary>
+    Task OnEmailConfirmedAsync(string userId, string email, CancellationToken ct = default) => Task.CompletedTask;
 }
 
 /// <summary>
@@ -101,5 +106,11 @@ public static class AuthHookExtensions
     {
         foreach (var hook in hooks)
             await hook.OnUserDeletedAsync(userId, email, deletedVia, ct);
+    }
+
+    public static async Task RunOnEmailConfirmedAsync(this IEnumerable<IAuthHook> hooks, string userId, string email, CancellationToken ct = default)
+    {
+        foreach (var hook in hooks)
+            await hook.OnEmailConfirmedAsync(userId, email, ct);
     }
 }
