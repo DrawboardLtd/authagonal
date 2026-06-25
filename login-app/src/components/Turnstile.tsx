@@ -32,7 +32,7 @@ function loadTurnstileScript(): Promise<void> {
   return scriptPromise;
 }
 
-interface TurnstileProps {
+export interface TurnstileProps {
   siteKey: string;
   /** Called with the token on success, or null when it expires / errors / is reset. */
   onToken: (token: string | null) => void;

@@ -12,6 +12,8 @@ export { Label } from './components/ui/label';
 export { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from './components/ui/card';
 export { Alert } from './components/ui/alert';
 export { Separator } from './components/ui/separator';
+export { Turnstile } from './components/Turnstile';
+export type { TurnstileProps } from './components/Turnstile';
 export { cn } from './lib/utils';
 
 // Pages
