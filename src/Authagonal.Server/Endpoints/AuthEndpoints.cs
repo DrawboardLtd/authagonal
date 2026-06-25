@@ -535,7 +535,9 @@ public static class AuthEndpoints
         }, ct);
 
         var issuer = tenantContext.Issuer;
-        var callbackUrl = $"{issuer}/reset-password?p={Uri.EscapeDataString(resetToken)}";
+        // The login SPA is mounted under /login (App basename), so the reset page lives at
+        // /login/reset-password — the link must include that prefix or it renders a blank page.
+        var callbackUrl = $"{issuer}/login/reset-password?p={Uri.EscapeDataString(resetToken)}";
 
         try
         {
@@ -560,6 +562,7 @@ public static class AuthEndpoints
         PasswordPolicy passwordPolicy,
         TurnstileVerifier turnstile,
         IStringLocalizer<SharedMessages> localizer,
+        IEnumerable<IAuthHook> authHooks,
         ILogger<Program> logger,
         CancellationToken ct)
     {
@@ -615,6 +618,11 @@ public static class AuthEndpoints
         user.SecurityStamp = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
         user.AccessFailedCount = 0;
         user.LockoutEnd = null;
+        // Completing a reset proves control of the email, so it also confirms an unverified account:
+        // the reset link IS a proof-of-control challenge, and we shouldn't dead-end a user who never
+        // verified and then forgot their password.
+        var newlyConfirmed = !user.EmailConfirmed;
+        user.EmailConfirmed = true;
         // Refresh the stored locale from the reset page's UI language (optional, no extra write).
         var resetLocale = NormalizeLocale(request.Locale);
         if (resetLocale is not null) user.Locale = resetLocale;
@@ -623,6 +631,10 @@ public static class AuthEndpoints
 
         // Invalidate all refresh tokens for this user
         await grantStore.RemoveAllBySubjectAsync(user.Id, ct);
+
+        // Lift the unverified-tenant cap etc. if this reset is what first confirmed the email.
+        if (newlyConfirmed)
+            await authHooks.RunOnEmailConfirmedAsync(user.Id, user.Email, ct);
 
         logger.LogInformation("Password reset completed for user {UserId} ({Email})", user.Id, user.Email);
 

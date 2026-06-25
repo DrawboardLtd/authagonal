@@ -358,6 +358,27 @@ public sealed class AuthEndpointTests : IAsyncLifetime
         Assert.Equal("weak_password", json.GetProperty("error").GetString());
     }
 
+    [Fact]
+    public async Task ResetPassword_ConfirmsUnverifiedEmail()
+    {
+        // A user who registered, never verified, then resets their password: completing the reset
+        // (proof of email control) should also confirm the email — don't dead-end unverified users.
+        await _client.PostAsJsonAsync("/api/auth/register",
+            new { email = "reset-verify@example.com", password = "NewPass1234!" });
+        var before = await _factory.UserStore.FindByEmailAsync("reset-verify@example.com");
+        Assert.False(before!.EmailConfirmed);
+
+        await _client.PostAsJsonAsync("/api/auth/forgot-password", new { email = "reset-verify@example.com" });
+        var sent = _factory.EmailService.SentEmails.Last(e => e.Type == "password_reset" && e.Email == "reset-verify@example.com");
+        var token = System.Web.HttpUtility.ParseQueryString(new Uri(sent.CallbackUrl).Query)["p"]!;
+
+        var reset = await _client.PostAsJsonAsync("/api/auth/reset-password", new { token, newPassword = "AnotherPass1234!" });
+        Assert.Equal(HttpStatusCode.OK, reset.StatusCode);
+
+        var after = await _factory.UserStore.FindByEmailAsync("reset-verify@example.com");
+        Assert.True(after!.EmailConfirmed, "completing a password reset should confirm the email");
+    }
+
     // -----------------------------------------------------------------------
     // GET/POST /api/auth/confirm-email  (email verification — CRITICAL PATH)
     // -----------------------------------------------------------------------
