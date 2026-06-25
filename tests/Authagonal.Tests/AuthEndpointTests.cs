@@ -357,4 +357,62 @@ public sealed class AuthEndpointTests : IAsyncLifetime
         var json = await response.Content.ReadFromJsonAsync<JsonElement>();
         Assert.Equal("weak_password", json.GetProperty("error").GetString());
     }
+
+    // -----------------------------------------------------------------------
+    // GET/POST /api/auth/confirm-email  (email verification — CRITICAL PATH)
+    // -----------------------------------------------------------------------
+
+    [Fact]
+    public async Task Register_ThenClickVerificationLink_ConfirmsEmail()
+    {
+        // Registration sends a verification email; the new user starts unconfirmed.
+        var register = await _client.PostAsJsonAsync("/api/auth/register",
+            new { email = "verify-me@example.com", password = "NewPass1234!" });
+        Assert.Equal(HttpStatusCode.Created, register.StatusCode);
+
+        var before = await _factory.UserStore.FindByEmailAsync("verify-me@example.com");
+        Assert.False(before!.EmailConfirmed, "user should start unconfirmed");
+
+        // Follow the verification link the way a user actually does: a GET on the clicked link.
+        // (This guards the regression where the route was POST-only and a clicked link 404'd to a
+        // blank SPA page, leaving the user unverified.)
+        var sent = _factory.EmailService.SentEmails.Last(e => e.Type == "verification" && e.Email == "verify-me@example.com");
+        var confirm = await _client.GetAsync(new Uri(sent.CallbackUrl).PathAndQuery);
+
+        Assert.Equal(HttpStatusCode.Redirect, confirm.StatusCode);
+        Assert.Contains("email_confirmed=1", confirm.Headers.Location?.ToString() ?? "");
+
+        var after = await _factory.UserStore.FindByEmailAsync("verify-me@example.com");
+        Assert.True(after!.EmailConfirmed, "clicking the verification link should confirm the email");
+    }
+
+    [Fact]
+    public async Task ConfirmEmail_PostWithJsonToken_ConfirmsAndReturnsJson()
+    {
+        // The programmatic (custom-login-UI) path posts the token as JSON and keeps the JSON contract.
+        await _client.PostAsJsonAsync("/api/auth/register",
+            new { email = "verify-post@example.com", password = "NewPass1234!" });
+        var sent = _factory.EmailService.SentEmails.Last(e => e.Type == "verification" && e.Email == "verify-post@example.com");
+        var token = System.Web.HttpUtility.ParseQueryString(new Uri(sent.CallbackUrl).Query)["token"]!;
+
+        var confirm = await _client.PostAsJsonAsync("/api/auth/confirm-email", new { token });
+
+        Assert.Equal(HttpStatusCode.OK, confirm.StatusCode);
+        var after = await _factory.UserStore.FindByEmailAsync("verify-post@example.com");
+        Assert.True(after!.EmailConfirmed);
+    }
+
+    [Fact]
+    public async Task ConfirmEmail_GetWithExpiredOrBadToken_DoesNotConfirm()
+    {
+        await _client.PostAsJsonAsync("/api/auth/register",
+            new { email = "verify-bad@example.com", password = "NewPass1234!" });
+
+        // A clicked link with a garbage token must not confirm anyone.
+        var confirm = await _client.GetAsync("/api/auth/confirm-email?token=not-a-real-token");
+        Assert.NotEqual(HttpStatusCode.Redirect, confirm.StatusCode);
+
+        var after = await _factory.UserStore.FindByEmailAsync("verify-bad@example.com");
+        Assert.False(after!.EmailConfirmed);
+    }
 }

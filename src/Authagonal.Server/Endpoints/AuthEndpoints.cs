@@ -24,6 +24,9 @@ public static class AuthEndpoints
 
         group.MapPost("/login", LoginAsync).AllowAnonymous().DisableAntiforgery();
         group.MapPost("/register", RegisterAsync).AllowAnonymous().DisableAntiforgery();
+        // GET: the clickable email-verification link (token in the query string). POST: the
+        // custom-login-UI / programmatic path (token in a JSON body). The handler accepts either.
+        group.MapGet("/confirm-email", ConfirmEmailAsync).AllowAnonymous();
         group.MapPost("/confirm-email", ConfirmEmailAsync).AllowAnonymous().DisableAntiforgery();
         group.MapPost("/logout", LogoutAsync).RequireAuthorization().DisableAntiforgery();
         group.MapPost("/forgot-password", ForgotPasswordAsync).AllowAnonymous().DisableAntiforgery();
@@ -458,6 +461,10 @@ public static class AuthEndpoints
         // Notify hooks (e.g. the Cloud lifts the unverified-tenant user cap when the owner confirms).
         await authHooks.RunOnEmailConfirmedAsync(user.Id, user.Email, ct);
 
+        // A clicked email link (GET) lands the user on the login page, not raw JSON; the programmatic
+        // POST path keeps the JSON contract.
+        if (HttpMethods.IsGet(httpContext.Request.Method))
+            return Results.Redirect("/login?email_confirmed=1");
         return TypedResults.Json(new SuccessMessageResponse { Message = "Email confirmed successfully." }, AuthagonalJsonContext.Default.SuccessMessageResponse);
     }
 
