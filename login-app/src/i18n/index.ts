@@ -11,6 +11,8 @@ import vi from './vi.json';
 import pt from './pt.json';
 import ar from './ar.json';
 import tlh from './tlh.json';
+import af from './af.json';
+import hi from './hi.json';
 
 i18n
   .use(LanguageDetector)
@@ -26,6 +28,8 @@ i18n
       pt: { translation: pt },
       ar: { translation: ar },
       tlh: { translation: tlh },
+      af: { translation: af },
+      hi: { translation: hi },
     },
     fallbackLng: 'en',
     interpolation: {
