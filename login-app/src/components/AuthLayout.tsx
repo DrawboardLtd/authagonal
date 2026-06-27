@@ -128,25 +128,47 @@ export default function AuthLayout({ children }: AuthLayoutProps) {
   useDarkMode();
 
   useEffect(() => {
-    if (branding.primaryColor && isSafeCssColor(branding.primaryColor)) {
-      document.documentElement.style.setProperty('--brand-primary', branding.primaryColor);
+    // Per-theme brand colours as CSS vars: :root for light, .dark for dark (toggled by useDarkMode).
+    // Injected after the bundled CSS so it wins by source order — and because it's a stylesheet rule
+    // (not an inline set), the .dark block can override the light value, so a dark-mode primary /
+    // background / card colour can differ from its light counterpart.
+    const safe = (v?: string | null) => (v && isSafeCssColor(v) ? v : null);
+    const light: string[] = [];
+    const dark: string[] = [];
+    const add = (arr: string[], name: string, v?: string | null) => { const s = safe(v); if (s) arr.push(`${name}:${s}`); };
+    add(light, '--brand-primary', branding.primaryColor);
+    add(dark, '--brand-primary', branding.darkPrimaryColor);
+    add(light, '--auth-bg', branding.lightBg);
+    add(light, '--auth-card-bg', branding.lightCardBg);
+    add(dark, '--auth-bg', branding.darkBg);
+    add(dark, '--auth-card-bg', branding.darkCardBg);
+
+    let styleEl: HTMLStyleElement | undefined;
+    if (light.length || dark.length) {
+      styleEl = document.createElement('style');
+      styleEl.id = 'branding-theme-vars';
+      styleEl.textContent =
+        (light.length ? `:root{${light.join(';')}}` : '') + (dark.length ? `.dark{${dark.join(';')}}` : '');
+      document.head.appendChild(styleEl);
     }
 
+    let linkEl: HTMLLinkElement | undefined;
     if (branding.customCssUrl) {
       try {
         const parsed = new URL(branding.customCssUrl, window.location.origin);
         if (parsed.origin === window.location.origin) {
-          const link = document.createElement('link');
-          link.rel = 'stylesheet';
-          link.href = branding.customCssUrl;
-          link.id = 'branding-css';
-          document.head.appendChild(link);
-          return () => { link.remove(); };
+          linkEl = document.createElement('link');
+          linkEl.rel = 'stylesheet';
+          linkEl.href = branding.customCssUrl;
+          linkEl.id = 'branding-css';
+          document.head.appendChild(linkEl);
         }
       } catch {
         // Invalid URL — skip injecting custom CSS.
       }
     }
+
+    return () => { styleEl?.remove(); linkEl?.remove(); };
   }, [branding]);
 
   return (

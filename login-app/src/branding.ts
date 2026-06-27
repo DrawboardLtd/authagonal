@@ -19,6 +19,13 @@ export interface BrandingConfig {
   /** Default login-page theme when the visitor hasn't picked one: "off" (light only),
    * "auto" (follow the OS preference), "force" (always dark). The visitor's toggle still wins. */
   darkMode: 'off' | 'auto' | 'force';
+  /** Optional per-mode surface-colour overrides for the login page (CSS colours); null = use the
+   *  app's built-in theme defaults. darkPrimaryColor overrides primaryColor in dark mode. */
+  lightBg: string | null;
+  lightCardBg: string | null;
+  darkBg: string | null;
+  darkCardBg: string | null;
+  darkPrimaryColor: string | null;
 }
 
 const defaults: BrandingConfig = {
@@ -34,6 +41,11 @@ const defaults: BrandingConfig = {
   languages: null,
   poweredBy: true,
   darkMode: 'auto',
+  lightBg: null,
+  lightCardBg: null,
+  darkBg: null,
+  darkCardBg: null,
+  darkPrimaryColor: null,
 };
 
 export async function loadBranding(): Promise<BrandingConfig> {
