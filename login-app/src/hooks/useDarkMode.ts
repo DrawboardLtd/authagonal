@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useBranding } from '../branding';
 
 type Theme = 'light' | 'dark' | 'system';
 
@@ -13,11 +14,25 @@ function applyTheme(theme: Theme) {
   document.documentElement.classList.toggle('dark', isDark);
 }
 
+// The tenant's branding.darkMode sets the DEFAULT theme; the visitor's toggle (persisted to
+// localStorage) always wins over it.
+function brandingDefault(darkMode: string | undefined): Theme {
+  switch (darkMode) {
+    case 'force': return 'dark';
+    case 'off': return 'light';
+    case 'auto':
+    default: return 'system';
+  }
+}
+
 export function useDarkMode() {
-  const [theme, setThemeState] = useState<Theme>(() => {
-    const stored = localStorage.getItem(STORAGE_KEY) as Theme | null;
-    return stored ?? 'system';
-  });
+  const branding = useBranding();
+  // null = the visitor hasn't chosen a theme yet → fall back to the tenant's branding default
+  // (which may arrive asynchronously, so it's resolved on every render, not just at mount).
+  const [override, setOverride] = useState<Theme | null>(
+    () => localStorage.getItem(STORAGE_KEY) as Theme | null,
+  );
+  const theme = override ?? brandingDefault(branding.darkMode);
 
   useEffect(() => {
     applyTheme(theme);
@@ -32,7 +47,7 @@ export function useDarkMode() {
 
   const setTheme = (t: Theme) => {
     localStorage.setItem(STORAGE_KEY, t);
-    setThemeState(t);
+    setOverride(t);
   };
 
   return { theme, setTheme };

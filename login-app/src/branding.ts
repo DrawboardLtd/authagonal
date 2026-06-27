@@ -16,6 +16,9 @@ export interface BrandingConfig {
   languages: { code: string; label: string }[] | null;
   /** When true, show the "Powered by Authagonal" footer on the auth pages. */
   poweredBy: boolean;
+  /** Default login-page theme when the visitor hasn't picked one: "off" (light only),
+   * "auto" (follow the OS preference), "force" (always dark). The visitor's toggle still wins. */
+  darkMode: 'off' | 'auto' | 'force';
 }
 
 const defaults: BrandingConfig = {
@@ -30,6 +33,7 @@ const defaults: BrandingConfig = {
   welcomeSubtitle: null,
   languages: null,
   poweredBy: true,
+  darkMode: 'auto',
 };
 
 export async function loadBranding(): Promise<BrandingConfig> {
