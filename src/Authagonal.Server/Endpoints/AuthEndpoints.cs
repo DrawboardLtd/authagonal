@@ -632,6 +632,8 @@ public static class AuthEndpoints
         // Invalidate all refresh tokens for this user
         await grantStore.RemoveAllBySubjectAsync(user.Id, ct);
 
+        await authHooks.RunOnPasswordChangedAsync(user.Id, user.Email, "reset", ct);
+
         // Lift the unverified-tenant cap etc. if this reset is what first confirmed the email.
         if (newlyConfirmed)
             await authHooks.RunOnEmailConfirmedAsync(user.Id, user.Email, ct);

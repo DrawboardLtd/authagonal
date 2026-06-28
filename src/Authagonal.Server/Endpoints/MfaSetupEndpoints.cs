@@ -200,6 +200,9 @@ public static class MfaSetupEndpoints
             await userStore.UpdateAsync(user, ct);
         }
 
+        if (user is not null)
+            await authHooks.RunOnMfaEnrolledAsync(user.Id, user.Email, "totp", ct);
+
         // If authenticated via setup token, sign the cookie now (user proved password + TOTP).
         // Run the onUserAuthenticated hook BEFORE signing in, so an enforced hook that rejects the
         // login prevents the cookie from being issued.
@@ -328,6 +331,9 @@ public static class MfaSetupEndpoints
             await userStore.UpdateAsync(user, ct);
         }
 
+        if (user is not null)
+            await authHooks.RunOnMfaEnrolledAsync(user.Id, user.Email, "webauthn", ct);
+
         // If authenticated via setup token, sign the cookie now. Run the onUserAuthenticated hook
         // BEFORE signing in, so an enforced hook that rejects the login prevents the cookie issue.
         if (setupChallenge is not null && user is not null)
@@ -345,6 +351,7 @@ public static class MfaSetupEndpoints
         IMfaStore mfaStore,
         IUserStore userStore,
         RecoveryCodeService recoveryCodeService,
+        IEnumerable<IAuthHook> authHooks,
         CancellationToken ct)
     {
         var (userId, _) = await ResolveUserIdAsync(httpContext, mfaStore, ct);
@@ -365,6 +372,9 @@ public static class MfaSetupEndpoints
         foreach (var cred in credentials)
             await mfaStore.CreateCredentialAsync(cred, ct);
 
+        var user = await userStore.GetAsync(userId, ct);
+        await authHooks.RunOnRecoveryCodesRegeneratedAsync(userId, user?.Email ?? "", ct);
+
         return TypedResults.Json(new RecoveryCodesResponse { Codes = plaintextCodes.ToList() }, AuthagonalJsonContext.Default.RecoveryCodesResponse);
     }
 
@@ -373,6 +383,7 @@ public static class MfaSetupEndpoints
         HttpContext httpContext,
         IMfaStore mfaStore,
         IUserStore userStore,
+        IEnumerable<IAuthHook> authHooks,
         CancellationToken ct)
     {
         var (userId, setupChallenge) = await ResolveUserIdAsync(httpContext, mfaStore, ct);
@@ -390,18 +401,24 @@ public static class MfaSetupEndpoints
 
         await mfaStore.DeleteCredentialAsync(userId, credentialId, ct);
 
+        var user = await userStore.GetAsync(userId, ct);
+        var mfaDisabled = false;
+
         // Check if user still has MFA credentials (excluding recovery codes)
         var remaining = await mfaStore.GetCredentialsAsync(userId, ct);
         if (!remaining.Any(c => c.Type is MfaCredentialType.Totp or MfaCredentialType.WebAuthn))
         {
-            var user = await userStore.GetAsync(userId, ct);
             if (user is not null && user.MfaEnabled)
             {
                 user.MfaEnabled = false;
                 user.UpdatedAt = DateTimeOffset.UtcNow;
                 await userStore.UpdateAsync(user, ct);
+                mfaDisabled = true;
             }
         }
+
+        await authHooks.RunOnMfaCredentialRemovedAsync(
+            userId, user?.Email ?? "", cred.Type.ToString().ToLowerInvariant(), mfaDisabled, ct);
 
         return TypedResults.Json(new SuccessResponse(), AuthagonalJsonContext.Default.SuccessResponse);
     }

@@ -51,6 +51,27 @@ public interface IAuthHook
     /// Notification only — the confirmation has already been persisted. Default: no-op,
     /// so existing hooks need no change.</summary>
     Task OnEmailConfirmedAsync(string userId, string email, CancellationToken ct = default) => Task.CompletedTask;
+
+    /// <summary>Called after a user adds a new MFA factor (enrols a TOTP authenticator or a passkey).
+    /// Notification only — the credential is already active. Default: no-op.</summary>
+    /// <param name="mfaMethod">One of "totp" or "webauthn".</param>
+    Task OnMfaEnrolledAsync(string userId, string email, string mfaMethod, CancellationToken ct = default) => Task.CompletedTask;
+
+    /// <summary>Called after a user removes one of their MFA credentials. Notification only.
+    /// Default: no-op.</summary>
+    /// <param name="mfaMethod">The removed credential's type ("totp", "webauthn", or "recoverycode").</param>
+    /// <param name="mfaDisabled">True when removing this credential left no primary factor, so MFA
+    /// was switched off for the user entirely.</param>
+    Task OnMfaCredentialRemovedAsync(string userId, string email, string mfaMethod, bool mfaDisabled, CancellationToken ct = default) => Task.CompletedTask;
+
+    /// <summary>Called after a user regenerates their MFA recovery codes (the previous set is
+    /// invalidated). Notification only. Default: no-op.</summary>
+    Task OnRecoveryCodesRegeneratedAsync(string userId, string email, CancellationToken ct = default) => Task.CompletedTask;
+
+    /// <summary>Called after a user's password is changed. Notification only — the change is already
+    /// persisted and existing sessions invalidated. Default: no-op.</summary>
+    /// <param name="changedVia">Origin of the change, e.g. "reset".</param>
+    Task OnPasswordChangedAsync(string userId, string email, string changedVia, CancellationToken ct = default) => Task.CompletedTask;
 }
 
 /// <summary>
@@ -112,5 +133,29 @@ public static class AuthHookExtensions
     {
         foreach (var hook in hooks)
             await hook.OnEmailConfirmedAsync(userId, email, ct);
+    }
+
+    public static async Task RunOnMfaEnrolledAsync(this IEnumerable<IAuthHook> hooks, string userId, string email, string mfaMethod, CancellationToken ct = default)
+    {
+        foreach (var hook in hooks)
+            await hook.OnMfaEnrolledAsync(userId, email, mfaMethod, ct);
+    }
+
+    public static async Task RunOnMfaCredentialRemovedAsync(this IEnumerable<IAuthHook> hooks, string userId, string email, string mfaMethod, bool mfaDisabled, CancellationToken ct = default)
+    {
+        foreach (var hook in hooks)
+            await hook.OnMfaCredentialRemovedAsync(userId, email, mfaMethod, mfaDisabled, ct);
+    }
+
+    public static async Task RunOnRecoveryCodesRegeneratedAsync(this IEnumerable<IAuthHook> hooks, string userId, string email, CancellationToken ct = default)
+    {
+        foreach (var hook in hooks)
+            await hook.OnRecoveryCodesRegeneratedAsync(userId, email, ct);
+    }
+
+    public static async Task RunOnPasswordChangedAsync(this IEnumerable<IAuthHook> hooks, string userId, string email, string changedVia, CancellationToken ct = default)
+    {
+        foreach (var hook in hooks)
+            await hook.OnPasswordChangedAsync(userId, email, changedVia, ct);
     }
 }
