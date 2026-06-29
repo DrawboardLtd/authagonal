@@ -8,8 +8,11 @@ public static class DiscoveryEndpoint
             Authagonal.Core.Services.ITenantContext tenantContext,
             Authagonal.Core.Stores.IScopeStore scopeStore,
             Microsoft.Extensions.Options.IOptions<Authagonal.Server.Services.AuthOptions> authOptions,
+            Microsoft.AspNetCore.Http.HttpResponse response,
             CancellationToken ct) =>
         {
+            // Edge/CDN-cacheable: per-tenant discovery metadata changes rarely.
+            response.Headers.CacheControl = "public, max-age=3600";
             var issuer = tenantContext.Issuer;
 
             var builtIn = new[] { "openid", "profile", "email", "offline_access" };

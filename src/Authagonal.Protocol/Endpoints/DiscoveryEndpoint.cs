@@ -13,8 +13,11 @@ internal static class DiscoveryEndpoint
         app.MapGet("/.well-known/openid-configuration", async (
             ITenantContext tenantContext,
             IScopeStore scopeStore,
+            HttpResponse response,
             CancellationToken ct) =>
         {
+            // Edge/CDN-cacheable: per-tenant discovery metadata changes rarely.
+            response.Headers.CacheControl = "public, max-age=3600";
             var issuer = tenantContext.Issuer;
 
             var builtIn = new[] { "openid", "profile", "email", "offline_access" };

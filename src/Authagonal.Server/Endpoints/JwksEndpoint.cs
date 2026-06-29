@@ -6,8 +6,11 @@ public static class JwksEndpoint
 {
     public static IEndpointRouteBuilder MapJwksEndpoint(this IEndpointRouteBuilder app)
     {
-        app.MapGet("/.well-known/openid-configuration/jwks", (IKeyManager keyManager) =>
+        app.MapGet("/.well-known/openid-configuration/jwks", (IKeyManager keyManager, Microsoft.AspNetCore.Http.HttpResponse response) =>
         {
+            // Edge/CDN-cacheable: JWKS advertises every non-expired key and rotation publishes the next
+            // key days ahead, so a short shared cache never lacks a token's signing key.
+            response.Headers.CacheControl = "public, max-age=3600";
             var keys = keyManager.GetSecurityKeys();
 
             var jwks = new JwksDocument
