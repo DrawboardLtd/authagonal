@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useSearchParams, Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { mfaStatus, mfaTotpSetup, mfaTotpConfirm, mfaWebAuthnSetup, mfaWebAuthnConfirm, mfaRecoveryGenerate, mfaDeleteCredential, ApiRequestError } from '../api';
 import type { MfaMethod } from '../types';
@@ -45,6 +45,7 @@ export default function MfaSetupPage() {
   const backUrl = searchParams.get('backUrl') || '';
   const [enabled, setEnabled] = useState(false);
   const [methods, setMethods] = useState<MfaMethod[]>([]);
+  const [offered, setOffered] = useState(true);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
 
@@ -69,6 +70,7 @@ export default function MfaSetupPage() {
       const status = await mfaStatus(mfaSetupToken);
       setEnabled(status.enabled);
       setMethods(status.methods);
+      setOffered(status.offered !== false);
     } catch {
       setError(t('errorUnexpected'));
     } finally {
@@ -214,6 +216,18 @@ export default function MfaSetupPage() {
 
   if (loading) {
     return <div className="text-center py-10 text-gray-500 dark:text-gray-400">{t('mfaLoading')}</div>;
+  }
+
+  // MFA is turned off for this tenant (every client's policy is Disabled) and this isn't a forced setup,
+  // so don't offer enrolment. Forced setup carries a setupToken and always proceeds.
+  if (!offered && !mfaSetupToken) {
+    return (
+      <div>
+        <CardTitle>{t('mfaSetupTitle')}</CardTitle>
+        <CardDescription className="mb-6">{t('mfaNotAvailable', 'Two-factor authentication is turned off for this account.')}</CardDescription>
+        <Link to="/account"><Button variant="secondary" className="w-full">{t('back', 'Back')}</Button></Link>
+      </div>
+    );
   }
 
   const hasTotp = methods.some(m => m.type === 'totp');

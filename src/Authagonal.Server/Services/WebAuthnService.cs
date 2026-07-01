@@ -3,11 +3,31 @@ using System.Text.Json;
 using Authagonal.Core.Models;
 using Fido2NetLib;
 using Fido2NetLib.Objects;
+using Microsoft.AspNetCore.Http;
 
 namespace Authagonal.Server.Services;
 
-public sealed class WebAuthnService(IFido2 fido2)
+public sealed class WebAuthnService(IHttpContextAccessor httpContextAccessor)
 {
+    // Build the FIDO2 relying-party config from the ACTUAL request host, not a fixed startup value.
+    // WebAuthn requires the RP ID to be the origin's registrable host and the origin to match exactly,
+    // so on a multi-tenant server (each tenant on its own host, e.g. {slug}-admin.authagonal.io) the RP
+    // must be resolved per request — a single startup Issuer would only ever be valid for one host, which
+    // is why passkey setup failed for every tenant host. rp.id is the hostname (no port); the origin is
+    // scheme + host (+ port) and must equal what the browser sends.
+    private IFido2 ResolveFido2()
+    {
+        var req = httpContextAccessor.HttpContext?.Request
+            ?? throw new InvalidOperationException("WebAuthn requires an active HTTP request.");
+        var origin = $"{req.Scheme}://{req.Host.Value}";
+        return new Fido2(new Fido2Configuration
+        {
+            ServerDomain = req.Host.Host,
+            ServerName = "Authagonal",
+            Origins = new HashSet<string> { origin },
+        });
+    }
+
     public (CredentialCreateOptions Options, string SetupToken) CreateAttestationOptions(
         AuthUser user, IReadOnlyList<MfaCredential> existingCredentials)
     {
@@ -27,7 +47,7 @@ public sealed class WebAuthnService(IFido2 fido2)
             })
             .ToList();
 
-        var options = fido2.RequestNewCredential(
+        var options = ResolveFido2().RequestNewCredential(
             new RequestNewCredentialParams
             {
                 User = fidoUser,
@@ -50,7 +70,7 @@ public sealed class WebAuthnService(IFido2 fido2)
         AuthenticatorAttestationRawResponse attestationResponse,
         CancellationToken ct = default)
     {
-        var result = await fido2.MakeNewCredentialAsync(
+        var result = await ResolveFido2().MakeNewCredentialAsync(
             new MakeNewCredentialParams
             {
                 AttestationResponse = attestationResponse,
@@ -89,7 +109,7 @@ public sealed class WebAuthnService(IFido2 fido2)
             })
             .ToList();
 
-        return fido2.GetAssertionOptions(
+        return ResolveFido2().GetAssertionOptions(
             new GetAssertionOptionsParams
             {
                 AllowedCredentials = allowedCredentials,
@@ -104,7 +124,7 @@ public sealed class WebAuthnService(IFido2 fido2)
         uint storedSignCount,
         CancellationToken ct = default)
     {
-        var result = await fido2.MakeAssertionAsync(
+        var result = await ResolveFido2().MakeAssertionAsync(
             new MakeAssertionParams
             {
                 AssertionResponse = assertionResponse,

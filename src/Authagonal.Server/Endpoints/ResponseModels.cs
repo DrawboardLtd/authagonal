@@ -146,6 +146,11 @@ public sealed class MfaStatusResponse
 {
     [JsonPropertyName("enabled")] public bool Enabled { get; set; }
     [JsonPropertyName("methods")] public List<MfaMethodInfo> Methods { get; set; } = [];
+
+    /// <summary>Whether MFA is offered for this tenant at all — false when every client's MfaPolicy is
+    /// Disabled, so the self-service setup UI can hide itself. Distinct from <see cref="Enabled"/>, which
+    /// means the user has already set MFA up.</summary>
+    [JsonPropertyName("offered")] public bool Offered { get; set; }
 }
 
 public sealed class MfaMethodInfo

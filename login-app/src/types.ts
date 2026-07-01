@@ -81,6 +81,9 @@ export interface MfaVerifyResponse {
 export interface MfaStatusResponse {
   enabled: boolean;
   methods: MfaMethod[];
+  /** Whether MFA is offered for this tenant at all (some client policy != Disabled). Absent on older
+   *  servers — treat only an explicit false as "not offered". */
+  offered?: boolean;
 }
 
 export interface MfaMethod {

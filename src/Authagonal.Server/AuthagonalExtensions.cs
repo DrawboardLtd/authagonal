@@ -16,7 +16,6 @@ using Authagonal.Server.Services.Saml;
 using Authagonal.AzureProvider;
 using Azure.Data.Tables;
 using Azure.Storage.Blobs;
-using Fido2NetLib;
 using System.Globalization;
 using System.Security.Cryptography;
 using Microsoft.AspNetCore.Authentication;
@@ -213,17 +212,10 @@ public static class AuthagonalExtensions
         services.AddScoped<IOidcSubjectResolver>(sp => sp.GetRequiredService<UserStoreOidcSubjectResolver>());
         services.AddSingleton<TotpService>();
         services.AddSingleton<RecoveryCodeService>();
+        // WebAuthn (FIDO2): the relying-party config (rp id + origin) is resolved PER REQUEST from the
+        // request host inside WebAuthnService — a single startup value can't be right on a multi-tenant
+        // server where each tenant is on its own host. So there's no AddFido2 singleton here.
         services.AddScoped<WebAuthnService>();
-
-        // WebAuthn (FIDO2)
-        var issuer = configuration["Issuer"] ?? "https://localhost";
-        var issuerUri = new Uri(issuer);
-        services.AddFido2(options =>
-        {
-            options.ServerDomain = issuerUri.Host;
-            options.ServerName = "Authagonal";
-            options.Origins = new HashSet<string> { issuer.TrimEnd('/') };
-        });
 
         // Extensibility points — TryAdd so custom registrations take precedence
         services.TryAddSingleton<IEmailService, NullEmailService>();

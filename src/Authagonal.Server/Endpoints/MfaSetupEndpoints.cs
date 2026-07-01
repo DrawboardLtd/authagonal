@@ -59,10 +59,17 @@ public static class MfaSetupEndpoints
     private static async Task<IResult> GetStatusAsync(
         HttpContext httpContext,
         IMfaStore mfaStore,
+        IClientStore clientStore,
         CancellationToken ct)
     {
         var (userId, _) = await ResolveUserIdAsync(httpContext, mfaStore, ct);
         if (userId is null) return Results.Unauthorized();
+
+        // Is MFA offered for this tenant at all? False when every client's policy is Disabled — lets the
+        // self-service setup UI hide itself (a tenant that has turned MFA off shouldn't be prompted to
+        // enrol). Any non-Disabled client (Enabled/Required) means MFA is in play.
+        var clients = await clientStore.GetAllAsync(ct);
+        var offered = clients.Any(c => c.MfaPolicy != MfaPolicy.Disabled);
 
         var credentials = await mfaStore.GetCredentialsAsync(userId, ct);
 
@@ -83,7 +90,7 @@ public static class MfaSetupEndpoints
 
         var enabled = confirmed.Any(c => c.Type != MfaCredentialType.RecoveryCode);
 
-        return TypedResults.Json(new MfaStatusResponse { Enabled = enabled, Methods = methods }, AuthagonalJsonContext.Default.MfaStatusResponse);
+        return TypedResults.Json(new MfaStatusResponse { Enabled = enabled, Offered = offered, Methods = methods }, AuthagonalJsonContext.Default.MfaStatusResponse);
     }
 
     private static async Task<IResult> TotpSetupAsync(

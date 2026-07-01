@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { getProfile, updateProfile, ApiRequestError } from '../api';
+import { getProfile, updateProfile, mfaStatus, ApiRequestError } from '../api';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -40,6 +40,7 @@ export default function AccountPage() {
   const [error, setError] = useState('');
   const [unauthenticated, setUnauthenticated] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [mfaOffered, setMfaOffered] = useState(false);
   const [email, setEmail] = useState('');
   const [form, setForm] = useState({ firstName: '', lastName: '', companyName: '', phone: '', locale: '' });
 
@@ -65,6 +66,12 @@ export default function AccountPage() {
       })
       .finally(() => setLoading(false));
   }, [t]);
+
+  // MFA setup is only advertised when the tenant offers it (some client's policy is not Disabled) —
+  // don't show a "set up 2FA" prompt on a tenant that has turned MFA off.
+  useEffect(() => {
+    mfaStatus().then((s) => setMfaOffered(s.offered !== false)).catch(() => {});
+  }, []);
 
   // Switch the live UI immediately as a preview; the choice only persists on Save.
   function changeLocale(code: string) {
@@ -154,6 +161,7 @@ export default function AccountPage() {
           </Button>
         </form>
 
+        {mfaOffered && (
         <div className="mt-6 border-t border-gray-200 dark:border-gray-800 pt-4">
           <h2 className="text-sm font-medium text-gray-900 dark:text-white mb-1">{t('account.security', 'Security')}</h2>
           <p className="text-sm text-gray-500 dark:text-gray-400 mb-3">{t('account.securitySubtitle', 'Add two-factor authentication to keep your account secure.')}</p>
@@ -161,6 +169,7 @@ export default function AccountPage() {
             <Button type="button" variant="secondary" className="w-full">{t('account.setupMfa', 'Set up two-factor authentication')}</Button>
           </Link>
         </div>
+        )}
         </>
       )}
     </>
