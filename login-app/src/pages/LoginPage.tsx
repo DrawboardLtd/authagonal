@@ -282,7 +282,10 @@ export default function LoginPage() {
       <div>
         <CardTitle>{t('signedInAs', { name: session.name || session.email })}</CardTitle>
         <p className="text-center text-gray-500 dark:text-gray-400">{t('signedInMessage')}</p>
-        <CardFooter>
+        <CardFooter className="flex flex-col gap-2">
+          <Link to="/account" className="block">
+            <Button className="w-full">{t('manageAccount', 'Manage account')}</Button>
+          </Link>
           <Button
             variant="secondary"
             onClick={() => {
