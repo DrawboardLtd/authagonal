@@ -250,6 +250,15 @@ public static class MfaSetupEndpoints
         if (pendingWebAuthn.Count > 0)
             existingCredentials = await mfaStore.GetCredentialsAsync(userId, ct);
 
+        // Passkeys are a per-device convenience layered on top of the portable base factor (TOTP), not a
+        // standalone factor. Require a confirmed TOTP credential before allowing passkey enrolment, so
+        // every account keeps a device-independent factor and a "Required" MFA policy can't be satisfied
+        // by a passkey alone (which would risk a lockout on a device the passkey isn't on). Enforced here
+        // at the boundary, not just hidden in the client.
+        var hasConfirmedTotp = existingCredentials.Any(c => c.Type == MfaCredentialType.Totp && c.Name != "TOTP (pending)");
+        if (!hasConfirmedTotp)
+            return Results.Json(new ErrorInfoResponse { Error = "totp_required_first" }, AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 400);
+
         var (options, setupToken) = webAuthnService.CreateAttestationOptions(user, existingCredentials);
 
         // Store the options JSON temporarily in a credential so we can verify later

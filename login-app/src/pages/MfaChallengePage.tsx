@@ -45,8 +45,11 @@ export default function MfaChallengePage() {
   const availableMethods = methodsParam ? methodsParam.split(',') : [];
 
   const hasWebAuthn = availableMethods.includes('webauthn');
-  const defaultMethod = hasWebAuthn ? 'webauthn'
-    : availableMethods.includes('totp') ? 'totp'
+  // Default to a device-independent factor (TOTP) when the user has one, so a login on a device that
+  // doesn't have the passkey is never pushed toward it — passkey stays a one-tap choice, not the forced
+  // default. (We also never auto-invoke the passkey; it only fires on an explicit tap.)
+  const defaultMethod = availableMethods.includes('totp') ? 'totp'
+    : hasWebAuthn ? 'webauthn'
     : availableMethods[0] || 'totp';
 
   const [method, setMethod] = useState(defaultMethod);

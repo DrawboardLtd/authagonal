@@ -316,11 +316,17 @@ export default function MfaSetupPage() {
         </div>
       )}
 
-      {/* WebAuthn / Passkey setup */}
-      {supportsWebAuthn && !hasWebAuthn && (
+      {/* WebAuthn / Passkey setup — only after a TOTP (portable base) factor exists. A passkey is a
+          per-device convenience layered on top of TOTP, not a standalone factor. */}
+      {supportsWebAuthn && hasTotp && (
         <Button className="mb-4" onClick={handleWebAuthnSetup} disabled={webAuthnLoading}>
-          {webAuthnLoading ? t('mfaLoading') : t('mfaSetupPasskey')}
+          {webAuthnLoading ? t('mfaLoading') : (hasWebAuthn ? t('mfaAddPasskey', 'Add another passkey') : t('mfaSetupPasskey'))}
         </Button>
+      )}
+      {supportsWebAuthn && !hasTotp && !hasWebAuthn && (
+        <p className="mb-4 text-[13px] text-gray-500 dark:text-gray-400">
+          {t('mfaPasskeyNeedsTotp', 'Set up an authenticator app first — passkeys are added on top of it.')}
+        </p>
       )}
 
       {/* Recovery codes */}
