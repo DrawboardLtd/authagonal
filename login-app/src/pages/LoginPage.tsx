@@ -1,7 +1,8 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useSearchParams, Link, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { login, logout, ssoCheck, getProviders, getSession, ApiRequestError } from '../api';
+import { login, logout, ssoCheck, getProviders, getSession, passkeyLoginBegin, passkeyLoginComplete, ApiRequestError } from '../api';
+import { toRequestOptions, serializeAssertion } from '../webauthn';
 import { Turnstile } from '../components/Turnstile';
 import { useBranding } from '../branding';
 import type { ExternalProvider } from '../types';
@@ -149,6 +150,32 @@ export default function LoginPage() {
       window.location.href = ssoUrl.toString();
     }
   }
+
+  // Passkey autofill (conditional mediation): if the browser supports it and a passkey exists for this
+  // site, it's offered in the email field's autofill dropdown. Selecting it logs in passwordless. Fully
+  // best-effort — no passkey / user ignores it / aborted / SSO-routed all fall back silently to password.
+  useEffect(() => {
+    const ac = new AbortController();
+    (async () => {
+      try {
+        const pkc = (window as unknown as { PublicKeyCredential?: { isConditionalMediationAvailable?: () => Promise<boolean> } }).PublicKeyCredential;
+        if (!pkc?.isConditionalMediationAvailable || !(await pkc.isConditionalMediationAvailable())) return;
+
+        const { challengeId, options } = await passkeyLoginBegin();
+        const getOptions: CredentialRequestOptions = { publicKey: toRequestOptions(options), signal: ac.signal };
+        (getOptions as { mediation?: string }).mediation = 'conditional';
+        const credential = await navigator.credentials.get(getOptions) as PublicKeyCredential | null;
+        if (!credential || ac.signal.aborted) return;
+
+        await passkeyLoginComplete(challengeId, serializeAssertion(credential));
+        window.location.href = returnUrl && isSafeReturnUrl(returnUrl) ? returnUrl : '/';
+      } catch {
+        // No passkey, user ignored the autofill, aborted, or SSO-routed — normal password login continues.
+      }
+    })();
+    return () => ac.abort();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [returnUrl]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -360,7 +387,7 @@ export default function LoginPage() {
               }
             }}
             placeholder={t('emailPlaceholder')}
-            autoComplete="email"
+            autoComplete="username webauthn"
             autoFocus={!loginHint}
             maxLength={256}
             required

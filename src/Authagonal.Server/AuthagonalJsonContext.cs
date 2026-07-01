@@ -87,6 +87,7 @@ namespace Authagonal.Server;
 [JsonSerializable(typeof(ResetPasswordRequest))]
 [JsonSerializable(typeof(ProfileUpdateRequest))]
 [JsonSerializable(typeof(MfaVerifyRequest))]
+[JsonSerializable(typeof(PasswordlessCompleteRequest))]
 [JsonSerializable(typeof(TotpConfirmRequest))]
 [JsonSerializable(typeof(WebAuthnConfirmRequest))]
 [JsonSerializable(typeof(Dictionary<string, string>))]

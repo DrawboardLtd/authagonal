@@ -228,6 +228,7 @@ public static class MfaSetupEndpoints
         HttpContext httpContext,
         IMfaStore mfaStore,
         IUserStore userStore,
+        ISsoDomainStore ssoDomainStore,
         WebAuthnService webAuthnService,
         CancellationToken ct)
     {
@@ -236,6 +237,12 @@ public static class MfaSetupEndpoints
 
         var user = await userStore.GetAsync(userId, ct);
         if (user is null) return Results.Unauthorized();
+
+        // Don't let a user whose domain is SSO-routed (the tenant forces the IdP) enrol a local passkey —
+        // it would become a bypass of the IdP and its deprovisioning. They authenticate via SSO instead.
+        var ssoDomainName = user.Email.Split('@', 2).LastOrDefault()?.ToLowerInvariant();
+        if (!string.IsNullOrWhiteSpace(ssoDomainName) && await ssoDomainStore.GetAsync(ssoDomainName, ct) is not null)
+            return Results.Json(new ErrorInfoResponse { Error = "sso_managed" }, AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 400);
 
         var existingCredentials = await mfaStore.GetCredentialsAsync(userId, ct);
 

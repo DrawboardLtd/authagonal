@@ -1,5 +1,7 @@
 import type { ApiError, SessionResponse, SsoCheckResponse, ProvidersResponse, PasswordPolicyResponse, MfaLoginResponse, MfaVerifyResponse, MfaStatusResponse, MfaTotpSetupResponse, MfaRecoveryGenerateResponse, MfaWebAuthnSetupResponse, MfaWebAuthnConfirmResponse, RegisterResponse, ProfileResponse, ProfileUpdateRequest } from './types';
 
+import type { AssertionOptionsJson } from './webauthn';
+
 const API_URL = import.meta.env.VITE_API_URL || '';
 
 class ApiRequestError extends Error {
@@ -50,6 +52,19 @@ export function login(email: string, password: string, returnUrl?: string, turns
   return api<MfaLoginResponse>(url, {
     method: 'POST',
     body: JSON.stringify({ email, password, turnstileToken }),
+  });
+}
+
+// Passwordless passkey login (conditional mediation). Begin issues a discoverable-credential challenge;
+// complete verifies the assertion and signs in (server resolves the user from the passkey).
+export function passkeyLoginBegin(): Promise<{ challengeId: string; options: AssertionOptionsJson }> {
+  return api('/api/auth/mfa/passwordless/begin', { method: 'POST' });
+}
+
+export function passkeyLoginComplete(challengeId: string, assertion: string): Promise<{ userId: string; email: string; name: string }> {
+  return api('/api/auth/mfa/passwordless/complete', {
+    method: 'POST',
+    body: JSON.stringify({ challengeId, assertion }),
   });
 }
 

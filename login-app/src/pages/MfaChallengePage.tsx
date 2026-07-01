@@ -181,7 +181,7 @@ export default function MfaChallengePage() {
               type="button"
               variant={method === 'webauthn' ? 'default' : 'secondary'}
               size="sm"
-              className="flex-1"
+              className="flex-1 whitespace-nowrap"
               onClick={() => { setMethod('webauthn'); setCode(''); setError(''); }}
             >
               {t('mfaMethodWebAuthn')}
@@ -192,7 +192,7 @@ export default function MfaChallengePage() {
               type="button"
               variant={method === 'totp' ? 'default' : 'secondary'}
               size="sm"
-              className="flex-1"
+              className="flex-1 whitespace-nowrap"
               onClick={() => { setMethod('totp'); setCode(''); setError(''); }}
             >
               {t('mfaMethodTotp')}
@@ -203,7 +203,7 @@ export default function MfaChallengePage() {
               type="button"
               variant={method === 'recovery' ? 'default' : 'secondary'}
               size="sm"
-              className="flex-1"
+              className="flex-1 whitespace-nowrap"
               onClick={() => { setMethod('recovery'); setCode(''); setError(''); }}
             >
               {t('mfaMethodRecovery')}
