@@ -114,6 +114,7 @@ export default function AccountPage() {
       {loading ? (
         <p className="text-sm text-gray-500 dark:text-gray-400">{t('account.loading')}</p>
       ) : (
+        <>
         <form onSubmit={handleSave} className="space-y-4">
           <div>
             <Label htmlFor="acc-email">{t('email')}</Label>
@@ -152,6 +153,15 @@ export default function AccountPage() {
             {saving ? t('account.saving') : t('account.save')}
           </Button>
         </form>
+
+        <div className="mt-6 border-t border-gray-200 dark:border-gray-800 pt-4">
+          <h2 className="text-sm font-medium text-gray-900 dark:text-white mb-1">{t('account.security', 'Security')}</h2>
+          <p className="text-sm text-gray-500 dark:text-gray-400 mb-3">{t('account.securitySubtitle', 'Add two-factor authentication to keep your account secure.')}</p>
+          <Link to="/mfa-setup">
+            <Button type="button" variant="secondary" className="w-full">{t('account.setupMfa', 'Set up two-factor authentication')}</Button>
+          </Link>
+        </div>
+        </>
       )}
     </>
   );
