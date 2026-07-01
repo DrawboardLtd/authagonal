@@ -2,6 +2,7 @@ using System.Security.Claims;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using Authagonal.Core.Models;
 using Authagonal.Core.Services;
 using Authagonal.Core.Stores;
@@ -164,7 +165,14 @@ public static class AuthEndpoints
         {
             // Create MFA challenge
             var credentials = await mfaStore.GetCredentialsAsync(user.Id, ct);
-            var methods = credentials
+            // Exclude half-finished enrolments: a passkey setup that errored before confirm leaves a
+            // "WebAuthn (pending)" credential (same for "TOTP (pending)"). They must never count as usable
+            // MFA methods — otherwise login tries to build a passkey challenge for a credential that isn't
+            // real and can lock the account out.
+            var confirmedCreds = credentials
+                .Where(c => c.Name is not "TOTP (pending)" and not "WebAuthn (pending)")
+                .ToList();
+            var methods = confirmedCreds
                 .Where(c => !c.IsConsumed)
                 .Select(c => c.Type)
                 .Distinct()
@@ -181,26 +189,41 @@ public static class AuthEndpoints
                 ExpiresAt = DateTimeOffset.UtcNow.AddMinutes(authOptions.Value.MfaChallengeExpiryMinutes),
             };
 
-            // Generate WebAuthn assertion options if the user has passkeys
-            object? webAuthnOptions = null;
-            var webAuthnCreds = credentials.Where(c => c.Type == MfaCredentialType.WebAuthn).ToList();
+            // Generate WebAuthn assertion options if the user has (confirmed) passkeys. Wrapped in a
+            // fallback: a passkey-options failure must NEVER block login — the user can still use another
+            // factor (e.g. TOTP). On any error we log it and continue without the passkey option.
+            string? webAuthnJson = null;
+            var webAuthnCreds = confirmedCreds.Where(c => c.Type == MfaCredentialType.WebAuthn).ToList();
             if (webAuthnCreds.Count > 0)
             {
-                var assertionOptions = webAuthnService.CreateAssertionOptions(webAuthnCreds);
-                challenge.WebAuthnChallenge = assertionOptions.ToJson();
-                webAuthnOptions = assertionOptions;
+                try
+                {
+                    var assertionOptions = webAuthnService.CreateAssertionOptions(webAuthnCreds);
+                    challenge.WebAuthnChallenge = assertionOptions.ToJson();
+                    webAuthnJson = challenge.WebAuthnChallenge;
+                }
+                catch (Exception ex)
+                {
+                    logger.LogError(ex, "Failed to build WebAuthn assertion options for user {UserId}; continuing without the passkey option", user.Id);
+                    webAuthnJson = null;
+                }
             }
 
             await mfaStore.StoreChallengeAsync(challenge, ct);
 
             logger.LogInformation("MFA challenge created for user {UserId}", user.Id);
 
-            return TypedResults.Json(new MfaRequiredResponse
+            // AssertionOptions isn't in the source-gen JSON context (and Fido2 owns the WebAuthn wire
+            // format), so build the response as raw JSON with the options embedded via ToJson() rather
+            // than letting the typed serializer choke on the object-typed WebAuthn member.
+            var mfaBody = new JsonObject
             {
-                ChallengeId = challenge.ChallengeId,
-                Methods = methods,
-                WebAuthn = webAuthnOptions,
-            }, AuthagonalJsonContext.Default.MfaRequiredResponse);
+                ["mfaRequired"] = true,
+                ["challengeId"] = challenge.ChallengeId,
+                ["methods"] = new JsonArray(methods.Select(m => (JsonNode?)JsonValue.Create(m)).ToArray()),
+                ["webAuthn"] = webAuthnJson is null ? null : JsonNode.Parse(webAuthnJson),
+            };
+            return Results.Content(mfaBody.ToJsonString(), "application/json");
         }
 
         // Not enrolled, but policy requires MFA → force enrollment before any session is issued.

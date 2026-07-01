@@ -1,5 +1,6 @@
 using System.Security.Claims;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using Authagonal.Core.Models;
 using Authagonal.Core.Services;
 using Authagonal.Core.Stores;
@@ -263,7 +264,15 @@ public static class MfaSetupEndpoints
         };
         await mfaStore.CreateCredentialAsync(setupCred, ct);
 
-        return TypedResults.Json(new WebAuthnSetupResponse { SetupToken = setupToken, Options = options }, AuthagonalJsonContext.Default.WebAuthnSetupResponse);
+        // Fido2's CredentialCreateOptions isn't in the source-gen JSON context, and it has its own
+        // converters for the WebAuthn wire format — so emit it via Fido2's ToJson() embedded as raw JSON
+        // rather than letting the typed serializer choke on the object-typed Options member.
+        var setupBody = new JsonObject
+        {
+            ["setupToken"] = setupToken,
+            ["options"] = JsonNode.Parse(options.ToJson()),
+        };
+        return Results.Content(setupBody.ToJsonString(), "application/json");
     }
 
     private static async Task<IResult> WebAuthnConfirmAsync(
