@@ -27,11 +27,13 @@ public class VaultTransitClient
     }
 
     /// <summary>Sign data using a Transit key. Returns raw R‖S signature bytes (JWS-marshaled).</summary>
-    public virtual async Task<byte[]> SignAsync(string keyName, byte[] data, CancellationToken ct = default)
+    public virtual async Task<byte[]> SignAsync(string keyName, byte[] data, CancellationToken ct = default, int keyVersion = 0)
     {
         var input = Convert.ToBase64String(data);
         var payload = JsonSerializer.Serialize(
-            new VaultSignRequest { Input = input, HashAlgorithm = "sha2-256", MarshalingAlgorithm = "jws" },
+            // key_version omitted (null) => Vault signs with the latest version; a specific version is
+            // passed for publish-ahead rotation so the signature matches the advertised kid.
+            new VaultSignRequest { Input = input, HashAlgorithm = "sha2-256", MarshalingAlgorithm = "jws", KeyVersion = keyVersion > 0 ? keyVersion : null },
             AuthagonalJsonContext.Default.VaultSignRequest);
 
         var response = await PostAsync($"/v1/transit/sign/{keyName}/sha2-256", payload, ct);
@@ -204,6 +206,10 @@ internal sealed class VaultSignRequest
     public required string HashAlgorithm { get; set; }
     [JsonPropertyName("marshaling_algorithm")]
     public required string MarshalingAlgorithm { get; set; }
+    // Sign with a specific key version (publish-ahead rotation). Omitted => Vault uses the latest version.
+    [JsonPropertyName("key_version")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public int? KeyVersion { get; set; }
 }
 
 internal sealed class VaultVerifyRequest

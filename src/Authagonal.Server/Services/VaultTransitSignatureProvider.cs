@@ -22,7 +22,7 @@ public sealed class VaultTransitSignatureProvider : SignatureProvider
 
     public override byte[] Sign(byte[] input)
     {
-        return _key.TransitClient.SignAsync(_key.VaultKeyName, input, CancellationToken.None)
+        return _key.TransitClient.SignAsync(_key.VaultKeyName, input, CancellationToken.None, _key.KeyVersion)
             .GetAwaiter().GetResult();
     }
 
