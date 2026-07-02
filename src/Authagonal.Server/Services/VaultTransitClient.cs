@@ -323,6 +323,14 @@ public sealed class TransitKeyInfo
     public Dictionary<string, TransitKeyVersion>? Keys { get; set; }
 }
 
+/// <summary>
+/// A single Transit key version. Vault serializes this as an OBJECT
+/// (<c>{ public_key, creation_time }</c>) for asymmetric keys (ecdsa-p256 / rsa) but as a bare
+/// NUMBER (the unix-seconds creation timestamp) for symmetric keys (aes256-gcm96). The custom
+/// converter tolerates both shapes so <see cref="VaultTransitClient.ReadKeyAsync"/> — and everything
+/// downstream of it (KeyExists / EnsureKeyType) — works for encryption keys too, not just signing keys.
+/// </summary>
+[JsonConverter(typeof(TransitKeyVersionConverter))]
 public sealed class TransitKeyVersion
 {
     [JsonPropertyName("public_key")]
@@ -330,4 +338,57 @@ public sealed class TransitKeyVersion
 
     [JsonPropertyName("creation_time")]
     public string? CreationTime { get; set; }
+}
+
+/// <summary>Reads <see cref="TransitKeyVersion"/> from either Vault shape (object for asymmetric keys, bare unix-seconds number for symmetric keys).</summary>
+public sealed class TransitKeyVersionConverter : JsonConverter<TransitKeyVersion>
+{
+    public override TransitKeyVersion Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+    {
+        // Symmetric keys (aes256-gcm96): the version value is just the unix-seconds creation timestamp.
+        if (reader.TokenType == JsonTokenType.Number)
+            return new TransitKeyVersion { CreationTime = reader.GetInt64().ToString(System.Globalization.CultureInfo.InvariantCulture) };
+
+        if (reader.TokenType != JsonTokenType.StartObject)
+        {
+            reader.Skip();
+            return new TransitKeyVersion();
+        }
+
+        // Asymmetric keys: { "public_key": "...", "creation_time": "..." } (plus fields we ignore).
+        var version = new TransitKeyVersion();
+        while (reader.Read())
+        {
+            if (reader.TokenType == JsonTokenType.EndObject) break;
+            if (reader.TokenType != JsonTokenType.PropertyName) continue;
+            var prop = reader.GetString();
+            reader.Read();
+            switch (prop)
+            {
+                case "public_key":
+                    version.PublicKey = reader.TokenType == JsonTokenType.String ? reader.GetString() : null;
+                    break;
+                case "creation_time":
+                    version.CreationTime = reader.TokenType switch
+                    {
+                        JsonTokenType.String => reader.GetString(),
+                        JsonTokenType.Number => reader.GetInt64().ToString(System.Globalization.CultureInfo.InvariantCulture),
+                        _ => null,
+                    };
+                    break;
+                default:
+                    reader.Skip();
+                    break;
+            }
+        }
+        return version;
+    }
+
+    public override void Write(Utf8JsonWriter writer, TransitKeyVersion value, JsonSerializerOptions options)
+    {
+        writer.WriteStartObject();
+        if (value.PublicKey is not null) writer.WriteString("public_key", value.PublicKey);
+        if (value.CreationTime is not null) writer.WriteString("creation_time", value.CreationTime);
+        writer.WriteEndObject();
+    }
 }
