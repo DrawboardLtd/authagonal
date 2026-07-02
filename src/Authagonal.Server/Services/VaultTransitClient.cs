@@ -16,6 +16,9 @@ namespace Authagonal.Server.Services;
 public class VaultTransitClient
 {
     public const string EcdsaP256 = "ecdsa-p256";
+    /// <summary>Symmetric key type for Transit encrypt/decrypt (encryption-as-a-service). Distinct from
+    /// the ECDSA signing keys — a key can't both sign and encrypt, so encryption uses its own key.</summary>
+    public const string Aes256Gcm96 = "aes256-gcm96";
 
     private readonly HttpClient _client;
     private readonly ILogger<VaultTransitClient> _logger;
@@ -64,6 +67,40 @@ public class VaultTransitClient
         var response = await PostAsync($"/v1/transit/verify/{keyName}/sha2-256", payload, ct);
         var result = JsonSerializer.Deserialize(response, AuthagonalJsonContext.Default.VaultResponseVerifyResponse);
         return result?.Data?.Valid ?? false;
+    }
+
+    /// <summary>
+    /// Encrypt plaintext with a Transit key (must be a symmetric <see cref="Aes256Gcm96"/> key). Returns
+    /// the Vault ciphertext token ("vault:v{version}:{base64}") — store it verbatim; <see cref="DecryptAsync"/>
+    /// reverses it. The key material never leaves Vault, and the version prefix lets Vault rewrap on rotation.
+    /// </summary>
+    public virtual async Task<string> EncryptAsync(string keyName, byte[] plaintext, CancellationToken ct = default)
+    {
+        var payload = JsonSerializer.Serialize(
+            new VaultEncryptRequest { Plaintext = Convert.ToBase64String(plaintext) },
+            AuthagonalJsonContext.Default.VaultEncryptRequest);
+
+        var response = await PostAsync($"/v1/transit/encrypt/{keyName}", payload, ct);
+        var result = JsonSerializer.Deserialize(response, AuthagonalJsonContext.Default.VaultResponseEncryptResponse);
+
+        return result?.Data?.Ciphertext
+            ?? throw new InvalidOperationException($"Vault Transit encrypt returned no ciphertext for key '{keyName}'");
+    }
+
+    /// <summary>Decrypt a Vault ciphertext token ("vault:v{version}:...") produced by <see cref="EncryptAsync"/>
+    /// with the same key. Returns the original plaintext bytes.</summary>
+    public virtual async Task<byte[]> DecryptAsync(string keyName, string ciphertext, CancellationToken ct = default)
+    {
+        var payload = JsonSerializer.Serialize(
+            new VaultDecryptRequest { Ciphertext = ciphertext },
+            AuthagonalJsonContext.Default.VaultDecryptRequest);
+
+        var response = await PostAsync($"/v1/transit/decrypt/{keyName}", payload, ct);
+        var result = JsonSerializer.Deserialize(response, AuthagonalJsonContext.Default.VaultResponseDecryptResponse);
+
+        var b64 = result?.Data?.Plaintext
+            ?? throw new InvalidOperationException($"Vault Transit decrypt returned no plaintext for key '{keyName}'");
+        return Convert.FromBase64String(b64);
     }
 
     /// <summary>Create a new Transit key.</summary>
@@ -198,6 +235,18 @@ internal sealed class VerifyResponse
     public bool Valid { get; set; }
 }
 
+internal sealed class EncryptResponse
+{
+    [JsonPropertyName("ciphertext")]
+    public string? Ciphertext { get; set; }
+}
+
+internal sealed class DecryptResponse
+{
+    [JsonPropertyName("plaintext")]
+    public string? Plaintext { get; set; }
+}
+
 internal sealed class VaultSignRequest
 {
     [JsonPropertyName("input")]
@@ -222,6 +271,18 @@ internal sealed class VaultVerifyRequest
     public required string HashAlgorithm { get; set; }
     [JsonPropertyName("marshaling_algorithm")]
     public required string MarshalingAlgorithm { get; set; }
+}
+
+internal sealed class VaultEncryptRequest
+{
+    [JsonPropertyName("plaintext")]
+    public required string Plaintext { get; set; }
+}
+
+internal sealed class VaultDecryptRequest
+{
+    [JsonPropertyName("ciphertext")]
+    public required string Ciphertext { get; set; }
 }
 
 internal sealed class VaultCreateKeyRequest
