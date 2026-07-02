@@ -19,7 +19,8 @@ public sealed class TableUserStore(
     TableClient? userFirstNamesTable,
     TableClient? userLastNamesTable,
     EnvPartitioner partitioner,
-    ITombstoneWriter? tombstoneWriter = null) : IUserStore
+    ITombstoneWriter? tombstoneWriter = null,
+    IFieldCipher? fieldCipher = null) : IUserStore
 {
     private readonly EnvPartitioner _partitioner = partitioner; // Phase B2 will wrap PartitionKeys with _partitioner.PK
     // Name-index tables are optional. When null (Storage:NameIndexesEnabled=false),
@@ -29,19 +30,55 @@ public sealed class TableUserStore(
     // scale the writes go through a single hot partition — disabling them is the
     // right call when name search isn't a product feature.
 
+    // At-rest PII encryption (opt-in). When null, values are stored plaintext (single-tenant /
+    // unconfigured hosts, and every existing deployment). When supplied (Cloud, per-tenant
+    // enc-{prefix} key), the Tier-1 fields below are encrypted at the entity level: on write
+    // AFTER FromModel(), on read BEFORE ToModel() — CustomAttributesJson must be plaintext
+    // before ToModel() deserializes it. Names/email stay plaintext until the index increments.
+    private readonly IFieldCipher _cipher = fieldCipher ?? NullFieldCipher.Instance;
+
     private static string? Normalize(string? name)
     {
         if (string.IsNullOrWhiteSpace(name)) return null;
         return name.Trim().ToUpperInvariant();
     }
 
+    // "{}" is an empty attribute map and reveals nothing, so it stays plaintext — this also
+    // spares a Vault round-trip on the common no-custom-attributes case.
+    private static bool ShouldProtect(string? value)
+        => !string.IsNullOrEmpty(value) && value != "{}";
+
+    private async Task<string?> ProtectFieldAsync(string? plaintext, CancellationToken ct)
+        => ShouldProtect(plaintext) ? await _cipher.ProtectAsync(plaintext!, ct) : plaintext;
+
+    // ResolveAsync passes legacy plaintext through unchanged, so this is safe on un-migrated rows.
+    private async Task<string?> ResolveFieldAsync(string? stored, CancellationToken ct)
+        => string.IsNullOrEmpty(stored) ? stored : await _cipher.ResolveAsync(stored, ct);
+
+    // Encrypt the at-rest PII fields on a freshly-mapped entity, just before a table write.
+    private async Task EncryptEntityAsync(UserEntity e, CancellationToken ct)
+    {
+        e.Phone = await ProtectFieldAsync(e.Phone, ct);
+        e.CompanyName = await ProtectFieldAsync(e.CompanyName, ct);
+        e.CustomAttributesJson = await ProtectFieldAsync(e.CustomAttributesJson, ct) ?? "{}";
+    }
+
+    // Decrypt the at-rest PII fields on an entity read from the table, before ToModel().
+    private async Task DecryptEntityAsync(UserEntity e, CancellationToken ct)
+    {
+        e.Phone = await ResolveFieldAsync(e.Phone, ct);
+        e.CompanyName = await ResolveFieldAsync(e.CompanyName, ct);
+        e.CustomAttributesJson = await ResolveFieldAsync(e.CustomAttributesJson, ct) ?? "{}";
+    }
+
     public async Task<AuthUser?> GetAsync(string userId, CancellationToken ct = default)
     {
         try
         {
-            var response = await usersTable.GetEntityAsync<UserEntity>(
-                _partitioner.PK(userId), UserEntity.ProfileRowKey, cancellationToken: ct);
-            var user = response.Value.ToModel();
+            var entity = (await usersTable.GetEntityAsync<UserEntity>(
+                _partitioner.PK(userId), UserEntity.ProfileRowKey, cancellationToken: ct)).Value;
+            await DecryptEntityAsync(entity, ct);
+            var user = entity.ToModel();
             user.Id = _partitioner.Strip(user.Id);
             return user;
         }
@@ -111,6 +148,7 @@ public sealed class TableUserStore(
     {
         var userEntity = UserEntity.FromModel(user);
         userEntity.PartitionKey = _partitioner.PK(userEntity.PartitionKey);
+        await EncryptEntityAsync(userEntity, ct);
         var emailEntity = UserEmailEntity.Create(user.NormalizedEmail, user.Id);
         emailEntity.PartitionKey = _partitioner.PK(emailEntity.PartitionKey);
 
@@ -147,6 +185,7 @@ public sealed class TableUserStore(
 
             var userEntity = UserEntity.FromModel(user);
             userEntity.PartitionKey = _partitioner.PK(userEntity.PartitionKey);
+            await EncryptEntityAsync(userEntity, ct);
             await usersTable.UpsertEntityAsync(userEntity, TableUpdateMode.Replace, ct);
 
             if (!string.Equals(oldNormalizedEmail, newNormalizedEmail, StringComparison.Ordinal))
@@ -339,6 +378,7 @@ public sealed class TableUserStore(
 
         await foreach (var entity in query)
         {
+            await DecryptEntityAsync(entity, ct);
             var user = entity.ToModel();
             user.Id = _partitioner.Strip(user.Id);
             if (organizationId is not null &&
@@ -391,6 +431,7 @@ public sealed class TableUserStore(
 
         await foreach (var entity in query)
         {
+            await DecryptEntityAsync(entity, ct);
             var user = entity.ToModel();
             user.Id = _partitioner.Strip(user.Id);
 
