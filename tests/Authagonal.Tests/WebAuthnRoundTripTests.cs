@@ -8,6 +8,7 @@ using Authagonal.Server;
 using Authagonal.Server.Services;
 using Fido2NetLib;
 using Fido2NetLib.Objects;
+using Microsoft.AspNetCore.Http;
 
 namespace Authagonal.Tests;
 
@@ -23,13 +24,21 @@ public sealed class WebAuthnRoundTripTests
     private const string RpId = "test.authagonal.local";
     private const string Origin = "https://test.authagonal.local";
 
-    private static WebAuthnService NewService() =>
-        new(new Fido2(new Fido2Configuration
-        {
-            ServerDomain = RpId,
-            ServerName = "Authagonal Test",
-            Origins = new HashSet<string> { Origin },
-        }));
+    // WebAuthnService now derives the FIDO2 relying party from the live request host (per-tenant hosts),
+    // so drive it with an HTTP context whose host is RpId — giving ServerDomain=RpId and origin=Origin,
+    // exactly what the VirtualAuthenticator signs over.
+    private static WebAuthnService NewService()
+    {
+        var ctx = new DefaultHttpContext();
+        ctx.Request.Scheme = "https";
+        ctx.Request.Host = new HostString(RpId);
+        return new WebAuthnService(new StubHttpContextAccessor { HttpContext = ctx });
+    }
+
+    private sealed class StubHttpContextAccessor : IHttpContextAccessor
+    {
+        public HttpContext? HttpContext { get; set; }
+    }
 
     private static AuthUser TestUser() => new()
     {
