@@ -167,6 +167,99 @@ public sealed class TableUserStore(
         catch (RequestFailedException ex) when (ex.Status == 404) { }
     }
 
+    // ── Name prefix index (first/last) ──────────────────────────────────────────
+    // A keyed HMAC destroys ordering, so the legacy scheme (2-char PartitionKey + RowKey range scan) can't
+    // work once names are tokenized. Tokenized instead indexes each prefix of a name as its own token row
+    // (PK = HMAC(prefix), RowKey = userId): "starts with p" becomes an exact-match lookup on HMAC(p). All of
+    // a name's prefixes are HMAC'd in one batch. When tokenization is OFF the legacy scheme is used unchanged.
+    // GetPartitionKey/MakeRowKey are identical between the first/last entities, so UserFirstNameEntity's serve
+    // both tables. Legacy and tokenized rows never collide (different PartitionKey shape), so both coexist
+    // during migration; search reads both.
+    private const int NamePrefixMin = 2;   // == legacy UserFirstNameEntity.PartitionKeyLength — the min searchable length
+    private const int NamePrefixMax = 16;  // cap on indexed prefix length: bounds rows/name; a longer query matches the first 16 chars
+
+    private static IReadOnlyList<string> NamePrefixesOf(string normalizedName)
+    {
+        if (normalizedName.Length < NamePrefixMin) return [normalizedName];
+        var hi = Math.Min(normalizedName.Length, NamePrefixMax);
+        var prefixes = new List<string>(hi - NamePrefixMin + 1);
+        for (var len = NamePrefixMin; len <= hi; len++)
+            prefixes.Add(normalizedName[..len]);
+        return prefixes;
+    }
+
+    private async Task WriteNameIndexAsync(TableClient table, string normalizedName, string userId, CancellationToken ct)
+    {
+        if (_indexTokenized)
+        {
+            var tokens = await _tokenizer.TokenizeBatchAsync(NamePrefixesOf(normalizedName), ct);
+            foreach (var token in tokens)
+                await table.UpsertEntityAsync(new TableEntity(_partitioner.PK(token), userId) { ["UserId"] = userId }, TableUpdateMode.Replace, ct);
+            return;
+        }
+        var pk = _partitioner.PK(UserFirstNameEntity.GetPartitionKey(normalizedName));
+        var rk = UserFirstNameEntity.MakeRowKey(normalizedName, userId);
+        await table.UpsertEntityAsync(new TableEntity(pk, rk) { ["UserId"] = userId }, TableUpdateMode.Replace, ct);
+    }
+
+    private async Task DeleteNameIndexAsync(TableClient table, string normalizedName, string userId, string tombstoneTable, CancellationToken ct)
+    {
+        if (_indexTokenized)
+        {
+            var tokens = await _tokenizer.TokenizeBatchAsync(NamePrefixesOf(normalizedName), ct);
+            foreach (var token in tokens)
+                await TryDeleteRowAsync(table, _partitioner.PK(token), userId, tombstoneTable, ct);
+            // Migration window: also remove any legacy row for this name (single, old-scheme row).
+        }
+        var legacyPk = _partitioner.PK(UserFirstNameEntity.GetPartitionKey(normalizedName));
+        await TryDeleteRowAsync(table, legacyPk, UserFirstNameEntity.MakeRowKey(normalizedName, userId), tombstoneTable, ct);
+    }
+
+    private async Task TryDeleteRowAsync(TableClient table, string pk, string rk, string tombstoneTable, CancellationToken ct)
+    {
+        try
+        {
+            await table.DeleteEntityAsync(pk, rk, cancellationToken: ct);
+            if (tombstoneWriter is not null)
+                await tombstoneWriter.WriteAsync(tombstoneTable, pk, rk, ct);
+        }
+        catch (RequestFailedException ex) when (ex.Status == 404) { }
+    }
+
+    // Collect userIds whose name (in the given first/last table) starts with `prefix`. Off: legacy range
+    // scan. Tokenized: exact-match on the prefix token (capped at NamePrefixMax), plus the legacy range scan
+    // for migration-window rows not yet backfilled. Queries shorter than NamePrefixMin don't hit the index.
+    private async Task<List<string>> SearchNameIndexAsync(TableClient? table, string prefix, string prefixEnd, int maxResults, CancellationToken ct)
+    {
+        if (table is null || prefix.Length < NamePrefixMin) return [];
+
+        var ids = new List<string>();
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+
+        async Task CollectAsync(Azure.AsyncPageable<UserFirstNameEntity> query)
+        {
+            await foreach (var e in query.WithCancellation(ct))
+            {
+                if (seen.Add(e.UserId)) ids.Add(e.UserId);
+                if (ids.Count >= maxResults) break;
+            }
+        }
+
+        if (_indexTokenized)
+        {
+            var lookup = prefix.Length > NamePrefixMax ? prefix[..NamePrefixMax] : prefix;
+            var tokenPk = _partitioner.PK(await _tokenizer.TokenizeAsync(lookup, ct));
+            await CollectAsync(table.QueryAsync<UserFirstNameEntity>(e => e.PartitionKey == tokenPk, cancellationToken: ct));
+            if (ids.Count >= maxResults) return ids;
+        }
+
+        var legacyPk = _partitioner.PK(UserFirstNameEntity.GetPartitionKey(prefix));
+        await CollectAsync(table.QueryAsync<UserFirstNameEntity>(
+            e => e.PartitionKey == legacyPk && e.RowKey.CompareTo(prefix) >= 0 && e.RowKey.CompareTo(prefixEnd) < 0,
+            cancellationToken: ct));
+        return ids;
+    }
+
     // "{}" is an empty attribute map and reveals nothing, so it stays plaintext — this also
     // spares a Vault round-trip on the common no-custom-attributes case.
     private static bool ShouldProtect(string? value)
@@ -278,19 +371,11 @@ public sealed class TableUserStore(
 
         var normFirst = Normalize(user.FirstName);
         if (normFirst is not null && userFirstNamesTable is not null)
-        {
-            var firstEntity = UserFirstNameEntity.Create(normFirst, user.Id);
-            firstEntity.PartitionKey = _partitioner.PK(firstEntity.PartitionKey);
-            await userFirstNamesTable.UpsertEntityAsync(firstEntity, TableUpdateMode.Replace, ct);
-        }
+            await WriteNameIndexAsync(userFirstNamesTable, normFirst, user.Id, ct);
 
         var normLast = Normalize(user.LastName);
         if (normLast is not null && userLastNamesTable is not null)
-        {
-            var lastEntity = UserLastNameEntity.Create(normLast, user.Id);
-            lastEntity.PartitionKey = _partitioner.PK(lastEntity.PartitionKey);
-            await userLastNamesTable.UpsertEntityAsync(lastEntity, TableUpdateMode.Replace, ct);
-        }
+            await WriteNameIndexAsync(userLastNamesTable, normLast, user.Id, ct);
     }
 
     public async Task UpdateAsync(AuthUser user, CancellationToken ct = default)
@@ -330,50 +415,16 @@ public sealed class TableUserStore(
             var newFirst = Normalize(user.FirstName);
             if (userFirstNamesTable is not null && !string.Equals(oldFirst, newFirst, StringComparison.Ordinal))
             {
-                if (oldFirst is not null)
-                {
-                    var oldPk = _partitioner.PK(UserFirstNameEntity.GetPartitionKey(oldFirst));
-                    var oldRk = UserFirstNameEntity.MakeRowKey(oldFirst, user.Id);
-                    try
-                    {
-                        await userFirstNamesTable.DeleteEntityAsync(oldPk, oldRk, cancellationToken: ct);
-                        if (tombstoneWriter is not null)
-                            await tombstoneWriter.WriteAsync("UserFirstNames", oldPk, oldRk, ct);
-                    }
-                    catch (RequestFailedException ex) when (ex.Status == 404) { }
-                }
-
-                if (newFirst is not null)
-                {
-                    var firstEntity = UserFirstNameEntity.Create(newFirst, user.Id);
-                    firstEntity.PartitionKey = _partitioner.PK(firstEntity.PartitionKey);
-                    await userFirstNamesTable.UpsertEntityAsync(firstEntity, TableUpdateMode.Replace, ct);
-                }
+                if (oldFirst is not null) await DeleteNameIndexAsync(userFirstNamesTable, oldFirst, user.Id, "UserFirstNames", ct);
+                if (newFirst is not null) await WriteNameIndexAsync(userFirstNamesTable, newFirst, user.Id, ct);
             }
 
             var oldLast = Normalize(existing.Value.LastName);
             var newLast = Normalize(user.LastName);
             if (userLastNamesTable is not null && !string.Equals(oldLast, newLast, StringComparison.Ordinal))
             {
-                if (oldLast is not null)
-                {
-                    var oldPk = _partitioner.PK(UserLastNameEntity.GetPartitionKey(oldLast));
-                    var oldRk = UserLastNameEntity.MakeRowKey(oldLast, user.Id);
-                    try
-                    {
-                        await userLastNamesTable.DeleteEntityAsync(oldPk, oldRk, cancellationToken: ct);
-                        if (tombstoneWriter is not null)
-                            await tombstoneWriter.WriteAsync("UserLastNames", oldPk, oldRk, ct);
-                    }
-                    catch (RequestFailedException ex) when (ex.Status == 404) { }
-                }
-
-                if (newLast is not null)
-                {
-                    var lastEntity = UserLastNameEntity.Create(newLast, user.Id);
-                    lastEntity.PartitionKey = _partitioner.PK(lastEntity.PartitionKey);
-                    await userLastNamesTable.UpsertEntityAsync(lastEntity, TableUpdateMode.Replace, ct);
-                }
+                if (oldLast is not null) await DeleteNameIndexAsync(userLastNamesTable, oldLast, user.Id, "UserLastNames", ct);
+                if (newLast is not null) await WriteNameIndexAsync(userLastNamesTable, newLast, user.Id, ct);
             }
         }
         catch (RequestFailedException ex) when (ex.Status == 404)
@@ -395,35 +446,14 @@ public sealed class TableUserStore(
             await DeleteEmailIndexAsync(existing.Value.NormalizedEmail, ct);
             await DeleteDomainIndexAsync(existing.Value.NormalizedEmail, userId, ct);
 
-            // Delete first-name index
+            // Delete name indexes (all prefix-token rows + any legacy row)
             var normFirst = Normalize(existing.Value.FirstName);
             if (normFirst is not null && userFirstNamesTable is not null)
-            {
-                var pk = _partitioner.PK(UserFirstNameEntity.GetPartitionKey(normFirst));
-                var rk = UserFirstNameEntity.MakeRowKey(normFirst, userId);
-                try
-                {
-                    await userFirstNamesTable.DeleteEntityAsync(pk, rk, cancellationToken: ct);
-                    if (tombstoneWriter is not null)
-                        await tombstoneWriter.WriteAsync("UserFirstNames", pk, rk, ct);
-                }
-                catch (RequestFailedException ex) when (ex.Status == 404) { }
-            }
+                await DeleteNameIndexAsync(userFirstNamesTable, normFirst, userId, "UserFirstNames", ct);
 
-            // Delete last-name index
             var normLast = Normalize(existing.Value.LastName);
             if (normLast is not null && userLastNamesTable is not null)
-            {
-                var pk = _partitioner.PK(UserLastNameEntity.GetPartitionKey(normLast));
-                var rk = UserLastNameEntity.MakeRowKey(normLast, userId);
-                try
-                {
-                    await userLastNamesTable.DeleteEntityAsync(pk, rk, cancellationToken: ct);
-                    if (tombstoneWriter is not null)
-                        await tombstoneWriter.WriteAsync("UserLastNames", pk, rk, ct);
-                }
-                catch (RequestFailedException ex) when (ex.Status == 404) { }
-            }
+                await DeleteNameIndexAsync(userLastNamesTable, normLast, userId, "UserLastNames", ct);
 
             // Delete all external login entries for this user
             var logins = await GetLoginsAsync(userId, ct);
@@ -605,35 +635,12 @@ public sealed class TableUserStore(
                     cancellationToken: ct),
                 e => e.UserId, maxResults, ct);
 
-        // Name indexes are optional and partition-bucketed by name prefix. A query
-        // shorter than UserFirstNameEntity.PartitionKeyLength would have to fan out
-        // across many partitions, so we only consult the indexes once the query is
-        // long enough to land in a single partition (admin search UIs should require
-        // at least this many chars). Email prefix search is always available; users
-        // can find e.g. "j" by emails containing "j*".
-        var firstNamePk = prefix.Length >= UserFirstNameEntity.PartitionKeyLength
-            ? _partitioner.PK(UserFirstNameEntity.GetPartitionKey(prefix))
-            : null;
-        var firstNameTask = (userFirstNamesTable is null || firstNamePk is null)
-            ? Task.FromResult(new List<string>())
-            : CollectUserIdsAsync(
-                userFirstNamesTable.QueryAsync<UserFirstNameEntity>(
-                    e => e.PartitionKey == firstNamePk
-                         && e.RowKey.CompareTo(prefix) >= 0 && e.RowKey.CompareTo(prefixEnd) < 0,
-                    cancellationToken: ct),
-                e => e.UserId, maxResults, ct);
-
-        var lastNamePk = prefix.Length >= UserLastNameEntity.PartitionKeyLength
-            ? _partitioner.PK(UserLastNameEntity.GetPartitionKey(prefix))
-            : null;
-        var lastNameTask = (userLastNamesTable is null || lastNamePk is null)
-            ? Task.FromResult(new List<string>())
-            : CollectUserIdsAsync(
-                userLastNamesTable.QueryAsync<UserLastNameEntity>(
-                    e => e.PartitionKey == lastNamePk
-                         && e.RowKey.CompareTo(prefix) >= 0 && e.RowKey.CompareTo(prefixEnd) < 0,
-                    cancellationToken: ct),
-                e => e.UserId, maxResults, ct);
+        // Name search needs a query of at least NamePrefixMin chars (admin search UIs enforce this).
+        // SearchNameIndexAsync picks the scheme per row: legacy range scan when off, exact prefix-token
+        // lookup (+ legacy fallback for un-backfilled rows) when tokenized. Email prefix search is dropped
+        // when tokenized (unordered keys) — exact email match is handled above via FindByEmailAsync.
+        var firstNameTask = SearchNameIndexAsync(userFirstNamesTable, prefix, prefixEnd, maxResults, ct);
+        var lastNameTask = SearchNameIndexAsync(userLastNamesTable, prefix, prefixEnd, maxResults, ct);
 
         await Task.WhenAll(emailTask, firstNameTask, lastNameTask);
 
