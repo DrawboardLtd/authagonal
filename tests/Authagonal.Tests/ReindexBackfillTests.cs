@@ -1,0 +1,126 @@
+using System.Security.Cryptography;
+using System.Text;
+using Authagonal.Core.Models;
+using Authagonal.Core.Services;
+using Authagonal.AzureProvider.Entities;
+using Authagonal.AzureProvider.Stores;
+using Authagonal.Tests.Infrastructure;
+using Azure;
+using Azure.Data.Tables;
+
+namespace Authagonal.Tests;
+
+/// <summary>
+/// The cold-row backfill primitive: <see cref="TableUserStore.ReindexUserAsync"/> migrates a user written
+/// before encryption was enabled — plaintext profile + plaintext-keyed indexes — to the current scheme
+/// (encrypted profile + tokenized index rows, legacy rows removed), while login lookup and name search keep
+/// working throughout. Azurite.
+/// </summary>
+[Collection("Azurite")]
+public class ReindexBackfillTests(AzuriteFixture azurite)
+{
+    private sealed class FakeCipher : IFieldCipher
+    {
+        public const string Prefix = "enc:";
+        public Task<string> ProtectAsync(string p, CancellationToken ct = default)
+            => Task.FromResult(Prefix + Convert.ToBase64String(Encoding.UTF8.GetBytes(p)));
+        public Task<string> ResolveAsync(string s, CancellationToken ct = default)
+            => Task.FromResult(s.StartsWith(Prefix, StringComparison.Ordinal)
+                ? Encoding.UTF8.GetString(Convert.FromBase64String(s[Prefix.Length..])) : s);
+    }
+
+    private sealed class FakeTokenizer : IIndexTokenizer
+    {
+        public const string Prefix = "tok_";
+        public static string Token(string v) => Prefix + Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(v)));
+        public Task<string> TokenizeAsync(string value, CancellationToken ct = default) => Task.FromResult(Token(value));
+        public Task<IReadOnlyList<string>> TokenizeBatchAsync(IReadOnlyList<string> values, CancellationToken ct = default)
+            => Task.FromResult<IReadOnlyList<string>>(values.Select(Token).ToList());
+    }
+
+    private readonly TableServiceClient _svc = new(azurite.ConnectionString);
+
+    private TableUserStore NewStore(string prefix, IFieldCipher? cipher, IIndexTokenizer? tokenizer)
+    {
+        TableClient T(string name)
+        {
+            var c = _svc.GetTableClient($"{prefix}{name}");
+            c.CreateIfNotExists();
+            return c;
+        }
+        return new TableUserStore(T("Users"), T("Emails"), T("Logins"), T("ExtIds"), T("FirstNames"), T("LastNames"),
+            EnvPartitioner.Live, fieldCipher: cipher, indexTokenizer: tokenizer, userEmailDomainsTable: T("EmailDomains"));
+    }
+
+    private async Task<bool> RowExists<T>(string table, string pk, string rk) where T : class, ITableEntity
+    {
+        try { await _svc.GetTableClient(table).GetEntityAsync<T>(pk, rk); return true; }
+        catch (RequestFailedException ex) when (ex.Status == 404) { return false; }
+    }
+
+    [Fact]
+    public async Task Reindex_MigratesPlaintextUser_ToEncryptedAndTokenized()
+    {
+        var prefix = $"backfill{Guid.NewGuid():N}";
+        // Legacy state: created before encryption — plaintext profile + plaintext-keyed indexes.
+        var plain = NewStore(prefix, cipher: null, tokenizer: null);
+        await plain.CreateAsync(new AuthUser
+        {
+            Id = "u1",
+            Email = "ada@acme.test",
+            NormalizedEmail = "ADA@ACME.TEST",
+            FirstName = "Ada",
+            LastName = "Lovelace",
+            Phone = "+15551234567",
+            IsActive = true,
+            CreatedAt = DateTimeOffset.UtcNow,
+        });
+
+        // Turn encryption on and backfill this cold row.
+        var enc = NewStore(prefix, new FakeCipher(), new FakeTokenizer());
+        await enc.ReindexUserAsync("u1");
+
+        // Profile PII is now ciphertext.
+        var raw = await _svc.GetTableClient($"{prefix}Users").GetEntityAsync<UserEntity>("u1", UserEntity.ProfileRowKey);
+        Assert.StartsWith(FakeCipher.Prefix, raw.Value.Email);
+        Assert.StartsWith(FakeCipher.Prefix, raw.Value.LastName);
+        Assert.StartsWith(FakeCipher.Prefix, raw.Value.Phone);
+
+        // Email index migrated to the token key; legacy plaintext row removed.
+        Assert.True(await RowExists<UserEmailEntity>($"{prefix}Emails", FakeTokenizer.Token("ADA@ACME.TEST"), UserEmailEntity.LookupRowKey));
+        Assert.False(await RowExists<UserEmailEntity>($"{prefix}Emails", "ADA@ACME.TEST", UserEmailEntity.LookupRowKey));
+
+        // Name index migrated to prefix tokens; legacy range-scan row removed.
+        Assert.True(await RowExists<TableEntity>($"{prefix}LastNames", FakeTokenizer.Token("LOV"), "u1"));
+        Assert.False(await RowExists<TableEntity>($"{prefix}LastNames", "LO", "LOVELACE|u1"));
+
+        // Lookup + search + round-trip all still work through the encrypted store.
+        var byEmail = await enc.FindByEmailAsync("ada@acme.test");
+        Assert.Equal("u1", byEmail!.Id);
+        Assert.Equal("ada@acme.test", byEmail.Email);       // decrypts back
+        Assert.Equal("Lovelace", byEmail.LastName);
+        Assert.Equal(new[] { "u1" }, (await enc.SearchAsync("lov")).Select(u => u.Id).ToArray());
+        Assert.Equal(new[] { "u1" }, (await enc.SearchByEmailDomainAsync("acme.test")).Select(u => u.Id).ToArray());
+    }
+
+    [Fact]
+    public async Task Reindex_IsIdempotent()
+    {
+        var prefix = $"backfill{Guid.NewGuid():N}";
+        var enc = NewStore(prefix, new FakeCipher(), new FakeTokenizer());
+        await enc.CreateAsync(new AuthUser
+        {
+            Id = "u1", Email = "ada@acme.test", NormalizedEmail = "ADA@ACME.TEST",
+            FirstName = "Ada", LastName = "Lovelace", IsActive = true, CreatedAt = DateTimeOffset.UtcNow,
+        });
+
+        // Running the backfill over an already-encrypted user must not corrupt it.
+        await enc.ReindexUserAsync("u1");
+        await enc.ReindexUserAsync("u1");
+
+        var got = await enc.FindByEmailAsync("ada@acme.test");
+        Assert.Equal("u1", got!.Id);
+        Assert.Equal("ada@acme.test", got.Email);
+        Assert.Equal("Lovelace", got.LastName);
+    }
+}

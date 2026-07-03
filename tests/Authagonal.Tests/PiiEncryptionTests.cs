@@ -68,7 +68,7 @@ public class PiiEncryptionTests(AzuriteFixture azurite)
     };
 
     [Fact]
-    public async Task Create_EncryptsTier1FieldsAtRest_ButLeavesEmailAndNamesPlaintext()
+    public async Task Create_EncryptsAllPiiAtRest()
     {
         var prefix = $"piienc{Guid.NewGuid():N}";
         var store = NewStore(prefix, new FakeCipher());
@@ -76,19 +76,19 @@ public class PiiEncryptionTests(AzuriteFixture azurite)
 
         var raw = await RawProfile(prefix, "u1");
 
-        // Tier-1 fields are ciphertext in the table.
+        // Every PII field is ciphertext in the profile row — a dump of Users exposes nothing.
+        Assert.StartsWith(FakeCipher.Prefix, raw.Email);
+        Assert.StartsWith(FakeCipher.Prefix, raw.NormalizedEmail);
+        Assert.StartsWith(FakeCipher.Prefix, raw.FirstName);
+        Assert.StartsWith(FakeCipher.Prefix, raw.LastName);
         Assert.StartsWith(FakeCipher.Prefix, raw.Phone);
         Assert.StartsWith(FakeCipher.Prefix, raw.CompanyName);
         Assert.StartsWith(FakeCipher.Prefix, raw.CustomAttributesJson);
+        Assert.DoesNotContain("ada@acme.test", raw.Email);
+        Assert.DoesNotContain("ADA@ACME.TEST", raw.NormalizedEmail);
+        Assert.DoesNotContain("Lovelace", raw.LastName);
         Assert.DoesNotContain("+15551234567", raw.Phone);
-        Assert.DoesNotContain("Analytical Engines", raw.CompanyName);
         Assert.DoesNotContain("Research", raw.CustomAttributesJson);
-
-        // Increment-1 scope guard: email + names remain plaintext (they get blind indexes later).
-        Assert.Equal("ada@acme.test", raw.Email);
-        Assert.Equal("ADA@ACME.TEST", raw.NormalizedEmail);
-        Assert.Equal("Ada", raw.FirstName);
-        Assert.Equal("Lovelace", raw.LastName);
     }
 
     [Fact]
@@ -101,10 +101,16 @@ public class PiiEncryptionTests(AzuriteFixture azurite)
         var got = await store.GetAsync("u1");
 
         Assert.NotNull(got);
-        Assert.Equal("+15551234567", got!.Phone);
+        Assert.Equal("ada@acme.test", got!.Email);
+        Assert.Equal("Ada", got.FirstName);
+        Assert.Equal("Lovelace", got.LastName);
+        Assert.Equal("+15551234567", got.Phone);
         Assert.Equal("Analytical Engines Ltd", got.CompanyName);
         Assert.Equal("Research", got.CustomAttributes["department"]);
         Assert.Equal("0001", got.CustomAttributes["badge"]);
+
+        // And exact login lookup still resolves (plaintext index here — no tokenizer in this test).
+        Assert.Equal("u1", (await store.FindByEmailAsync("ada@acme.test"))!.Id);
     }
 
     [Fact]

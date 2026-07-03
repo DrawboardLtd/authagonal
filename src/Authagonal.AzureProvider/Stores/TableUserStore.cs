@@ -33,10 +33,12 @@ public sealed class TableUserStore(
     // right call when name search isn't a product feature.
 
     // At-rest PII encryption (opt-in). When null, values are stored plaintext (single-tenant /
-    // unconfigured hosts, and every existing deployment). When supplied (Cloud, per-tenant
-    // enc-{prefix} key), the Tier-1 fields below are encrypted at the entity level: on write
-    // AFTER FromModel(), on read BEFORE ToModel() — CustomAttributesJson must be plaintext
-    // before ToModel() deserializes it. Names/email stay plaintext until the index increments.
+    // unconfigured hosts, and every existing deployment). When supplied (Cloud, per-tenant enc-{prefix}
+    // key), the PII fields are encrypted at the entity level: on write AFTER FromModel(), on read BEFORE
+    // ToModel() — CustomAttributesJson must be plaintext before ToModel() deserializes it. Email and names
+    // are encrypted too (so the profile row itself leaks nothing); the blind INDEXES keep them searchable.
+    // Anything that reads an entity's email/name for index-key computation (Update/Delete) must decrypt
+    // it first — the model's plaintext values drive index keys, never the stored ciphertext.
     private readonly IFieldCipher _cipher = fieldCipher ?? NullFieldCipher.Instance;
 
     // Blind-index tokenization (opt-in). When null, index rows stay keyed on plaintext (current behavior).
@@ -272,17 +274,29 @@ public sealed class TableUserStore(
     private async Task<string?> ResolveFieldAsync(string? stored, CancellationToken ct)
         => string.IsNullOrEmpty(stored) ? stored : await _cipher.ResolveAsync(stored, ct);
 
-    // Encrypt the at-rest PII fields on a freshly-mapped entity, just before a table write.
+    // Encrypt the at-rest PII fields on a freshly-mapped entity, just before a table write. Email and
+    // names are encrypted alongside phone/company/attrs; the blind indexes (keyed on the plaintext, via
+    // the tokenizer) are what keep them findable. Email/NormalizedEmail are required (non-empty) so they
+    // always encrypt; the `?? e.X` guards only the theoretical empty case.
     private async Task EncryptEntityAsync(UserEntity e, CancellationToken ct)
     {
+        e.Email = await ProtectFieldAsync(e.Email, ct) ?? e.Email;
+        e.NormalizedEmail = await ProtectFieldAsync(e.NormalizedEmail, ct) ?? e.NormalizedEmail;
+        e.FirstName = await ProtectFieldAsync(e.FirstName, ct);
+        e.LastName = await ProtectFieldAsync(e.LastName, ct);
         e.Phone = await ProtectFieldAsync(e.Phone, ct);
         e.CompanyName = await ProtectFieldAsync(e.CompanyName, ct);
         e.CustomAttributesJson = await ProtectFieldAsync(e.CustomAttributesJson, ct) ?? "{}";
     }
 
-    // Decrypt the at-rest PII fields on an entity read from the table, before ToModel().
+    // Decrypt the at-rest PII fields on an entity read from the table, before ToModel() (or before its
+    // email/name is used for index-key computation).
     private async Task DecryptEntityAsync(UserEntity e, CancellationToken ct)
     {
+        e.Email = await ResolveFieldAsync(e.Email, ct) ?? e.Email;
+        e.NormalizedEmail = await ResolveFieldAsync(e.NormalizedEmail, ct) ?? e.NormalizedEmail;
+        e.FirstName = await ResolveFieldAsync(e.FirstName, ct);
+        e.LastName = await ResolveFieldAsync(e.LastName, ct);
         e.Phone = await ResolveFieldAsync(e.Phone, ct);
         e.CompanyName = await ResolveFieldAsync(e.CompanyName, ct);
         e.CustomAttributesJson = await ResolveFieldAsync(e.CustomAttributesJson, ct) ?? "{}";
@@ -385,6 +399,9 @@ public sealed class TableUserStore(
         {
             var existing = await usersTable.GetEntityAsync<UserEntity>(
                 _partitioner.PK(user.Id), UserEntity.ProfileRowKey, cancellationToken: ct);
+            // Decrypt first: the old email/names drive old-index-key removal, and must be plaintext (never
+            // the stored ciphertext) to recompute the right tokens.
+            await DecryptEntityAsync(existing.Value, ct);
 
             var oldNormalizedEmail = existing.Value.NormalizedEmail;
             var newNormalizedEmail = user.NormalizedEmail;
@@ -441,6 +458,8 @@ public sealed class TableUserStore(
         {
             var existing = await usersTable.GetEntityAsync<UserEntity>(
                 _partitioner.PK(userId), UserEntity.ProfileRowKey, cancellationToken: ct);
+            // Decrypt first: the stored email/names must be plaintext to recompute the index keys to remove.
+            await DecryptEntityAsync(existing.Value, ct);
 
             // Delete email index (tokenized + any legacy plaintext row) + the domain-index row
             await DeleteEmailIndexAsync(existing.Value.NormalizedEmail, ct);
@@ -468,6 +487,64 @@ public sealed class TableUserStore(
                 await tombstoneWriter.WriteAsync("Users", _partitioner.PK(userId), UserEntity.ProfileRowKey, ct);
         }
         catch (RequestFailedException ex) when (ex.Status == 404) { }
+    }
+
+    public async Task ReindexUserAsync(string userId, CancellationToken ct = default)
+    {
+        UserEntity entity;
+        try
+        {
+            entity = (await usersTable.GetEntityAsync<UserEntity>(_partitioner.PK(userId), UserEntity.ProfileRowKey, cancellationToken: ct)).Value;
+        }
+        catch (RequestFailedException ex) when (ex.Status == 404) { return; }
+
+        // Read plaintext (passthrough if a field is already plaintext) — index keys derive from plaintext.
+        await DecryptEntityAsync(entity, ct);
+        var normalizedEmail = entity.NormalizedEmail;
+        var normFirst = Normalize(entity.FirstName);
+        var normLast = Normalize(entity.LastName);
+
+        // 1. Re-encrypt the profile in place (plaintext → ciphertext under the current cipher; idempotent).
+        await EncryptEntityAsync(entity, ct);
+        await usersTable.UpsertEntityAsync(entity, TableUpdateMode.Replace, ct);
+
+        // 2. Email lookup — write the current-scheme row FIRST (no login gap), then drop the legacy row.
+        var emailEntity = UserEmailEntity.Create(normalizedEmail, userId);
+        emailEntity.PartitionKey = await EmailIndexPkAsync(normalizedEmail, ct);
+        await userEmailsTable.UpsertEntityAsync(emailEntity, TableUpdateMode.Replace, ct);
+        if (_indexTokenized)
+        {
+            var plainPk = _partitioner.PK(normalizedEmail);
+            if (!string.Equals(plainPk, emailEntity.PartitionKey, StringComparison.Ordinal))
+                await TryDeleteEmailIndexAsync(plainPk, ct);
+        }
+
+        // 3. Domain — write current, drop legacy.
+        await WriteDomainIndexAsync(normalizedEmail, userId, ct);
+        if (_indexTokenized && userEmailDomainsTable is not null)
+        {
+            var domain = UserEmailDomainEntity.DomainOf(normalizedEmail);
+            if (domain is not null)
+            {
+                var plainDomPk = _partitioner.PK(domain);
+                if (!string.Equals(plainDomPk, await DomainIndexPkAsync(domain, ct), StringComparison.Ordinal))
+                    await TryDeleteDomainAsync(plainDomPk, userId, ct);
+            }
+        }
+
+        // 4. Names — write current-scheme prefix rows, drop the single legacy row.
+        if (normFirst is not null && userFirstNamesTable is not null)
+        {
+            await WriteNameIndexAsync(userFirstNamesTable, normFirst, userId, ct);
+            if (_indexTokenized)
+                await TryDeleteRowAsync(userFirstNamesTable, _partitioner.PK(UserFirstNameEntity.GetPartitionKey(normFirst)), UserFirstNameEntity.MakeRowKey(normFirst, userId), "UserFirstNames", ct);
+        }
+        if (normLast is not null && userLastNamesTable is not null)
+        {
+            await WriteNameIndexAsync(userLastNamesTable, normLast, userId, ct);
+            if (_indexTokenized)
+                await TryDeleteRowAsync(userLastNamesTable, _partitioner.PK(UserFirstNameEntity.GetPartitionKey(normLast)), UserFirstNameEntity.MakeRowKey(normLast, userId), "UserLastNames", ct);
+        }
     }
 
     public async Task<bool> ExistsAsync(string userId, CancellationToken ct = default)

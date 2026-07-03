@@ -50,6 +50,13 @@ public interface IUserStore
     Task<IReadOnlyList<AuthUser>> SearchByEmailDomainAsync(string domain, int maxResults = 50, CancellationToken ct = default)
         => Task.FromResult<IReadOnlyList<AuthUser>>([]);
 
+    /// <summary>
+    /// Re-write one user to the current at-rest scheme: re-encrypt the profile's PII and rewrite the
+    /// profile-derived index rows (email, domain, first/last name) under the current keys, removing any
+    /// legacy-keyed rows. Idempotent — the cold-row backfill for enabling encryption. Default is a no-op.
+    /// </summary>
+    Task ReindexUserAsync(string userId, CancellationToken ct = default) => Task.CompletedTask;
+
     Task SetExternalIdAsync(string userId, string clientId, string externalId, CancellationToken ct = default);
     Task RemoveExternalIdAsync(string userId, string clientId, string externalId, CancellationToken ct = default);
 
