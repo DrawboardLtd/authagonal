@@ -30,15 +30,29 @@ public sealed class DynamoGrantStore(
     DynamoTable grantsByExpiry,
     EnvPartitioner partitioner,
     ILogger<DynamoGrantStore> logger,
-    ITombstoneWriter? tombstones = null) : IGrantStore
+    ITombstoneWriter? tombstones = null,
+    IFieldCipher? fieldCipher = null) : IGrantStore
 {
     private const string GrantSk = "grant";
     private const int ShardCount = 4; // matches GrantByExpiryEntity.ShardCount
 
+    // Encrypts the serialized grant at rest. Unlike the Azure store (separate columns), the whole
+    // PersistedGrant — including the raw token handle (Key) and the OidcSubject-bearing Data — is one
+    // JSON attribute here, so encrypting the blob covers both: a table dump yields no live handles and
+    // no session PII. Handle stays available in-memory after decrypt (RemoveBySubject re-hashes it).
+    // Defaults to passthrough so OSS hosts are unchanged; Cloud injects the per-tenant Vault cipher.
+    private readonly IFieldCipher _cipher = fieldCipher ?? NullFieldCipher.Instance;
+
+    private Task<string> ProtectAsync(string data, CancellationToken ct)
+        => string.IsNullOrEmpty(data) ? Task.FromResult(data) : _cipher.ProtectAsync(data, ct);
+
+    private Task<string> ResolveAsync(string data, CancellationToken ct)
+        => string.IsNullOrEmpty(data) ? Task.FromResult(data) : _cipher.ResolveAsync(data, ct);
+
     public async Task StoreAsync(PersistedGrant grant, CancellationToken ct = default)
     {
         var hashedKey = HashKey(grant.Key);
-        var json = JsonSerializer.Serialize(grant, AwsJsonContext.Default.PersistedGrant);
+        var json = await ProtectAsync(JsonSerializer.Serialize(grant, AwsJsonContext.Default.PersistedGrant), ct).ConfigureAwait(false);
 
         // Primary write is the critical one.
         var primary = Dyn.Item(partitioner.PK(hashedKey), GrantSk);
@@ -87,7 +101,7 @@ public sealed class DynamoGrantStore(
     public async Task<PersistedGrant?> GetAsync(string key, CancellationToken ct = default)
     {
         var item = await grants.GetAsync(partitioner.PK(HashKey(key)), GrantSk, ct).ConfigureAwait(false);
-        return item is null ? null : ReadGrant(item);
+        return item is null ? null : await ReadGrantAsync(item, ct).ConfigureAwait(false);
     }
 
     public async Task ConsumeAsync(string key, CancellationToken ct = default)
@@ -98,9 +112,9 @@ public sealed class DynamoGrantStore(
         var item = await grants.GetAsync(pk, GrantSk, ct).ConfigureAwait(false);
         if (item is null) return;
 
-        var grant = ReadGrant(item);
+        var grant = await ReadGrantAsync(item, ct).ConfigureAwait(false);
         grant.ConsumedAt = DateTimeOffset.UtcNow;
-        var json = JsonSerializer.Serialize(grant, AwsJsonContext.Default.PersistedGrant);
+        var json = await ProtectAsync(JsonSerializer.Serialize(grant, AwsJsonContext.Default.PersistedGrant), ct).ConfigureAwait(false);
 
         var updated = Dyn.Item(pk, GrantSk);
         updated.PutS("data", json);
@@ -134,7 +148,7 @@ public sealed class DynamoGrantStore(
         var old = await grants.DeleteIfExistsReturningAsync(pk, GrantSk, ct).ConfigureAwait(false);
         if (old is null) return false;
 
-        var grant = ReadGrant(old);
+        var grant = await ReadGrantAsync(old, ct).ConfigureAwait(false);
         await CleanupIndexesAsync(hashedKey, grant.SubjectId, grant.Type, grant.ExpiresAt, ct).ConfigureAwait(false);
         if (tombstones is not null) await tombstones.WriteAsync("Grants", pk, GrantSk, ct).ConfigureAwait(false);
         return true;
@@ -148,7 +162,7 @@ public sealed class DynamoGrantStore(
         var old = await grants.DeleteIfExistsReturningAsync(pk, GrantSk, ct).ConfigureAwait(false);
         if (old is null) return;
 
-        var grant = ReadGrant(old);
+        var grant = await ReadGrantAsync(old, ct).ConfigureAwait(false);
         await CleanupIndexesAsync(hashedKey, grant.SubjectId, grant.Type, grant.ExpiresAt, ct).ConfigureAwait(false);
         if (tombstones is not null) await tombstones.WriteAsync("Grants", pk, GrantSk, ct).ConfigureAwait(false);
     }
@@ -163,7 +177,7 @@ public sealed class DynamoGrantStore(
     {
         var results = new List<PersistedGrant>();
         await foreach (var item in grantsBySubject.QueryAsync(partitioner.PK(subjectId), ct: ct).ConfigureAwait(false))
-            results.Add(ReadGrant(item));
+            results.Add(await ReadGrantAsync(item, ct).ConfigureAwait(false));
         return results;
     }
 
@@ -212,7 +226,7 @@ public sealed class DynamoGrantStore(
 
         foreach (var item in items)
         {
-            var grant = ReadGrant(item);
+            var grant = await ReadGrantAsync(item, ct).ConfigureAwait(false);
             var hashedKey = HashKey(grant.Key);
 
             await grants.DeleteAsync(partitioner.PK(hashedKey), GrantSk, ct).ConfigureAwait(false);
@@ -244,8 +258,8 @@ public sealed class DynamoGrantStore(
         if (tombstones is not null) await tombstones.WriteAsync("GrantsByExpiry", expiryPk, expirySk, ct).ConfigureAwait(false);
     }
 
-    private static PersistedGrant ReadGrant(Dictionary<string, AttributeValue> item)
-        => JsonSerializer.Deserialize(item.GetStr("data"), AwsJsonContext.Default.PersistedGrant)!;
+    private async Task<PersistedGrant> ReadGrantAsync(Dictionary<string, AttributeValue> item, CancellationToken ct)
+        => JsonSerializer.Deserialize(await ResolveAsync(item.GetStr("data"), ct).ConfigureAwait(false), AwsJsonContext.Default.PersistedGrant)!;
 
     public static string HashKey(string key)
         => Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(key)));

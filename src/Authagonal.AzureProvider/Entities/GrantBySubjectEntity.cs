@@ -11,7 +11,8 @@ public sealed class GrantBySubjectEntity : ITableEntity
     public DateTimeOffset? Timestamp { get; set; }
     public ETag ETag { get; set; }
 
-    public required string Key { get; set; }
+    // Plaintext grant key is not persisted here either (see GrantEntity); HashedKey is the SHA-256
+    // used to locate the primary grant row for index-cleanup deletes.
     public required string HashedKey { get; set; }
     public required string Type { get; set; }
     public required string ClientId { get; set; }
@@ -24,7 +25,6 @@ public sealed class GrantBySubjectEntity : ITableEntity
     {
         PartitionKey = grant.SubjectId ?? string.Empty,
         RowKey = $"{grant.Type}|{hashedKey}",
-        Key = grant.Key,
         HashedKey = hashedKey,
         Type = grant.Type,
         ClientId = grant.ClientId,
@@ -36,7 +36,7 @@ public sealed class GrantBySubjectEntity : ITableEntity
 
     public PersistedGrant ToModel() => new()
     {
-        Key = Key,
+        Key = string.Empty, // not persisted (see note above); no read path consumes it
         Type = Type,
         SubjectId = PartitionKey,
         ClientId = ClientId,

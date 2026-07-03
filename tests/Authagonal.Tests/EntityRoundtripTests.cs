@@ -166,7 +166,8 @@ public class EntityRoundtripTests
         var entity = GrantEntity.FromModel(grant, "hashed-abc");
         var result = entity.ToModel();
 
-        Assert.Equal(grant.Key, result.Key);
+        // Key (raw token handle) is deliberately NOT persisted — only its SHA-256 lives in PartitionKey.
+        Assert.Equal(string.Empty, result.Key);
         Assert.Equal(grant.Type, result.Type);
         Assert.Equal(grant.SubjectId, result.SubjectId);
         Assert.Equal(grant.ClientId, result.ClientId);
@@ -207,7 +208,8 @@ public class EntityRoundtripTests
         var entity = GrantBySubjectEntity.FromModel(grant, "hashed-xyz");
         var result = entity.ToModel();
 
-        Assert.Equal(grant.Key, result.Key);
+        // Key (raw token handle) is deliberately NOT persisted — see GrantEntity round-trip test.
+        Assert.Equal(string.Empty, result.Key);
         Assert.Equal(grant.Type, result.Type);
         Assert.Equal(grant.SubjectId, result.SubjectId);
         Assert.Equal(grant.ClientId, result.ClientId);

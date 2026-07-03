@@ -16,19 +16,34 @@ public sealed class TableGrantStore(
     TableClient grantsByExpiryTable,
     EnvPartitioner partitioner,
     ILogger<TableGrantStore> logger,
-    ITombstoneWriter? tombstoneWriter = null) : IGrantStore
+    ITombstoneWriter? tombstoneWriter = null,
+    IFieldCipher? fieldCipher = null) : IGrantStore
 {
+    // Encrypts PersistedGrant.Data at rest — refresh-token/auth-code/device/PAR payloads carry the
+    // full OidcSubject (email, name, phone, claims). Defaults to a passthrough so single-tenant / OSS
+    // hosts are unchanged; Cloud injects the per-tenant Vault Transit cipher when EncryptPii is on.
+    private readonly IFieldCipher _cipher = fieldCipher ?? NullFieldCipher.Instance;
+
+    private Task<string> ProtectAsync(string data, CancellationToken ct)
+        => string.IsNullOrEmpty(data) ? Task.FromResult(data) : _cipher.ProtectAsync(data, ct);
+
+    private Task<string> ResolveAsync(string data, CancellationToken ct)
+        => string.IsNullOrEmpty(data) ? Task.FromResult(data) : _cipher.ResolveAsync(data, ct);
+
     public async Task StoreAsync(PersistedGrant grant, CancellationToken ct = default)
     {
         var hashedKey = HashKey(grant.Key);
+        var protectedData = await ProtectAsync(grant.Data, ct);
 
         var grantEntity = GrantEntity.FromModel(grant, hashedKey);
+        grantEntity.Data = protectedData;
         grantEntity.PartitionKey = partitioner.PK(grantEntity.PartitionKey);
         await grantsTable.UpsertEntityAsync(grantEntity, TableUpdateMode.Replace, ct);
 
         if (!string.IsNullOrEmpty(grant.SubjectId))
         {
             var subjectEntity = GrantBySubjectEntity.FromModel(grant, hashedKey);
+            subjectEntity.Data = protectedData;
             subjectEntity.PartitionKey = partitioner.PK(subjectEntity.PartitionKey);
             try
             {
@@ -81,7 +96,9 @@ public sealed class TableGrantStore(
         {
             var response = await grantsTable.GetEntityAsync<GrantEntity>(
                 partitioner.PK(hashedKey), GrantEntity.GrantRowKey, cancellationToken: ct);
-            return response.Value.ToModel();
+            var model = response.Value.ToModel();
+            model.Data = await ResolveAsync(model.Data, ct);
+            return model;
         }
         catch (RequestFailedException ex) when (ex.Status == 404)
         {
@@ -349,7 +366,9 @@ public sealed class TableGrantStore(
 
         await foreach (var entity in query)
         {
-            results.Add(entity.ToModel());
+            var model = entity.ToModel();
+            model.Data = await ResolveAsync(model.Data, ct);
+            results.Add(model);
         }
 
         return results;

@@ -13,7 +13,9 @@ public sealed class GrantEntity : ITableEntity
 
     public const string GrantRowKey = "grant";
 
-    public required string Key { get; set; }
+    // The plaintext grant key (raw refresh-token / device-code handle) is deliberately NOT persisted:
+    // only its SHA-256 lives in PartitionKey. Storing the handle would let a table dump replay live
+    // tokens. Every lookup re-hashes the caller-supplied key, so nothing reads the handle back.
     public required string Type { get; set; }
     public string? SubjectId { get; set; }
     public required string ClientId { get; set; }
@@ -26,7 +28,6 @@ public sealed class GrantEntity : ITableEntity
     {
         PartitionKey = hashedKey,
         RowKey = GrantRowKey,
-        Key = grant.Key,
         Type = grant.Type,
         SubjectId = grant.SubjectId,
         ClientId = grant.ClientId,
@@ -38,7 +39,7 @@ public sealed class GrantEntity : ITableEntity
 
     public PersistedGrant ToModel() => new()
     {
-        Key = Key,
+        Key = string.Empty, // not persisted (see note above); no read path consumes it
         Type = Type,
         SubjectId = SubjectId,
         ClientId = ClientId,
