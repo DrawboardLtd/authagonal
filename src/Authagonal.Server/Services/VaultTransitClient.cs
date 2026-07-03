@@ -164,7 +164,11 @@ public class VaultTransitClient
     public virtual async Task CreateKeyAsync(string keyName, string type = EcdsaP256, CancellationToken ct = default)
     {
         var payload = JsonSerializer.Serialize(
-            new VaultCreateKeyRequest { Type = type },
+            // hmac keys REQUIRE an explicit key_size (Vault: "must be between 32 and 512 bytes"); 32 bytes =
+            // HMAC-SHA256. Fixed-size key types (ecdsa-p256 / aes256-gcm96) must NOT send key_size, so it's
+            // omitted when 0 (WhenWritingDefault). Without this, creating an idx- key 500s and every
+            // tokenize/blind-index lookup — including the login FindByEmail path — throws.
+            new VaultCreateKeyRequest { Type = type, KeySize = type == Hmac ? 32 : 0 },
             AuthagonalJsonContext.Default.VaultCreateKeyRequest);
         await PostAsync($"/v1/transit/keys/{keyName}", payload, ct);
         _logger.LogInformation("Created Vault Transit key {KeyName} (type={Type})", keyName, type);
@@ -377,6 +381,11 @@ internal sealed class VaultCreateKeyRequest
 {
     [JsonPropertyName("type")]
     public required string Type { get; set; }
+
+    // Required for hmac keys (32–512 bytes); omitted for fixed-size key types (ecdsa/aes) via WhenWritingDefault.
+    [JsonPropertyName("key_size")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public int KeySize { get; set; }
 }
 
 internal sealed class VaultKeyConfigRequest

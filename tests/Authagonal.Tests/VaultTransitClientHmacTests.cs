@@ -93,4 +93,32 @@ public class VaultTransitClientHmacTests
         await Assert.ThrowsAsync<InvalidOperationException>(() =>
             client.HmacBatchAsync("idx-acme", [Encoding.UTF8.GetBytes("A"), Encoding.UTF8.GetBytes("B")]));
     }
+
+    [Fact]
+    public async Task CreateKey_Hmac_SendsKeySize()
+    {
+        // Vault rejects an hmac key create without key_size (32–512). Regression for the idx- key that
+        // 500'd every blind-index tokenize (and the login FindByEmail path) on first use.
+        var handler = new StubHandler((_, _) => "{}");
+        var client = NewClient(handler);
+
+        await client.CreateKeyAsync("idx-acme", VaultTransitClient.Hmac);
+
+        Assert.Equal("/v1/transit/keys/idx-acme", handler.LastRequest!.RequestUri!.AbsolutePath);
+        Assert.Contains("\"type\":\"hmac\"", handler.LastBody);
+        Assert.Contains("\"key_size\":32", handler.LastBody);
+    }
+
+    [Fact]
+    public async Task CreateKey_NonHmac_OmitsKeySize()
+    {
+        // Fixed-size key types must not send key_size (Vault errors on it).
+        var handler = new StubHandler((_, _) => "{}");
+        var client = NewClient(handler);
+
+        await client.CreateKeyAsync("enc-acme", VaultTransitClient.Aes256Gcm96);
+
+        Assert.Contains("\"type\":\"aes256-gcm96\"", handler.LastBody);
+        Assert.DoesNotContain("key_size", handler.LastBody);
+    }
 }
