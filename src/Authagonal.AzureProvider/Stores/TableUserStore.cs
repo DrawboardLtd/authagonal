@@ -20,7 +20,8 @@ public sealed class TableUserStore(
     TableClient? userLastNamesTable,
     EnvPartitioner partitioner,
     ITombstoneWriter? tombstoneWriter = null,
-    IFieldCipher? fieldCipher = null) : IUserStore
+    IFieldCipher? fieldCipher = null,
+    IIndexTokenizer? indexTokenizer = null) : IUserStore
 {
     private readonly EnvPartitioner _partitioner = partitioner; // Phase B2 will wrap PartitionKeys with _partitioner.PK
     // Name-index tables are optional. When null (Storage:NameIndexesEnabled=false),
@@ -37,10 +38,61 @@ public sealed class TableUserStore(
     // before ToModel() deserializes it. Names/email stay plaintext until the index increments.
     private readonly IFieldCipher _cipher = fieldCipher ?? NullFieldCipher.Instance;
 
+    // Blind-index tokenization (opt-in). When null, index rows stay keyed on plaintext (current behavior).
+    // When supplied (Cloud, per-tenant idx-{prefix} HMAC key), lookup-index PartitionKeys become HMAC
+    // tokens so a dump exposes no addresses/ids. _tokenizer is passthrough when off, so the WRITE path is
+    // uniform; _indexTokenized gates the migration-window read fallback (tokenized miss → legacy plaintext).
+    private readonly IIndexTokenizer _tokenizer = indexTokenizer ?? NullIndexTokenizer.Instance;
+    private readonly bool _indexTokenized = indexTokenizer is not null;
+
     private static string? Normalize(string? name)
     {
         if (string.IsNullOrWhiteSpace(name)) return null;
         return name.Trim().ToUpperInvariant();
+    }
+
+    // Env-wrapped PartitionKey for the email lookup index: HMAC token when tokenization is on, else the
+    // plaintext normalized email (identical to the historical key). Tokenize BEFORE the env prefix so the
+    // sandbox partitioner still isolates envs.
+    private async Task<string> EmailIndexPkAsync(string normalizedEmail, CancellationToken ct)
+        => _partitioner.PK(await _tokenizer.TokenizeAsync(normalizedEmail, ct));
+
+    private async Task<string?> TryGetEmailIndexUserIdAsync(string pk, CancellationToken ct)
+    {
+        try
+        {
+            var e = await userEmailsTable.GetEntityAsync<UserEmailEntity>(pk, UserEmailEntity.LookupRowKey, cancellationToken: ct);
+            return e.Value.UserId;
+        }
+        catch (RequestFailedException ex) when (ex.Status == 404)
+        {
+            return null;
+        }
+    }
+
+    // Delete a normalized email's lookup row. Removes the tokenized key and, while tokenization is on, also
+    // the legacy plaintext key (a row written before backfill), so an email change/delete can't orphan either.
+    private async Task DeleteEmailIndexAsync(string normalizedEmail, CancellationToken ct)
+    {
+        var tokenPk = await EmailIndexPkAsync(normalizedEmail, ct);
+        await TryDeleteEmailIndexAsync(tokenPk, ct);
+        if (_indexTokenized)
+        {
+            var plainPk = _partitioner.PK(normalizedEmail);
+            if (!string.Equals(plainPk, tokenPk, StringComparison.Ordinal))
+                await TryDeleteEmailIndexAsync(plainPk, ct);
+        }
+    }
+
+    private async Task TryDeleteEmailIndexAsync(string pk, CancellationToken ct)
+    {
+        try
+        {
+            await userEmailsTable.DeleteEntityAsync(pk, UserEmailEntity.LookupRowKey, cancellationToken: ct);
+            if (tombstoneWriter is not null)
+                await tombstoneWriter.WriteAsync("UserEmails", pk, UserEmailEntity.LookupRowKey, ct);
+        }
+        catch (RequestFailedException ex) when (ex.Status == 404) { }
     }
 
     // "{}" is an empty attribute map and reveals nothing, so it stays plaintext — this also
@@ -132,16 +184,12 @@ public sealed class TableUserStore(
     public async Task<AuthUser?> FindByEmailAsync(string email, CancellationToken ct = default)
     {
         var normalizedEmail = email.ToUpperInvariant();
-        try
-        {
-            var emailEntity = await userEmailsTable.GetEntityAsync<UserEmailEntity>(
-                _partitioner.PK(normalizedEmail), UserEmailEntity.LookupRowKey, cancellationToken: ct);
-            return await GetAsync(emailEntity.Value.UserId, ct);
-        }
-        catch (RequestFailedException ex) when (ex.Status == 404)
-        {
-            return null;
-        }
+        // Blind-index lookup: point-read the tokenized key; during migration fall back to the legacy
+        // plaintext key for a row not yet backfilled (only meaningful while tokenization is on).
+        var userId = await TryGetEmailIndexUserIdAsync(await EmailIndexPkAsync(normalizedEmail, ct), ct);
+        if (userId is null && _indexTokenized)
+            userId = await TryGetEmailIndexUserIdAsync(_partitioner.PK(normalizedEmail), ct);
+        return userId is null ? null : await GetAsync(userId, ct);
     }
 
     public async Task CreateAsync(AuthUser user, CancellationToken ct = default)
@@ -150,7 +198,7 @@ public sealed class TableUserStore(
         userEntity.PartitionKey = _partitioner.PK(userEntity.PartitionKey);
         await EncryptEntityAsync(userEntity, ct);
         var emailEntity = UserEmailEntity.Create(user.NormalizedEmail, user.Id);
-        emailEntity.PartitionKey = _partitioner.PK(emailEntity.PartitionKey);
+        emailEntity.PartitionKey = await EmailIndexPkAsync(user.NormalizedEmail, ct);
 
         await usersTable.AddEntityAsync(userEntity, ct);
         await userEmailsTable.UpsertEntityAsync(emailEntity, TableUpdateMode.Replace, ct);
@@ -190,20 +238,11 @@ public sealed class TableUserStore(
 
             if (!string.Equals(oldNormalizedEmail, newNormalizedEmail, StringComparison.Ordinal))
             {
-                // Remove old email index, add new one
-                try
-                {
-                    await userEmailsTable.DeleteEntityAsync(_partitioner.PK(oldNormalizedEmail), UserEmailEntity.LookupRowKey, cancellationToken: ct);
-                    if (tombstoneWriter is not null)
-                        await tombstoneWriter.WriteAsync("UserEmails", _partitioner.PK(oldNormalizedEmail), UserEmailEntity.LookupRowKey, ct);
-                }
-                catch (RequestFailedException ex) when (ex.Status == 404)
-                {
-                    // Old email index didn't exist, that's fine
-                }
+                // Remove the old email index (tokenized + any legacy plaintext row), add the new one.
+                await DeleteEmailIndexAsync(oldNormalizedEmail, ct);
 
                 var emailEntity = UserEmailEntity.Create(newNormalizedEmail, user.Id);
-                emailEntity.PartitionKey = _partitioner.PK(emailEntity.PartitionKey);
+                emailEntity.PartitionKey = await EmailIndexPkAsync(newNormalizedEmail, ct);
                 await userEmailsTable.UpsertEntityAsync(emailEntity, TableUpdateMode.Replace, ct);
             }
 
@@ -272,15 +311,8 @@ public sealed class TableUserStore(
             var existing = await usersTable.GetEntityAsync<UserEntity>(
                 _partitioner.PK(userId), UserEntity.ProfileRowKey, cancellationToken: ct);
 
-            // Delete email index
-            try
-            {
-                await userEmailsTable.DeleteEntityAsync(
-                    _partitioner.PK(existing.Value.NormalizedEmail), UserEmailEntity.LookupRowKey, cancellationToken: ct);
-                if (tombstoneWriter is not null)
-                    await tombstoneWriter.WriteAsync("UserEmails", _partitioner.PK(existing.Value.NormalizedEmail), UserEmailEntity.LookupRowKey, ct);
-            }
-            catch (RequestFailedException ex) when (ex.Status == 404) { }
+            // Delete email index (tokenized + any legacy plaintext row)
+            await DeleteEmailIndexAsync(existing.Value.NormalizedEmail, ct);
 
             // Delete first-name index
             var normFirst = Normalize(existing.Value.FirstName);
@@ -484,13 +516,18 @@ public sealed class TableUserStore(
         var prefixEnd = prefix + "\uffff";
         // For sandbox env, prefix the partition keys with "{env}|" so the range
         // queries stay within this env's slice of the shared sandbox tables.
+        // Email prefix range scan works only on plaintext keys. With blind-index tokenization on, email keys
+        // are unordered HMAC tokens so prefix search over them is impossible — email search degrades to exact
+        // match (already handled above via FindByEmailAsync). Name prefix search is unaffected here.
         var emailLo = _partitioner.PK(prefix);
         var emailHi = _partitioner.PK(prefixEnd);
-        var emailTask = CollectUserIdsAsync(
-            userEmailsTable.QueryAsync<UserEmailEntity>(
-                e => e.PartitionKey.CompareTo(emailLo) >= 0 && e.PartitionKey.CompareTo(emailHi) < 0,
-                cancellationToken: ct),
-            e => e.UserId, maxResults, ct);
+        var emailTask = _indexTokenized
+            ? Task.FromResult(new List<string>())
+            : CollectUserIdsAsync(
+                userEmailsTable.QueryAsync<UserEmailEntity>(
+                    e => e.PartitionKey.CompareTo(emailLo) >= 0 && e.PartitionKey.CompareTo(emailHi) < 0,
+                    cancellationToken: ct),
+                e => e.UserId, maxResults, ct);
 
         // Name indexes are optional and partition-bucketed by name prefix. A query
         // shorter than UserFirstNameEntity.PartitionKeyLength would have to fan out
