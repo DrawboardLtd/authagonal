@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using Azure;
 using Azure.Data.Tables;
 using Authagonal.Core.Models;
@@ -195,8 +196,11 @@ public sealed class TableUserStore(
         if (_indexTokenized)
         {
             var tokens = await _tokenizer.TokenizeBatchAsync(NamePrefixesOf(normalizedName), ct);
-            foreach (var token in tokens)
-                await table.UpsertEntityAsync(new TableEntity(_partitioner.PK(token), userId) { ["UserId"] = userId }, TableUpdateMode.Replace, ct);
+            // Up to ~15 prefix rows per name. The upserts are independent (distinct PartitionKeys, no
+            // shared state), so fire them concurrently instead of one blocking round-trip each — this is
+            // on every create/update and every backfilled user's reindex.
+            await Task.WhenAll(tokens.Select(token =>
+                table.UpsertEntityAsync(new TableEntity(_partitioner.PK(token), userId) { ["UserId"] = userId }, TableUpdateMode.Replace, ct)));
             return;
         }
         var pk = _partitioner.PK(UserFirstNameEntity.GetPartitionKey(normalizedName));
@@ -376,20 +380,60 @@ public sealed class TableUserStore(
         var userEntity = UserEntity.FromModel(user);
         userEntity.PartitionKey = _partitioner.PK(userEntity.PartitionKey);
         await EncryptEntityAsync(userEntity, ct);
-        var emailEntity = UserEmailEntity.Create(user.NormalizedEmail, user.Id);
-        emailEntity.PartitionKey = await EmailIndexPkAsync(user.NormalizedEmail, ct);
 
         await usersTable.AddEntityAsync(userEntity, ct);
+        await WriteProfileIndexesAsync(user.NormalizedEmail, Normalize(user.FirstName), Normalize(user.LastName), user.Id, dropLegacy: false, ct);
+    }
+
+    /// <summary>
+    /// Write the current-scheme profile-derived index rows for a user — email lookup, email-domain, and
+    /// first/last name prefixes. The single source of truth shared by <see cref="CreateAsync"/> and
+    /// <see cref="ReindexUserAsync"/> (UpdateAsync stays bespoke — it diffs old vs new per field). Email is
+    /// written before any legacy drop, so there's no lookup gap. When <paramref name="dropLegacy"/> is set
+    /// (the reindex/backfill path), also removes the matching legacy plaintext-keyed rows once tokenization
+    /// is on, so at "contract" no plaintext index rows remain.
+    /// </summary>
+    private async Task WriteProfileIndexesAsync(
+        string normalizedEmail, string? normalizedFirst, string? normalizedLast, string userId, bool dropLegacy, CancellationToken ct)
+    {
+        // Email lookup.
+        var emailPk = await EmailIndexPkAsync(normalizedEmail, ct);
+        var emailEntity = UserEmailEntity.Create(normalizedEmail, userId);
+        emailEntity.PartitionKey = emailPk;
         await userEmailsTable.UpsertEntityAsync(emailEntity, TableUpdateMode.Replace, ct);
-        await WriteDomainIndexAsync(user.NormalizedEmail, user.Id, ct);
+        if (dropLegacy && _indexTokenized)
+        {
+            var plainPk = _partitioner.PK(normalizedEmail);
+            if (!string.Equals(plainPk, emailPk, StringComparison.Ordinal))
+                await TryDeleteEmailIndexAsync(plainPk, ct);
+        }
 
-        var normFirst = Normalize(user.FirstName);
-        if (normFirst is not null && userFirstNamesTable is not null)
-            await WriteNameIndexAsync(userFirstNamesTable, normFirst, user.Id, ct);
+        // Email-domain index.
+        await WriteDomainIndexAsync(normalizedEmail, userId, ct);
+        if (dropLegacy && _indexTokenized && userEmailDomainsTable is not null)
+        {
+            var domain = UserEmailDomainEntity.DomainOf(normalizedEmail);
+            if (domain is not null)
+            {
+                var plainDomPk = _partitioner.PK(domain);
+                if (!string.Equals(plainDomPk, await DomainIndexPkAsync(domain, ct), StringComparison.Ordinal))
+                    await TryDeleteDomainAsync(plainDomPk, userId, ct);
+            }
+        }
 
-        var normLast = Normalize(user.LastName);
-        if (normLast is not null && userLastNamesTable is not null)
-            await WriteNameIndexAsync(userLastNamesTable, normLast, user.Id, ct);
+        // Name prefix indexes.
+        if (normalizedFirst is not null && userFirstNamesTable is not null)
+        {
+            await WriteNameIndexAsync(userFirstNamesTable, normalizedFirst, userId, ct);
+            if (dropLegacy && _indexTokenized)
+                await TryDeleteRowAsync(userFirstNamesTable, _partitioner.PK(UserFirstNameEntity.GetPartitionKey(normalizedFirst)), UserFirstNameEntity.MakeRowKey(normalizedFirst, userId), "UserFirstNames", ct);
+        }
+        if (normalizedLast is not null && userLastNamesTable is not null)
+        {
+            await WriteNameIndexAsync(userLastNamesTable, normalizedLast, userId, ct);
+            if (dropLegacy && _indexTokenized)
+                await TryDeleteRowAsync(userLastNamesTable, _partitioner.PK(UserFirstNameEntity.GetPartitionKey(normalizedLast)), UserFirstNameEntity.MakeRowKey(normalizedLast, userId), "UserLastNames", ct);
+        }
     }
 
     public async Task UpdateAsync(AuthUser user, CancellationToken ct = default)
@@ -514,43 +558,9 @@ public sealed class TableUserStore(
         await EncryptEntityAsync(entity, ct);
         await usersTable.UpsertEntityAsync(entity, TableUpdateMode.Replace, ct);
 
-        // 2. Email lookup — write the current-scheme row FIRST (no login gap), then drop the legacy row.
-        var emailEntity = UserEmailEntity.Create(normalizedEmail, userId);
-        emailEntity.PartitionKey = await EmailIndexPkAsync(normalizedEmail, ct);
-        await userEmailsTable.UpsertEntityAsync(emailEntity, TableUpdateMode.Replace, ct);
-        if (_indexTokenized)
-        {
-            var plainPk = _partitioner.PK(normalizedEmail);
-            if (!string.Equals(plainPk, emailEntity.PartitionKey, StringComparison.Ordinal))
-                await TryDeleteEmailIndexAsync(plainPk, ct);
-        }
-
-        // 3. Domain — write current, drop legacy.
-        await WriteDomainIndexAsync(normalizedEmail, userId, ct);
-        if (_indexTokenized && userEmailDomainsTable is not null)
-        {
-            var domain = UserEmailDomainEntity.DomainOf(normalizedEmail);
-            if (domain is not null)
-            {
-                var plainDomPk = _partitioner.PK(domain);
-                if (!string.Equals(plainDomPk, await DomainIndexPkAsync(domain, ct), StringComparison.Ordinal))
-                    await TryDeleteDomainAsync(plainDomPk, userId, ct);
-            }
-        }
-
-        // 4. Names — write current-scheme prefix rows, drop the single legacy row.
-        if (normFirst is not null && userFirstNamesTable is not null)
-        {
-            await WriteNameIndexAsync(userFirstNamesTable, normFirst, userId, ct);
-            if (_indexTokenized)
-                await TryDeleteRowAsync(userFirstNamesTable, _partitioner.PK(UserFirstNameEntity.GetPartitionKey(normFirst)), UserFirstNameEntity.MakeRowKey(normFirst, userId), "UserFirstNames", ct);
-        }
-        if (normLast is not null && userLastNamesTable is not null)
-        {
-            await WriteNameIndexAsync(userLastNamesTable, normLast, userId, ct);
-            if (_indexTokenized)
-                await TryDeleteRowAsync(userLastNamesTable, _partitioner.PK(UserFirstNameEntity.GetPartitionKey(normLast)), UserFirstNameEntity.MakeRowKey(normLast, userId), "UserLastNames", ct);
-        }
+        // 2-4. Rewrite the profile-derived indexes (email lookup, domain, name prefixes) under the current
+        //       keys, dropping any legacy plaintext-keyed rows. Shared with CreateAsync (dropLegacy:false).
+        await WriteProfileIndexesAsync(normalizedEmail, normFirst, normLast, userId, dropLegacy: true, ct);
     }
 
     public async Task<bool> ExistsAsync(string userId, CancellationToken ct = default)
@@ -599,9 +609,20 @@ public sealed class TableUserStore(
 
         await foreach (var entity in query)
         {
-            await DecryptEntityAsync(entity, ct);
-            var user = entity.ToModel();
-            user.Id = _partitioner.Strip(user.Id);
+            AuthUser user;
+            try
+            {
+                await DecryptEntityAsync(entity, ct);
+                user = entity.ToModel();
+                user.Id = _partitioner.Strip(user.Id);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                // One undecryptable/corrupt row (e.g. a key whose min_decryption_version was raised
+                // before this row was reindexed) must not fail the whole tenant's user list — skip it
+                // and keep enumerating the rest of the page.
+                continue;
+            }
             if (organizationId is not null &&
                 !string.Equals(user.OrganizationId, organizationId, StringComparison.Ordinal))
                 continue;
@@ -652,9 +673,18 @@ public sealed class TableUserStore(
 
         await foreach (var entity in query)
         {
-            await DecryptEntityAsync(entity, ct);
-            var user = entity.ToModel();
-            user.Id = _partitioner.Strip(user.Id);
+            AuthUser user;
+            try
+            {
+                await DecryptEntityAsync(entity, ct);
+                user = entity.ToModel();
+                user.Id = _partitioner.Strip(user.Id);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                // Skip a row we can't decrypt rather than failing the entire SCIM sync (see ListAsync).
+                continue;
+            }
 
             if (skipped < start)
             {
@@ -674,6 +704,26 @@ public sealed class TableUserStore(
             results.RemoveAt(results.Count - 1);
 
         return (results, hasMore);
+    }
+
+    public async IAsyncEnumerable<string> EnumerateUserIdsAsync([EnumeratorCancellation] CancellationToken ct = default)
+    {
+        // Id-only stream for the cold-row backfill: select just the keys — no PII columns, so no per-row
+        // decryption — and let the Tables SDK page via continuation tokens. O(N), unlike ListAsync's
+        // offset re-scan that also decrypts every skipped row. One profile row per user.
+        var range = _partitioner.RangeForEnv();
+        var query = range is null
+            ? usersTable.QueryAsync<TableEntity>(
+                e => e.RowKey == UserEntity.ProfileRowKey,
+                select: ["PartitionKey", "RowKey"], cancellationToken: ct)
+            : usersTable.QueryAsync<TableEntity>(
+                e => e.PartitionKey.CompareTo(range.Value.Low) >= 0
+                     && e.PartitionKey.CompareTo(range.Value.High) < 0
+                     && e.RowKey == UserEntity.ProfileRowKey,
+                select: ["PartitionKey", "RowKey"], cancellationToken: ct);
+
+        await foreach (var entity in query)
+            yield return _partitioner.Strip(entity.PartitionKey);
     }
 
     public async Task<IReadOnlyList<AuthUser>> SearchAsync(

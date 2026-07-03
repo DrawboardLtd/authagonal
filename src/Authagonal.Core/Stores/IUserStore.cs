@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using Authagonal.Core.Models;
 
 namespace Authagonal.Core.Stores;
@@ -56,6 +57,18 @@ public interface IUserStore
     /// legacy-keyed rows. Idempotent — the cold-row backfill for enabling encryption. Default is a no-op.
     /// </summary>
     Task ReindexUserAsync(string userId, CancellationToken ct = default) => Task.CompletedTask;
+
+    /// <summary>
+    /// Stream every user's id for this store, cheaply: id-only (no PII decryption) and paged via the
+    /// backend's native continuation, so it is O(N) rather than the O(N²) offset re-scan of
+    /// <see cref="ListAsync"/> that also decrypts every skipped row. Used by the cold-row encryption
+    /// backfill, which only needs ids to feed <see cref="ReindexUserAsync"/>. Default yields nothing.
+    /// </summary>
+    async IAsyncEnumerable<string> EnumerateUserIdsAsync([EnumeratorCancellation] CancellationToken ct = default)
+    {
+        await Task.CompletedTask;
+        yield break;
+    }
 
     Task SetExternalIdAsync(string userId, string clientId, string externalId, CancellationToken ct = default);
     Task RemoveExternalIdAsync(string userId, string clientId, string externalId, CancellationToken ct = default);
