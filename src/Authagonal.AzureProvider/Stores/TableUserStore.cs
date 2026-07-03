@@ -21,7 +21,8 @@ public sealed class TableUserStore(
     EnvPartitioner partitioner,
     ITombstoneWriter? tombstoneWriter = null,
     IFieldCipher? fieldCipher = null,
-    IIndexTokenizer? indexTokenizer = null) : IUserStore
+    IIndexTokenizer? indexTokenizer = null,
+    TableClient? userEmailDomainsTable = null) : IUserStore
 {
     private readonly EnvPartitioner _partitioner = partitioner; // Phase B2 will wrap PartitionKeys with _partitioner.PK
     // Name-index tables are optional. When null (Storage:NameIndexesEnabled=false),
@@ -91,6 +92,77 @@ public sealed class TableUserStore(
             await userEmailsTable.DeleteEntityAsync(pk, UserEmailEntity.LookupRowKey, cancellationToken: ct);
             if (tombstoneWriter is not null)
                 await tombstoneWriter.WriteAsync("UserEmails", pk, UserEmailEntity.LookupRowKey, ct);
+        }
+        catch (RequestFailedException ex) when (ex.Status == 404) { }
+    }
+
+    // externalId lookup index — same shape as email: tokenize the "{clientId}|{externalId}" composite so
+    // the key exposes no external identifier, with a migration-window plaintext fallback on read.
+    private async Task<string> ExternalIdIndexPkAsync(string clientId, string externalId, CancellationToken ct)
+        => _partitioner.PK(await _tokenizer.TokenizeAsync($"{clientId}|{externalId}", ct));
+
+    private async Task<string?> TryGetExternalIdUserIdAsync(string pk, CancellationToken ct)
+    {
+        try
+        {
+            var e = await userExternalIdsTable.GetEntityAsync<UserExternalIdEntity>(pk, UserExternalIdEntity.LookupRowKey, cancellationToken: ct);
+            return e.Value.UserId;
+        }
+        catch (RequestFailedException ex) when (ex.Status == 404)
+        {
+            return null;
+        }
+    }
+
+    private async Task TryDeleteExternalIdAsync(string pk, CancellationToken ct)
+    {
+        try
+        {
+            await userExternalIdsTable.DeleteEntityAsync(pk, UserExternalIdEntity.LookupRowKey, cancellationToken: ct);
+            if (tombstoneWriter is not null)
+                await tombstoneWriter.WriteAsync("UserExternalIds", pk, UserExternalIdEntity.LookupRowKey, ct);
+        }
+        catch (RequestFailedException ex) when (ex.Status == 404) { }
+    }
+
+    // Email-domain index ("all users @X"). Optional (null table → feature off). PartitionKey = tokenized
+    // domain, RowKey = userId. Unlike email/externalId this is a NEW index, so there are no pre-existing
+    // plaintext rows to migrate — but if a tenant is enabled after some rows were written plaintext, the
+    // search dual-reads and the backfill rewrites, same as the other indexes.
+    private async Task<string> DomainIndexPkAsync(string domain, CancellationToken ct)
+        => _partitioner.PK(await _tokenizer.TokenizeAsync(domain, ct));
+
+    private async Task WriteDomainIndexAsync(string? normalizedEmail, string userId, CancellationToken ct)
+    {
+        if (userEmailDomainsTable is null) return;
+        var domain = UserEmailDomainEntity.DomainOf(normalizedEmail);
+        if (domain is null) return;
+        var entity = new UserEmailDomainEntity { PartitionKey = await DomainIndexPkAsync(domain, ct), RowKey = userId, UserId = userId };
+        await userEmailDomainsTable.UpsertEntityAsync(entity, TableUpdateMode.Replace, ct);
+    }
+
+    private async Task DeleteDomainIndexAsync(string? normalizedEmail, string userId, CancellationToken ct)
+    {
+        if (userEmailDomainsTable is null) return;
+        var domain = UserEmailDomainEntity.DomainOf(normalizedEmail);
+        if (domain is null) return;
+        var tokenPk = await DomainIndexPkAsync(domain, ct);
+        await TryDeleteDomainAsync(tokenPk, userId, ct);
+        if (_indexTokenized)
+        {
+            var plainPk = _partitioner.PK(domain);
+            if (!string.Equals(plainPk, tokenPk, StringComparison.Ordinal))
+                await TryDeleteDomainAsync(plainPk, userId, ct);
+        }
+    }
+
+    private async Task TryDeleteDomainAsync(string pk, string userId, CancellationToken ct)
+    {
+        try
+        {
+            await userEmailDomainsTable!.DeleteEntityAsync(pk, userId, cancellationToken: ct);
+            if (tombstoneWriter is not null)
+                await tombstoneWriter.WriteAsync("UserEmailDomains", pk, userId, ct);
         }
         catch (RequestFailedException ex) when (ex.Status == 404) { }
     }
@@ -202,6 +274,7 @@ public sealed class TableUserStore(
 
         await usersTable.AddEntityAsync(userEntity, ct);
         await userEmailsTable.UpsertEntityAsync(emailEntity, TableUpdateMode.Replace, ct);
+        await WriteDomainIndexAsync(user.NormalizedEmail, user.Id, ct);
 
         var normFirst = Normalize(user.FirstName);
         if (normFirst is not null && userFirstNamesTable is not null)
@@ -244,6 +317,13 @@ public sealed class TableUserStore(
                 var emailEntity = UserEmailEntity.Create(newNormalizedEmail, user.Id);
                 emailEntity.PartitionKey = await EmailIndexPkAsync(newNormalizedEmail, ct);
                 await userEmailsTable.UpsertEntityAsync(emailEntity, TableUpdateMode.Replace, ct);
+
+                // Domain index: only rewrite when the domain part actually changed (a@acme → b@acme keeps it).
+                if (!string.Equals(UserEmailDomainEntity.DomainOf(oldNormalizedEmail), UserEmailDomainEntity.DomainOf(newNormalizedEmail), StringComparison.Ordinal))
+                {
+                    await DeleteDomainIndexAsync(oldNormalizedEmail, user.Id, ct);
+                    await WriteDomainIndexAsync(newNormalizedEmail, user.Id, ct);
+                }
             }
 
             var oldFirst = Normalize(existing.Value.FirstName);
@@ -311,8 +391,9 @@ public sealed class TableUserStore(
             var existing = await usersTable.GetEntityAsync<UserEntity>(
                 _partitioner.PK(userId), UserEntity.ProfileRowKey, cancellationToken: ct);
 
-            // Delete email index (tokenized + any legacy plaintext row)
+            // Delete email index (tokenized + any legacy plaintext row) + the domain-index row
             await DeleteEmailIndexAsync(existing.Value.NormalizedEmail, ct);
+            await DeleteDomainIndexAsync(existing.Value.NormalizedEmail, userId, ct);
 
             // Delete first-name index
             var normFirst = Normalize(existing.Value.FirstName);
@@ -375,16 +456,11 @@ public sealed class TableUserStore(
 
     public async Task<AuthUser?> FindByExternalIdAsync(string clientId, string externalId, CancellationToken ct = default)
     {
-        try
-        {
-            var indexEntity = await userExternalIdsTable.GetEntityAsync<UserExternalIdEntity>(
-                _partitioner.PK($"{clientId}|{externalId}"), UserExternalIdEntity.LookupRowKey, cancellationToken: ct);
-            return await GetAsync(indexEntity.Value.UserId, ct);
-        }
-        catch (RequestFailedException ex) when (ex.Status == 404)
-        {
-            return null;
-        }
+        // Tokenized lookup; migration-window fallback to the legacy plaintext key for un-backfilled rows.
+        var userId = await TryGetExternalIdUserIdAsync(await ExternalIdIndexPkAsync(clientId, externalId, ct), ct);
+        if (userId is null && _indexTokenized)
+            userId = await TryGetExternalIdUserIdAsync(_partitioner.PK($"{clientId}|{externalId}"), ct);
+        return userId is null ? null : await GetAsync(userId, ct);
     }
 
     public async Task<(IReadOnlyList<AuthUser> Users, bool HasMore)> ListAsync(
@@ -575,6 +651,42 @@ public sealed class TableUserStore(
         return results;
     }
 
+    public async Task<IReadOnlyList<AuthUser>> SearchByEmailDomainAsync(string domain, int maxResults = 50, CancellationToken ct = default)
+    {
+        if (userEmailDomainsTable is null || string.IsNullOrWhiteSpace(domain))
+            return [];
+
+        var normDomain = domain.Trim().ToUpperInvariant();
+        var ids = new List<string>();
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+
+        async Task CollectAsync(string pk)
+        {
+            var query = userEmailDomainsTable.QueryAsync<UserEmailDomainEntity>(e => e.PartitionKey == pk, cancellationToken: ct);
+            await foreach (var e in query.WithCancellation(ct))
+            {
+                if (seen.Add(e.UserId)) ids.Add(e.UserId);
+                if (ids.Count >= maxResults) break;
+            }
+        }
+
+        await CollectAsync(await DomainIndexPkAsync(normDomain, ct));
+        // Migration window: also sweep any legacy plaintext-keyed rows written before tokenization.
+        if (_indexTokenized && ids.Count < maxResults)
+            await CollectAsync(_partitioner.PK(normDomain));
+
+        var results = new List<AuthUser>();
+        foreach (var id in ids)
+        {
+            var user = await GetAsync(id, ct);
+            if (user is not null)
+                results.Add(user);
+            if (results.Count >= maxResults)
+                break;
+        }
+        return results;
+    }
+
     private static async Task<List<string>> CollectUserIdsAsync<T>(
         Azure.AsyncPageable<T> query,
         Func<T, string> extractUserId,
@@ -593,20 +705,21 @@ public sealed class TableUserStore(
     public async Task SetExternalIdAsync(string userId, string clientId, string externalId, CancellationToken ct = default)
     {
         var entity = UserExternalIdEntity.Create(clientId, externalId, userId);
-        entity.PartitionKey = _partitioner.PK(entity.PartitionKey);
+        entity.PartitionKey = await ExternalIdIndexPkAsync(clientId, externalId, ct);
         await userExternalIdsTable.UpsertEntityAsync(entity, TableUpdateMode.Replace, ct);
     }
 
     public async Task RemoveExternalIdAsync(string userId, string clientId, string externalId, CancellationToken ct = default)
     {
-        var pk = _partitioner.PK($"{clientId}|{externalId}");
-        try
+        // Delete the tokenized row and, while tokenization is on, any legacy plaintext row too.
+        var tokenPk = await ExternalIdIndexPkAsync(clientId, externalId, ct);
+        await TryDeleteExternalIdAsync(tokenPk, ct);
+        if (_indexTokenized)
         {
-            await userExternalIdsTable.DeleteEntityAsync(pk, UserExternalIdEntity.LookupRowKey, cancellationToken: ct);
-            if (tombstoneWriter is not null)
-                await tombstoneWriter.WriteAsync("UserExternalIds", pk, UserExternalIdEntity.LookupRowKey, ct);
+            var plainPk = _partitioner.PK($"{clientId}|{externalId}");
+            if (!string.Equals(plainPk, tokenPk, StringComparison.Ordinal))
+                await TryDeleteExternalIdAsync(plainPk, ct);
         }
-        catch (RequestFailedException ex) when (ex.Status == 404) { }
     }
 
     public async Task AddLoginAsync(ExternalLoginInfo login, CancellationToken ct = default)

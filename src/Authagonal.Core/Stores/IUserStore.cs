@@ -42,6 +42,14 @@ public interface IUserStore
     Task<(IReadOnlyList<AuthUser> Users, bool HasMore)> ListAsync(string? organizationId, int startIndex, int count, CancellationToken ct = default);
     Task<(IReadOnlyList<AuthUser> Users, bool HasMore)> ListByScimClientAsync(string scimClientId, int startIndex, int count, CancellationToken ct = default);
     Task<IReadOnlyList<AuthUser>> SearchAsync(string query, int maxResults = 20, CancellationToken ct = default);
+
+    /// <summary>
+    /// Find users whose email is at <paramref name="domain"/> (e.g. "acme.com") — backed by the
+    /// email-domain blind index. Default returns empty for stores that don't implement it.
+    /// </summary>
+    Task<IReadOnlyList<AuthUser>> SearchByEmailDomainAsync(string domain, int maxResults = 50, CancellationToken ct = default)
+        => Task.FromResult<IReadOnlyList<AuthUser>>([]);
+
     Task SetExternalIdAsync(string userId, string clientId, string externalId, CancellationToken ct = default);
     Task RemoveExternalIdAsync(string userId, string clientId, string externalId, CancellationToken ct = default);
 
