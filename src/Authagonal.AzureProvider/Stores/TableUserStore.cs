@@ -413,35 +413,41 @@ public sealed class TableUserStore(
 
             if (!string.Equals(oldNormalizedEmail, newNormalizedEmail, StringComparison.Ordinal))
             {
-                // Remove the old email index (tokenized + any legacy plaintext row), add the new one.
-                await DeleteEmailIndexAsync(oldNormalizedEmail, ct);
-
+                // Write the NEW email index first, then remove the old (tokenized + any legacy plaintext row).
+                // Write-before-delete: a throw between the two calls — e.g. a Vault HMAC hiccup while computing
+                // the new tokenized PK — must never strand the user with neither lookup (login-lockout). Old≠new
+                // here, so the PKs differ and the new write can't collide with the row we then delete. Mirrors
+                // ReindexUserAsync's "write current FIRST (no login gap), then drop legacy".
                 var emailEntity = UserEmailEntity.Create(newNormalizedEmail, user.Id);
                 emailEntity.PartitionKey = await EmailIndexPkAsync(newNormalizedEmail, ct);
                 await userEmailsTable.UpsertEntityAsync(emailEntity, TableUpdateMode.Replace, ct);
+                await DeleteEmailIndexAsync(oldNormalizedEmail, ct);
 
                 // Domain index: only rewrite when the domain part actually changed (a@acme → b@acme keeps it).
+                // Same write-before-delete ordering.
                 if (!string.Equals(UserEmailDomainEntity.DomainOf(oldNormalizedEmail), UserEmailDomainEntity.DomainOf(newNormalizedEmail), StringComparison.Ordinal))
                 {
-                    await DeleteDomainIndexAsync(oldNormalizedEmail, user.Id, ct);
                     await WriteDomainIndexAsync(newNormalizedEmail, user.Id, ct);
+                    await DeleteDomainIndexAsync(oldNormalizedEmail, user.Id, ct);
                 }
             }
 
+            // Names: write the new prefix rows before dropping the old (write-before-delete, as above) so a
+            // mid-call throw never leaves the user unsearchable by name. old≠new ⇒ distinct rows.
             var oldFirst = Normalize(existing.Value.FirstName);
             var newFirst = Normalize(user.FirstName);
             if (userFirstNamesTable is not null && !string.Equals(oldFirst, newFirst, StringComparison.Ordinal))
             {
-                if (oldFirst is not null) await DeleteNameIndexAsync(userFirstNamesTable, oldFirst, user.Id, "UserFirstNames", ct);
                 if (newFirst is not null) await WriteNameIndexAsync(userFirstNamesTable, newFirst, user.Id, ct);
+                if (oldFirst is not null) await DeleteNameIndexAsync(userFirstNamesTable, oldFirst, user.Id, "UserFirstNames", ct);
             }
 
             var oldLast = Normalize(existing.Value.LastName);
             var newLast = Normalize(user.LastName);
             if (userLastNamesTable is not null && !string.Equals(oldLast, newLast, StringComparison.Ordinal))
             {
-                if (oldLast is not null) await DeleteNameIndexAsync(userLastNamesTable, oldLast, user.Id, "UserLastNames", ct);
                 if (newLast is not null) await WriteNameIndexAsync(userLastNamesTable, newLast, user.Id, ct);
+                if (oldLast is not null) await DeleteNameIndexAsync(userLastNamesTable, oldLast, user.Id, "UserLastNames", ct);
             }
         }
         catch (RequestFailedException ex) when (ex.Status == 404)
