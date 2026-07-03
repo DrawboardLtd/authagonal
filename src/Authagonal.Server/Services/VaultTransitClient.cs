@@ -19,6 +19,10 @@ public class VaultTransitClient
     /// <summary>Symmetric key type for Transit encrypt/decrypt (encryption-as-a-service). Distinct from
     /// the ECDSA signing keys — a key can't both sign and encrypt, so encryption uses its own key.</summary>
     public const string Aes256Gcm96 = "aes256-gcm96";
+    /// <summary>HMAC-only key type, for keyed blind-index tokens (searchable-encryption indexes). Its own
+    /// key ("idx-…"), separate from the encryption key: HMAC needs determinism (same input → same token,
+    /// so equality/prefix lookups work) whereas encryption is randomized, so they can't share a key.</summary>
+    public const string Hmac = "hmac";
 
     private readonly HttpClient _client;
     private readonly ILogger<VaultTransitClient> _logger;
@@ -101,6 +105,59 @@ public class VaultTransitClient
         var b64 = result?.Data?.Plaintext
             ?? throw new InvalidOperationException($"Vault Transit decrypt returned no plaintext for key '{keyName}'");
         return Convert.FromBase64String(b64);
+    }
+
+    /// <summary>
+    /// Keyed HMAC-SHA256 of <paramref name="input"/> using an <see cref="Hmac"/> Transit key — the
+    /// primitive behind blind indexes. Returns Vault's token ("vault:v{version}:{base64}"). Deterministic
+    /// for a given key version: the same input always yields the same token, which is exactly what makes
+    /// equality (and prefix) lookups possible over encrypted data. The key material never leaves Vault, so
+    /// a database dump can't recompute tokens. NOTE: the token embeds the key version, so rotating the idx
+    /// key invalidates existing index tokens — a rotation means a full reindex; idx keys aren't rotated casually.
+    /// </summary>
+    public virtual async Task<string> HmacAsync(string keyName, byte[] input, CancellationToken ct = default)
+    {
+        var payload = JsonSerializer.Serialize(
+            new VaultHmacRequest { Input = Convert.ToBase64String(input) },
+            AuthagonalJsonContext.Default.VaultHmacRequest);
+
+        var response = await PostAsync($"/v1/transit/hmac/{keyName}/sha2-256", payload, ct);
+        var result = JsonSerializer.Deserialize(response, AuthagonalJsonContext.Default.VaultResponseHmacResponse);
+
+        return result?.Data?.Hmac
+            ?? throw new InvalidOperationException($"Vault Transit hmac returned no result for key '{keyName}'");
+    }
+
+    /// <summary>
+    /// Batched <see cref="HmacAsync"/> — one Vault round-trip for many inputs (e.g. all prefix tokens for a
+    /// name, or a bulk reindex). Returns tokens in the SAME order as <paramref name="inputs"/>. Empty input
+    /// yields an empty list without a request.
+    /// </summary>
+    public virtual async Task<IReadOnlyList<string>> HmacBatchAsync(string keyName, IReadOnlyList<byte[]> inputs, CancellationToken ct = default)
+    {
+        if (inputs.Count == 0) return [];
+
+        var payload = JsonSerializer.Serialize(
+            new VaultHmacBatchRequest
+            {
+                BatchInput = [.. inputs.Select(i => new VaultHmacBatchItem { Input = Convert.ToBase64String(i) })],
+            },
+            AuthagonalJsonContext.Default.VaultHmacBatchRequest);
+
+        var response = await PostAsync($"/v1/transit/hmac/{keyName}/sha2-256", payload, ct);
+        var result = JsonSerializer.Deserialize(response, AuthagonalJsonContext.Default.VaultResponseHmacBatchResponse);
+
+        var results = result?.Data?.BatchResults
+            ?? throw new InvalidOperationException($"Vault Transit hmac batch returned no results for key '{keyName}'");
+        if (results.Count != inputs.Count)
+            throw new InvalidOperationException(
+                $"Vault Transit hmac batch returned {results.Count} results for {inputs.Count} inputs (key '{keyName}')");
+
+        var tokens = new string[results.Count];
+        for (var i = 0; i < results.Count; i++)
+            tokens[i] = results[i].Hmac
+                ?? throw new InvalidOperationException($"Vault Transit hmac batch item {i} had no hmac (key '{keyName}')");
+        return tokens;
     }
 
     /// <summary>Create a new Transit key.</summary>
@@ -283,6 +340,37 @@ internal sealed class VaultDecryptRequest
 {
     [JsonPropertyName("ciphertext")]
     public required string Ciphertext { get; set; }
+}
+
+internal sealed class HmacResponse
+{
+    [JsonPropertyName("hmac")]
+    public string? Hmac { get; set; }
+}
+
+// Batch responses come back as { "data": { "batch_results": [ { "hmac": ... }, ... ] } }, in request order.
+internal sealed class HmacBatchResponse
+{
+    [JsonPropertyName("batch_results")]
+    public List<HmacResponse>? BatchResults { get; set; }
+}
+
+internal sealed class VaultHmacRequest
+{
+    [JsonPropertyName("input")]
+    public required string Input { get; set; }
+}
+
+internal sealed class VaultHmacBatchItem
+{
+    [JsonPropertyName("input")]
+    public required string Input { get; set; }
+}
+
+internal sealed class VaultHmacBatchRequest
+{
+    [JsonPropertyName("batch_input")]
+    public required List<VaultHmacBatchItem> BatchInput { get; set; }
 }
 
 internal sealed class VaultCreateKeyRequest
