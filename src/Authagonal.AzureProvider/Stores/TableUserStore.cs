@@ -23,15 +23,17 @@ public sealed class TableUserStore(
     ITombstoneWriter? tombstoneWriter = null,
     IFieldCipher? fieldCipher = null,
     IIndexTokenizer? indexTokenizer = null,
-    TableClient? userEmailDomainsTable = null) : IUserStore
+    TableClient? userEmailDomainsTable = null,
+    TableClient? userEmailLocalPrefixesTable = null) : IUserStore
 {
     private readonly EnvPartitioner _partitioner = partitioner; // Phase B2 will wrap PartitionKeys with _partitioner.PK
     // Name-index tables are optional. When null (Storage:NameIndexesEnabled=false),
     // CreateAsync/UpdateAsync/DeleteAsync skip the index writes entirely and
     // SearchAsync degrades from "email + name prefix" to "email prefix only".
-    // The index entities all share PartitionKey="all", so at multi-million-user
-    // scale the writes go through a single hot partition — disabling them is the
-    // right call when name search isn't a product feature.
+    // Index rows are partitioned by the (tokenized) search key — one PK per name
+    // prefix, per email-local prefix, and per email domain (further bucketed by
+    // userId) — so writes spread across partitions rather than one hot "all". The
+    // cost is write fan-out: one row per prefix of each indexed field.
 
     // At-rest PII encryption (opt-in). When null, values are stored plaintext (single-tenant /
     // unconfigured hosts, and every existing deployment). When supplied (Cloud, per-tenant enc-{prefix}
@@ -150,6 +152,57 @@ public sealed class TableUserStore(
     }
 
     private static string Bucketed(string basePk, string userId) => $"{basePk}-{DomainBucketOf(userId):x}";
+
+    // Email local-part prefix index (tokenized only). Each prefix of the local part (before '@') is an
+    // HMAC-token row, so "email starts with X" is an exact lookup over encrypted emails — same trick as
+    // the name index. With tokenization off, email prefix search uses the ordered range scan on the exact
+    // email index, so this index is neither written nor read.
+    private static string? LocalPartOf(string? normalizedEmail)
+    {
+        if (string.IsNullOrEmpty(normalizedEmail)) return null;
+        var at = normalizedEmail.IndexOf('@');
+        var local = at > 0 ? normalizedEmail[..at] : normalizedEmail;
+        return string.IsNullOrEmpty(local) ? null : local;
+    }
+
+    private async Task WriteEmailLocalPrefixIndexAsync(string? normalizedEmail, string userId, CancellationToken ct)
+    {
+        if (userEmailLocalPrefixesTable is null || !_indexTokenized) return;
+        var local = LocalPartOf(normalizedEmail);
+        if (local is null) return;
+        var tokens = await _tokenizer.TokenizeBatchAsync(NamePrefixesOf(local), ct);
+        await Task.WhenAll(tokens.Select(token =>
+            userEmailLocalPrefixesTable.UpsertEntityAsync(
+                new TableEntity(_partitioner.PK(token), userId) { ["UserId"] = userId }, TableUpdateMode.Replace, ct)));
+    }
+
+    private async Task DeleteEmailLocalPrefixIndexAsync(string? normalizedEmail, string userId, CancellationToken ct)
+    {
+        if (userEmailLocalPrefixesTable is null || !_indexTokenized) return;
+        var local = LocalPartOf(normalizedEmail);
+        if (local is null) return;
+        var tokens = await _tokenizer.TokenizeBatchAsync(NamePrefixesOf(local), ct);
+        foreach (var token in tokens)
+            await TryDeleteRowAsync(userEmailLocalPrefixesTable, _partitioner.PK(token), userId, "UserEmailLocalPrefixes", ct);
+    }
+
+    private async Task<List<string>> SearchEmailLocalPrefixAsync(string prefix, int maxResults, CancellationToken ct)
+    {
+        if (userEmailLocalPrefixesTable is null || !_indexTokenized) return [];
+        var local = LocalPartOf(prefix) ?? prefix;
+        if (local.Length < NamePrefixMin) return [];
+        var lookup = local.Length > NamePrefixMax ? local[..NamePrefixMax] : local;
+        var pk = _partitioner.PK(await _tokenizer.TokenizeAsync(lookup, ct));
+        var ids = new List<string>();
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        await foreach (var e in userEmailLocalPrefixesTable.QueryAsync<UserEmailLocalPrefixEntity>(
+            e => e.PartitionKey == pk, cancellationToken: ct).WithCancellation(ct))
+        {
+            if (seen.Add(e.UserId)) ids.Add(e.UserId);
+            if (ids.Count >= maxResults) break;
+        }
+        return ids;
+    }
 
     private async Task WriteDomainIndexAsync(string? normalizedEmail, string userId, CancellationToken ct)
     {
@@ -478,8 +531,9 @@ public sealed class TableUserStore(
                 await TryDeleteEmailIndexAsync(plainPk, ct);
         }
 
-        // Email-domain index.
+        // Email-domain index + email local-part prefix index.
         await WriteDomainIndexAsync(normalizedEmail, userId, ct);
+        await WriteEmailLocalPrefixIndexAsync(normalizedEmail, userId, ct);
         if (dropLegacy && _indexTokenized && userEmailDomainsTable is not null)
         {
             var domain = UserEmailDomainEntity.DomainOf(normalizedEmail);
@@ -537,6 +591,16 @@ public sealed class TableUserStore(
                 await userEmailsTable.UpsertEntityAsync(emailEntity, TableUpdateMode.Replace, ct);
                 await DeleteEmailIndexAsync(oldNormalizedEmail, ct);
 
+                // Local-part prefix index: keyed on the bit before '@', so rewrite when THAT changed
+                // (a@acme → a@other keeps it; alistair@acme → wendy@acme moves it). Independent of the
+                // domain check below — a same-domain local-part change still has to move the prefix rows.
+                // Write-before-delete as above.
+                if (!string.Equals(LocalPartOf(oldNormalizedEmail), LocalPartOf(newNormalizedEmail), StringComparison.Ordinal))
+                {
+                    await WriteEmailLocalPrefixIndexAsync(newNormalizedEmail, user.Id, ct);
+                    await DeleteEmailLocalPrefixIndexAsync(oldNormalizedEmail, user.Id, ct);
+                }
+
                 // Domain index: only rewrite when the domain part actually changed (a@acme → b@acme keeps it).
                 // Same write-before-delete ordering.
                 if (!string.Equals(UserEmailDomainEntity.DomainOf(oldNormalizedEmail), UserEmailDomainEntity.DomainOf(newNormalizedEmail), StringComparison.Ordinal))
@@ -584,6 +648,7 @@ public sealed class TableUserStore(
             // Delete email index (tokenized + any legacy plaintext row) + the domain-index row
             await DeleteEmailIndexAsync(existing.Value.NormalizedEmail, ct);
             await DeleteDomainIndexAsync(existing.Value.NormalizedEmail, userId, ct);
+            await DeleteEmailLocalPrefixIndexAsync(existing.Value.NormalizedEmail, userId, ct);
 
             // Delete name indexes (all prefix-token rows + any legacy row)
             var normFirst = Normalize(existing.Value.FirstName);
@@ -830,8 +895,10 @@ public sealed class TableUserStore(
         // match (already handled above via FindByEmailAsync). Name prefix search is unaffected here.
         var emailLo = _partitioner.PK(prefix);
         var emailHi = _partitioner.PK(prefixEnd);
+        // Tokenized: HMAC keys are unordered, so email prefix search uses the local-part prefix index
+        // (exact-match on HMAC(prefix)). Off: the ordered range scan on the exact-email index works.
         var emailTask = _indexTokenized
-            ? Task.FromResult(new List<string>())
+            ? SearchEmailLocalPrefixAsync(prefix, maxResults, ct)
             : CollectUserIdsAsync(
                 userEmailsTable.QueryAsync<UserEmailEntity>(
                     e => e.PartitionKey.CompareTo(emailLo) >= 0 && e.PartitionKey.CompareTo(emailHi) < 0,

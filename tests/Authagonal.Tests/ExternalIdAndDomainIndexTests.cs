@@ -38,7 +38,8 @@ public class ExternalIdAndDomainIndexTests(AzuriteFixture azurite)
             return c;
         }
         return new TableUserStore(T("Users"), T("Emails"), T("Logins"), T("ExtIds"), null, null,
-            EnvPartitioner.Live, indexTokenizer: tokenizer, userEmailDomainsTable: T("EmailDomains"));
+            EnvPartitioner.Live, indexTokenizer: tokenizer, userEmailDomainsTable: T("EmailDomains"),
+            userEmailLocalPrefixesTable: T("EmailLocalPrefixes"));
     }
 
     private static AuthUser User(string id, string email) => new()
@@ -163,6 +164,48 @@ public class ExternalIdAndDomainIndexTests(AzuriteFixture azurite)
 
         Assert.Empty(await store.SearchByEmailDomainAsync("acme.test"));
         Assert.Equal("u1", (await store.SearchByEmailDomainAsync("other.test")).Single().Id);
+    }
+
+    // ── email local-part prefix ─────────────────────────────────
+
+    [Fact]
+    public async Task EmailLocalPrefix_Tokenized_SearchByLocalPartPrefix()
+    {
+        var prefix = $"elp{Guid.NewGuid():N}";
+        var store = NewStore(prefix, new FakeTokenizer());
+        await store.CreateAsync(User("u1", "alistair@acme.test")); // no name set — isolates the email path
+        await store.CreateAsync(User("u2", "bob@acme.test"));
+
+        var hits = await store.SearchAsync("ali");
+        Assert.Equal(new[] { "u1" }, hits.Select(u => u.Id).ToArray());
+
+        // Indexed as HMAC(prefix) -> userId, never the plaintext local part.
+        Assert.True(await RowExists<UserEmailLocalPrefixEntity>($"{prefix}EmailLocalPrefixes", FakeTokenizer.Token("ALI"), "u1"));
+        Assert.False(await RowExists<UserEmailLocalPrefixEntity>($"{prefix}EmailLocalPrefixes", "ALI", "u1"));
+    }
+
+    [Fact]
+    public async Task EmailLocalPrefix_EmailChange_MovesPrefixes()
+    {
+        var prefix = $"elp{Guid.NewGuid():N}";
+        var store = NewStore(prefix, new FakeTokenizer());
+        await store.CreateAsync(User("u1", "alistair@acme.test"));
+
+        await store.UpdateAsync(User("u1", "wendy@acme.test"));
+
+        Assert.Empty(await store.SearchAsync("ali"));
+        Assert.Equal(new[] { "u1" }, (await store.SearchAsync("wen")).Select(u => u.Id).ToArray());
+    }
+
+    [Fact]
+    public async Task EmailLocalPrefix_Off_UsesRangeScan_NoPrefixRows()
+    {
+        var prefix = $"elp{Guid.NewGuid():N}";
+        var store = NewStore(prefix, tokenizer: null);
+        await store.CreateAsync(User("u1", "alistair@acme.test"));
+
+        Assert.Equal(new[] { "u1" }, (await store.SearchAsync("ali")).Select(u => u.Id).ToArray()); // range scan
+        Assert.False(await RowExists<UserEmailLocalPrefixEntity>($"{prefix}EmailLocalPrefixes", "ALI", "u1")); // not written when off
     }
 
     [Fact]
