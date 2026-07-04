@@ -268,15 +268,11 @@ public sealed class TableUserStore(
 
     // "{}" is an empty attribute map and reveals nothing, so it stays plaintext — this also
     // spares a Vault round-trip on the common no-custom-attributes case.
+    // A field is worth encrypting if it carries content — empty values and the "{}" attrs default pass
+    // through untouched (and ResolveMany passes legacy plaintext through, so reads over un-migrated rows
+    // still work).
     private static bool ShouldProtect(string? value)
         => !string.IsNullOrEmpty(value) && value != "{}";
-
-    private async Task<string?> ProtectFieldAsync(string? plaintext, CancellationToken ct)
-        => ShouldProtect(plaintext) ? await _cipher.ProtectAsync(plaintext!, ct) : plaintext;
-
-    // ResolveAsync passes legacy plaintext through unchanged, so this is safe on un-migrated rows.
-    private async Task<string?> ResolveFieldAsync(string? stored, CancellationToken ct)
-        => string.IsNullOrEmpty(stored) ? stored : await _cipher.ResolveAsync(stored, ct);
 
     // Encrypt the at-rest PII fields on a freshly-mapped entity, just before a table write. Email and
     // names are encrypted alongside phone/company/attrs; the blind indexes (keyed on the plaintext, via
@@ -284,26 +280,82 @@ public sealed class TableUserStore(
     // always encrypt; the `?? e.X` guards only the theoretical empty case.
     private async Task EncryptEntityAsync(UserEntity e, CancellationToken ct)
     {
-        e.Email = await ProtectFieldAsync(e.Email, ct) ?? e.Email;
-        e.NormalizedEmail = await ProtectFieldAsync(e.NormalizedEmail, ct) ?? e.NormalizedEmail;
-        e.FirstName = await ProtectFieldAsync(e.FirstName, ct);
-        e.LastName = await ProtectFieldAsync(e.LastName, ct);
-        e.Phone = await ProtectFieldAsync(e.Phone, ct);
-        e.CompanyName = await ProtectFieldAsync(e.CompanyName, ct);
-        e.CustomAttributesJson = await ProtectFieldAsync(e.CustomAttributesJson, ct) ?? "{}";
+        // Batch the fields that need protection into ONE Vault round-trip (vs 7 sequential). Fields that
+        // don't need protecting (empty, or the "{}" attrs default) are left untouched, preserving the
+        // exact per-field semantics of the old ProtectFieldAsync path.
+        var fields = new[] { e.Email, e.NormalizedEmail, e.FirstName, e.LastName, e.Phone, e.CompanyName, e.CustomAttributesJson };
+        var idx = new List<int>(fields.Length);
+        var toProtect = new List<string>(fields.Length);
+        for (var i = 0; i < fields.Length; i++)
+            if (ShouldProtect(fields[i])) { idx.Add(i); toProtect.Add(fields[i]!); }
+
+        if (toProtect.Count > 0)
+        {
+            var ciphertexts = await _cipher.ProtectManyAsync(toProtect, ct);
+            for (var j = 0; j < idx.Count; j++) fields[idx[j]] = ciphertexts[j];
+        }
+
+        e.Email = fields[0] ?? e.Email;
+        e.NormalizedEmail = fields[1] ?? e.NormalizedEmail;
+        e.FirstName = fields[2];
+        e.LastName = fields[3];
+        e.Phone = fields[4];
+        e.CompanyName = fields[5];
+        e.CustomAttributesJson = fields[6] ?? "{}";
     }
 
     // Decrypt the at-rest PII fields on an entity read from the table, before ToModel() (or before its
-    // email/name is used for index-key computation).
+    // email/name is used for index-key computation). One batch round-trip; empties/legacy plaintext pass
+    // through untouched (ResolveManyAsync handles per-item passthrough).
     private async Task DecryptEntityAsync(UserEntity e, CancellationToken ct)
     {
-        e.Email = await ResolveFieldAsync(e.Email, ct) ?? e.Email;
-        e.NormalizedEmail = await ResolveFieldAsync(e.NormalizedEmail, ct) ?? e.NormalizedEmail;
-        e.FirstName = await ResolveFieldAsync(e.FirstName, ct);
-        e.LastName = await ResolveFieldAsync(e.LastName, ct);
-        e.Phone = await ResolveFieldAsync(e.Phone, ct);
-        e.CompanyName = await ResolveFieldAsync(e.CompanyName, ct);
-        e.CustomAttributesJson = await ResolveFieldAsync(e.CustomAttributesJson, ct) ?? "{}";
+        var fields = new[] { e.Email, e.NormalizedEmail, e.FirstName, e.LastName, e.Phone, e.CompanyName, e.CustomAttributesJson };
+        var idx = new List<int>(fields.Length);
+        var toResolve = new List<string>(fields.Length);
+        for (var i = 0; i < fields.Length; i++)
+            if (!string.IsNullOrEmpty(fields[i])) { idx.Add(i); toResolve.Add(fields[i]!); }
+
+        if (toResolve.Count > 0)
+        {
+            var resolved = await _cipher.ResolveManyAsync(toResolve, ct);
+            for (var j = 0; j < idx.Count; j++) fields[idx[j]] = resolved[j];
+        }
+
+        e.Email = fields[0] ?? e.Email;
+        e.NormalizedEmail = fields[1] ?? e.NormalizedEmail;
+        e.FirstName = fields[2];
+        e.LastName = fields[3];
+        e.Phone = fields[4];
+        e.CompanyName = fields[5];
+        e.CustomAttributesJson = fields[6] ?? "{}";
+    }
+
+    /// <summary>
+    /// Stamp login state (lockout reset, last-login time, optional password rehash) WITHOUT touching the
+    /// encrypted PII columns. The entity is read raw and written back with Replace, so the ciphertext
+    /// fields round-trip verbatim — zero Vault round-trips, versus the ~14 (decrypt 7 + re-encrypt 7) a
+    /// full <see cref="UpdateAsync"/> would spend just to write a timestamp on every login. Email/name are
+    /// unchanged, so the blind indexes need no update either. Last-writer-wins (no ETag) is fine for
+    /// login-state columns.
+    /// </summary>
+    public async Task RecordSuccessfulLoginAsync(string userId, string? rehashedPassword = null, CancellationToken ct = default)
+    {
+        try
+        {
+            var e = (await usersTable.GetEntityAsync<UserEntity>(
+                _partitioner.PK(userId), UserEntity.ProfileRowKey, cancellationToken: ct)).Value;
+            var now = DateTimeOffset.UtcNow;
+            e.AccessFailedCount = 0;
+            e.LockoutEnd = null;
+            e.LastLoginAt = now;
+            e.UpdatedAt = now;
+            if (rehashedPassword is not null) e.PasswordHash = rehashedPassword;
+            await usersTable.UpsertEntityAsync(e, TableUpdateMode.Replace, ct);
+        }
+        catch (RequestFailedException ex) when (ex.Status == 404)
+        {
+            // User deleted between auth and stamp — nothing to record.
+        }
     }
 
     public async Task<AuthUser?> GetAsync(string userId, CancellationToken ct = default)

@@ -160,6 +160,72 @@ public class VaultTransitClient
         return tokens;
     }
 
+    /// <summary>
+    /// Batched <see cref="EncryptAsync"/> — one Vault round-trip for many plaintexts (e.g. all PII fields
+    /// of a user in one call instead of seven). Returns ciphertext tokens in the SAME order as
+    /// <paramref name="plaintexts"/>. Empty input yields an empty list without a request.
+    /// </summary>
+    public virtual async Task<IReadOnlyList<string>> EncryptBatchAsync(string keyName, IReadOnlyList<byte[]> plaintexts, CancellationToken ct = default)
+    {
+        if (plaintexts.Count == 0) return [];
+
+        var payload = JsonSerializer.Serialize(
+            new VaultEncryptBatchRequest
+            {
+                BatchInput = [.. plaintexts.Select(p => new VaultEncryptBatchItem { Plaintext = Convert.ToBase64String(p) })],
+            },
+            AuthagonalJsonContext.Default.VaultEncryptBatchRequest);
+
+        var response = await PostAsync($"/v1/transit/encrypt/{keyName}", payload, ct);
+        var result = JsonSerializer.Deserialize(response, AuthagonalJsonContext.Default.VaultResponseEncryptBatchResponse);
+
+        var results = result?.Data?.BatchResults
+            ?? throw new InvalidOperationException($"Vault Transit encrypt batch returned no results for key '{keyName}'");
+        if (results.Count != plaintexts.Count)
+            throw new InvalidOperationException(
+                $"Vault Transit encrypt batch returned {results.Count} results for {plaintexts.Count} inputs (key '{keyName}')");
+
+        var tokens = new string[results.Count];
+        for (var i = 0; i < results.Count; i++)
+            tokens[i] = results[i].Ciphertext
+                ?? throw new InvalidOperationException($"Vault Transit encrypt batch item {i} had no ciphertext (key '{keyName}')");
+        return tokens;
+    }
+
+    /// <summary>
+    /// Batched <see cref="DecryptAsync"/> — one Vault round-trip for many ciphertexts. Returns plaintext
+    /// bytes in the SAME order as <paramref name="ciphertexts"/>. Empty input yields an empty list.
+    /// </summary>
+    public virtual async Task<IReadOnlyList<byte[]>> DecryptBatchAsync(string keyName, IReadOnlyList<string> ciphertexts, CancellationToken ct = default)
+    {
+        if (ciphertexts.Count == 0) return [];
+
+        var payload = JsonSerializer.Serialize(
+            new VaultDecryptBatchRequest
+            {
+                BatchInput = [.. ciphertexts.Select(c => new VaultDecryptBatchItem { Ciphertext = c })],
+            },
+            AuthagonalJsonContext.Default.VaultDecryptBatchRequest);
+
+        var response = await PostAsync($"/v1/transit/decrypt/{keyName}", payload, ct);
+        var result = JsonSerializer.Deserialize(response, AuthagonalJsonContext.Default.VaultResponseDecryptBatchResponse);
+
+        var results = result?.Data?.BatchResults
+            ?? throw new InvalidOperationException($"Vault Transit decrypt batch returned no results for key '{keyName}'");
+        if (results.Count != ciphertexts.Count)
+            throw new InvalidOperationException(
+                $"Vault Transit decrypt batch returned {results.Count} results for {ciphertexts.Count} inputs (key '{keyName}')");
+
+        var plaintexts = new byte[results.Count][];
+        for (var i = 0; i < results.Count; i++)
+        {
+            var b64 = results[i].Plaintext
+                ?? throw new InvalidOperationException($"Vault Transit decrypt batch item {i} had no plaintext (key '{keyName}')");
+            plaintexts[i] = Convert.FromBase64String(b64);
+        }
+        return plaintexts;
+    }
+
     /// <summary>Create a new Transit key.</summary>
     public virtual async Task CreateKeyAsync(string keyName, string type = EcdsaP256, CancellationToken ct = default)
     {
@@ -375,6 +441,43 @@ internal sealed class VaultHmacBatchRequest
 {
     [JsonPropertyName("batch_input")]
     public required List<VaultHmacBatchItem> BatchInput { get; set; }
+}
+
+// Batch encrypt/decrypt come back as { "data": { "batch_results": [ { "ciphertext" | "plaintext": ... }, ... ] } }, in request order.
+internal sealed class EncryptBatchResponse
+{
+    [JsonPropertyName("batch_results")]
+    public List<EncryptResponse>? BatchResults { get; set; }
+}
+
+internal sealed class DecryptBatchResponse
+{
+    [JsonPropertyName("batch_results")]
+    public List<DecryptResponse>? BatchResults { get; set; }
+}
+
+internal sealed class VaultEncryptBatchItem
+{
+    [JsonPropertyName("plaintext")]
+    public required string Plaintext { get; set; }
+}
+
+internal sealed class VaultEncryptBatchRequest
+{
+    [JsonPropertyName("batch_input")]
+    public required List<VaultEncryptBatchItem> BatchInput { get; set; }
+}
+
+internal sealed class VaultDecryptBatchItem
+{
+    [JsonPropertyName("ciphertext")]
+    public required string Ciphertext { get; set; }
+}
+
+internal sealed class VaultDecryptBatchRequest
+{
+    [JsonPropertyName("batch_input")]
+    public required List<VaultDecryptBatchItem> BatchInput { get; set; }
 }
 
 internal sealed class VaultCreateKeyRequest

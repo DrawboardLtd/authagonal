@@ -37,6 +37,26 @@ public interface IUserStore
         await UpdateAsync(user, ct);
         return locked;
     }
+
+    /// <summary>
+    /// Record a successful login: reset the lockout counter, stamp the login time, and optionally store a
+    /// rehashed password. This exists as a separate method from <see cref="UpdateAsync"/> so an encrypting
+    /// store can persist ONLY these plaintext auth columns without decrypting and re-encrypting every PII
+    /// field (which a full update does) just to write a timestamp on the hottest path. The default is the
+    /// straightforward read-modify-write; encrypting backends override it to skip the crypto round-trips.
+    /// </summary>
+    async Task RecordSuccessfulLoginAsync(string userId, string? rehashedPassword = null, CancellationToken ct = default)
+    {
+        var user = await GetAsync(userId, ct);
+        if (user is null) return;
+        user.AccessFailedCount = 0;
+        user.LockoutEnd = null;
+        user.LastLoginAt = DateTimeOffset.UtcNow;
+        user.UpdatedAt = DateTimeOffset.UtcNow;
+        if (rehashedPassword is not null) user.PasswordHash = rehashedPassword;
+        await UpdateAsync(user, ct);
+    }
+
     Task<bool> ExistsAsync(string userId, CancellationToken ct = default);
 
     Task<AuthUser?> FindByExternalIdAsync(string clientId, string externalId, CancellationToken ct = default);

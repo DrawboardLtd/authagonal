@@ -24,6 +24,26 @@ public interface IFieldCipher
 
     /// <summary>Decrypt a token from <see cref="ProtectAsync"/>; return unrecognised (legacy plaintext) input unchanged.</summary>
     Task<string> ResolveAsync(string stored, CancellationToken ct = default);
+
+    /// <summary>Encrypt many values in one shot, results in input order. The default loops
+    /// <see cref="ProtectAsync"/>; a backend with a batch primitive (Vault Transit) overrides this to do it
+    /// in a single round-trip. Callers pass only non-empty values.</summary>
+    async Task<IReadOnlyList<string>> ProtectManyAsync(IReadOnlyList<string> plaintexts, CancellationToken ct = default)
+    {
+        var r = new string[plaintexts.Count];
+        for (var i = 0; i < plaintexts.Count; i++) r[i] = await ProtectAsync(plaintexts[i], ct);
+        return r;
+    }
+
+    /// <summary>Resolve many values in one shot, results in input order (legacy plaintext passed through
+    /// per item, as in <see cref="ResolveAsync"/>). The default loops; a batch backend overrides to
+    /// decrypt the ciphertext items in a single round-trip. Callers pass only non-empty values.</summary>
+    async Task<IReadOnlyList<string>> ResolveManyAsync(IReadOnlyList<string> stored, CancellationToken ct = default)
+    {
+        var r = new string[stored.Count];
+        for (var i = 0; i < stored.Count; i++) r[i] = await ResolveAsync(stored[i], ct);
+        return r;
+    }
 }
 
 /// <summary>

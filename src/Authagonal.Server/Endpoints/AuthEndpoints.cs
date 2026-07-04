@@ -132,20 +132,25 @@ public static class AuthEndpoints
         if (tenantContext.RequireConfirmedEmailForLogin && !user.EmailConfirmed)
             return JsonResults.Error("email_not_confirmed", 403);
 
-        // Successful login - reset lockout counters, record login time
+        // Successful login - reset lockout counters, record login time. Mutate the in-memory user for the
+        // rest of the request (MFA etc.), but PERSIST via RecordSuccessfulLoginAsync, not UpdateAsync: the
+        // latter re-encrypts every PII field just to stamp a timestamp (an encrypting store makes that ~14
+        // Vault round-trips). RecordSuccessfulLoginAsync writes only the plaintext auth columns.
         user.AccessFailedCount = 0;
         user.LockoutEnd = null;
         user.LastLoginAt = DateTimeOffset.UtcNow;
         user.UpdatedAt = DateTimeOffset.UtcNow;
 
         // Rehash if needed (BCrypt -> PBKDF2 migration)
+        string? rehashedPassword = null;
         if (verifyResult == PasswordVerifyResult.SuccessRehashNeeded)
         {
-            user.PasswordHash = passwordHasher.HashPassword(request.Password);
+            rehashedPassword = passwordHasher.HashPassword(request.Password);
+            user.PasswordHash = rehashedPassword;
             logger.LogInformation("Password rehashed for user {UserId}", user.Id);
         }
 
-        await userStore.UpdateAsync(user, ct);
+        await userStore.RecordSuccessfulLoginAsync(user.Id, rehashedPassword, ct);
 
         // --- MFA check ---
         // Resolve client from returnUrl (OAuth authorize context carries client_id)
