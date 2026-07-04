@@ -135,12 +135,29 @@ public sealed class TableUserStore(
     private async Task<string> DomainIndexPkAsync(string domain, CancellationToken ct)
         => _partitioner.PK(await _tokenizer.TokenizeAsync(domain, ct));
 
+    // A domain's members are bucketed across DomainBuckets partitions so a big single-domain tenant
+    // (e.g. a 50k-user @acme.com import) doesn't funnel every index write into one partition and hit its
+    // ~2000 ops/s cap. The read (SearchByEmailDomain) fans out over the buckets; it's bounded by
+    // maxResults and rarely called, so the fan-out is cheap. Bucket = stable FNV-1a of the userId
+    // (string.GetHashCode is NOT stable across processes, which would strand rows on delete).
+    private const int DomainBuckets = 16;
+
+    private static int DomainBucketOf(string userId)
+    {
+        uint h = 2166136261u;
+        foreach (var ch in userId) { h ^= ch; h *= 16777619u; }
+        return (int)(h % (uint)DomainBuckets);
+    }
+
+    private static string Bucketed(string basePk, string userId) => $"{basePk}-{DomainBucketOf(userId):x}";
+
     private async Task WriteDomainIndexAsync(string? normalizedEmail, string userId, CancellationToken ct)
     {
         if (userEmailDomainsTable is null) return;
         var domain = UserEmailDomainEntity.DomainOf(normalizedEmail);
         if (domain is null) return;
-        var entity = new UserEmailDomainEntity { PartitionKey = await DomainIndexPkAsync(domain, ct), RowKey = userId, UserId = userId };
+        var pk = Bucketed(await DomainIndexPkAsync(domain, ct), userId);
+        var entity = new UserEmailDomainEntity { PartitionKey = pk, RowKey = userId, UserId = userId };
         await userEmailDomainsTable.UpsertEntityAsync(entity, TableUpdateMode.Replace, ct);
     }
 
@@ -150,12 +167,13 @@ public sealed class TableUserStore(
         var domain = UserEmailDomainEntity.DomainOf(normalizedEmail);
         if (domain is null) return;
         var tokenPk = await DomainIndexPkAsync(domain, ct);
-        await TryDeleteDomainAsync(tokenPk, userId, ct);
+        await TryDeleteDomainAsync(Bucketed(tokenPk, userId), userId, ct); // current: bucketed
+        await TryDeleteDomainAsync(tokenPk, userId, ct);                   // legacy: unbucketed (pre-bucketing rows)
         if (_indexTokenized)
         {
             var plainPk = _partitioner.PK(domain);
             if (!string.Equals(plainPk, tokenPk, StringComparison.Ordinal))
-                await TryDeleteDomainAsync(plainPk, userId, ct);
+                await TryDeleteDomainAsync(plainPk, userId, ct);           // legacy: plaintext (pre-tokenization rows)
         }
     }
 
@@ -854,6 +872,7 @@ public sealed class TableUserStore(
 
         async Task CollectAsync(string pk)
         {
+            if (ids.Count >= maxResults) return;
             var query = userEmailDomainsTable.QueryAsync<UserEmailDomainEntity>(e => e.PartitionKey == pk, cancellationToken: ct);
             await foreach (var e in query.WithCancellation(ct))
             {
@@ -862,8 +881,12 @@ public sealed class TableUserStore(
             }
         }
 
-        await CollectAsync(await DomainIndexPkAsync(normDomain, ct));
-        // Migration window: also sweep any legacy plaintext-keyed rows written before tokenization.
+        var basePk = await DomainIndexPkAsync(normDomain, ct);
+        // Members are bucketed, so fan out over the buckets (bounded by maxResults).
+        for (var b = 0; b < DomainBuckets && ids.Count < maxResults; b++)
+            await CollectAsync($"{basePk}-{b:x}");
+        // Migration windows: unbucketed tokenized rows (pre-bucketing), then plaintext rows (pre-tokenization).
+        await CollectAsync(basePk);
         if (_indexTokenized && ids.Count < maxResults)
             await CollectAsync(_partitioner.PK(normDomain));
 

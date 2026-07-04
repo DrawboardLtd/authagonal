@@ -95,6 +95,16 @@ public class ExternalIdAndDomainIndexTests(AzuriteFixture azurite)
         Assert.Null(await store.FindByExternalIdAsync("client-a", "EXT-123"));
     }
 
+    // Mirrors TableUserStore.DomainBucketOf — the domain index buckets members by userId so a big
+    // single-domain tenant doesn't hammer one partition. Kept in sync deliberately: a bucketing change
+    // should break these layout assertions.
+    private static string Bucket(string userId)
+    {
+        uint h = 2166136261u;
+        foreach (var ch in userId) { h ^= ch; h *= 16777619u; }
+        return ((int)(h % 16u)).ToString("x");
+    }
+
     // ── domain ──────────────────────────────────────────────────
 
     [Fact]
@@ -109,9 +119,26 @@ public class ExternalIdAndDomainIndexTests(AzuriteFixture azurite)
         var atAcme = await store.SearchByEmailDomainAsync("acme.test");
         Assert.Equal(new[] { "u1", "u2" }, atAcme.Select(u => u.Id).OrderBy(x => x).ToArray());
 
-        // Keyed on the token, not the plaintext domain.
-        Assert.True(await RowExists<UserEmailDomainEntity>($"{prefix}EmailDomains", FakeTokenizer.Token("ACME.TEST"), "u1"));
-        Assert.False(await RowExists<UserEmailDomainEntity>($"{prefix}EmailDomains", "ACME.TEST", "u1"));
+        // Keyed on the token (never the plaintext domain), bucketed by userId.
+        Assert.True(await RowExists<UserEmailDomainEntity>($"{prefix}EmailDomains", $"{FakeTokenizer.Token("ACME.TEST")}-{Bucket("u1")}", "u1"));
+        Assert.False(await RowExists<UserEmailDomainEntity>($"{prefix}EmailDomains", FakeTokenizer.Token("ACME.TEST"), "u1")); // not unbucketed
+        Assert.False(await RowExists<UserEmailDomainEntity>($"{prefix}EmailDomains", "ACME.TEST", "u1")); // not plaintext
+    }
+
+    [Fact]
+    public async Task Domain_MembersSpreadAcrossBuckets()
+    {
+        var prefix = $"dom{Guid.NewGuid():N}";
+        var store = NewStore(prefix, new FakeTokenizer());
+        // Enough same-domain users that they can't all land in one bucket.
+        for (var i = 0; i < 40; i++) await store.CreateAsync(User($"u{i}", $"user{i}@acme.test"));
+
+        var found = await store.SearchByEmailDomainAsync("acme.test", maxResults: 100);
+        Assert.Equal(40, found.Count); // fan-out over buckets finds every member
+
+        var distinctPartitions = Enumerable.Range(0, 40)
+            .Select(i => Bucket($"u{i}")).Distinct().Count();
+        Assert.True(distinctPartitions > 1, "domain members should spread across multiple bucket partitions");
     }
 
     [Fact]
@@ -121,7 +148,7 @@ public class ExternalIdAndDomainIndexTests(AzuriteFixture azurite)
         var store = NewStore(prefix, tokenizer: null);
         await store.CreateAsync(User("u1", "ada@acme.test"));
 
-        Assert.True(await RowExists<UserEmailDomainEntity>($"{prefix}EmailDomains", "ACME.TEST", "u1")); // plaintext key
+        Assert.True(await RowExists<UserEmailDomainEntity>($"{prefix}EmailDomains", $"ACME.TEST-{Bucket("u1")}", "u1")); // plaintext key, bucketed
         Assert.Equal("u1", (await store.SearchByEmailDomainAsync("acme.test")).Single().Id);
     }
 
