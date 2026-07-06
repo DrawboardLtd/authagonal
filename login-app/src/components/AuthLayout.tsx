@@ -8,6 +8,7 @@ import { ChevronDown, Globe, Sun, Moon, Monitor } from 'lucide-react';
 
 // Ensure i18n is initialized when AuthLayout is used (including by npm consumers)
 import '../i18n';
+import { LANGUAGES } from '../i18n';
 
 interface AuthLayoutProps {
   children: ReactNode;
@@ -19,17 +20,10 @@ function isSafeCssColor(color: string): boolean {
     || /^(?:rgb|rgba|hsl|hsla)\([0-9.,%\s/]+\)$/i.test(color);
 }
 
-const ALL_LANGUAGES: { code: string; label: string }[] = [
-  { code: 'en', label: 'English' },
-  { code: 'zh-Hans', label: '中文' },
-  { code: 'de', label: 'Deutsch' },
-  { code: 'fr', label: 'Français' },
-  { code: 'es', label: 'Español' },
-  { code: 'vi', label: 'Tiếng Việt' },
-  { code: 'pt', label: 'Português' },
-  { code: 'ar', label: 'العربية' },
-  { code: 'tlh', label: 'tlhIngan' },
-];
+// The picker's default list is the shipped-locale registry (i18n/index.ts LANGUAGES) — a
+// single source of truth, so registering a locale automatically surfaces it here. Tenants
+// can still narrow the list via branding.languages.
+const ALL_LANGUAGES: { code: string; label: string }[] = LANGUAGES;
 
 function ThemeToggle() {
   const { theme, setTheme } = useDarkMode();

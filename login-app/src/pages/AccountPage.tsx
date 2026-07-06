@@ -7,20 +7,11 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Alert } from '@/components/ui/alert';
 import { CardTitle } from '@/components/ui/card';
-
-// The UI languages we ship — mirrors AuthLayout's switcher. The chosen value is the user's
-// preferred UI/communication language; emails localise to it (falling back to English for any
-// language we don't template, e.g. the tlh easter egg).
-const LANGUAGES: { code: string; label: string }[] = [
-  { code: 'en', label: 'English' },
-  { code: 'zh-Hans', label: '中文' },
-  { code: 'de', label: 'Deutsch' },
-  { code: 'fr', label: 'Français' },
-  { code: 'es', label: 'Español' },
-  { code: 'vi', label: 'Tiếng Việt' },
-  { code: 'pt', label: 'Português' },
-  { code: 'tlh', label: 'tlhIngan' },
-];
+// The shipped-locale registry — one list drives i18next registration AND every picker, so this
+// select can't drift from the languages we actually ship (see i18n/index.ts). The chosen value is
+// the user's preferred UI/communication language; emails localise to it (falling back to English
+// for any language we don't template, e.g. the tlh easter egg).
+import { LANGUAGES } from '../i18n';
 
 // Resolve any tag (stored locale, browser language, region variant) to one of our option codes —
 // the controlled <select> must always hold a value that exists in LANGUAGES. zh* → zh-Hans,

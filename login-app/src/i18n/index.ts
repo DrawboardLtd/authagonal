@@ -14,23 +14,30 @@ import tlh from './tlh.json';
 import af from './af.json';
 import hi from './hi.json';
 
+/// The single source of truth for shipped UI languages: this list drives BOTH i18next resource
+/// registration and every language picker (AuthLayout switcher, AccountPage select). Adding a
+/// locale here is the whole job — a picker can no longer drift from the registered locales
+/// (which is how hi/af/ar went missing from dropdowns while the tlh easter egg survived).
+/// Labels are each language's native name, no flags.
+export const LANGUAGES: { code: string; label: string; resource: object }[] = [
+  { code: 'en', label: 'English', resource: en },
+  { code: 'zh-Hans', label: '中文', resource: zhHans },
+  { code: 'de', label: 'Deutsch', resource: de },
+  { code: 'fr', label: 'Français', resource: fr },
+  { code: 'es', label: 'Español', resource: es },
+  { code: 'vi', label: 'Tiếng Việt', resource: vi },
+  { code: 'pt', label: 'Português', resource: pt },
+  { code: 'ar', label: 'العربية', resource: ar },
+  { code: 'af', label: 'Afrikaans', resource: af },
+  { code: 'hi', label: 'हिन्दी', resource: hi },
+  { code: 'tlh', label: 'tlhIngan', resource: tlh },
+];
+
 i18n
   .use(LanguageDetector)
   .use(initReactI18next)
   .init({
-    resources: {
-      en: { translation: en },
-      'zh-Hans': { translation: zhHans },
-      de: { translation: de },
-      fr: { translation: fr },
-      es: { translation: es },
-      vi: { translation: vi },
-      pt: { translation: pt },
-      ar: { translation: ar },
-      tlh: { translation: tlh },
-      af: { translation: af },
-      hi: { translation: hi },
-    },
+    resources: Object.fromEntries(LANGUAGES.map((l) => [l.code, { translation: l.resource }])),
     fallbackLng: 'en',
     interpolation: {
       escapeValue: false,
