@@ -34,6 +34,7 @@
   "resetPassword": "mu'wIj pegh yIchoH",
   "passwordResetSuccess": "mu'wIj pegh choHta'",
   "passwordResetSuccessMessage": "mu'wIj pegh choHlu'pu'. DaH mu'wIj pegh chu' DayI'el.",
+  "continueToApp": "{{app}}Daq yIruch",
   "invalidLink": "lIngwI' muj",
   "invalidOrExpiredLink": "lIngwI' muj pagh Qav.",
   "requestNewResetLink": "lIngwI' chu' yItlhob",

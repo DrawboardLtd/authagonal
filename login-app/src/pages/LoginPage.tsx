@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useSearchParams, Link, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { login, logout, ssoCheck, getProviders, getSession, passkeyLoginBegin, passkeyLoginComplete, ApiRequestError } from '../api';
+import { login, logout, ssoCheck, getProviders, getSession, getApps, passkeyLoginBegin, passkeyLoginComplete, ApiRequestError } from '../api';
 import { toRequestOptions, serializeAssertion } from '../webauthn';
 import { Turnstile } from '../components/Turnstile';
 import { useBranding } from '../branding';
@@ -33,6 +33,20 @@ export default function LoginPage() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const returnUrl = searchParams.get('returnUrl') || '';
+  // Stamped by the confirm-email redirect: the client whose flow triggered the verification email.
+  // With no authorize returnUrl, a successful sign-in continues to that app instead of the account
+  // page (resolved via the now-authenticated /apps call; falls back to the tenant default, then /).
+  const continueClient = searchParams.get('continue_client') || '';
+  async function continueDestination(): Promise<string> {
+    if (!continueClient) return '/';
+    try {
+      const apps = await getApps();
+      const match = apps.find((a) => a.clientId === continueClient) ?? apps.find((a) => a.isDefault);
+      return match?.homeUri || '/';
+    } catch {
+      return '/';
+    }
+  }
   const loginHint = searchParams.get('login_hint') || '';
   const oidcError = searchParams.get('error_description') || searchParams.get('error') || '';
   const messageParam = searchParams.get('message') || '';
@@ -168,7 +182,7 @@ export default function LoginPage() {
         if (!credential || ac.signal.aborted) return;
 
         await passkeyLoginComplete(challengeId, serializeAssertion(credential));
-        window.location.href = returnUrl && isSafeReturnUrl(returnUrl) ? returnUrl : '/';
+        window.location.href = returnUrl && isSafeReturnUrl(returnUrl) ? returnUrl : await continueDestination();
       } catch {
         // No passkey, user ignored the autofill, aborted, or SSO-routed — normal password login continues.
       }
@@ -220,7 +234,7 @@ export default function LoginPage() {
       if (returnUrl && isSafeReturnUrl(returnUrl)) {
         window.location.href = returnUrl;
       } else {
-        window.location.href = '/';
+        window.location.href = await continueDestination();
       }
     } catch (err) {
       if (err instanceof ApiRequestError) {

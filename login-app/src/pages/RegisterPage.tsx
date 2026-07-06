@@ -49,7 +49,7 @@ export default function RegisterPage() {
     setLoading(true);
 
     try {
-      await register(email, password, firstName || undefined, lastName || undefined, turnstileToken || undefined);
+      await register(email, password, firstName || undefined, lastName || undefined, turnstileToken || undefined, returnUrl || undefined);
 
       // Redirect to login with success message
       const params = new URLSearchParams();

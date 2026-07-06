@@ -34,6 +34,7 @@
   "resetPassword": "पासवर्ड रीसेट करें",
   "passwordResetSuccess": "पासवर्ड सफलतापूर्वक रीसेट हुआ",
   "passwordResetSuccessMessage": "आपका पासवर्ड रीसेट कर दिया गया है। अब आप अपने नए पासवर्ड के साथ साइन इन कर सकते हैं।",
+  "continueToApp": "{{app}} पर जारी रखें",
   "invalidLink": "अमान्य लिंक",
   "invalidOrExpiredLink": "यह रीसेट लिंक अमान्य है या इसकी समय-सीमा समाप्त हो चुकी है।",
   "requestNewResetLink": "एक नया रीसेट लिंक अनुरोध करें",

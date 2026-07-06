@@ -411,9 +411,14 @@ public static class AuthEndpoints
         user.UpdatedAt = DateTimeOffset.UtcNow;
         await userStore.UpdateAsync(user, ct);
 
-        // Send verification email
+        // Send verification email. The optional 4th payload segment carries the OAuth client the
+        // registration flow originated from (parsed from the login page's authorize returnUrl), so
+        // the confirmation landing can offer "continue to {app}". Older 3-segment tokens stay valid.
+        var flowClientId = ExtractClientIdFromReturnUrl(httpContext.Request.Query["returnUrl"].FirstOrDefault());
         var expiresAt = DateTimeOffset.UtcNow.AddHours(ao.EmailVerificationExpiryHours).ToUnixTimeSeconds();
-        var payload = $"{user.SecurityStamp}||{user.Email}||{expiresAt}";
+        var payload = flowClientId is null
+            ? $"{user.SecurityStamp}||{user.Email}||{expiresAt}"
+            : $"{user.SecurityStamp}||{user.Email}||{expiresAt}||{flowClientId}";
         var encodedPayload = Convert.ToBase64String(Encoding.UTF8.GetBytes(payload));
         var issuer = tenantContext.Issuer;
         var callbackUrl = $"{issuer}/api/auth/confirm-email?token={Uri.EscapeDataString(encodedPayload)}";
@@ -435,6 +440,7 @@ public static class AuthEndpoints
     private static async Task<IResult> ConfirmEmailAsync(
         HttpContext httpContext,
         IUserStore userStore,
+        IClientStore clientStore,
         IEnumerable<IAuthHook> authHooks,
         ILogger<Program> logger,
         CancellationToken ct)
@@ -490,11 +496,21 @@ public static class AuthEndpoints
         // Notify hooks (e.g. the Cloud lifts the unverified-tenant user cap when the owner confirms).
         await authHooks.RunOnEmailConfirmedAsync(user.Id, user.Email, ct);
 
+        // Optional 4th token segment = the client the registration flow came from (stamped by
+        // RegisterAsync, integrity-backed by the security-stamp check above). It rides to the login
+        // page so the post-sign-in destination can be that app instead of the account page.
+        var flowClientId = parts.Length >= 4 && !string.IsNullOrWhiteSpace(parts[3]) ? parts[3] : null;
+
         // A clicked email link (GET) lands the user on the login page, not raw JSON; the programmatic
-        // POST path keeps the JSON contract.
+        // POST path keeps the JSON contract (now with the resolved continue-to-app link, if any).
         if (HttpMethods.IsGet(httpContext.Request.Method))
-            return Results.Redirect("/login?email_confirmed=1");
-        return TypedResults.Json(new SuccessMessageResponse { Message = "Email confirmed successfully." }, AuthagonalJsonContext.Default.SuccessMessageResponse);
+            return Results.Redirect(flowClientId is null
+                ? "/login?email_confirmed=1"
+                : $"/login?email_confirmed=1&continue_client={Uri.EscapeDataString(flowClientId)}");
+        var appLink = await ResolveAppLinkAsync(clientStore, flowClientId, ct);
+        return TypedResults.Json(
+            new ConfirmEmailResponse { Message = "Email confirmed successfully.", AppLink = appLink },
+            AuthagonalJsonContext.Default.ConfirmEmailResponse);
     }
 
     private static async Task<IResult> LogoutAsync(HttpContext httpContext, CancellationToken ct)
@@ -552,13 +568,17 @@ public static class AuthEndpoints
         var tokenHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(resetToken))).ToLowerInvariant();
         var expiresAt = DateTimeOffset.UtcNow.AddMinutes(authOptions.Value.PasswordResetExpiryMinutes);
 
+        // Data carries the user id plus, when the forgot form was reached from an authorize flow,
+        // the originating client ("userId||clientId") so the reset-complete page can offer
+        // "continue to {app}". ClientId stays the "auth" marker — grant queries key on it.
+        var flowClientId = ExtractClientIdFromReturnUrl(httpContext.Request.Query["returnUrl"].FirstOrDefault());
         await grantStore.StoreAsync(new PersistedGrant
         {
             Key = tokenHash,
             Type = "password_reset",
             SubjectId = user.Id,
             ClientId = "auth",
-            Data = user.Id,
+            Data = flowClientId is null ? user.Id : $"{user.Id}||{flowClientId}",
             CreatedAt = DateTimeOffset.UtcNow,
             ExpiresAt = expiresAt,
         }, ct);
@@ -586,6 +606,7 @@ public static class AuthEndpoints
         HttpContext httpContext,
         IUserStore userStore,
         IGrantStore grantStore,
+        IClientStore clientStore,
         PasswordHasher passwordHasher,
         PasswordValidator passwordValidator,
         PasswordPolicy passwordPolicy,
@@ -631,7 +652,11 @@ public static class AuthEndpoints
             return JsonResults.Error("token_expired", localizer["Auth_TokenUsedOrExpired"].Value);
         }
 
-        var userId = grant.Data;
+        // Data is "userId" or "userId||clientId" (the flow's originating client, stamped by
+        // ForgotPasswordAsync) — see the grant write for the format rationale.
+        var dataParts = grant.Data.Split("||", 2);
+        var userId = dataParts[0];
+        var flowClientId = dataParts.Length > 1 && !string.IsNullOrWhiteSpace(dataParts[1]) ? dataParts[1] : null;
         var user = await userStore.GetAsync(userId, ct);
         if (user is null)
         {
@@ -669,7 +694,12 @@ public static class AuthEndpoints
 
         logger.LogInformation("Password reset completed for user {UserId} ({Email})", user.Id, user.Email);
 
-        return TypedResults.Json(new SuccessResponse(), AuthagonalJsonContext.Default.SuccessResponse);
+        // Offer the reset-complete page a "continue to {app}" target: the flow's client, else the
+        // tenant default. Null keeps the plain "sign in" UX.
+        var appLink = await ResolveAppLinkAsync(clientStore, flowClientId, ct);
+        return TypedResults.Json(
+            new ResetPasswordResponse { Success = true, AppLink = appLink },
+            AuthagonalJsonContext.Default.ResetPasswordResponse);
     }
 
     private static IResult GetSessionAsync(HttpContext httpContext, CancellationToken ct)
@@ -713,6 +743,40 @@ public static class AuthEndpoints
             foreach (var a in defaults.Skip(1)) a.IsDefault = false;
 
         return TypedResults.Json(apps, AuthagonalJsonContext.Default.ListAppLinkResponse);
+    }
+
+    /// <summary>
+    /// The single "continue to app" target for an email-flow completion page: the flow's
+    /// originating client when it has a home URI, else the tenant's default application
+    /// (explicit flag, else the only client with a home URI), else null (caller keeps the
+    /// plain "sign in" UX). Anonymous-safe: exposes only operator-entered client name and
+    /// home URI — the same information the sign-in page's branding already shows.
+    /// </summary>
+    internal static async Task<AppLinkResponse?> ResolveAppLinkAsync(
+        IClientStore clientStore, string? preferredClientId, CancellationToken ct)
+    {
+        static string? HomeUri(OAuthClient c) =>
+            !string.IsNullOrWhiteSpace(c.InitiateLoginUri) ? c.InitiateLoginUri
+            : !string.IsNullOrWhiteSpace(c.ClientUri) ? c.ClientUri
+            : null;
+
+        var withHome = (await clientStore.GetAllAsync(ct))
+            .Where(c => c.Enabled && HomeUri(c) is not null)
+            .ToList();
+
+        var pick =
+            (preferredClientId is not null ? withHome.FirstOrDefault(c => c.ClientId == preferredClientId) : null)
+            ?? withHome.FirstOrDefault(c => c.IsDefaultApplication)
+            ?? (withHome.Count == 1 ? withHome[0] : null);
+
+        return pick is null ? null : new AppLinkResponse
+        {
+            ClientId = pick.ClientId,
+            ClientName = string.IsNullOrWhiteSpace(pick.ClientName) ? pick.ClientId : pick.ClientName,
+            HomeUri = HomeUri(pick)!,
+            LogoUri = pick.LogoUri,
+            IsDefault = pick.IsDefaultApplication,
+        };
     }
 
     // Self-service profile: the authenticated user reads and updates their own non-sensitive profile

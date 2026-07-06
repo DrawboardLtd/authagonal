@@ -68,8 +68,10 @@ export function passkeyLoginComplete(challengeId: string, assertion: string): Pr
   });
 }
 
-export function register(email: string, password: string, firstName?: string, lastName?: string, turnstileToken?: string): Promise<RegisterResponse> {
-  return api<RegisterResponse>('/api/auth/register', {
+export function register(email: string, password: string, firstName?: string, lastName?: string, turnstileToken?: string, returnUrl?: string): Promise<RegisterResponse> {
+  // returnUrl carries the authorize context so the verification email can lead back to the app.
+  const url = returnUrl ? `/api/auth/register?returnUrl=${encodeURIComponent(returnUrl)}` : '/api/auth/register';
+  return api<RegisterResponse>(url, {
     method: 'POST',
     body: JSON.stringify({ email, password, firstName, lastName, turnstileToken }),
   });
@@ -94,15 +96,17 @@ export function updateProfile(patch: ProfileUpdateRequest): Promise<ProfileRespo
   });
 }
 
-export function forgotPassword(email: string, turnstileToken?: string): Promise<{ success: true }> {
-  return api<{ success: true }>('/api/auth/forgot-password', {
+export function forgotPassword(email: string, turnstileToken?: string, returnUrl?: string): Promise<{ success: true }> {
+  // returnUrl carries the authorize context so the reset-complete page can lead back to the app.
+  const url = returnUrl ? `/api/auth/forgot-password?returnUrl=${encodeURIComponent(returnUrl)}` : '/api/auth/forgot-password';
+  return api<{ success: true }>(url, {
     method: 'POST',
     body: JSON.stringify({ email, turnstileToken }),
   });
 }
 
-export function resetPassword(token: string, newPassword: string, turnstileToken?: string): Promise<{ success: true }> {
-  return api<{ success: true }>('/api/auth/reset-password', {
+export function resetPassword(token: string, newPassword: string, turnstileToken?: string): Promise<{ success: boolean; appLink?: AppLinkResponse | null }> {
+  return api<{ success: boolean; appLink?: AppLinkResponse | null }>('/api/auth/reset-password', {
     method: 'POST',
     body: JSON.stringify({ token, newPassword, turnstileToken }),
   });

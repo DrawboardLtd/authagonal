@@ -56,6 +56,9 @@ export default function ResetPasswordPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState(false);
+  // "Continue to {app}" target from the reset response: the flow's originating client, else the
+  // tenant's default application; null keeps the plain sign-in link.
+  const [appLink, setAppLink] = useState<{ clientName: string; homeUri: string } | null>(null);
   const [validationError, setValidationError] = useState('');
   const [rules, setRules] = useState<PasswordRule[]>(defaultRules);
   const [turnstileSiteKey, setTurnstileSiteKey] = useState<string | undefined>(undefined);
@@ -113,7 +116,8 @@ export default function ResetPasswordPage() {
     setLoading(true);
 
     try {
-      await resetPassword(token, newPassword, turnstileToken || undefined);
+      const result = await resetPassword(token, newPassword, turnstileToken || undefined);
+      if (result.appLink?.homeUri) setAppLink({ clientName: result.appLink.clientName, homeUri: result.appLink.homeUri });
       setSuccess(true);
     } catch (err) {
       if (err instanceof ApiRequestError) {
@@ -152,6 +156,11 @@ export default function ResetPasswordPage() {
       <div>
         <CardTitle>{t('passwordResetSuccess')}</CardTitle>
         <Alert variant="success">{t('passwordResetSuccessMessage')}</Alert>
+        {appLink && (
+          <a href={appLink.homeUri} data-testid="continue-to-app" className="mt-4 block no-underline">
+            <Button className="w-full">{t('continueToApp', { app: appLink.clientName })}</Button>
+          </a>
+        )}
         <CardFooter>
           <Link to="/" className="text-sm font-medium text-primary hover:underline no-underline">
             {t('signIn')}

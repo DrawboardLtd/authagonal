@@ -34,6 +34,7 @@
   "resetPassword": "Stel wagwoord terug",
   "passwordResetSuccess": "Wagwoord suksesvol teruggestel",
   "passwordResetSuccessMessage": "Jou wagwoord is teruggestel. Jy kan nou met jou nuwe wagwoord aanmeld.",
+  "continueToApp": "Gaan voort na {{app}}",
   "invalidLink": "Ongeldige skakel",
   "invalidOrExpiredLink": "Hierdie terugstelskakel is ongeldig of het verval.",
   "requestNewResetLink": "Vra 'n nuwe terugstelskakel aan",

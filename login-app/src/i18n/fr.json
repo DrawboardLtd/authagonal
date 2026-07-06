@@ -34,6 +34,7 @@
   "resetPassword": "Réinitialiser le mot de passe",
   "passwordResetSuccess": "Mot de passe réinitialisé avec succès",
   "passwordResetSuccessMessage": "Votre mot de passe a été réinitialisé. Vous pouvez maintenant vous connecter avec votre nouveau mot de passe.",
+  "continueToApp": "Continuer vers {{app}}",
   "invalidLink": "Lien invalide",
   "invalidOrExpiredLink": "Ce lien de réinitialisation est invalide ou a expiré.",
   "requestNewResetLink": "Demander un nouveau lien de réinitialisation",

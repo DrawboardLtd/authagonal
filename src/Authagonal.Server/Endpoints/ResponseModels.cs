@@ -89,6 +89,21 @@ public sealed class AppLinkResponse
     [JsonPropertyName("isDefault")] public bool IsDefault { get; set; }
 }
 
+/// <summary>Programmatic (POST) email-confirmation result. <c>appLink</c> is the resolved
+/// "continue to app" target (flow client, else tenant default), or null for the plain UX.</summary>
+public sealed class ConfirmEmailResponse
+{
+    [JsonPropertyName("message")] public string Message { get; set; } = "";
+    [JsonPropertyName("appLink")] public AppLinkResponse? AppLink { get; set; }
+}
+
+/// <summary>Password-reset completion result. <c>appLink</c> as on <see cref="ConfirmEmailResponse"/>.</summary>
+public sealed class ResetPasswordResponse
+{
+    [JsonPropertyName("success")] public bool Success { get; set; } = true;
+    [JsonPropertyName("appLink")] public AppLinkResponse? AppLink { get; set; }
+}
+
 public sealed class UserIdentityResponse
 {
     [JsonPropertyName("userId")] public string UserId { get; set; } = "";

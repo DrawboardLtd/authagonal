@@ -39,7 +39,7 @@ export default function ForgotPasswordPage() {
     setLoading(true);
 
     try {
-      await forgotPassword(email, turnstileToken || undefined);
+      await forgotPassword(email, turnstileToken || undefined, returnUrl || undefined);
       setSubmitted(true);
     } catch (err) {
       // The API always returns 200 for anti-enumeration; the only expected error is a

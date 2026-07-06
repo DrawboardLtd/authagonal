@@ -34,6 +34,7 @@
   "resetPassword": "Redefinir senha",
   "passwordResetSuccess": "Senha redefinida com sucesso",
   "passwordResetSuccessMessage": "A sua senha foi redefinida. Pode agora entrar com a sua nova senha.",
+  "continueToApp": "Continuar para {{app}}",
   "invalidLink": "Link inválido",
   "invalidOrExpiredLink": "Este link de redefinição é inválido ou expirou.",
   "requestNewResetLink": "Solicitar um novo link de redefinição",

@@ -34,6 +34,7 @@
   "resetPassword": "Passwort zurücksetzen",
   "passwordResetSuccess": "Passwort erfolgreich zurückgesetzt",
   "passwordResetSuccessMessage": "Ihr Passwort wurde zurückgesetzt. Sie können sich jetzt mit Ihrem neuen Passwort anmelden.",
+  "continueToApp": "Weiter zu {{app}}",
   "invalidLink": "Ungültiger Link",
   "invalidOrExpiredLink": "Dieser Link zum Zurücksetzen ist ungültig oder abgelaufen.",
   "requestNewResetLink": "Neuen Link zum Zurücksetzen anfordern",

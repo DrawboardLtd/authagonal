@@ -34,6 +34,7 @@
   "resetPassword": "Restablecer contraseña",
   "passwordResetSuccess": "Contraseña restablecida exitosamente",
   "passwordResetSuccessMessage": "Su contraseña ha sido restablecida. Ahora puede iniciar sesión con su nueva contraseña.",
+  "continueToApp": "Continuar a {{app}}",
   "invalidLink": "Enlace no válido",
   "invalidOrExpiredLink": "Este enlace de restablecimiento no es válido o ha expirado.",
   "requestNewResetLink": "Solicitar un nuevo enlace de restablecimiento",

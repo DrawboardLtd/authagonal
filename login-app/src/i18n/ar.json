@@ -34,6 +34,7 @@
   "resetPassword": "إعادة تعيين كلمة المرور",
   "passwordResetSuccess": "تمت إعادة تعيين كلمة المرور بنجاح",
   "passwordResetSuccessMessage": "تمت إعادة تعيين كلمة المرور. يمكنك الآن تسجيل الدخول باستخدام كلمة المرور الجديدة.",
+  "continueToApp": "المتابعة إلى {{app}}",
   "invalidLink": "رابط غير صالح",
   "invalidOrExpiredLink": "رابط إعادة التعيين هذا غير صالح أو انتهت صلاحيته.",
   "requestNewResetLink": "طلب رابط إعادة تعيين جديد",

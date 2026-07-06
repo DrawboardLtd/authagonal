@@ -34,6 +34,7 @@
   "resetPassword": "重置密码",
   "passwordResetSuccess": "密码重置成功",
   "passwordResetSuccessMessage": "您的密码已重置。您现在可以使用新密码登录。",
+  "continueToApp": "继续前往{{app}}",
   "invalidLink": "无效链接",
   "invalidOrExpiredLink": "此重置链接无效或已过期。",
   "requestNewResetLink": "请求新的重置链接",
