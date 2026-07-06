@@ -118,7 +118,7 @@ export default function AccountPage() {
         <div className="mb-4">
           {defaultApp && (
             <a href={defaultApp.homeUri} data-testid="back-to-app">
-              <Button variant="outline" className="w-full">
+              <Button variant="secondary" className="w-full">
                 {defaultApp.logoUri && <img src={defaultApp.logoUri} alt="" className="h-4 w-4 me-2 rounded-sm" />}
                 {t('account.backToApp', { app: defaultApp.clientName })}
               </Button>
