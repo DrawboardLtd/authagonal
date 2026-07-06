@@ -109,5 +109,6 @@
   "errorEmailAlreadyRegistered": "De'wI' chenpu'.",
   "errorWeakPassword": "mu'HaqHom puj.",
   "errorEmailAndPasswordRequired": "QIn 'ej mu'HaqHom poQlu'.",
-  "errorRegistrationFailed": "chenmoH luj. yInIDqa'."
+  "errorRegistrationFailed": "chenmoH luj. yInIDqa'.",
+  "account.backToApp": "{{app}}Daq yIchegh"
 }

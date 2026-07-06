@@ -77,6 +77,18 @@ public sealed class SessionResponse
     [JsonPropertyName("name")] public string? Name { get; set; }
 }
 
+/// <summary>One application link for the hosted account pages' "back to app" button / launcher:
+/// an enabled client with a usable home URI. <c>homeUri</c> is the navigation target
+/// (initiate-login URI when set, else the client URI).</summary>
+public sealed class AppLinkResponse
+{
+    [JsonPropertyName("clientId")] public string ClientId { get; set; } = "";
+    [JsonPropertyName("clientName")] public string ClientName { get; set; } = "";
+    [JsonPropertyName("homeUri")] public string HomeUri { get; set; } = "";
+    [JsonPropertyName("logoUri")] public string? LogoUri { get; set; }
+    [JsonPropertyName("isDefault")] public bool IsDefault { get; set; }
+}
+
 public sealed class UserIdentityResponse
 {
     [JsonPropertyName("userId")] public string UserId { get; set; } = "";

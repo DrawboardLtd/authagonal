@@ -135,6 +135,7 @@
   "grants.revokeFailed": "فشل إلغاء الوصول.",
   "account.title": "الحساب",
   "account.subtitle": "إدارة ملفك الشخصي ولغتك المفضّلة.",
+  "account.backToApp": "العودة إلى {{app}}",
   "account.signInPrompt": "سجّل الدخول لإدارة حسابك.",
   "account.loading": "جارٍ تحميل ملفك الشخصي…",
   "account.loadError": "تعذّر تحميل ملفك الشخصي.",

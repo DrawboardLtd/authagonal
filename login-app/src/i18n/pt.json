@@ -112,6 +112,7 @@
   "errorRegistrationFailed": "O registo falhou. Tente novamente.",
   "account.title": "Conta",
   "account.subtitle": "Faça a gestão do seu perfil e do seu idioma preferido.",
+  "account.backToApp": "Voltar para {{app}}",
   "account.signInPrompt": "Inicie sessão para gerir a sua conta.",
   "account.loading": "A carregar o seu perfil…",
   "account.loadError": "Não foi possível carregar o seu perfil.",

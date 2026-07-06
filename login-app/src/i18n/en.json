@@ -110,7 +110,6 @@
   "errorWeakPassword": "Password does not meet strength requirements.",
   "errorEmailAndPasswordRequired": "Email and password are required.",
   "errorRegistrationFailed": "Registration failed. Please try again.",
-
   "consent.title": "Authorize {{appName}}",
   "consent.subtitle": "{{appName}} wants to access your account",
   "consent.scopeOpenid": "Verify your identity",
@@ -125,7 +124,6 @@
   "consent.loading": "Loading...",
   "consent.loadError": "Failed to load application details.",
   "consent.submitError": "Something went wrong. Please try again.",
-
   "grants.title": "Authorized Apps",
   "grants.subtitle": "Apps you've granted access to your account.",
   "grants.loading": "Loading...",
@@ -137,6 +135,7 @@
   "grants.revokeFailed": "Failed to revoke access.",
   "account.title": "Account",
   "account.subtitle": "Manage your profile and preferred language.",
+  "account.backToApp": "Back to {{app}}",
   "account.signInPrompt": "Sign in to manage your account.",
   "account.loading": "Loading your profile…",
   "account.loadError": "Couldn't load your profile.",

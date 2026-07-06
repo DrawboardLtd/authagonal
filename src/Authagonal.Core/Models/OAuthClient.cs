@@ -7,6 +7,15 @@ public sealed record OAuthClient
     public string? Description { get; set; }
     public string? ClientUri { get; set; }
     public string? LogoUri { get; set; }
+    /// <summary>RP endpoint that starts a fresh login when visited (OIDC third-party initiated
+    /// login). Preferred over <see cref="ClientUri"/> as the "back to app" target because the RP
+    /// originates a proper authorize flow instead of relying on its middleware.</summary>
+    public string? InitiateLoginUri { get; set; }
+    /// <summary>Marks this client as the tenant's default application: the "back to app" target
+    /// when a user reaches the hosted account pages with no flow context. At most one client may
+    /// hold the flag (the admin API clears it from others on write); when no client holds it and
+    /// exactly one client has a home URI, that client is the implicit default.</summary>
+    public bool IsDefaultApplication { get; set; }
     public bool Enabled { get; set; } = true;
     public List<string> ClientSecretHashes { get; set; } = [];
     public List<string> AllowedGrantTypes { get; set; } = [];

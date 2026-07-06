@@ -33,6 +33,7 @@ public static class AuthEndpoints
         group.MapPost("/forgot-password", ForgotPasswordAsync).AllowAnonymous().DisableAntiforgery();
         group.MapPost("/reset-password", ResetPasswordAsync).AllowAnonymous().DisableAntiforgery();
         group.MapGet("/session", GetSessionAsync).RequireAuthorization();
+        group.MapGet("/apps", GetAppsAsync).RequireAuthorization();
         group.MapGet("/profile", GetProfileAsync).RequireAuthorization();
         group.MapPatch("/profile", UpdateProfileAsync).RequireAuthorization().DisableAntiforgery();
         group.MapGet("/sso-check", SsoCheckAsync).AllowAnonymous();
@@ -679,6 +680,39 @@ public static class AuthEndpoints
         var name = httpContext.User.FindFirstValue(ClaimTypes.Name);
 
         return TypedResults.Json(new SessionResponse { UserId = userId, Email = email, Name = name }, AuthagonalJsonContext.Default.SessionResponse);
+    }
+
+    // Application links for the account pages' "back to app" button / launcher: enabled clients
+    // with a home URI (initiate-login preferred over client URI — the RP then originates a real
+    // authorize flow). Default resolution: the explicitly flagged client wins; when none is
+    // flagged and exactly one client has a home URI, it is the implicit default. Home URIs are
+    // operator-entered config validated at write time (see Admin.ClientEndpoints), never derived
+    // from request input, so they are safe to hand to the SPA as navigation targets.
+    private static async Task<IResult> GetAppsAsync(IClientStore clientStore, CancellationToken ct)
+    {
+        var clients = await clientStore.GetAllAsync(ct);
+        var apps = clients
+            .Where(c => c.Enabled && (!string.IsNullOrWhiteSpace(c.InitiateLoginUri) || !string.IsNullOrWhiteSpace(c.ClientUri)))
+            .Select(c => new AppLinkResponse
+            {
+                ClientId = c.ClientId,
+                ClientName = string.IsNullOrWhiteSpace(c.ClientName) ? c.ClientId : c.ClientName,
+                HomeUri = !string.IsNullOrWhiteSpace(c.InitiateLoginUri) ? c.InitiateLoginUri! : c.ClientUri!,
+                LogoUri = c.LogoUri,
+                IsDefault = c.IsDefaultApplication,
+            })
+            .OrderBy(a => a.ClientName, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        // The API presents exactly one default: single-app tenants get it implicitly, and a
+        // store-level race that left two flags set is tie-broken rather than surfaced.
+        var defaults = apps.Where(a => a.IsDefault).ToList();
+        if (defaults.Count == 0 && apps.Count == 1)
+            apps[0].IsDefault = true;
+        else if (defaults.Count > 1)
+            foreach (var a in defaults.Skip(1)) a.IsDefault = false;
+
+        return TypedResults.Json(apps, AuthagonalJsonContext.Default.ListAppLinkResponse);
     }
 
     // Self-service profile: the authenticated user reads and updates their own non-sensitive profile

@@ -110,7 +110,6 @@
   "errorWeakPassword": "पासवर्ड मजबूती की आवश्यकताओं को पूरा नहीं करता है।",
   "errorEmailAndPasswordRequired": "ईमेल और पासवर्ड आवश्यक हैं।",
   "errorRegistrationFailed": "पंजीकरण विफल रहा। कृपया पुनः प्रयास करें।",
-
   "consent.title": "{{appName}} को अधिकृत करें",
   "consent.subtitle": "{{appName}} आपके खाते तक पहुँचना चाहता है",
   "consent.scopeOpenid": "अपनी पहचान सत्यापित करें",
@@ -125,7 +124,6 @@
   "consent.loading": "लोड हो रहा है...",
   "consent.loadError": "एप्लिकेशन विवरण लोड करने में विफल रहा।",
   "consent.submitError": "कुछ गलत हो गया। कृपया पुनः प्रयास करें।",
-
   "grants.title": "अधिकृत ऐप्स",
   "grants.subtitle": "वे ऐप्स जिन्हें आपने अपने खाते तक पहुँच प्रदान की है।",
   "grants.loading": "लोड हो रहा है...",
@@ -137,6 +135,7 @@
   "grants.revokeFailed": "पहुँच रद्द करने में विफल रहा।",
   "account.title": "खाता",
   "account.subtitle": "अपनी प्रोफ़ाइल और पसंदीदा भाषा प्रबंधित करें।",
+  "account.backToApp": "{{app}} पर वापस जाएँ",
   "account.signInPrompt": "अपने खाते का प्रबंधन करने के लिए साइन इन करें।",
   "account.loading": "आपकी प्रोफ़ाइल लोड हो रही है…",
   "account.loadError": "आपकी प्रोफ़ाइल लोड नहीं की जा सकी।",

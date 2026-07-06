@@ -1,4 +1,4 @@
-import type { ApiError, SessionResponse, SsoCheckResponse, ProvidersResponse, PasswordPolicyResponse, MfaLoginResponse, MfaVerifyResponse, MfaStatusResponse, MfaTotpSetupResponse, MfaRecoveryGenerateResponse, MfaWebAuthnSetupResponse, MfaWebAuthnConfirmResponse, RegisterResponse, ProfileResponse, ProfileUpdateRequest } from './types';
+import type { ApiError, SessionResponse, AppLinkResponse, SsoCheckResponse, ProvidersResponse, PasswordPolicyResponse, MfaLoginResponse, MfaVerifyResponse, MfaStatusResponse, MfaTotpSetupResponse, MfaRecoveryGenerateResponse, MfaWebAuthnSetupResponse, MfaWebAuthnConfirmResponse, RegisterResponse, ProfileResponse, ProfileUpdateRequest } from './types';
 
 import type { AssertionOptionsJson } from './webauthn';
 
@@ -110,6 +110,10 @@ export function resetPassword(token: string, newPassword: string, turnstileToken
 
 export function getSession(): Promise<SessionResponse> {
   return api<SessionResponse>('/api/auth/session');
+}
+
+export function getApps(): Promise<AppLinkResponse[]> {
+  return api<AppLinkResponse[]>('/api/auth/apps');
 }
 
 export function ssoCheck(email: string): Promise<SsoCheckResponse> {

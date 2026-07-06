@@ -53,6 +53,7 @@ namespace Authagonal.Server;
 [JsonSerializable(typeof(MfaRequiredResponse))]
 [JsonSerializable(typeof(MfaSetupRequiredResponse))]
 [JsonSerializable(typeof(SessionResponse))]
+[JsonSerializable(typeof(List<AppLinkResponse>))]
 [JsonSerializable(typeof(UserIdentityResponse))]
 [JsonSerializable(typeof(SsoCheckResponse))]
 [JsonSerializable(typeof(SsoProviderListResponse))]

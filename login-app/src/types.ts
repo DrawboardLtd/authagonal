@@ -18,6 +18,15 @@ export interface SessionResponse {
   name: string;
 }
 
+/** One "back to app" target: an enabled client with a home URI configured. */
+export interface AppLinkResponse {
+  clientId: string;
+  clientName: string;
+  homeUri: string;
+  logoUri?: string;
+  isDefault: boolean;
+}
+
 export interface SsoCheckResponse {
   ssoRequired: boolean;
   providerType?: string;
