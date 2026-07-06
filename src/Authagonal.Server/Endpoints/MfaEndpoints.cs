@@ -73,7 +73,10 @@ public static class MfaEndpoints
                 // Reject a code whose time-step was already used (replay within the validity window).
                 var matchedStep = totpService.GetMatchingStep(secret, request.Code, totpCred.LastTotpStep ?? long.MinValue);
                 if (matchedStep is null)
+                {
+                    await authHooks.RunOnMfaVerifyFailedAsync(user.Id, user.Email, "totp", ct);
                     return JsonResults.Error("invalid_code", 401);
+                }
 
                 totpCred.LastTotpStep = matchedStep;
                 totpCred.LastUsedAt = DateTimeOffset.UtcNow;
@@ -96,7 +99,10 @@ public static class MfaEndpoints
                     recoveryCodeService.VerifyCode(request.Code, c.SecretProtected!));
 
                 if (matchedCred is null)
+                {
+                    await authHooks.RunOnMfaVerifyFailedAsync(user.Id, user.Email, "recovery", ct);
                     return JsonResults.Error("invalid_code", 401);
+                }
 
                 matchedCred.IsConsumed = true;
                 matchedCred.LastUsedAt = DateTimeOffset.UtcNow;
@@ -165,11 +171,15 @@ public static class MfaEndpoints
                 {
                     // Fido2NetLib throws on a failed/forged assertion or a sign-count regression
                     // (cloned authenticator). Surface it as a clean 401, not an unhandled 500.
+                    await authHooks.RunOnMfaVerifyFailedAsync(user.Id, user.Email, "webauthn", ct);
                     return JsonResults.Error("assertion_failed", 401);
                 }
 
                 if (!success)
+                {
+                    await authHooks.RunOnMfaVerifyFailedAsync(user.Id, user.Email, "webauthn", ct);
                     return JsonResults.Error("assertion_failed", 401);
+                }
 
                 matchedWebAuthnCred.SignCount = newSignCount;
                 matchedWebAuthnCred.LastUsedAt = DateTimeOffset.UtcNow;
@@ -291,9 +301,14 @@ public static class MfaEndpoints
         }
         catch (Fido2VerificationException)
         {
+            await authHooks.RunOnMfaVerifyFailedAsync(user.Id, user.Email, "webauthn", ct);
             return JsonResults.Error("assertion_failed", 401);
         }
-        if (!success) return JsonResults.Error("assertion_failed", 401);
+        if (!success)
+        {
+            await authHooks.RunOnMfaVerifyFailedAsync(user.Id, user.Email, "webauthn", ct);
+            return JsonResults.Error("assertion_failed", 401);
+        }
 
         cred.SignCount = newSignCount;
         cred.LastUsedAt = DateTimeOffset.UtcNow;

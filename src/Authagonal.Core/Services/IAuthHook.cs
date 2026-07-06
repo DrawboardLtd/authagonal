@@ -37,6 +37,12 @@ public interface IAuthHook
     /// <param name="mfaMethod">One of "totp", "webauthn", or "recovery".</param>
     Task OnMfaVerifiedAsync(string userId, string email, string mfaMethod, CancellationToken ct = default);
 
+    /// <summary>An MFA verification attempt failed (wrong TOTP code, unmatched recovery code, failed
+    /// WebAuthn assertion). Distinct from <see cref="OnLoginFailedAsync"/>, which is the password
+    /// stage — this fires only after valid first-factor credentials, so bursts are a strong
+    /// MFA-bypass-attempt signal.</summary>
+    Task OnMfaVerifyFailedAsync(string userId, string email, string mfaMethod, CancellationToken ct = default) => Task.CompletedTask;
+
     /// <summary>Called after a user record is updated (profile fields, organization, active status, etc.).
     /// Notification only — the update has already happened.</summary>
     /// <param name="updatedVia">Origin of the update, e.g. "portal", "scim", "self-service".</param>
@@ -115,6 +121,12 @@ public static class AuthHookExtensions
     {
         foreach (var hook in hooks)
             await hook.OnMfaVerifiedAsync(userId, email, mfaMethod, ct);
+    }
+
+    public static async Task RunOnMfaVerifyFailedAsync(this IEnumerable<IAuthHook> hooks, string userId, string email, string mfaMethod, CancellationToken ct = default)
+    {
+        foreach (var hook in hooks)
+            await hook.OnMfaVerifyFailedAsync(userId, email, mfaMethod, ct);
     }
 
     public static async Task RunOnUserUpdatedAsync(this IEnumerable<IAuthHook> hooks, string userId, string email, string updatedVia, CancellationToken ct = default)
