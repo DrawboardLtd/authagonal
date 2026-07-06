@@ -112,6 +112,7 @@
   "errorRegistrationFailed": "Registrierung fehlgeschlagen. Bitte versuchen Sie es erneut.",
   "account.title": "Konto",
   "account.subtitle": "Verwalten Sie Ihr Profil und Ihre bevorzugte Sprache.",
+  "account.backToApp": "Zurück zu {{app}}",
   "account.signInPrompt": "Melden Sie sich an, um Ihr Konto zu verwalten.",
   "account.loading": "Profil wird geladen…",
   "account.loadError": "Ihr Profil konnte nicht geladen werden.",

@@ -18,6 +18,9 @@ public sealed class ClientEntity : ITableEntity
     public string? Description { get; set; }
     public string? ClientUri { get; set; }
     public string? LogoUri { get; set; }
+    public string? InitiateLoginUri { get; set; }
+    // Nullable so pre-existing rows read as false (not-default) without a migration.
+    public bool? IsDefaultApplication { get; set; }
     // Nullable with default-true semantics — a row written before this field existed
     // should not read as disabled. ToModel() coerces null → true.
     public bool? Enabled { get; set; } = true;
@@ -61,6 +64,8 @@ public sealed class ClientEntity : ITableEntity
         Description = client.Description,
         ClientUri = client.ClientUri,
         LogoUri = client.LogoUri,
+        InitiateLoginUri = client.InitiateLoginUri,
+        IsDefaultApplication = client.IsDefaultApplication,
         Enabled = client.Enabled,
         ClientSecretHashesJson = JsonSerializer.Serialize(client.ClientSecretHashes, AzureJsonContext.Default.ListString),
         AllowedGrantTypesJson = JsonSerializer.Serialize(client.AllowedGrantTypes, AzureJsonContext.Default.ListString),
@@ -99,6 +104,8 @@ public sealed class ClientEntity : ITableEntity
         Description = Description,
         ClientUri = ClientUri,
         LogoUri = LogoUri,
+        InitiateLoginUri = InitiateLoginUri,
+        IsDefaultApplication = IsDefaultApplication ?? false,
         Enabled = Enabled ?? true,
         ClientSecretHashes = JsonSerializer.Deserialize(ClientSecretHashesJson, AzureJsonContext.Default.ListString) ?? [],
         AllowedGrantTypes = JsonSerializer.Deserialize(AllowedGrantTypesJson, AzureJsonContext.Default.ListString) ?? [],

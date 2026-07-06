@@ -112,6 +112,7 @@
   "errorRegistrationFailed": "注册失败，请重试。",
   "account.title": "账户",
   "account.subtitle": "管理您的个人资料和首选语言。",
+  "account.backToApp": "返回{{app}}",
   "account.signInPrompt": "登录以管理您的账户。",
   "account.loading": "正在加载您的个人资料…",
   "account.loadError": "无法加载您的个人资料。",

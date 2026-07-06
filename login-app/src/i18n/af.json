@@ -110,7 +110,6 @@
   "errorWeakPassword": "Wagwoord voldoen nie aan die sterktevereistes nie.",
   "errorEmailAndPasswordRequired": "E-pos en wagwoord word vereis.",
   "errorRegistrationFailed": "Registrasie het misluk. Probeer asseblief weer.",
-
   "consent.title": "Magtig {{appName}}",
   "consent.subtitle": "{{appName}} wil toegang tot jou rekening kry",
   "consent.scopeOpenid": "Verifieer jou identiteit",
@@ -125,7 +124,6 @@
   "consent.loading": "Besig om te laai...",
   "consent.loadError": "Kon nie die toepassingsbesonderhede laai nie.",
   "consent.submitError": "Iets het verkeerd geloop. Probeer asseblief weer.",
-
   "grants.title": "Gemagtigde Toepassings",
   "grants.subtitle": "Toepassings waaraan jy toegang tot jou rekening verleen het.",
   "grants.loading": "Besig om te laai...",
@@ -137,6 +135,7 @@
   "grants.revokeFailed": "Kon nie toegang herroep nie.",
   "account.title": "Rekening",
   "account.subtitle": "Bestuur jou profiel en voorkeurtaal.",
+  "account.backToApp": "Terug na {{app}}",
   "account.signInPrompt": "Meld aan om jou rekening te bestuur.",
   "account.loading": "Besig om jou profiel te laai…",
   "account.loadError": "Kon nie jou profiel laai nie.",

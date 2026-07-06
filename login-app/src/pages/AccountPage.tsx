@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { getProfile, updateProfile, mfaStatus, ApiRequestError } from '../api';
+import { getProfile, updateProfile, mfaStatus, getApps, ApiRequestError } from '../api';
+import type { AppLinkResponse } from '../types';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -41,6 +42,7 @@ export default function AccountPage() {
   const [unauthenticated, setUnauthenticated] = useState(false);
   const [saved, setSaved] = useState(false);
   const [mfaOffered, setMfaOffered] = useState(false);
+  const [apps, setApps] = useState<AppLinkResponse[]>([]);
   const [email, setEmail] = useState('');
   const [form, setForm] = useState({ firstName: '', lastName: '', companyName: '', phone: '', locale: '' });
 
@@ -71,6 +73,12 @@ export default function AccountPage() {
   // don't show a "set up 2FA" prompt on a tenant that has turned MFA off.
   useEffect(() => {
     mfaStatus().then((s) => setMfaOffered(s.offered !== false)).catch(() => {});
+  }, []);
+
+  // "Back to app" targets: clients the operator gave a home URI. Absent/failed → no button,
+  // the account page stays the destination (the pre-existing behavior).
+  useEffect(() => {
+    getApps().then(setApps).catch(() => {});
   }, []);
 
   // Switch the live UI immediately as a preview; the choice only persists on Save.
@@ -110,8 +118,34 @@ export default function AccountPage() {
     );
   }
 
+  const defaultApp = apps.find((a) => a.isDefault) ?? null;
+  const otherApps = apps.filter((a) => a !== defaultApp);
+
   return (
     <>
+      {apps.length > 0 && (
+        <div className="mb-4">
+          {defaultApp && (
+            <a href={defaultApp.homeUri} data-testid="back-to-app">
+              <Button variant="outline" className="w-full">
+                {defaultApp.logoUri && <img src={defaultApp.logoUri} alt="" className="h-4 w-4 me-2 rounded-sm" />}
+                {t('account.backToApp', { app: defaultApp.clientName })}
+              </Button>
+            </a>
+          )}
+          {otherApps.length > 0 && (
+            <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 justify-center">
+              {otherApps.map((a) => (
+                <a key={a.clientId} href={a.homeUri}
+                   className="text-xs text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 underline underline-offset-2">
+                  {a.clientName}
+                </a>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
       <CardTitle>{t('account.title')}</CardTitle>
       <p className="text-sm text-gray-500 dark:text-gray-400 mb-4">{t('account.subtitle')}</p>
 

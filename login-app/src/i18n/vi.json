@@ -112,6 +112,7 @@
   "errorRegistrationFailed": "Đăng ký thất bại. Vui lòng thử lại.",
   "account.title": "Tài khoản",
   "account.subtitle": "Quản lý hồ sơ và ngôn ngữ ưa thích của bạn.",
+  "account.backToApp": "Quay lại {{app}}",
   "account.signInPrompt": "Đăng nhập để quản lý tài khoản của bạn.",
   "account.loading": "Đang tải hồ sơ của bạn…",
   "account.loadError": "Không thể tải hồ sơ của bạn.",

@@ -64,6 +64,11 @@ public static class ClientEndpoints
         if (existing is not null)
             return TypedResults.Json(new ErrorInfoResponse { Error = "client_exists", ErrorDescription = $"Client '{client.ClientId}' already exists" }, AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 409);
 
+        if (InvalidHomeUri(client) is { } uriError)
+            return TypedResults.Json(new ErrorInfoResponse { Error = "invalid_request", ErrorDescription = uriError }, AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 400);
+
+        if (client.IsDefaultApplication)
+            await ClearOtherDefaultsAsync(store, client.ClientId, ct);
         await store.UpsertAsync(client, ct);
         await audit.LogAsync(Actor(http), "client.created", "client", client.ClientId, client.ClientName, ct);
         return Results.Created($"/api/v1/clients/{client.ClientId}", Redacted(client));
@@ -97,9 +102,37 @@ public static class ClientEndpoints
         // that explicitly supplies new hashes is still honoured.)
         if (client.ClientSecretHashes is not { Count: > 0 })
             client.ClientSecretHashes = existing.ClientSecretHashes;
+        if (InvalidHomeUri(client) is { } uriError)
+            return TypedResults.Json(new ErrorInfoResponse { Error = "invalid_request", ErrorDescription = uriError }, AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 400);
+        if (client.IsDefaultApplication && !existing.IsDefaultApplication)
+            await ClearOtherDefaultsAsync(store, clientId, ct);
         await store.UpsertAsync(client, ct);
         await audit.LogAsync(Actor(http), "client.updated", "client", clientId, null, ct);
         return TypedResults.Json(Redacted(client), AuthagonalJsonContext.Default.OAuthClient);
+    }
+
+    // Home URIs are rendered as navigation targets on the hosted account pages, so they must be
+    // absolute https (http only for loopback, for local dev). Rejecting here keeps javascript:/data:
+    // and scheme-relative values out of the store entirely.
+    private static string? InvalidHomeUri(OAuthClient client)
+    {
+        foreach (var (name, value) in new[] { ("client_uri", client.ClientUri), ("initiate_login_uri", client.InitiateLoginUri) })
+        {
+            if (string.IsNullOrWhiteSpace(value)) continue;
+            if (!Uri.TryCreate(value, UriKind.Absolute, out var uri)
+                || (uri.Scheme != Uri.UriSchemeHttps && !(uri.Scheme == Uri.UriSchemeHttp && uri.IsLoopback)))
+                return $"{name} must be an absolute https URL (http is allowed for loopback only)";
+        }
+        return null;
+    }
+
+    // At most one client may be the default application: taking the flag clears it elsewhere.
+    // Copies via `with` — stores may hand back cached instances that must not be mutated.
+    private static async Task ClearOtherDefaultsAsync(IClientStore store, string keepClientId, CancellationToken ct)
+    {
+        var all = await store.GetAllAsync(ct);
+        foreach (var other in all.Where(c => c.IsDefaultApplication && c.ClientId != keepClientId))
+            await store.UpsertAsync(other with { IsDefaultApplication = false }, ct);
     }
 
     private static bool IsAdminScopeRequested(IEnumerable<string> scopes, IConfiguration configuration)
