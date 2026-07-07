@@ -123,4 +123,66 @@ public class ReindexBackfillTests(AzuriteFixture azurite)
         Assert.Equal("ada@acme.test", got.Email);
         Assert.Equal("Lovelace", got.LastName);
     }
+
+    [Fact]
+    public async Task MigrateExternalIdIndex_ReKeysLegacyPlaintextRow_AndKeepsLookupLive()
+    {
+        var prefix = $"extid{Guid.NewGuid():N}";
+
+        // Legacy state: externalId written before tokenization → plaintext "{clientId}|{externalId}" PK.
+        var plain = NewStore(prefix, cipher: null, tokenizer: null);
+        await plain.CreateAsync(new AuthUser
+        {
+            Id = "u1", Email = "e@x.test", NormalizedEmail = "E@X.TEST", IsActive = true, CreatedAt = DateTimeOffset.UtcNow,
+        });
+        await plain.SetExternalIdAsync("u1", "clientA", "ext-123");
+        Assert.True(await RowExists<UserExternalIdEntity>($"{prefix}ExtIds", "clientA|ext-123", UserExternalIdEntity.LookupRowKey));
+
+        // Turn tokenization on and migrate the cold index row.
+        var enc = NewStore(prefix, new FakeCipher(), new FakeTokenizer());
+        Assert.Equal(1, await enc.MigrateExternalIdIndexAsync(dryRun: false));
+
+        // Row now lives at the token PK; the legacy plaintext row is gone.
+        Assert.True(await RowExists<UserExternalIdEntity>($"{prefix}ExtIds", FakeTokenizer.Token("clientA|ext-123"), UserExternalIdEntity.LookupRowKey));
+        Assert.False(await RowExists<UserExternalIdEntity>($"{prefix}ExtIds", "clientA|ext-123", UserExternalIdEntity.LookupRowKey));
+
+        // Lookup still resolves through the encrypted store.
+        Assert.Equal("u1", (await enc.FindByExternalIdAsync("clientA", "ext-123"))!.Id);
+    }
+
+    [Fact]
+    public async Task MigrateExternalIdIndex_DryRun_CountsWithoutWriting()
+    {
+        var prefix = $"extid{Guid.NewGuid():N}";
+        var plain = NewStore(prefix, cipher: null, tokenizer: null);
+        await plain.CreateAsync(new AuthUser
+        {
+            Id = "u1", Email = "e@x.test", NormalizedEmail = "E@X.TEST", IsActive = true, CreatedAt = DateTimeOffset.UtcNow,
+        });
+        await plain.SetExternalIdAsync("u1", "clientA", "ext-123");
+
+        var enc = NewStore(prefix, new FakeCipher(), new FakeTokenizer());
+        Assert.Equal(1, await enc.MigrateExternalIdIndexAsync(dryRun: true));
+
+        // Nothing moved — the legacy row is untouched and no token row was written.
+        Assert.True(await RowExists<UserExternalIdEntity>($"{prefix}ExtIds", "clientA|ext-123", UserExternalIdEntity.LookupRowKey));
+        Assert.False(await RowExists<UserExternalIdEntity>($"{prefix}ExtIds", FakeTokenizer.Token("clientA|ext-123"), UserExternalIdEntity.LookupRowKey));
+    }
+
+    [Fact]
+    public async Task MigrateExternalIdIndex_IsIdempotent_AndSkipsAlreadyTokenizedRows()
+    {
+        var prefix = $"extid{Guid.NewGuid():N}";
+        var enc = NewStore(prefix, new FakeCipher(), new FakeTokenizer());
+        await enc.CreateAsync(new AuthUser
+        {
+            Id = "u1", Email = "e@x.test", NormalizedEmail = "E@X.TEST", IsActive = true, CreatedAt = DateTimeOffset.UtcNow,
+        });
+        await enc.SetExternalIdAsync("u1", "clientA", "ext-123"); // fresh write → already a token row
+
+        // No legacy rows to move, and a re-run stays 0 — the lookup keeps working.
+        Assert.Equal(0, await enc.MigrateExternalIdIndexAsync(dryRun: false));
+        Assert.Equal(0, await enc.MigrateExternalIdIndexAsync(dryRun: false));
+        Assert.Equal("u1", (await enc.FindByExternalIdAsync("clientA", "ext-123"))!.Id);
+    }
 }

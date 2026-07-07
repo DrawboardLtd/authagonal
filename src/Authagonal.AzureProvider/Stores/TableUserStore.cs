@@ -698,6 +698,52 @@ public sealed class TableUserStore(
         await WriteProfileIndexesAsync(normalizedEmail, normFirst, normLast, userId, dropLegacy: true, ct);
     }
 
+    /// <summary>
+    /// Re-key the <c>UserExternalIds</c> forward index from legacy plaintext-keyed rows
+    /// (PK = "{clientId}|{externalId}") to blind-index tokens. This index is invisible to
+    /// <see cref="ReindexUserAsync"/> — there is no userId→externalId reverse index to drive a per-user
+    /// rewrite — so it is migrated by scanning the table directly. A migrated row's key is the HMAC token
+    /// (lowercase hex, no separator); a legacy row's key is the plaintext composite, which always contains
+    /// '|'. That makes the classification exact (a token can never contain '|'), independent of the digest
+    /// length. Write-before-delete keeps <see cref="FindByExternalIdAsync"/> resolving throughout, and the
+    /// scan is idempotent (token rows are skipped, so re-runs move 0). No-op when tokenization is off —
+    /// plaintext keys ARE the current scheme then.
+    /// </summary>
+    public async Task<int> MigrateExternalIdIndexAsync(bool dryRun, CancellationToken ct = default)
+    {
+        if (!_indexTokenized) return 0;
+
+        // Env-scoped scan, same shape as EnumerateUserIdsAsync: live has no range filter; a sandbox env
+        // restricts to its "{env}|" PartitionKey range so the sweep never crosses env isolation.
+        var range = _partitioner.RangeForEnv();
+        var query = range is null
+            ? userExternalIdsTable.QueryAsync<UserExternalIdEntity>(
+                e => e.RowKey == UserExternalIdEntity.LookupRowKey, cancellationToken: ct)
+            : userExternalIdsTable.QueryAsync<UserExternalIdEntity>(
+                e => e.PartitionKey.CompareTo(range.Value.Low) >= 0
+                     && e.PartitionKey.CompareTo(range.Value.High) < 0
+                     && e.RowKey == UserExternalIdEntity.LookupRowKey, cancellationToken: ct);
+
+        var count = 0;
+        await foreach (var row in query)
+        {
+            var composite = _partitioner.Strip(row.PartitionKey);
+            if (!composite.Contains('|')) continue; // already a token — nothing to migrate
+            count++;
+            if (dryRun) continue;
+
+            // Tokenize the whole "{clientId}|{externalId}" composite — the exact input ExternalIdIndexPkAsync
+            // hashes on the write path — then move the row: write the token PK first, drop the legacy PK after.
+            var tokenPk = _partitioner.PK(await _tokenizer.TokenizeAsync(composite, ct));
+            if (string.Equals(tokenPk, row.PartitionKey, StringComparison.Ordinal)) continue; // defensive
+            await userExternalIdsTable.UpsertEntityAsync(
+                new UserExternalIdEntity { PartitionKey = tokenPk, RowKey = UserExternalIdEntity.LookupRowKey, UserId = row.UserId },
+                TableUpdateMode.Replace, ct);
+            await TryDeleteExternalIdAsync(row.PartitionKey, ct);
+        }
+        return count;
+    }
+
     public async Task<bool> ExistsAsync(string userId, CancellationToken ct = default)
     {
         try

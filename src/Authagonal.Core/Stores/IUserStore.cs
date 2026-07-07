@@ -90,6 +90,17 @@ public interface IUserStore
         yield break;
     }
 
+    /// <summary>
+    /// Re-key legacy plaintext-keyed <c>UserExternalIds</c> forward-index rows to blind-index tokens.
+    /// Unlike the profile-derived indexes (email/domain/name), externalId rows are NOT reachable from
+    /// <see cref="ReindexUserAsync"/> — there is no userId→externalId reverse index — so migrating them
+    /// requires a standalone table scan. Idempotent (already-tokenized rows are skipped); write-before-delete
+    /// keeps lookups live. No-op when tokenization is off. Returns the number of legacy rows found
+    /// (<paramref name="dryRun"/>) or migrated (live run) — a live-run 0 means the index is fully tokenized.
+    /// Default: no-op (non-tokenizing / non-table stores).
+    /// </summary>
+    Task<int> MigrateExternalIdIndexAsync(bool dryRun, CancellationToken ct = default) => Task.FromResult(0);
+
     Task SetExternalIdAsync(string userId, string clientId, string externalId, CancellationToken ct = default);
     Task RemoveExternalIdAsync(string userId, string clientId, string externalId, CancellationToken ct = default);
 
