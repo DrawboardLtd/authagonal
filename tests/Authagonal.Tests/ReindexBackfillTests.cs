@@ -277,4 +277,44 @@ public class ReindexBackfillTests(AzuriteFixture azurite)
         Assert.Null(await enc.FindLoginAsync("saml", "nameid@corp.test"));
         Assert.Empty(await enc.GetLoginsAsync("u1"));
     }
+
+    private TableProvisioningAppStore NewProvStore(string prefix, IFieldCipher? cipher)
+    {
+        var c = _svc.GetTableClient($"{prefix}ProvApps");
+        c.CreateIfNotExists();
+        return new TableProvisioningAppStore(c, EnvPartitioner.Live, null, cipher);
+    }
+
+    [Fact]
+    public async Task ProvisioningApp_ApiKey_EncryptedAtRest_DecryptsOnRead()
+    {
+        var prefix = $"prov{Guid.NewGuid():N}";
+        var enc = NewProvStore(prefix, new FakeCipher());
+        await enc.UpsertAsync(new ProvisioningAppConfig { AppId = "app1", Name = "App 1", CallbackUrl = "https://x.test", ApiKey = "secret-key-123" });
+
+        // At rest: ciphertext. On read (Get + GetAll): plaintext.
+        var raw = await _svc.GetTableClient($"{prefix}ProvApps").GetEntityAsync<ProvisioningAppEntity>(ProvisioningAppEntity.AppsPartition, "app1");
+        Assert.StartsWith(FakeCipher.Prefix, raw.Value.ApiKey!);
+        Assert.Equal("secret-key-123", (await enc.GetAsync("app1"))!.ApiKey);
+        Assert.Equal("secret-key-123", (await enc.GetAllAsync()).Single().ApiKey);
+    }
+
+    [Fact]
+    public async Task MigrateProvisioningApps_EncryptsLegacyPlaintext_Idempotent()
+    {
+        var prefix = $"prov{Guid.NewGuid():N}";
+        // Legacy: written before encryption (Null cipher) → plaintext ApiKey at rest.
+        var plain = NewProvStore(prefix, cipher: null);
+        await plain.UpsertAsync(new ProvisioningAppConfig { AppId = "app1", Name = "App 1", CallbackUrl = "https://x.test", ApiKey = "legacy-key" });
+        var before = await _svc.GetTableClient($"{prefix}ProvApps").GetEntityAsync<ProvisioningAppEntity>(ProvisioningAppEntity.AppsPartition, "app1");
+        Assert.Equal("legacy-key", before.Value.ApiKey);
+
+        var enc = NewProvStore(prefix, new FakeCipher());
+        Assert.Equal(1, await enc.MigrateProvisioningAppsAsync(dryRun: true));   // counts, no write
+        Assert.Equal(1, await enc.MigrateProvisioningAppsAsync(dryRun: false));  // migrates
+        var after = await _svc.GetTableClient($"{prefix}ProvApps").GetEntityAsync<ProvisioningAppEntity>(ProvisioningAppEntity.AppsPartition, "app1");
+        Assert.StartsWith(FakeCipher.Prefix, after.Value.ApiKey!);               // now ciphertext
+        Assert.Equal("legacy-key", (await enc.GetAsync("app1"))!.ApiKey);        // still readable
+        Assert.Equal(0, await enc.MigrateProvisioningAppsAsync(dryRun: false));  // already encrypted → skipped
+    }
 }
