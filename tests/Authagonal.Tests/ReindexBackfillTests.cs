@@ -185,4 +185,96 @@ public class ReindexBackfillTests(AzuriteFixture azurite)
         Assert.Equal(0, await enc.MigrateExternalIdIndexAsync(dryRun: false));
         Assert.Equal("u1", (await enc.FindByExternalIdAsync("clientA", "ext-123"))!.Id);
     }
+
+    private static ExternalLoginInfo Login(string userId = "u1", string provider = "saml",
+        string providerKey = "nameid@corp.test", string? displayName = "Ada Lovelace")
+        => new() { UserId = userId, Provider = provider, ProviderKey = providerKey, DisplayName = displayName };
+
+    [Fact]
+    public async Task UserLogins_FreshWrite_TokenizesKeys_EncryptsColumns_RoundTrips()
+    {
+        var prefix = $"logins{Guid.NewGuid():N}";
+        var enc = NewStore(prefix, new FakeCipher(), new FakeTokenizer());
+        await enc.AddLoginAsync(Login());
+
+        var token = FakeTokenizer.Token("saml|nameid@corp.test");
+        // Forward row at the token PK, reverse row at "login|{token}"; no plaintext-keyed rows.
+        Assert.True(await RowExists<UserLoginEntity>($"{prefix}Logins", token, UserLoginEntity.LookupRowKey));
+        Assert.True(await RowExists<UserLoginEntity>($"{prefix}Logins", "u1", $"{UserLoginEntity.LoginRowKeyPrefix}{token}"));
+        Assert.False(await RowExists<UserLoginEntity>($"{prefix}Logins", "saml|nameid@corp.test", UserLoginEntity.LookupRowKey));
+
+        // Recoverable columns encrypted at rest; Provider stays plaintext.
+        var raw = await _svc.GetTableClient($"{prefix}Logins").GetEntityAsync<UserLoginEntity>(token, UserLoginEntity.LookupRowKey);
+        Assert.StartsWith(FakeCipher.Prefix, raw.Value.ProviderKey);
+        Assert.StartsWith(FakeCipher.Prefix, raw.Value.DisplayName!);
+        Assert.Equal("saml", raw.Value.Provider);
+
+        // Lookups decrypt back to plaintext.
+        var found = await enc.FindLoginAsync("saml", "nameid@corp.test");
+        Assert.Equal("u1", found!.UserId);
+        Assert.Equal("nameid@corp.test", found.ProviderKey);
+        Assert.Equal("Ada Lovelace", found.DisplayName);
+        Assert.Equal(new[] { "nameid@corp.test" }, (await enc.GetLoginsAsync("u1")).Select(l => l.ProviderKey).ToArray());
+    }
+
+    [Fact]
+    public async Task MigrateUserLogins_ReKeysAndEncrypts_LegacyRows()
+    {
+        var prefix = $"logins{Guid.NewGuid():N}";
+        // Legacy: written before tokenization/encryption → plaintext keys + columns.
+        var plain = NewStore(prefix, cipher: null, tokenizer: null);
+        await plain.AddLoginAsync(Login());
+        Assert.True(await RowExists<UserLoginEntity>($"{prefix}Logins", "saml|nameid@corp.test", UserLoginEntity.LookupRowKey));
+
+        var enc = NewStore(prefix, new FakeCipher(), new FakeTokenizer());
+        Assert.Equal(2, await enc.MigrateUserLoginsAsync(dryRun: false)); // forward + reverse
+
+        var token = FakeTokenizer.Token("saml|nameid@corp.test");
+        Assert.True(await RowExists<UserLoginEntity>($"{prefix}Logins", token, UserLoginEntity.LookupRowKey));
+        Assert.True(await RowExists<UserLoginEntity>($"{prefix}Logins", "u1", $"{UserLoginEntity.LoginRowKeyPrefix}{token}"));
+        Assert.False(await RowExists<UserLoginEntity>($"{prefix}Logins", "saml|nameid@corp.test", UserLoginEntity.LookupRowKey));
+        Assert.False(await RowExists<UserLoginEntity>($"{prefix}Logins", "u1", $"{UserLoginEntity.LoginRowKeyPrefix}saml|nameid@corp.test"));
+
+        var raw = await _svc.GetTableClient($"{prefix}Logins").GetEntityAsync<UserLoginEntity>(token, UserLoginEntity.LookupRowKey);
+        Assert.StartsWith(FakeCipher.Prefix, raw.Value.ProviderKey);
+
+        // Lookups still resolve through the encrypted store.
+        Assert.Equal("u1", (await enc.FindLoginAsync("saml", "nameid@corp.test"))!.UserId);
+        Assert.Single(await enc.GetLoginsAsync("u1"));
+    }
+
+    [Fact]
+    public async Task MigrateUserLogins_DryRun_CountsWithoutWriting()
+    {
+        var prefix = $"logins{Guid.NewGuid():N}";
+        var plain = NewStore(prefix, cipher: null, tokenizer: null);
+        await plain.AddLoginAsync(Login());
+
+        var enc = NewStore(prefix, new FakeCipher(), new FakeTokenizer());
+        Assert.Equal(2, await enc.MigrateUserLoginsAsync(dryRun: true));
+        Assert.True(await RowExists<UserLoginEntity>($"{prefix}Logins", "saml|nameid@corp.test", UserLoginEntity.LookupRowKey));
+        Assert.False(await RowExists<UserLoginEntity>($"{prefix}Logins", FakeTokenizer.Token("saml|nameid@corp.test"), UserLoginEntity.LookupRowKey));
+    }
+
+    [Fact]
+    public async Task MigrateUserLogins_IsIdempotent()
+    {
+        var prefix = $"logins{Guid.NewGuid():N}";
+        var enc = NewStore(prefix, new FakeCipher(), new FakeTokenizer());
+        await enc.AddLoginAsync(Login());
+        Assert.Equal(0, await enc.MigrateUserLoginsAsync(dryRun: false));
+        Assert.Equal(0, await enc.MigrateUserLoginsAsync(dryRun: false));
+        Assert.Equal("u1", (await enc.FindLoginAsync("saml", "nameid@corp.test"))!.UserId);
+    }
+
+    [Fact]
+    public async Task RemoveLogin_UnderEncryption_RemovesBothRows()
+    {
+        var prefix = $"logins{Guid.NewGuid():N}";
+        var enc = NewStore(prefix, new FakeCipher(), new FakeTokenizer());
+        await enc.AddLoginAsync(Login());
+        await enc.RemoveLoginAsync("u1", "saml", "nameid@corp.test");
+        Assert.Null(await enc.FindLoginAsync("saml", "nameid@corp.test"));
+        Assert.Empty(await enc.GetLoginsAsync("u1"));
+    }
 }

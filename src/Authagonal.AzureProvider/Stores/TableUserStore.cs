@@ -744,6 +744,58 @@ public sealed class TableUserStore(
         return count;
     }
 
+    /// <summary>
+    /// Re-key + encrypt legacy <c>UserLogins</c> rows to the blind-index scheme. Both row shapes are
+    /// scanned: the forward lookup (RK=<c>lookup</c>, legacy PK = the plaintext "{provider}|{providerKey}"
+    /// composite) and the reverse per-user list (RK = <c>login|{provider}|{providerKey}</c>). A migrated
+    /// row's key is the HMAC token (forward PK = token; reverse RK = <c>login|{token}</c>) — the token is
+    /// hex, so a legacy key is exactly the one that still contains '|'. For each legacy row the plaintext
+    /// Provider/ProviderKey columns (present because it predates encryption) drive the token and are then
+    /// encrypted. Write-before-delete; idempotent (token-keyed rows skipped). No-op when tokenization off.
+    /// </summary>
+    public async Task<int> MigrateUserLoginsAsync(bool dryRun, CancellationToken ct = default)
+    {
+        if (!_indexTokenized) return 0;
+
+        var range = _partitioner.RangeForEnv();
+        var query = range is null
+            ? userLoginsTable.QueryAsync<UserLoginEntity>(cancellationToken: ct)
+            : userLoginsTable.QueryAsync<UserLoginEntity>(
+                e => e.PartitionKey.CompareTo(range.Value.Low) >= 0 && e.PartitionKey.CompareTo(range.Value.High) < 0, cancellationToken: ct);
+
+        var count = 0;
+        await foreach (var row in query)
+        {
+            var isForward = row.RowKey == UserLoginEntity.LookupRowKey;
+            var isReverse = row.RowKey.StartsWith(UserLoginEntity.LoginRowKeyPrefix, StringComparison.Ordinal);
+            if (!isForward && !isReverse) continue;
+
+            // Legacy iff the key still carries the plaintext composite (contains '|'); a token is pure hex.
+            var legacy = isForward
+                ? _partitioner.Strip(row.PartitionKey).Contains('|')
+                : row.RowKey[UserLoginEntity.LoginRowKeyPrefix.Length..].Contains('|');
+            if (!legacy) continue;
+            count++;
+            if (dryRun) continue;
+
+            // Columns are plaintext on a legacy row — recompute the token from them and encrypt for the move.
+            var token = await LoginTokenAsync(row.Provider, row.ProviderKey, ct);
+            var moved = new UserLoginEntity
+            {
+                PartitionKey = isForward ? _partitioner.PK(token) : row.PartitionKey,
+                RowKey = isForward ? UserLoginEntity.LookupRowKey : LoginReverseRk(token),
+                UserId = row.UserId,
+                Provider = row.Provider,
+                ProviderKey = row.ProviderKey,
+                DisplayName = row.DisplayName,
+            };
+            await EncryptLoginAsync(moved, ct);
+            await userLoginsTable.UpsertEntityAsync(moved, TableUpdateMode.Replace, ct);  // write new first
+            await TryDeleteLoginAsync(row.PartitionKey, row.RowKey, ct);                  // then drop legacy
+        }
+        return count;
+    }
+
     public async Task<bool> ExistsAsync(string userId, CancellationToken ct = default)
     {
         try
@@ -1050,53 +1102,87 @@ public sealed class TableUserStore(
         }
     }
 
+    // ── External-login index crypto (mirrors the email index) ──────────────────────────────────────
+    // The lookup KEYS are blind-index tokens: forward PK = token(provider|providerKey), reverse RK =
+    // "login|{token}". The recoverable VALUE columns (ProviderKey — a SAML NameId is usually an email — and
+    // DisplayName — a person's name) are encrypted; Provider + UserId stay plaintext. All passthrough when
+    // the tokenizer/cipher are the Null defaults, so the key stays the historical "{provider}|{providerKey}"
+    // composite and columns stay plaintext (single-tenant hosts unchanged, and legacy rows keep resolving).
+    private async Task<string> LoginTokenAsync(string provider, string providerKey, CancellationToken ct)
+        => await _tokenizer.TokenizeAsync($"{provider}|{providerKey}", ct);
+
+    private static string LoginReverseRk(string token) => $"{UserLoginEntity.LoginRowKeyPrefix}{token}";
+
+    private async Task EncryptLoginAsync(UserLoginEntity e, CancellationToken ct)
+    {
+        e.ProviderKey = await _cipher.ProtectAsync(e.ProviderKey, ct);
+        if (!string.IsNullOrEmpty(e.DisplayName)) e.DisplayName = await _cipher.ProtectAsync(e.DisplayName, ct);
+    }
+
+    private async Task DecryptLoginAsync(UserLoginEntity e, CancellationToken ct)
+    {
+        e.ProviderKey = await _cipher.ResolveAsync(e.ProviderKey, ct);
+        if (!string.IsNullOrEmpty(e.DisplayName)) e.DisplayName = await _cipher.ResolveAsync(e.DisplayName, ct);
+    }
+
+    private async Task<UserLoginEntity?> TryGetLoginAsync(string pk, CancellationToken ct)
+    {
+        try { return (await userLoginsTable.GetEntityAsync<UserLoginEntity>(pk, UserLoginEntity.LookupRowKey, cancellationToken: ct)).Value; }
+        catch (RequestFailedException ex) when (ex.Status == 404) { return null; }
+    }
+
+    private async Task TryDeleteLoginAsync(string pk, string rk, CancellationToken ct)
+    {
+        try
+        {
+            await userLoginsTable.DeleteEntityAsync(pk, rk, cancellationToken: ct);
+            if (tombstoneWriter is not null)
+                await tombstoneWriter.WriteAsync("UserLogins", pk, rk, ct);
+        }
+        catch (RequestFailedException ex) when (ex.Status == 404) { }
+    }
+
     public async Task AddLoginAsync(ExternalLoginInfo login, CancellationToken ct = default)
     {
-        var forwardEntity = UserLoginEntity.FromModelForward(login);
-        forwardEntity.PartitionKey = _partitioner.PK(forwardEntity.PartitionKey);
-        var reverseEntity = UserLoginEntity.FromModelReverse(login);
-        reverseEntity.PartitionKey = _partitioner.PK(reverseEntity.PartitionKey);
+        var token = await LoginTokenAsync(login.Provider, login.ProviderKey, ct);
 
-        await userLoginsTable.UpsertEntityAsync(forwardEntity, TableUpdateMode.Replace, ct);
-        await userLoginsTable.UpsertEntityAsync(reverseEntity, TableUpdateMode.Replace, ct);
+        var forward = UserLoginEntity.FromModelForward(login);
+        forward.PartitionKey = _partitioner.PK(token);           // tokenized lookup key
+        await EncryptLoginAsync(forward, ct);
+        await userLoginsTable.UpsertEntityAsync(forward, TableUpdateMode.Replace, ct);
+
+        var reverse = UserLoginEntity.FromModelReverse(login);
+        reverse.PartitionKey = _partitioner.PK(login.UserId);
+        reverse.RowKey = LoginReverseRk(token);                  // "login|{token}"
+        await EncryptLoginAsync(reverse, ct);
+        await userLoginsTable.UpsertEntityAsync(reverse, TableUpdateMode.Replace, ct);
     }
 
     public async Task RemoveLoginAsync(string userId, string provider, string providerKey, CancellationToken ct = default)
     {
-        var forwardPk = _partitioner.PK($"{provider}|{providerKey}");
+        var token = await LoginTokenAsync(provider, providerKey, ct);
         var reversePk = _partitioner.PK(userId);
-        var reverseRk = $"{UserLoginEntity.LoginRowKeyPrefix}{provider}|{providerKey}";
 
-        try
+        await TryDeleteLoginAsync(_partitioner.PK(token), UserLoginEntity.LookupRowKey, ct);   // forward
+        await TryDeleteLoginAsync(reversePk, LoginReverseRk(token), ct);                        // reverse
+        if (_indexTokenized)
         {
-            await userLoginsTable.DeleteEntityAsync(forwardPk, UserLoginEntity.LookupRowKey, cancellationToken: ct);
-            if (tombstoneWriter is not null)
-                await tombstoneWriter.WriteAsync("UserLogins", forwardPk, UserLoginEntity.LookupRowKey, ct);
+            // Also drop any not-yet-migrated legacy rows keyed on the plaintext composite.
+            await TryDeleteLoginAsync(_partitioner.PK($"{provider}|{providerKey}"), UserLoginEntity.LookupRowKey, ct);
+            await TryDeleteLoginAsync(reversePk, $"{UserLoginEntity.LoginRowKeyPrefix}{provider}|{providerKey}", ct);
         }
-        catch (RequestFailedException ex) when (ex.Status == 404) { }
-
-        try
-        {
-            await userLoginsTable.DeleteEntityAsync(reversePk, reverseRk, cancellationToken: ct);
-            if (tombstoneWriter is not null)
-                await tombstoneWriter.WriteAsync("UserLogins", reversePk, reverseRk, ct);
-        }
-        catch (RequestFailedException ex) when (ex.Status == 404) { }
     }
 
     public async Task<ExternalLoginInfo?> FindLoginAsync(string provider, string providerKey, CancellationToken ct = default)
     {
-        var forwardPk = _partitioner.PK($"{provider}|{providerKey}");
-        try
-        {
-            var response = await userLoginsTable.GetEntityAsync<UserLoginEntity>(
-                forwardPk, UserLoginEntity.LookupRowKey, cancellationToken: ct);
-            return response.Value.ToModel();
-        }
-        catch (RequestFailedException ex) when (ex.Status == 404)
-        {
-            return null;
-        }
+        var token = await LoginTokenAsync(provider, providerKey, ct);
+        var entity = await TryGetLoginAsync(_partitioner.PK(token), ct);
+        // Migration-window fallback: a not-yet-re-keyed row still lives at the legacy plaintext PK.
+        if (entity is null && _indexTokenized)
+            entity = await TryGetLoginAsync(_partitioner.PK($"{provider}|{providerKey}"), ct);
+        if (entity is null) return null;
+        await DecryptLoginAsync(entity, ct);
+        return entity.ToModel();
     }
 
     public async Task<IReadOnlyList<ExternalLoginInfo>> GetLoginsAsync(string userId, CancellationToken ct = default)
@@ -1110,6 +1196,7 @@ public sealed class TableUserStore(
 
         await foreach (var entity in query)
         {
+            await DecryptLoginAsync(entity, ct);
             results.Add(entity.ToModel());
         }
 

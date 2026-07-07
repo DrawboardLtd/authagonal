@@ -101,6 +101,15 @@ public interface IUserStore
     /// </summary>
     Task<int> MigrateExternalIdIndexAsync(bool dryRun, CancellationToken ct = default) => Task.FromResult(0);
 
+    /// <summary>
+    /// Re-key + encrypt legacy plaintext <c>UserLogins</c> rows (forward lookup + reverse per-user list) to
+    /// the blind-index scheme: HMAC-token lookup keys, encrypted ProviderKey/DisplayName columns. Like
+    /// <see cref="MigrateExternalIdIndexAsync"/> it is a standalone table scan (no reverse index to drive a
+    /// per-user rewrite), write-before-delete, idempotent. Returns rows found (<paramref name="dryRun"/>) /
+    /// migrated (live run). Default: no-op.
+    /// </summary>
+    Task<int> MigrateUserLoginsAsync(bool dryRun, CancellationToken ct = default) => Task.FromResult(0);
+
     Task SetExternalIdAsync(string userId, string clientId, string externalId, CancellationToken ct = default);
     Task RemoveExternalIdAsync(string userId, string clientId, string externalId, CancellationToken ct = default);
 
