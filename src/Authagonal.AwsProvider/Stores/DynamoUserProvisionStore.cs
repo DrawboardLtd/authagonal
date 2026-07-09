@@ -8,7 +8,7 @@ using Authagonal.Core.Stores;
 namespace Authagonal.AwsProvider.Stores;
 
 /// <summary>DynamoDB <see cref="IUserProvisionStore"/>. pk = userId, sk = appId.</summary>
-public sealed class DynamoUserProvisionStore(DynamoTable table, EnvPartitioner partitioner, ITombstoneWriter? tombstones = null) : IUserProvisionStore
+public sealed class DynamoUserProvisionStore(DynamoTable table, EnvPartitioner partitioner, IChangeWriter? tombstones = null) : IUserProvisionStore
 {
     public async Task<IReadOnlyList<UserProvision>> GetByUserAsync(string userId, CancellationToken ct = default)
     {

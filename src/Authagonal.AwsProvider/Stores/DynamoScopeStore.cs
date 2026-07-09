@@ -8,7 +8,7 @@ using Authagonal.Core.Stores;
 namespace Authagonal.AwsProvider.Stores;
 
 /// <summary>DynamoDB <see cref="IScopeStore"/>. All scopes share one partition ("scope"), sk = scope name.</summary>
-public sealed class DynamoScopeStore(DynamoTable table, EnvPartitioner partitioner, ITombstoneWriter? tombstones = null) : IScopeStore
+public sealed class DynamoScopeStore(DynamoTable table, EnvPartitioner partitioner, IChangeWriter? tombstones = null) : IScopeStore
 {
     private const string Partition = "scope";
 

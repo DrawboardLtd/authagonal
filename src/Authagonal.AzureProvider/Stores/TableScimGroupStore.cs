@@ -11,7 +11,7 @@ public sealed class TableScimGroupStore(
     TableClient scimGroupsTable,
     TableClient scimGroupExternalIdsTable,
     EnvPartitioner partitioner,
-    ITombstoneWriter? tombstoneWriter = null) : IScimGroupStore
+    IChangeWriter? tombstoneWriter = null) : IScimGroupStore
 {
     public async Task<ScimGroup?> GetAsync(string groupId, CancellationToken ct = default)
     {

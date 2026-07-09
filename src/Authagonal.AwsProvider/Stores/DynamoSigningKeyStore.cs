@@ -12,7 +12,7 @@ namespace Authagonal.AwsProvider.Stores;
 /// cheap server-side filter on the <c>active</c> attribute. This is the store the federated cross-cloud
 /// JWKS reads from: every key here is published, so a peer cloud's public keys validate after failover.
 /// </summary>
-public sealed class DynamoSigningKeyStore(DynamoTable table, EnvPartitioner partitioner, ITombstoneWriter? tombstones = null) : ISigningKeyStore
+public sealed class DynamoSigningKeyStore(DynamoTable table, EnvPartitioner partitioner, IChangeWriter? tombstones = null) : ISigningKeyStore
 {
     private const string Partition = "signing";
 

@@ -86,8 +86,8 @@ public static class ServiceCollectionExtensions
             DynamoTableProvisioner.EnsureTableAsync(db, table).GetAwaiter().GetResult();
 
         var live = EnvPartitioner.Live;
-        var tombstones = new DynamoTombstoneWriter(new DynamoTable(db, TombstonesTable));
-        services.TryAddSingleton<ITombstoneWriter>(tombstones);
+        var tombstones = new DynamoChangeWriter(new DynamoTable(db, TombstonesTable));
+        services.TryAddSingleton<IChangeWriter>(tombstones);
 
         services.TryAddSingleton<IClientStore>(new DynamoClientStore(new DynamoTable(db, ClientsTable), live, tombstones));
         services.TryAddSingleton<ISigningKeyStore>(new DynamoSigningKeyStore(new DynamoTable(db, SigningKeysTable), live, tombstones));

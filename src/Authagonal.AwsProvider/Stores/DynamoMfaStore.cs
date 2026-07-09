@@ -16,7 +16,7 @@ public sealed class DynamoMfaStore(
     DynamoTable challenges,
     DynamoTable webAuthnIndex,
     EnvPartitioner partitioner,
-    ITombstoneWriter? tombstones = null) : IMfaStore
+    IChangeWriter? tombstones = null) : IMfaStore
 {
     private const string ChallengeSk = "challenge";
     private const string Lookup = "lookup";

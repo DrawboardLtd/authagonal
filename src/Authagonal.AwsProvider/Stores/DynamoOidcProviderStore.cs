@@ -8,7 +8,7 @@ using Authagonal.Core.Stores;
 namespace Authagonal.AwsProvider.Stores;
 
 /// <summary>DynamoDB <see cref="IOidcProviderStore"/>. pk = connectionId, sk = "config".</summary>
-public sealed class DynamoOidcProviderStore(DynamoTable table, EnvPartitioner partitioner, ITombstoneWriter? tombstones = null) : IOidcProviderStore
+public sealed class DynamoOidcProviderStore(DynamoTable table, EnvPartitioner partitioner, IChangeWriter? tombstones = null) : IOidcProviderStore
 {
     private const string ConfigSk = "config";
 

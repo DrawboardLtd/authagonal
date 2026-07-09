@@ -12,7 +12,7 @@ public sealed class TableMfaStore(
     TableClient challengesTable,
     TableClient webAuthnIndexTable,
     EnvPartitioner partitioner,
-    ITombstoneWriter? tombstoneWriter = null) : IMfaStore
+    IChangeWriter? tombstoneWriter = null) : IMfaStore
 {
     public async Task<IReadOnlyList<MfaCredential>> GetCredentialsAsync(string userId, CancellationToken ct = default)
     {

@@ -14,7 +14,7 @@ public sealed class DynamoScimGroupStore(
     DynamoTable groups,
     DynamoTable groupExternalIds,
     EnvPartitioner partitioner,
-    ITombstoneWriter? tombstones = null) : IScimGroupStore
+    IChangeWriter? tombstones = null) : IScimGroupStore
 {
     private const string GroupSk = "group";
     private const string GroupLookupSk = "group-lookup";

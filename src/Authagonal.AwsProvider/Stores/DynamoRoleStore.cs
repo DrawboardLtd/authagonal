@@ -10,7 +10,7 @@ namespace Authagonal.AwsProvider.Stores;
 /// <summary>DynamoDB <see cref="IRoleStore"/>. All roles share one partition ("role"), sk = roleId;
 /// the role name is promoted to <c>roleName</c> for the by-name lookup ("name" is a DynamoDB reserved
 /// word, so the attribute is renamed).</summary>
-public sealed class DynamoRoleStore(DynamoTable table, EnvPartitioner partitioner, ITombstoneWriter? tombstones = null) : IRoleStore
+public sealed class DynamoRoleStore(DynamoTable table, EnvPartitioner partitioner, IChangeWriter? tombstones = null) : IRoleStore
 {
     private const string Partition = "role";
 

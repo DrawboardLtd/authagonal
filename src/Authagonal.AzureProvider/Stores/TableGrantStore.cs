@@ -16,7 +16,7 @@ public sealed class TableGrantStore(
     TableClient grantsByExpiryTable,
     EnvPartitioner partitioner,
     ILogger<TableGrantStore> logger,
-    ITombstoneWriter? tombstoneWriter = null,
+    IChangeWriter? tombstoneWriter = null,
     IFieldCipher? fieldCipher = null) : IGrantStore
 {
     // Encrypts PersistedGrant.Data at rest — refresh-token/auth-code/device/PAR payloads carry the

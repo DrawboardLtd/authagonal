@@ -23,7 +23,7 @@ public sealed class DynamoUserStore(
     DynamoTable? userFirstNames,
     DynamoTable? userLastNames,
     EnvPartitioner partitioner,
-    ITombstoneWriter? tombstones = null) : IUserStore
+    IChangeWriter? tombstones = null) : IUserStore
 {
     private const string Profile = "profile";
     private const string Lookup = "lookup";

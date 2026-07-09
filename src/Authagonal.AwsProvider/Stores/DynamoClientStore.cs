@@ -11,7 +11,7 @@ namespace Authagonal.AwsProvider.Stores;
 /// DynamoDB <see cref="IClientStore"/>. One item per client: pk = client_id, sk = "config", with the
 /// whole <see cref="OAuthClient"/> stored as a JSON document attribute (no field is queried server-side).
 /// </summary>
-public sealed class DynamoClientStore(DynamoTable table, EnvPartitioner partitioner, ITombstoneWriter? tombstones = null) : IClientStore
+public sealed class DynamoClientStore(DynamoTable table, EnvPartitioner partitioner, IChangeWriter? tombstones = null) : IClientStore
 {
     private const string ConfigSk = "config";
 

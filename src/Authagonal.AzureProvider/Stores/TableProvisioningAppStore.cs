@@ -7,7 +7,7 @@ using Authagonal.AzureProvider.Entities;
 
 namespace Authagonal.AzureProvider.Stores;
 
-public sealed class TableProvisioningAppStore(TableClient appsTable, EnvPartitioner partitioner, ITombstoneWriter? tombstoneWriter = null, IFieldCipher? fieldCipher = null) : IProvisioningAppStore
+public sealed class TableProvisioningAppStore(TableClient appsTable, EnvPartitioner partitioner, IChangeWriter? tombstoneWriter = null, IFieldCipher? fieldCipher = null) : IProvisioningAppStore
 {
     // ApiKey is the outbound Bearer credential the orchestrator sends to a provisioning app's callback —
     // reversible, so it's encrypted at rest (not hashed): encrypt on write, decrypt on read. Passthrough

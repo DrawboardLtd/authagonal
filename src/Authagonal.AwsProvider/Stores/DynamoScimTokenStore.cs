@@ -10,7 +10,7 @@ namespace Authagonal.AwsProvider.Stores;
 /// <summary>DynamoDB <see cref="IScimTokenStore"/>. Dual index: a forward row (pk = tokenHash,
 /// sk = "lookup") for O(1) auth, and a reverse row (pk = clientId, sk = "scimtoken|{tokenId}") to list
 /// by client. Both carry the full token document and are kept in sync.</summary>
-public sealed class DynamoScimTokenStore(DynamoTable table, EnvPartitioner partitioner, ITombstoneWriter? tombstones = null) : IScimTokenStore
+public sealed class DynamoScimTokenStore(DynamoTable table, EnvPartitioner partitioner, IChangeWriter? tombstones = null) : IScimTokenStore
 {
     private const string Lookup = "lookup";
     private const string TokenPrefix = "scimtoken|";

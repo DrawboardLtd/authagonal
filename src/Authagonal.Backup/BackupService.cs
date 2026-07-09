@@ -170,6 +170,11 @@ public sealed class BackupService(TableServiceClient serviceClient, IBackupTarge
 
             await foreach (var entity in pages)
             {
+                // Upsert entries share this change-log table (Op="U") but are not deletes — the data-table
+                // scan captures upserts. Only Op="D" (and legacy rows written before the Op column) belong
+                // in the tombstone file; emitting a "U" here would delete a live row on restore.
+                if (entity.GetString("Op") == "U") continue;
+
                 if (writer is null && !options.DryRun)
                 {
                     var ext = options.Gzip ? ".jsonl.gz" : ".jsonl";

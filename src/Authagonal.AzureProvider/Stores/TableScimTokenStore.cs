@@ -7,7 +7,7 @@ using Authagonal.AzureProvider.Entities;
 
 namespace Authagonal.AzureProvider.Stores;
 
-public sealed class TableScimTokenStore(TableClient scimTokensTable, EnvPartitioner partitioner, ITombstoneWriter? tombstoneWriter = null) : IScimTokenStore
+public sealed class TableScimTokenStore(TableClient scimTokensTable, EnvPartitioner partitioner, IChangeWriter? tombstoneWriter = null) : IScimTokenStore
 {
     public async Task<ScimToken?> FindByHashAsync(string tokenHash, CancellationToken ct = default)
     {

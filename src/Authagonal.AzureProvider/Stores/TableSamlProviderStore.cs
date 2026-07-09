@@ -7,7 +7,7 @@ using Authagonal.AzureProvider.Entities;
 
 namespace Authagonal.AzureProvider.Stores;
 
-public sealed class TableSamlProviderStore(TableClient samlProvidersTable, EnvPartitioner partitioner, ITombstoneWriter? tombstoneWriter = null) : ISamlProviderStore
+public sealed class TableSamlProviderStore(TableClient samlProvidersTable, EnvPartitioner partitioner, IChangeWriter? tombstoneWriter = null) : ISamlProviderStore
 {
     public async Task<SamlProviderConfig?> GetAsync(string connectionId, CancellationToken ct = default)
     {

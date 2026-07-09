@@ -9,7 +9,7 @@ namespace Authagonal.AwsProvider.Stores;
 
 /// <summary>DynamoDB <see cref="ISsoDomainStore"/>. pk = lower-cased domain, sk = "mapping"; the
 /// connection id is promoted to an attribute for <see cref="DeleteByConnectionAsync"/>.</summary>
-public sealed class DynamoSsoDomainStore(DynamoTable table, EnvPartitioner partitioner, ITombstoneWriter? tombstones = null) : ISsoDomainStore
+public sealed class DynamoSsoDomainStore(DynamoTable table, EnvPartitioner partitioner, IChangeWriter? tombstones = null) : ISsoDomainStore
 {
     private const string MappingSk = "mapping";
 

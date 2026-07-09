@@ -20,7 +20,7 @@ public sealed class TableUserStore(
     TableClient? userFirstNamesTable,
     TableClient? userLastNamesTable,
     EnvPartitioner partitioner,
-    ITombstoneWriter? tombstoneWriter = null,
+    IChangeWriter? tombstoneWriter = null,
     IFieldCipher? fieldCipher = null,
     IIndexTokenizer? indexTokenizer = null,
     TableClient? userEmailDomainsTable = null,

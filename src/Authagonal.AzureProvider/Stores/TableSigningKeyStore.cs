@@ -7,7 +7,7 @@ using Authagonal.AzureProvider.Entities;
 
 namespace Authagonal.AzureProvider.Stores;
 
-public sealed class TableSigningKeyStore(TableClient signingKeysTable, EnvPartitioner partitioner, ITombstoneWriter? tombstoneWriter = null) : ISigningKeyStore
+public sealed class TableSigningKeyStore(TableClient signingKeysTable, EnvPartitioner partitioner, IChangeWriter? tombstoneWriter = null) : ISigningKeyStore
 {
     public async Task<SigningKeyInfo?> GetActiveKeyAsync(CancellationToken ct = default)
     {

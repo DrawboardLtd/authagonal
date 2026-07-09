@@ -30,7 +30,7 @@ public sealed class DynamoGrantStore(
     DynamoTable grantsByExpiry,
     EnvPartitioner partitioner,
     ILogger<DynamoGrantStore> logger,
-    ITombstoneWriter? tombstones = null,
+    IChangeWriter? tombstones = null,
     IFieldCipher? fieldCipher = null) : IGrantStore
 {
     private const string GrantSk = "grant";

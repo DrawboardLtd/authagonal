@@ -7,7 +7,7 @@ using Authagonal.AzureProvider.Entities;
 
 namespace Authagonal.AzureProvider.Stores;
 
-public sealed class TableRoleStore(TableClient rolesTable, EnvPartitioner partitioner, ITombstoneWriter? tombstoneWriter = null) : IRoleStore
+public sealed class TableRoleStore(TableClient rolesTable, EnvPartitioner partitioner, IChangeWriter? tombstoneWriter = null) : IRoleStore
 {
     public async Task<Role?> GetAsync(string roleId, CancellationToken ct = default)
     {

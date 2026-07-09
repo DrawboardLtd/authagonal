@@ -7,7 +7,7 @@ using Authagonal.AzureProvider.Entities;
 
 namespace Authagonal.AzureProvider.Stores;
 
-public sealed class TableScopeStore(TableClient scopesTable, EnvPartitioner partitioner, ITombstoneWriter? tombstoneWriter = null) : IScopeStore
+public sealed class TableScopeStore(TableClient scopesTable, EnvPartitioner partitioner, IChangeWriter? tombstoneWriter = null) : IScopeStore
 {
     public async Task<Scope?> GetAsync(string name, CancellationToken ct = default)
     {

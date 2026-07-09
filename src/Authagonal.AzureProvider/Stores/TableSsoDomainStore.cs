@@ -7,7 +7,7 @@ using Authagonal.AzureProvider.Entities;
 
 namespace Authagonal.AzureProvider.Stores;
 
-public sealed class TableSsoDomainStore(TableClient ssoDomainsTable, EnvPartitioner partitioner, ITombstoneWriter? tombstoneWriter = null) : ISsoDomainStore
+public sealed class TableSsoDomainStore(TableClient ssoDomainsTable, EnvPartitioner partitioner, IChangeWriter? tombstoneWriter = null) : ISsoDomainStore
 {
     public async Task<SsoDomain?> GetAsync(string domain, CancellationToken ct = default)
     {

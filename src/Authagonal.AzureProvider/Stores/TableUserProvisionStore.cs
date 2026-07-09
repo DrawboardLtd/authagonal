@@ -7,7 +7,7 @@ using Authagonal.AzureProvider.Entities;
 
 namespace Authagonal.AzureProvider.Stores;
 
-public sealed class TableUserProvisionStore(TableClient tableClient, EnvPartitioner partitioner, ITombstoneWriter? tombstoneWriter = null) : IUserProvisionStore
+public sealed class TableUserProvisionStore(TableClient tableClient, EnvPartitioner partitioner, IChangeWriter? tombstoneWriter = null) : IUserProvisionStore
 {
     public async Task<IReadOnlyList<UserProvision>> GetByUserAsync(string userId, CancellationToken ct = default)
     {

@@ -7,7 +7,7 @@ using Authagonal.AzureProvider.Entities;
 
 namespace Authagonal.AzureProvider.Stores;
 
-public sealed class TableOidcProviderStore(TableClient oidcProvidersTable, EnvPartitioner partitioner, ITombstoneWriter? tombstoneWriter = null) : IOidcProviderStore
+public sealed class TableOidcProviderStore(TableClient oidcProvidersTable, EnvPartitioner partitioner, IChangeWriter? tombstoneWriter = null) : IOidcProviderStore
 {
     public async Task<OidcProviderConfig?> GetAsync(string connectionId, CancellationToken ct = default)
     {

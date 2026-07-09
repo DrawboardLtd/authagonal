@@ -8,7 +8,7 @@ using Authagonal.Core.Stores;
 namespace Authagonal.AwsProvider.Stores;
 
 /// <summary>DynamoDB <see cref="IProvisioningAppStore"/>. All apps share one partition ("app"), sk = appId.</summary>
-public sealed class DynamoProvisioningAppStore(DynamoTable table, EnvPartitioner partitioner, ITombstoneWriter? tombstones = null) : IProvisioningAppStore
+public sealed class DynamoProvisioningAppStore(DynamoTable table, EnvPartitioner partitioner, IChangeWriter? tombstones = null) : IProvisioningAppStore
 {
     private const string Partition = "app";
 

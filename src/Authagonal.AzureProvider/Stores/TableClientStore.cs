@@ -7,7 +7,7 @@ using Authagonal.AzureProvider.Entities;
 
 namespace Authagonal.AzureProvider.Stores;
 
-public sealed class TableClientStore(TableClient clientsTable, EnvPartitioner partitioner, ITombstoneWriter? tombstoneWriter = null) : IClientStore
+public sealed class TableClientStore(TableClient clientsTable, EnvPartitioner partitioner, IChangeWriter? tombstoneWriter = null) : IClientStore
 {
     public async Task<OAuthClient?> GetAsync(string clientId, CancellationToken ct = default)
     {
