@@ -102,6 +102,17 @@ public sealed class TableUserStore(
             ? batch.AddRange(NamePrefixesOf(normalizedName))
             : null;
 
+    // Change-log capture for incremental backups: the upsert-side mirror of the tombstone (delete) writes,
+    // for the backed-up Users-family tables (Users, UserEmails, UserFirstNames, UserLastNames, UserLogins,
+    // UserExternalIds). No-op when no writer is wired. Login-state-only updates (RecordSuccessful/
+    // FailedLoginAsync) are deliberately NOT logged: they are the hot path and carry low-value fields
+    // (LastLoginAt, lockout counters), so their backup recency rides on the periodic full-scan backstop.
+    private Task LogUpsertAsync(string changeTable, string pk, string rk, CancellationToken ct)
+        => tombstoneWriter?.WriteUpsertAsync(changeTable, pk, rk, ct) ?? Task.CompletedTask;
+
+    private Task LogUpsertBatchAsync(string changeTable, IEnumerable<(string PartitionKey, string RowKey)> keys, CancellationToken ct)
+        => tombstoneWriter?.WriteUpsertBatchAsync(changeTable, keys, ct) ?? Task.CompletedTask;
+
     private static string? Normalize(string? name)
     {
         if (string.IsNullOrWhiteSpace(name)) return null;
@@ -302,10 +313,11 @@ public sealed class TableUserStore(
         return prefixes;
     }
 
-    // Name-index write/delete over prefix tokens reserved via ReserveNameTokens: non-null exactly when
+    // Name-index write over prefix tokens reserved via ReserveNameTokens: non-null exactly when
     // tokenization is on (a null token list selects the legacy plaintext scheme, matching the old
-    // _indexTokenized branch — the reservation helper encodes that gate).
-    private async Task WriteNameIndexAsync(TableClient table, IReadOnlyList<string>? tokens, string normalizedName, string userId, CancellationToken ct)
+    // _indexTokenized branch, the reservation helper encodes that gate). changeTable names the logical
+    // table ("UserFirstNames"/"UserLastNames") whose upserts are captured to the change-log.
+    private async Task WriteNameIndexAsync(TableClient table, IReadOnlyList<string>? tokens, string changeTable, string normalizedName, string userId, CancellationToken ct)
     {
         if (tokens is not null)
         {
@@ -314,11 +326,13 @@ public sealed class TableUserStore(
             // on every create/update and every backfilled user's reindex.
             await Task.WhenAll(tokens.Select(token =>
                 table.UpsertEntityAsync(new TableEntity(_partitioner.PK(token), userId) { ["UserId"] = userId }, TableUpdateMode.Replace, ct)));
+            await LogUpsertBatchAsync(changeTable, tokens.Select(t => (_partitioner.PK(t), userId)), ct);
             return;
         }
         var pk = _partitioner.PK(UserFirstNameEntity.GetPartitionKey(normalizedName));
         var rk = UserFirstNameEntity.MakeRowKey(normalizedName, userId);
         await table.UpsertEntityAsync(new TableEntity(pk, rk) { ["UserId"] = userId }, TableUpdateMode.Replace, ct);
+        await LogUpsertAsync(changeTable, pk, rk, ct);
     }
 
     private async Task DeleteNameIndexAsync(TableClient table, IReadOnlyList<string>? tokens, string normalizedName, string userId, string tombstoneTable, CancellationToken ct)
@@ -546,6 +560,7 @@ public sealed class TableUserStore(
         await EncryptEntityAsync(userEntity, ct);
 
         await usersTable.AddEntityAsync(userEntity, ct);
+        await LogUpsertAsync("Users", userEntity.PartitionKey, userEntity.RowKey, ct);
         await WriteProfileIndexesAsync(user.NormalizedEmail, Normalize(user.FirstName), Normalize(user.LastName), user.Id, dropLegacy: false, ct);
     }
 
@@ -575,6 +590,7 @@ public sealed class TableUserStore(
         var emailEntity = UserEmailEntity.Create(normalizedEmail, userId);
         emailEntity.PartitionKey = emailPk;
         await userEmailsTable.UpsertEntityAsync(emailEntity, TableUpdateMode.Replace, ct);
+        await LogUpsertAsync("UserEmails", emailPk, UserEmailEntity.LookupRowKey, ct);
         if (dropLegacy && _indexTokenized)
         {
             var plainPk = _partitioner.PK(normalizedEmail);
@@ -599,13 +615,13 @@ public sealed class TableUserStore(
         // Name prefix indexes.
         if (normalizedFirst is not null && userFirstNamesTable is not null)
         {
-            await WriteNameIndexAsync(userFirstNamesTable, firstTokens?.Invoke(), normalizedFirst, userId, ct);
+            await WriteNameIndexAsync(userFirstNamesTable, firstTokens?.Invoke(), "UserFirstNames", normalizedFirst, userId, ct);
             if (dropLegacy && _indexTokenized)
                 await TryDeleteRowAsync(userFirstNamesTable, _partitioner.PK(UserFirstNameEntity.GetPartitionKey(normalizedFirst)), UserFirstNameEntity.MakeRowKey(normalizedFirst, userId), "UserFirstNames", ct);
         }
         if (normalizedLast is not null && userLastNamesTable is not null)
         {
-            await WriteNameIndexAsync(userLastNamesTable, lastTokens?.Invoke(), normalizedLast, userId, ct);
+            await WriteNameIndexAsync(userLastNamesTable, lastTokens?.Invoke(), "UserLastNames", normalizedLast, userId, ct);
             if (dropLegacy && _indexTokenized)
                 await TryDeleteRowAsync(userLastNamesTable, _partitioner.PK(UserFirstNameEntity.GetPartitionKey(normalizedLast)), UserFirstNameEntity.MakeRowKey(normalizedLast, userId), "UserLastNames", ct);
         }
@@ -640,6 +656,7 @@ public sealed class TableUserStore(
             userEntity.PartitionKey = _partitioner.PK(userEntity.PartitionKey);
             await EncryptEntityAsync(userEntity, ct);
             await usersTable.UpsertEntityAsync(userEntity, TableUpdateMode.Replace, ct);
+            await LogUpsertAsync("Users", userEntity.PartitionKey, userEntity.RowKey, ct);
 
             // Every index key the changed fields need — new-side and old-side — in ONE tokenizer
             // round-trip, computed BEFORE any index write: a tokenizer throw here leaves every existing
@@ -678,6 +695,7 @@ public sealed class TableUserStore(
                 var emailEntity = UserEmailEntity.Create(newNormalizedEmail, user.Id);
                 emailEntity.PartitionKey = _partitioner.PK(newEmailToken!());
                 await userEmailsTable.UpsertEntityAsync(emailEntity, TableUpdateMode.Replace, ct);
+                await LogUpsertAsync("UserEmails", emailEntity.PartitionKey, emailEntity.RowKey, ct);
                 await DeleteEmailIndexAsync(oldNormalizedEmail, oldEmailToken!(), ct);
 
                 // Local-part prefix index: keyed on the bit before '@', so rewrite when THAT changed
@@ -703,12 +721,12 @@ public sealed class TableUserStore(
             // mid-call throw never leaves the user unsearchable by name. old≠new ⇒ distinct rows.
             if (firstChanged)
             {
-                if (newFirst is not null) await WriteNameIndexAsync(userFirstNamesTable!, newFirstTokens?.Invoke(), newFirst, user.Id, ct);
+                if (newFirst is not null) await WriteNameIndexAsync(userFirstNamesTable!, newFirstTokens?.Invoke(), "UserFirstNames", newFirst, user.Id, ct);
                 if (oldFirst is not null) await DeleteNameIndexAsync(userFirstNamesTable!, oldFirstTokens?.Invoke(), oldFirst, user.Id, "UserFirstNames", ct);
             }
             if (lastChanged)
             {
-                if (newLast is not null) await WriteNameIndexAsync(userLastNamesTable!, newLastTokens?.Invoke(), newLast, user.Id, ct);
+                if (newLast is not null) await WriteNameIndexAsync(userLastNamesTable!, newLastTokens?.Invoke(), "UserLastNames", newLast, user.Id, ct);
                 if (oldLast is not null) await DeleteNameIndexAsync(userLastNamesTable!, oldLastTokens?.Invoke(), oldLast, user.Id, "UserLastNames", ct);
             }
         }
@@ -787,6 +805,7 @@ public sealed class TableUserStore(
         // 1. Re-encrypt the profile in place (plaintext → ciphertext under the current cipher; idempotent).
         await EncryptEntityAsync(entity, ct);
         await usersTable.UpsertEntityAsync(entity, TableUpdateMode.Replace, ct);
+        await LogUpsertAsync("Users", entity.PartitionKey, entity.RowKey, ct);
 
         // 2-4. Rewrite the profile-derived indexes (email lookup, domain, name prefixes) under the current
         //       keys, dropping any legacy plaintext-keyed rows. Shared with CreateAsync (dropLegacy:false).
@@ -834,6 +853,7 @@ public sealed class TableUserStore(
             await userExternalIdsTable.UpsertEntityAsync(
                 new UserExternalIdEntity { PartitionKey = tokenPk, RowKey = UserExternalIdEntity.LookupRowKey, UserId = row.UserId },
                 TableUpdateMode.Replace, ct);
+            await LogUpsertAsync("UserExternalIds", tokenPk, UserExternalIdEntity.LookupRowKey, ct);
             await TryDeleteExternalIdAsync(row.PartitionKey, ct);
         }
         return count;
@@ -886,6 +906,7 @@ public sealed class TableUserStore(
             };
             await EncryptLoginAsync(moved, ct);
             await userLoginsTable.UpsertEntityAsync(moved, TableUpdateMode.Replace, ct);  // write new first
+            await LogUpsertAsync("UserLogins", moved.PartitionKey, moved.RowKey, ct);
             await TryDeleteLoginAsync(row.PartitionKey, row.RowKey, ct);                  // then drop legacy
         }
         return count;
@@ -1203,6 +1224,7 @@ public sealed class TableUserStore(
         var entity = UserExternalIdEntity.Create(clientId, externalId, userId);
         entity.PartitionKey = await ExternalIdIndexPkAsync(clientId, externalId, ct);
         await userExternalIdsTable.UpsertEntityAsync(entity, TableUpdateMode.Replace, ct);
+        await LogUpsertAsync("UserExternalIds", entity.PartitionKey, UserExternalIdEntity.LookupRowKey, ct);
     }
 
     public async Task RemoveExternalIdAsync(string userId, string clientId, string externalId, CancellationToken ct = default)
@@ -1264,6 +1286,7 @@ public sealed class TableUserStore(
 
         var forward = UserLoginEntity.FromModelForward(login);
         forward.PartitionKey = _partitioner.PK(token);           // tokenized lookup key
+
         var reverse = UserLoginEntity.FromModelReverse(login);
         reverse.PartitionKey = _partitioner.PK(login.UserId);
         reverse.RowKey = LoginReverseRk(token);                  // "login|{token}"
@@ -1279,6 +1302,8 @@ public sealed class TableUserStore(
 
         await userLoginsTable.UpsertEntityAsync(forward, TableUpdateMode.Replace, ct);
         await userLoginsTable.UpsertEntityAsync(reverse, TableUpdateMode.Replace, ct);
+        await LogUpsertAsync("UserLogins", forward.PartitionKey, forward.RowKey, ct);
+        await LogUpsertAsync("UserLogins", reverse.PartitionKey, reverse.RowKey, ct);
     }
 
     public async Task RemoveLoginAsync(string userId, string provider, string providerKey, CancellationToken ct = default)
