@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.IO.Compression;
+using System.Runtime.CompilerServices;
 using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -49,17 +50,18 @@ public sealed class BackupService(TableServiceClient serviceClient, IBackupTarge
 
         long totalEntities = 0;
 
+        // Incremental reads for change-logged tables come from the change-log (physically the Tombstones
+        // table), not a Timestamp scan of the live table. Opt-in: null means all-scan (the caller passes
+        // BackupDefaults.ChangeLoggedTables to activate). Defaulting OFF keeps shipping the mechanism inert
+        // until a deliberate flip, so a deploy can't silently miss rows changed by pre-capture code.
+        var changeLogged = options.ChangeLoggedTables ?? (IReadOnlySet<string>)new HashSet<string>();
+        var changeLogClient = serviceClient.GetTableClient(prefix + "Tombstones");
+
         foreach (var tableName in tables)
         {
             var physicalName = prefix + tableName;
             var tableClient = serviceClient.GetTableClient(physicalName);
             var tableStart = Stopwatch.StartNew();
-
-            string? filter = null;
-            if (watermark.HasValue)
-            {
-                filter = $"Timestamp gt datetime'{watermark.Value:O}'";
-            }
 
             long count = 0;
             string? fileName = null;
@@ -70,7 +72,20 @@ public sealed class BackupService(TableServiceClient serviceClient, IBackupTarge
 
             try
             {
-                var pages = tableClient.QueryAsync<TableEntity>(filter: filter, maxPerPage: 1000, cancellationToken: ct);
+                // Incremental read for a change-logged table: enumerate its Op="U" change-log entries since
+                // the watermark and point-read each live row, rather than scanning the whole table on the
+                // unindexed Timestamp column. Full backups (and tables still on the scan path) scan. Deletes
+                // are captured separately by the tombstone pass below.
+                IAsyncEnumerable<TableEntity> pages;
+                if (watermark.HasValue && changeLogged.Contains(tableName))
+                {
+                    pages = ReadUpsertsViaChangeLogAsync(changeLogClient, tableClient, tableName, watermark.Value, ct);
+                }
+                else
+                {
+                    var filter = watermark.HasValue ? $"Timestamp gt datetime'{watermark.Value:O}'" : null;
+                    pages = tableClient.QueryAsync<TableEntity>(filter: filter, maxPerPage: 1000, cancellationToken: ct);
+                }
 
                 await foreach (var entity in pages)
                 {
@@ -151,6 +166,36 @@ public sealed class BackupService(TableServiceClient serviceClient, IBackupTarge
         }
 
         return manifest;
+    }
+
+    // Enumerate a change-logged table's live rows that changed since the watermark, via the change-log:
+    // read its Op="U" entries (PK = logical table name, RK = "{pk}|{rk}") and point-read each row. A row
+    // deleted after its upsert 404s and is skipped — that delete is recorded by the tombstone pass.
+    private static async IAsyncEnumerable<TableEntity> ReadUpsertsViaChangeLogAsync(
+        TableClient changeLog, TableClient dataTable, string tableName, DateTimeOffset watermark,
+        [EnumeratorCancellation] CancellationToken ct)
+    {
+        var filter = $"PartitionKey eq '{tableName}' and Op eq 'U' and Timestamp gt datetime'{watermark:O}'";
+        await foreach (var logRow in changeLog.QueryAsync<TableEntity>(filter: filter, cancellationToken: ct))
+        {
+            // RK = "{pk}|{rk}" — split on the FIRST '|' (matches the tombstone-file key convention).
+            var composite = logRow.RowKey;
+            var pipe = composite.IndexOf('|');
+            if (pipe < 0) continue;
+            var pk = composite[..pipe];
+            var rk = composite[(pipe + 1)..];
+
+            TableEntity? live = null;
+            try
+            {
+                live = (await dataTable.GetEntityAsync<TableEntity>(pk, rk, cancellationToken: ct)).Value;
+            }
+            catch (RequestFailedException ex) when (ex.Status == 404)
+            {
+                // Deleted (or table gone) since the upsert was logged; the tombstone pass records the delete.
+            }
+            if (live is not null) yield return live;
+        }
     }
 
     private async Task<long> BackupTombstonesAsync(string backupId, string prefix, DateTimeOffset watermark, CancellationToken ct)

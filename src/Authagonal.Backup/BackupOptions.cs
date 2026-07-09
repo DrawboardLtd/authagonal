@@ -34,4 +34,11 @@ public sealed class BackupOptions
     /// itself encrypted/access-controlled. (Vault Transit hosts keep no private key in the table.)
     /// </summary>
     public bool IncludeSigningKeys { get; set; }
+
+    /// <summary>
+    /// Tables whose incremental backup reads from the change-log instead of scanning the live table. Null
+    /// (and empty) mean all-scan; pass <see cref="BackupDefaults.ChangeLoggedTables"/> to activate the
+    /// change-log path for the eligible tables. Opt-in so the mechanism ships inert until a deliberate flip.
+    /// </summary>
+    public IReadOnlySet<string>? ChangeLoggedTables { get; set; }
 }

@@ -29,6 +29,7 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\Authagonal.Core\Authagonal.Core.csproj" />
     <ProjectReference Include="..\..\src\Authagonal.AzureProvider\Authagonal.AzureProvider.csproj" />
+    <ProjectReference Include="..\..\src\Authagonal.Backup\Authagonal.Backup.csproj" />
     <ProjectReference Include="..\..\src\Authagonal.Server\Authagonal.Server.csproj" />
   </ItemGroup>
 
