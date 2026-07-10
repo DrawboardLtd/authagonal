@@ -11,6 +11,13 @@ public sealed class BackupManifest
     public DateTimeOffset? Watermark { get; set; }
     public string? ParentBackupId { get; set; }
     public Dictionary<string, TableBackupInfo> Tables { get; set; } = new();
+
+    /// <summary>
+    /// Tables this run read via the change-log instead of a Timestamp scan. Null or empty means the run
+    /// had full scan coverage (a full backup, a plain scan incremental, or a backstop scan) — which older
+    /// manifests, written before this property existed, correctly deserialize to.
+    /// </summary>
+    public List<string>? ChangeLogTables { get; set; }
     public long TombstoneCount { get; set; }
     public long TotalEntities { get; set; }
     public double DurationSeconds { get; set; }

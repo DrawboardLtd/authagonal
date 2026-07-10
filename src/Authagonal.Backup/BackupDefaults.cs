@@ -34,4 +34,17 @@ public static class BackupDefaults
     {
         "UserEmails", "UserFirstNames", "UserLastNames", "UserLogins", "UserExternalIds",
     };
+
+    /// <summary>
+    /// <see cref="ChangeLoggedTables"/> plus Users — the biggest table, and the whole point of the
+    /// optimization. Users' profile upserts ARE change-log-captured, but its login-state writes
+    /// (RecordSuccessful/FailedLogin) deliberately are not (hot-path, low-value fields), so this set is
+    /// only safe when the caller ALSO runs a periodic full-scan backstop: an incremental with
+    /// <see cref="BackupOptions.WatermarkOverride"/> set to the last full-coverage scan and the
+    /// change-log path off. Without the backstop, login-state changes never reach a backup.
+    /// </summary>
+    public static readonly IReadOnlySet<string> ChangeLoggedTablesWithUsers = new HashSet<string>(StringComparer.Ordinal)
+    {
+        "Users", "UserEmails", "UserFirstNames", "UserLastNames", "UserLogins", "UserExternalIds",
+    };
 }

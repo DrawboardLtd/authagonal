@@ -41,4 +41,13 @@ public sealed class BackupOptions
     /// change-log path for the eligible tables. Opt-in so the mechanism ships inert until a deliberate flip.
     /// </summary>
     public IReadOnlySet<string>? ChangeLoggedTables { get; set; }
+
+    /// <summary>
+    /// When set (with <see cref="Incremental"/>), use this watermark for the run instead of the target's
+    /// stored one. This is how the periodic full-scan backstop works: pass the timestamp of the last
+    /// full-coverage scan (with <see cref="ChangeLoggedTables"/> unset) and the run re-scans the whole
+    /// window on the Timestamp column, catching rows the change-log never captured — login-state writes,
+    /// non-store writers, pre-capture pods during a deploy. Ignored for full (non-incremental) backups.
+    /// </summary>
+    public DateTimeOffset? WatermarkOverride { get; set; }
 }

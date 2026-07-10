@@ -67,10 +67,7 @@ public sealed class MergeService(IBackupSource source)
             // Apply tombstones
             if (tombstones.TryGetValue(tableName, out var tableTombstones))
             {
-                foreach (var key in tableTombstones)
-                {
-                    entities.Remove(key);
-                }
+                ApplyTombstones(entities, tableTombstones);
             }
 
             if (entities.Count == 0) continue;
@@ -142,10 +139,7 @@ public sealed class MergeService(IBackupSource source)
 
             if (tombstones.TryGetValue(tableName, out var tableTombstones))
             {
-                foreach (var key in tableTombstones)
-                {
-                    entities.Remove(key);
-                }
+                ApplyTombstones(entities, tableTombstones);
             }
 
             if (entities.Count == 0) continue;
@@ -160,6 +154,34 @@ public sealed class MergeService(IBackupSource source)
             ms.Position = 0;
 
             await onTable(tableName, ms);
+        }
+    }
+
+    // Apply a delete only when it postdates the captured row. Incrementals are pooled and deletes
+    // applied after all upserts, so a key deleted early in the window and recreated later has both a
+    // tombstone and a live capture — the old unconditional Remove dropped the recreated row from the
+    // merged full. Equal timestamps remove (a row can't be deleted before it was written). A tombstone
+    // without DeletedAt (legacy) or a row without a parseable Timestamp falls back to removing.
+    private static void ApplyTombstones(
+        Dictionary<(string PK, string RK), string> entities,
+        Dictionary<(string PK, string RK), DateTimeOffset?> tableTombstones)
+    {
+        foreach (var (key, deletedAt) in tableTombstones)
+        {
+            if (deletedAt is null || !entities.TryGetValue(key, out var line))
+            {
+                entities.Remove(key);
+                continue;
+            }
+
+            using var doc = JsonDocument.Parse(line);
+            var recreatedAfterDelete =
+                doc.RootElement.TryGetProperty("Timestamp", out var tsProp) &&
+                tsProp.ValueKind == JsonValueKind.String &&
+                DateTimeOffset.TryParse(tsProp.GetString(), out var ts) &&
+                ts > deletedAt.Value;
+
+            if (!recreatedAfterDelete) entities.Remove(key);
         }
     }
 
@@ -207,10 +229,10 @@ public sealed class MergeService(IBackupSource source)
         return entities;
     }
 
-    private async Task<Dictionary<string, HashSet<(string PK, string RK)>>> LoadTombstonesAsync(
+    private async Task<Dictionary<string, Dictionary<(string PK, string RK), DateTimeOffset?>>> LoadTombstonesAsync(
         IReadOnlyList<string> incrementalBackupIds, CancellationToken ct)
     {
-        var tombstones = new Dictionary<string, HashSet<(string, string)>>();
+        var tombstones = new Dictionary<string, Dictionary<(string, string), DateTimeOffset?>>();
 
         foreach (var incrId in incrementalBackupIds)
         {
@@ -245,13 +267,26 @@ public sealed class MergeService(IBackupSource source)
                     var table = doc.RootElement.GetProperty("Table").GetString()!;
                     var pk = doc.RootElement.GetProperty("PartitionKey").GetString()!;
                     var rk = doc.RootElement.GetProperty("RowKey").GetString()!;
+                    DateTimeOffset? deletedAt = null;
+                    if (doc.RootElement.TryGetProperty("DeletedAt", out var deletedAtProp) &&
+                        deletedAtProp.ValueKind == JsonValueKind.String &&
+                        DateTimeOffset.TryParse(deletedAtProp.GetString(), out var parsed))
+                    {
+                        deletedAt = parsed;
+                    }
 
                     if (!tombstones.TryGetValue(table, out var set))
                     {
-                        set = new HashSet<(string, string)>();
+                        set = new Dictionary<(string, string), DateTimeOffset?>();
                         tombstones[table] = set;
                     }
-                    set.Add((pk, rk));
+                    // Keep the LATEST delete per key; a null DeletedAt (legacy tombstone) means
+                    // "unconditionally remove", so it wins over any timestamped delete.
+                    if (!set.TryGetValue((pk, rk), out var existing) ||
+                        existing is not null && (deletedAt is null || deletedAt > existing))
+                    {
+                        set[(pk, rk)] = deletedAt;
+                    }
                 }
             }
         }

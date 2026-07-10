@@ -27,11 +27,13 @@ public sealed class BackupService(TableServiceClient serviceClient, IBackupTarge
             tables = tables.Where(t => !string.Equals(t, "SigningKeys", StringComparison.OrdinalIgnoreCase)).ToArray();
         var prefix = options.TablePrefix ?? "";
 
-        // Determine incremental watermark
+        // Determine incremental watermark. WatermarkOverride wins: a backstop scan passes the last
+        // full-coverage scan's timestamp so the run covers the whole window since it, not just the hour
+        // since the stored (per-run) watermark.
         DateTimeOffset? watermark = null;
         if (options.Incremental)
         {
-            watermark = await target.GetLastWatermarkAsync(ct);
+            watermark = options.WatermarkOverride ?? await target.GetLastWatermarkAsync(ct);
         }
 
         var backupStart = DateTimeOffset.UtcNow;
@@ -79,6 +81,7 @@ public sealed class BackupService(TableServiceClient serviceClient, IBackupTarge
                 IAsyncEnumerable<TableEntity> pages;
                 if (watermark.HasValue && changeLogged.Contains(tableName))
                 {
+                    (manifest.ChangeLogTables ??= []).Add(tableName);
                     pages = ReadUpsertsViaChangeLogAsync(changeLogClient, tableClient, tableName, watermark.Value, ct);
                 }
                 else
