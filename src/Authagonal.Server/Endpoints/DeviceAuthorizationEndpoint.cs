@@ -147,6 +147,11 @@ public static class DeviceAuthorizationEndpoint
             data.IsApproved = true;
             data.SubjectId = subjectId;
 
+            // GetAsync returns Key empty (the raw handle is never persisted — only its hash is the
+            // partition key), so it MUST be re-set before the store re-hashes it; an empty key would
+            // silently write the approval to the SHA-256("") partition and leave the device polling
+            // authorization_pending forever.
+            deviceGrant.Key = $"device:{deviceCode}";
             deviceGrant.Data = JsonSerializer.Serialize(data, AuthagonalJsonContext.Default.DeviceCodeData);
             deviceGrant.SubjectId = subjectId;
             await grantStore.StoreAsync(deviceGrant, ct);

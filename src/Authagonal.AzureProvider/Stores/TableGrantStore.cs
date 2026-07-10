@@ -32,6 +32,14 @@ public sealed class TableGrantStore(
 
     public async Task StoreAsync(PersistedGrant grant, CancellationToken ct = default)
     {
+        // GetAsync deliberately returns Key empty (only the hash is persisted), so a fetched grant
+        // re-stored without re-setting Key would silently land in the SHA-256("") partition. Fail
+        // loudly instead — callers must always know the plaintext handle they're writing under.
+        if (string.IsNullOrEmpty(grant.Key))
+            throw new ArgumentException(
+                "PersistedGrant.Key is empty. Grants read back from storage have no Key — set it explicitly before storing.",
+                nameof(grant));
+
         var hashedKey = HashKey(grant.Key);
         var protectedData = await ProtectAsync(grant.Data, ct);
 

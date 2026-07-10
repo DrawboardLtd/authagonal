@@ -168,12 +168,36 @@ public sealed class InMemoryGrantStore : IGrantStore
 
     public Task StoreAsync(PersistedGrant grant, CancellationToken ct = default)
     {
-        _grants[grant.Key] = grant;
+        // Mirror TableGrantStore: an empty Key means the caller re-stored a fetched grant without
+        // re-setting the handle — on the real store that write would land in the SHA-256("") partition.
+        if (string.IsNullOrEmpty(grant.Key))
+            throw new ArgumentException(
+                "PersistedGrant.Key is empty. Grants read back from storage have no Key — set it explicitly before storing.",
+                nameof(grant));
+
+        _grants[grant.Key] = Clone(grant, grant.Key);
         return Task.CompletedTask;
     }
 
     public Task<PersistedGrant?> GetAsync(string key, CancellationToken ct = default)
-        => Task.FromResult(_grants.GetValueOrDefault(key));
+    {
+        // Mirror TableGrantStore: the plaintext handle is never read back (Key comes back empty),
+        // and the caller gets a detached copy, not a live reference into the store.
+        var grant = _grants.GetValueOrDefault(key);
+        return Task.FromResult(grant is null ? null : Clone(grant, string.Empty));
+    }
+
+    private static PersistedGrant Clone(PersistedGrant grant, string key) => new()
+    {
+        Key = key,
+        Type = grant.Type,
+        SubjectId = grant.SubjectId,
+        ClientId = grant.ClientId,
+        Data = grant.Data,
+        CreatedAt = grant.CreatedAt,
+        ExpiresAt = grant.ExpiresAt,
+        ConsumedAt = grant.ConsumedAt,
+    };
 
     public Task ConsumeAsync(string key, CancellationToken ct = default)
     {

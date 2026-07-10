@@ -375,7 +375,7 @@ public sealed class ProtocolTokenService(
                     !successor.ConsumedAt.HasValue &&
                     successor.ExpiresAt > now)
                 {
-                    return await ReissueFromSuccessorAsync(successor, resources, ct);
+                    return await ReissueFromSuccessorAsync(successor, data.SuccessorKey, resources, ct);
                 }
             }
 
@@ -432,6 +432,11 @@ public sealed class ProtocolTokenService(
             freshSubject, client, data.Scopes, data.Resources, originalCreatedAt, ct);
 
         data.SuccessorKey = newRefreshToken;
+        // GetAsync returns Key empty (the raw handle is never persisted — only its hash is the
+        // partition key), so it MUST be re-set before the store re-hashes it. An empty key writes
+        // the consumed-marker to the SHA-256("") partition instead of the real row, which silently
+        // disables rotation: the old token replays forever and replay revocation never fires.
+        grant.Key = refreshToken;
         grant.ConsumedAt = now;
         grant.Data = JsonSerializer.Serialize(data, ProtocolJsonContext.Default.RefreshTokenData);
         await grantStore.StoreAsync(grant, ct);
@@ -460,6 +465,7 @@ public sealed class ProtocolTokenService(
 
     private async Task<TokenResponse> ReissueFromSuccessorAsync(
         PersistedGrant successor,
+        string successorKey, // successor.Key is empty on grants read back from storage
         IEnumerable<string>? resources,
         CancellationToken ct)
     {
@@ -503,7 +509,7 @@ public sealed class ProtocolTokenService(
             AccessToken = accessToken,
             ExpiresIn = client.AccessTokenLifetimeSeconds,
             IdToken = idToken,
-            RefreshToken = successor.Key,
+            RefreshToken = successorKey,
             Scope = string.Join(' ', data.Scopes)
         };
     }
