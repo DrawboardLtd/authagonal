@@ -51,6 +51,57 @@ public sealed class TableUserStore(
     private readonly IIndexTokenizer _tokenizer = indexTokenizer ?? NullIndexTokenizer.Instance;
     private readonly bool _indexTokenized = indexTokenizer is not null;
 
+    // Collects every blind-index token one store operation needs (the email lookup key, domain key, and
+    // the name / email-local-part prefix sets) and computes them in a single TokenizeBatchAsync call —
+    // one Vault HMAC round-trip in Cloud — instead of one call per index. This batches token COMPUTATION
+    // only: callers keep their existing table write/delete ordering, so the write-before-delete
+    // guarantees are untouched. Usage: Add/AddRange everything up front, await RunAsync once, then read
+    // tokens through the returned accessors.
+    private sealed class TokenBatch(IIndexTokenizer tokenizer)
+    {
+        private readonly List<string> _values = [];
+        private IReadOnlyList<string>? _tokens;
+
+        public Func<string> Add(string value)
+        {
+            var i = _values.Count;
+            _values.Add(value);
+            return () => _tokens![i];
+        }
+
+        public Func<IReadOnlyList<string>> AddRange(IReadOnlyList<string> values)
+        {
+            var start = _values.Count;
+            var count = values.Count;
+            _values.AddRange(values);
+            return () =>
+            {
+                var slice = new string[count];
+                for (var i = 0; i < count; i++) slice[i] = _tokens![start + i];
+                return slice;
+            };
+        }
+
+        public async Task RunAsync(CancellationToken ct)
+            => _tokens = _values.Count == 0 ? [] : await tokenizer.TokenizeBatchAsync(_values, ct);
+    }
+
+    // Reserve the local-part prefix tokens for an email's local-prefix index write/delete; null when the
+    // index doesn't apply (table off, tokenization off, or no local part).
+    private Func<IReadOnlyList<string>>? ReserveLocalPrefixTokens(TokenBatch batch, string? normalizedEmail)
+    {
+        if (userEmailLocalPrefixesTable is null || !_indexTokenized) return null;
+        var local = LocalPartOf(normalizedEmail);
+        return local is null ? null : batch.AddRange(NamePrefixesOf(local));
+    }
+
+    // Reserve the prefix tokens for a name index write/delete; null when tokens aren't needed (no table,
+    // no name, or tokenization off — the legacy scheme derives its keys from the plaintext name).
+    private Func<IReadOnlyList<string>>? ReserveNameTokens(TokenBatch batch, TableClient? table, string? normalizedName)
+        => table is not null && normalizedName is not null && _indexTokenized
+            ? batch.AddRange(NamePrefixesOf(normalizedName))
+            : null;
+
     private static string? Normalize(string? name)
     {
         if (string.IsNullOrWhiteSpace(name)) return null;
@@ -76,11 +127,12 @@ public sealed class TableUserStore(
         }
     }
 
-    // Delete a normalized email's lookup row. Removes the tokenized key and, while tokenization is on, also
-    // the legacy plaintext key (a row written before backfill), so an email change/delete can't orphan either.
-    private async Task DeleteEmailIndexAsync(string normalizedEmail, CancellationToken ct)
+    // Delete a normalized email's lookup row (its token precomputed by the caller's TokenBatch). Removes
+    // the tokenized key and, while tokenization is on, also the legacy plaintext key (a row written before
+    // backfill), so an email change/delete can't orphan either.
+    private async Task DeleteEmailIndexAsync(string normalizedEmail, string emailToken, CancellationToken ct)
     {
-        var tokenPk = await EmailIndexPkAsync(normalizedEmail, ct);
+        var tokenPk = _partitioner.PK(emailToken);
         await TryDeleteEmailIndexAsync(tokenPk, ct);
         if (_indexTokenized)
         {
@@ -165,37 +217,29 @@ public sealed class TableUserStore(
         return string.IsNullOrEmpty(local) ? null : local;
     }
 
-    private async Task WriteEmailLocalPrefixIndexAsync(string? normalizedEmail, string userId, CancellationToken ct)
+    // Local-prefix index write/delete over tokens reserved via ReserveLocalPrefixTokens (whose null
+    // result encodes the "table off / tokenization off / no local part" gates — callers skip on null).
+    private async Task WriteEmailLocalPrefixIndexAsync(IReadOnlyList<string> tokens, string userId, CancellationToken ct)
     {
-        if (userEmailLocalPrefixesTable is null || !_indexTokenized) return;
-        var local = LocalPartOf(normalizedEmail);
-        if (local is null) return;
-        var tokens = await _tokenizer.TokenizeBatchAsync(NamePrefixesOf(local), ct);
         await Task.WhenAll(tokens.Select(token =>
-            userEmailLocalPrefixesTable.UpsertEntityAsync(
+            userEmailLocalPrefixesTable!.UpsertEntityAsync(
                 new TableEntity(_partitioner.PK(token), userId) { ["UserId"] = userId }, TableUpdateMode.Replace, ct)));
     }
 
-    private async Task DeleteEmailLocalPrefixIndexAsync(string? normalizedEmail, string userId, CancellationToken ct)
+    private async Task DeleteEmailLocalPrefixIndexAsync(IReadOnlyList<string> tokens, string userId, CancellationToken ct)
     {
-        if (userEmailLocalPrefixesTable is null || !_indexTokenized) return;
-        var local = LocalPartOf(normalizedEmail);
-        if (local is null) return;
-        var tokens = await _tokenizer.TokenizeBatchAsync(NamePrefixesOf(local), ct);
         foreach (var token in tokens)
-            await TryDeleteRowAsync(userEmailLocalPrefixesTable, _partitioner.PK(token), userId, "UserEmailLocalPrefixes", ct);
+            await TryDeleteRowAsync(userEmailLocalPrefixesTable!, _partitioner.PK(token), userId, "UserEmailLocalPrefixes", ct);
     }
 
-    private async Task<List<string>> SearchEmailLocalPrefixAsync(string prefix, int maxResults, CancellationToken ct)
+    // pk is the env-wrapped token PartitionKey precomputed by SearchAsync's batch; null encodes every
+    // "index not applicable" gate (table off, tokenization off, or lookup shorter than NamePrefixMin).
+    private async Task<List<string>> SearchEmailLocalPrefixAsync(string? pk, int maxResults, CancellationToken ct)
     {
-        if (userEmailLocalPrefixesTable is null || !_indexTokenized) return [];
-        var local = LocalPartOf(prefix) ?? prefix;
-        if (local.Length < NamePrefixMin) return [];
-        var lookup = local.Length > NamePrefixMax ? local[..NamePrefixMax] : local;
-        var pk = _partitioner.PK(await _tokenizer.TokenizeAsync(lookup, ct));
+        if (pk is null) return [];
         var ids = new List<string>();
         var seen = new HashSet<string>(StringComparer.Ordinal);
-        await foreach (var e in userEmailLocalPrefixesTable.QueryAsync<UserEmailLocalPrefixEntity>(
+        await foreach (var e in userEmailLocalPrefixesTable!.QueryAsync<UserEmailLocalPrefixEntity>(
             e => e.PartitionKey == pk, cancellationToken: ct).WithCancellation(ct))
         {
             if (seen.Add(e.UserId)) ids.Add(e.UserId);
@@ -204,22 +248,18 @@ public sealed class TableUserStore(
         return ids;
     }
 
-    private async Task WriteDomainIndexAsync(string? normalizedEmail, string userId, CancellationToken ct)
+    // Domain-index write/delete over a token reserved by the caller's TokenBatch (reserved only when the
+    // domain table is on and the email has a domain — callers skip on a null reservation).
+    private async Task WriteDomainIndexAsync(string domainToken, string userId, CancellationToken ct)
     {
-        if (userEmailDomainsTable is null) return;
-        var domain = UserEmailDomainEntity.DomainOf(normalizedEmail);
-        if (domain is null) return;
-        var pk = Bucketed(await DomainIndexPkAsync(domain, ct), userId);
+        var pk = Bucketed(_partitioner.PK(domainToken), userId);
         var entity = new UserEmailDomainEntity { PartitionKey = pk, RowKey = userId, UserId = userId };
-        await userEmailDomainsTable.UpsertEntityAsync(entity, TableUpdateMode.Replace, ct);
+        await userEmailDomainsTable!.UpsertEntityAsync(entity, TableUpdateMode.Replace, ct);
     }
 
-    private async Task DeleteDomainIndexAsync(string? normalizedEmail, string userId, CancellationToken ct)
+    private async Task DeleteDomainIndexAsync(string domain, string domainToken, string userId, CancellationToken ct)
     {
-        if (userEmailDomainsTable is null) return;
-        var domain = UserEmailDomainEntity.DomainOf(normalizedEmail);
-        if (domain is null) return;
-        var tokenPk = await DomainIndexPkAsync(domain, ct);
+        var tokenPk = _partitioner.PK(domainToken);
         await TryDeleteDomainAsync(Bucketed(tokenPk, userId), userId, ct); // current: bucketed
         await TryDeleteDomainAsync(tokenPk, userId, ct);                   // legacy: unbucketed (pre-bucketing rows)
         if (_indexTokenized)
@@ -262,11 +302,13 @@ public sealed class TableUserStore(
         return prefixes;
     }
 
-    private async Task WriteNameIndexAsync(TableClient table, string normalizedName, string userId, CancellationToken ct)
+    // Name-index write/delete over prefix tokens reserved via ReserveNameTokens: non-null exactly when
+    // tokenization is on (a null token list selects the legacy plaintext scheme, matching the old
+    // _indexTokenized branch — the reservation helper encodes that gate).
+    private async Task WriteNameIndexAsync(TableClient table, IReadOnlyList<string>? tokens, string normalizedName, string userId, CancellationToken ct)
     {
-        if (_indexTokenized)
+        if (tokens is not null)
         {
-            var tokens = await _tokenizer.TokenizeBatchAsync(NamePrefixesOf(normalizedName), ct);
             // Up to ~15 prefix rows per name. The upserts are independent (distinct PartitionKeys, no
             // shared state), so fire them concurrently instead of one blocking round-trip each — this is
             // on every create/update and every backfilled user's reindex.
@@ -279,11 +321,10 @@ public sealed class TableUserStore(
         await table.UpsertEntityAsync(new TableEntity(pk, rk) { ["UserId"] = userId }, TableUpdateMode.Replace, ct);
     }
 
-    private async Task DeleteNameIndexAsync(TableClient table, string normalizedName, string userId, string tombstoneTable, CancellationToken ct)
+    private async Task DeleteNameIndexAsync(TableClient table, IReadOnlyList<string>? tokens, string normalizedName, string userId, string tombstoneTable, CancellationToken ct)
     {
-        if (_indexTokenized)
+        if (tokens is not null)
         {
-            var tokens = await _tokenizer.TokenizeBatchAsync(NamePrefixesOf(normalizedName), ct);
             foreach (var token in tokens)
                 await TryDeleteRowAsync(table, _partitioner.PK(token), userId, tombstoneTable, ct);
             // Migration window: also remove any legacy row for this name (single, old-scheme row).
@@ -306,7 +347,9 @@ public sealed class TableUserStore(
     // Collect userIds whose name (in the given first/last table) starts with `prefix`. Off: legacy range
     // scan. Tokenized: exact-match on the prefix token (capped at NamePrefixMax), plus the legacy range scan
     // for migration-window rows not yet backfilled. Queries shorter than NamePrefixMin don't hit the index.
-    private async Task<List<string>> SearchNameIndexAsync(TableClient? table, string prefix, string prefixEnd, int maxResults, CancellationToken ct)
+    // tokenPk is the env-wrapped prefix-token PartitionKey precomputed by SearchAsync's batch (null when
+    // tokenization is off — the same set of inputs that gated the old _indexTokenized branch).
+    private async Task<List<string>> SearchNameIndexAsync(TableClient? table, string? tokenPk, string prefix, string prefixEnd, int maxResults, CancellationToken ct)
     {
         if (table is null || prefix.Length < NamePrefixMin) return [];
 
@@ -322,10 +365,8 @@ public sealed class TableUserStore(
             }
         }
 
-        if (_indexTokenized)
+        if (tokenPk is not null)
         {
-            var lookup = prefix.Length > NamePrefixMax ? prefix[..NamePrefixMax] : prefix;
-            var tokenPk = _partitioner.PK(await _tokenizer.TokenizeAsync(lookup, ct));
             await CollectAsync(table.QueryAsync<UserFirstNameEntity>(e => e.PartitionKey == tokenPk, cancellationToken: ct));
             if (ids.Count >= maxResults) return ids;
         }
@@ -519,8 +560,18 @@ public sealed class TableUserStore(
     private async Task WriteProfileIndexesAsync(
         string normalizedEmail, string? normalizedFirst, string? normalizedLast, string userId, bool dropLegacy, CancellationToken ct)
     {
+        // Every index key this write needs, computed in ONE tokenizer round-trip.
+        var batch = new TokenBatch(_tokenizer);
+        var emailToken = batch.Add(normalizedEmail);
+        var domain = userEmailDomainsTable is null ? null : UserEmailDomainEntity.DomainOf(normalizedEmail);
+        var domainToken = domain is null ? null : batch.Add(domain);
+        var localPrefixTokens = ReserveLocalPrefixTokens(batch, normalizedEmail);
+        var firstTokens = ReserveNameTokens(batch, userFirstNamesTable, normalizedFirst);
+        var lastTokens = ReserveNameTokens(batch, userLastNamesTable, normalizedLast);
+        await batch.RunAsync(ct);
+
         // Email lookup.
-        var emailPk = await EmailIndexPkAsync(normalizedEmail, ct);
+        var emailPk = _partitioner.PK(emailToken());
         var emailEntity = UserEmailEntity.Create(normalizedEmail, userId);
         emailEntity.PartitionKey = emailPk;
         await userEmailsTable.UpsertEntityAsync(emailEntity, TableUpdateMode.Replace, ct);
@@ -532,29 +583,29 @@ public sealed class TableUserStore(
         }
 
         // Email-domain index + email local-part prefix index.
-        await WriteDomainIndexAsync(normalizedEmail, userId, ct);
-        await WriteEmailLocalPrefixIndexAsync(normalizedEmail, userId, ct);
-        if (dropLegacy && _indexTokenized && userEmailDomainsTable is not null)
+        if (domainToken is not null)
         {
-            var domain = UserEmailDomainEntity.DomainOf(normalizedEmail);
-            if (domain is not null)
+            await WriteDomainIndexAsync(domainToken(), userId, ct);
+            if (dropLegacy && _indexTokenized)
             {
-                var plainDomPk = _partitioner.PK(domain);
-                if (!string.Equals(plainDomPk, await DomainIndexPkAsync(domain, ct), StringComparison.Ordinal))
+                var plainDomPk = _partitioner.PK(domain!);
+                if (!string.Equals(plainDomPk, _partitioner.PK(domainToken()), StringComparison.Ordinal))
                     await TryDeleteDomainAsync(plainDomPk, userId, ct);
             }
         }
+        if (localPrefixTokens is not null)
+            await WriteEmailLocalPrefixIndexAsync(localPrefixTokens(), userId, ct);
 
         // Name prefix indexes.
         if (normalizedFirst is not null && userFirstNamesTable is not null)
         {
-            await WriteNameIndexAsync(userFirstNamesTable, normalizedFirst, userId, ct);
+            await WriteNameIndexAsync(userFirstNamesTable, firstTokens?.Invoke(), normalizedFirst, userId, ct);
             if (dropLegacy && _indexTokenized)
                 await TryDeleteRowAsync(userFirstNamesTable, _partitioner.PK(UserFirstNameEntity.GetPartitionKey(normalizedFirst)), UserFirstNameEntity.MakeRowKey(normalizedFirst, userId), "UserFirstNames", ct);
         }
         if (normalizedLast is not null && userLastNamesTable is not null)
         {
-            await WriteNameIndexAsync(userLastNamesTable, normalizedLast, userId, ct);
+            await WriteNameIndexAsync(userLastNamesTable, lastTokens?.Invoke(), normalizedLast, userId, ct);
             if (dropLegacy && _indexTokenized)
                 await TryDeleteRowAsync(userLastNamesTable, _partitioner.PK(UserFirstNameEntity.GetPartitionKey(normalizedLast)), UserFirstNameEntity.MakeRowKey(normalizedLast, userId), "UserLastNames", ct);
         }
@@ -573,59 +624,92 @@ public sealed class TableUserStore(
 
             var oldNormalizedEmail = existing.Value.NormalizedEmail;
             var newNormalizedEmail = user.NormalizedEmail;
+            var emailChanged = !string.Equals(oldNormalizedEmail, newNormalizedEmail, StringComparison.Ordinal);
+            var localChanged = emailChanged && !string.Equals(LocalPartOf(oldNormalizedEmail), LocalPartOf(newNormalizedEmail), StringComparison.Ordinal);
+            var oldDomain = UserEmailDomainEntity.DomainOf(oldNormalizedEmail);
+            var newDomain = UserEmailDomainEntity.DomainOf(newNormalizedEmail);
+            var domainChanged = emailChanged && !string.Equals(oldDomain, newDomain, StringComparison.Ordinal);
+            var oldFirst = Normalize(existing.Value.FirstName);
+            var newFirst = Normalize(user.FirstName);
+            var firstChanged = userFirstNamesTable is not null && !string.Equals(oldFirst, newFirst, StringComparison.Ordinal);
+            var oldLast = Normalize(existing.Value.LastName);
+            var newLast = Normalize(user.LastName);
+            var lastChanged = userLastNamesTable is not null && !string.Equals(oldLast, newLast, StringComparison.Ordinal);
 
             var userEntity = UserEntity.FromModel(user);
             userEntity.PartitionKey = _partitioner.PK(userEntity.PartitionKey);
             await EncryptEntityAsync(userEntity, ct);
             await usersTable.UpsertEntityAsync(userEntity, TableUpdateMode.Replace, ct);
 
-            if (!string.Equals(oldNormalizedEmail, newNormalizedEmail, StringComparison.Ordinal))
+            // Every index key the changed fields need — new-side and old-side — in ONE tokenizer
+            // round-trip, computed BEFORE any index write: a tokenizer throw here leaves every existing
+            // lookup row intact, and the per-field write-before-delete ordering below is unchanged.
+            var batch = new TokenBatch(_tokenizer);
+            Func<string>? newEmailToken = null, oldEmailToken = null, newDomainToken = null, oldDomainToken = null;
+            Func<IReadOnlyList<string>>? newLocalTokens = null, oldLocalTokens = null;
+            if (emailChanged)
+            {
+                newEmailToken = batch.Add(newNormalizedEmail);
+                oldEmailToken = batch.Add(oldNormalizedEmail);
+                if (localChanged)
+                {
+                    newLocalTokens = ReserveLocalPrefixTokens(batch, newNormalizedEmail);
+                    oldLocalTokens = ReserveLocalPrefixTokens(batch, oldNormalizedEmail);
+                }
+                if (domainChanged && userEmailDomainsTable is not null)
+                {
+                    newDomainToken = newDomain is null ? null : batch.Add(newDomain);
+                    oldDomainToken = oldDomain is null ? null : batch.Add(oldDomain);
+                }
+            }
+            var newFirstTokens = firstChanged ? ReserveNameTokens(batch, userFirstNamesTable, newFirst) : null;
+            var oldFirstTokens = firstChanged ? ReserveNameTokens(batch, userFirstNamesTable, oldFirst) : null;
+            var newLastTokens = lastChanged ? ReserveNameTokens(batch, userLastNamesTable, newLast) : null;
+            var oldLastTokens = lastChanged ? ReserveNameTokens(batch, userLastNamesTable, oldLast) : null;
+            await batch.RunAsync(ct);
+
+            if (emailChanged)
             {
                 // Write the NEW email index first, then remove the old (tokenized + any legacy plaintext row).
-                // Write-before-delete: a throw between the two calls — e.g. a Vault HMAC hiccup while computing
-                // the new tokenized PK — must never strand the user with neither lookup (login-lockout). Old≠new
-                // here, so the PKs differ and the new write can't collide with the row we then delete. Mirrors
-                // ReindexUserAsync's "write current FIRST (no login gap), then drop legacy".
+                // Write-before-delete: a throw between the two calls must never strand the user with neither
+                // lookup (login-lockout). Old≠new here, so the PKs differ and the new write can't collide with
+                // the row we then delete. Mirrors ReindexUserAsync's "write current FIRST (no login gap), then
+                // drop legacy".
                 var emailEntity = UserEmailEntity.Create(newNormalizedEmail, user.Id);
-                emailEntity.PartitionKey = await EmailIndexPkAsync(newNormalizedEmail, ct);
+                emailEntity.PartitionKey = _partitioner.PK(newEmailToken!());
                 await userEmailsTable.UpsertEntityAsync(emailEntity, TableUpdateMode.Replace, ct);
-                await DeleteEmailIndexAsync(oldNormalizedEmail, ct);
+                await DeleteEmailIndexAsync(oldNormalizedEmail, oldEmailToken!(), ct);
 
                 // Local-part prefix index: keyed on the bit before '@', so rewrite when THAT changed
                 // (a@acme → a@other keeps it; alistair@acme → wendy@acme moves it). Independent of the
                 // domain check below — a same-domain local-part change still has to move the prefix rows.
                 // Write-before-delete as above.
-                if (!string.Equals(LocalPartOf(oldNormalizedEmail), LocalPartOf(newNormalizedEmail), StringComparison.Ordinal))
+                if (localChanged)
                 {
-                    await WriteEmailLocalPrefixIndexAsync(newNormalizedEmail, user.Id, ct);
-                    await DeleteEmailLocalPrefixIndexAsync(oldNormalizedEmail, user.Id, ct);
+                    if (newLocalTokens is not null) await WriteEmailLocalPrefixIndexAsync(newLocalTokens(), user.Id, ct);
+                    if (oldLocalTokens is not null) await DeleteEmailLocalPrefixIndexAsync(oldLocalTokens(), user.Id, ct);
                 }
 
                 // Domain index: only rewrite when the domain part actually changed (a@acme → b@acme keeps it).
                 // Same write-before-delete ordering.
-                if (!string.Equals(UserEmailDomainEntity.DomainOf(oldNormalizedEmail), UserEmailDomainEntity.DomainOf(newNormalizedEmail), StringComparison.Ordinal))
+                if (domainChanged)
                 {
-                    await WriteDomainIndexAsync(newNormalizedEmail, user.Id, ct);
-                    await DeleteDomainIndexAsync(oldNormalizedEmail, user.Id, ct);
+                    if (newDomainToken is not null) await WriteDomainIndexAsync(newDomainToken(), user.Id, ct);
+                    if (oldDomainToken is not null) await DeleteDomainIndexAsync(oldDomain!, oldDomainToken(), user.Id, ct);
                 }
             }
 
             // Names: write the new prefix rows before dropping the old (write-before-delete, as above) so a
             // mid-call throw never leaves the user unsearchable by name. old≠new ⇒ distinct rows.
-            var oldFirst = Normalize(existing.Value.FirstName);
-            var newFirst = Normalize(user.FirstName);
-            if (userFirstNamesTable is not null && !string.Equals(oldFirst, newFirst, StringComparison.Ordinal))
+            if (firstChanged)
             {
-                if (newFirst is not null) await WriteNameIndexAsync(userFirstNamesTable, newFirst, user.Id, ct);
-                if (oldFirst is not null) await DeleteNameIndexAsync(userFirstNamesTable, oldFirst, user.Id, "UserFirstNames", ct);
+                if (newFirst is not null) await WriteNameIndexAsync(userFirstNamesTable!, newFirstTokens?.Invoke(), newFirst, user.Id, ct);
+                if (oldFirst is not null) await DeleteNameIndexAsync(userFirstNamesTable!, oldFirstTokens?.Invoke(), oldFirst, user.Id, "UserFirstNames", ct);
             }
-
-            var oldLast = Normalize(existing.Value.LastName);
-            var newLast = Normalize(user.LastName);
-            if (userLastNamesTable is not null && !string.Equals(oldLast, newLast, StringComparison.Ordinal))
+            if (lastChanged)
             {
-                if (newLast is not null) await WriteNameIndexAsync(userLastNamesTable, newLast, user.Id, ct);
-                if (oldLast is not null) await DeleteNameIndexAsync(userLastNamesTable, oldLast, user.Id, "UserLastNames", ct);
+                if (newLast is not null) await WriteNameIndexAsync(userLastNamesTable!, newLastTokens?.Invoke(), newLast, user.Id, ct);
+                if (oldLast is not null) await DeleteNameIndexAsync(userLastNamesTable!, oldLastTokens?.Invoke(), oldLast, user.Id, "UserLastNames", ct);
             }
         }
         catch (RequestFailedException ex) when (ex.Status == 404)
@@ -645,26 +729,37 @@ public sealed class TableUserStore(
             // Decrypt first: the stored email/names must be plaintext to recompute the index keys to remove.
             await DecryptEntityAsync(existing.Value, ct);
 
+            var normalizedEmail = existing.Value.NormalizedEmail;
+            var normFirst = Normalize(existing.Value.FirstName);
+            var normLast = Normalize(existing.Value.LastName);
+
+            // Every index key the cleanup needs, computed in ONE tokenizer round-trip.
+            var batch = new TokenBatch(_tokenizer);
+            var emailToken = batch.Add(normalizedEmail);
+            var domain = userEmailDomainsTable is null ? null : UserEmailDomainEntity.DomainOf(normalizedEmail);
+            var domainToken = domain is null ? null : batch.Add(domain);
+            var localPrefixTokens = ReserveLocalPrefixTokens(batch, normalizedEmail);
+            var firstTokens = ReserveNameTokens(batch, userFirstNamesTable, normFirst);
+            var lastTokens = ReserveNameTokens(batch, userLastNamesTable, normLast);
+            await batch.RunAsync(ct);
+
             // Delete email index (tokenized + any legacy plaintext row) + the domain-index row
-            await DeleteEmailIndexAsync(existing.Value.NormalizedEmail, ct);
-            await DeleteDomainIndexAsync(existing.Value.NormalizedEmail, userId, ct);
-            await DeleteEmailLocalPrefixIndexAsync(existing.Value.NormalizedEmail, userId, ct);
+            await DeleteEmailIndexAsync(normalizedEmail, emailToken(), ct);
+            if (domainToken is not null)
+                await DeleteDomainIndexAsync(domain!, domainToken(), userId, ct);
+            if (localPrefixTokens is not null)
+                await DeleteEmailLocalPrefixIndexAsync(localPrefixTokens(), userId, ct);
 
             // Delete name indexes (all prefix-token rows + any legacy row)
-            var normFirst = Normalize(existing.Value.FirstName);
             if (normFirst is not null && userFirstNamesTable is not null)
-                await DeleteNameIndexAsync(userFirstNamesTable, normFirst, userId, "UserFirstNames", ct);
-
-            var normLast = Normalize(existing.Value.LastName);
+                await DeleteNameIndexAsync(userFirstNamesTable, firstTokens?.Invoke(), normFirst, userId, "UserFirstNames", ct);
             if (normLast is not null && userLastNamesTable is not null)
-                await DeleteNameIndexAsync(userLastNamesTable, normLast, userId, "UserLastNames", ct);
+                await DeleteNameIndexAsync(userLastNamesTable, lastTokens?.Invoke(), normLast, userId, "UserLastNames", ct);
 
-            // Delete all external login entries for this user
+            // Delete all external login entries for this user — independent row pairs, so remove them
+            // concurrently instead of one blocking round-trip each.
             var logins = await GetLoginsAsync(userId, ct);
-            foreach (var login in logins)
-            {
-                await RemoveLoginAsync(userId, login.Provider, login.ProviderKey, ct);
-            }
+            await Task.WhenAll(logins.Select(login => RemoveLoginAsync(userId, login.Provider, login.ProviderKey, ct)));
 
             // Delete user profile
             await usersTable.DeleteEntityAsync(_partitioner.PK(userId), UserEntity.ProfileRowKey, cancellationToken: ct);
@@ -993,10 +1088,28 @@ public sealed class TableUserStore(
         // match (already handled above via FindByEmailAsync). Name prefix search is unaffected here.
         var emailLo = _partitioner.PK(prefix);
         var emailHi = _partitioner.PK(prefixEnd);
+
+        // Tokenized: compute the (≤2) prefix-lookup tokens — email local-part and name — in ONE
+        // round-trip instead of one per index; the three index queries below still run in parallel.
+        string? localPrefixPk = null, namePrefixPk = null;
+        if (_indexTokenized)
+        {
+            var batch = new TokenBatch(_tokenizer);
+            Func<string>? localToken = null, nameToken = null;
+            var local = LocalPartOf(prefix) ?? prefix;
+            if (userEmailLocalPrefixesTable is not null && local.Length >= NamePrefixMin)
+                localToken = batch.Add(local.Length > NamePrefixMax ? local[..NamePrefixMax] : local);
+            if ((userFirstNamesTable ?? userLastNamesTable) is not null && prefix.Length >= NamePrefixMin)
+                nameToken = batch.Add(prefix.Length > NamePrefixMax ? prefix[..NamePrefixMax] : prefix);
+            await batch.RunAsync(ct);
+            localPrefixPk = localToken is null ? null : _partitioner.PK(localToken());
+            namePrefixPk = nameToken is null ? null : _partitioner.PK(nameToken());
+        }
+
         // Tokenized: HMAC keys are unordered, so email prefix search uses the local-part prefix index
         // (exact-match on HMAC(prefix)). Off: the ordered range scan on the exact-email index works.
         var emailTask = _indexTokenized
-            ? SearchEmailLocalPrefixAsync(prefix, maxResults, ct)
+            ? SearchEmailLocalPrefixAsync(localPrefixPk, maxResults, ct)
             : CollectUserIdsAsync(
                 userEmailsTable.QueryAsync<UserEmailEntity>(
                     e => e.PartitionKey.CompareTo(emailLo) >= 0 && e.PartitionKey.CompareTo(emailHi) < 0,
@@ -1007,18 +1120,21 @@ public sealed class TableUserStore(
         // SearchNameIndexAsync picks the scheme per row: legacy range scan when off, exact prefix-token
         // lookup (+ legacy fallback for un-backfilled rows) when tokenized. Email prefix search is dropped
         // when tokenized (unordered keys) — exact email match is handled above via FindByEmailAsync.
-        var firstNameTask = SearchNameIndexAsync(userFirstNamesTable, prefix, prefixEnd, maxResults, ct);
-        var lastNameTask = SearchNameIndexAsync(userLastNamesTable, prefix, prefixEnd, maxResults, ct);
+        var firstNameTask = SearchNameIndexAsync(userFirstNamesTable, namePrefixPk, prefix, prefixEnd, maxResults, ct);
+        var lastNameTask = SearchNameIndexAsync(userLastNamesTable, namePrefixPk, prefix, prefixEnd, maxResults, ct);
 
         await Task.WhenAll(emailTask, firstNameTask, lastNameTask);
 
-        // Interleave: email hits first, then first-name, then last-name.
-        foreach (var id in emailTask.Result.Concat(firstNameTask.Result).Concat(lastNameTask.Result))
+        // Interleave: email hits first, then first-name, then last-name. Point-read the deduped candidates
+        // in parallel (each is an independent read + decrypt round-trip) instead of one at a time; every
+        // candidate list is capped at maxResults, so the fan-out is bounded.
+        var candidateIds = emailTask.Result.Concat(firstNameTask.Result).Concat(lastNameTask.Result)
+            .Where(id => seen.Add(id)).ToList();
+        var fetched = await Task.WhenAll(candidateIds.Select(id => GetAsync(id, ct)));
+        foreach (var user in fetched)
         {
-            if (!seen.Add(id)) continue;
-            var user = await GetAsync(id, ct);
-            if (user is not null)
-                results.Add(user);
+            if (user is null) continue;
+            results.Add(user);
             if (results.Count >= maxResults)
                 break;
         }
@@ -1148,13 +1264,20 @@ public sealed class TableUserStore(
 
         var forward = UserLoginEntity.FromModelForward(login);
         forward.PartitionKey = _partitioner.PK(token);           // tokenized lookup key
-        await EncryptLoginAsync(forward, ct);
-        await userLoginsTable.UpsertEntityAsync(forward, TableUpdateMode.Replace, ct);
-
         var reverse = UserLoginEntity.FromModelReverse(login);
         reverse.PartitionKey = _partitioner.PK(login.UserId);
         reverse.RowKey = LoginReverseRk(token);                  // "login|{token}"
-        await EncryptLoginAsync(reverse, ct);
+
+        // Encrypt ProviderKey (+ DisplayName) ONCE and share the ciphertext across the forward and
+        // reverse rows — one batch round-trip instead of four singles. Decrypt-equivalent: AES-GCM
+        // ciphertext is randomized, but nothing requires the two rows' ciphertexts to differ.
+        var toProtect = new List<string> { forward.ProviderKey };
+        if (!string.IsNullOrEmpty(forward.DisplayName)) toProtect.Add(forward.DisplayName);
+        var ciphertexts = await _cipher.ProtectManyAsync(toProtect, ct);
+        forward.ProviderKey = reverse.ProviderKey = ciphertexts[0];
+        if (ciphertexts.Count > 1) forward.DisplayName = reverse.DisplayName = ciphertexts[1];
+
+        await userLoginsTable.UpsertEntityAsync(forward, TableUpdateMode.Replace, ct);
         await userLoginsTable.UpsertEntityAsync(reverse, TableUpdateMode.Replace, ct);
     }
 
