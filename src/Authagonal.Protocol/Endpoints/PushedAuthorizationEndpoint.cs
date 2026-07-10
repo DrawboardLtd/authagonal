@@ -1,4 +1,3 @@
-using System.Text;
 using System.Text.Json;
 using Authagonal.Core.Stores;
 using Authagonal.Protocol.Services;
@@ -13,7 +12,7 @@ namespace Authagonal.Protocol.Endpoints;
 /// with standard client auth and receives a short-lived opaque request_uri to hand to the
 /// browser, keeping the parameters off the URL bar and integrity-checked.
 /// </summary>
-public static class PushedAuthorizationEndpoint
+internal static class PushedAuthorizationEndpoint
 {
     public static IEndpointRouteBuilder MapProtocolPushedAuthorizationEndpoint(this IEndpointRouteBuilder app)
     {
@@ -29,25 +28,15 @@ public static class PushedAuthorizationEndpoint
 
             var form = await httpContext.Request.ReadFormAsync(ct);
 
-            var (clientId, clientSecret) = ExtractClientCredentials(httpContext, form);
+            // RFC 9126 client-auth failures are all 401 here (unlike the token endpoint,
+            // where only invalid_client is).
+            var (client, authError) = await ClientAuthentication.AuthenticateAsync(
+                httpContext, form, clientStore, secretVerifier,
+                (error, description) => JsonResults.OAuthError(error, description, statusCode: 401), ct);
+            if (authError is not null)
+                return authError;
 
-            if (string.IsNullOrWhiteSpace(clientId))
-                return JsonResults.OAuthError("invalid_client", "client_id is required", statusCode: 401);
-
-            var client = await clientStore.GetAsync(clientId, ct);
-            if (client is null)
-                return JsonResults.OAuthError("invalid_client", "Unknown client", statusCode: 401);
-
-            if (!client.Enabled)
-                return JsonResults.OAuthError("unauthorized_client", "Client is disabled", statusCode: 401);
-
-            if (client.RequireClientSecret)
-            {
-                if (string.IsNullOrWhiteSpace(clientSecret))
-                    return JsonResults.OAuthError("invalid_client", "client_secret is required", statusCode: 401);
-                if (!await secretVerifier.VerifyAsync(client, clientSecret, ct))
-                    return JsonResults.OAuthError("invalid_client", "Invalid client credentials", statusCode: 401);
-            }
+            var clientId = client!.ClientId;
 
             // RFC 9126 §2.1: request_uri MUST NOT be sent to PAR — chaining is forbidden.
             if (form.ContainsKey("request_uri"))
@@ -82,29 +71,5 @@ public static class PushedAuthorizationEndpoint
         .WithTags("OAuth");
 
         return app;
-    }
-
-    private static (string? ClientId, string? ClientSecret) ExtractClientCredentials(
-        HttpContext httpContext, IFormCollection form)
-    {
-        var authHeader = httpContext.Request.Headers.Authorization.FirstOrDefault();
-        if (!string.IsNullOrWhiteSpace(authHeader) && authHeader.StartsWith("Basic ", StringComparison.OrdinalIgnoreCase))
-        {
-            try
-            {
-                var encoded = authHeader["Basic ".Length..];
-                var decoded = Encoding.UTF8.GetString(Convert.FromBase64String(encoded));
-                var colonIndex = decoded.IndexOf(':');
-                if (colonIndex > 0)
-                {
-                    var id = Uri.UnescapeDataString(decoded[..colonIndex]);
-                    var secret = Uri.UnescapeDataString(decoded[(colonIndex + 1)..]);
-                    return (id, secret);
-                }
-            }
-            catch (FormatException) { /* fall through */ }
-        }
-
-        return (form["client_id"].FirstOrDefault(), form["client_secret"].FirstOrDefault());
     }
 }

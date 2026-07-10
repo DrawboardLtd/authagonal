@@ -17,8 +17,7 @@ internal static class JsonResults
             AuthagonalJsonContext.Default.ApiErrorDetail, statusCode: statusCode);
 
     public static IResult OAuthError(string error, string description, int statusCode = 400)
-        => TypedResults.Json(new OAuthErrorResponse { Error = error, ErrorDescription = description },
-            AuthagonalJsonContext.Default.OAuthErrorResponse, statusCode: statusCode);
+        => Protocol.Endpoints.JsonResults.OAuthError(error, description, statusCode);
 }
 
 // ── Common response DTOs ────────────────────────────────────────────
@@ -35,15 +34,6 @@ internal sealed class ApiErrorDetail
     public required string Error { get; set; }
     [JsonPropertyName("message")]
     public string? Message { get; set; }
-}
-
-/// <summary>OAuth 2.0 standard error response format.</summary>
-internal sealed class OAuthErrorResponse
-{
-    [JsonPropertyName("error")]
-    public required string Error { get; set; }
-    [JsonPropertyName("error_description")]
-    public string? ErrorDescription { get; set; }
 }
 
 internal sealed class SsoRedirectError

@@ -14,25 +14,7 @@ internal static class JwksEndpoint
             // Edge/CDN-cacheable: all non-expired keys are advertised and the next key is published days
             // ahead of use, so a short shared cache is always safe.
             response.Headers.CacheControl = "public, max-age=3600";
-            var keys = keyManager.GetSecurityKeys();
-
-            var jwks = new JwksDocument
-            {
-                Keys = keys.Select(k => new JwkKey
-                {
-                    Kty = k.Kty,
-                    Use = k.Use,
-                    Kid = k.Kid,
-                    Alg = k.Alg,
-                    Crv = k.Crv,
-                    X = k.X,
-                    Y = k.Y,
-                    N = k.N,
-                    E = k.E,
-                }).ToList()
-            };
-
-            return TypedResults.Json(jwks, ProtocolJsonContext.Default.JwksDocument);
+            return TypedResults.Json(DiscoveryHelpers.BuildJwksDocument(keyManager), ProtocolJsonContext.Default.JwksDocument);
         })
         .AllowAnonymous()
         .WithTags("OIDC");

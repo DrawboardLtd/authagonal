@@ -1,4 +1,6 @@
 using Authagonal.Core.Services;
+using Authagonal.Protocol;
+using Authagonal.Protocol.Endpoints;
 
 namespace Authagonal.Server.Endpoints;
 
@@ -11,25 +13,7 @@ public static class JwksEndpoint
             // Edge/CDN-cacheable: JWKS advertises every non-expired key and rotation publishes the next
             // key days ahead, so a short shared cache never lacks a token's signing key.
             response.Headers.CacheControl = "public, max-age=3600";
-            var keys = keyManager.GetSecurityKeys();
-
-            var jwks = new JwksDocument
-            {
-                Keys = keys.Select(k => new JwkKey
-                {
-                    Kty = k.Kty,
-                    Use = k.Use,
-                    Kid = k.Kid,
-                    Alg = k.Alg,
-                    Crv = k.Crv,
-                    X = k.X,
-                    Y = k.Y,
-                    N = k.N,
-                    E = k.E,
-                }).ToList()
-            };
-
-            return TypedResults.Json(jwks, AuthagonalJsonContext.Default.JwksDocument);
+            return TypedResults.Json(DiscoveryHelpers.BuildJwksDocument(keyManager), ProtocolJsonContext.Default.JwksDocument);
         })
         .AllowAnonymous()
         .WithTags("Discovery");

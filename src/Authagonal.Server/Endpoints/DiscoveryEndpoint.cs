@@ -1,3 +1,6 @@
+using Authagonal.Protocol;
+using Authagonal.Protocol.Endpoints;
+
 namespace Authagonal.Server.Endpoints;
 
 public static class DiscoveryEndpoint
@@ -15,20 +18,7 @@ public static class DiscoveryEndpoint
             response.Headers.CacheControl = "public, max-age=3600";
             var issuer = tenantContext.Issuer;
 
-            var builtIn = new[] { "openid", "profile", "email", "offline_access" };
-            string[] scopesSupported;
-            try
-            {
-                var custom = await scopeStore.ListAsync(ct);
-                scopesSupported = builtIn
-                    .Concat(custom.Where(s => s.ShowInDiscoveryDocument).Select(s => s.Name))
-                    .Distinct(StringComparer.Ordinal)
-                    .ToArray();
-            }
-            catch
-            {
-                scopesSupported = builtIn;
-            }
+            var scopesSupported = await DiscoveryHelpers.ResolveSupportedScopesAsync(scopeStore, ct);
 
             return TypedResults.Json(new DiscoveryResponse
             {
@@ -55,7 +45,7 @@ public static class DiscoveryEndpoint
                 FrontchannelLogoutSupported = true,
                 FrontchannelLogoutSessionSupported = true,
                 ClaimsSupported = ["sub", "iss", "aud", "exp", "iat", "auth_time", "email", "email_verified", "name", "given_name", "family_name", "phone_number", "roles", "groups"],
-            }, AuthagonalJsonContext.Default.DiscoveryResponse);
+            }, ProtocolJsonContext.Default.DiscoveryResponse);
         })
         .AllowAnonymous()
         .WithTags("Discovery");

@@ -32,13 +32,9 @@ namespace Authagonal.Server;
 [JsonSerializable(typeof(VaultCreateKeyRequest))]
 [JsonSerializable(typeof(VaultKeyConfigRequest))]
 [JsonSerializable(typeof(ErrorResponse))]
-// Discovery
-[JsonSerializable(typeof(DiscoveryResponse))]
-[JsonSerializable(typeof(JwksDocument))]
 // Common response DTOs
 [JsonSerializable(typeof(ApiError))]
 [JsonSerializable(typeof(ApiErrorDetail))]
-[JsonSerializable(typeof(OAuthErrorResponse))]
 [JsonSerializable(typeof(SsoRedirectError))]
 [JsonSerializable(typeof(LockedOutError))]
 [JsonSerializable(typeof(RegistrationSuccess))]
