@@ -11,8 +11,11 @@ import { CardTitle } from '@/components/ui/card';
 // The shipped-locale registry — one list drives i18next registration AND every picker, so this
 // select can't drift from the languages we actually ship (see i18n/index.ts). The chosen value is
 // the user's preferred UI/communication language; emails localise to it (falling back to English
-// for any language we don't template, e.g. the tlh easter egg).
-import { LANGUAGES } from '../i18n';
+// for any language we don't template, e.g. the tlh easter egg). The OPTIONS honour
+// branding.languages with the novelty-free default as fallback, so easter eggs only appear for
+// tenants that explicitly list them; LANGUAGES stays the validity set for normalization.
+import { LANGUAGES, DEFAULT_LANGUAGES } from '../i18n';
+import { useBranding } from '../branding';
 
 // Resolve any tag (stored locale, browser language, region variant) to one of our option codes —
 // the controlled <select> must always hold a value that exists in LANGUAGES. zh* → zh-Hans,
@@ -27,6 +30,7 @@ function toLangOption(code?: string): string {
 
 export default function AccountPage() {
   const { t, i18n } = useTranslation();
+  const branding = useBranding();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -178,7 +182,16 @@ export default function AccountPage() {
               onChange={(e) => changeLocale(e.target.value)}
               className="flex h-11 w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-base text-gray-900 transition-colors focus-visible:outline-none focus-visible:border-primary focus-visible:ring-[3px] focus-visible:ring-primary/15 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-100"
             >
-              {LANGUAGES.map((l) => <option key={l.code} value={l.code}>{l.label}</option>)}
+              {(() => {
+                const opts = branding.languages ?? DEFAULT_LANGUAGES;
+                // A locale chosen while it was offered (e.g. the tlh easter egg on an opted-in
+                // tenant) must stay renderable — a controlled <select> whose value is missing
+                // from its options displays blank. Append the known entry for the active value.
+                const withActive = form.locale && !opts.some((l) => l.code === form.locale)
+                  ? [...opts, ...LANGUAGES.filter((l) => l.code === form.locale).map(({ code, label }) => ({ code, label }))]
+                  : opts;
+                return withActive.map((l) => <option key={l.code} value={l.code}>{l.label}</option>);
+              })()}
             </select>
           </div>
           <Button type="submit" className="w-full" loading={saving}>

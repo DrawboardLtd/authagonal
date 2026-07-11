@@ -8,7 +8,7 @@ import { ChevronDown, Globe, Sun, Moon, Monitor } from 'lucide-react';
 
 // Ensure i18n is initialized when AuthLayout is used (including by npm consumers)
 import '../i18n';
-import { LANGUAGES } from '../i18n';
+import { DEFAULT_LANGUAGES } from '../i18n';
 
 interface AuthLayoutProps {
   children: ReactNode;
@@ -20,10 +20,10 @@ function isSafeCssColor(color: string): boolean {
     || /^(?:rgb|rgba|hsl|hsla)\([0-9.,%\s/]+\)$/i.test(color);
 }
 
-// The picker's default list is the shipped-locale registry (i18n/index.ts LANGUAGES) — a
-// single source of truth, so registering a locale automatically surfaces it here. Tenants
-// can still narrow the list via branding.languages.
-const ALL_LANGUAGES: { code: string; label: string }[] = LANGUAGES;
+// The picker's default list is the shipped-locale registry minus novelty locales
+// (i18n/index.ts DEFAULT_LANGUAGES) — a single source of truth, so registering a real locale
+// automatically surfaces it here, while easter eggs (tlh) only appear when a tenant's
+// branding.languages explicitly lists them. Tenants can still narrow or extend via branding.
 
 function ThemeToggle() {
   const { theme, setTheme } = useDarkMode();
@@ -176,7 +176,7 @@ export default function AuthLayout({ children }: AuthLayoutProps) {
           )}
         </div>
         <div data-auth="content">{children}</div>
-        <LanguagePicker languages={branding.languages ?? ALL_LANGUAGES} />
+        <LanguagePicker languages={branding.languages ?? DEFAULT_LANGUAGES} />
         <ThemeToggle />
         {branding.poweredBy && (
           <p className="mt-3 text-center text-xs text-gray-400 dark:text-gray-500" data-auth="powered-by">
