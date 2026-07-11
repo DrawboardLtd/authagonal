@@ -135,12 +135,12 @@ public sealed class TableScimGroupStore(
                     !string.Equals(oldOrgId, group.OrganizationId, StringComparison.Ordinal))
                 {
                     var oldIndexPk = partitioner.PK($"{oldOrgId}|{oldExternalId}");
+                    if (tombstoneWriter is not null)
+                        await tombstoneWriter.WriteAsync("ScimGroupExternalIds", oldIndexPk, ScimGroupEntity.GroupLookupRowKey, ct);
                     try
                     {
                         await scimGroupExternalIdsTable.DeleteEntityAsync(
                             oldIndexPk, ScimGroupEntity.GroupLookupRowKey, cancellationToken: ct);
-                        if (tombstoneWriter is not null)
-                            await tombstoneWriter.WriteAsync("ScimGroupExternalIds", oldIndexPk, ScimGroupEntity.GroupLookupRowKey, ct);
                     }
                     catch (RequestFailedException ex) when (ex.Status == 404) { }
                 }
@@ -169,24 +169,26 @@ public sealed class TableScimGroupStore(
 
             var group = existing.Value.ToModel();
 
+            // Tombstone-first (F24e): record both deletes before removing anything.
+            if (tombstoneWriter is not null)
+                await tombstoneWriter.WriteAsync("ScimGroups", groupPk, ScimGroupEntity.GroupRowKey, ct);
+
             // Remove external ID index
             if (!string.IsNullOrEmpty(group.ExternalId) && !string.IsNullOrEmpty(group.OrganizationId))
             {
                 var indexPk = partitioner.PK($"{group.OrganizationId}|{group.ExternalId}");
+                if (tombstoneWriter is not null)
+                    await tombstoneWriter.WriteAsync("ScimGroupExternalIds", indexPk, ScimGroupEntity.GroupLookupRowKey, ct);
                 try
                 {
                     await scimGroupExternalIdsTable.DeleteEntityAsync(
                         indexPk, ScimGroupEntity.GroupLookupRowKey, cancellationToken: ct);
-                    if (tombstoneWriter is not null)
-                        await tombstoneWriter.WriteAsync("ScimGroupExternalIds", indexPk, ScimGroupEntity.GroupLookupRowKey, ct);
                 }
                 catch (RequestFailedException ex) when (ex.Status == 404) { }
             }
 
             // Delete the group
             await scimGroupsTable.DeleteEntityAsync(groupPk, ScimGroupEntity.GroupRowKey, cancellationToken: ct);
-            if (tombstoneWriter is not null)
-                await tombstoneWriter.WriteAsync("ScimGroups", groupPk, ScimGroupEntity.GroupRowKey, ct);
         }
         catch (RequestFailedException ex) when (ex.Status == 404)
         {

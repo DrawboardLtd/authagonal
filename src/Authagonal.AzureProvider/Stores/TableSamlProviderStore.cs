@@ -54,11 +54,11 @@ public sealed class TableSamlProviderStore(TableClient samlProvidersTable, EnvPa
     public async Task DeleteAsync(string connectionId, CancellationToken ct = default)
     {
         var pk = partitioner.PK(connectionId);
+        if (tombstoneWriter is not null)
+            await tombstoneWriter.WriteAsync("SamlProviders", pk, SamlProviderEntity.ConfigRowKey, ct);
         try
         {
             await samlProvidersTable.DeleteEntityAsync(pk, SamlProviderEntity.ConfigRowKey, cancellationToken: ct);
-            if (tombstoneWriter is not null)
-                await tombstoneWriter.WriteAsync("SamlProviders", pk, SamlProviderEntity.ConfigRowKey, ct);
         }
         catch (RequestFailedException ex) when (ex.Status == 404) { }
     }

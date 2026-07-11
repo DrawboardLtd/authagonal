@@ -166,6 +166,20 @@ public sealed class TableGrantStore(
             return false;
         }
 
+        // Tombstone-first (F24e): a crash between a data delete and its tombstone loses the delete
+        // from every future backup (the backstop only re-scans LIVE rows), so the tombstone goes down
+        // before the row. A tombstone for a delete that then doesn't happen is safe: any later write
+        // to the key re-stamps a newer storage Timestamp, and the merge keeps rows written after the
+        // tombstone's (same-clock) DeletedAt.
+        var expiryPartition = partitioner.PK(GrantByExpiryEntity.GetPartitionKey(entity.ExpiresAt, hashedKey));
+        if (tombstoneWriter is not null)
+        {
+            await tombstoneWriter.WriteAsync("Grants", hashedKeyPk, GrantEntity.GrantRowKey, ct);
+            await tombstoneWriter.WriteAsync("GrantsByExpiry", expiryPartition, hashedKey, ct);
+            if (!string.IsNullOrEmpty(entity.SubjectId))
+                await tombstoneWriter.WriteAsync("GrantsBySubject", partitioner.PK(entity.SubjectId), $"{entity.Type}|{hashedKey}", ct);
+        }
+
         // Atomic single-use: only the caller whose conditional (ETag) delete matches the current
         // row wins. A racing redemption gets 412/404 and loses.
         try
@@ -178,7 +192,6 @@ public sealed class TableGrantStore(
         }
 
         // Best-effort index cleanup (mirrors RemoveAsync).
-        var expiryPartition = partitioner.PK(GrantByExpiryEntity.GetPartitionKey(entity.ExpiresAt, hashedKey));
         try
         {
             await grantsByExpiryTable.DeleteEntityAsync(expiryPartition, hashedKey, cancellationToken: ct);
@@ -194,15 +207,6 @@ public sealed class TableGrantStore(
                 await grantsBySubjectTable.DeleteEntityAsync(subjectPk, subjectRk, cancellationToken: ct);
             }
             catch (RequestFailedException ex) when (ex.Status == 404) { }
-
-            if (tombstoneWriter is not null)
-                await tombstoneWriter.WriteAsync("GrantsBySubject", subjectPk, subjectRk, ct);
-        }
-
-        if (tombstoneWriter is not null)
-        {
-            await tombstoneWriter.WriteAsync("Grants", hashedKeyPk, GrantEntity.GrantRowKey, ct);
-            await tombstoneWriter.WriteAsync("GrantsByExpiry", expiryPartition, hashedKey, ct);
         }
 
         return true;
@@ -221,11 +225,20 @@ public sealed class TableGrantStore(
 
             var entity = response.Value;
 
+            // Tombstone-first (F24e) — see TryConsumeAsync.
+            var expiryPartition = partitioner.PK(GrantByExpiryEntity.GetPartitionKey(entity.ExpiresAt, hashedKey));
+            if (tombstoneWriter is not null)
+            {
+                await tombstoneWriter.WriteAsync("Grants", hashedKeyPk, GrantEntity.GrantRowKey, ct);
+                await tombstoneWriter.WriteAsync("GrantsByExpiry", expiryPartition, hashedKey, ct);
+                if (!string.IsNullOrEmpty(entity.SubjectId))
+                    await tombstoneWriter.WriteAsync("GrantsBySubject", partitioner.PK(entity.SubjectId), $"{entity.Type}|{hashedKey}", ct);
+            }
+
             // Delete from primary table
             await grantsTable.DeleteEntityAsync(hashedKeyPk, GrantEntity.GrantRowKey, cancellationToken: ct);
 
             // Delete from expiry index
-            var expiryPartition = partitioner.PK(GrantByExpiryEntity.GetPartitionKey(entity.ExpiresAt, hashedKey));
             try
             {
                 await grantsByExpiryTable.DeleteEntityAsync(expiryPartition, hashedKey, cancellationToken: ct);
@@ -242,15 +255,6 @@ public sealed class TableGrantStore(
                     await grantsBySubjectTable.DeleteEntityAsync(subjectPk, subjectRk, cancellationToken: ct);
                 }
                 catch (RequestFailedException ex) when (ex.Status == 404) { }
-
-                if (tombstoneWriter is not null)
-                    await tombstoneWriter.WriteAsync("GrantsBySubject", subjectPk, subjectRk, ct);
-            }
-
-            if (tombstoneWriter is not null)
-            {
-                await tombstoneWriter.WriteAsync("Grants", hashedKeyPk, GrantEntity.GrantRowKey, ct);
-                await tombstoneWriter.WriteAsync("GrantsByExpiry", expiryPartition, hashedKey, ct);
             }
         }
         catch (RequestFailedException ex) when (ex.Status == 404) { }
@@ -269,9 +273,18 @@ public sealed class TableGrantStore(
             entities.Add(entity);
         }
 
-        var grantTombstones = new List<(string, string)>();
-        var expiryTombstones = new List<(string, string)>();
-        var subjectTombstones = new List<(string, string)>();
+        // Tombstone-first (F24e): every key is derivable from the materialized index rows, so record
+        // the whole batch before deleting anything — a crash mid-way can only leave rows that are
+        // tombstoned AND still live, which later writes out-timestamp (safe), never a lost delete.
+        if (tombstoneWriter is not null && entities.Count > 0)
+        {
+            await tombstoneWriter.WriteBatchAsync("Grants",
+                entities.Select(e => (partitioner.PK(e.HashedKey), GrantEntity.GrantRowKey)), ct);
+            await tombstoneWriter.WriteBatchAsync("GrantsByExpiry",
+                entities.Select(e => (partitioner.PK(GrantByExpiryEntity.GetPartitionKey(e.ExpiresAt, e.HashedKey)), e.HashedKey)), ct);
+            await tombstoneWriter.WriteBatchAsync("GrantsBySubject",
+                entities.Select(e => (e.PartitionKey, e.RowKey)), ct);
+        }
 
         foreach (var entity in entities)
         {
@@ -280,7 +293,6 @@ public sealed class TableGrantStore(
             try
             {
                 await grantsTable.DeleteEntityAsync(grantPk, GrantEntity.GrantRowKey, cancellationToken: ct);
-                grantTombstones.Add((grantPk, GrantEntity.GrantRowKey));
             }
             catch (RequestFailedException ex) when (ex.Status == 404) { }
 
@@ -289,7 +301,6 @@ public sealed class TableGrantStore(
             try
             {
                 await grantsByExpiryTable.DeleteEntityAsync(expiryPartition, entity.HashedKey, cancellationToken: ct);
-                expiryTombstones.Add((expiryPartition, entity.HashedKey));
             }
             catch (RequestFailedException ex) when (ex.Status == 404) { }
 
@@ -297,16 +308,8 @@ public sealed class TableGrantStore(
             try
             {
                 await grantsBySubjectTable.DeleteEntityAsync(entity.PartitionKey, entity.RowKey, cancellationToken: ct);
-                subjectTombstones.Add((entity.PartitionKey, entity.RowKey));
             }
             catch (RequestFailedException ex) when (ex.Status == 404) { }
-        }
-
-        if (tombstoneWriter is not null)
-        {
-            await tombstoneWriter.WriteBatchAsync("Grants", grantTombstones, ct);
-            await tombstoneWriter.WriteBatchAsync("GrantsByExpiry", expiryTombstones, ct);
-            await tombstoneWriter.WriteBatchAsync("GrantsBySubject", subjectTombstones, ct);
         }
     }
 
@@ -323,9 +326,18 @@ public sealed class TableGrantStore(
             entities.Add(entity);
         }
 
-        var grantTombstones = new List<(string, string)>();
-        var expiryTombstones = new List<(string, string)>();
-        var subjectTombstones = new List<(string, string)>();
+        // Tombstone-first (F24e): every key is derivable from the materialized index rows, so record
+        // the whole batch before deleting anything — a crash mid-way can only leave rows that are
+        // tombstoned AND still live, which later writes out-timestamp (safe), never a lost delete.
+        if (tombstoneWriter is not null && entities.Count > 0)
+        {
+            await tombstoneWriter.WriteBatchAsync("Grants",
+                entities.Select(e => (partitioner.PK(e.HashedKey), GrantEntity.GrantRowKey)), ct);
+            await tombstoneWriter.WriteBatchAsync("GrantsByExpiry",
+                entities.Select(e => (partitioner.PK(GrantByExpiryEntity.GetPartitionKey(e.ExpiresAt, e.HashedKey)), e.HashedKey)), ct);
+            await tombstoneWriter.WriteBatchAsync("GrantsBySubject",
+                entities.Select(e => (e.PartitionKey, e.RowKey)), ct);
+        }
 
         foreach (var entity in entities)
         {
@@ -334,7 +346,6 @@ public sealed class TableGrantStore(
             try
             {
                 await grantsTable.DeleteEntityAsync(grantPk, GrantEntity.GrantRowKey, cancellationToken: ct);
-                grantTombstones.Add((grantPk, GrantEntity.GrantRowKey));
             }
             catch (RequestFailedException ex) when (ex.Status == 404) { }
 
@@ -343,7 +354,6 @@ public sealed class TableGrantStore(
             try
             {
                 await grantsByExpiryTable.DeleteEntityAsync(expiryPartition, entity.HashedKey, cancellationToken: ct);
-                expiryTombstones.Add((expiryPartition, entity.HashedKey));
             }
             catch (RequestFailedException ex) when (ex.Status == 404) { }
 
@@ -351,16 +361,8 @@ public sealed class TableGrantStore(
             try
             {
                 await grantsBySubjectTable.DeleteEntityAsync(entity.PartitionKey, entity.RowKey, cancellationToken: ct);
-                subjectTombstones.Add((entity.PartitionKey, entity.RowKey));
             }
             catch (RequestFailedException ex) when (ex.Status == 404) { }
-        }
-
-        if (tombstoneWriter is not null)
-        {
-            await tombstoneWriter.WriteBatchAsync("Grants", grantTombstones, ct);
-            await tombstoneWriter.WriteBatchAsync("GrantsByExpiry", expiryTombstones, ct);
-            await tombstoneWriter.WriteBatchAsync("GrantsBySubject", subjectTombstones, ct);
         }
     }
 

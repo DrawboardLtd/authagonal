@@ -112,12 +112,15 @@ public class ScanBackstopTests(AzuriteFixture azurite)
             await logTarget.SetLastWatermarkAsync(watermark);
 
             // Change-log incremental (Users included, the flip's configuration): both writes invisible.
+            // Margin zeroed: this test asserts exact window boundaries with sub-second seed/watermark
+            // spacing; the production 5-min skew margin would (correctly) pull the seeds back in.
             var log = await new BackupService(_svc, logTarget, new BackupOptions
             {
                 TablePrefix = prefix,
                 Incremental = true,
                 Gzip = false,
                 ChangeLoggedTables = BackupDefaults.ChangeLoggedTablesWithUsers,
+                WatermarkSkewMargin = TimeSpan.Zero,
             }).RunAsync();
 
             var logSrc = new FileSystemBackupSource(logDir);
@@ -139,6 +142,7 @@ public class ScanBackstopTests(AzuriteFixture azurite)
                 Incremental = true,
                 Gzip = false,
                 WatermarkOverride = watermark,
+                WatermarkSkewMargin = TimeSpan.Zero,
             }).RunAsync();
 
             var bsSrc = new FileSystemBackupSource(backstopDir);

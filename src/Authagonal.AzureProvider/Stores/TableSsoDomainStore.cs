@@ -55,11 +55,11 @@ public sealed class TableSsoDomainStore(TableClient ssoDomainsTable, EnvPartitio
     public async Task DeleteAsync(string domain, CancellationToken ct = default)
     {
         var pk = partitioner.PK(domain.ToLowerInvariant());
+        if (tombstoneWriter is not null)
+            await tombstoneWriter.WriteAsync("SsoDomains", pk, SsoDomainEntity.MappingRowKey, ct);
         try
         {
             await ssoDomainsTable.DeleteEntityAsync(pk, SsoDomainEntity.MappingRowKey, cancellationToken: ct);
-            if (tombstoneWriter is not null)
-                await tombstoneWriter.WriteAsync("SsoDomains", pk, SsoDomainEntity.MappingRowKey, ct);
         }
         catch (RequestFailedException ex) when (ex.Status == 404) { }
     }
@@ -84,19 +84,19 @@ public sealed class TableSsoDomainStore(TableClient ssoDomainsTable, EnvPartitio
             entities.Add(entity);
         }
 
-        var tombstones = new List<(string, string)>();
+        // Tombstone-first (F24e): record the batch before deleting anything.
+        if (tombstoneWriter is not null && entities.Count > 0)
+            await tombstoneWriter.WriteBatchAsync("SsoDomains",
+                entities.Select(e => (e.PartitionKey, e.RowKey)), ct);
+
         foreach (var entity in entities)
         {
             try
             {
                 // entity.PartitionKey is already env-prefixed when read back (sandbox).
                 await ssoDomainsTable.DeleteEntityAsync(entity.PartitionKey, entity.RowKey, cancellationToken: ct);
-                tombstones.Add((entity.PartitionKey, entity.RowKey));
             }
             catch (RequestFailedException ex) when (ex.Status == 404) { }
         }
-
-        if (tombstoneWriter is not null && tombstones.Count > 0)
-            await tombstoneWriter.WriteBatchAsync("SsoDomains", tombstones, ct);
     }
 }

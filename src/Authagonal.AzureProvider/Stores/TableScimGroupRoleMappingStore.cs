@@ -34,11 +34,11 @@ public sealed class TableScimGroupRoleMappingStore(TableClient table, EnvPartiti
     {
         var pk = partitioner.PK(ScimGroupRoleMappingEntity.MappingPartition);
         var rk = ScimGroupRoleMappingEntity.RowKeyFor(groupId, role);
+        if (changeWriter is not null)
+            await changeWriter.WriteAsync("ScimGroupRoleMappings", pk, rk, ct);
         try
         {
             await table.DeleteEntityAsync(pk, rk, cancellationToken: ct);
-            if (changeWriter is not null)
-                await changeWriter.WriteAsync("ScimGroupRoleMappings", pk, rk, ct);
         }
         catch (RequestFailedException ex) when (ex.Status == 404) { }
     }

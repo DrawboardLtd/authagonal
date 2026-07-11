@@ -18,6 +18,13 @@ public enum ChangeOp
 /// their original signatures so existing call sites are unchanged; a missed delete resurrects a row on
 /// restore, so those stay on the awaited path.
 /// </para>
+/// <para>
+/// ORDERING CONTRACT (F24e): callers write the delete tombstone BEFORE deleting the data row. A crash in
+/// the other order loses the delete from every future backup (the daily backstop only re-scans LIVE rows —
+/// deletes are the one mutation class with no self-heal). The reverse crash (tombstone written, delete
+/// failed) is safe: any later write to the key re-stamps a newer storage Timestamp, and merge/restore keep
+/// rows written after the tombstone's DeletedAt.
+/// </para>
 /// </summary>
 public interface IChangeWriter
 {

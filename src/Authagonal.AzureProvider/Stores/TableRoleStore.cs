@@ -65,11 +65,11 @@ public sealed class TableRoleStore(TableClient rolesTable, EnvPartitioner partit
     public async Task DeleteAsync(string roleId, CancellationToken ct = default)
     {
         var pk = partitioner.PK(RoleEntity.RolePartition);
+        if (tombstoneWriter is not null)
+            await tombstoneWriter.WriteAsync("Roles", pk, roleId, ct);
         try
         {
             await rolesTable.DeleteEntityAsync(pk, roleId, cancellationToken: ct);
-            if (tombstoneWriter is not null)
-                await tombstoneWriter.WriteAsync("Roles", pk, roleId, ct);
         }
         catch (RequestFailedException ex) when (ex.Status == 404) { }
     }

@@ -31,6 +31,15 @@ public sealed class RestoreOptions
     /// verified and are allowed through with a warning.
     /// </summary>
     public bool VerifyIntegrity { get; set; } = true;
+
+    /// <summary>
+    /// Apply the backup's <c>_tombstones</c> file after the data files: delete each recorded key from
+    /// the restored tables. On by default — an incremental's deletes are as much a part of its state
+    /// as its upserts, and skipping them resurrects deleted (incl. GDPR-erased) rows when restoring a
+    /// full + incrementals sequence. Only meaningful when restoring incrementals (fulls carry no
+    /// tombstone file). Disable to inspect deleted rows deliberately.
+    /// </summary>
+    public bool ApplyTombstones { get; set; } = true;
 }
 
 public enum RestoreMode

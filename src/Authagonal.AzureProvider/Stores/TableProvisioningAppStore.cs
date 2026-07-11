@@ -85,11 +85,11 @@ public sealed class TableProvisioningAppStore(TableClient appsTable, EnvPartitio
     public async Task DeleteAsync(string appId, CancellationToken ct = default)
     {
         var pk = partitioner.PK(ProvisioningAppEntity.AppsPartition);
+        if (tombstoneWriter is not null)
+            await tombstoneWriter.WriteAsync("ProvisioningApps", pk, appId, ct);
         try
         {
             await appsTable.DeleteEntityAsync(pk, appId, cancellationToken: ct);
-            if (tombstoneWriter is not null)
-                await tombstoneWriter.WriteAsync("ProvisioningApps", pk, appId, ct);
         }
         catch (RequestFailedException ex) when (ex.Status == 404) { }
     }

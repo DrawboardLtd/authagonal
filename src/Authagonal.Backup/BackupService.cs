@@ -29,12 +29,15 @@ public sealed class BackupService(TableServiceClient serviceClient, IBackupTarge
 
         // Determine incremental watermark. WatermarkOverride wins: a backstop scan passes the last
         // full-coverage scan's timestamp so the run covers the whole window since it, not just the hour
-        // since the stored (per-run) watermark.
+        // since the stored (per-run) watermark. All Timestamp filters below use the margin-adjusted
+        // effectiveWatermark (see BackupDefaults.WatermarkSkewMargin) — the raw watermark is pod-clock,
+        // row Timestamps are storage-clock, and a commit inside the skew would escape every future run.
         DateTimeOffset? watermark = null;
         if (options.Incremental)
         {
             watermark = options.WatermarkOverride ?? await target.GetLastWatermarkAsync(ct);
         }
+        var effectiveWatermark = watermark - options.WatermarkSkewMargin;
 
         var backupStart = DateTimeOffset.UtcNow;
         var suffix = watermark.HasValue ? "-incr" : "";
@@ -79,14 +82,14 @@ public sealed class BackupService(TableServiceClient serviceClient, IBackupTarge
                 // unindexed Timestamp column. Full backups (and tables still on the scan path) scan. Deletes
                 // are captured separately by the tombstone pass below.
                 IAsyncEnumerable<TableEntity> pages;
-                if (watermark.HasValue && changeLogged.Contains(tableName))
+                if (effectiveWatermark.HasValue && changeLogged.Contains(tableName))
                 {
                     (manifest.ChangeLogTables ??= []).Add(tableName);
-                    pages = ReadUpsertsViaChangeLogAsync(changeLogClient, tableClient, tableName, watermark.Value, ct);
+                    pages = ReadUpsertsViaChangeLogAsync(changeLogClient, tableClient, tableName, effectiveWatermark.Value, ct);
                 }
                 else
                 {
-                    var filter = watermark.HasValue ? $"Timestamp gt datetime'{watermark.Value:O}'" : null;
+                    var filter = effectiveWatermark.HasValue ? $"Timestamp gt datetime'{effectiveWatermark.Value:O}'" : null;
                     pages = tableClient.QueryAsync<TableEntity>(filter: filter, maxPerPage: 1000, cancellationToken: ct);
                 }
 
@@ -152,9 +155,9 @@ public sealed class BackupService(TableServiceClient serviceClient, IBackupTarge
 
         // Back up tombstones for incremental backups
         long tombstoneCount = 0;
-        if (watermark.HasValue)
+        if (effectiveWatermark.HasValue)
         {
-            tombstoneCount = await BackupTombstonesAsync(backupId, prefix, watermark.Value, ct);
+            tombstoneCount = await BackupTombstonesAsync(backupId, prefix, effectiveWatermark.Value, ct);
         }
 
         sw.Stop();
@@ -260,12 +263,17 @@ public sealed class BackupService(TableServiceClient serviceClient, IBackupTarge
                         origPk = pipeIndex >= 0 ? rk[..pipeIndex] : rk;
                         origRk = pipeIndex >= 0 ? rk[(pipeIndex + 1)..] : "";
                     }
+                    // DeletedAt drives MergeService's recreate check against captured rows' STORAGE-clock
+                    // Timestamps, so emit the change-log row's own storage Timestamp (same clock domain;
+                    // the row is upsert-replaced per key, so its Timestamp IS the delete time). The stored
+                    // DeletedAt column is pod-clock — comparing it to a storage Timestamp let a
+                    // delete-then-recreate within the skew drop the recreated row from rollups (F24f).
                     var tombstone = new Dictionary<string, object?>
                     {
                         ["Table"] = entity.PartitionKey,
                         ["PartitionKey"] = origPk,
                         ["RowKey"] = origRk,
-                        ["DeletedAt"] = entity.GetDateTimeOffset("DeletedAt"),
+                        ["DeletedAt"] = entity.Timestamp ?? entity.GetDateTimeOffset("DeletedAt"),
                     };
                     writer!.WriteLine(JsonSerializer.Serialize(tombstone, JsonOptions));
                 }
@@ -291,6 +299,12 @@ public sealed class BackupService(TableServiceClient serviceClient, IBackupTarge
     {
         var dict = new Dictionary<string, object?>
         {
+            // Format marker: rows carrying it store explicit EDM type annotations for every
+            // JSON-ambiguous column, so restore never re-infers a type. Without it (legacy rows),
+            // restore falls back to shape-based inference — which mis-typed GUID/date-SHAPED
+            // string columns (e.g. the index tables' string UserId) as Edm.Guid/Edm.DateTime,
+            // breaking typed reads after a restore.
+            ["@v"] = 2,
             ["PartitionKey"] = entity.PartitionKey,
             ["RowKey"] = entity.RowKey,
             ["Timestamp"] = entity.Timestamp,
@@ -300,7 +314,20 @@ public sealed class BackupService(TableServiceClient serviceClient, IBackupTarge
         foreach (var kvp in entity)
         {
             if (kvp.Key is "odata.etag") continue;
-            dict.TryAdd(kvp.Key, kvp.Value);
+            if (!dict.TryAdd(kvp.Key, kvp.Value)) continue;
+
+            // Mirror the wire protocol's odata type annotations for the types JSON can't represent
+            // unambiguously. Strings/ints/bools need none — an unannotated value restores as-is.
+            var edmType = kvp.Value switch
+            {
+                Guid => "Edm.Guid",
+                DateTimeOffset or DateTime => "Edm.DateTime",
+                byte[] or BinaryData => "Edm.Binary",
+                long => "Edm.Int64",
+                double => "Edm.Double",
+                _ => null,
+            };
+            if (edmType is not null) dict[$"{kvp.Key}@odata.type"] = edmType;
         }
 
         return dict;

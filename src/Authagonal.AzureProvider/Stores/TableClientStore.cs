@@ -54,11 +54,11 @@ public sealed class TableClientStore(TableClient clientsTable, EnvPartitioner pa
     public async Task DeleteAsync(string clientId, CancellationToken ct = default)
     {
         var pk = partitioner.PK(clientId);
+        if (tombstoneWriter is not null)
+            await tombstoneWriter.WriteAsync("Clients", pk, ClientEntity.ConfigRowKey, ct);
         try
         {
             await clientsTable.DeleteEntityAsync(pk, ClientEntity.ConfigRowKey, cancellationToken: ct);
-            if (tombstoneWriter is not null)
-                await tombstoneWriter.WriteAsync("Clients", pk, ClientEntity.ConfigRowKey, ct);
         }
         catch (RequestFailedException ex) when (ex.Status == 404) { }
     }

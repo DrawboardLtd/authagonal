@@ -53,11 +53,11 @@ public sealed class TableScopeStore(TableClient scopesTable, EnvPartitioner part
     public async Task DeleteAsync(string name, CancellationToken ct = default)
     {
         var pk = partitioner.PK(ScopeEntity.ScopePartition);
+        if (tombstoneWriter is not null)
+            await tombstoneWriter.WriteAsync("Scopes", pk, name, ct);
         try
         {
             await scopesTable.DeleteEntityAsync(pk, name, cancellationToken: ct);
-            if (tombstoneWriter is not null)
-                await tombstoneWriter.WriteAsync("Scopes", pk, name, ct);
         }
         catch (RequestFailedException ex) when (ex.Status == 404) { }
     }

@@ -3,6 +3,17 @@ namespace Authagonal.Backup;
 public static class BackupDefaults
 {
     /// <summary>
+    /// Safety margin subtracted from the incremental watermark before filtering on the storage-stamped
+    /// <c>Timestamp</c> column. The watermark is pod-clock <c>UtcNow</c> while row Timestamps are
+    /// storage-clock; a mutation committing inside the skew window would otherwise be excluded by this
+    /// run AND every later run (each filters <c>Timestamp gt</c> a later watermark) — silently missing
+    /// from all backups. Re-reading the margin costs a few duplicate rows per run (upsert-merge dedupes);
+    /// callers that purge the change-log after a backup must bound the purge by the SAME margin or they
+    /// delete rows the next run still needs.
+    /// </summary>
+    public static readonly TimeSpan WatermarkSkewMargin = TimeSpan.FromMinutes(5);
+
+    /// <summary>
     /// All Authagonal data tables. Excludes transient tables (SamlReplayCache, OidcStateStore,
     /// RevokedTokens — entries are bounded by access token lifetime, typically minutes)
     /// and the Tombstones table (handled separately by the backup engine).

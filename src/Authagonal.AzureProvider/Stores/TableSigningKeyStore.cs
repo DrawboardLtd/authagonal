@@ -65,11 +65,11 @@ public sealed class TableSigningKeyStore(TableClient signingKeysTable, EnvPartit
     public async Task DeleteAsync(string keyId, CancellationToken ct = default)
     {
         var pk = partitioner.PK(SigningKeyEntity.SigningPartitionKey);
+        if (tombstoneWriter is not null)
+            await tombstoneWriter.WriteAsync("SigningKeys", pk, keyId, ct);
         try
         {
             await signingKeysTable.DeleteEntityAsync(pk, keyId, cancellationToken: ct);
-            if (tombstoneWriter is not null)
-                await tombstoneWriter.WriteAsync("SigningKeys", pk, keyId, ct);
         }
         catch (RequestFailedException ex) when (ex.Status == 404) { }
     }

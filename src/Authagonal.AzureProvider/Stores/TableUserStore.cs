@@ -155,11 +155,11 @@ public sealed class TableUserStore(
 
     private async Task TryDeleteEmailIndexAsync(string pk, CancellationToken ct)
     {
+        if (tombstoneWriter is not null)
+            await tombstoneWriter.WriteAsync("UserEmails", pk, UserEmailEntity.LookupRowKey, ct);
         try
         {
             await userEmailsTable.DeleteEntityAsync(pk, UserEmailEntity.LookupRowKey, cancellationToken: ct);
-            if (tombstoneWriter is not null)
-                await tombstoneWriter.WriteAsync("UserEmails", pk, UserEmailEntity.LookupRowKey, ct);
         }
         catch (RequestFailedException ex) when (ex.Status == 404) { }
     }
@@ -184,11 +184,11 @@ public sealed class TableUserStore(
 
     private async Task TryDeleteExternalIdAsync(string pk, CancellationToken ct)
     {
+        if (tombstoneWriter is not null)
+            await tombstoneWriter.WriteAsync("UserExternalIds", pk, UserExternalIdEntity.LookupRowKey, ct);
         try
         {
             await userExternalIdsTable.DeleteEntityAsync(pk, UserExternalIdEntity.LookupRowKey, cancellationToken: ct);
-            if (tombstoneWriter is not null)
-                await tombstoneWriter.WriteAsync("UserExternalIds", pk, UserExternalIdEntity.LookupRowKey, ct);
         }
         catch (RequestFailedException ex) when (ex.Status == 404) { }
     }
@@ -285,11 +285,11 @@ public sealed class TableUserStore(
 
     private async Task TryDeleteDomainAsync(string pk, string userId, CancellationToken ct)
     {
+        if (tombstoneWriter is not null)
+            await tombstoneWriter.WriteAsync("UserEmailDomains", pk, userId, ct);
         try
         {
             await userEmailDomainsTable!.DeleteEntityAsync(pk, userId, cancellationToken: ct);
-            if (tombstoneWriter is not null)
-                await tombstoneWriter.WriteAsync("UserEmailDomains", pk, userId, ct);
         }
         catch (RequestFailedException ex) when (ex.Status == 404) { }
     }
@@ -351,11 +351,11 @@ public sealed class TableUserStore(
 
     private async Task TryDeleteRowAsync(TableClient table, string pk, string rk, string tombstoneTable, CancellationToken ct)
     {
+        if (tombstoneWriter is not null)
+            await tombstoneWriter.WriteAsync(tombstoneTable, pk, rk, ct);
         try
         {
             await table.DeleteEntityAsync(pk, rk, cancellationToken: ct);
-            if (tombstoneWriter is not null)
-                await tombstoneWriter.WriteAsync(tombstoneTable, pk, rk, ct);
         }
         catch (RequestFailedException ex) when (ex.Status == 404) { }
     }
@@ -781,10 +781,12 @@ public sealed class TableUserStore(
             var logins = await GetLoginsAsync(userId, ct);
             await Task.WhenAll(logins.Select(login => RemoveLoginAsync(userId, login.Provider, login.ProviderKey, ct)));
 
-            // Delete user profile
-            await usersTable.DeleteEntityAsync(_partitioner.PK(userId), UserEntity.ProfileRowKey, cancellationToken: ct);
+            // Delete user profile — tombstone-first (F24e): a crash between the delete and the
+            // tombstone would drop the delete from every backup, and restore would resurrect the
+            // (possibly GDPR-erased) account.
             if (tombstoneWriter is not null)
                 await tombstoneWriter.WriteAsync("Users", _partitioner.PK(userId), UserEntity.ProfileRowKey, ct);
+            await usersTable.DeleteEntityAsync(_partitioner.PK(userId), UserEntity.ProfileRowKey, cancellationToken: ct);
         }
         catch (RequestFailedException ex) when (ex.Status == 404) { }
     }
@@ -1273,11 +1275,11 @@ public sealed class TableUserStore(
 
     private async Task TryDeleteLoginAsync(string pk, string rk, CancellationToken ct)
     {
+        if (tombstoneWriter is not null)
+            await tombstoneWriter.WriteAsync("UserLogins", pk, rk, ct);
         try
         {
             await userLoginsTable.DeleteEntityAsync(pk, rk, cancellationToken: ct);
-            if (tombstoneWriter is not null)
-                await tombstoneWriter.WriteAsync("UserLogins", pk, rk, ct);
         }
         catch (RequestFailedException ex) when (ex.Status == 404) { }
     }

@@ -54,11 +54,11 @@ public sealed class TableOidcProviderStore(TableClient oidcProvidersTable, EnvPa
     public async Task DeleteAsync(string connectionId, CancellationToken ct = default)
     {
         var pk = partitioner.PK(connectionId);
+        if (tombstoneWriter is not null)
+            await tombstoneWriter.WriteAsync("OidcProviders", pk, OidcProviderEntity.ConfigRowKey, ct);
         try
         {
             await oidcProvidersTable.DeleteEntityAsync(pk, OidcProviderEntity.ConfigRowKey, cancellationToken: ct);
-            if (tombstoneWriter is not null)
-                await tombstoneWriter.WriteAsync("OidcProviders", pk, OidcProviderEntity.ConfigRowKey, ct);
         }
         catch (RequestFailedException ex) when (ex.Status == 404) { }
     }

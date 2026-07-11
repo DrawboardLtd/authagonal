@@ -86,6 +86,14 @@ public sealed class TableScimTokenStore(TableClient scimTokensTable, EnvPartitio
             var tokenHash = reverseEntity.Value.TokenHash;
             var hashPk = partitioner.PK(tokenHash);
 
+            // Tombstone-first (F24e): a crash between the deletes and the tombstones would lose the
+            // deletes from every backup (restore would resurrect a revoked SCIM token).
+            if (tombstoneWriter is not null)
+            {
+                await tombstoneWriter.WriteAsync("ScimTokens", hashPk, ScimTokenEntity.LookupRowKey, ct);
+                await tombstoneWriter.WriteAsync("ScimTokens", clientPk, reverseRk, ct);
+            }
+
             // Delete forward index
             try
             {
@@ -95,12 +103,6 @@ public sealed class TableScimTokenStore(TableClient scimTokensTable, EnvPartitio
 
             // Delete reverse index
             await scimTokensTable.DeleteEntityAsync(clientPk, reverseRk, cancellationToken: ct);
-
-            if (tombstoneWriter is not null)
-            {
-                await tombstoneWriter.WriteAsync("ScimTokens", hashPk, ScimTokenEntity.LookupRowKey, ct);
-                await tombstoneWriter.WriteAsync("ScimTokens", clientPk, reverseRk, ct);
-            }
         }
         catch (RequestFailedException ex) when (ex.Status == 404)
         {

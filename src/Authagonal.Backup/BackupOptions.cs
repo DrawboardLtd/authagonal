@@ -50,4 +50,11 @@ public sealed class BackupOptions
     /// non-store writers, pre-capture pods during a deploy. Ignored for full (non-incremental) backups.
     /// </summary>
     public DateTimeOffset? WatermarkOverride { get; set; }
+
+    /// <summary>
+    /// Safety margin subtracted from the watermark before every Timestamp filter (see
+    /// <see cref="BackupDefaults.WatermarkSkewMargin"/> for why). Override only in tests that assert
+    /// exact window boundaries; production callers keep the default.
+    /// </summary>
+    public TimeSpan WatermarkSkewMargin { get; set; } = BackupDefaults.WatermarkSkewMargin;
 }
