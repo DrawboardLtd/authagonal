@@ -6,7 +6,11 @@ namespace Authagonal.AzureProvider.Stores;
 /// <summary>
 /// Records row-level changes to a dedicated change-log table (physically still named <c>Tombstones</c>) so
 /// incremental backups can enumerate what changed without a <c>Timestamp</c> scan of the live data tables.
-/// Each row: PK = logical table name (e.g. "Users"), RK = "{originalPK}|{originalRK}", <c>Op</c> = "U"/"D".
+/// Each row: PK = logical table name (e.g. "Users"), RK = "{originalPK}|{originalRK}", <c>Op</c> = "U"/"D",
+/// plus authoritative <c>OrigPK</c>/<c>OrigRK</c> columns. The composite RK stays as the upsert-replace dedup
+/// key, but the backup reader recovers the original key from the columns — a '|' in the PK (sandbox
+/// <c>{env}|</c> prefix, legacy <c>{clientId}|{externalId}</c> / <c>{provider}|{providerKey}</c>) makes
+/// splitting the RK ambiguous.
 /// A given key holds one row (upsert-replace), so the last op in a backup window wins — an upsert then a
 /// delete of the same key resolves to a delete, a delete then a re-create resolves to an upsert. Deletes
 /// keep the historical <c>DeletedAt</c> column so the backup's <c>_tombstones</c> file format is unchanged.
@@ -24,8 +28,13 @@ public sealed class TableChangeWriter(TableClient changeLogTable) : IChangeWrite
 
     private Task WriteOneAsync(string tableName, string partitionKey, string rowKey, string op, CancellationToken ct)
     {
-        var entity = new TableEntity(tableName, $"{partitionKey}|{rowKey}") { { "Op", op } };
-        // DeletedAt preserved for the backup's tombstone file (Table (from PK), PK|RK (from RK), DeletedAt).
+        var entity = new TableEntity(tableName, $"{partitionKey}|{rowKey}")
+        {
+            { "Op", op },
+            { "OrigPK", partitionKey }, // authoritative key columns — see the class summary (RK '|' is ambiguous)
+            { "OrigRK", rowKey },
+        };
+        // DeletedAt preserved for the backup's tombstone file (Table (from PK), PK/RK (from OrigPK/OrigRK), DeletedAt).
         if (op == DeleteOp) entity["DeletedAt"] = DateTimeOffset.UtcNow;
         return changeLogTable.UpsertEntityAsync(entity, TableUpdateMode.Replace, ct);
     }
@@ -44,7 +53,12 @@ public sealed class TableChangeWriter(TableClient changeLogTable) : IChangeWrite
 
         foreach (var (pk, rk) in keys)
         {
-            var entity = new TableEntity(tableName, $"{pk}|{rk}") { { "Op", op } };
+            var entity = new TableEntity(tableName, $"{pk}|{rk}")
+            {
+                { "Op", op },
+                { "OrigPK", pk },
+                { "OrigRK", rk },
+            };
             if (op == DeleteOp) entity["DeletedAt"] = now;
             batch.Add(new TableTransactionAction(TableTransactionActionType.UpsertReplace, entity));
 

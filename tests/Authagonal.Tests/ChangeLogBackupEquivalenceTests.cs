@@ -40,7 +40,7 @@ public class ChangeLogBackupEquivalenceTests(AzuriteFixture azurite)
 
     private readonly TableServiceClient _svc = new(azurite.ConnectionString);
 
-    private TableUserStore NewStore(string prefix)
+    private TableUserStore NewStore(string prefix, EnvPartitioner? env = null)
     {
         TableClient T(string name)
         {
@@ -50,7 +50,7 @@ public class ChangeLogBackupEquivalenceTests(AzuriteFixture azurite)
         }
         return new TableUserStore(
             T("Users"), T("UserEmails"), T("UserLogins"), T("UserExternalIds"), T("UserFirstNames"), T("UserLastNames"),
-            EnvPartitioner.Live, tombstoneWriter: new TableChangeWriter(T("Tombstones")),
+            env ?? EnvPartitioner.Live, tombstoneWriter: new TableChangeWriter(T("Tombstones")),
             fieldCipher: new FakeCipher(), indexTokenizer: new FakeTokenizer(),
             userEmailDomainsTable: T("UserEmailDomains"), userEmailLocalPrefixesTable: T("UserEmailLocalPrefixes"));
     }
@@ -80,6 +80,23 @@ public class ChangeLogBackupEquivalenceTests(AzuriteFixture azurite)
             set.Add($"{pk}|{rk}");
         }
         return set;
+    }
+
+    private static async Task<List<(string Table, string Pk, string Rk)>> TombstonesAsync(IBackupSource src, string backupId)
+    {
+        var list = new List<(string Table, string Pk, string Rk)>();
+        await using var stream = await src.OpenReadAsync(backupId, "_tombstones.jsonl");
+        if (stream is null) return list;
+        using var reader = new StreamReader(stream);
+        string? line;
+        while ((line = await reader.ReadLineAsync()) is not null)
+        {
+            if (string.IsNullOrWhiteSpace(line)) continue;
+            using var doc = JsonDocument.Parse(line);
+            var r = doc.RootElement;
+            list.Add((r.GetProperty("Table").GetString()!, r.GetProperty("PartitionKey").GetString()!, r.GetProperty("RowKey").GetString()!));
+        }
+        return list;
     }
 
     [Fact]
@@ -146,6 +163,79 @@ public class ChangeLogBackupEquivalenceTests(AzuriteFixture azurite)
             var logTomb = await KeysAsync(logSrc, log.BackupId, "_tombstones");
             Assert.True(scanTomb.SetEquals(logTomb));
             Assert.NotEmpty(logTomb); // u3's deletes
+        }
+        finally
+        {
+            if (Directory.Exists(scanDir)) Directory.Delete(scanDir, true);
+            if (Directory.Exists(logDir)) Directory.Delete(logDir, true);
+        }
+    }
+
+    [Fact]
+    public async Task Changelog_incremental_handles_env_prefixed_keys()
+    {
+        // Sandbox env ⇒ every PartitionKey is {env}|{natural} (EnvPartitioner), so the change-log composite
+        // RK is {env}|{natural}|{rk} and a naive split-on-first-'|' recovers the WRONG (pk, rk): the upsert
+        // point-read 404s and the row silently vanishes, and delete tombstones carry a mangled PK that removes
+        // the wrong key on restore. Regression guard for F24d — the OrigPK/OrigRK columns fix both. (This is
+        // the case tokenization can't dodge: the env prefix puts a '|' ahead of the '|'-free hex token.)
+        var prefix = $"env{Guid.NewGuid():N}";
+        var store = NewStore(prefix, new EnvPartitioner("staging"));
+
+        await store.CreateAsync(User("u1", "ada@acme.test", "Ada", "Lovelace"));
+        await store.CreateAsync(User("u2", "grace@acme.test", "Grace", "Hopper"));
+        await store.CreateAsync(User("u3", "edsger@acme.test", "Edsger", "Dijkstra"));
+        await store.SetExternalIdAsync("u1", "client1", "ext-ada");
+
+        var watermark = DateTimeOffset.UtcNow.AddHours(-1);
+
+        await store.UpdateAsync(User("u1", "ada2@acme.test", "Ada", "Lovelace"));
+        await store.AddLoginAsync(new ExternalLoginInfo { UserId = "u1", Provider = "google", ProviderKey = "ada@gmail" });
+        await store.SetExternalIdAsync("u2", "client1", "ext-grace");
+        await store.DeleteAsync("u3");
+        await store.CreateAsync(User("u4", "alan@acme.test", "Alan", "Turing"));
+
+        var scanDir = Path.Combine(Path.GetTempPath(), $"scan{Guid.NewGuid():N}");
+        var logDir = Path.Combine(Path.GetTempPath(), $"log{Guid.NewGuid():N}");
+        try
+        {
+            var scanTarget = new FileSystemBackupTarget(scanDir);
+            var logTarget = new FileSystemBackupTarget(logDir);
+            await scanTarget.SetLastWatermarkAsync(watermark);
+            await logTarget.SetLastWatermarkAsync(watermark);
+
+            BackupOptions Opt(IReadOnlySet<string>? changeLogged) => new()
+            {
+                TablePrefix = prefix,
+                Incremental = true,
+                Gzip = false,
+                ChangeLoggedTables = changeLogged,
+            };
+
+            var scan = await new BackupService(_svc, scanTarget, Opt(new HashSet<string>())).RunAsync();
+            var log = await new BackupService(_svc, logTarget, Opt(BackupDefaults.ChangeLoggedTables)).RunAsync();
+
+            var scanSrc = new FileSystemBackupSource(scanDir);
+            var logSrc = new FileSystemBackupSource(logDir);
+
+            // Upsert equivalence: the change-log incremental must capture the same env-prefixed keys as a scan.
+            // Pre-fix, the mis-split point-read 404s and `logged` comes back empty for these tables.
+            foreach (var table in BackupDefaults.ChangeLoggedTables)
+            {
+                var scanned = await KeysAsync(scanSrc, scan.BackupId, table);
+                var logged = await KeysAsync(logSrc, log.BackupId, table);
+                Assert.True(scanned.SetEquals(logged),
+                    $"{table}: scan=[{string.Join(",", scanned.Order())}] changelog=[{string.Join(",", logged.Order())}]");
+                Assert.NotEmpty(logged);
+            }
+
+            // Every key here is env-prefixed, so each tombstone's PartitionKey must be "staging|…". Pre-fix the
+            // split mangles it to exactly "staging" — assert on the SEPARATE PK (a "{pk}|{rk}" concat can't tell
+            // them apart). This covers the tombstone pass, which the scan-equivalence check can't (both modes
+            // share it, so both would be wrong identically).
+            var tombs = await TombstonesAsync(logSrc, log.BackupId);
+            Assert.NotEmpty(tombs); // u3's deletes + u1's replaced index rows
+            Assert.All(tombs, t => Assert.StartsWith("staging|", t.Pk));
         }
         finally
         {

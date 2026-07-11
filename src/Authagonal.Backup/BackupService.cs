@@ -181,12 +181,20 @@ public sealed class BackupService(TableServiceClient serviceClient, IBackupTarge
         var filter = $"PartitionKey eq '{tableName}' and Op eq 'U' and Timestamp gt datetime'{watermark:O}'";
         await foreach (var logRow in changeLog.QueryAsync<TableEntity>(filter: filter, cancellationToken: ct))
         {
-            // RK = "{pk}|{rk}" — split on the FIRST '|' (matches the tombstone-file key convention).
-            var composite = logRow.RowKey;
-            var pipe = composite.IndexOf('|');
-            if (pipe < 0) continue;
-            var pk = composite[..pipe];
-            var rk = composite[(pipe + 1)..];
+            // Recover the original key from the authoritative OrigPK/OrigRK columns. A '|' in the PK (sandbox
+            // {env}| prefix, legacy {clientId}|{externalId} / {provider}|{providerKey}) makes splitting the
+            // composite RK ambiguous — point-reading the wrong key 404s and silently drops the row. Fall back
+            // to the split only for legacy change-log rows written before those columns existed.
+            var pk = logRow.GetString("OrigPK");
+            var rk = logRow.GetString("OrigRK");
+            if (pk is null || rk is null)
+            {
+                var composite = logRow.RowKey;
+                var pipe = composite.IndexOf('|');
+                if (pipe < 0) continue;
+                pk = composite[..pipe];
+                rk = composite[(pipe + 1)..];
+            }
 
             TableEntity? live = null;
             try
@@ -240,14 +248,23 @@ public sealed class BackupService(TableServiceClient serviceClient, IBackupTarge
 
                 if (!options.DryRun)
                 {
-                    // Tombstone format: Table (from PK), PK|RK (from RK), DeletedAt
-                    var rk = entity.RowKey;
-                    var pipeIndex = rk.IndexOf('|');
+                    // Tombstone format: Table (from PK), PK/RK (from the authoritative OrigPK/OrigRK columns,
+                    // with the RK split as a legacy fallback — see ReadUpsertsViaChangeLogAsync for why the
+                    // columns are authoritative). A mis-split here removes the wrong key on restore.
+                    var origPk = entity.GetString("OrigPK");
+                    var origRk = entity.GetString("OrigRK");
+                    if (origPk is null || origRk is null)
+                    {
+                        var rk = entity.RowKey;
+                        var pipeIndex = rk.IndexOf('|');
+                        origPk = pipeIndex >= 0 ? rk[..pipeIndex] : rk;
+                        origRk = pipeIndex >= 0 ? rk[(pipeIndex + 1)..] : "";
+                    }
                     var tombstone = new Dictionary<string, object?>
                     {
                         ["Table"] = entity.PartitionKey,
-                        ["PartitionKey"] = pipeIndex >= 0 ? rk[..pipeIndex] : rk,
-                        ["RowKey"] = pipeIndex >= 0 ? rk[(pipeIndex + 1)..] : "",
+                        ["PartitionKey"] = origPk,
+                        ["RowKey"] = origRk,
                         ["DeletedAt"] = entity.GetDateTimeOffset("DeletedAt"),
                     };
                     writer!.WriteLine(JsonSerializer.Serialize(tombstone, JsonOptions));
