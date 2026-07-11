@@ -1,6 +1,7 @@
 import type { ApiError, SessionResponse, AppLinkResponse, SsoCheckResponse, ProvidersResponse, PasswordPolicyResponse, MfaLoginResponse, MfaVerifyResponse, MfaStatusResponse, MfaTotpSetupResponse, MfaRecoveryGenerateResponse, MfaWebAuthnSetupResponse, MfaWebAuthnConfirmResponse, RegisterResponse, ProfileResponse, ProfileUpdateRequest } from './types';
 
 import type { AssertionOptionsJson } from './webauthn';
+import { getBoot } from './branding';
 
 const API_URL = import.meta.env.VITE_API_URL || '';
 
@@ -125,6 +126,9 @@ export function ssoCheck(email: string): Promise<SsoCheckResponse> {
 }
 
 export function getProviders(): Promise<ProvidersResponse> {
+  // Server-inlined boot payload (see branding.ts getBoot) saves the round trip.
+  const bootProviders = getBoot()?.providers;
+  if (bootProviders) return Promise.resolve(bootProviders as ProvidersResponse);
   return api<ProvidersResponse>('/api/auth/providers');
 }
 

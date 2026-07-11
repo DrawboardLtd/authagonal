@@ -48,7 +48,26 @@ const defaults: BrandingConfig = {
   darkPrimaryColor: null,
 };
 
+/**
+ * Boot payload a host server may inline into the login document (a
+ * `window.__AUTHAGONAL_BOOT__` script tag) so the SPA renders without waiting
+ * on the branding/providers fetches — each one is a full client→origin round
+ * trip that serializes first paint for far-from-origin visitors.
+ */
+export interface AuthagonalBoot {
+  branding?: Partial<BrandingConfig>;
+  providers?: unknown;
+}
+
+export function getBoot(): AuthagonalBoot | undefined {
+  return (window as { __AUTHAGONAL_BOOT__?: AuthagonalBoot }).__AUTHAGONAL_BOOT__;
+}
+
 export async function loadBranding(): Promise<BrandingConfig> {
+  // Server-inlined payload wins: zero round trips. Fetch remains the fallback
+  // for hosts that don't inject (dev server, the support SPA on nginx).
+  const boot = getBoot();
+  if (boot?.branding) return { ...defaults, ...boot.branding };
   try {
     const response = await fetch('/branding.json');
     if (!response.ok) return defaults;

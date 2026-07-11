@@ -859,11 +859,31 @@ public static class AuthEndpoints
         IOptions<TurnstileOptions> turnstileOptions,
         CancellationToken ct)
     {
+        var response = await BuildProvidersResponseAsync(oidcStore, samlStore, turnstileOptions.Value.SiteKey, ct);
+        return TypedResults.Json(response, AuthagonalJsonContext.Default.SsoProviderListResponse);
+    }
+
+    /// <summary>
+    /// Builds the login page's provider-list payload (the <c>/api/auth/providers</c> response body).
+    /// Public so a host can inline the exact same payload into the login document it serves
+    /// (a <c>window.__AUTHAGONAL_BOOT__</c> script the login SPA consumes), sparing far-from-origin
+    /// visitors the extra round trip that otherwise serializes first paint.
+    /// </summary>
+    public static async Task<SsoProviderListResponse> BuildProvidersResponseAsync(
+        IOidcProviderStore oidcStore,
+        ISamlProviderStore samlStore,
+        string? turnstileSiteKey,
+        CancellationToken ct)
+    {
         // Render a "Continue with {name}" button only for connections that are NOT domain-routed.
         // A connection with AllowedDomains is reached email-first via /sso-check instead, so showing
         // a button for it would be redundant. Covers both OIDC and SAML uniformly.
-        var oidc = await oidcStore.GetAllAsync(ct);
-        var saml = await samlStore.GetAllAsync(ct);
+        // The two reads hit independent tables — run them concurrently; this payload sits on the
+        // login page's first-paint path.
+        var oidcTask = oidcStore.GetAllAsync(ct);
+        var samlTask = samlStore.GetAllAsync(ct);
+        var oidc = await oidcTask;
+        var saml = await samlTask;
         var result = oidc
             .Where(p => p.AllowedDomains.Count == 0)
             .Select(p => new SsoProviderInfo
@@ -885,9 +905,7 @@ public static class AuthEndpoints
                     LoginUrl = $"/saml/{p.ConnectionId}/login"
                 }))
             .ToList();
-        return TypedResults.Json(
-            new SsoProviderListResponse { Providers = result, TurnstileSiteKey = turnstileOptions.Value.SiteKey },
-            AuthagonalJsonContext.Default.SsoProviderListResponse);
+        return new SsoProviderListResponse { Providers = result, TurnstileSiteKey = turnstileSiteKey };
     }
 
     private static async Task<IResult> SsoCheckAsync(
