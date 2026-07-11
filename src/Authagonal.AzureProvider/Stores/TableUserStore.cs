@@ -235,6 +235,7 @@ public sealed class TableUserStore(
         await Task.WhenAll(tokens.Select(token =>
             userEmailLocalPrefixesTable!.UpsertEntityAsync(
                 new TableEntity(_partitioner.PK(token), userId) { ["UserId"] = userId }, TableUpdateMode.Replace, ct)));
+        await LogUpsertBatchAsync("UserEmailLocalPrefixes", tokens.Select(t => (_partitioner.PK(t), userId)), ct);
     }
 
     private async Task DeleteEmailLocalPrefixIndexAsync(IReadOnlyList<string> tokens, string userId, CancellationToken ct)
@@ -266,6 +267,7 @@ public sealed class TableUserStore(
         var pk = Bucketed(_partitioner.PK(domainToken), userId);
         var entity = new UserEmailDomainEntity { PartitionKey = pk, RowKey = userId, UserId = userId };
         await userEmailDomainsTable!.UpsertEntityAsync(entity, TableUpdateMode.Replace, ct);
+        await LogUpsertAsync("UserEmailDomains", pk, userId, ct);
     }
 
     private async Task DeleteDomainIndexAsync(string domain, string domainToken, string userId, CancellationToken ct)

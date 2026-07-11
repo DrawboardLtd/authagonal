@@ -55,6 +55,21 @@ public class ChangeLogBackupEquivalenceTests(AzuriteFixture azurite)
             userEmailDomainsTable: T("UserEmailDomains"), userEmailLocalPrefixesTable: T("UserEmailLocalPrefixes"));
     }
 
+    // The other two change-logged stores (same prefix + partitioner + change-log table as the user store).
+    private (TableScimGroupRoleMappingStore ScimMappings, TableProvisioningAppStore ProvApps) NewAuxStores(string prefix, EnvPartitioner env)
+    {
+        TableClient T(string name)
+        {
+            var c = _svc.GetTableClient($"{prefix}{name}");
+            c.CreateIfNotExists();
+            return c;
+        }
+        var writer = new TableChangeWriter(T("Tombstones"));
+        return (
+            new TableScimGroupRoleMappingStore(T("ScimGroupRoleMappings"), env, writer),
+            new TableProvisioningAppStore(T("ProvisioningApps"), env, writer));
+    }
+
     private static AuthUser User(string id, string email, string first, string last) => new()
     {
         Id = id,
@@ -104,6 +119,7 @@ public class ChangeLogBackupEquivalenceTests(AzuriteFixture azurite)
     {
         var prefix = $"eq{Guid.NewGuid():N}";
         var store = NewStore(prefix);
+        var (scimMappings, provApps) = NewAuxStores(prefix, EnvPartitioner.Live);
 
         // Seed (before the watermark)
         await store.CreateAsync(User("u1", "ada@acme.test", "Ada", "Lovelace"));
@@ -123,6 +139,8 @@ public class ChangeLogBackupEquivalenceTests(AzuriteFixture azurite)
         await store.AddLoginAsync(new ExternalLoginInfo { UserId = "u3", Provider = "saml", ProviderKey = "edsger@idp" }); // logged then deleted
         await store.DeleteAsync("u3");                                                                   // tombstones
         await store.CreateAsync(User("u4", "alan@acme.test", "Alan", "Turing"));                         // UserEmails, names
+        await scimMappings.SetAsync(new ScimGroupRoleMapping { GroupId = "g1", Role = "tenant:admin" }); // ScimGroupRoleMappings
+        await provApps.UpsertAsync(new ProvisioningAppConfig { AppId = "app1", Name = "App", CallbackUrl = "https://x.test" }); // ProvisioningApps
 
         var scanDir = Path.Combine(Path.GetTempPath(), $"scan{Guid.NewGuid():N}");
         var logDir = Path.Combine(Path.GetTempPath(), $"log{Guid.NewGuid():N}");
@@ -180,7 +198,9 @@ public class ChangeLogBackupEquivalenceTests(AzuriteFixture azurite)
         // the wrong key on restore. Regression guard for F24d — the OrigPK/OrigRK columns fix both. (This is
         // the case tokenization can't dodge: the env prefix puts a '|' ahead of the '|'-free hex token.)
         var prefix = $"env{Guid.NewGuid():N}";
-        var store = NewStore(prefix, new EnvPartitioner("staging"));
+        var env = new EnvPartitioner("staging");
+        var store = NewStore(prefix, env);
+        var (scimMappings, provApps) = NewAuxStores(prefix, env);
 
         await store.CreateAsync(User("u1", "ada@acme.test", "Ada", "Lovelace"));
         await store.CreateAsync(User("u2", "grace@acme.test", "Grace", "Hopper"));
@@ -194,6 +214,8 @@ public class ChangeLogBackupEquivalenceTests(AzuriteFixture azurite)
         await store.SetExternalIdAsync("u2", "client1", "ext-grace");
         await store.DeleteAsync("u3");
         await store.CreateAsync(User("u4", "alan@acme.test", "Alan", "Turing"));
+        await scimMappings.SetAsync(new ScimGroupRoleMapping { GroupId = "g1", Role = "tenant:admin" });
+        await provApps.UpsertAsync(new ProvisioningAppConfig { AppId = "app1", Name = "App", CallbackUrl = "https://x.test" });
 
         var scanDir = Path.Combine(Path.GetTempPath(), $"scan{Guid.NewGuid():N}");
         var logDir = Path.Combine(Path.GetTempPath(), $"log{Guid.NewGuid():N}");

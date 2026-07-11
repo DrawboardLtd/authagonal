@@ -56,6 +56,8 @@ public sealed class TableProvisioningAppStore(TableClient appsTable, EnvPartitio
         entity.PartitionKey = partitioner.PK(entity.PartitionKey);
         entity.ApiKey = await EncryptApiKeyAsync(entity.ApiKey, ct);
         await appsTable.UpsertEntityAsync(entity, TableUpdateMode.Replace, ct);
+        if (tombstoneWriter is not null)
+            await tombstoneWriter.WriteUpsertAsync("ProvisioningApps", entity.PartitionKey, entity.RowKey, ct);
     }
 
     public async Task<int> MigrateProvisioningAppsAsync(bool dryRun, CancellationToken ct = default)
@@ -74,6 +76,8 @@ public sealed class TableProvisioningAppStore(TableClient appsTable, EnvPartitio
             if (dryRun) continue;
             e.ApiKey = await _cipher.ProtectAsync(e.ApiKey, ct);
             await appsTable.UpsertEntityAsync(e, TableUpdateMode.Replace, ct);
+            if (tombstoneWriter is not null)
+                await tombstoneWriter.WriteUpsertAsync("ProvisioningApps", e.PartitionKey, e.RowKey, ct);
         }
         return count;
     }

@@ -10,6 +10,7 @@ public static class BackupDefaults
     public static readonly string[] Tables =
     [
         "Users", "UserEmails", "UserFirstNames", "UserLastNames", "UserLogins", "UserExternalIds",
+        "UserEmailDomains", "UserEmailLocalPrefixes",
         "Clients",
         "Grants", "GrantsBySubject", "GrantsByExpiry",
         "SigningKeys",
@@ -17,9 +18,10 @@ public static class BackupDefaults
         "SamlProviders", "OidcProviders",
         "UserProvisions",
         "MfaCredentials", "MfaChallenges", "MfaWebAuthnIndex",
-        "ScimTokens", "ScimGroups", "ScimGroupExternalIds",
+        "ScimTokens", "ScimGroups", "ScimGroupExternalIds", "ScimGroupRoleMappings",
         "Roles",
-        "Scopes"
+        "Scopes",
+        "ProvisioningApps"
     ];
 
     /// <summary>
@@ -33,6 +35,8 @@ public static class BackupDefaults
     public static readonly IReadOnlySet<string> ChangeLoggedTables = new HashSet<string>(StringComparer.Ordinal)
     {
         "UserEmails", "UserFirstNames", "UserLastNames", "UserLogins", "UserExternalIds",
+        "UserEmailDomains", "UserEmailLocalPrefixes",
+        "ScimGroupRoleMappings", "ProvisioningApps",
     };
 
     /// <summary>
@@ -43,8 +47,9 @@ public static class BackupDefaults
     /// <see cref="BackupOptions.WatermarkOverride"/> set to the last full-coverage scan and the
     /// change-log path off. Without the backstop, login-state changes never reach a backup.
     /// </summary>
-    public static readonly IReadOnlySet<string> ChangeLoggedTablesWithUsers = new HashSet<string>(StringComparer.Ordinal)
+    public static readonly IReadOnlySet<string> ChangeLoggedTablesWithUsers = new HashSet<string>(
+        ChangeLoggedTables, StringComparer.Ordinal)
     {
-        "Users", "UserEmails", "UserFirstNames", "UserLastNames", "UserLogins", "UserExternalIds",
+        "Users",
     };
 }

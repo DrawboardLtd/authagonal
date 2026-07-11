@@ -7,7 +7,7 @@ using Authagonal.AzureProvider.Entities;
 
 namespace Authagonal.AzureProvider.Stores;
 
-public sealed class TableScimGroupRoleMappingStore(TableClient table, EnvPartitioner partitioner) : IScimGroupRoleMappingStore
+public sealed class TableScimGroupRoleMappingStore(TableClient table, EnvPartitioner partitioner, IChangeWriter? changeWriter = null) : IScimGroupRoleMappingStore
 {
     public async Task<IReadOnlyList<ScimGroupRoleMapping>> GetAllAsync(CancellationToken ct = default)
     {
@@ -26,15 +26,19 @@ public sealed class TableScimGroupRoleMappingStore(TableClient table, EnvPartiti
         var entity = ScimGroupRoleMappingEntity.FromModel(mapping);
         entity.PartitionKey = partitioner.PK(entity.PartitionKey);
         await table.UpsertEntityAsync(entity, TableUpdateMode.Replace, ct);
+        if (changeWriter is not null)
+            await changeWriter.WriteUpsertAsync("ScimGroupRoleMappings", entity.PartitionKey, entity.RowKey, ct);
     }
 
     public async Task DeleteAsync(string groupId, string role, CancellationToken ct = default)
     {
         var pk = partitioner.PK(ScimGroupRoleMappingEntity.MappingPartition);
+        var rk = ScimGroupRoleMappingEntity.RowKeyFor(groupId, role);
         try
         {
-            await table.DeleteEntityAsync(
-                pk, ScimGroupRoleMappingEntity.RowKeyFor(groupId, role), cancellationToken: ct);
+            await table.DeleteEntityAsync(pk, rk, cancellationToken: ct);
+            if (changeWriter is not null)
+                await changeWriter.WriteAsync("ScimGroupRoleMappings", pk, rk, ct);
         }
         catch (RequestFailedException ex) when (ex.Status == 404) { }
     }

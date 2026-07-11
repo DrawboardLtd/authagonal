@@ -11,13 +11,18 @@ public sealed class MergeService(IBackupSource source)
 {
     /// <summary>
     /// Merges a full backup and incrementals into a new full backup written to the target.
+    /// <paramref name="newBackupId"/> names the merged backup; null derives a plain timestamp id.
+    /// A caller producing a specially-retained snapshot (e.g. a "-weekly") MUST pass the id here —
+    /// tagging only the manifest leaves the physical id untagged, so id-based retention/selection
+    /// (which lists blob prefixes, not manifests) still treats it as an ordinary daily full.
     /// </summary>
     public async Task<BackupManifest> MergeToTargetAsync(
         string fullBackupId,
         IReadOnlyList<string> incrementalBackupIds,
         IBackupTarget target,
         bool gzip = true,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        string? newBackupId = null)
     {
         var fullManifest = await source.ReadManifestAsync(fullBackupId, ct)
             ?? throw new InvalidOperationException($"Manifest not found for backup {fullBackupId}");
@@ -38,7 +43,7 @@ public sealed class MergeService(IBackupSource source)
         var tombstones = await LoadTombstonesAsync(incrementalBackupIds, ct);
 
         var backupStart = DateTimeOffset.UtcNow;
-        var backupId = backupStart.ToString("yyyyMMdd-HHmmss");
+        var backupId = newBackupId ?? backupStart.ToString("yyyyMMdd-HHmmss");
         var manifest = new BackupManifest
         {
             BackupId = backupId,
