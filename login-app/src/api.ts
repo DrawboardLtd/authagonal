@@ -97,6 +97,25 @@ export function updateProfile(patch: ProfileUpdateRequest): Promise<ProfileRespo
   });
 }
 
+/** Download all personal data held on the signed-in user (GDPR Art. 15/20) as a JSON blob. Served by the
+ *  Cloud auth host; not part of the library's own /api/auth surface. */
+export async function exportMyData(): Promise<Blob> {
+  const response = await fetch(`${API_URL}/api/v1/account/export`, { credentials: 'include' });
+  if (!response.ok) {
+    let apiError: ApiError;
+    try { apiError = await response.json() as ApiError; }
+    catch { apiError = { error: 'export_failed', message: `Request failed with status ${response.status}` }; }
+    throw new ApiRequestError(apiError);
+  }
+  return response.blob();
+}
+
+/** Queue the signed-in user's account for GDPR erasure (Art. 17, 30-day window). The server revokes the
+ *  session, emails a durable single-use cancel link, and returns the schedule. */
+export function requestErasure(): Promise<{ status: string; scheduledAt: string; cancelToken?: string; alreadyQueued?: boolean }> {
+  return api('/api/v1/account/erasure', { method: 'POST' });
+}
+
 export function forgotPassword(email: string, turnstileToken?: string, returnUrl?: string): Promise<{ success: true }> {
   // returnUrl carries the authorize context so the reset-complete page can lead back to the app.
   const url = returnUrl ? `/api/auth/forgot-password?returnUrl=${encodeURIComponent(returnUrl)}` : '/api/auth/forgot-password';

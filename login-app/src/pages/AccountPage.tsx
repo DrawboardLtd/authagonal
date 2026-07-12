@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { getProfile, updateProfile, mfaStatus, getApps, ApiRequestError } from '../api';
+import { getProfile, updateProfile, mfaStatus, getApps, exportMyData, requestErasure, ApiRequestError } from '../api';
 import type { AppLinkResponse } from '../types';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -40,6 +40,49 @@ export default function AccountPage() {
   const [apps, setApps] = useState<AppLinkResponse[]>([]);
   const [email, setEmail] = useState('');
   const [form, setForm] = useState({ firstName: '', lastName: '', companyName: '', phone: '', locale: '' });
+  // "Your data" (GDPR) section state.
+  const [exporting, setExporting] = useState(false);
+  const [showDelete, setShowDelete] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState('');
+  const [deleteQueued, setDeleteQueued] = useState(false);
+
+  async function handleExport() {
+    setExporting(true);
+    try {
+      const blob = await exportMyData();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'authagonal-data-export.json';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch {
+      setError(t('account.exportError', 'Could not export your data. Please try again.'));
+    } finally {
+      setExporting(false);
+    }
+  }
+
+  async function handleDelete() {
+    setDeleting(true);
+    setDeleteError('');
+    try {
+      await requestErasure();
+      setDeleteQueued(true);
+      setShowDelete(false);
+    } catch (e) {
+      if (e instanceof ApiRequestError && e.error === 'last_owner_cannot_erase') {
+        setDeleteError(t('account.deleteOwnerError', 'You own this account and cannot delete your own record. Transfer ownership first.'));
+      } else {
+        setDeleteError(t('account.deleteError', 'Could not schedule deletion. Please try again.'));
+      }
+    } finally {
+      setDeleting(false);
+    }
+  }
 
   useEffect(() => {
     getProfile()
@@ -208,6 +251,37 @@ export default function AccountPage() {
           </Link>
         </div>
         )}
+
+        {/* Your data — GDPR export (Art. 15/20) + delete (Art. 17). */}
+        <div className="mt-6 border-t border-gray-200 dark:border-gray-800 pt-4">
+          <h2 className="text-sm font-medium text-gray-900 dark:text-white mb-1">{t('account.dataTitle', 'Your data')}</h2>
+          <p className="text-sm text-gray-500 dark:text-gray-400 mb-3">{t('account.dataSubtitle', 'Download a copy of your personal data, or delete your account.')}</p>
+
+          {deleteQueued ? (
+            <Alert variant="success">{t('account.deleteQueued', "Your account is scheduled for deletion. We've emailed you a cancellation link — use it any time in the next 30 days to keep your account.")}</Alert>
+          ) : (
+            <div className="space-y-2">
+              <Button type="button" variant="secondary" className="w-full" loading={exporting} onClick={handleExport}>
+                {t('account.exportData', 'Download my data')}
+              </Button>
+
+              {!showDelete ? (
+                <Button type="button" variant="ghost" className="w-full text-red-600 hover:text-red-700 dark:text-red-400" onClick={() => { setShowDelete(true); setDeleteError(''); }}>
+                  {t('account.deleteAccount', 'Delete my account')}
+                </Button>
+              ) : (
+                <div className="rounded-md border border-red-200 dark:border-red-900/50 p-3 space-y-2">
+                  <p className="text-sm text-gray-700 dark:text-gray-300">{t('account.deleteConfirmBody', 'This schedules your account for permanent deletion in 30 days or less. You will be signed out and emailed a cancellation link. Download your data first if you want a copy.')}</p>
+                  {deleteError && <Alert variant="error">{deleteError}</Alert>}
+                  <div className="flex gap-2">
+                    <Button type="button" variant="secondary" className="flex-1" disabled={deleting} onClick={() => setShowDelete(false)}>{t('cancel', 'Cancel')}</Button>
+                    <Button type="button" className="flex-1 bg-red-600 text-white hover:bg-red-700" loading={deleting} onClick={handleDelete}>{t('account.deleteConfirm', 'Delete my account')}</Button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
         </>
       )}
     </>
