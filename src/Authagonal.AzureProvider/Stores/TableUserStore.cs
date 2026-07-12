@@ -1059,6 +1059,85 @@ public sealed class TableUserStore(
         return (results, hasMore);
     }
 
+    public async Task<UserPage> ListPageAsync(string? organizationId, int count, string? continuationToken, CancellationToken ct = default)
+    {
+        var range = _partitioner.RangeForEnv();
+        var query = range is null
+            ? usersTable.QueryAsync<UserEntity>(
+                e => e.RowKey == UserEntity.ProfileRowKey,
+                maxPerPage: count, cancellationToken: ct)
+            : usersTable.QueryAsync<UserEntity>(
+                e => e.PartitionKey.CompareTo(range.Value.Low) >= 0
+                     && e.PartitionKey.CompareTo(range.Value.High) < 0
+                     && e.RowKey == UserEntity.ProfileRowKey,
+                maxPerPage: count, cancellationToken: ct);
+        return await ReadPageAsync(query, organizationId, count, continuationToken, ct);
+    }
+
+    public async Task<UserPage> ListByScimClientPageAsync(string scimClientId, int count, string? continuationToken, CancellationToken ct = default)
+    {
+        var range = _partitioner.RangeForEnv();
+        var query = range is null
+            ? usersTable.QueryAsync<UserEntity>(
+                e => e.RowKey == UserEntity.ProfileRowKey && e.ScimProvisionedByClientId == scimClientId,
+                maxPerPage: count, cancellationToken: ct)
+            : usersTable.QueryAsync<UserEntity>(
+                e => e.PartitionKey.CompareTo(range.Value.Low) >= 0
+                     && e.PartitionKey.CompareTo(range.Value.High) < 0
+                     && e.RowKey == UserEntity.ProfileRowKey
+                     && e.ScimProvisionedByClientId == scimClientId,
+                maxPerPage: count, cancellationToken: ct);
+        return await ReadPageAsync(query, organizationId: null, count, continuationToken, ct);
+    }
+
+    /// <summary>
+    /// F26 cursor paging core: resume from the SDK's opaque continuation token, decrypt ONLY the
+    /// returned rows, and stop at a page boundary once at least <paramref name="count"/> rows are
+    /// collected (a server-filtered page can come back short — or even empty with a token — so keep
+    /// consuming pages until there's something to return or the listing is exhausted). Tokens are
+    /// only valid at page boundaries, so pages are never split; the count is a hint.
+    /// </summary>
+    private async Task<UserPage> ReadPageAsync(
+        Azure.AsyncPageable<UserEntity> query, string? organizationId, int count, string? continuationToken, CancellationToken ct)
+    {
+        var results = new List<AuthUser>();
+        string? nextToken = null;
+        var pagesConsumed = 0;
+
+        await foreach (var page in query.AsPages(continuationToken))
+        {
+            foreach (var entity in page.Values)
+            {
+                AuthUser user;
+                try
+                {
+                    await DecryptEntityAsync(entity, ct);
+                    user = entity.ToModel();
+                    user.Id = _partitioner.Strip(user.Id);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    // One undecryptable/corrupt row must not fail the page — skip it (see ListAsync).
+                    continue;
+                }
+                if (organizationId is not null &&
+                    !string.Equals(user.OrganizationId, organizationId, StringComparison.Ordinal))
+                    continue;
+
+                results.Add(user);
+            }
+
+            nextToken = page.ContinuationToken;
+            // The page cap bounds one call's work when a client-side filter (organizationId)
+            // matches almost nothing — return a short page with a token rather than scanning the
+            // whole tenant in a single request.
+            if (results.Count >= count || nextToken is null || ++pagesConsumed >= 10)
+                break;
+        }
+
+        return new UserPage(results, nextToken);
+    }
+
     public async IAsyncEnumerable<string> EnumerateUserIdsAsync([EnumeratorCancellation] CancellationToken ct = default)
     {
         // Id-only stream for the cold-row backfill: select just the keys — no PII columns, so no per-row

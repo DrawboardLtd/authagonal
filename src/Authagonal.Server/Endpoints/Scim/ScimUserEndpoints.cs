@@ -41,6 +41,7 @@ public static class ScimUserEndpoints
         int? startIndex,
         int? count,
         string? filter,
+        string? cursor,
         CancellationToken ct)
     {
         var clientId = GetClientId(httpContext);
@@ -48,41 +49,71 @@ public static class ScimUserEndpoints
             return ScimResults.Error(429, "tooMany", "Too many SCIM requests. Please try again later.");
 
         var baseUrl = GetBaseUrl(tenantContext);
-        var start = startIndex ?? 1;
         var pageSize = Math.Min(count ?? 100, 200);
-
-        // Scope to users provisioned by this SCIM client
-        var (users, _) = await userStore.ListByScimClientAsync(clientId, 0, int.MaxValue, ct);
-
-        // Apply filter
         var parsed = ScimFilterParser.Parse(filter);
-        IEnumerable<AuthUser> filtered = users;
-        if (parsed is not null)
+
+        // Equality filters — the path IdP provisioning agents (Entra/Okta) hit before every
+        // create/update — resolve via point lookups (blind indexes), never a tenant scan.
+        if (parsed is { Operator: "eq" } eq
+            && eq.Attribute.ToLowerInvariant() is "username" or "externalid")
         {
-            filtered = users.Where(u =>
+            var match = eq.Attribute.ToLowerInvariant() == "username"
+                ? await userStore.FindByEmailAsync(eq.Value, ct)
+                : await userStore.FindByExternalIdAsync(clientId, eq.Value, ct);
+            // Same scoping as the listing: only users this SCIM client provisioned.
+            var resources = match is not null
+                            && string.Equals(match.ScimProvisionedByClientId, clientId, StringComparison.Ordinal)
+                ? new List<ScimUserResource> { ScimUserResource.FromUser(match, baseUrl) }
+                : [];
+            return ScimResults.Success(new ScimListResponse<ScimUserResource>
             {
-                var displayName = $"{u.FirstName} {u.LastName}".Trim();
-                return ScimFilterParser.Matches(parsed, u.Email, u.ExternalId, displayName);
+                TotalResults = resources.Count,
+                StartIndex = 1,
+                ItemsPerPage = resources.Count,
+                Resources = resources,
             });
         }
 
-        var filteredList = filtered.ToList();
-        var paged = filteredList
-            .OrderBy(u => u.CreatedAt)
-            .Skip(start - 1)
-            .Take(pageSize)
-            .Select(u => ScimUserResource.FromUser(u, baseUrl))
-            .ToList();
+        // F26: listing is cursor-paginated (draft-ietf-scim-cursor-pagination) — the old
+        // implementation materialized and decrypted the ENTIRE client population on every request
+        // to emulate startIndex. Offset pagination past the first page is no longer offered.
+        if ((startIndex ?? 1) > 1)
+            return ScimResults.Error(400, "invalidValue",
+                "startIndex pagination is not supported; page with cursor/nextCursor instead "
+                + "(pass the response's nextCursor back as ?cursor=).");
 
-        var response = new ScimListResponse<ScimUserResource>
+        var resourcesOut = new List<ScimUserResource>();
+        var nextCursor = cursor;
+        // Non-eq filters (co / displayName) apply per page; keep consuming pages (bounded) so a
+        // sparse match can't return an empty first page with a cursor and mislead the client.
+        for (var pages = 0; pages < 10; pages++)
         {
-            TotalResults = filteredList.Count,
-            StartIndex = start,
-            ItemsPerPage = paged.Count,
-            Resources = paged,
-        };
+            var page = await userStore.ListByScimClientPageAsync(clientId, pageSize, nextCursor, ct);
+            IEnumerable<AuthUser> pageUsers = page.Users;
+            if (parsed is not null)
+            {
+                pageUsers = page.Users.Where(u =>
+                {
+                    var displayName = $"{u.FirstName} {u.LastName}".Trim();
+                    return ScimFilterParser.Matches(parsed, u.Email, u.ExternalId, displayName);
+                });
+            }
+            resourcesOut.AddRange(pageUsers.Select(u => ScimUserResource.FromUser(u, baseUrl)));
+            nextCursor = page.ContinuationToken;
+            if (parsed is null || resourcesOut.Count >= pageSize || nextCursor is null)
+                break;
+        }
 
-        return ScimResults.Success(response);
+        return ScimResults.Success(new ScimListResponse<ScimUserResource>
+        {
+            // The true total is unknowable without a full scan under cursor pagination; report the
+            // returned count (accurate whenever nextCursor is absent, i.e. the listing completed).
+            TotalResults = resourcesOut.Count,
+            StartIndex = 1,
+            ItemsPerPage = resourcesOut.Count,
+            Resources = resourcesOut,
+            NextCursor = nextCursor,
+        });
     }
 
     private static async Task<IResult> GetUserAsync(

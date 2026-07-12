@@ -189,6 +189,12 @@ public sealed class ScimListResponse<T>
     [JsonPropertyName("itemsPerPage")]
     public int ItemsPerPage { get; set; }
 
+    /// <summary>Cursor pagination (draft-ietf-scim-cursor-pagination): pass back as <c>?cursor=</c>
+    /// for the next page. Absent when the listing is exhausted.</summary>
+    [JsonPropertyName("nextCursor")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? NextCursor { get; set; }
+
     [JsonPropertyName("Resources")]
     public required IReadOnlyList<T> Resources { get; set; }
 }
