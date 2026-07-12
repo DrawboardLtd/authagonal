@@ -1079,6 +1079,32 @@ public sealed class TableUserStore(
             yield return _partitioner.Strip(entity.PartitionKey);
     }
 
+    public async IAsyncEnumerable<UserLoginState> EnumerateLoginStatesAsync([EnumeratorCancellation] CancellationToken ct = default)
+    {
+        // Same shape as EnumerateUserIdsAsync, projecting only the plaintext login-state columns —
+        // no encrypted field is selected, so a whole-population retention sweep never touches Vault.
+        string[] columns = ["PartitionKey", "RowKey", "CreatedAt", "LastLoginAt", "IsActive"];
+        var range = _partitioner.RangeForEnv();
+        var query = range is null
+            ? usersTable.QueryAsync<TableEntity>(
+                e => e.RowKey == UserEntity.ProfileRowKey,
+                select: columns, cancellationToken: ct)
+            : usersTable.QueryAsync<TableEntity>(
+                e => e.PartitionKey.CompareTo(range.Value.Low) >= 0
+                     && e.PartitionKey.CompareTo(range.Value.High) < 0
+                     && e.RowKey == UserEntity.ProfileRowKey,
+                select: columns, cancellationToken: ct);
+
+        await foreach (var entity in query)
+        {
+            yield return new UserLoginState(
+                _partitioner.Strip(entity.PartitionKey),
+                entity.GetDateTimeOffset("CreatedAt") ?? default,
+                entity.GetDateTimeOffset("LastLoginAt"),
+                entity.GetBoolean("IsActive") ?? true);
+        }
+    }
+
     public async Task<IReadOnlyList<AuthUser>> SearchAsync(
         string query, int maxResults = 20, CancellationToken ct = default)
     {

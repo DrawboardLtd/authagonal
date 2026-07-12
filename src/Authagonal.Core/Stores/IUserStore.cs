@@ -117,4 +117,24 @@ public interface IUserStore
     Task RemoveLoginAsync(string userId, string provider, string providerKey, CancellationToken ct = default);
     Task<ExternalLoginInfo?> FindLoginAsync(string provider, string providerKey, CancellationToken ct = default);
     Task<IReadOnlyList<ExternalLoginInfo>> GetLoginsAsync(string userId, CancellationToken ct = default);
+
+    /// <summary>
+    /// Streams every user's non-PII login-state snapshot (id, created, last login, active) — for
+    /// retention-style sweeps that must evaluate the whole population without decrypting profiles or
+    /// materializing the table. Default: per-id <see cref="GetAsync"/> fallback (correct but decrypts);
+    /// table-backed stores override with a column-projected scan that touches no encrypted field.
+    /// </summary>
+    async IAsyncEnumerable<UserLoginState> EnumerateLoginStatesAsync([EnumeratorCancellation] CancellationToken ct = default)
+    {
+        await foreach (var id in EnumerateUserIdsAsync(ct))
+        {
+            var user = await GetAsync(id, ct);
+            if (user is not null)
+                yield return new UserLoginState(user.Id, user.CreatedAt, user.LastLoginAt, user.IsActive);
+        }
+    }
 }
+
+/// <summary>A user's non-PII login-state columns, as streamed by
+/// <see cref="IUserStore.EnumerateLoginStatesAsync"/>.</summary>
+public sealed record UserLoginState(string Id, DateTimeOffset CreatedAt, DateTimeOffset? LastLoginAt, bool IsActive);
