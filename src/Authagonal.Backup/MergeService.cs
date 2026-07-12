@@ -1,11 +1,15 @@
 using System.IO.Compression;
+using System.IO.Pipelines;
+using System.Runtime.CompilerServices;
 using System.Text.Json;
 
 namespace Authagonal.Backup;
 
 /// <summary>
 /// Merges a full backup with incremental backups and tombstones into a single current-state view.
-/// Processes one table at a time to bound memory usage.
+/// Processes one table at a time, and STREAMS the full backup through — only the incremental
+/// overlay and the tombstone set are held in memory (both bounded by the change window), so a
+/// large tenant's rollup can't balloon the host's memory the way the old whole-table dictionary did.
 /// </summary>
 public sealed class MergeService(IBackupSource source)
 {
@@ -24,22 +28,7 @@ public sealed class MergeService(IBackupSource source)
         CancellationToken ct = default,
         string? newBackupId = null)
     {
-        var fullManifest = await source.ReadManifestAsync(fullBackupId, ct)
-            ?? throw new InvalidOperationException($"Manifest not found for backup {fullBackupId}");
-
-        // Collect all table names across full + incrementals
-        var allTables = new HashSet<string>(fullManifest.Tables.Keys);
-        foreach (var incrId in incrementalBackupIds)
-        {
-            var incrManifest = await source.ReadManifestAsync(incrId, ct);
-            if (incrManifest?.Tables is not null)
-            {
-                foreach (var t in incrManifest.Tables.Keys)
-                    allTables.Add(t);
-            }
-        }
-
-        // Collect all tombstones from incrementals
+        var allTables = await CollectTableNamesAsync(fullBackupId, incrementalBackupIds, ct);
         var tombstones = await LoadTombstonesAsync(incrementalBackupIds, ct);
 
         var backupStart = DateTimeOffset.UtcNow;
@@ -56,44 +45,30 @@ public sealed class MergeService(IBackupSource source)
 
         foreach (var tableName in allTables)
         {
-            // Load full backup data for this table
-            var entities = await LoadTableEntitiesAsync(fullBackupId, tableName, ct);
+            tombstones.TryGetValue(tableName, out var tableTombstones);
 
-            // Apply incrementals in order
-            foreach (var incrId in incrementalBackupIds)
-            {
-                var incrEntities = await LoadTableEntitiesAsync(incrId, tableName, ct);
-                foreach (var (key, value) in incrEntities)
+            // Output opens lazily on the first surviving row, so an empty table writes no file —
+            // same behaviour as the old dictionary merge.
+            StreamWriter? writer = null;
+            var count = await MergeTableAsync(
+                fullBackupId, incrementalBackupIds, tableName, tableTombstones,
+                openWriter: async () =>
                 {
-                    entities[key] = value;
-                }
-            }
+                    var ext = gzip ? ".jsonl.gz" : ".jsonl";
+                    var outputStream = await target.OpenWriteAsync(backupId, $"{tableName}{ext}", ct);
+                    Stream writeStream = gzip ? new GZipStream(outputStream, CompressionLevel.Optimal) : outputStream;
+                    writer = new StreamWriter(writeStream, System.Text.Encoding.UTF8);
+                    return writer;
+                }, ct);
+            if (writer is not null)
+                await writer.DisposeAsync(); // cascades: flushes + disposes gzip + output streams
 
-            // Apply tombstones
-            if (tombstones.TryGetValue(tableName, out var tableTombstones))
-            {
-                ApplyTombstones(entities, tableTombstones);
-            }
-
-            if (entities.Count == 0) continue;
-
-            // Write merged table
-            var ext = gzip ? ".jsonl.gz" : ".jsonl";
-            var outputStream = await target.OpenWriteAsync(backupId, $"{tableName}{ext}", ct);
-            Stream writeStream = gzip ? new GZipStream(outputStream, CompressionLevel.Optimal) : outputStream;
-            await using var gzipScope = gzip ? writeStream : null;
-            await using var writer = new StreamWriter(writeStream, System.Text.Encoding.UTF8);
-
-            foreach (var jsonLine in entities.Values)
-            {
-                await writer.WriteLineAsync(jsonLine.AsMemory(), ct);
-            }
-
+            if (count == 0) continue;
             manifest.Tables[tableName] = new TableBackupInfo
             {
-                EntityCount = entities.Count,
+                EntityCount = count,
             };
-            totalEntities += entities.Count;
+            totalEntities += count;
         }
 
         manifest.TotalEntities = totalEntities;
@@ -104,14 +79,61 @@ public sealed class MergeService(IBackupSource source)
     }
 
     /// <summary>
-    /// Merges full + incrementals and writes the result to a stream as a single JSONL archive per table.
-    /// The callback is invoked for each table with its name and a stream of JSONL lines.
+    /// Merges full + incrementals and streams the result to a callback as a JSONL stream per table.
+    /// The callback is invoked (lazily — only for tables with at least one surviving row) with the
+    /// table name and a live read stream; it MUST consume the stream to completion.
     /// </summary>
     public async Task MergeToCallbackAsync(
         string fullBackupId,
         IReadOnlyList<string> incrementalBackupIds,
         Func<string, Stream, Task> onTable,
         CancellationToken ct = default)
+    {
+        var allTables = await CollectTableNamesAsync(fullBackupId, incrementalBackupIds, ct);
+        var tombstones = await LoadTombstonesAsync(incrementalBackupIds, ct);
+
+        foreach (var tableName in allTables)
+        {
+            tombstones.TryGetValue(tableName, out var tableTombstones);
+
+            // The consumer reads a Pipe the merge writes into — nothing is buffered beyond the pipe's
+            // window. The consumer task starts on the first surviving row (empty tables never invoke
+            // the callback, matching the old behaviour).
+            Pipe? pipe = null;
+            Task? consumer = null;
+            StreamWriter? writer = null;
+            try
+            {
+                await MergeTableAsync(
+                    fullBackupId, incrementalBackupIds, tableName, tableTombstones,
+                    openWriter: () =>
+                    {
+                        pipe = new Pipe();
+                        consumer = Task.Run(() => onTable(tableName, pipe.Reader.AsStream()), ct);
+                        writer = new StreamWriter(pipe.Writer.AsStream(), System.Text.Encoding.UTF8);
+                        return Task.FromResult(writer);
+                    }, ct);
+
+                if (writer is not null)
+                    await writer.DisposeAsync(); // flush + complete the pipe writer → consumer sees EOF
+            }
+            catch (Exception ex)
+            {
+                // Fault the pipe so the consumer unblocks, then swallow its secondary failure —
+                // the merge exception is the one worth surfacing.
+                if (pipe is not null) await pipe.Writer.CompleteAsync(ex);
+                if (consumer is not null) { try { await consumer; } catch { /* secondary */ } }
+                throw;
+            }
+
+            if (consumer is not null)
+                await consumer;
+        }
+    }
+
+    /// <summary>Union of table names across the full and every incremental manifest.</summary>
+    private async Task<HashSet<string>> CollectTableNamesAsync(
+        string fullBackupId, IReadOnlyList<string> incrementalBackupIds, CancellationToken ct)
     {
         var fullManifest = await source.ReadManifestAsync(fullBackupId, ct)
             ?? throw new InvalidOperationException($"Manifest not found for backup {fullBackupId}");
@@ -126,90 +148,98 @@ public sealed class MergeService(IBackupSource source)
                     allTables.Add(t);
             }
         }
+        return allTables;
+    }
 
-        var tombstones = await LoadTombstonesAsync(incrementalBackupIds, ct);
-
-        foreach (var tableName in allTables)
+    /// <summary>
+    /// The streaming merge core for one table. The incrementals fold into an in-memory overlay
+    /// (later incrementals win); the full then streams through line by line — a row superseded by
+    /// the overlay or deleted by a tombstone is dropped, everything else passes straight to the
+    /// writer. Overlay rows (minus tombstoned ones) are appended last. Row order is not part of the
+    /// backup contract (restore upserts row-by-row). Returns rows written; the writer factory is
+    /// only invoked when there is at least one row to write.
+    /// </summary>
+    private async Task<int> MergeTableAsync(
+        string fullBackupId,
+        IReadOnlyList<string> incrementalBackupIds,
+        string tableName,
+        Dictionary<(string PK, string RK), DateTimeOffset?>? tableTombstones,
+        Func<Task<StreamWriter>> openWriter,
+        CancellationToken ct)
+    {
+        var overlay = new Dictionary<(string PK, string RK), string>();
+        foreach (var incrId in incrementalBackupIds)
         {
-            var entities = await LoadTableEntitiesAsync(fullBackupId, tableName, ct);
-
-            foreach (var incrId in incrementalBackupIds)
-            {
-                var incrEntities = await LoadTableEntitiesAsync(incrId, tableName, ct);
-                foreach (var (key, value) in incrEntities)
-                {
-                    entities[key] = value;
-                }
-            }
-
-            if (tombstones.TryGetValue(tableName, out var tableTombstones))
-            {
-                ApplyTombstones(entities, tableTombstones);
-            }
-
-            if (entities.Count == 0) continue;
-
-            var ms = new MemoryStream();
-            await using var writer = new StreamWriter(ms, System.Text.Encoding.UTF8, leaveOpen: true);
-            foreach (var jsonLine in entities.Values)
-            {
-                await writer.WriteLineAsync(jsonLine.AsMemory(), ct);
-            }
-            await writer.FlushAsync(ct);
-            ms.Position = 0;
-
-            await onTable(tableName, ms);
+            await foreach (var (key, line) in ReadEntitiesAsync(incrId, tableName, ct))
+                overlay[key] = line;
         }
+
+        StreamWriter? writer = null;
+        var written = 0;
+
+        await foreach (var (key, line) in ReadEntitiesAsync(fullBackupId, tableName, ct))
+        {
+            if (overlay.ContainsKey(key)) continue;                    // superseded by an incremental
+            if (IsDeleted(key, line, tableTombstones)) continue;       // tombstoned, not recreated
+            writer ??= await openWriter();
+            await writer.WriteLineAsync(line.AsMemory(), ct);
+            written++;
+        }
+
+        foreach (var (key, line) in overlay)
+        {
+            if (IsDeleted(key, line, tableTombstones)) continue;
+            writer ??= await openWriter();
+            await writer.WriteLineAsync(line.AsMemory(), ct);
+            written++;
+        }
+
+        if (writer is not null)
+            await writer.FlushAsync(ct);
+        return written;
     }
 
     // Apply a delete only when it postdates the captured row. Incrementals are pooled and deletes
     // applied after all upserts, so a key deleted early in the window and recreated later has both a
-    // tombstone and a live capture — the old unconditional Remove dropped the recreated row from the
+    // tombstone and a live capture — an unconditional remove would drop the recreated row from the
     // merged full. Equal timestamps remove (a row can't be deleted before it was written). A tombstone
     // without DeletedAt (legacy) or a row without a parseable Timestamp falls back to removing.
-    private static void ApplyTombstones(
-        Dictionary<(string PK, string RK), string> entities,
-        Dictionary<(string PK, string RK), DateTimeOffset?> tableTombstones)
+    private static bool IsDeleted(
+        (string PK, string RK) key, string line,
+        Dictionary<(string PK, string RK), DateTimeOffset?>? tableTombstones)
     {
-        foreach (var (key, deletedAt) in tableTombstones)
-        {
-            if (deletedAt is null || !entities.TryGetValue(key, out var line))
-            {
-                entities.Remove(key);
-                continue;
-            }
+        if (tableTombstones is null || !tableTombstones.TryGetValue(key, out var deletedAt))
+            return false;
+        if (deletedAt is null)
+            return true;
 
-            using var doc = JsonDocument.Parse(line);
-            var recreatedAfterDelete =
-                doc.RootElement.TryGetProperty("Timestamp", out var tsProp) &&
-                tsProp.ValueKind == JsonValueKind.String &&
-                DateTimeOffset.TryParse(tsProp.GetString(), out var ts) &&
-                ts > deletedAt.Value;
+        using var doc = JsonDocument.Parse(line);
+        var recreatedAfterDelete =
+            doc.RootElement.TryGetProperty("Timestamp", out var tsProp) &&
+            tsProp.ValueKind == JsonValueKind.String &&
+            DateTimeOffset.TryParse(tsProp.GetString(), out var ts) &&
+            ts > deletedAt.Value;
 
-            if (!recreatedAfterDelete) entities.Remove(key);
-        }
+        return !recreatedAfterDelete;
     }
 
-    private async Task<Dictionary<(string PK, string RK), string>> LoadTableEntitiesAsync(
-        string backupId, string tableName, CancellationToken ct)
+    /// <summary>Streams a backed-up table's rows as ((PK, RK), jsonLine) without materializing the
+    /// table. Auto-detects gzip; yields nothing when the file is absent.</summary>
+    private async IAsyncEnumerable<((string PK, string RK) Key, string Line)> ReadEntitiesAsync(
+        string backupId, string tableName, [EnumeratorCancellation] CancellationToken ct)
     {
-        var entities = new Dictionary<(string, string), string>();
-
-        // Try both compressed and uncompressed
         var stream = await source.OpenReadAsync(backupId, $"{tableName}.jsonl.gz", ct)
                      ?? await source.OpenReadAsync(backupId, $"{tableName}.jsonl", ct);
 
-        if (stream is null) return entities;
+        if (stream is null) yield break;
 
         await using (stream)
         {
-            Stream readStream = stream;
-            // Auto-detect gzip
             var buffered = new BufferedStream(stream);
             var header = new byte[2];
             var read = await buffered.ReadAsync(header, ct);
             buffered.Position = 0;
-            readStream = buffered;
+            Stream readStream = buffered;
 
             if (read >= 2 && header[0] == 0x1f && header[1] == 0x8b)
             {
@@ -224,14 +254,15 @@ public sealed class MergeService(IBackupSource source)
             {
                 if (string.IsNullOrWhiteSpace(line)) continue;
 
-                using var doc = JsonDocument.Parse(line);
-                var pk = doc.RootElement.GetProperty("PartitionKey").GetString()!;
-                var rk = doc.RootElement.GetProperty("RowKey").GetString()!;
-                entities[(pk, rk)] = line;
+                string pk, rk;
+                using (var doc = JsonDocument.Parse(line))
+                {
+                    pk = doc.RootElement.GetProperty("PartitionKey").GetString()!;
+                    rk = doc.RootElement.GetProperty("RowKey").GetString()!;
+                }
+                yield return ((pk, rk), line);
             }
         }
-
-        return entities;
     }
 
     private async Task<Dictionary<string, Dictionary<(string PK, string RK), DateTimeOffset?>>> LoadTombstonesAsync(
