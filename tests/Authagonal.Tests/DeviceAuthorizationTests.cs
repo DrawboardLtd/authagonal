@@ -110,6 +110,31 @@ public sealed class DeviceAuthorizationTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task DeviceCodeGrant_PollingTooFast_ReturnsSlowDown()
+    {
+        // RFC 8628 §3.5 (F45): a second poll within the advertised interval must earn slow_down.
+        var deviceCodes = await RequestDeviceCodes();
+
+        FormUrlEncodedContent Poll() => new(new Dictionary<string, string>
+        {
+            ["grant_type"] = GrantTypes.DeviceCode,
+            ["device_code"] = deviceCodes.DeviceCode,
+            ["client_id"] = AuthagonalTestFactory.AdminClientId,
+            ["client_secret"] = AuthagonalTestFactory.AdminClientSecret
+        });
+
+        var first = await _client.PostAsync("/connect/token", Poll());
+        var firstJson = await first.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("authorization_pending", firstJson.GetProperty("error").GetString());
+
+        // Immediately poll again — inside the 5s interval.
+        var second = await _client.PostAsync("/connect/token", Poll());
+        Assert.Equal(HttpStatusCode.BadRequest, second.StatusCode);
+        var secondJson = await second.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("slow_down", secondJson.GetProperty("error").GetString());
+    }
+
+    [Fact]
     public async Task DeviceCodeGrant_AfterApproval_ReturnsTokens()
     {
         var user = await _factory.SeedTestUserAsync();

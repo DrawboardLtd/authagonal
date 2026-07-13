@@ -439,7 +439,23 @@ public sealed class ProtocolTokenService(
         grant.Key = refreshToken;
         grant.ConsumedAt = now;
         grant.Data = JsonSerializer.Serialize(data, ProtocolJsonContext.Default.RefreshTokenData);
-        await grantStore.StoreAsync(grant, ct);
+
+        // Atomic rotation (F32): only ONE concurrent redemption of this refresh token may consume it.
+        // Two requests whose reads both saw ConsumedAt==null (a window spanning the resolve + client
+        // lookup + successor mint) would otherwise both write a consumed marker and both mint valid
+        // successors, and neither would enter replay revocation — defeating strict rotation. The
+        // ETag-conditional mark lets exactly one win; the loser abandons its just-minted (orphan,
+        // soon-expiring) successor and re-evaluates through the replay/grace path below, which either
+        // serves the winner's successor (concurrent double-submit within the grace window) or revokes
+        // the family (a genuine stolen-token replay).
+        var consumed = await grantStore.TryMarkConsumedAsync(grant, ct);
+        if (!consumed)
+        {
+            logger.LogWarning(
+                "Refresh-token rotation lost the consume race; re-evaluating as replay/grace. Client: {ClientId}, Subject: {SubjectId}",
+                clientId, grant.SubjectId);
+            return await HandleRefreshTokenAsync(refreshToken, clientId, resources, ct);
+        }
 
         var accessToken = await CreateAccessTokenAsync(freshSubject, client, data.Scopes, tokenResources, ct);
 

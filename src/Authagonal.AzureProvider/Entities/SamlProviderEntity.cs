@@ -18,6 +18,7 @@ public sealed class SamlProviderEntity : ITableEntity
     public required string EntityId { get; set; }
     public required string MetadataLocation { get; set; }
     public required string AllowedDomainsJson { get; set; }
+    public string? IconUrl { get; set; }
     /// <summary>
     /// Mirrors <see cref="SamlProviderConfig.DisableJitProvisioning"/>. Nullable
     /// for back-compat with rows written before this column existed; ToModel()
@@ -35,6 +36,7 @@ public sealed class SamlProviderEntity : ITableEntity
         EntityId = config.EntityId,
         MetadataLocation = config.MetadataLocation,
         AllowedDomainsJson = JsonSerializer.Serialize(config.AllowedDomains, AzureJsonContext.Default.ListString),
+        IconUrl = config.IconUrl,
         DisableJitProvisioning = config.DisableJitProvisioning,
         CreatedAt = config.CreatedAt,
         UpdatedAt = config.UpdatedAt,
@@ -47,6 +49,7 @@ public sealed class SamlProviderEntity : ITableEntity
         EntityId = EntityId,
         MetadataLocation = MetadataLocation,
         AllowedDomains = JsonSerializer.Deserialize(AllowedDomainsJson, AzureJsonContext.Default.ListString) ?? [],
+        IconUrl = IconUrl,
         DisableJitProvisioning = DisableJitProvisioning ?? false,
         CreatedAt = CreatedAt,
         UpdatedAt = UpdatedAt,

@@ -20,6 +20,7 @@ public sealed class OidcProviderEntity : ITableEntity
     public required string ClientSecret { get; set; }
     public required string RedirectUrl { get; set; }
     public required string AllowedDomainsJson { get; set; }
+    public string? IconUrl { get; set; }
     public bool DisableJitProvisioning { get; set; }
     public string? SessionExpClaim { get; set; }
     public string? PassthroughParamsJson { get; set; }
@@ -36,6 +37,7 @@ public sealed class OidcProviderEntity : ITableEntity
         ClientSecret = config.ClientSecret,
         RedirectUrl = config.RedirectUrl,
         AllowedDomainsJson = JsonSerializer.Serialize(config.AllowedDomains, AzureJsonContext.Default.ListString),
+        IconUrl = config.IconUrl,
         DisableJitProvisioning = config.DisableJitProvisioning,
         SessionExpClaim = config.SessionExpClaim,
         PassthroughParamsJson = config.PassthroughParams.Count > 0
@@ -54,6 +56,7 @@ public sealed class OidcProviderEntity : ITableEntity
         ClientSecret = ClientSecret,
         RedirectUrl = RedirectUrl,
         AllowedDomains = JsonSerializer.Deserialize(AllowedDomainsJson, AzureJsonContext.Default.ListString) ?? [],
+        IconUrl = IconUrl,
         DisableJitProvisioning = DisableJitProvisioning,
         SessionExpClaim = SessionExpClaim,
         PassthroughParams = string.IsNullOrEmpty(PassthroughParamsJson)

@@ -133,6 +133,57 @@ public sealed class ScimPatchApplierTests
         Assert.Contains("user3", group.MemberUserIds);
     }
 
+    // F38 — Okta's deprovisioning shape: id in a value-path filter, no value array.
+    [Fact]
+    public void ApplyToGroup_RemoveMember_ByPathFilter_Okta()
+    {
+        var group = CreateTestGroup();
+        group.MemberUserIds = ["user1", "user2", "user3"];
+
+        var ops = new List<ScimPatchApplier.PatchOperation>
+        {
+            new("remove", "members[value eq \"user2\"]", Value: null)
+        };
+
+        ScimPatchApplier.ApplyToGroup(group, ops);
+        Assert.DoesNotContain("user2", group.MemberUserIds);
+        Assert.Contains("user1", group.MemberUserIds);
+        Assert.Contains("user3", group.MemberUserIds);
+    }
+
+    // F38 — "remove members" with no value = remove ALL members.
+    [Fact]
+    public void ApplyToGroup_RemoveAllMembers_NoValue()
+    {
+        var group = CreateTestGroup();
+        group.MemberUserIds = ["user1", "user2"];
+
+        var ops = new List<ScimPatchApplier.PatchOperation>
+        {
+            new("remove", "members", Value: null)
+        };
+
+        ScimPatchApplier.ApplyToGroup(group, ops);
+        Assert.Empty(group.MemberUserIds);
+    }
+
+    // F38 — replace members = full set replacement (drop existing, add supplied).
+    [Fact]
+    public void ApplyToGroup_ReplaceMembers_SetsExactMembership()
+    {
+        var group = CreateTestGroup();
+        group.MemberUserIds = ["user1", "user2"];
+
+        var json = """[{"value": "user3"}]""";
+        var ops = new List<ScimPatchApplier.PatchOperation>
+        {
+            new("replace", "members", JsonDocument.Parse(json).RootElement)
+        };
+
+        ScimPatchApplier.ApplyToGroup(group, ops);
+        Assert.Equal(["user3"], group.MemberUserIds);
+    }
+
     private static AuthUser CreateTestUser() => new()
     {
         Id = "test-id",

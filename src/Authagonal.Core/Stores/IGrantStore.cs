@@ -15,6 +15,18 @@ public interface IGrantStore
     /// </summary>
     Task<bool> TryConsumeAsync(string key, CancellationToken ct = default);
 
+    /// <summary>
+    /// Atomically records the consumed marker (<see cref="PersistedGrant.ConsumedAt"/> plus the supplied
+    /// <see cref="PersistedGrant.Data"/> — which for refresh rotation carries the successor key) for a
+    /// rotating / single-use grant, but ONLY if the grant is currently un-consumed. Returns true for the
+    /// one caller that won the transition; false if a concurrent caller already consumed it (the loser
+    /// must re-read and treat it as replay / grace-window reuse). Unlike <see cref="TryConsumeAsync"/>
+    /// this KEEPS the row — rotation needs the consumed marker for replay detection and the grace-window
+    /// reissue. The caller must set <see cref="PersistedGrant.Key"/> (grants read back from storage have
+    /// none), or the write would land under the wrong (empty-key) partition.
+    /// </summary>
+    Task<bool> TryMarkConsumedAsync(PersistedGrant grant, CancellationToken ct = default);
+
     Task RemoveAsync(string key, CancellationToken ct = default);
     Task RemoveAllBySubjectAsync(string subjectId, CancellationToken ct = default);
     Task RemoveAllBySubjectAndClientAsync(string subjectId, string clientId, CancellationToken ct = default);

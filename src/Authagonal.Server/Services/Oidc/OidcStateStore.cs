@@ -42,8 +42,17 @@ public sealed class OidcStateStore(TableClient tableClient, IOptions<CacheOption
 
             var entity = response.Value;
 
-            // Delete immediately to prevent replay
-            await tableClient.DeleteEntityAsync(state, "state", cancellationToken: ct);
+            // Atomic single-use (F48a): only the caller whose ETag-conditional delete removes the row may
+            // proceed; a concurrent callback presenting the same state loses (412/404) and gets null.
+            // Prevents two callbacks from both consuming one federation state.
+            try
+            {
+                await tableClient.DeleteEntityAsync(state, "state", entity.ETag, ct);
+            }
+            catch (Azure.RequestFailedException ex) when (ex.Status is 412 or 404)
+            {
+                return null;
+            }
 
             // Check age
             if (entity.TryGetValue("CreatedAt", out var createdAtObj) &&

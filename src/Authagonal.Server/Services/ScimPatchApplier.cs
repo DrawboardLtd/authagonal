@@ -1,11 +1,17 @@
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using Authagonal.Core.Models;
 
 namespace Authagonal.Server.Services;
 
-public static class ScimPatchApplier
+public static partial class ScimPatchApplier
 {
     public sealed record PatchOperation(string Op, string? Path, JsonElement? Value);
+
+    // SCIM value-path filter carrying the member id in the PATH, e.g. members[value eq "abc-123"].
+    // This is Okta's deprovisioning shape; without parsing it a "remove member" is silently ignored.
+    [GeneratedRegex("^value\\s+eq\\s+\"(?<id>[^\"]*)\"$", RegexOptions.IgnoreCase)]
+    private static partial Regex MemberValueFilter();
 
     public static void ApplyToUser(AuthUser user, IReadOnlyList<PatchOperation> operations)
     {
@@ -33,21 +39,40 @@ public static class ScimPatchApplier
 
             switch (normalizedOp)
             {
-                case "replace" or "add" when op.Value is not null:
-                    if (normalizedOp == "add" && string.Equals(path, "members", StringComparison.OrdinalIgnoreCase))
-                    {
+                case "add" when IsMembersPath(path) && op.Value is not null:
+                    AddGroupMembers(group, op.Value.Value);
+                    break;
+
+                case "replace" when IsMembersPath(path):
+                    // Full membership replacement ("set members"): drop the current set, add the supplied
+                    // one. Previously this fell through to ApplyGroupValue, which handles only
+                    // displayName/externalId — so a replace-members PATCH was silently dropped.
+                    group.MemberUserIds.Clear();
+                    if (op.Value is not null)
                         AddGroupMembers(group, op.Value.Value);
-                    }
-                    else
-                    {
-                        ApplyGroupValue(group, path, op.Value.Value);
-                    }
+                    break;
+
+                case "replace" or "add" when op.Value is not null:
+                    ApplyGroupValue(group, path, op.Value.Value);
                     break;
 
                 case "remove":
-                    if (string.Equals(path, "members", StringComparison.OrdinalIgnoreCase) && op.Value is not null)
+                    // Three member-removal shapes must all deprovision (or a removed user keeps mapped
+                    // roles at next token issuance):
+                    //   (1) path = members[value eq "id"]   → Okta: id encoded in the path filter (no value)
+                    //   (2) path = members, value=[{value}] → Entra: id(s) in the value array
+                    //   (3) path = members, no value        → remove ALL members
+                    var filterId = ExtractMemberIdFromPath(path);
+                    if (filterId is not null)
                     {
-                        RemoveGroupMembers(group, op.Value.Value);
+                        group.MemberUserIds.Remove(filterId);
+                    }
+                    else if (IsMembersPath(path))
+                    {
+                        if (op.Value is not null)
+                            RemoveGroupMembers(group, op.Value.Value);
+                        else
+                            group.MemberUserIds.Clear();
                     }
                     break;
             }
@@ -155,6 +180,29 @@ public static class ScimPatchApplier
                 group.ExternalId = value.GetString();
                 break;
         }
+    }
+
+    private static bool IsMembersPath(string? path)
+        => string.Equals(path, "members", StringComparison.OrdinalIgnoreCase);
+
+    // Parses a member value-path filter (members[value eq "id"]) and returns the id, or null when the
+    // path isn't that shape.
+    private static string? ExtractMemberIdFromPath(string? path)
+    {
+        if (string.IsNullOrEmpty(path))
+            return null;
+
+        var open = path.IndexOf('[');
+        if (open < 0 || !path.EndsWith(']'))
+            return null;
+
+        var attr = path[..open].Trim();
+        if (!string.Equals(attr, "members", StringComparison.OrdinalIgnoreCase))
+            return null;
+
+        var filter = path[(open + 1)..^1].Trim();
+        var match = MemberValueFilter().Match(filter);
+        return match.Success ? match.Groups["id"].Value : null;
     }
 
     private static void AddGroupMembers(ScimGroup group, JsonElement value)

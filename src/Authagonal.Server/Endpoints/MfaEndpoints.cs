@@ -95,8 +95,19 @@ public static class MfaEndpoints
                     .Where(c => c.Type == MfaCredentialType.RecoveryCode && !c.IsConsumed)
                     .ToList();
 
-                var matchedCred = recoveryCreds.FirstOrDefault(c =>
-                    recoveryCodeService.VerifyCode(request.Code, c.SecretProtected!));
+                // F35: the stored code hash is encrypted at rest — resolve it before comparing.
+                // ResolveAsync passes legacy (pre-encryption) plaintext hashes through unchanged, so old
+                // recovery codes keep working without a backfill.
+                MfaCredential? matchedCred = null;
+                foreach (var c in recoveryCreds)
+                {
+                    var storedHash = await secretProvider.ResolveAsync(c.SecretProtected!, ct);
+                    if (recoveryCodeService.VerifyCode(request.Code, storedHash))
+                    {
+                        matchedCred = c;
+                        break;
+                    }
+                }
 
                 if (matchedCred is null)
                 {

@@ -383,6 +383,7 @@ public static class MfaSetupEndpoints
         IMfaStore mfaStore,
         IUserStore userStore,
         RecoveryCodeService recoveryCodeService,
+        ISecretProvider secretProvider,
         IEnumerable<IAuthHook> authHooks,
         CancellationToken ct)
     {
@@ -399,10 +400,15 @@ public static class MfaSetupEndpoints
         foreach (var old in oldRecoveryCodes)
             await mfaStore.DeleteCredentialAsync(userId, old.Id, ct);
 
-        // Generate new codes
+        // Generate new codes. F35: the code hash is additionally encrypted at rest via the per-tenant
+        // secret provider — same treatment as TOTP seeds (line ~150) — so a storage dump yields
+        // `vault:` ciphertext, not an offline-brute-forceable unsalted hash that is itself an MFA bypass.
         var (plaintextCodes, credentials) = recoveryCodeService.Generate(userId);
         foreach (var cred in credentials)
+        {
+            cred.SecretProtected = await secretProvider.ProtectAsync($"mfa-recovery-{userId}", cred.SecretProtected!, ct);
             await mfaStore.CreateCredentialAsync(cred, ct);
+        }
 
         var user = await userStore.GetAsync(userId, ct);
         await authHooks.RunOnRecoveryCodesRegeneratedAsync(userId, user?.Email ?? "", ct);

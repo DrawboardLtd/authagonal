@@ -154,6 +154,60 @@ public sealed class DynamoGrantStore(
         return true;
     }
 
+    public async Task<bool> TryMarkConsumedAsync(PersistedGrant grant, CancellationToken ct = default)
+    {
+        if (string.IsNullOrEmpty(grant.Key))
+            throw new ArgumentException(
+                "PersistedGrant.Key is empty. Grants read back from storage have no Key — set it explicitly before marking consumed.",
+                nameof(grant));
+
+        var hashedKey = HashKey(grant.Key);
+        var pk = partitioner.PK(hashedKey);
+
+        grant.ConsumedAt ??= DateTimeOffset.UtcNow;
+        var json = await ProtectAsync(JsonSerializer.Serialize(grant, AwsJsonContext.Default.PersistedGrant), ct).ConfigureAwait(false);
+
+        var item = Dyn.Item(pk, GrantSk);
+        item.PutS("data", json);
+        // Top-level guard marker (the ConsumedAt inside the encrypted `data` blob can't gate a
+        // condition). Its presence is what a racing consume trips on.
+        item.PutS("consumedAt", grant.ConsumedAt.Value.ToString("O"));
+
+        // Atomic compare-and-set: land the consumed marker only if the row exists and is NOT already
+        // consumed. A concurrent consume wins first → this put's condition fails → the caller loses and
+        // must re-evaluate as replay. DynamoDB analog of Azure's ETag-conditional update.
+        try
+        {
+            await grants.Client.PutItemAsync(new PutItemRequest
+            {
+                TableName = grants.Name,
+                Item = item,
+                ConditionExpression = "attribute_exists(pk) AND attribute_not_exists(consumedAt)",
+            }, ct).ConfigureAwait(false);
+        }
+        catch (ConditionalCheckFailedException)
+        {
+            return false;
+        }
+
+        // Mirror the consumed marker to the subject index (best-effort).
+        if (!string.IsNullOrEmpty(grant.SubjectId))
+        {
+            var spk = partitioner.PK(grant.SubjectId);
+            var ssk = SubjectSk(grant.Type, hashedKey);
+            if (await grantsBySubject.GetAsync(spk, ssk, ct).ConfigureAwait(false) is not null)
+            {
+                var s = Dyn.Item(spk, ssk);
+                s.PutS("data", json);
+                s.PutS("clientId", grant.ClientId);
+                s.PutS("consumedAt", grant.ConsumedAt.Value.ToString("O"));
+                await grantsBySubject.PutAsync(s, ct).ConfigureAwait(false);
+            }
+        }
+
+        return true;
+    }
+
     public async Task RemoveAsync(string key, CancellationToken ct = default)
     {
         var hashedKey = HashKey(key);
@@ -205,6 +259,16 @@ public sealed class DynamoGrantStore(
                 var hashedKey = item.GetStr("hashedKey");
                 var subjectId = item.GetS("subjectId");
                 var type = item.GetStr("type");
+
+                // Tombstone-first (F24e contract) — record every delete before removing the row so an
+                // incremental backup can't miss an expired-grant deletion.
+                if (tombstones is not null)
+                {
+                    await tombstones.WriteAsync("Grants", partitioner.PK(hashedKey), GrantSk, ct).ConfigureAwait(false);
+                    if (!string.IsNullOrEmpty(subjectId))
+                        await tombstones.WriteAsync("GrantsBySubject", partitioner.PK(subjectId), SubjectSk(type, hashedKey), ct).ConfigureAwait(false);
+                    await tombstones.WriteAsync("GrantsByExpiry", item.GetStr(Dyn.Pk), item.GetStr(Dyn.Sk), ct).ConfigureAwait(false);
+                }
 
                 await grants.DeleteAsync(partitioner.PK(hashedKey), GrantSk, ct).ConfigureAwait(false);
                 if (!string.IsNullOrEmpty(subjectId))

@@ -35,7 +35,14 @@ public sealed class OidcSsoEndpointTests : IAsyncLifetime
         await _factory.SeedTestDataAsync();
         _adminToken = await _factory.GetAdminTokenAsync(_client);
 
-        // Create OIDC connection via admin API
+        _connectionId = await CreateConnectionAsync(["oidctest.com"]);
+    }
+
+    public Task DisposeAsync() => _factory.DisposeAsync().AsTask();
+
+    // Creates an OIDC connection (optionally with AllowedDomains) and returns its connectionId.
+    private async Task<string> CreateConnectionAsync(string[]? allowedDomains)
+    {
         var response = await _client.SendAsync(AdminRequest(HttpMethod.Post, "/api/v1/oidc/connections",
             new
             {
@@ -44,14 +51,12 @@ public sealed class OidcSsoEndpointTests : IAsyncLifetime
                 clientId = "test-oidc-client",
                 clientSecret = "test-oidc-secret",
                 redirectUrl = $"{AuthagonalTestFactory.TestIssuer}/oidc/callback",
-                allowedDomains = new[] { "oidctest.com" }
+                allowedDomains = allowedDomains ?? Array.Empty<string>()
             }));
         response.EnsureSuccessStatusCode();
         var json = await response.Content.ReadFromJsonAsync<JsonElement>();
-        _connectionId = json.GetProperty("connectionId").GetString()!;
+        return json.GetProperty("connectionId").GetString()!;
     }
-
-    public Task DisposeAsync() => _factory.DisposeAsync().AsTask();
 
     private HttpRequestMessage AdminRequest(HttpMethod method, string url, object? body = null)
     {
@@ -172,8 +177,11 @@ public sealed class OidcSsoEndpointTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task OidcCallback_UnverifiedEmail_ExistingUser_NotLinked()
+    public async Task OidcCallback_DomainAuthorised_UnverifiedEmail_ExistingUser_Links()
     {
+        // F36: matching SAML, the connection's AllowedDomains vouch is the trust anchor for attaching to a
+        // pre-existing account. When the domain IS authorised, the IdP's assertion links even if the
+        // upstream doesn't flag the email verified — the admin has explicitly trusted this IdP for the domain.
         _oidcMock.EmailVerified = false;
         await _factory.SeedTestUserAsync(email: _oidcMock.Email);
 
@@ -184,7 +192,31 @@ public sealed class OidcSsoEndpointTests : IAsyncLifetime
 
         await _client.GetAsync($"/oidc/callback?code=test-auth-code&state={Uri.EscapeDataString(state)}");
 
-        // An unverified upstream email must NOT be auto-linked onto a pre-existing local account.
+        var user = await _factory.UserStore.FindByEmailAsync(_oidcMock.Email);
+        var logins = await _factory.UserStore.GetLoginsAsync(user!.Id);
+        Assert.Contains(logins, l => l.Provider.StartsWith("oidc:"));
+    }
+
+    [Fact]
+    public async Task OidcCallback_NotDomainAuthorised_ExistingUser_NotLinked()
+    {
+        // F36: a connection NOT authorised for the email's domain (empty AllowedDomains) must refuse to
+        // attach to a pre-existing local account even on a VERIFIED email — email_verified alone is an
+        // upstream-controlled boolean and can't be allowed to seize an existing (possibly admin) account.
+        var conn = await CreateConnectionAsync(allowedDomains: null);
+        _oidcMock.EmailVerified = true;
+        await _factory.SeedTestUserAsync(email: _oidcMock.Email);
+
+        var loginResponse = await _client.GetAsync($"/oidc/{conn}/login");
+        var qs = HttpUtility.ParseQueryString(new Uri(loginResponse.Headers.Location!.ToString()).Query);
+        _oidcMock.Nonce = qs["nonce"]!;
+        var state = qs["state"]!;
+
+        var cb = await _client.GetAsync($"/oidc/callback?code=test-auth-code&state={Uri.EscapeDataString(state)}");
+
+        // Rejected with access_denied, and no external login attached.
+        Assert.Equal(HttpStatusCode.Redirect, cb.StatusCode);
+        Assert.Contains("access_denied", cb.Headers.Location!.ToString());
         var user = await _factory.UserStore.FindByEmailAsync(_oidcMock.Email);
         var logins = await _factory.UserStore.GetLoginsAsync(user!.Id);
         Assert.DoesNotContain(logins, l => l.Provider.StartsWith("oidc:"));
@@ -207,6 +239,54 @@ public sealed class OidcSsoEndpointTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task OidcCallback_MfaEnrolledUser_RoutesThroughMfaChallenge()
+    {
+        // F42: a federated login for an MFA-enrolled user is only the FIRST factor — the callback must
+        // redirect to the local MFA challenge, not sign a fully-authenticated session.
+        var user = await _factory.SeedTestUserAsync(email: _oidcMock.Email);
+        user.MfaEnabled = true;
+        await _factory.UserStore.UpdateAsync(user);
+        await _factory.MfaStore.CreateCredentialAsync(new MfaCredential
+        {
+            Id = Guid.NewGuid().ToString("N"),
+            UserId = user.Id,
+            Type = MfaCredentialType.Totp,
+            Name = "TOTP",
+            SecretProtected = "seed",
+            CreatedAt = DateTimeOffset.UtcNow,
+        });
+
+        var loginResponse = await _client.GetAsync($"/oidc/{_connectionId}/login");
+        var qs = HttpUtility.ParseQueryString(new Uri(loginResponse.Headers.Location!.ToString()).Query);
+        _oidcMock.Nonce = qs["nonce"]!;
+        var state = qs["state"]!;
+
+        var cb = await _client.GetAsync($"/oidc/callback?code=test-auth-code&state={Uri.EscapeDataString(state)}");
+
+        Assert.Equal(HttpStatusCode.Redirect, cb.StatusCode);
+        var location = cb.Headers.Location!.ToString();
+        Assert.Contains("/mfa-challenge", location);
+        Assert.Contains("challengeId=", location);
+    }
+
+    [Fact]
+    public async Task OidcCallback_MissingStateCookie_RejectedAsLoginCsrf()
+    {
+        // F48d: a callback delivered to a DIFFERENT browser (one that never got the oidc_state binding
+        // cookie) must be rejected even with an otherwise-valid state — the login-CSRF defense.
+        var loginResponse = await _client.GetAsync($"/oidc/{_connectionId}/login");
+        var qs = HttpUtility.ParseQueryString(new Uri(loginResponse.Headers.Location!.ToString()).Query);
+        var state = qs["state"]!;
+
+        var otherBrowser = _factory.CreateClient(new() { AllowAutoRedirect = false });
+        var cb = await otherBrowser.GetAsync($"/oidc/callback?code=test-auth-code&state={Uri.EscapeDataString(state)}");
+
+        Assert.Equal(HttpStatusCode.BadRequest, cb.StatusCode);
+        var json = await cb.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("invalid_state", json.GetProperty("error").GetString());
+    }
+
+    [Fact]
     public async Task SsoCheck_OidcDomain_ReturnsSsoRequired()
     {
         var response = await _client.GetAsync("/api/auth/sso-check?email=user@oidctest.com");
@@ -217,21 +297,22 @@ public sealed class OidcSsoEndpointTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task OidcLogin_ForwardsScopeFromReturnUrl()
+    public async Task OidcLogin_ForwardsStandardScopes_DropsCustom()
     {
-        // returnUrl is the original /authorize URL — its scope param is the
-        // contract for what claims should ride through. Federation should ask
-        // upstream for the same scopes the downstream RP requested.
-        var originalAuthorize = "/connect/authorize?client_id=foo&scope=openid+projects-api.read&response_type=code";
+        // F40: only STANDARD OIDC scopes ride to the upstream — the downstream RP's custom API scope
+        // (projects-api.read) is dropped, since a strict IdP like Google 400s invalid_scope on it and the
+        // upstream only needs to identify the user. profile/email are forwarded because they're standard.
+        var originalAuthorize = "/connect/authorize?client_id=foo&scope=openid+profile+email+projects-api.read&response_type=code";
         var encoded = Uri.EscapeDataString(originalAuthorize);
         var response = await _client.GetAsync($"/oidc/{_connectionId}/login?returnUrl={encoded}");
 
         Assert.Equal(HttpStatusCode.Redirect, response.StatusCode);
         var qs = HttpUtility.ParseQueryString(new Uri(response.Headers.Location!.ToString()).Query);
-        var upstreamScope = qs["scope"]!;
-        var scopes = upstreamScope.Split(' ');
+        var scopes = qs["scope"]!.Split(' ');
         Assert.Contains("openid", scopes);
-        Assert.Contains("projects-api.read", scopes);
+        Assert.Contains("profile", scopes);
+        Assert.Contains("email", scopes);
+        Assert.DoesNotContain("projects-api.read", scopes);
     }
 
     [Fact]
@@ -247,9 +328,8 @@ public sealed class OidcSsoEndpointTests : IAsyncLifetime
     [Fact]
     public async Task OidcLogin_ForwardedScope_AlwaysIncludesOpenid()
     {
-        // If the downstream RP somehow asked for scopes without openid (e.g. a
-        // pure access-token-only flow), upstream still needs openid to mint an
-        // id_token we can validate. We add it back.
+        // If the downstream RP asked only for a custom scope (no standard ones), the upstream still needs
+        // openid to mint an id_token we can validate — it's added back, and the custom scope is dropped (F40).
         var originalAuthorize = "/connect/authorize?client_id=foo&scope=projects-api.read&response_type=code";
         var encoded = Uri.EscapeDataString(originalAuthorize);
         var response = await _client.GetAsync($"/oidc/{_connectionId}/login?returnUrl={encoded}");
@@ -258,7 +338,7 @@ public sealed class OidcSsoEndpointTests : IAsyncLifetime
         var qs = HttpUtility.ParseQueryString(new Uri(response.Headers.Location!.ToString()).Query);
         var scopes = qs["scope"]!.Split(' ');
         Assert.Contains("openid", scopes);
-        Assert.Contains("projects-api.read", scopes);
+        Assert.DoesNotContain("projects-api.read", scopes);
     }
 
     [Fact]

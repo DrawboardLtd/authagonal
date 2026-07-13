@@ -107,8 +107,25 @@ public static class TokenEndpoint
         if (data is null)
             return TokenGrantHandlers.TokenError("server_error", "Invalid device code data");
 
+        // RFC 8628 §3.5 — throttle (F45): if the client polls faster than the advertised interval, tell
+        // it to slow down instead of doing the work (the client must then add 5s to its interval).
+        // Tracked per device_code via LastPolledAt; enforced regardless of approval state.
+        var now = DateTimeOffset.UtcNow;
+        if (data.LastPolledAt is { } lastPolled &&
+            now - lastPolled < TimeSpan.FromSeconds(DeviceCodeData.PollIntervalSeconds))
+        {
+            return JsonResults.OAuthError("slow_down", "Polling too frequently. Increase your interval and try again.");
+        }
+
         if (!data.IsApproved || string.IsNullOrEmpty(data.SubjectId))
         {
+            // Record this poll so the next too-fast poll is throttled (best-effort — a lost update just
+            // means one un-throttled poll). Only the pending path persists; an approved poll consumes.
+            data.LastPolledAt = now;
+            grant.Key = $"device:{deviceCode}";
+            grant.Data = JsonSerializer.Serialize(data, AuthagonalJsonContext.Default.DeviceCodeData);
+            await grantStore.StoreAsync(grant, ct);
+
             // RFC 8628 §3.5 — authorization_pending
             return JsonResults.OAuthError("authorization_pending", "The user has not yet approved the request");
         }
@@ -117,8 +134,13 @@ public static class TokenEndpoint
         if (user is null || !user.IsActive)
             return TokenGrantHandlers.TokenError("invalid_grant", "User not found or inactive");
 
-        // Consume the device code
-        await grantStore.ConsumeAsync($"device:{deviceCode}", ct);
+        // Consume the device code atomically (F39): after approval, two polls could both pass the
+        // ConsumedAt==null check above and both mint token sets. The ETag-conditional mark lets only
+        // one win; the loser gets invalid_grant instead of a duplicate token set.
+        grant.Key = $"device:{deviceCode}";
+        grant.ConsumedAt = DateTimeOffset.UtcNow;
+        if (!await grantStore.TryMarkConsumedAsync(grant, ct))
+            return TokenGrantHandlers.TokenError("invalid_grant", "Device code has already been used");
 
         // Build the subject through the shared resolver so group inflation and claim
         // shape match what the authorize flow produces.

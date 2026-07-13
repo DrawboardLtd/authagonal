@@ -7,6 +7,7 @@ using Authagonal.Server.Services.Saml;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.Extensions.Caching.Memory;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Options;
 
 namespace Authagonal.Server.Endpoints;
@@ -73,6 +74,9 @@ public static class SamlEndpoints
         HttpContext httpContext,
         ISamlProviderStore samlStore,
         IUserStore userStore,
+        IClientStore clientStore,
+        IMfaStore mfaStore,
+        WebAuthnService webAuthnService,
         IEnumerable<IAuthHook> authHooks,
         SamlMetadataParser metadataParser,
         SamlResponseParser responseParser,
@@ -80,6 +84,8 @@ public static class SamlEndpoints
         IMemoryCache memoryCache,
         Authagonal.Core.Services.ITenantContext tenantContext,
         IProvisioningOrchestrator provisioning,
+        IConfiguration configuration,
+        IOptions<AuthOptions> authOptions,
         IOptions<CacheOptions> cacheOptions,
         ILogger<Program> logger,
         CancellationToken ct)
@@ -151,7 +157,7 @@ public static class SamlEndpoints
         if (!parseResult.Success)
         {
             logger.LogWarning("SAML response validation failed: {Error}", parseResult.Error);
-            return Results.Redirect($"{relayState}?error=saml_error&error_description={Uri.EscapeDataString(parseResult.Error ?? "Unknown error")}");
+            return RedirectWithError(relayState, "saml_error", parseResult.Error ?? "Unknown error");
         }
 
         // Enforce assertion single-use for EVERY accepted assertion, regardless of flow.
@@ -182,7 +188,7 @@ public static class SamlEndpoints
         if (string.IsNullOrEmpty(userInfo.Email))
         {
             logger.LogWarning("No email address found in SAML response for connection {ConnectionId}", connectionId);
-            return Results.Redirect($"{relayState}?error=saml_error&error_description={Uri.EscapeDataString("No email address found in SAML assertion.")}");
+            return RedirectWithError(relayState, "saml_error", "No email address found in SAML assertion.");
         }
 
         var email = userInfo.Email.ToLowerInvariant();
@@ -196,7 +202,7 @@ public static class SamlEndpoints
         if (config.AllowedDomains is { Count: > 0 } && !domainAllowed)
         {
             logger.LogWarning("SAML email domain '{Domain}' not permitted for connection {ConnectionId}", emailDomain, connectionId);
-            return Results.Redirect($"{relayState}?error=access_denied&error_description={Uri.EscapeDataString("Your email domain is not permitted for this connection.")}");
+            return RedirectWithError(relayState, "access_denied", "Your email domain is not permitted for this connection.");
         }
 
         // Resolve a returning user by their STABLE federated identity (provider + NameID) first —
@@ -217,7 +223,7 @@ public static class SamlEndpoints
                 if (!domainAllowed)
                 {
                     logger.LogWarning("SAML login rejected: email {Email} matches an existing account but connection {ConnectionId} is not authorised for its domain", email, connectionId);
-                    return Results.Redirect($"{relayState}?error=access_denied&error_description={Uri.EscapeDataString("This email already belongs to an account. Contact your administrator to link it.")}");
+                    return RedirectWithError(relayState, "access_denied", "This email already belongs to an account. Contact your administrator to link it.");
                 }
                 user = existingByEmail;
             }
@@ -228,7 +234,7 @@ public static class SamlEndpoints
             if (config.DisableJitProvisioning)
             {
                 logger.LogInformation("JIT provisioning disabled for SAML connection {ConnectionId}, rejecting unknown user {Email}", connectionId, email);
-                return Results.Redirect($"{relayState}?error=access_denied&error_description={Uri.EscapeDataString("User not found. Contact your administrator to be provisioned.")}");
+                return RedirectWithError(relayState, "access_denied", "User not found. Contact your administrator to be provisioned.");
             }
 
             user = new AuthUser
@@ -286,7 +292,7 @@ public static class SamlEndpoints
         if (!user.IsActive)
         {
             logger.LogWarning("SAML login denied for deactivated user {UserId} ({Email})", user.Id, email);
-            return Results.Redirect($"{relayState}?error=account_disabled&error_description={Uri.EscapeDataString("Account has been deactivated.")}");
+            return RedirectWithError(relayState, "account_disabled", "Account has been deactivated.");
         }
 
         // Establish the federated identity link on first sign-in (provider/providerKey resolved above).
@@ -303,6 +309,15 @@ public static class SamlEndpoints
             logger.LogInformation("Linked external login {Provider}:{ProviderKey} to user {UserId}",
                 provider, providerKey, user.Id);
         }
+
+        // F42: federation proves the FIRST factor only. If the user's effective policy requires MFA, route
+        // through the local MFA challenge/setup rather than signing a fully-authenticated session — else a
+        // bare SAML login silently satisfies a tenant's MFA requirement. relayState carries them onward.
+        var loginAppBase = configuration["LoginAppUrl"] ?? "/login";
+        var mfaRedirect = await FederatedMfaFlow.MaybeChallengeAsync(
+            user, relayState, loginAppBase, clientStore, mfaStore, webAuthnService, authHooks, authOptions.Value, logger, ct);
+        if (mfaRedirect is not null)
+            return mfaRedirect;
 
         // Sign in with cookie auth
         var displayName = $"{user.FirstName} {user.LastName}".Trim();
@@ -377,11 +392,21 @@ public static class SamlEndpoints
         if (string.IsNullOrWhiteSpace(url))
             return "/";
 
-        // Only allow relative paths to prevent open redirect
-        if (!url.StartsWith('/') || url.StartsWith("//"))
+        // Must be a same-site relative path. Reject anything a browser could read as an authority:
+        // "//host", a leading "/\", or any embedded backslash (WHATWG treats '\' as '/', so "/\evil.com"
+        // navigates off-site). RelayState is attacker-controllable, so this is load-bearing. See F37.
+        if (!url.StartsWith('/') || url.StartsWith("//") || url.Contains('\\'))
             return "/";
 
         return url;
+    }
+
+    // F48c: append the error to relayState with the correct separator (relayState is the original
+    // /authorize URL and already carries a query, so a naive "?error=" produced a malformed double-"?").
+    private static IResult RedirectWithError(string relayState, string error, string description)
+    {
+        var sep = relayState.Contains('?') ? '&' : '?';
+        return Results.Redirect($"{relayState}{sep}error={Uri.EscapeDataString(error)}&error_description={Uri.EscapeDataString(description)}");
     }
 
     private static async Task<SamlIdpMetadata> GetCachedMetadataAsync(
@@ -391,7 +416,12 @@ public static class SamlEndpoints
         CacheOptions cacheOpts,
         CancellationToken ct)
     {
-        var cacheKey = $"saml-metadata:{config.ConnectionId}";
+        // F34: key by the authoritative MetadataLocation, NOT the (attacker-settable, semi-public)
+        // connectionId. The process-wide IMemoryCache is shared across every tenant on the pod; keying by
+        // connectionId let a malicious tenant create a connection reusing a victim's connectionId with its
+        // OWN metadata URL and poison the victim's signing certs (→ forged-assertion takeover). Keyed by URL,
+        // each connection's metadata is cached under its own source, so no cross-tenant confusion is possible.
+        var cacheKey = $"saml-metadata:{config.MetadataLocation}";
         if (memoryCache.TryGetValue<SamlIdpMetadata>(cacheKey, out var cached) && cached is not null)
             return cached;
 

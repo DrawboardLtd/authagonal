@@ -143,4 +143,70 @@ public class GrantDataEncryptionTests(AzuriteFixture azurite)
         Assert.NotNull(got);
         Assert.Equal(PiiData, got!.Data);
     }
+
+    // ── F32 / F39: atomic consume-mark (rotation + device-code single-use) ──
+
+    [Fact]
+    public async Task TryMarkConsumed_ConcurrentCallers_ExactlyOneWins()
+    {
+        // Real Azure Table ETag semantics (Azurite): N racing marks on the same un-consumed grant, only
+        // one lands. This is the anti-replay guarantee refresh rotation (F32) and device-code (F39) rely
+        // on — without it two readers both observing ConsumedAt==null would both "consume" and both mint.
+        var prefix = $"grantenc{Guid.NewGuid():N}";
+        var store = NewStore(prefix, new FakeCipher());
+        await store.StoreAsync(SampleGrant());
+
+        var marker = SampleGrant();
+        marker.ConsumedAt = DateTimeOffset.UtcNow;
+
+        var results = await Task.WhenAll(Enumerable.Range(0, 12).Select(_ =>
+            store.TryMarkConsumedAsync(marker)));
+
+        Assert.Equal(1, results.Count(won => won));
+
+        // The row survives (rotation needs the consumed marker) and now reads back consumed.
+        var after = await store.GetAsync(Handle);
+        Assert.NotNull(after);
+        Assert.NotNull(after!.ConsumedAt);
+    }
+
+    [Fact]
+    public async Task TryMarkConsumed_AlreadyConsumed_ReturnsFalse()
+    {
+        var prefix = $"grantenc{Guid.NewGuid():N}";
+        var store = NewStore(prefix, new FakeCipher());
+        await store.StoreAsync(SampleGrant());
+
+        var marker = SampleGrant();
+        marker.ConsumedAt = DateTimeOffset.UtcNow;
+
+        Assert.True(await store.TryMarkConsumedAsync(marker));   // first wins
+        Assert.False(await store.TryMarkConsumedAsync(marker));  // second sees it consumed
+    }
+
+    [Fact]
+    public async Task TryMarkConsumed_MissingGrant_ReturnsFalse()
+    {
+        var prefix = $"grantenc{Guid.NewGuid():N}";
+        var store = NewStore(prefix, new FakeCipher());
+
+        var marker = SampleGrant();
+        marker.ConsumedAt = DateTimeOffset.UtcNow;
+
+        Assert.False(await store.TryMarkConsumedAsync(marker));
+    }
+
+    [Fact]
+    public async Task TryMarkConsumed_EmptyKey_Throws()
+    {
+        var prefix = $"grantenc{Guid.NewGuid():N}";
+        var store = NewStore(prefix, new FakeCipher());
+
+        // Grants read back from storage have Key="" — marking one without re-setting the handle would
+        // land under the SHA-256("") partition; fail loudly instead (mirrors StoreAsync's guard).
+        var fetched = SampleGrant();
+        fetched.Key = string.Empty;
+
+        await Assert.ThrowsAsync<ArgumentException>(() => store.TryMarkConsumedAsync(fetched));
+    }
 }

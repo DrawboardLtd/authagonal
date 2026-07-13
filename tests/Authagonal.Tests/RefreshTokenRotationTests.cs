@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text;
+using Authagonal.Core.Models;
 using Authagonal.Core.Stores;
 using Authagonal.Protocol;
 using Authagonal.Protocol.Services;
@@ -198,6 +199,69 @@ public sealed class RefreshTokenRotationTests
         var refreshGrant = await factory.GrantStore.GetAsync(response.RefreshToken!);
         Assert.NotNull(refreshGrant);
         Assert.True(refreshGrant.ExpiresAt <= cap.AddSeconds(1));
+    }
+
+    [Fact]
+    public async Task ConcurrentRotation_WithinGraceWindow_BothServedSameSuccessor_NoFamilyRevoke()
+    {
+        // F32: two concurrent redemptions of the SAME refresh handle must not both mint independent
+        // successors and must not trip replay revocation. The atomic consume-mark lets one win the
+        // rotation; the loser re-evaluates through the grace window and is served the winner's successor.
+        await using var factory = new AuthagonalTestFactory
+        {
+            ConfigureAuthOptions = o => o.RefreshTokenReuseGraceSeconds = 30
+        };
+        await factory.SeedTestDataAsync();
+        var user = await factory.SeedTestUserAsync();
+
+        using var scope = factory.Services.CreateScope();
+        var tokens = scope.ServiceProvider.GetRequiredService<IProtocolTokenService>();
+        var resolver = scope.ServiceProvider.GetRequiredService<UserStoreOidcSubjectResolver>();
+        var client = (await factory.Services.GetRequiredService<IClientStore>().GetAsync(ClientId))!;
+        var subject = await resolver.BuildSubjectAsync(user, client);
+
+        var handle = await tokens.CreateRefreshTokenAsync(subject, client, ["openid", "offline_access"]);
+
+        var a = tokens.HandleRefreshTokenAsync(handle, ClientId);
+        var b = tokens.HandleRefreshTokenAsync(handle, ClientId);
+        var results = await Task.WhenAll(a, b);
+
+        // Both got tokens (no revoke), and both carry the SAME successor refresh handle.
+        Assert.All(results, r => Assert.NotNull(r.RefreshToken));
+        Assert.Equal(results[0].RefreshToken, results[1].RefreshToken);
+        Assert.NotNull(await factory.GrantStore.GetAsync(results[0].RefreshToken!));
+    }
+
+    [Fact]
+    public async Task ConcurrentRotation_StrictNoGrace_OneSucceeds_OtherRevokesFamily()
+    {
+        // With the default strict policy (grace = 0), a concurrent reuse is treated as replay: exactly
+        // one rotation succeeds, the other revokes the family. The point of F32 is that the outcome is
+        // deterministic (one winner), not two independently-valid successors.
+        await using var factory = new AuthagonalTestFactory();
+        await factory.SeedTestDataAsync();
+        var user = await factory.SeedTestUserAsync();
+
+        using var scope = factory.Services.CreateScope();
+        var tokens = scope.ServiceProvider.GetRequiredService<IProtocolTokenService>();
+        var resolver = scope.ServiceProvider.GetRequiredService<UserStoreOidcSubjectResolver>();
+        var client = (await factory.Services.GetRequiredService<IClientStore>().GetAsync(ClientId))!;
+        var subject = await resolver.BuildSubjectAsync(user, client);
+
+        var handle = await tokens.CreateRefreshTokenAsync(subject, client, ["openid", "offline_access"]);
+
+        var outcomes = await Task.WhenAll(
+            Capture(() => tokens.HandleRefreshTokenAsync(handle, ClientId)),
+            Capture(() => tokens.HandleRefreshTokenAsync(handle, ClientId)));
+
+        Assert.Equal(1, outcomes.Count(o => o.Ok));
+        Assert.Equal(1, outcomes.Count(o => !o.Ok));
+    }
+
+    private static async Task<(bool Ok, string? RefreshToken)> Capture(Func<Task<TokenResponse>> act)
+    {
+        try { var r = await act(); return (true, r.RefreshToken); }
+        catch (InvalidOperationException) { return (false, null); }
     }
 
     private static (string Verifier, string Challenge) GeneratePkce()

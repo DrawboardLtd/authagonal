@@ -10,6 +10,8 @@ using Authagonal.Server.Services;
 using Authagonal.Server.Services.Oidc;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.JsonWebTokens;
 using Microsoft.IdentityModel.Tokens;
 
@@ -17,6 +19,10 @@ namespace Authagonal.Server.Endpoints;
 
 public static class OidcEndpoints
 {
+    // Browser-binding cookie for the federation state (F48d). Scoped to /oidc so it rides the login→callback
+    // navigation only.
+    private const string StateCookieName = "oidc_state";
+
     public static IEndpointRouteBuilder MapOidcEndpoints(this IEndpointRouteBuilder app)
     {
         app.MapGet("/oidc/{connectionId}/login", LoginAsync).AllowAnonymous();
@@ -58,6 +64,19 @@ public static class OidcEndpoints
         // Store state (validate returnUrl to prevent open redirect)
         var effectiveReturnUrl = SanitizeReturnUrl(returnUrl);
         await stateStore.StoreAsync(state, connectionId, effectiveReturnUrl, codeVerifier, nonce, ct);
+
+        // F48d: bind this attempt to the initiating browser. The callback requires a cookie matching the
+        // state param, so an attacker can't run the federation for their own identity and deliver the
+        // callback URL to a victim (login CSRF — the nonce binds the id_token to the state, not the
+        // browser). SameSite=Lax survives the top-level GET redirect back from the IdP.
+        httpContext.Response.Cookies.Append(StateCookieName, state, new CookieOptions
+        {
+            HttpOnly = true,
+            Secure = httpContext.Request.IsHttps,
+            SameSite = SameSiteMode.Lax,
+            Path = "/oidc",
+            Expires = DateTimeOffset.UtcNow.AddMinutes(15),
+        });
 
         // Build authorization URL
         var baseUrl = tenantContext.Issuer;
@@ -104,6 +123,9 @@ public static class OidcEndpoints
         HttpContext httpContext,
         IOidcProviderStore oidcStore,
         IUserStore userStore,
+        IClientStore clientStore,
+        IMfaStore mfaStore,
+        WebAuthnService webAuthnService,
         IEnumerable<IAuthHook> authHooks,
         OidcDiscoveryClient discoveryClient,
         Authagonal.Core.Services.IOidcStateStore stateStore,
@@ -111,6 +133,8 @@ public static class OidcEndpoints
         ISecretProvider secretProvider,
         Authagonal.Core.Services.ITenantContext tenantContext,
         IProvisioningOrchestrator provisioning,
+        IConfiguration configuration,
+        IOptions<AuthOptions> authOptions,
         ILogger<Program> logger,
         CancellationToken ct)
     {
@@ -132,6 +156,17 @@ public static class OidcEndpoints
         if (string.IsNullOrEmpty(code) || string.IsNullOrEmpty(state))
             return Results.BadRequest(new { error = "missing_parameters", error_description = "Missing code or state parameter" });
 
+        // F48d: the state must match the browser-bound cookie set at /oidc/{id}/login (login-CSRF defense).
+        // Checked before consuming state so a cross-browser callback can't burn a victim's pending state.
+        var boundState = httpContext.Request.Cookies[StateCookieName];
+        httpContext.Response.Cookies.Delete(StateCookieName, new CookieOptions { Path = "/oidc" });
+        if (string.IsNullOrEmpty(boundState) ||
+            !CryptographicOperations.FixedTimeEquals(Encoding.UTF8.GetBytes(boundState), Encoding.UTF8.GetBytes(state)))
+        {
+            logger.LogWarning("OIDC state cookie missing or mismatched — possible login CSRF");
+            return Results.BadRequest(new { error = "invalid_state", error_description = "State binding validation failed" });
+        }
+
         // Consume state
         var stateData = await stateStore.ConsumeAsync(state, ct);
         if (stateData is null)
@@ -147,7 +182,7 @@ public static class OidcEndpoints
         if (config is null)
         {
             logger.LogWarning("OIDC connection {ConnectionId} not found during callback", stateData.ConnectionId);
-            return Results.Redirect($"{returnUrl}?error=oidc_error&error_description={Uri.EscapeDataString("OIDC connection not found")}");
+            return RedirectWithError(returnUrl, "oidc_error", "OIDC connection not found");
         }
 
         // Fetch discovery document
@@ -159,7 +194,7 @@ public static class OidcEndpoints
         catch (Exception ex)
         {
             logger.LogError(ex, "Failed to fetch OIDC discovery document for connection {ConnectionId}", stateData.ConnectionId);
-            return Results.Redirect($"{returnUrl}?error=oidc_error&error_description={Uri.EscapeDataString("Failed to fetch provider configuration")}");
+            return RedirectWithError(returnUrl, "oidc_error", "Failed to fetch provider configuration");
         }
 
         // Exchange code for tokens
@@ -180,7 +215,7 @@ public static class OidcEndpoints
         catch (Exception ex)
         {
             logger.LogError(ex, "OIDC token exchange failed for connection {ConnectionId}", stateData.ConnectionId);
-            return Results.Redirect($"{returnUrl}?error=oidc_error&error_description={Uri.EscapeDataString("Token exchange failed")}");
+            return RedirectWithError(returnUrl, "oidc_error", "Token exchange failed");
         }
 
         // Validate id_token
@@ -202,13 +237,13 @@ public static class OidcEndpoints
             if (!validationResult.IsValid)
             {
                 logger.LogWarning("OIDC id_token validation failed: {Error}", validationResult.Exception?.Message);
-                return Results.Redirect($"{returnUrl}?error=oidc_error&error_description={Uri.EscapeDataString("ID token validation failed")}");
+                return RedirectWithError(returnUrl, "oidc_error", "ID token validation failed");
             }
         }
         catch (Exception ex)
         {
             logger.LogError(ex, "OIDC id_token validation threw for connection {ConnectionId}", stateData.ConnectionId);
-            return Results.Redirect($"{returnUrl}?error=oidc_error&error_description={Uri.EscapeDataString("ID token validation failed")}");
+            return RedirectWithError(returnUrl, "oidc_error", "ID token validation failed");
         }
 
         // Verify nonce — must be present and match the stored value
@@ -217,7 +252,7 @@ public static class OidcEndpoints
             !string.Equals(nonceClaim, stateData.Nonce, StringComparison.Ordinal))
         {
             logger.LogWarning("OIDC nonce missing or mismatch for connection {ConnectionId}", stateData.ConnectionId);
-            return Results.Redirect($"{returnUrl}?error=oidc_error&error_description={Uri.EscapeDataString("Nonce validation failed")}");
+            return RedirectWithError(returnUrl, "oidc_error", "Nonce validation failed");
         }
 
         // Extract claims from validated id_token
@@ -235,17 +270,27 @@ public static class OidcEndpoints
             try
             {
                 var userinfoClaims = await FetchUserinfoAsync(httpClientFactory, discovery.UserinfoEndpoint, accessToken, ct);
-                var userinfoEmail = ExtractEmailFromJson(userinfoClaims);
-                if (string.IsNullOrEmpty(email) && !string.IsNullOrEmpty(userinfoEmail))
-                {
-                    email = userinfoEmail;
-                    emailVerified = userinfoClaims.TryGetValue("email_verified", out var uev)
-                        && (uev is bool uevBool ? uevBool : bool.TryParse(uev?.ToString(), out var uevParsed) && uevParsed);
-                }
-                name ??= userinfoClaims.GetValueOrDefault("name") as string;
-                givenName ??= userinfoClaims.GetValueOrDefault("given_name") as string;
-                familyName ??= userinfoClaims.GetValueOrDefault("family_name") as string;
 
+                // OIDC Core 5.3.2 (F48b): the userinfo `sub` MUST match the id_token `sub`, else the
+                // response may describe a DIFFERENT subject — ignore it rather than adopt its email.
+                var userinfoSub = userinfoClaims.GetValueOrDefault("sub") as string;
+                if (string.IsNullOrEmpty(userinfoSub) || !string.Equals(userinfoSub, sub, StringComparison.Ordinal))
+                {
+                    logger.LogWarning("OIDC userinfo sub mismatch for connection {ConnectionId}; ignoring userinfo response", stateData.ConnectionId);
+                }
+                else
+                {
+                    var userinfoEmail = ExtractEmailFromJson(userinfoClaims);
+                    if (string.IsNullOrEmpty(email) && !string.IsNullOrEmpty(userinfoEmail))
+                    {
+                        email = userinfoEmail;
+                        emailVerified = userinfoClaims.TryGetValue("email_verified", out var uev)
+                            && (uev is bool uevBool ? uevBool : bool.TryParse(uev?.ToString(), out var uevParsed) && uevParsed);
+                    }
+                    name ??= userinfoClaims.GetValueOrDefault("name") as string;
+                    givenName ??= userinfoClaims.GetValueOrDefault("given_name") as string;
+                    familyName ??= userinfoClaims.GetValueOrDefault("family_name") as string;
+                }
             }
             catch (Exception ex)
             {
@@ -256,13 +301,13 @@ public static class OidcEndpoints
         if (string.IsNullOrEmpty(email))
         {
             logger.LogWarning("No email found in OIDC claims for connection {ConnectionId}", stateData.ConnectionId);
-            return Results.Redirect($"{returnUrl}?error=oidc_error&error_description={Uri.EscapeDataString("No email address found in identity token")}");
+            return RedirectWithError(returnUrl, "oidc_error", "No email address found in identity token");
         }
 
         if (string.IsNullOrEmpty(sub))
         {
             logger.LogWarning("No sub claim found in OIDC id_token for connection {ConnectionId}", stateData.ConnectionId);
-            return Results.Redirect($"{returnUrl}?error=oidc_error&error_description={Uri.EscapeDataString("No subject identifier found in identity token")}");
+            return RedirectWithError(returnUrl, "oidc_error", "No subject identifier found in identity token");
         }
 
         email = email.ToLowerInvariant();
@@ -276,13 +321,15 @@ public static class OidcEndpoints
         }
 
         // Enforce the connection's allowed email domains (when configured): a connection may only
-        // assert identities within its own domain(s). Closes cross-connection account takeover.
+        // assert identities within its own domain(s). AllowedDomains is also the admin's explicit vouch
+        // that this IdP owns the domain — required (F36) before attaching to a PRE-EXISTING local account.
         var emailDomain = email.Contains('@') ? email[(email.LastIndexOf('@') + 1)..] : "";
-        if (config.AllowedDomains is { Count: > 0 } &&
-            !config.AllowedDomains.Any(d => string.Equals(d, emailDomain, StringComparison.OrdinalIgnoreCase)))
+        var domainAllowed = config.AllowedDomains is { Count: > 0 } &&
+            config.AllowedDomains.Any(d => string.Equals(d, emailDomain, StringComparison.OrdinalIgnoreCase));
+        if (config.AllowedDomains is { Count: > 0 } && !domainAllowed)
         {
             logger.LogWarning("OIDC email domain '{Domain}' not permitted for connection {ConnectionId}", emailDomain, stateData.ConnectionId);
-            return Results.Redirect($"{returnUrl}?error=access_denied&error_description={Uri.EscapeDataString("Your email domain is not permitted for this connection.")}");
+            return RedirectWithError(returnUrl, "access_denied", "Your email domain is not permitted for this connection.");
         }
 
         // Resolve a returning user by their STABLE federated identity (provider + subject) — never by
@@ -292,17 +339,19 @@ public static class OidcEndpoints
         var existingLogin = await userStore.FindLoginAsync(provider, providerKey, ct);
         var user = existingLogin is not null ? await userStore.GetAsync(existingLogin.UserId, ct) : null;
 
-        // Fall back to matching an existing local account by email ONLY when the upstream asserts the
-        // email is verified — otherwise a malicious/permissive IdP could claim someone else's address.
+        // Attach this IdP to an existing local account by email ONLY when the connection is explicitly
+        // authorised for that email's domain (AllowedDomains vouches the IdP owns it). email_verified is
+        // an upstream-controlled boolean and is NOT sufficient to seize a pre-existing (possibly admin)
+        // account — this matches SAML's stance (F36) and closes the takeover against a permissive IdP.
         if (user is null)
         {
             var existingByEmail = await userStore.FindByEmailAsync(email, ct);
             if (existingByEmail is not null)
             {
-                if (!emailVerified)
+                if (!domainAllowed)
                 {
-                    logger.LogWarning("OIDC login rejected: unverified email {Email} matches an existing account on connection {ConnectionId}", email, stateData.ConnectionId);
-                    return Results.Redirect($"{returnUrl}?error=access_denied&error_description={Uri.EscapeDataString("This email already belongs to an account and could not be verified. Contact your administrator.")}");
+                    logger.LogWarning("OIDC login rejected: email {Email} matches an existing account but connection {ConnectionId} is not authorised for its domain", email, stateData.ConnectionId);
+                    return RedirectWithError(returnUrl, "access_denied", "This email already belongs to an account. Contact your administrator to link it.");
                 }
                 user = existingByEmail;
             }
@@ -313,7 +362,7 @@ public static class OidcEndpoints
             if (config.DisableJitProvisioning)
             {
                 logger.LogInformation("JIT provisioning disabled for OIDC connection {ConnectionId}, rejecting unknown user {Email}", stateData.ConnectionId, email);
-                return Results.Redirect($"{returnUrl}?error=access_denied&error_description={Uri.EscapeDataString("User not found. Contact your administrator to be provisioned.")}");
+                return RedirectWithError(returnUrl, "access_denied", "User not found. Contact your administrator to be provisioned.");
             }
 
             user = new AuthUser
@@ -370,7 +419,7 @@ public static class OidcEndpoints
         if (!user.IsActive)
         {
             logger.LogWarning("OIDC login denied for deactivated user {UserId} ({Email})", user.Id, email);
-            return Results.Redirect($"{returnUrl}?error=account_disabled&error_description={Uri.EscapeDataString("Account has been deactivated.")}");
+            return RedirectWithError(returnUrl, "account_disabled", "Account has been deactivated.");
         }
 
         // Establish the federated identity link on first sign-in (provider/providerKey resolved above).
@@ -387,6 +436,16 @@ public static class OidcEndpoints
             logger.LogInformation("Linked external login {Provider}:{ProviderKey} to user {UserId}",
                 provider, providerKey, user.Id);
         }
+
+        // F42: federation proves the FIRST factor only. If the user's effective policy requires MFA (they
+        // are enrolled, or the client mandates it), route through the local MFA challenge/setup instead of
+        // signing a fully-authenticated session — otherwise a bare federated login silently satisfies a
+        // tenant's MFA requirement. When MFA is neither enrolled nor required, federation stands alone.
+        var loginAppBase = configuration["LoginAppUrl"] ?? "/login";
+        var mfaRedirect = await FederatedMfaFlow.MaybeChallengeAsync(
+            user, returnUrl, loginAppBase, clientStore, mfaStore, webAuthnService, authHooks, authOptions.Value, logger, ct);
+        if (mfaRedirect is not null)
+            return mfaRedirect;
 
         // Sign in with cookie auth
         var displayName = $"{user.FirstName} {user.LastName}".Trim();
@@ -619,11 +678,22 @@ public static class OidcEndpoints
         if (string.IsNullOrWhiteSpace(url))
             return "/login";
 
-        // Only allow relative paths to prevent open redirect
-        if (!url.StartsWith('/') || url.StartsWith("//"))
+        // Must be a same-site relative path. Reject anything a browser could read as an authority:
+        // "//host", a leading "/\", or any embedded backslash (WHATWG treats '\' as '/', so "/\evil.com"
+        // navigates off-site). See F37.
+        if (!url.StartsWith('/') || url.StartsWith("//") || url.Contains('\\'))
             return "/login";
 
         return url;
+    }
+
+    // F48c: appends the OAuth error to returnUrl with the correct separator. returnUrl is the original
+    // /authorize URL, which already carries a query string — a naive "?error=" produced a malformed
+    // double-"?" that swallowed the error params.
+    private static IResult RedirectWithError(string returnUrl, string error, string description)
+    {
+        var sep = returnUrl.Contains('?') ? '&' : '?';
+        return Results.Redirect($"{returnUrl}{sep}error={Uri.EscapeDataString(error)}&error_description={Uri.EscapeDataString(description)}");
     }
 
     /// <summary>
@@ -690,11 +760,21 @@ public static class OidcEndpoints
         }
     }
 
+    /// <summary>Standard OIDC scopes safe to forward to ANY upstream IdP. Anything else the downstream RP
+    /// requested (custom API scopes, <c>offline_access</c>, …) is dropped — a strict IdP like Google 400s
+    /// <c>invalid_scope</c> on unknown values (F40), and the upstream only needs to identify the user. The
+    /// downstream's own scopes are re-released on Authagonal-issued tokens via the federation claim
+    /// flow-through, not by the upstream.</summary>
+    private static readonly HashSet<string> StandardUpstreamScopes = new(StringComparer.Ordinal)
+    {
+        "openid", "profile", "email", "address", "phone",
+    };
+
     /// <summary>
     /// Pulls the <c>scope</c> query parameter off the original /authorize URL we were
-    /// asked to bring the user back to after federation. Returns null if returnUrl
-    /// doesn't carry one (e.g. login UI redirected here directly with returnUrl="/").
-    /// Always ensures <c>openid</c> is present — OIDC requires it.
+    /// asked to bring the user back to after federation, filtered to the standard OIDC set
+    /// (see <see cref="StandardUpstreamScopes"/>). Returns null if returnUrl doesn't carry one
+    /// (e.g. login UI redirected here directly with returnUrl="/"). Always ensures <c>openid</c>.
     /// </summary>
     private static string? ExtractScopeFromReturnUrl(string? returnUrl)
     {
@@ -707,9 +787,11 @@ public static class OidcEndpoints
         var scope = query["scope"];
         if (string.IsNullOrWhiteSpace(scope)) return null;
 
-        var scopes = scope.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        var scopes = scope.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(StandardUpstreamScopes.Contains)
+            .ToList();
         if (!scopes.Contains("openid", StringComparer.Ordinal))
-            scopes = [.. scopes, "openid"];
+            scopes.Add("openid");
 
         return string.Join(' ', scopes);
     }

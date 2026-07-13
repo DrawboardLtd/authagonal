@@ -36,15 +36,26 @@ public static class AuthorizeEndpoint
                 ? httpContext.Request.Query["redirect_uri"].FirstOrDefault()
                 : null;
 
+            // F46: with no client (missing / unknown client_id) there is nothing to validate redirect_uri
+            // against, so the error MUST be delivered directly — reflecting it to the attacker-supplied
+            // redirect_uri would be an open redirect.
             if (string.IsNullOrWhiteSpace(clientId))
-                return AuthorizeRequestSupport.BuildErrorRedirect(initialRedirectUri, "invalid_request", "client_id is required", initialState);
+                return AuthorizeRequestSupport.BuildErrorRedirect(null, "invalid_request", "client_id is required", initialState);
 
             var client = await clientStore.GetAsync(clientId, ct);
             if (client is null)
-                return AuthorizeRequestSupport.BuildErrorRedirect(initialRedirectUri, "unauthorized_client", "Unknown client_id", initialState);
+                return AuthorizeRequestSupport.BuildErrorRedirect(null, "unauthorized_client", "Unknown client_id", initialState);
 
             if (!client.Enabled)
-                return AuthorizeRequestSupport.BuildErrorRedirect(initialRedirectUri, "unauthorized_client", "Client is disabled", initialState);
+            {
+                // F46: only reflect the error to a redirect_uri actually registered for this (disabled)
+                // client; an unregistered one gets a direct error, never a bounce to an attacker URL.
+                var safeRedirect = !string.IsNullOrWhiteSpace(initialRedirectUri)
+                    && AuthorizeRequestSupport.IsRedirectUriRegistered(initialRedirectUri, client.RedirectUris)
+                    ? initialRedirectUri
+                    : null;
+                return AuthorizeRequestSupport.BuildErrorRedirect(safeRedirect, "unauthorized_client", "Client is disabled", initialState);
+            }
 
             IReadableRequestParameters source;
             if (!string.IsNullOrWhiteSpace(requestUri))

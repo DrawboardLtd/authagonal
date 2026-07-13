@@ -185,9 +185,16 @@ public static class DeviceAuthorizationEndpoint
 
 internal sealed class DeviceCodeData
 {
+    /// <summary>Advertised (and enforced) minimum poll interval, seconds — matches
+    /// <c>DeviceAuthorizationResponse.Interval</c>. Polling faster earns a <c>slow_down</c> (RFC 8628 §3.5).</summary>
+    public const int PollIntervalSeconds = 5;
+
     public required string UserCode { get; set; }
     public required string ClientId { get; set; }
     public required List<string> Scopes { get; set; }
     public bool IsApproved { get; set; }
     public string? SubjectId { get; set; }
+
+    /// <summary>Timestamp of the last accepted token poll, for interval throttling. Null until first polled.</summary>
+    public DateTimeOffset? LastPolledAt { get; set; }
 }

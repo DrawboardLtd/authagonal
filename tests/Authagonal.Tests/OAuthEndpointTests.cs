@@ -184,16 +184,18 @@ public sealed class OAuthEndpointTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Authorize_InvalidClientId_RedirectsWithError()
+    public async Task Authorize_InvalidClientId_ReturnsDirectError()
     {
         var url = BuildAuthorizeUrl("nonexistent-client", "https://app.test/callback");
 
         var response = await _client.GetAsync(url);
 
-        // OAuth spec: when redirect_uri is provided, errors are redirected back to the client
-        Assert.Equal(HttpStatusCode.Redirect, response.StatusCode);
-        var location = response.Headers.Location!.ToString();
-        Assert.Contains("error=unauthorized_client", location);
+        // F46 / RFC 6749 §4.1.2.1: with an unknown client there is no registered redirect_uri to trust,
+        // so the error MUST be shown directly and MUST NOT be auto-redirected to the supplied (unvalidated)
+        // URI — otherwise it's an open redirect against any known-disabled/unknown client_id.
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Null(response.Headers.Location);
+        Assert.Contains("unauthorized_client", await response.Content.ReadAsStringAsync());
     }
 
     [Fact]

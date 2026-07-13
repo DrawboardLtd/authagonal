@@ -275,6 +275,64 @@ public sealed class AuthorizeEndpointTests : IAsyncLifetime
         return token.Audiences.ToArray();
     }
 
+    // -----------------------------------------------------------------------
+    // F46 — disabled-client error path must not open-redirect to an unregistered URI
+    // -----------------------------------------------------------------------
+
+    [Fact]
+    public async Task Authorize_DisabledClient_UnregisteredRedirectUri_DoesNotOpenRedirect()
+    {
+        await _factory.ClientStore.UpsertAsync(new Authagonal.Core.Models.OAuthClient
+        {
+            ClientId = "disabled-client",
+            ClientName = "Disabled",
+            Enabled = false,
+            RedirectUris = ["https://app.test/callback"],
+            AllowedGrantTypes = ["authorization_code"],
+            AllowedScopes = ["openid"],
+        });
+
+        var url = "/connect/authorize?client_id=disabled-client" +
+                  $"&redirect_uri={Uri.EscapeDataString("https://attacker.evil/x")}" +
+                  "&response_type=code&scope=openid&state=abc" +
+                  $"&code_challenge={GeneratePkce().Challenge}&code_challenge_method=S256";
+
+        var response = await _client.GetAsync(url);
+
+        // The attacker-supplied redirect_uri is NOT registered, so the error must be delivered directly
+        // (400), never bounced to attacker.evil.
+        Assert.NotEqual(HttpStatusCode.Redirect, response.StatusCode);
+        Assert.Null(response.Headers.Location);
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Authorize_DisabledClient_RegisteredRedirectUri_ReflectsErrorToIt()
+    {
+        await _factory.ClientStore.UpsertAsync(new Authagonal.Core.Models.OAuthClient
+        {
+            ClientId = "disabled-client-2",
+            ClientName = "Disabled",
+            Enabled = false,
+            RedirectUris = ["https://app.test/callback"],
+            AllowedGrantTypes = ["authorization_code"],
+            AllowedScopes = ["openid"],
+        });
+
+        var url = "/connect/authorize?client_id=disabled-client-2" +
+                  $"&redirect_uri={Uri.EscapeDataString("https://app.test/callback")}" +
+                  "&response_type=code&scope=openid&state=abc" +
+                  $"&code_challenge={GeneratePkce().Challenge}&code_challenge_method=S256";
+
+        var response = await _client.GetAsync(url);
+
+        // A registered redirect_uri is a legitimate destination for the OAuth error.
+        Assert.Equal(HttpStatusCode.Redirect, response.StatusCode);
+        Assert.StartsWith("https://app.test/callback", response.Headers.Location!.ToString());
+        var query = HttpUtility.ParseQueryString(response.Headers.Location!.Query);
+        Assert.Equal("unauthorized_client", query["error"]);
+    }
+
     private static string BuildAuthorizeUrl(
         string scope = "openid profile email",
         string? codeChallenge = null,

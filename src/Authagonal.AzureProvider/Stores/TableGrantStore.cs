@@ -212,6 +212,72 @@ public sealed class TableGrantStore(
         return true;
     }
 
+    public async Task<bool> TryMarkConsumedAsync(PersistedGrant grant, CancellationToken ct = default)
+    {
+        if (string.IsNullOrEmpty(grant.Key))
+            throw new ArgumentException(
+                "PersistedGrant.Key is empty. Grants read back from storage have no Key — set it explicitly before marking consumed.",
+                nameof(grant));
+
+        var hashedKey = HashKey(grant.Key);
+        var hashedKeyPk = partitioner.PK(hashedKey);
+
+        GrantEntity entity;
+        try
+        {
+            var response = await grantsTable.GetEntityAsync<GrantEntity>(
+                hashedKeyPk, GrantEntity.GrantRowKey, cancellationToken: ct);
+            entity = response.Value;
+        }
+        catch (RequestFailedException ex) when (ex.Status == 404)
+        {
+            return false;
+        }
+
+        // Already consumed by a racing caller — this caller lost the rotation race.
+        if (entity.ConsumedAt is not null)
+            return false;
+
+        entity.ConsumedAt = grant.ConsumedAt ?? DateTimeOffset.UtcNow;
+        entity.Data = await ProtectAsync(grant.Data, ct);
+
+        // Atomic compare-and-set: the conditional (ETag / If-Match) update only lands for the caller
+        // whose read matched the current row. A concurrent consume changes the ETag → 412 → this caller
+        // loses. Without this, two readers that both observed ConsumedAt==null would both write a
+        // consumed marker and neither would trip replay detection.
+        try
+        {
+            await grantsTable.UpdateEntityAsync(entity, entity.ETag, TableUpdateMode.Replace, ct);
+        }
+        catch (RequestFailedException ex) when (ex.Status is 412 or 404)
+        {
+            return false;
+        }
+
+        // Mirror the consumed marker to the subject index (best-effort, matches ConsumeAsync).
+        if (!string.IsNullOrEmpty(entity.SubjectId))
+        {
+            var subjectRk = $"{entity.Type}|{hashedKey}";
+            try
+            {
+                var subjectResponse = await grantsBySubjectTable.GetEntityAsync<GrantBySubjectEntity>(
+                    partitioner.PK(entity.SubjectId), subjectRk, cancellationToken: ct);
+
+                var subjectEntity = subjectResponse.Value;
+                subjectEntity.ConsumedAt = entity.ConsumedAt;
+                subjectEntity.Data = entity.Data;
+                await grantsBySubjectTable.UpsertEntityAsync(subjectEntity, TableUpdateMode.Replace, ct);
+            }
+            catch (RequestFailedException ex) when (ex.Status == 404)
+            {
+                logger.LogWarning("Subject index entry missing during consume-mark for subject {SubjectId}, key {HashedKey}",
+                    entity.SubjectId, hashedKey);
+            }
+        }
+
+        return true;
+    }
+
     public async Task RemoveAsync(string key, CancellationToken ct = default)
     {
         var hashedKey = HashKey(key);
@@ -407,6 +473,21 @@ public sealed class TableGrantStore(
             // Entries in the cutoff-day bucket may not all be expired yet
             if (entity.ExpiresAt <= cutoff)
                 expiredEntries.Add(entity);
+        }
+
+        // Tombstone-first (F24e contract): record every delete before removing any row so an
+        // incremental backup can never miss an expired-grant deletion (the backstop only re-scans
+        // LIVE rows). Harmless today — grants aren't in the change-logged set — but keeps this delete
+        // path consistent with every other store delete, so grants can join it without a silent gap.
+        if (tombstoneWriter is not null && expiredEntries.Count > 0)
+        {
+            await tombstoneWriter.WriteBatchAsync("Grants",
+                expiredEntries.Select(e => (partitioner.PK(e.RowKey), GrantEntity.GrantRowKey)), ct);
+            await tombstoneWriter.WriteBatchAsync("GrantsByExpiry",
+                expiredEntries.Select(e => (e.PartitionKey, e.RowKey)), ct);
+            await tombstoneWriter.WriteBatchAsync("GrantsBySubject",
+                expiredEntries.Where(e => !string.IsNullOrEmpty(e.SubjectId))
+                              .Select(e => (partitioner.PK(e.SubjectId), $"{e.Type}|{e.RowKey}")), ct);
         }
 
         // Delete primary grants and subject index entries

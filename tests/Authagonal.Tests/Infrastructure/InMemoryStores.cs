@@ -165,6 +165,7 @@ public sealed class InMemoryClientStore : IClientStore
 public sealed class InMemoryGrantStore : IGrantStore
 {
     private readonly ConcurrentDictionary<string, PersistedGrant> _grants = new();
+    private readonly object _consumeGate = new();
 
     public Task StoreAsync(PersistedGrant grant, CancellationToken ct = default)
     {
@@ -208,6 +209,27 @@ public sealed class InMemoryGrantStore : IGrantStore
 
     public Task<bool> TryConsumeAsync(string key, CancellationToken ct = default)
         => Task.FromResult(_grants.TryRemove(key, out _)); // atomic single-use
+
+    public Task<bool> TryMarkConsumedAsync(PersistedGrant grant, CancellationToken ct = default)
+    {
+        // Mirror TableGrantStore: fail loudly on an empty handle, and let exactly one concurrent caller
+        // win the un-consumed → consumed transition. The gate serialises the check-and-set the real
+        // store gets from its ETag-conditional update.
+        if (string.IsNullOrEmpty(grant.Key))
+            throw new ArgumentException(
+                "PersistedGrant.Key is empty. Grants read back from storage have no Key — set it explicitly before marking consumed.",
+                nameof(grant));
+
+        lock (_consumeGate)
+        {
+            if (!_grants.TryGetValue(grant.Key, out var existing) || existing.ConsumedAt is not null)
+                return Task.FromResult(false);
+
+            existing.ConsumedAt = grant.ConsumedAt ?? DateTimeOffset.UtcNow;
+            existing.Data = grant.Data;
+            return Task.FromResult(true);
+        }
+    }
 
     public Task RemoveAsync(string key, CancellationToken ct = default)
     {

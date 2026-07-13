@@ -31,12 +31,14 @@ internal static class AuthorizeEndpoint
                 ? httpContext.Request.Query["redirect_uri"].FirstOrDefault()
                 : null;
 
+            // F46: with no client (missing / unknown client_id) there is nothing to validate redirect_uri
+            // against, so the error MUST be delivered directly rather than reflected to an attacker URL.
             if (string.IsNullOrWhiteSpace(clientId))
-                return AuthorizeRequestSupport.BuildErrorRedirect(initialRedirectUri, "invalid_request", "client_id is required", initialState);
+                return AuthorizeRequestSupport.BuildErrorRedirect(null, "invalid_request", "client_id is required", initialState);
 
             var client = await clientStore.GetAsync(clientId, ct);
             if (client is null)
-                return AuthorizeRequestSupport.BuildErrorRedirect(initialRedirectUri, "unauthorized_client", "Unknown client_id", initialState);
+                return AuthorizeRequestSupport.BuildErrorRedirect(null, "unauthorized_client", "Unknown client_id", initialState);
 
             IReadableRequestParameters source;
             if (!string.IsNullOrWhiteSpace(requestUri))
@@ -56,7 +58,17 @@ internal static class AuthorizeEndpoint
             var request = AuthorizeRequest.Read(source);
 
             if (!client.Enabled)
-                return AuthorizeRequestSupport.BuildErrorRedirect(request.RedirectUri, "unauthorized_client", "Client is disabled", request.State);
+            {
+                // F46: don't reflect the error to an UNVALIDATED redirect_uri — an attacker who knows a
+                // disabled client_id could otherwise bounce error+state to an arbitrary URL (open
+                // redirect), since redirect_uri registration is normally checked later in Validate().
+                // Only redirect to a redirect_uri actually registered for this client; else a direct error.
+                var safeRedirect = !string.IsNullOrWhiteSpace(request.RedirectUri)
+                    && AuthorizeRequestSupport.IsRedirectUriRegistered(request.RedirectUri, client.RedirectUris)
+                    ? request.RedirectUri
+                    : null;
+                return AuthorizeRequestSupport.BuildErrorRedirect(safeRedirect, "unauthorized_client", "Client is disabled", request.State);
+            }
 
             if (AuthorizeRequestSupport.Validate(client, request) is { } validationError)
                 return validationError;
