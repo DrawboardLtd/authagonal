@@ -17,6 +17,10 @@ public sealed class SamlProviderEntity : ITableEntity
     public required string ConnectionName { get; set; }
     public required string EntityId { get; set; }
     public required string MetadataLocation { get; set; }
+    /// <summary>Condensed pasted IdP metadata XML (F49) — set when the IdP has no metadata URL.</summary>
+    public string? MetadataXml { get; set; }
+    /// <summary>Requested NameIDPolicy format (F51): null = emailAddress default, "none" = omit.</summary>
+    public string? NameIdFormat { get; set; }
     public required string AllowedDomainsJson { get; set; }
     public string? IconUrl { get; set; }
     /// <summary>
@@ -35,6 +39,8 @@ public sealed class SamlProviderEntity : ITableEntity
         ConnectionName = config.ConnectionName,
         EntityId = config.EntityId,
         MetadataLocation = config.MetadataLocation,
+        MetadataXml = config.MetadataXml,
+        NameIdFormat = config.NameIdFormat,
         AllowedDomainsJson = JsonSerializer.Serialize(config.AllowedDomains, AzureJsonContext.Default.ListString),
         IconUrl = config.IconUrl,
         DisableJitProvisioning = config.DisableJitProvisioning,
@@ -48,6 +54,8 @@ public sealed class SamlProviderEntity : ITableEntity
         ConnectionName = ConnectionName,
         EntityId = EntityId,
         MetadataLocation = MetadataLocation,
+        MetadataXml = MetadataXml,
+        NameIdFormat = NameIdFormat,
         AllowedDomains = JsonSerializer.Deserialize(AllowedDomainsJson, AzureJsonContext.Default.ListString) ?? [],
         IconUrl = IconUrl,
         DisableJitProvisioning = DisableJitProvisioning ?? false,

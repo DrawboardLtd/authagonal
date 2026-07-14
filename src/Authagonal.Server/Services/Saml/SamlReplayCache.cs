@@ -9,13 +9,22 @@ public sealed class SamlReplayCache(TableClient tableClient, IOptions<CacheOptio
     /// <summary>
     /// Stores a SAML AuthnRequest ID associated with a connection ID for later validation.
     /// </summary>
-    public async Task StoreRequestIdAsync(string requestId, string connectionId, CancellationToken ct = default)
+    public Task StoreRequestIdAsync(string requestId, string connectionId, CancellationToken ct = default)
+        => StoreRequestAsync(requestId, connectionId, returnUrl: null, ct);
+
+    /// <summary>
+    /// Stores a SAML AuthnRequest ID with its connection ID and post-login return URL (F56: the
+    /// return URL rides this row instead of RelayState, which the spec caps at 80 bytes).
+    /// </summary>
+    public async Task StoreRequestAsync(string requestId, string connectionId, string? returnUrl, CancellationToken ct = default)
     {
         var entity = new TableEntity(requestId, "request")
         {
             ["ConnectionId"] = connectionId,
             ["CreatedAt"] = DateTimeOffset.UtcNow
         };
+        if (!string.IsNullOrEmpty(returnUrl))
+            entity["ReturnUrl"] = returnUrl;
 
         await tableClient.UpsertEntityAsync(entity, TableUpdateMode.Replace, ct);
     }
@@ -26,6 +35,9 @@ public sealed class SamlReplayCache(TableClient tableClient, IOptions<CacheOptio
     /// Returns the connection ID if valid, null otherwise.
     /// </summary>
     public async Task<string?> ValidateAndConsumeAsync(string requestId, CancellationToken ct = default)
+        => (await ValidateAndConsumeRequestAsync(requestId, ct))?.ConnectionId;
+
+    public async Task<Authagonal.Core.Services.SamlRequestState?> ValidateAndConsumeRequestAsync(string requestId, CancellationToken ct = default)
     {
         try
         {
@@ -49,7 +61,10 @@ public sealed class SamlReplayCache(TableClient tableClient, IOptions<CacheOptio
                 return null; // Missing timestamp — treat as invalid
             }
 
-            return entity.GetString("ConnectionId");
+            var connectionId = entity.GetString("ConnectionId");
+            return connectionId is null
+                ? null
+                : new Authagonal.Core.Services.SamlRequestState(connectionId, entity.GetString("ReturnUrl"));
         }
         catch (Azure.RequestFailedException ex) when (ex.Status == 404)
         {

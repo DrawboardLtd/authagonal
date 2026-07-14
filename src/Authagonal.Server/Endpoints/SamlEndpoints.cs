@@ -47,21 +47,19 @@ public static class SamlEndpoints
         // Generate request ID
         var requestId = "_" + Guid.NewGuid().ToString("N");
 
-        // Store request ID in replay cache
-        await replayCache.StoreRequestIdAsync(requestId, connectionId, ct);
+        // Store request ID in replay cache, carrying the post-login return URL server-side. F56:
+        // the SAML spec caps RelayState at 80 bytes and some IdPs truncate it — a full /authorize
+        // returnUrl doesn't fit, so it rides the request row and comes back via InResponseTo.
+        await replayCache.StoreRequestAsync(requestId, connectionId, SanitizeReturnUrl(returnUrl), ct);
 
         // Build the issuer (our entity ID)
         var issuer = config.EntityId;
         var baseUrl = tenantContext.Issuer;
         var acsUrl = $"{baseUrl}/saml/{connectionId}/acs";
 
-        // Build redirect URL
+        // Build redirect URL (no RelayState — the return URL is server-side state now)
         var url = SamlRequestBuilder.BuildAuthnRequestUrl(
-            requestId, issuer, acsUrl, metadata.SingleSignOnServiceUrl, loginHint);
-
-        // Append RelayState if returnUrl is provided (validated to prevent open redirect)
-        var relayState = SanitizeReturnUrl(returnUrl);
-        url += $"&RelayState={Uri.EscapeDataString(relayState)}";
+            requestId, issuer, acsUrl, metadata.SingleSignOnServiceUrl, loginHint, config.NameIdFormat);
 
         logger.LogInformation("SAML login initiated for connection {ConnectionId}, RequestId={RequestId}",
             connectionId, requestId);
@@ -90,7 +88,8 @@ public static class SamlEndpoints
         ILogger<Program> logger,
         CancellationToken ct)
     {
-        // Read form data
+        // Read form data. RelayState is only meaningful for IdP-initiated flows now (the IdP's
+        // configured default RelayState); SP-initiated return URLs ride the stored request row (F56).
         var form = await httpContext.Request.ReadFormAsync(ct);
         var samlResponse = form["SAMLResponse"].ToString();
         var relayState = SanitizeReturnUrl(form["RelayState"].ToString());
@@ -131,18 +130,22 @@ public static class SamlEndpoints
         // If InResponseTo IS present, replay validation must pass — reject otherwise.
         if (expectedInResponseTo is not null)
         {
-            var cachedConnectionId = await replayCache.ValidateAndConsumeAsync(expectedInResponseTo, ct);
-            if (cachedConnectionId is null)
+            var requestState = await replayCache.ValidateAndConsumeRequestAsync(expectedInResponseTo, ct);
+            if (requestState is null)
             {
                 logger.LogWarning("SAML replay detected or unknown request ID: InResponseTo={InResponseTo}", expectedInResponseTo);
                 return Results.BadRequest(new { error = "saml_replay", error_description = "SAML response replay detected or unknown request ID." });
             }
-            else if (!string.Equals(cachedConnectionId, connectionId, StringComparison.OrdinalIgnoreCase))
+            else if (!string.Equals(requestState.ConnectionId, connectionId, StringComparison.OrdinalIgnoreCase))
             {
                 logger.LogWarning("SAML connection mismatch: expected={Expected}, actual={Actual}",
-                    cachedConnectionId, connectionId);
+                    requestState.ConnectionId, connectionId);
                 return Results.BadRequest(new { error = "connection_mismatch" });
             }
+
+            // F56: the SP-initiated return URL comes from the stored request row, not RelayState.
+            if (!string.IsNullOrEmpty(requestState.ReturnUrl))
+                relayState = SanitizeReturnUrl(requestState.ReturnUrl);
         }
 
         // Build validation context
@@ -154,6 +157,37 @@ public static class SamlEndpoints
 
         // Parse and validate the response
         var parseResult = responseParser.Parse(samlResponse, validationContext);
+
+        // F52: a signature failure right after an IdP cert rollover means our cached metadata is
+        // stale (the new cert was published after our last fetch). Evict, refetch once, and retry
+        // validation — rate-limited per metadata location so a garbage assertion can't be used to
+        // hammer the IdP's metadata endpoint. Without this, rollover = failed logins per pod until
+        // the cache TTL lapses.
+        if (!parseResult.Success &&
+            parseResult.Error == SamlResponseParser.SignatureFailure &&
+            !string.IsNullOrWhiteSpace(config.MetadataLocation) &&
+            string.IsNullOrWhiteSpace(config.MetadataXml))
+        {
+            var cooldownKey = $"saml-metadata-refetch:{config.MetadataLocation}";
+            if (!memoryCache.TryGetValue(cooldownKey, out _))
+            {
+                memoryCache.Set(cooldownKey, true, TimeSpan.FromMinutes(5));
+                memoryCache.Remove($"saml-metadata:{config.MetadataLocation}");
+                try
+                {
+                    metadata = await GetCachedMetadataAsync(config, metadataParser, memoryCache, cacheOptions.Value, ct);
+                    validationContext = validationContext with { TrustedCertificates = metadata.SigningCertificates };
+                    parseResult = responseParser.Parse(samlResponse, validationContext);
+                    logger.LogInformation("SAML metadata refetched after signature failure for connection {ConnectionId}; retry {Outcome}",
+                        connectionId, parseResult.Success ? "succeeded (IdP cert rollover)" : "still failing");
+                }
+                catch (Exception ex)
+                {
+                    logger.LogWarning(ex, "SAML metadata refetch after signature failure failed for connection {ConnectionId}", connectionId);
+                }
+            }
+        }
+
         if (!parseResult.Success)
         {
             logger.LogWarning("SAML response validation failed: {Error}", parseResult.Error);
@@ -183,7 +217,7 @@ public static class SamlEndpoints
 
         // Map claims
         var userInfo = SamlClaimMapper.MapClaims(
-            parseResult.NameId!, parseResult.NameIdFormat, parseResult.Attributes);
+            parseResult.NameId!, parseResult.NameIdFormat, parseResult.Attributes, parseResult.AttributeValues);
 
         if (string.IsNullOrEmpty(userInfo.Email))
         {
@@ -207,8 +241,24 @@ public static class SamlEndpoints
 
         // Resolve a returning user by their STABLE federated identity (provider + NameID) first —
         // never by email alone.
+        // F50: a transient NameID rotates every login — using it as the federated key would JIT a
+        // duplicate user per sign-in. Fall back to the IdP's stable object id when asserted;
+        // otherwise reject with an actionable error rather than silently multiplying accounts.
         var provider = $"saml:{connectionId}";
         var providerKey = parseResult.NameId!;
+        if (string.Equals(parseResult.NameIdFormat, Services.Saml.SamlConstants.NameIdTransient, StringComparison.OrdinalIgnoreCase))
+        {
+            if (!string.IsNullOrWhiteSpace(userInfo.ObjectId))
+            {
+                providerKey = userInfo.ObjectId;
+            }
+            else
+            {
+                logger.LogWarning("SAML connection {ConnectionId} asserted a transient NameID with no stable object-id attribute", connectionId);
+                return RedirectWithError(relayState, "saml_error",
+                    "The IdP sent a transient NameID and no stable identifier. Configure a persistent or emailAddress NameID format at your IdP, or assert an object-id attribute.");
+            }
+        }
         var existingLogin = await userStore.FindLoginAsync(provider, providerKey, ct);
         var user = existingLogin is not null ? await userStore.GetAsync(existingLogin.UserId, ct) : null;
 
@@ -366,6 +416,14 @@ public static class SamlEndpoints
         var acsUrl = $"{baseUrl}/saml/{connectionId}/acs";
         var issuer = config.EntityId;
 
+        // F51: advertise the connection's requested NameID format; omit the element when the
+        // connection omits NameIDPolicy ("none") — advertising a format we don't request misleads.
+        var nameIdFormatLine = string.Equals(config.NameIdFormat, Services.Saml.SamlRequestBuilder.NameIdFormatNone, StringComparison.OrdinalIgnoreCase)
+            ? ""
+            : $"""
+                <md:NameIDFormat>{System.Security.SecurityElement.Escape(config.NameIdFormat ?? Services.Saml.SamlConstants.NameIdEmail)}</md:NameIDFormat>
+            """;
+
         var xml = $"""
             <?xml version="1.0" encoding="UTF-8"?>
             <md:EntityDescriptor xmlns:md="urn:oasis:names:tc:SAML:2.0:metadata"
@@ -373,8 +431,7 @@ public static class SamlEndpoints
               <md:SPSSODescriptor
                   AuthnRequestsSigned="false"
                   WantAssertionsSigned="true"
-                  protocolSupportEnumeration="urn:oasis:names:tc:SAML:2.0:protocol">
-                <md:NameIDFormat>urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress</md:NameIDFormat>
+                  protocolSupportEnumeration="urn:oasis:names:tc:SAML:2.0:protocol">{nameIdFormatLine}
                 <md:AssertionConsumerService
                     Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST"
                     Location="{acsUrl}"
@@ -416,6 +473,22 @@ public static class SamlEndpoints
         CacheOptions cacheOpts,
         CancellationToken ct)
     {
+        // F49: pasted metadata (IdPs with no metadata URL — Google Workspace, private-network ADFS)
+        // takes precedence over MetadataLocation. Cached content-addressed (hash of the XML), which
+        // is inherently poison-proof: identical content parses identically regardless of tenant.
+        if (!string.IsNullOrWhiteSpace(config.MetadataXml))
+        {
+            var xmlHash = Convert.ToHexString(
+                System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(config.MetadataXml)));
+            var xmlCacheKey = $"saml-metadata-xml:{xmlHash}";
+            if (memoryCache.TryGetValue<SamlIdpMetadata>(xmlCacheKey, out var cachedXml) && cachedXml is not null)
+                return cachedXml;
+
+            var parsed = SamlMetadataParser.Parse(config.MetadataXml);
+            memoryCache.Set(xmlCacheKey, parsed, TimeSpan.FromMinutes(cacheOpts.SamlMetadataCacheMinutes));
+            return parsed;
+        }
+
         // F34: key by the authoritative MetadataLocation, NOT the (attacker-settable, semi-public)
         // connectionId. The process-wide IMemoryCache is shared across every tenant on the pod; keying by
         // connectionId let a malicious tenant create a connection reusing a victim's connectionId with its

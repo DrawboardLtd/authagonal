@@ -23,7 +23,32 @@ public sealed class SamlMetadataParser(IHttpClientFactory httpClientFactory)
         return Parse(response);
     }
 
-    internal static SamlIdpMetadata Parse(string metadataXml)
+    /// <summary>
+    /// F49: condense pasted IdP metadata to a canonical minimal EntityDescriptor holding exactly what
+    /// the SP consumes (entityID, SSO endpoints, signing certs). Vendor documents can exceed 100KB
+    /// (ADFS FederationMetadata.xml) — past the 64KB Azure Table property cap — while the parts we
+    /// use are a few KB of certificates. Parses (validating the paste) and re-emits.
+    /// </summary>
+    public static string Condense(string metadataXml)
+    {
+        var parsed = Parse(metadataXml);
+        var root = new XElement(Md + "EntityDescriptor",
+            new XAttribute("entityID", parsed.EntityId),
+            new XElement(Md + "IDPSSODescriptor",
+                new XAttribute("protocolSupportEnumeration", SamlConstants.Saml2Protocol),
+                parsed.SigningCertificates.Select(cert =>
+                    new XElement(Md + "KeyDescriptor",
+                        new XAttribute("use", "signing"),
+                        new XElement(Ds + "KeyInfo",
+                            new XElement(Ds + "X509Data",
+                                new XElement(Ds + "X509Certificate", Convert.ToBase64String(cert.RawData)))))),
+                new XElement(Md + "SingleSignOnService",
+                    new XAttribute("Binding", SamlConstants.HttpRedirectBinding),
+                    new XAttribute("Location", parsed.SingleSignOnServiceUrl))));
+        return root.ToString(SaveOptions.DisableFormatting);
+    }
+
+    public static SamlIdpMetadata Parse(string metadataXml)
     {
         var doc = XDocument.Parse(metadataXml);
         var root = doc.Root

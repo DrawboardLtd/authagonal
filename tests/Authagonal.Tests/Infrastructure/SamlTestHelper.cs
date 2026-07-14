@@ -33,7 +33,8 @@ public static class SamlTestHelper
         string? email = null,
         string? firstName = null,
         string? lastName = null,
-        TimeSpan? validFor = null)
+        TimeSpan? validFor = null,
+        string? extraAttributesXml = null)
     {
         var now = DateTime.UtcNow;
         var notBefore = now.AddMinutes(-5);
@@ -85,6 +86,8 @@ public static class SamlTestHelper
             sb.Append($@"<saml:Attribute Name=""http://schemas.xmlsoap.org/ws/2005/05/identity/claims/givenname""><saml:AttributeValue>{firstName}</saml:AttributeValue></saml:Attribute>");
         if (lastName is not null)
             sb.Append($@"<saml:Attribute Name=""http://schemas.xmlsoap.org/ws/2005/05/identity/claims/surname""><saml:AttributeValue>{lastName}</saml:AttributeValue></saml:Attribute>");
+        if (extraAttributesXml is not null)
+            sb.Append(extraAttributesXml);
         sb.Append("</saml:AttributeStatement>");
 
         sb.Append("</saml:Assertion>");
@@ -114,10 +117,10 @@ public static class SamlTestHelper
         return Convert.ToBase64String(Encoding.UTF8.GetBytes(xml));
     }
 
-    /// <summary>Build IdP metadata XML with the test signing certificate.</summary>
-    public static string BuildIdpMetadata(string entityId = "https://idp.test", string ssoUrl = "https://idp.test/sso")
+    /// <summary>Build IdP metadata XML with the test signing certificate (or a supplied one).</summary>
+    public static string BuildIdpMetadata(string entityId = "https://idp.test", string ssoUrl = "https://idp.test/sso", X509Certificate2? signingCert = null)
     {
-        var certBase64 = Convert.ToBase64String(TestCertificate.Export(X509ContentType.Cert));
+        var certBase64 = Convert.ToBase64String((signingCert ?? TestCertificate).Export(X509ContentType.Cert));
 
         return $@"<?xml version=""1.0""?>
 <EntityDescriptor xmlns=""urn:oasis:names:tc:SAML:2.0:metadata""

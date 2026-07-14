@@ -20,13 +20,26 @@ public sealed record SamlParseResult
     public string? Error { get; init; }
     public string? NameId { get; init; }
     public string? NameIdFormat { get; init; }
-    public Dictionary<string, string> Attributes { get; init; } = new();
+    /// <summary>First value per attribute, keyed case-insensitively by Name and FriendlyName.</summary>
+    public Dictionary<string, string> Attributes { get; init; } = new(StringComparer.OrdinalIgnoreCase);
+    /// <summary>
+    /// All values per attribute (F50) — multi-valued attributes like groups/memberOf carry one
+    /// AttributeValue element per entry. Keyed case-insensitively by Name and FriendlyName.
+    /// </summary>
+    public Dictionary<string, List<string>> AttributeValues { get; init; } = new(StringComparer.OrdinalIgnoreCase);
     public string? SessionIndex { get; init; }
     public string? AssertionId { get; init; }
 }
 
 public sealed class SamlResponseParser(ILogger<SamlResponseParser> logger)
 {
+    /// <summary>
+    /// The exact failure string produced when neither the Response nor the Assertion carried a
+    /// validatable signature. The ACS matches on this to trigger a one-shot metadata refetch (F52:
+    /// IdP cert rollover mid-cache-window would otherwise fail logins until the TTL lapses).
+    /// </summary>
+    public const string SignatureFailure = "No valid signature found on Response or Assertion.";
+
     public SamlParseResult Parse(string base64Response, SamlResponseValidationContext context)
     {
         // 1. Base64 decode
@@ -120,7 +133,7 @@ public sealed class SamlResponseParser(ILogger<SamlResponseParser> logger)
         if (!responseSignatureValid && !assertionSignatureValid)
         {
             logger.LogWarning("No valid signature found on Response or Assertion");
-            return Fail("No valid signature found on Response or Assertion.");
+            return Fail(SignatureFailure);
         }
 
         // 8. Validate Assertion Conditions — required, and must bind the audience to this SP so an
@@ -218,8 +231,11 @@ public sealed class SamlResponseParser(ILogger<SamlResponseParser> logger)
         if (string.IsNullOrEmpty(nameId))
             return Fail("Assertion does not contain a NameID.");
 
-        // 11. Extract Attributes
-        var attributes = new Dictionary<string, string>();
+        // 11. Extract Attributes — every AttributeValue (multi-valued attributes like groups carry
+        // one element per entry), indexed under both Name and FriendlyName (Okta/Shibboleth emit
+        // OID Names with human FriendlyNames; matching either is what makes vendor mapping work).
+        var attributes = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var attributeValues = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
         var attributeNodes = assertionElement.SelectNodes(
             "saml:AttributeStatement/saml:Attribute", nsManager);
         if (attributeNodes is not null)
@@ -230,10 +246,31 @@ public sealed class SamlResponseParser(ILogger<SamlResponseParser> logger)
                 if (string.IsNullOrEmpty(attrName))
                     continue;
 
-                var valueNode = attrElement.SelectSingleNode("saml:AttributeValue", nsManager);
-                var attrValue = valueNode?.InnerText?.Trim();
-                if (attrValue is not null)
-                    attributes[attrName] = attrValue;
+                var values = new List<string>();
+                var valueNodes = attrElement.SelectNodes("saml:AttributeValue", nsManager);
+                if (valueNodes is not null)
+                {
+                    foreach (System.Xml.XmlNode valueNode in valueNodes)
+                    {
+                        var v = valueNode.InnerText?.Trim();
+                        if (!string.IsNullOrEmpty(v))
+                            values.Add(v);
+                    }
+                }
+                if (values.Count == 0)
+                    continue;
+
+                var friendlyName = attrElement.Attributes?["FriendlyName"]?.Value;
+                foreach (var key in new[] { attrName, friendlyName })
+                {
+                    if (string.IsNullOrEmpty(key))
+                        continue;
+                    attributes.TryAdd(key, values[0]);
+                    if (!attributeValues.TryGetValue(key, out var existing))
+                        attributeValues[key] = [.. values];
+                    else
+                        existing.AddRange(values);
+                }
             }
         }
 
@@ -251,6 +288,7 @@ public sealed class SamlResponseParser(ILogger<SamlResponseParser> logger)
             NameId = nameId,
             NameIdFormat = nameIdFormat,
             Attributes = attributes,
+            AttributeValues = attributeValues,
             SessionIndex = sessionIndex,
             AssertionId = assertionId
         };

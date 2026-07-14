@@ -5,7 +5,14 @@ namespace Authagonal.Server.Services.Saml;
 
 public static class SamlRequestBuilder
 {
-    public static string BuildAuthnRequestUrl(string requestId, string issuer, string acsUrl, string destination, string? loginHint = null)
+    /// <summary>
+    /// Sentinel for <paramref name="nameIdFormat"/>: omit the NameIDPolicy element entirely. The
+    /// ADFS-safe setting — ADFS fails the whole login (MSIS7070) when its relying-party claim rules
+    /// don't emit the requested format. F51.
+    /// </summary>
+    public const string NameIdFormatNone = "none";
+
+    public static string BuildAuthnRequestUrl(string requestId, string issuer, string acsUrl, string destination, string? loginHint = null, string? nameIdFormat = null)
     {
         var issueInstant = DateTime.UtcNow.ToString("o");
 
@@ -14,6 +21,15 @@ public static class SamlRequestBuilder
         // (AADSTS900236: "The SAML authentication request property 'Subject' is not
         // supported and must not be set."). The login hint is conveyed via the
         // login_hint query parameter below instead, which Entra (and Google) honour.
+        // NameIDPolicy: null keeps the historic emailAddress default (existing Entra connections
+        // rely on the NameID-email fallback); "none" omits the element (ADFS-safe); anything else
+        // is sent verbatim.
+        var nameIdPolicy = string.Equals(nameIdFormat, NameIdFormatNone, StringComparison.OrdinalIgnoreCase)
+            ? ""
+            : $"""
+              <samlp:NameIDPolicy Format="{System.Security.SecurityElement.Escape(nameIdFormat ?? SamlConstants.NameIdEmail)}" AllowCreate="true" />
+            """;
+
         var xml = $"""
             <samlp:AuthnRequest
                 xmlns:samlp="{SamlConstants.Saml2Protocol}"
@@ -23,8 +39,7 @@ public static class SamlRequestBuilder
                 Destination="{destination}"
                 AssertionConsumerServiceURL="{acsUrl}"
                 ProtocolBinding="{SamlConstants.HttpPostBinding}">
-              <saml:Issuer xmlns:saml="{SamlConstants.Saml2Assertion}">{issuer}</saml:Issuer>
-              <samlp:NameIDPolicy Format="{SamlConstants.NameIdEmail}" AllowCreate="true" />
+              <saml:Issuer xmlns:saml="{SamlConstants.Saml2Assertion}">{issuer}</saml:Issuer>{nameIdPolicy}
             </samlp:AuthnRequest>
             """;
 

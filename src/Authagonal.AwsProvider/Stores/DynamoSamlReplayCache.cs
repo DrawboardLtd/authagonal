@@ -13,19 +13,28 @@ public sealed class DynamoSamlReplayCache(DynamoTable table, TimeSpan ttl) : ISa
     private const string AssertionSk = "assertion";
 
     public Task StoreRequestIdAsync(string requestId, string connectionId, CancellationToken ct = default)
+        => StoreRequestAsync(requestId, connectionId, returnUrl: null, ct);
+
+    public Task StoreRequestAsync(string requestId, string connectionId, string? returnUrl, CancellationToken ct = default)
     {
         var item = Dyn.Item(requestId, RequestSk);
         item.PutS("connectionId", connectionId);
+        if (!string.IsNullOrEmpty(returnUrl))
+            item.PutS("returnUrl", returnUrl);
         item.PutDate("createdAt", DateTimeOffset.UtcNow);
         return table.PutAsync(item, ct);
     }
 
     public async Task<string?> ValidateAndConsumeAsync(string requestId, CancellationToken ct = default)
+        => (await ValidateAndConsumeRequestAsync(requestId, ct).ConfigureAwait(false))?.ConnectionId;
+
+    public async Task<SamlRequestState?> ValidateAndConsumeRequestAsync(string requestId, CancellationToken ct = default)
     {
         var old = await table.DeleteIfExistsReturningAsync(requestId, RequestSk, ct).ConfigureAwait(false);
         if (old is null) return null; // not found / already consumed (replay)
         if (DateTimeOffset.UtcNow - old.GetDate("createdAt") > ttl) return null; // expired
-        return old.GetS("connectionId");
+        var connectionId = old.GetS("connectionId");
+        return connectionId is null ? null : new SamlRequestState(connectionId, old.GetS("returnUrl"));
     }
 
     public async Task<bool> CheckAndStoreAssertionIdAsync(string assertionId, CancellationToken ct = default)

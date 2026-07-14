@@ -46,8 +46,19 @@ public static class SsoEndpoints
         if (string.IsNullOrWhiteSpace(request.EntityId))
             return Results.BadRequest(new { error = "invalid_request", error_description = "EntityId is required" });
 
-        if (string.IsNullOrWhiteSpace(request.MetadataLocation))
-            return Results.BadRequest(new { error = "invalid_request", error_description = "MetadataLocation is required" });
+        // F49: a connection is fed by a metadata URL OR pasted metadata XML (for IdPs with no
+        // metadata URL, e.g. Google Workspace). Exactly one must be supplied.
+        var hasUrl = !string.IsNullOrWhiteSpace(request.MetadataLocation);
+        var hasXml = !string.IsNullOrWhiteSpace(request.MetadataXml);
+        if (hasUrl == hasXml)
+            return Results.BadRequest(new { error = "invalid_request", error_description = "Provide exactly one of MetadataLocation (a metadata URL) or MetadataXml (pasted IdP metadata)." });
+
+        string? condensedXml = null;
+        if (hasXml && CondenseMetadataXml(request.MetadataXml!, out condensedXml) is { } xmlError)
+            return xmlError;
+
+        if (ValidateNameIdFormat(request.NameIdFormat) is { } nameIdError)
+            return nameIdError;
 
         var connectionId = Guid.NewGuid().ToString("N");
         var now = DateTimeOffset.UtcNow;
@@ -58,7 +69,9 @@ public static class SsoEndpoints
             ConnectionName = request.ConnectionName,
             IconUrl = request.IconUrl,
             EntityId = request.EntityId,
-            MetadataLocation = request.MetadataLocation,
+            MetadataLocation = request.MetadataLocation ?? "",
+            MetadataXml = condensedXml,
+            NameIdFormat = request.NameIdFormat,
             AllowedDomains = request.AllowedDomains ?? [],
             DisableJitProvisioning = request.DisableJitProvisioning,
             CreatedAt = now
@@ -118,6 +131,26 @@ public static class SsoEndpoints
         if (request.DisableJitProvisioning.HasValue)
         {
             config.DisableJitProvisioning = request.DisableJitProvisioning.Value;
+        }
+        // F49/F51 partial updates. Supplying a metadata URL clears pasted XML and vice versa (the
+        // two are mutually exclusive sources); NameIdFormat "" resets to the default.
+        if (!string.IsNullOrWhiteSpace(request.MetadataLocation))
+        {
+            config.MetadataLocation = request.MetadataLocation;
+            config.MetadataXml = null;
+        }
+        if (!string.IsNullOrWhiteSpace(request.MetadataXml))
+        {
+            if (CondenseMetadataXml(request.MetadataXml, out var condensed) is { } xmlError)
+                return xmlError;
+            config.MetadataXml = condensed;
+            config.MetadataLocation = "";
+        }
+        if (request.NameIdFormat is not null)
+        {
+            if (ValidateNameIdFormat(request.NameIdFormat) is { } nameIdError)
+                return nameIdError;
+            config.NameIdFormat = string.IsNullOrWhiteSpace(request.NameIdFormat) ? null : request.NameIdFormat;
         }
         config.UpdatedAt = DateTimeOffset.UtcNow;
         await samlStore.UpsertAsync(config, ct);
@@ -265,6 +298,46 @@ public static class SsoEndpoints
 
     // Reject malformed domains and domains already mapped to a DIFFERENT connection, so one
     // connection can't hijack SSO routing for a domain another connection already owns.
+    /// <summary>
+    /// F49: parse-validate pasted IdP metadata and condense it to the canonical minimal form (vendor
+    /// documents can exceed the 64KB Azure Table property cap; the parts the SP consumes are a few KB).
+    /// Returns an error result on unparseable input, else null with the condensed XML in the out param.
+    /// </summary>
+    private static IResult? CondenseMetadataXml(string metadataXml, out string? condensed)
+    {
+        try
+        {
+            condensed = Authagonal.Server.Services.Saml.SamlMetadataParser.Condense(metadataXml);
+            return null;
+        }
+        catch (Exception ex)
+        {
+            condensed = null;
+            return Results.BadRequest(new
+            {
+                error = "invalid_metadata",
+                error_description = $"The pasted metadata XML could not be parsed as SAML IdP metadata: {ex.Message} " +
+                    "Paste the full EntityDescriptor document your IdP provides (it must contain an IDPSSODescriptor with a signing certificate and a SingleSignOnService)."
+            });
+        }
+    }
+
+    /// <summary>F51: NameIdFormat must be null/empty, "none", or a plausible URN.</summary>
+    private static IResult? ValidateNameIdFormat(string? nameIdFormat)
+    {
+        if (string.IsNullOrWhiteSpace(nameIdFormat) ||
+            string.Equals(nameIdFormat, Authagonal.Server.Services.Saml.SamlRequestBuilder.NameIdFormatNone, StringComparison.OrdinalIgnoreCase) ||
+            nameIdFormat.StartsWith("urn:", StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+        return Results.BadRequest(new
+        {
+            error = "invalid_request",
+            error_description = "NameIdFormat must be omitted (emailAddress default), \"none\" (omit NameIDPolicy — recommended for ADFS), or a NameID format URN."
+        });
+    }
+
     private static async Task<IResult?> ValidateDomainsAsync(
         IEnumerable<string> domains, string connectionId, ISsoDomainStore ssoDomainStore, CancellationToken ct)
     {
@@ -299,7 +372,12 @@ public static class SsoEndpoints
         /// <summary>Optional branding icon URL for the "Continue with {name}" login button.</summary>
         public string? IconUrl { get; set; }
         public string EntityId { get; set; } = "";
-        public string MetadataLocation { get; set; } = "";
+        /// <summary>IdP metadata URL. Exactly one of this or <see cref="MetadataXml"/> is required.</summary>
+        public string? MetadataLocation { get; set; }
+        /// <summary>Pasted IdP metadata XML, for IdPs with no metadata URL (Google Workspace). F49.</summary>
+        public string? MetadataXml { get; set; }
+        /// <summary>NameIDPolicy format: null = emailAddress default, "none" = omit (ADFS-safe), or a URN. F51.</summary>
+        public string? NameIdFormat { get; set; }
         public List<string>? AllowedDomains { get; set; }
 
         /// <summary>
@@ -317,6 +395,12 @@ public static class SsoEndpoints
     {
         public List<string>? AllowedDomains { get; set; }
         public bool? DisableJitProvisioning { get; set; }
+        /// <summary>New metadata URL; setting it clears any pasted MetadataXml.</summary>
+        public string? MetadataLocation { get; set; }
+        /// <summary>New pasted metadata XML; setting it clears MetadataLocation.</summary>
+        public string? MetadataXml { get; set; }
+        /// <summary>NameIDPolicy format; "" resets to the emailAddress default, "none" omits. F51.</summary>
+        public string? NameIdFormat { get; set; }
     }
 
     public sealed class CreateOidcRequest
