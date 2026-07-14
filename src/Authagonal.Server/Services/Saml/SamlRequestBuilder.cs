@@ -70,4 +70,65 @@ public static class SamlRequestBuilder
 
         return url;
     }
+
+    /// <summary>F55: SP-initiated LogoutRequest, redirect binding.</summary>
+    public static string BuildLogoutRequestUrl(
+        string requestId, string issuer, string destination,
+        string nameId, string? nameIdFormat, string? sessionIndex)
+    {
+        var issueInstant = DateTime.UtcNow.ToString("o");
+        var formatAttr = string.IsNullOrEmpty(nameIdFormat)
+            ? ""
+            : $@" Format=""{System.Security.SecurityElement.Escape(nameIdFormat)}""";
+        var sessionIndexElement = string.IsNullOrEmpty(sessionIndex)
+            ? ""
+            : $"<samlp:SessionIndex>{System.Security.SecurityElement.Escape(sessionIndex)}</samlp:SessionIndex>";
+
+        var xml = $"""
+            <samlp:LogoutRequest
+                xmlns:samlp="{SamlConstants.Saml2Protocol}"
+                ID="{requestId}"
+                Version="2.0"
+                IssueInstant="{issueInstant}"
+                Destination="{destination}">
+              <saml:Issuer xmlns:saml="{SamlConstants.Saml2Assertion}">{System.Security.SecurityElement.Escape(issuer)}</saml:Issuer>
+              <saml:NameID xmlns:saml="{SamlConstants.Saml2Assertion}"{formatAttr}>{System.Security.SecurityElement.Escape(nameId)}</saml:NameID>{sessionIndexElement}
+            </samlp:LogoutRequest>
+            """;
+
+        return $"{destination}{(destination.Contains('?') ? '&' : '?')}SAMLRequest={DeflateAndEncode(xml)}";
+    }
+
+    /// <summary>F55: LogoutResponse (answering an IdP-initiated LogoutRequest), redirect binding.</summary>
+    public static string BuildLogoutResponseUrl(string inResponseTo, string issuer, string destination)
+    {
+        var issueInstant = DateTime.UtcNow.ToString("o");
+        var responseId = "_" + Guid.NewGuid().ToString("N");
+
+        var xml = $"""
+            <samlp:LogoutResponse
+                xmlns:samlp="{SamlConstants.Saml2Protocol}"
+                ID="{responseId}"
+                Version="2.0"
+                IssueInstant="{issueInstant}"
+                Destination="{destination}"
+                InResponseTo="{System.Security.SecurityElement.Escape(inResponseTo)}">
+              <saml:Issuer xmlns:saml="{SamlConstants.Saml2Assertion}">{System.Security.SecurityElement.Escape(issuer)}</saml:Issuer>
+              <samlp:Status><samlp:StatusCode Value="{SamlConstants.StatusSuccess}"/></samlp:Status>
+            </samlp:LogoutResponse>
+            """;
+
+        return $"{destination}{(destination.Contains('?') ? '&' : '?')}SAMLResponse={DeflateAndEncode(xml)}";
+    }
+
+    private static string DeflateAndEncode(string xml)
+    {
+        var bytes = Encoding.UTF8.GetBytes(xml);
+        using var output = new MemoryStream();
+        using (var deflate = new DeflateStream(output, CompressionLevel.Optimal, leaveOpen: true))
+        {
+            deflate.Write(bytes, 0, bytes.Length);
+        }
+        return Uri.EscapeDataString(Convert.ToBase64String(output.ToArray()));
+    }
 }

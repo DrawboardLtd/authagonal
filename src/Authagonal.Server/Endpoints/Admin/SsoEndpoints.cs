@@ -38,6 +38,7 @@ public static class SsoEndpoints
         CreateSamlRequest request,
         ISamlProviderStore samlStore,
         ISsoDomainStore ssoDomainStore,
+        ISecretProvider secretProvider,
         CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(request.ConnectionName))
@@ -72,15 +73,22 @@ public static class SsoEndpoints
             MetadataLocation = request.MetadataLocation ?? "",
             MetadataXml = condensedXml,
             NameIdFormat = request.NameIdFormat,
+            SignAuthnRequests = request.SignAuthnRequests,
             AllowedDomains = request.AllowedDomains ?? [],
             DisableJitProvisioning = request.DisableJitProvisioning,
             CreatedAt = now
         };
 
+        // F54: every connection gets an SP keypair (secret-provider-protected). It enables
+        // EncryptedAssertion decryption, signed AuthnRequests and signed logout messages.
+        config.SpCertificate = await secretProvider.ProtectAsync(
+            $"saml-{connectionId}-sp-key", Services.Saml.SamlSpKey.CreateCertificate(config.EntityId), ct);
+
         if (await ValidateDomainsAsync(config.AllowedDomains, connectionId, ssoDomainStore, ct) is { } domainError)
             return domainError;
 
         await samlStore.UpsertAsync(config, ct);
+        config.SpCertificate = null; // server-only — never returned to API callers
 
         // Register SSO domains
         foreach (var domain in config.AllowedDomains)
@@ -106,6 +114,7 @@ public static class SsoEndpoints
         if (config is null)
             return Results.NotFound(new { error = "not_found", error_description = $"SAML connection '{connectionId}' not found" });
 
+        config.SpCertificate = null; // server-only — never returned to API callers
         return Results.Ok(config);
     }
 
@@ -152,8 +161,13 @@ public static class SsoEndpoints
                 return nameIdError;
             config.NameIdFormat = string.IsNullOrWhiteSpace(request.NameIdFormat) ? null : request.NameIdFormat;
         }
+        if (request.SignAuthnRequests.HasValue)
+        {
+            config.SignAuthnRequests = request.SignAuthnRequests.Value;
+        }
         config.UpdatedAt = DateTimeOffset.UtcNow;
         await samlStore.UpsertAsync(config, ct);
+        config.SpCertificate = null; // server-only — never returned to API callers
 
         // Re-register domain mappings only when the domain list actually changed —
         // toggling JIT shouldn't churn the SsoDomain table.
@@ -378,6 +392,8 @@ public static class SsoEndpoints
         public string? MetadataXml { get; set; }
         /// <summary>NameIDPolicy format: null = emailAddress default, "none" = omit (ADFS-safe), or a URN. F51.</summary>
         public string? NameIdFormat { get; set; }
+        /// <summary>Force signed AuthnRequests; null = sign only when the IdP metadata requests it. F54.</summary>
+        public bool? SignAuthnRequests { get; set; }
         public List<string>? AllowedDomains { get; set; }
 
         /// <summary>
@@ -401,6 +417,8 @@ public static class SsoEndpoints
         public string? MetadataXml { get; set; }
         /// <summary>NameIDPolicy format; "" resets to the emailAddress default, "none" omits. F51.</summary>
         public string? NameIdFormat { get; set; }
+        /// <summary>Force signed AuthnRequests; null = leave unchanged. F54.</summary>
+        public bool? SignAuthnRequests { get; set; }
     }
 
     public sealed class CreateOidcRequest

@@ -9,7 +9,8 @@ public sealed record SamlResponseValidationContext(
     string ExpectedAudience,
     string? ExpectedInResponseTo,
     IReadOnlyList<X509Certificate2> TrustedCertificates,
-    TimeSpan ClockSkew = default)
+    TimeSpan ClockSkew = default,
+    System.Security.Cryptography.RSA? DecryptionKey = null)
 {
     public TimeSpan ClockSkew { get; init; } = ClockSkew == default ? TimeSpan.FromMinutes(5) : ClockSkew;
 }
@@ -119,7 +120,30 @@ public sealed class SamlResponseParser(ILogger<SamlResponseParser> logger)
         }
 
         // 7. Signature Validation (handle all Azure AD variations)
+        // F54: an EncryptedAssertion (ADFS default once the SP advertises an encryption cert) is
+        // decrypted with the SP private key first; the decrypted element then goes through the
+        // exact same signature/conditions pipeline as a plaintext assertion.
         var assertionNode = responseElement.SelectSingleNode("saml:Assertion", nsManager);
+        if (assertionNode is null)
+        {
+            var encryptedNode = responseElement.SelectSingleNode("saml:EncryptedAssertion", nsManager);
+            if (encryptedNode is XmlElement encryptedElement)
+            {
+                if (context.DecryptionKey is null)
+                    return Fail("SAML response carries an EncryptedAssertion but this connection has no SP decryption key. Disable assertion encryption at the IdP or recreate the connection.");
+                try
+                {
+                    DecryptAssertion(encryptedElement, context.DecryptionKey, doc);
+                }
+                catch (Exception ex)
+                {
+                    logger.LogWarning(ex, "Failed to decrypt EncryptedAssertion");
+                    return Fail($"Failed to decrypt the EncryptedAssertion: {ex.Message}");
+                }
+                assertionNode = responseElement.SelectSingleNode("saml:EncryptedAssertion/saml:Assertion", nsManager)
+                    ?? responseElement.SelectSingleNode("saml:Assertion", nsManager);
+            }
+        }
         if (assertionNode is not XmlElement assertionElement)
             return Fail("SAML response does not contain an Assertion.");
 
@@ -294,8 +318,9 @@ public sealed class SamlResponseParser(ILogger<SamlResponseParser> logger)
         };
     }
 
+    // Public: the SLO endpoint reuses this to validate POST-binding LogoutRequest signatures.
     [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("Trimming", "IL2026", Justification = "SAML XML signature validation requires reflection")]
-    private static bool ValidateElementSignature(
+    public static bool ValidateElementSignature(
         XmlElement element,
         IReadOnlyList<X509Certificate2> trustedCertificates,
         ILogger logger)
@@ -388,4 +413,76 @@ public sealed class SamlResponseParser(ILogger<SamlResponseParser> logger)
     }
 
     private static SamlParseResult Fail(string error) => new() { Success = false, Error = error };
+
+    /// <summary>
+    /// F54: decrypt an xenc EncryptedAssertion in place. Handles the shapes real IdPs emit: an
+    /// EncryptedKey either referenced from the EncryptedData's KeyInfo or as a sibling under the
+    /// EncryptedAssertion; RSA-OAEP(SHA1/SHA256) or RSA-1.5 key transport; AES-CBC / 3DES data
+    /// encryption (AES-GCM is not supported by <see cref="EncryptedXml"/> — a clear error beats a
+    /// silent failure).
+    /// </summary>
+    [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("Trimming", "IL2026", Justification = "SAML XML decryption requires reflection")]
+    private static void DecryptAssertion(XmlElement encryptedAssertion, System.Security.Cryptography.RSA decryptionKey, XmlDocument doc)
+    {
+        var nsManager = new XmlNamespaceManager(doc.NameTable);
+        nsManager.AddNamespace("xenc", EncryptedXml.XmlEncNamespaceUrl);
+
+        if (encryptedAssertion.SelectSingleNode(".//xenc:EncryptedData", nsManager) is not XmlElement encryptedDataElement)
+            throw new InvalidOperationException("EncryptedAssertion has no EncryptedData element.");
+
+        var encryptedData = new EncryptedData();
+        encryptedData.LoadXml(encryptedDataElement);
+
+        // Find the EncryptedKey: inside the EncryptedData KeyInfo, or anywhere under the EncryptedAssertion.
+        if (encryptedAssertion.SelectSingleNode(".//xenc:EncryptedKey", nsManager) is not XmlElement encryptedKeyElement)
+            throw new InvalidOperationException("EncryptedAssertion has no EncryptedKey element.");
+        var encryptedKey = new EncryptedKey();
+        encryptedKey.LoadXml(encryptedKeyElement);
+
+        var wrappedKey = encryptedKey.CipherData?.CipherValue
+            ?? throw new InvalidOperationException("EncryptedKey has no CipherValue.");
+
+        // Key transport: try the paddings real IdPs use, preferring what the algorithm URI declares.
+        var keyAlgorithm = encryptedKey.EncryptionMethod?.KeyAlgorithm ?? "";
+        var paddings = keyAlgorithm switch
+        {
+            EncryptedXml.XmlEncRSAOAEPUrl => new[] { System.Security.Cryptography.RSAEncryptionPadding.OaepSHA1, System.Security.Cryptography.RSAEncryptionPadding.OaepSHA256 },
+            EncryptedXml.XmlEncRSA15Url => new[] { System.Security.Cryptography.RSAEncryptionPadding.Pkcs1 },
+            // xenc11 rsa-oaep (digest negotiated separately) or anything else: try the common three.
+            _ => new[] { System.Security.Cryptography.RSAEncryptionPadding.OaepSHA256, System.Security.Cryptography.RSAEncryptionPadding.OaepSHA1, System.Security.Cryptography.RSAEncryptionPadding.Pkcs1 },
+        };
+        byte[]? contentKey = null;
+        foreach (var padding in paddings)
+        {
+            try
+            {
+                contentKey = decryptionKey.Decrypt(wrappedKey, padding);
+                break;
+            }
+            catch (System.Security.Cryptography.CryptographicException) { }
+        }
+        if (contentKey is null)
+            throw new InvalidOperationException("Could not unwrap the assertion encryption key with the SP private key (wrong SP cert, or an unsupported key-transport algorithm).");
+
+        var dataAlgorithm = encryptedData.EncryptionMethod?.KeyAlgorithm ?? "";
+        System.Security.Cryptography.SymmetricAlgorithm symmetric = dataAlgorithm switch
+        {
+            EncryptedXml.XmlEncAES128Url or EncryptedXml.XmlEncAES192Url or EncryptedXml.XmlEncAES256Url
+                => System.Security.Cryptography.Aes.Create(),
+            EncryptedXml.XmlEncTripleDESUrl => System.Security.Cryptography.TripleDES.Create(),
+            _ => throw new InvalidOperationException($"Unsupported assertion encryption algorithm '{dataAlgorithm}' (AES-GCM is not supported; configure AES-CBC at the IdP)."),
+        };
+        try
+        {
+            symmetric.Key = contentKey;
+            var encryptedXml = new EncryptedXml(doc);
+            var plaintext = encryptedXml.DecryptData(encryptedData, symmetric);
+            encryptedXml.ReplaceData(encryptedDataElement, plaintext);
+        }
+        finally
+        {
+            symmetric.Dispose();
+            System.Array.Clear(contentKey);
+        }
+    }
 }

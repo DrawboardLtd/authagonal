@@ -1,4 +1,5 @@
 using System.Security.Claims;
+using System.Security.Cryptography.X509Certificates;
 using Authagonal.Core.Models;
 using Authagonal.Core.Services;
 using Authagonal.Core.Stores;
@@ -20,6 +21,11 @@ public static class SamlEndpoints
         app.MapGet("/saml/{connectionId}/login", LoginAsync).AllowAnonymous();
         app.MapPost("/saml/{connectionId}/acs", AcsAsync).AllowAnonymous().DisableAntiforgery();
         app.MapGet("/saml/{connectionId}/metadata", MetadataAsync).AllowAnonymous();
+        // F55: single logout. /logout starts SP-initiated SLO for the current session; /slo receives
+        // IdP-initiated LogoutRequests and the LogoutResponse leg of SP-initiated SLO.
+        app.MapGet("/saml/{connectionId}/logout", LogoutAsync).AllowAnonymous();
+        app.MapGet("/saml/{connectionId}/slo", SloAsync).AllowAnonymous();
+        app.MapPost("/saml/{connectionId}/slo", SloAsync).AllowAnonymous().DisableAntiforgery();
 
         return app;
     }
@@ -33,6 +39,7 @@ public static class SamlEndpoints
         Authagonal.Core.Services.ISamlReplayCache replayCache,
         IMemoryCache memoryCache,
         Authagonal.Core.Services.ITenantContext tenantContext,
+        Authagonal.Core.Services.ISecretProvider secretProvider,
         IOptions<CacheOptions> cacheOptions,
         ILogger<Program> logger,
         CancellationToken ct)
@@ -61,6 +68,17 @@ public static class SamlEndpoints
         var url = SamlRequestBuilder.BuildAuthnRequestUrl(
             requestId, issuer, acsUrl, metadata.SingleSignOnServiceUrl, loginHint, config.NameIdFormat);
 
+        // F54: sign the redirect binding when we have an SP key and either the connection forces it
+        // or the IdP's metadata declares WantAuthnRequestsSigned (ADFS configured for signed requests).
+        if (!string.IsNullOrEmpty(config.SpCertificate) &&
+            (config.SignAuthnRequests == true || metadata.WantAuthnRequestsSigned))
+        {
+            using var spCert = SamlSpKey.Load(await secretProvider.ResolveAsync(config.SpCertificate, ct));
+            using var rsa = spCert.GetRSAPrivateKey();
+            if (rsa is not null)
+                url = SamlRedirectBinding.Sign(url, rsa);
+        }
+
         logger.LogInformation("SAML login initiated for connection {ConnectionId}, RequestId={RequestId}",
             connectionId, requestId);
 
@@ -81,6 +99,7 @@ public static class SamlEndpoints
         Authagonal.Core.Services.ISamlReplayCache replayCache,
         IMemoryCache memoryCache,
         Authagonal.Core.Services.ITenantContext tenantContext,
+        Authagonal.Core.Services.ISecretProvider secretProvider,
         IProvisioningOrchestrator provisioning,
         IConfiguration configuration,
         IOptions<AuthOptions> authOptions,
@@ -148,12 +167,20 @@ public static class SamlEndpoints
                 relayState = SanitizeReturnUrl(requestState.ReturnUrl);
         }
 
+        // F54: when the connection carries an SP keypair, hand the parser its private key so an
+        // EncryptedAssertion (ADFS default once our metadata advertises an encryption cert) decrypts.
+        using var spCert = string.IsNullOrEmpty(config.SpCertificate)
+            ? null
+            : SamlSpKey.Load(await secretProvider.ResolveAsync(config.SpCertificate, ct));
+        using var spDecryptionKey = spCert?.GetRSAPrivateKey();
+
         // Build validation context
         var validationContext = new SamlResponseValidationContext(
             ExpectedAcsUrl: acsUrl,
             ExpectedAudience: config.EntityId,
             ExpectedInResponseTo: expectedInResponseTo,
-            TrustedCertificates: metadata.SigningCertificates);
+            TrustedCertificates: metadata.SigningCertificates,
+            DecryptionKey: spDecryptionKey);
 
         // Parse and validate the response
         var parseResult = responseParser.Parse(samlResponse, validationContext);
@@ -386,6 +413,15 @@ public static class SamlEndpoints
         if (!string.IsNullOrWhiteSpace(user.OrganizationId))
             claims.Add(new Claim("org_id", user.OrganizationId));
 
+        // F55: remember the SAML session so /saml/{id}/logout can build a LogoutRequest (NameID +
+        // SessionIndex) and IdP-initiated SLO can be matched to this browser's session.
+        claims.Add(new Claim("saml_connection", connectionId));
+        claims.Add(new Claim("saml_name_id", parseResult.NameId!));
+        if (!string.IsNullOrEmpty(parseResult.NameIdFormat))
+            claims.Add(new Claim("saml_name_id_format", parseResult.NameIdFormat));
+        if (!string.IsNullOrEmpty(parseResult.SessionIndex))
+            claims.Add(new Claim("saml_session_index", parseResult.SessionIndex));
+
         var identity = new ClaimsIdentity(claims, CookieAuthenticationDefaults.AuthenticationScheme);
         var principal = new ClaimsPrincipal(identity);
 
@@ -406,6 +442,7 @@ public static class SamlEndpoints
         string connectionId,
         ISamlProviderStore samlStore,
         Authagonal.Core.Services.ITenantContext tenantContext,
+        Authagonal.Core.Services.ISecretProvider secretProvider,
         CancellationToken ct)
     {
         var config = await samlStore.GetAsync(connectionId, ct);
@@ -414,6 +451,7 @@ public static class SamlEndpoints
 
         var baseUrl = tenantContext.Issuer;
         var acsUrl = $"{baseUrl}/saml/{connectionId}/acs";
+        var sloUrl = $"{baseUrl}/saml/{connectionId}/slo";
         var issuer = config.EntityId;
 
         // F51: advertise the connection's requested NameID format; omit the element when the
@@ -424,14 +462,47 @@ public static class SamlEndpoints
                 <md:NameIDFormat>{System.Security.SecurityElement.Escape(config.NameIdFormat ?? Services.Saml.SamlConstants.NameIdEmail)}</md:NameIDFormat>
             """;
 
+        // F54: when the connection has an SP keypair, publish its PUBLIC cert as both signing and
+        // encryption KeyDescriptors. The encryption descriptor is what makes ADFS start encrypting
+        // assertions — which we now decrypt — and the signing one lets IdPs verify our signed
+        // AuthnRequests/logout messages.
+        var keyDescriptors = "";
+        if (!string.IsNullOrEmpty(config.SpCertificate))
+        {
+            using var spCert = Services.Saml.SamlSpKey.Load(await secretProvider.ResolveAsync(config.SpCertificate, ct));
+            var certBase64 = Convert.ToBase64String(spCert.Export(System.Security.Cryptography.X509Certificates.X509ContentType.Cert));
+            keyDescriptors = $"""
+
+                <md:KeyDescriptor use="signing">
+                  <ds:KeyInfo xmlns:ds="http://www.w3.org/2000/09/xmldsig#">
+                    <ds:X509Data><ds:X509Certificate>{certBase64}</ds:X509Certificate></ds:X509Data>
+                  </ds:KeyInfo>
+                </md:KeyDescriptor>
+                <md:KeyDescriptor use="encryption">
+                  <ds:KeyInfo xmlns:ds="http://www.w3.org/2000/09/xmldsig#">
+                    <ds:X509Data><ds:X509Certificate>{certBase64}</ds:X509Certificate></ds:X509Data>
+                  </ds:KeyInfo>
+                </md:KeyDescriptor>
+            """;
+        }
+
+        var authnRequestsSigned = config.SignAuthnRequests == true && !string.IsNullOrEmpty(config.SpCertificate)
+            ? "true" : "false";
+
         var xml = $"""
             <?xml version="1.0" encoding="UTF-8"?>
             <md:EntityDescriptor xmlns:md="urn:oasis:names:tc:SAML:2.0:metadata"
                 entityID="{issuer}">
               <md:SPSSODescriptor
-                  AuthnRequestsSigned="false"
+                  AuthnRequestsSigned="{authnRequestsSigned}"
                   WantAssertionsSigned="true"
-                  protocolSupportEnumeration="urn:oasis:names:tc:SAML:2.0:protocol">{nameIdFormatLine}
+                  protocolSupportEnumeration="urn:oasis:names:tc:SAML:2.0:protocol">{keyDescriptors}{nameIdFormatLine}
+                <md:SingleLogoutService
+                    Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect"
+                    Location="{sloUrl}" />
+                <md:SingleLogoutService
+                    Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST"
+                    Location="{sloUrl}" />
                 <md:AssertionConsumerService
                     Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST"
                     Location="{acsUrl}"
@@ -442,6 +513,196 @@ public static class SamlEndpoints
             """;
 
         return Results.Content(xml, "application/xml");
+    }
+
+    /// <summary>
+    /// F55: SP-initiated single logout. Ends the local cookie session, then — when the IdP supports
+    /// SLO and this browser's session came from this connection — sends a LogoutRequest to the IdP
+    /// (redirect binding, signed when the SP has a key). IdPs with no SLO (Google) just get the
+    /// local sign-out.
+    /// </summary>
+    private static async Task<IResult> LogoutAsync(
+        string connectionId,
+        string? returnUrl,
+        HttpContext httpContext,
+        ISamlProviderStore samlStore,
+        SamlMetadataParser metadataParser,
+        Authagonal.Core.Services.ISamlReplayCache replayCache,
+        IMemoryCache memoryCache,
+        Authagonal.Core.Services.ITenantContext tenantContext,
+        Authagonal.Core.Services.ISecretProvider secretProvider,
+        IOptions<CacheOptions> cacheOptions,
+        ILogger<Program> logger,
+        CancellationToken ct)
+    {
+        var config = await samlStore.GetAsync(connectionId, ct);
+        if (config is null)
+            return Results.NotFound(new { error = "not_found", error_description = $"SAML connection '{connectionId}' not found" });
+
+        var target = SanitizeReturnUrl(returnUrl);
+
+        var auth = await httpContext.AuthenticateAsync(CookieAuthenticationDefaults.AuthenticationScheme);
+        var principal = auth.Succeeded ? auth.Principal : null;
+        var sessionConnection = principal?.FindFirst("saml_connection")?.Value;
+        var nameId = principal?.FindFirst("saml_name_id")?.Value;
+        var nameIdFormat = principal?.FindFirst("saml_name_id_format")?.Value;
+        var sessionIndex = principal?.FindFirst("saml_session_index")?.Value;
+
+        // Always end the local session first — the user asked to log out; IdP SLO is best-effort.
+        await httpContext.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
+
+        if (nameId is null || !string.Equals(sessionConnection, connectionId, StringComparison.OrdinalIgnoreCase))
+            return Results.Redirect(target);
+
+        SamlIdpMetadata metadata;
+        try
+        {
+            metadata = await GetCachedMetadataAsync(config, metadataParser, memoryCache, cacheOptions.Value, ct);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "SAML SLO: could not load IdP metadata for {ConnectionId}; local sign-out only", connectionId);
+            return Results.Redirect(target);
+        }
+        if (string.IsNullOrEmpty(metadata.SingleLogoutServiceUrl))
+            return Results.Redirect(target);
+
+        var requestId = "_" + Guid.NewGuid().ToString("N");
+        await replayCache.StoreRequestAsync(requestId, connectionId, target, ct);
+
+        var url = SamlRequestBuilder.BuildLogoutRequestUrl(
+            requestId, config.EntityId, metadata.SingleLogoutServiceUrl, nameId, nameIdFormat, sessionIndex);
+
+        if (!string.IsNullOrEmpty(config.SpCertificate))
+        {
+            using var spCert = SamlSpKey.Load(await secretProvider.ResolveAsync(config.SpCertificate, ct));
+            using var rsa = spCert.GetRSAPrivateKey();
+            if (rsa is not null)
+                url = SamlRedirectBinding.Sign(url, rsa);
+        }
+
+        logger.LogInformation("SAML SP-initiated logout for connection {ConnectionId}, RequestId={RequestId}", connectionId, requestId);
+        return Results.Redirect(url);
+    }
+
+    /// <summary>
+    /// F55: the SLO endpoint. Receives IdP-initiated LogoutRequests (redirect GET or POST binding)
+    /// and the LogoutResponse leg of SP-initiated SLO. Front-channel only — the message arrives in
+    /// the user's browser, so ending the cookie session logs out exactly that browser.
+    /// </summary>
+    private static async Task<IResult> SloAsync(
+        string connectionId,
+        HttpContext httpContext,
+        ISamlProviderStore samlStore,
+        SamlMetadataParser metadataParser,
+        Authagonal.Core.Services.ISamlReplayCache replayCache,
+        IMemoryCache memoryCache,
+        Authagonal.Core.Services.ITenantContext tenantContext,
+        Authagonal.Core.Services.ISecretProvider secretProvider,
+        IOptions<CacheOptions> cacheOptions,
+        ILogger<Program> logger,
+        CancellationToken ct)
+    {
+        var config = await samlStore.GetAsync(connectionId, ct);
+        if (config is null)
+            return Results.NotFound(new { error = "not_found", error_description = $"SAML connection '{connectionId}' not found" });
+
+        var isPost = HttpMethods.IsPost(httpContext.Request.Method);
+        string? samlRequest, samlResponse;
+        if (isPost)
+        {
+            var form = await httpContext.Request.ReadFormAsync(ct);
+            samlRequest = form["SAMLRequest"].ToString();
+            samlResponse = form["SAMLResponse"].ToString();
+        }
+        else
+        {
+            samlRequest = httpContext.Request.Query["SAMLRequest"].ToString();
+            samlResponse = httpContext.Request.Query["SAMLResponse"].ToString();
+        }
+
+        // LogoutResponse: the IdP answering our SP-initiated LogoutRequest. The session is already
+        // gone; consume the request id and land the user on the stored return URL.
+        if (!string.IsNullOrEmpty(samlResponse))
+        {
+            var xml = DecodeSloMessage(samlResponse, isPost, logger);
+            var inResponseTo = xml?.DocumentElement?.Attributes?["InResponseTo"]?.Value;
+            var state = inResponseTo is null ? null : await replayCache.ValidateAndConsumeRequestAsync(inResponseTo, ct);
+            return Results.Redirect(SanitizeReturnUrl(state?.ReturnUrl));
+        }
+
+        if (string.IsNullOrEmpty(samlRequest))
+            return Results.BadRequest(new { error = "missing_saml_message" });
+
+        // IdP-initiated LogoutRequest.
+        var requestXml = DecodeSloMessage(samlRequest, isPost, logger);
+        if (requestXml?.DocumentElement is not { LocalName: "LogoutRequest" } logoutRequest)
+            return Results.BadRequest(new { error = "saml_invalid", error_description = "Expected a LogoutRequest." });
+
+        var requestIdAttr = logoutRequest.Attributes?["ID"]?.Value;
+        if (string.IsNullOrEmpty(requestIdAttr))
+            return Results.BadRequest(new { error = "saml_invalid", error_description = "LogoutRequest has no ID." });
+
+        var metadata = await GetCachedMetadataAsync(config, metadataParser, memoryCache, cacheOptions.Value, ct);
+
+        // Authenticate the request: a signature (query-level for the redirect binding, XML for POST)
+        // validated against the IdP's certs. Unsigned requests are honored only when this browser's
+        // own session belongs to this connection — an unauthenticated attacker can then log out
+        // nobody but themselves.
+        var signatureValid = isPost
+            ? SamlResponseParser.ValidateElementSignature(logoutRequest, metadata.SigningCertificates, logger)
+            : SamlRedirectBinding.Verify(httpContext.Request.QueryString.Value ?? "", metadata.SigningCertificates);
+        if (!signatureValid)
+        {
+            var auth = await httpContext.AuthenticateAsync(CookieAuthenticationDefaults.AuthenticationScheme);
+            var sessionConnection = auth.Succeeded ? auth.Principal?.FindFirst("saml_connection")?.Value : null;
+            if (!string.Equals(sessionConnection, connectionId, StringComparison.OrdinalIgnoreCase))
+            {
+                logger.LogWarning("SAML SLO: unsigned LogoutRequest for {ConnectionId} without a matching session — ignored", connectionId);
+                return Results.BadRequest(new { error = "saml_invalid", error_description = "LogoutRequest is unsigned and no matching session exists." });
+            }
+        }
+
+        await httpContext.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
+        logger.LogInformation("SAML IdP-initiated logout for connection {ConnectionId}", connectionId);
+
+        if (string.IsNullOrEmpty(metadata.SingleLogoutServiceUrl))
+            return Results.Text("Logged out.");
+
+        var responseUrl = SamlRequestBuilder.BuildLogoutResponseUrl(requestIdAttr, config.EntityId, metadata.SingleLogoutServiceUrl);
+        if (!string.IsNullOrEmpty(config.SpCertificate))
+        {
+            using var spCert = SamlSpKey.Load(await secretProvider.ResolveAsync(config.SpCertificate, ct));
+            using var rsa = spCert.GetRSAPrivateKey();
+            if (rsa is not null)
+                responseUrl = SamlRedirectBinding.Sign(responseUrl, rsa);
+        }
+        return Results.Redirect(responseUrl);
+    }
+
+    /// <summary>Decode an SLO message: base64+deflate for the redirect binding, plain base64 for POST.</summary>
+    private static System.Xml.XmlDocument? DecodeSloMessage(string value, bool isPost, ILogger logger)
+    {
+        try
+        {
+            var xml = isPost
+                ? System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(value))
+                : SamlRedirectBinding.Inflate(value);
+            var doc = new System.Xml.XmlDocument { PreserveWhitespace = true, XmlResolver = null };
+            using var reader = System.Xml.XmlReader.Create(new StringReader(xml), new System.Xml.XmlReaderSettings
+            {
+                DtdProcessing = System.Xml.DtdProcessing.Prohibit,
+                XmlResolver = null,
+                MaxCharactersFromEntities = 0,
+            });
+            doc.Load(reader);
+            return doc;
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Could not decode SAML SLO message");
+            return null;
+        }
     }
 
     private static string SanitizeReturnUrl(string? url)

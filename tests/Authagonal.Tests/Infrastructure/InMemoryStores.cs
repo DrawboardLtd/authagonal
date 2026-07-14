@@ -332,15 +332,35 @@ public sealed class InMemorySamlProviderStore : ISamlProviderStore
 {
     private readonly ConcurrentDictionary<string, SamlProviderConfig> _providers = new();
 
+    // Clone on store and on read so the store never aliases the caller's object — the real Table/
+    // Dynamo stores round-trip through an entity, so a caller mutating a config after Upsert (e.g.
+    // masking SpCertificate before returning it in the HTTP response) must not affect stored state.
+    private static SamlProviderConfig Clone(SamlProviderConfig c) => new()
+    {
+        ConnectionId = c.ConnectionId,
+        ConnectionName = c.ConnectionName,
+        IconUrl = c.IconUrl,
+        EntityId = c.EntityId,
+        MetadataLocation = c.MetadataLocation,
+        MetadataXml = c.MetadataXml,
+        NameIdFormat = c.NameIdFormat,
+        SpCertificate = c.SpCertificate,
+        SignAuthnRequests = c.SignAuthnRequests,
+        AllowedDomains = [.. c.AllowedDomains],
+        DisableJitProvisioning = c.DisableJitProvisioning,
+        CreatedAt = c.CreatedAt,
+        UpdatedAt = c.UpdatedAt,
+    };
+
     public Task<SamlProviderConfig?> GetAsync(string connectionId, CancellationToken ct = default)
-        => Task.FromResult(_providers.GetValueOrDefault(connectionId));
+        => Task.FromResult(_providers.TryGetValue(connectionId, out var c) ? Clone(c) : null);
 
     public Task<IReadOnlyList<SamlProviderConfig>> GetAllAsync(CancellationToken ct = default)
-        => Task.FromResult<IReadOnlyList<SamlProviderConfig>>(_providers.Values.ToList());
+        => Task.FromResult<IReadOnlyList<SamlProviderConfig>>(_providers.Values.Select(Clone).ToList());
 
     public Task UpsertAsync(SamlProviderConfig config, CancellationToken ct = default)
     {
-        _providers[config.ConnectionId] = config;
+        _providers[config.ConnectionId] = Clone(config);
         return Task.CompletedTask;
     }
 

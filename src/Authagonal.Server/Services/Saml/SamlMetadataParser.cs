@@ -6,7 +6,9 @@ namespace Authagonal.Server.Services.Saml;
 public sealed record SamlIdpMetadata(
     string SingleSignOnServiceUrl,
     List<X509Certificate2> SigningCertificates,
-    string EntityId);
+    string EntityId,
+    string? SingleLogoutServiceUrl = null,
+    bool WantAuthnRequestsSigned = false);
 
 public sealed class SamlMetadataParser(IHttpClientFactory httpClientFactory)
 {
@@ -32,19 +34,26 @@ public sealed class SamlMetadataParser(IHttpClientFactory httpClientFactory)
     public static string Condense(string metadataXml)
     {
         var parsed = Parse(metadataXml);
+        var idpDescriptor = new XElement(Md + "IDPSSODescriptor",
+            new XAttribute("protocolSupportEnumeration", SamlConstants.Saml2Protocol));
+        if (parsed.WantAuthnRequestsSigned)
+            idpDescriptor.Add(new XAttribute("WantAuthnRequestsSigned", "true"));
+        idpDescriptor.Add(parsed.SigningCertificates.Select(cert =>
+            new XElement(Md + "KeyDescriptor",
+                new XAttribute("use", "signing"),
+                new XElement(Ds + "KeyInfo",
+                    new XElement(Ds + "X509Data",
+                        new XElement(Ds + "X509Certificate", Convert.ToBase64String(cert.RawData)))))));
+        if (!string.IsNullOrEmpty(parsed.SingleLogoutServiceUrl))
+            idpDescriptor.Add(new XElement(Md + "SingleLogoutService",
+                new XAttribute("Binding", SamlConstants.HttpRedirectBinding),
+                new XAttribute("Location", parsed.SingleLogoutServiceUrl)));
+        idpDescriptor.Add(new XElement(Md + "SingleSignOnService",
+            new XAttribute("Binding", SamlConstants.HttpRedirectBinding),
+            new XAttribute("Location", parsed.SingleSignOnServiceUrl)));
         var root = new XElement(Md + "EntityDescriptor",
             new XAttribute("entityID", parsed.EntityId),
-            new XElement(Md + "IDPSSODescriptor",
-                new XAttribute("protocolSupportEnumeration", SamlConstants.Saml2Protocol),
-                parsed.SigningCertificates.Select(cert =>
-                    new XElement(Md + "KeyDescriptor",
-                        new XAttribute("use", "signing"),
-                        new XElement(Ds + "KeyInfo",
-                            new XElement(Ds + "X509Data",
-                                new XElement(Ds + "X509Certificate", Convert.ToBase64String(cert.RawData)))))),
-                new XElement(Md + "SingleSignOnService",
-                    new XAttribute("Binding", SamlConstants.HttpRedirectBinding),
-                    new XAttribute("Location", parsed.SingleSignOnServiceUrl))));
+            idpDescriptor);
         return root.ToString(SaveOptions.DisableFormatting);
     }
 
@@ -118,6 +127,24 @@ public sealed class SamlMetadataParser(IHttpClientFactory httpClientFactory)
         if (certificates.Count == 0)
             throw new InvalidOperationException("Metadata contains no signing certificates.");
 
-        return new SamlIdpMetadata(ssoUrl, certificates, entityId);
+        // Single logout endpoint (F55) — Redirect binding preferred, POST fallback
+        string? sloUrl = null;
+        foreach (var binding in new[] { SamlConstants.HttpRedirectBinding, SamlConstants.HttpPostBinding })
+        {
+            foreach (var sloElement in idpDescriptor.Elements(Md + "SingleLogoutService"))
+            {
+                if (string.Equals(sloElement.Attribute("Binding")?.Value, binding, StringComparison.Ordinal))
+                {
+                    sloUrl = sloElement.Attribute("Location")?.Value;
+                    break;
+                }
+            }
+            if (!string.IsNullOrEmpty(sloUrl)) break;
+        }
+
+        var wantSignedRequests = string.Equals(
+            idpDescriptor.Attribute("WantAuthnRequestsSigned")?.Value, "true", StringComparison.OrdinalIgnoreCase);
+
+        return new SamlIdpMetadata(ssoUrl, certificates, entityId, sloUrl, wantSignedRequests);
     }
 }

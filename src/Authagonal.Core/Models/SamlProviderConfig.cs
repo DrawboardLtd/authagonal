@@ -22,6 +22,18 @@ public sealed class SamlProviderConfig
     /// is sent verbatim as the Format URN.
     /// </summary>
     public string? NameIdFormat { get; set; }
+    /// <summary>
+    /// SP keypair as base64 PKCS#12 (no password), protected at rest via the host's secret provider.
+    /// Enables EncryptedAssertion decryption (ADFS default when the SP advertises an encryption cert),
+    /// signed AuthnRequests, and signed logout messages. Auto-generated at connection creation;
+    /// server-only — never returned to API callers.
+    /// </summary>
+    public string? SpCertificate { get; set; }
+    /// <summary>
+    /// Force AuthnRequest signing (redirect-binding SigAlg/Signature). Null/false = sign only when
+    /// the IdP's metadata declares WantAuthnRequestsSigned.
+    /// </summary>
+    public bool? SignAuthnRequests { get; set; }
     public List<string> AllowedDomains { get; set; } = [];
     public bool DisableJitProvisioning { get; set; }
     public DateTimeOffset CreatedAt { get; set; }

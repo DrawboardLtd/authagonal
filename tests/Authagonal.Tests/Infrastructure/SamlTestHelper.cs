@@ -34,7 +34,9 @@ public static class SamlTestHelper
         string? firstName = null,
         string? lastName = null,
         TimeSpan? validFor = null,
-        string? extraAttributesXml = null)
+        string? extraAttributesXml = null,
+        string? sessionIndex = null,
+        bool signAssertion = false)
     {
         var now = DateTime.UtcNow;
         var notBefore = now.AddMinutes(-5);
@@ -75,7 +77,8 @@ public static class SamlTestHelper
             <saml:AudienceRestriction><saml:Audience>{audience}</saml:Audience></saml:AudienceRestriction>
         </saml:Conditions>");
 
-        sb.Append($@"<saml:AuthnStatement AuthnInstant=""{now:O}"">
+        var sessionIndexAttr = sessionIndex is null ? "" : $@" SessionIndex=""{sessionIndex}""";
+        sb.Append($@"<saml:AuthnStatement AuthnInstant=""{now:O}""{sessionIndexAttr}>
             <saml:AuthnContext><saml:AuthnContextClassRef>urn:oasis:names:tc:SAML:2.0:ac:classes:PasswordProtectedTransport</saml:AuthnContextClassRef></saml:AuthnContext>
         </saml:AuthnStatement>");
 
@@ -95,10 +98,70 @@ public static class SamlTestHelper
 
         xml.LoadXml(sb.ToString());
 
-        // Sign the response
-        SignXmlElement(xml, responseId, TestCertificate);
+        if (signAssertion)
+        {
+            // Sign the Assertion in place (the Entra/ADFS shape — required when the assertion will
+            // subsequently be encrypted, since a Response-level signature would break on replace).
+            var nsm = new XmlNamespaceManager(xml.NameTable);
+            nsm.AddNamespace("saml", "urn:oasis:names:tc:SAML:2.0:assertion");
+            var assertion = (XmlElement)xml.SelectSingleNode("//saml:Assertion", nsm)!;
+            SignElementInPlace(xml, assertion, assertionId, TestCertificate);
+        }
+        else
+        {
+            // Sign the response
+            SignXmlElement(xml, responseId, TestCertificate);
+        }
 
         return Convert.ToBase64String(Encoding.UTF8.GetBytes(xml.OuterXml));
+    }
+
+    /// <summary>
+    /// F54: replace the (signed) Assertion with an EncryptedAssertion encrypted to the given cert,
+    /// the way ADFS does once the SP metadata advertises an encryption KeyDescriptor.
+    /// </summary>
+    public static string EncryptAssertionInResponse(string base64Response, X509Certificate2 encryptionCert)
+    {
+        var doc = new XmlDocument { PreserveWhitespace = true };
+        doc.LoadXml(Encoding.UTF8.GetString(Convert.FromBase64String(base64Response)));
+
+        var nsm = new XmlNamespaceManager(doc.NameTable);
+        nsm.AddNamespace("saml", "urn:oasis:names:tc:SAML:2.0:assertion");
+        var assertion = (XmlElement)doc.SelectSingleNode("//saml:Assertion", nsm)!;
+
+        var encryptedXml = new EncryptedXml();
+        var encryptedData = encryptedXml.Encrypt(assertion, encryptionCert);
+
+        var encryptedAssertion = doc.CreateElement("saml", "EncryptedAssertion", "urn:oasis:names:tc:SAML:2.0:assertion");
+        encryptedAssertion.AppendChild(doc.ImportNode(encryptedData.GetXml(), true));
+        assertion.ParentNode!.ReplaceChild(encryptedAssertion, assertion);
+
+        return Convert.ToBase64String(Encoding.UTF8.GetBytes(doc.OuterXml));
+    }
+
+    private static void SignElementInPlace(XmlDocument doc, XmlElement element, string id, X509Certificate2 cert)
+    {
+        var signedXml = new IdSignedXml(doc) { SigningKey = cert.GetRSAPrivateKey() };
+        var reference = new Reference("#" + id);
+        reference.AddTransform(new XmlDsigEnvelopedSignatureTransform());
+        reference.AddTransform(new XmlDsigExcC14NTransform());
+        reference.DigestMethod = SignedXml.XmlDsigSHA256Url;
+        signedXml.AddReference(reference);
+        signedXml.SignedInfo!.SignatureMethod = SignedXml.XmlDsigRSASHA256Url;
+        var keyInfo = new KeyInfo();
+        keyInfo.AddClause(new KeyInfoX509Data(cert));
+        signedXml.KeyInfo = keyInfo;
+        signedXml.ComputeSignature();
+        element.AppendChild(doc.ImportNode(signedXml.GetXml(), true));
+    }
+
+    // SignedXml resolves "#id" references via the SAML "ID" attribute (not the default "Id").
+    private sealed class IdSignedXml : SignedXml
+    {
+        private readonly XmlDocument _doc;
+        public IdSignedXml(XmlDocument doc) : base(doc) => _doc = doc;
+        public override XmlElement? GetIdElement(XmlDocument? document, string idValue) =>
+            (document ?? _doc).SelectSingleNode($"//*[@ID='{idValue}']") as XmlElement ?? base.GetIdElement(document, idValue);
     }
 
     /// <summary>Build a SAML Response with a failed status.</summary>
@@ -118,19 +181,29 @@ public static class SamlTestHelper
     }
 
     /// <summary>Build IdP metadata XML with the test signing certificate (or a supplied one).</summary>
-    public static string BuildIdpMetadata(string entityId = "https://idp.test", string ssoUrl = "https://idp.test/sso", X509Certificate2? signingCert = null)
+    public static string BuildIdpMetadata(
+        string entityId = "https://idp.test",
+        string ssoUrl = "https://idp.test/sso",
+        X509Certificate2? signingCert = null,
+        string? sloUrl = null,
+        bool wantAuthnRequestsSigned = false)
     {
         var certBase64 = Convert.ToBase64String((signingCert ?? TestCertificate).Export(X509ContentType.Cert));
+        var wantSigned = wantAuthnRequestsSigned ? @" WantAuthnRequestsSigned=""true""" : "";
+        var slo = sloUrl is null ? "" : $@"
+        <SingleLogoutService
+            Binding=""urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect""
+            Location=""{sloUrl}""/>";
 
         return $@"<?xml version=""1.0""?>
 <EntityDescriptor xmlns=""urn:oasis:names:tc:SAML:2.0:metadata""
     entityID=""{entityId}"">
-    <IDPSSODescriptor protocolSupportEnumeration=""urn:oasis:names:tc:SAML:2.0:protocol"">
+    <IDPSSODescriptor{wantSigned} protocolSupportEnumeration=""urn:oasis:names:tc:SAML:2.0:protocol"">
         <KeyDescriptor use=""signing"">
             <KeyInfo xmlns=""http://www.w3.org/2000/09/xmldsig#"">
                 <X509Data><X509Certificate>{certBase64}</X509Certificate></X509Data>
             </KeyInfo>
-        </KeyDescriptor>
+        </KeyDescriptor>{slo}
         <SingleSignOnService
             Binding=""urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect""
             Location=""{ssoUrl}""/>

@@ -21,6 +21,10 @@ public sealed class SamlProviderEntity : ITableEntity
     public string? MetadataXml { get; set; }
     /// <summary>Requested NameIDPolicy format (F51): null = emailAddress default, "none" = omit.</summary>
     public string? NameIdFormat { get; set; }
+    /// <summary>SP keypair (base64 PKCS#12), secret-provider-protected (F54). Server-only.</summary>
+    public string? SpCertificate { get; set; }
+    /// <summary>Force AuthnRequest signing; null = follow IdP metadata WantAuthnRequestsSigned (F54).</summary>
+    public bool? SignAuthnRequests { get; set; }
     public required string AllowedDomainsJson { get; set; }
     public string? IconUrl { get; set; }
     /// <summary>
@@ -41,6 +45,8 @@ public sealed class SamlProviderEntity : ITableEntity
         MetadataLocation = config.MetadataLocation,
         MetadataXml = config.MetadataXml,
         NameIdFormat = config.NameIdFormat,
+        SpCertificate = config.SpCertificate,
+        SignAuthnRequests = config.SignAuthnRequests,
         AllowedDomainsJson = JsonSerializer.Serialize(config.AllowedDomains, AzureJsonContext.Default.ListString),
         IconUrl = config.IconUrl,
         DisableJitProvisioning = config.DisableJitProvisioning,
@@ -56,6 +62,8 @@ public sealed class SamlProviderEntity : ITableEntity
         MetadataLocation = MetadataLocation,
         MetadataXml = MetadataXml,
         NameIdFormat = NameIdFormat,
+        SpCertificate = SpCertificate,
+        SignAuthnRequests = SignAuthnRequests,
         AllowedDomains = JsonSerializer.Deserialize(AllowedDomainsJson, AzureJsonContext.Default.ListString) ?? [],
         IconUrl = IconUrl,
         DisableJitProvisioning = DisableJitProvisioning ?? false,
