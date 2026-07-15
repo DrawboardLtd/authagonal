@@ -36,7 +36,7 @@ Content-Type: application/json
 
 `mfaAvailable` is `true` when the client's `MfaPolicy` is `Enabled` but the user hasn't enrolled yet (the UI can offer setup); in that case a `clientId` field is also included.
 
-**MFA required (200):** If the user has MFA enrolled, they are **always** challenged — regardless of the requesting client's `MfaPolicy` (MFA is a property of the user/session, not of the client):
+**MFA required (200):** If the user has MFA enrolled, they are **always** challenged, regardless of the requesting client's `MfaPolicy` (MFA is a property of the user/session, not of the client):
 
 ```json
 {
@@ -89,7 +89,7 @@ Content-Type: application/json
 
 Creates a new user account and sends a verification email. Returns `201 { "success": true, "userId": "..." }`. Optional fields: `locale` (BCP-47 tag persisted on the user) and `customAttributes` (a string map).
 
-Registration is deliberately **enumeration-neutral**: if the email is already registered, the response is the same neutral `201` (with a throwaway `userId`) and the real owner is emailed a sign-in/reset notice instead. Registration is also rate-limited per IP — `429 rate_limited` when exceeded (window and cap configurable via `Auth:MaxRegistrationsPerIp` / `Auth:RegistrationWindowMinutes`).
+Registration is deliberately **enumeration-neutral**: if the email is already registered, the response is the same neutral `201` (with a throwaway `userId`) and the real owner is emailed a sign-in/reset notice instead. Registration is also rate-limited per IP, `429 rate_limited` when exceeded (window and cap configurable via `Auth:MaxRegistrationsPerIp` / `Auth:RegistrationWindowMinutes`).
 
 ### Confirm Email
 
@@ -98,7 +98,7 @@ GET  /api/auth/confirm-email?token={token}
 POST /api/auth/confirm-email?token={token}
 ```
 
-Confirms the user's email address using the token from the verification email. `GET` is the clickable email link — it redirects to `/login?email_confirmed=1` (plus a `continue_client` parameter when the registration originated from an OAuth flow). `POST` is the programmatic path and returns JSON (the token may also be supplied in a JSON body as `{ "token": "..." }`); the response includes an optional `appLink` ("continue to app" target).
+Confirms the user's email address using the token from the verification email. `GET` is the clickable email link, it redirects to `/login?email_confirmed=1` (plus a `continue_client` parameter when the registration originated from an OAuth flow). `POST` is the programmatic path and returns JSON (the token may also be supplied in a JSON body as `{ "token": "..." }`); the response includes an optional `appLink` ("continue to app" target).
 
 ### Providers
 
@@ -117,7 +117,7 @@ Returns the list of configured external identity providers (for rendering SSO bu
 }
 ```
 
-Connections with `AllowedDomains` configured are **excluded** — those are reached email-first via `/api/auth/sso-check` instead of a button. `turnstileSiteKey` is set when Cloudflare Turnstile is configured (the login UI must then send a `turnstileToken` with login/register/password requests).
+Connections with `AllowedDomains` configured are **excluded**: those are reached email-first via `/api/auth/sso-check` instead of a button. `turnstileSiteKey` is set when Cloudflare Turnstile is configured (the login UI must then send a `turnstileToken` with login/register/password requests).
 
 ### Logout
 
@@ -252,7 +252,7 @@ With default configuration, passwords must meet all of these:
 - At least one non-alphanumeric character
 - At least 2 unique characters
 
-These can be customized via the `PasswordPolicy` configuration section — see [Configuration](configuration).
+These can be customized via the `PasswordPolicy` configuration section, see [Configuration](configuration).
 
 ## MFA Endpoints
 
@@ -279,7 +279,7 @@ Verifies an MFA challenge. On success, sets the auth cookie and returns user inf
 | `webauthn` | `assertion` (JSON string) | WebAuthn assertion response from `navigator.credentials.get()` |
 | `recovery` | `code` (`XXXX-XXXX`) | One-time recovery code (consumed on use) |
 
-**Retry semantics:** a wrong code does **not** burn the challenge — the code is validated first and the challenge is consumed only on success, so the user can retry the same `challengeId` after a mistyped digit (`401 invalid_code` / `assertion_failed`). Each challenge tolerates **5 failed attempts**; the 5th failure consumes it and returns `401 too_many_attempts`, forcing a fresh login (this bounds TOTP brute-force to 5 guesses per challenge). Challenges also expire (default 5 minutes, `Auth:MfaChallengeExpiryMinutes`); an expired, unknown, or already-consumed `challengeId` returns `invalid_challenge`. TOTP codes are additionally replay-protected — a code from an already-used time step is rejected.
+**Retry semantics:** a wrong code does **not** burn the challenge, the code is validated first and the challenge is consumed only on success, so the user can retry the same `challengeId` after a mistyped digit (`401 invalid_code` / `assertion_failed`). Each challenge tolerates **5 failed attempts**; the 5th failure consumes it and returns `401 too_many_attempts`, forcing a fresh login (this bounds TOTP brute-force to 5 guesses per challenge). Challenges also expire (default 5 minutes, `Auth:MfaChallengeExpiryMinutes`); an expired, unknown, or already-consumed `challengeId` returns `invalid_challenge`. TOTP codes are additionally replay-protected, a code from an already-used time step is rejected.
 
 ### MFA Status
 
@@ -299,7 +299,7 @@ Returns the user's enrolled MFA methods. Requires cookie auth or `X-MFA-Setup-To
 }
 ```
 
-`offered` is `false` when every client's `MfaPolicy` is `Disabled` — the tenant has MFA off, so the setup UI can hide itself. Recovery-code entries additionally carry `isConsumed`.
+`offered` is `false` when every client's `MfaPolicy` is `Disabled`, the tenant has MFA off, so the setup UI can hide itself. Recovery-code entries additionally carry `isConsumed`.
 
 ### TOTP Setup
 
@@ -323,7 +323,7 @@ POST /api/auth/mfa/webauthn/confirm
 → { "success": true, "credentialId": "..." }
 ```
 
-Passkey enrolment requires a **confirmed TOTP credential first** (`400 totp_required_first`) — passkeys are a per-device convenience layered on a portable base factor, so an account can never end up passkey-only and locked to a device. Users whose email domain is SSO-routed cannot enrol a local passkey (`400 sso_managed`) — it would bypass the tenant's IdP. A credential ID already registered to a different user is rejected with `409 credential_already_registered`.
+Passkey enrolment requires a **confirmed TOTP credential first** (`400 totp_required_first`), passkeys are a per-device convenience layered on a portable base factor, so an account can never end up passkey-only and locked to a device. Users whose email domain is SSO-routed cannot enrol a local passkey (`400 sso_managed`), it would bypass the tenant's IdP. A credential ID already registered to a different user is rejected with `409 credential_already_registered`.
 
 ### Recovery Codes
 
@@ -341,7 +341,7 @@ DELETE /api/auth/mfa/credentials/{credentialId}
 → { "success": true }
 ```
 
-Removes a specific MFA credential. If the last primary method is removed, MFA is disabled for the user. Requires a real cookie session — a setup token is rejected with `403 session_required` (setup tokens exist only to add a first factor, never to downgrade MFA).
+Removes a specific MFA credential. If the last primary method is removed, MFA is disabled for the user. Requires a real cookie session, a setup token is rejected with `403 session_required` (setup tokens exist only to add a first factor, never to downgrade MFA).
 
 ### Passwordless Passkey Login
 
@@ -354,7 +354,7 @@ POST /api/auth/mfa/passwordless/complete
 → { "userId": "...", "email": "...", "name": "..." }
 ```
 
-Discoverable-credential (resident passkey) login with no prior user context: `begin` issues an assertion challenge with an empty `allowCredentials` list, and `complete` resolves the user **from** the chosen passkey, verifies the assertion, and signs them in (the session carries the MFA marker — a passkey is phishing-resistant strong auth). If the resolved user's email domain is SSO-routed, the login is refused with `409 sso_required` + `redirectUrl` so a local passkey can't sidestep a forced IdP.
+Discoverable-credential (resident passkey) login with no prior user context: `begin` issues an assertion challenge with an empty `allowCredentials` list, and `complete` resolves the user **from** the chosen passkey, verifies the assertion, and signs them in (the session carries the MFA marker, a passkey is phishing-resistant strong auth). If the resolved user's email domain is SSO-routed, the login is refused with `409 sso_required` + `redirectUrl` so a local passkey can't sidestep a forced IdP.
 
 ## Device Authorization (RFC 8628)
 
@@ -380,7 +380,7 @@ Returns a device code, user code, and verification URI:
 }
 ```
 
-`expires_in` comes from the client's `DeviceCodeLifetimeSeconds` (default 300). The device displays the `verification_uri` and `user_code` to the user, then polls the token endpoint with the `device_code` — no faster than `interval` seconds apart, or the token endpoint answers `slow_down` (RFC 8628 §3.5). While the user hasn't approved yet the token endpoint returns `authorization_pending`. The user visits the verification URI, logs in, and enters the user code to approve.
+`expires_in` comes from the client's `DeviceCodeLifetimeSeconds` (default 300). The device displays the `verification_uri` and `user_code` to the user, then polls the token endpoint with the `device_code`, no faster than `interval` seconds apart, or the token endpoint answers `slow_down` (RFC 8628 §3.5). While the user hasn't approved yet the token endpoint returns `authorization_pending`. The user visits the verification URI, logs in, and enters the user code to approve.
 
 ### Approve Device
 
@@ -468,7 +468,7 @@ Content-Type: application/json
 }
 ```
 
-Records the user's consent decision (requires cookie auth) and returns `{ "redirect": "..." }` for the SPA to navigate to. On allow, the granted scopes are persisted (filtered to the client's `AllowedScopes` — a tampered body can't record scopes the client couldn't request) and the redirect points back to the authorize flow. On `"decision": "deny"`, the redirect points to the client's `redirect_uri` with an `access_denied` error.
+Records the user's consent decision (requires cookie auth) and returns `{ "redirect": "..." }` for the SPA to navigate to. On allow, the granted scopes are persisted (filtered to the client's `AllowedScopes`, a tampered body can't record scopes the client couldn't request) and the redirect points back to the authorize flow. On `"decision": "deny"`, the redirect points to the client's `redirect_uri` with an `access_denied` error.
 
 ### List Grants
 

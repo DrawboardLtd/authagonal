@@ -38,7 +38,7 @@ The server uses ASP.NET Core's built-in localization with `IStringLocalizer<T>` 
 
 ### What is NOT localized
 
-- Machine-readable `error` codes (`"email_required"`, `"invalid_credentials"`, etc.) — these are API contracts and remain constant
+- Machine-readable `error` codes (`"email_required"`, `"invalid_credentials"`, etc.), these are API contracts and remain constant
 - OAuth/OIDC error codes and developer-facing error descriptions on token, authorize, and revocation endpoints
 - Internal log messages and exception messages
 
@@ -85,10 +85,10 @@ The active language is mirrored onto `<html lang>` and `<html dir>`, so right-to
 
 The detection order is:
 
-1. **localStorage** — persisted preference from a previous visit
-2. **Query parameter** — `?lng=de` overrides browser detection
-3. **Browser language** — `navigator.language` (automatic)
-4. **Fallback** — English (`en`)
+1. **localStorage**: persisted preference from a previous visit
+2. **Query parameter**: `?lng=de` overrides browser detection
+3. **Browser language**: `navigator.language` (automatic)
+4. **Fallback**: English (`en`)
 
 ### Translation files
 

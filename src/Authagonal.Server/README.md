@@ -30,12 +30,12 @@ app.Run();
 
 That's it. You now have a fully functional auth server with:
 
-- **OAuth 2.0 / OpenID Connect** — Authorization code + PKCE, refresh tokens, client credentials
-- **SAML 2.0 SSO** — SP-initiated flows with automatic metadata parsing
-- **External OIDC providers** — Google, Microsoft, Okta, etc.
-- **Built-in login UI** — Customizable SPA with localization (10 languages)
-- **Admin APIs** — User management, SSO provider management, token administration
-- **Password policy** — Configurable strength requirements
+- **OAuth 2.0 / OpenID Connect**: Authorization code + PKCE, refresh tokens, client credentials
+- **SAML 2.0 SSO**: SP-initiated flows with automatic metadata parsing
+- **External OIDC providers**: Google, Microsoft, Okta, etc.
+- **Built-in login UI**: Customizable SPA with localization (10 languages)
+- **Admin APIs**: User management, SSO provider management, token administration
+- **Password policy**: Configurable strength requirements
 
 ## Configuration
 
@@ -68,7 +68,7 @@ Clients and SSO providers can be seeded from configuration:
 
 ## Extensibility
 
-Register custom implementations **before** `AddAuthagonal` — they take precedence via `TryAdd`:
+Register custom implementations **before** `AddAuthagonal`, they take precedence via `TryAdd`:
 
 ```csharp
 // Custom lifecycle hooks (audit logging, webhooks, etc.)
@@ -87,10 +87,10 @@ builder.Services.AddAuthagonal(builder.Configuration);
 
 | Package | Description |
 |---------|-------------|
-| **Authagonal.Server** | Full auth server — endpoints, middleware, services, login UI |
+| **Authagonal.Server** | Full auth server, endpoints, middleware, services, login UI |
 | [Authagonal.Protocol](https://www.nuget.org/packages/Authagonal.Protocol) | Embeddable OIDC/OAuth 2.0 protocol surface (no UI, no user store) |
 | [Authagonal.AzureProvider](https://www.nuget.org/packages/Authagonal.AzureProvider) | Azure Table Storage backend |
-| [Authagonal.AwsProvider](https://www.nuget.org/packages/Authagonal.AwsProvider) | AWS backend — DynamoDB / S3 / Secrets Manager |
+| [Authagonal.AwsProvider](https://www.nuget.org/packages/Authagonal.AwsProvider) | AWS backend, DynamoDB / S3 / Secrets Manager |
 | [Authagonal.Core](https://www.nuget.org/packages/Authagonal.Core) | Core models, interfaces, and abstractions |
 
 ## Links

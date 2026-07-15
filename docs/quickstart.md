@@ -50,7 +50,7 @@ Add a client to your `appsettings.json` (or pass via environment variables):
 }
 ```
 
-Clients are seeded on startup — safe to run on every deployment.
+Clients are seeded on startup, safe to run on every deployment.
 
 ## 4. Initiate a Login
 
@@ -69,7 +69,7 @@ http://localhost:8080/connect/authorize
 
 The user sees the login page, authenticates, and is redirected back with an authorization code.
 
-> **First user:** register one at `http://localhost:8080/login/register`, or create one via the [Admin API](admin-api). Self-registration sends a verification email, and with no email sender configured (the local default) that mail is discarded — so for local testing set `Auth__AutoConfirmEmailDomains__0=example.dev` (any domain you register with) to skip verification, or configure `Email:ResendApiKey` + `Email:SenderEmail`. See [Configuration → Email](configuration#email).
+> **First user:** register one at `http://localhost:8080/login/register`, or create one via the [Admin API](admin-api). Self-registration sends a verification email, and with no email sender configured (the local default) that mail is discarded, so for local testing set `Auth__AutoConfirmEmailDomains__0=example.dev` (any domain you register with) to skip verification, or configure `Email:ResendApiKey` + `Email:SenderEmail`. See [Configuration → Email](configuration#email).
 
 ## 5. Exchange the Code
 
@@ -99,8 +99,8 @@ The `demos/sample-app/` directory contains a complete React SPA + API that imple
 
 ## Next Steps
 
-- [Configuration](configuration) — full reference for all settings
-- [Extensibility](extensibility) — host as a library, add custom hooks
-- [Branding](branding) — customize the login UI
-- [SAML](saml) — add SAML SSO providers
-- [Provisioning](provisioning) — provision users into downstream apps
+- [Configuration](configuration), full reference for all settings
+- [Extensibility](extensibility), host as a library, add custom hooks
+- [Branding](branding), customize the login UI
+- [SAML](saml), add SAML SSO providers
+- [Provisioning](provisioning), provision users into downstream apps

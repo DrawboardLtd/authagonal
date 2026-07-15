@@ -6,8 +6,8 @@ Core models, interfaces, and abstractions for the Authagonal authentication serv
 
 | Model | Description |
 |-------|-------------|
-| `AuthUser` | User account — email, password hash, profile, lockout, security stamp |
-| `OAuthClient` | OAuth/OIDC client — secrets, grant types, redirect URIs, scopes, lifetimes |
+| `AuthUser` | User account, email, password hash, profile, lockout, security stamp |
+| `OAuthClient` | OAuth/OIDC client, secrets, grant types, redirect URIs, scopes, lifetimes |
 | `PersistedGrant` | Authorization codes, refresh tokens, and other temporary grants |
 | `OidcProviderConfig` | External OIDC identity provider (Google, Okta, etc.) |
 | `SamlProviderConfig` | SAML 2.0 identity provider |
@@ -48,14 +48,14 @@ Implement these to plug in your own storage backend:
 
 | Interface | Purpose |
 |-----------|---------|
-| `IAuthHook` | Lifecycle callbacks — `OnUserAuthenticated`, `OnUserCreated`, `OnUserUpdated`, `OnUserDeleted`, `OnLoginFailed`, `OnTokenIssued`, `ResolveMfaPolicy`, `OnMfaVerified`, `OnMfaVerifyFailed`, `OnMfaEnrolled`, `OnEmailConfirmed`, and more. Multiple implementations run in registration order. |
-| `IEmailService` | Email delivery — verification, password reset |
+| `IAuthHook` | Lifecycle callbacks, `OnUserAuthenticated`, `OnUserCreated`, `OnUserUpdated`, `OnUserDeleted`, `OnLoginFailed`, `OnTokenIssued`, `ResolveMfaPolicy`, `OnMfaVerified`, `OnMfaVerifyFailed`, `OnMfaEnrolled`, `OnEmailConfirmed`, and more. Multiple implementations run in registration order. |
+| `IEmailService` | Email delivery, verification, password reset |
 | `IProvisioningOrchestrator` | User provisioning into downstream apps (TCC protocol) |
 | `ISecretProvider` | Reversible secret protection at rest (plaintext default; Key Vault or your own) |
 | `IFieldCipher` | Field-level encryption of PII at rest (passthrough default) |
 | `IIndexTokenizer` | Blind-index tokenization so encrypted fields stay searchable (passthrough default) |
 | `ITenantContext` | Tenant resolution for multi-tenant deployments |
-| `IKeyManager` | Signing key management — override for per-tenant key isolation |
+| `IKeyManager` | Signing key management, override for per-tenant key isolation |
 
 ## Packages
 
@@ -64,9 +64,9 @@ Implement these to plug in your own storage backend:
 | **Authagonal.Core** | Core models, interfaces, and abstractions |
 | [Authagonal.Protocol](https://www.nuget.org/packages/Authagonal.Protocol) | Embeddable OIDC/OAuth 2.0 protocol surface (no UI, no user store) |
 | [Authagonal.AzureProvider](https://www.nuget.org/packages/Authagonal.AzureProvider) | Azure Table Storage backend |
-| [Authagonal.AwsProvider](https://www.nuget.org/packages/Authagonal.AwsProvider) | AWS backend — DynamoDB / S3 / Secrets Manager |
+| [Authagonal.AwsProvider](https://www.nuget.org/packages/Authagonal.AwsProvider) | AWS backend, DynamoDB / S3 / Secrets Manager |
 | [Authagonal.Backup](https://www.nuget.org/packages/Authagonal.Backup) | Backup, restore, merge, and rollup for the storage backends |
-| [Authagonal.Server](https://www.nuget.org/packages/Authagonal.Server) | Full auth server — endpoints, middleware, services, login UI |
+| [Authagonal.Server](https://www.nuget.org/packages/Authagonal.Server) | Full auth server, endpoints, middleware, services, login UI |
 
 ## Links
 

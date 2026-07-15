@@ -14,7 +14,7 @@ There are two entry paths into federation:
 **Domain-based (interactive login):**
 
 1. User enters their email on the login page
-2. SPA calls `/api/auth/sso-check` — if the email domain is linked to an OIDC provider, SSO is required
+2. SPA calls `/api/auth/sso-check`, if the email domain is linked to an OIDC provider, SSO is required
 3. User clicks "Continue with SSO" → redirected to the external IdP
 4. After authenticating, the IdP redirects back to `/oidc/callback`
 5. Authagonal validates the id_token, creates/links the user, and sets a session cookie
@@ -33,7 +33,7 @@ When the request is unauthenticated, Authagonal redirects to `/oidc/{connectionI
 
 ### 1. Create an OIDC Provider
 
-**Option A — Configuration (recommended for static setups):**
+**Option A, Configuration (recommended for static setups):**
 
 Add to `appsettings.json`:
 
@@ -55,9 +55,9 @@ Add to `appsettings.json`:
 
 Providers are seeded on startup. The seedable fields are exactly those shown: `ConnectionId`, `ConnectionName`, `MetadataLocation`, `ClientId`, `ClientSecret`, `RedirectUrl`, `AllowedDomains`. The `ClientSecret` is protected via `ISecretProvider` (Key Vault when configured, plaintext otherwise). SSO domain mappings are registered automatically from `AllowedDomains`.
 
-The connection model carries additional optional behavior — `PassthroughParams` (settable via the admin API create), plus `SessionExpClaim` and `DisableJitProvisioning` (store-level fields, set via `IOidcProviderStore` from hosting code) — see [Scope and claim flow-through](#scope-and-claim-flow-through) and [Session lifetime cap](#session-lifetime-cap) below.
+The connection model carries additional optional behavior, `PassthroughParams` (settable via the admin API create), plus `SessionExpClaim` and `DisableJitProvisioning` (store-level fields, set via `IOidcProviderStore` from hosting code), see [Scope and claim flow-through](#scope-and-claim-flow-through) and [Session lifetime cap](#session-lifetime-cap) below.
 
-**Option B — Admin API (for runtime management):**
+**Option B, Admin API (for runtime management):**
 
 ```bash
 curl -X POST https://auth.example.com/api/v1/oidc/connections \
@@ -86,9 +86,9 @@ When `AllowedDomains` is specified (in config or via the create API), SSO domain
 
 ## Scope and claim flow-through
 
-The scope set requested by the downstream RP at `/connect/authorize` is forwarded to the upstream IdP, **filtered to the standard OIDC set** — `openid`, `profile`, `email`, `address`, `phone` — with `openid` always included. Anything else the RP requested (custom API scopes, `offline_access`, …) is dropped before the upstream call: a strict IdP like Google returns `invalid_scope` on unknown values, and the upstream only needs to identify the user — the RP's own scopes are honored on Authagonal-issued tokens, not upstream ones. Whatever claims the upstream IdP scope-gates onto the id_token come back to Authagonal, get stashed on the cookie ticket as `federated:<name>` claims, and ride through into `OidcSubject.FederationClaims` at the next `/connect/authorize` traversal. From there `ProtocolTokenService` re-emits them on Authagonal-issued tokens, gated by the same `Scope.UserClaims` whitelist that gates `CustomAttributes`. Federation values win on key collision.
+The scope set requested by the downstream RP at `/connect/authorize` is forwarded to the upstream IdP, **filtered to the standard OIDC set**: `openid`, `profile`, `email`, `address`, `phone`, with `openid` always included. Anything else the RP requested (custom API scopes, `offline_access`, …) is dropped before the upstream call: a strict IdP like Google returns `invalid_scope` on unknown values, and the upstream only needs to identify the user, the RP's own scopes are honored on Authagonal-issued tokens, not upstream ones. Whatever claims the upstream IdP scope-gates onto the id_token come back to Authagonal, get stashed on the cookie ticket as `federated:<name>` claims, and ride through into `OidcSubject.FederationClaims` at the next `/connect/authorize` traversal. From there `ProtocolTokenService` re-emits them on Authagonal-issued tokens, gated by the same `Scope.UserClaims` whitelist that gates `CustomAttributes`. Federation values win on key collision.
 
-Net effect: no per-connection allowlist of claims to preserve. Every non-protocol claim the upstream puts on the id_token is captured; which of them reach downstream tokens is controlled by the downstream scope's `UserClaims` — declare the claim there and the value flows through.
+Net effect: no per-connection allowlist of claims to preserve. Every non-protocol claim the upstream puts on the id_token is captured; which of them reach downstream tokens is controlled by the downstream scope's `UserClaims`, declare the claim there and the value flows through.
 
 `FederationClaims` survives refresh rotations distinct from `CustomAttributes`, so per-session federation context (e.g. a share-link token captured at the original authorize) stays intact while per-user attributes still re-read fresh from the user store.
 
@@ -100,20 +100,20 @@ When a key is whitelisted, Authagonal pulls its value from the original `/author
 
 ## Session lifetime cap
 
-`OidcProviderConfig.SessionExpClaim` is the optional name of an id_token claim (Unix seconds) whose value caps the local session lifetime. When present, the upstream value rides through as `session_max_exp` on the cookie ticket and into the issued auth code; access / id / refresh tokens are clamped so no token — including those minted from rotations — outlives the upstream session. Useful when the upstream IdP enforces shorter session bounds than Authagonal would by default.
+`OidcProviderConfig.SessionExpClaim` is the optional name of an id_token claim (Unix seconds) whose value caps the local session lifetime. When present, the upstream value rides through as `session_max_exp` on the cookie ticket and into the issued auth code; access / id / refresh tokens are clamped so no token, including those minted from rotations, outlives the upstream session. Useful when the upstream IdP enforces shorter session bounds than Authagonal would by default.
 
 ## Security Features
 
-- **PKCE** — code_challenge with S256 on every authorization request
-- **Nonce validation** — nonce stored with the state, must be present in the id_token and match
-- **State validation** — single-use (consumed atomically via `IOidcStateStore`, persisted with expiry) **and browser-bound**: a `SameSite=Lax` cookie scoped to `/oidc` is set at login and must match the `state` on the callback, so an attacker can't complete a federation flow they started and deliver the callback URL to a victim (login CSRF)
-- **id_token signature validation** — keys fetched from the IdP's JWKS endpoint; issuer, audience and lifetime validated
-- **Userinfo fallback** — if the id_token doesn't contain an email, the userinfo endpoint is tried. The userinfo `sub` must match the id_token `sub` (OIDC Core 5.3.2), otherwise the response is ignored
-- **Stable identity linking** — a returning user is resolved by provider + `sub`, never by email alone. Attaching a federated identity to a **pre-existing** local account by email requires the connection's `AllowedDomains` to cover that email's domain — the admin's explicit vouch that the IdP owns it. An upstream-asserted `email_verified` is *not* sufficient to seize an existing account
-- **Domain enforcement** — when `AllowedDomains` is set, the connection may only assert identities within those domains (`access_denied` otherwise)
-- **JIT opt-out** — `DisableJitProvisioning` rejects unknown users instead of auto-creating them
-- **Open-redirect guard** — `returnUrl` must be a same-site relative path; protocol-relative (`//`) and backslash forms are rejected
-- **Local MFA still applies** — federation proves the first factor only. A user who is MFA-enrolled (or whose client policy requires MFA) is routed through the local MFA challenge/setup pages after the callback instead of being signed straight in; only then does the session carry the MFA marker
+- **PKCE**: code_challenge with S256 on every authorization request
+- **Nonce validation**: nonce stored with the state, must be present in the id_token and match
+- **State validation**: single-use (consumed atomically via `IOidcStateStore`, persisted with expiry) **and browser-bound**: a `SameSite=Lax` cookie scoped to `/oidc` is set at login and must match the `state` on the callback, so an attacker can't complete a federation flow they started and deliver the callback URL to a victim (login CSRF)
+- **id_token signature validation**: keys fetched from the IdP's JWKS endpoint; issuer, audience and lifetime validated
+- **Userinfo fallback**: if the id_token doesn't contain an email, the userinfo endpoint is tried. The userinfo `sub` must match the id_token `sub` (OIDC Core 5.3.2), otherwise the response is ignored
+- **Stable identity linking**: a returning user is resolved by provider + `sub`, never by email alone. Attaching a federated identity to a **pre-existing** local account by email requires the connection's `AllowedDomains` to cover that email's domain, the admin's explicit vouch that the IdP owns it. An upstream-asserted `email_verified` is *not* sufficient to seize an existing account
+- **Domain enforcement**: when `AllowedDomains` is set, the connection may only assert identities within those domains (`access_denied` otherwise)
+- **JIT opt-out**: `DisableJitProvisioning` rejects unknown users instead of auto-creating them
+- **Open-redirect guard**: `returnUrl` must be a same-site relative path; protocol-relative (`//`) and backslash forms are rejected
+- **Local MFA still applies**: federation proves the first factor only. A user who is MFA-enrolled (or whose client policy requires MFA) is routed through the local MFA challenge/setup pages after the callback instead of being signed straight in; only then does the session carry the MFA marker
 
 ## Azure AD Specifics
 

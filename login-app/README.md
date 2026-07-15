@@ -1,6 +1,6 @@
 # @authagonal/login
 
-Default login UI for [Authagonal](https://github.com/authagonal/authagonal) — a self-hosted OAuth 2.0 / OpenID Connect / SAML 2.0 authentication server with pluggable storage (Azure Table Storage or AWS DynamoDB).
+Default login UI for [Authagonal](https://github.com/authagonal/authagonal), a self-hosted OAuth 2.0 / OpenID Connect / SAML 2.0 authentication server with pluggable storage (Azure Table Storage or AWS DynamoDB).
 
 Use as a standalone app (built into the Authagonal Docker image) or as an npm package to build a custom login experience while reusing the API client, branding, i18n, and base components.
 
@@ -10,7 +10,7 @@ Use as a standalone app (built into the Authagonal Docker image) or as an npm pa
 npm install @authagonal/login
 ```
 
-`react`, `react-dom`, and `react-router-dom` are externalized at build time — your app must provide them.
+`react`, `react-dom`, and `react-router-dom` are externalized at build time, your app must provide them.
 
 ## Quick start
 
@@ -225,7 +225,7 @@ import { useTranslation } from 'react-i18next';
 
 | Export | Description |
 |---|---|
-| `AuthLayout` | Layout wrapper — loads branding, renders language selector, wraps `<Outlet />` |
+| `AuthLayout` | Layout wrapper, loads branding, renders language selector, wraps `<Outlet />` |
 | `LoginPage` | Login form with SSO check, external providers, session detection |
 | `ForgotPasswordPage` | Email input → sends reset link |
 | `ResetPasswordPage` | Token + new password form with policy validation |
@@ -282,7 +282,7 @@ import { useTranslation } from 'react-i18next';
 | Export | Description |
 |---|---|
 | `i18n` | Pre-configured i18next instance |
-| `useTranslation` | Re-exported from `react-i18next` — always import from this package to avoid context duplication |
+| `useTranslation` | Re-exported from `react-i18next`, always import from this package to avoid context duplication |
 
 ### Types
 

@@ -20,9 +20,9 @@ POST /connect/par
 Content-Type: application/x-www-form-urlencoded
 ```
 
-Authentication is the same as `/connect/token`: HTTP Basic with `client_id`/`client_secret`, or form-encoded credentials. Confidential clients must authenticate; public clients post without a secret. Client-authentication failures return `401` (per RFC 9126 — unlike the token endpoint, where only `invalid_client` is a 401).
+Authentication is the same as `/connect/token`: HTTP Basic with `client_id`/`client_secret`, or form-encoded credentials. Confidential clients must authenticate; public clients post without a secret. Client-authentication failures return `401` (per RFC 9126, unlike the token endpoint, where only `invalid_client` is a 401).
 
-The form body carries the same parameters that would normally go on `/connect/authorize` (`response_type`, `redirect_uri`, `scope`, `state`, `code_challenge`, `code_challenge_method`, `nonce`, `resource`, etc.). `request_uri` itself is rejected — chaining a PAR is forbidden by §2.1 of the spec. If the body carries a `client_id`, it must match the authenticated client.
+The form body carries the same parameters that would normally go on `/connect/authorize` (`response_type`, `redirect_uri`, `scope`, `state`, `code_challenge`, `code_challenge_method`, `nonce`, `resource`, etc.). `request_uri` itself is rejected, chaining a PAR is forbidden by §2.1 of the spec. If the body carries a `client_id`, it must match the authenticated client.
 
 ### Response
 
@@ -44,7 +44,7 @@ The `request_uri` is single-use. It's removed from the store once the matching `
 GET /connect/authorize?client_id=my-rp&request_uri=urn:ietf:params:oauth:request_uri:abc123...
 ```
 
-When `request_uri` is present, all other parameters are pulled from the pushed payload — anything else on the URL is ignored. The `client_id` on this request must match the client that pushed the payload.
+When `request_uri` is present, all other parameters are pulled from the pushed payload, anything else on the URL is ignored. The `client_id` on this request must match the client that pushed the payload.
 
 ## Requiring PAR per client
 
@@ -59,7 +59,7 @@ new OAuthClient
 }
 ```
 
-This is the recommended posture for clients that handle sensitive scopes — combined with PKCE, it removes the URL bar as an attack surface.
+This is the recommended posture for clients that handle sensitive scopes, combined with PKCE, it removes the URL bar as an attack surface.
 
 ## Lifetime and storage
 

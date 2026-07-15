@@ -1,6 +1,6 @@
 # Authagonal.AwsProvider
 
-AWS implementation of the Authagonal storage and clustering seams — the counterpart to
+AWS implementation of the Authagonal storage and clustering seams, the counterpart to
 `Authagonal.AzureProvider`. All cloud-vendor coupling lives here; `Authagonal.Core` and
 `Authagonal.Protocol` stay vendor-neutral.
 
@@ -12,12 +12,12 @@ AWS implementation of the Authagonal storage and clustering seams — the counte
 | Secrets (`ISecretProvider`) | **Secrets Manager** | Substitute for Azure Key Vault; references stored as `sm:{name}`. |
 
 Single-use grant redemption uses a conditional `DeleteItem` (`attribute_exists` + `ReturnValues=ALL_OLD`)
-in place of Azure's ETag/`If-Match` delete — the same anti-replay guarantee. The grant expiry index is
+in place of Azure's ETag/`If-Match` delete, the same anti-replay guarantee. The grant expiry index is
 re-keyed (`pk = exp_{shard}`, `sk = {yyyy-MM-dd}#{hashedKey}`) so the cleanup sweep can range-scan the
 sort key, since DynamoDB cannot range-query a partition key.
 
 Credentials resolve via the standard AWS chain (env / EC2 instance role / IRSA), so there's no
-managed-identity-vs-connection-string split — pass a configured `IAmazonDynamoDB`.
+managed-identity-vs-connection-string split, pass a configured `IAmazonDynamoDB`.
 
 ```csharp
 services.AddDynamoStorage(dynamoDbClient);

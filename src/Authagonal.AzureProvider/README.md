@@ -43,9 +43,9 @@ To use a different backend (SQL, MongoDB, Cosmos DB, etc.), implement the interf
 | [Authagonal.Core](https://www.nuget.org/packages/Authagonal.Core) | Core models, interfaces, and abstractions |
 | [Authagonal.Protocol](https://www.nuget.org/packages/Authagonal.Protocol) | Embeddable OIDC/OAuth 2.0 protocol surface (no UI, no user store) |
 | **Authagonal.AzureProvider** | Azure Table Storage backend |
-| [Authagonal.AwsProvider](https://www.nuget.org/packages/Authagonal.AwsProvider) | AWS backend — DynamoDB / S3 / Secrets Manager |
+| [Authagonal.AwsProvider](https://www.nuget.org/packages/Authagonal.AwsProvider) | AWS backend, DynamoDB / S3 / Secrets Manager |
 | [Authagonal.Backup](https://www.nuget.org/packages/Authagonal.Backup) | Backup, restore, merge, and rollup for the storage backends |
-| [Authagonal.Server](https://www.nuget.org/packages/Authagonal.Server) | Full auth server — endpoints, middleware, services, login UI |
+| [Authagonal.Server](https://www.nuget.org/packages/Authagonal.Server) | Full auth server, endpoints, middleware, services, login UI |
 
 ## Links
 

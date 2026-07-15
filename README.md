@@ -4,7 +4,7 @@
 
 <h1 align="center">Authagonal</h1>
 
-<p align="center">Self-hosted OAuth 2.0 / OpenID Connect / SAML 2.0 authentication server for .NET.<br>Pluggable cloud storage — Azure Table Storage or AWS (DynamoDB / S3 / Secrets Manager).</p>
+<p align="center">Self-hosted OAuth 2.0 / OpenID Connect / SAML 2.0 authentication server for .NET.<br>Pluggable cloud storage, Azure Table Storage or AWS (DynamoDB / S3 / Secrets Manager).</p>
 
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT License"></a>
@@ -15,10 +15,10 @@
 
 <p align="center"><strong><a href="https://authagonal.github.io/authagonal/">Documentation</a> · <a href="https://demo.authagonal.io">Live Demo</a> · <a href="https://authagonal.io">Managed Cloud</a></strong></p>
 
-The open, self-hostable identity server for .NET teams — a fully-featured alternative to Duende IdentityServer and Auth0 that **you** run. API-only ASP.NET Core server + React login SPA, shipped as a single Docker image, or embedded as a library in your own ASP.NET project. Built on a custom OIDC/OAuth2 protocol implementation — no OpenIddict or Duende dependency.
+The open, self-hostable identity server for .NET teams, a fully-featured alternative to Duende IdentityServer and Auth0 that **you** run. API-only ASP.NET Core server + React login SPA, shipped as a single Docker image, or embedded as a library in your own ASP.NET project. Built on a custom OIDC/OAuth2 protocol implementation, no OpenIddict or Duende dependency.
 
 > ### ☁️ Don't want to run it yourself?
-> **[Authagonal Cloud](https://authagonal.io)** is the fully-managed version — multi-tenant SSO, SCIM, MFA, custom domains, and a management portal, with **every feature on every plan and no per-connection SSO fees**. Self-host the OSS here, or let us operate it → **[authagonal.io](https://authagonal.io)**
+> **[Authagonal Cloud](https://authagonal.io)** is the fully-managed version, multi-tenant SSO, SCIM, MFA, custom domains, and a management portal, with **every feature on every plan and no per-connection SSO fees**. Self-host the OSS here, or let us operate it → **[authagonal.io](https://authagonal.io)**
 
 ## Quick Start
 
@@ -33,11 +33,11 @@ This starts the auth server on `http://localhost:8080` with an Azurite storage e
 | Project | Description |
 |---|---|
 | `src/Authagonal.Core` | Domain models, interfaces, extensibility contracts |
-| `src/Authagonal.Protocol` | Embeddable OIDC / OAuth 2.0 protocol surface — bring your own identity (`IOidcSubjectResolver`) and storage (`IClientStore` / `IGrantStore` / `IScopeStore` / `ISigningKeyStore`). No user store, no SAML, no admin UI. |
+| `src/Authagonal.Protocol` | Embeddable OIDC / OAuth 2.0 protocol surface, bring your own identity (`IOidcSubjectResolver`) and storage (`IClientStore` / `IGrantStore` / `IScopeStore` / `ISigningKeyStore`). No user store, no SAML, no admin UI. |
 | `src/Authagonal.AzureProvider` | Azure Table Storage implementation of the stores (formerly `Authagonal.Storage`) |
-| `src/Authagonal.AwsProvider` | AWS implementation — DynamoDB / S3 / Secrets Manager stores and clustering |
+| `src/Authagonal.AwsProvider` | AWS implementation, DynamoDB / S3 / Secrets Manager stores and clustering |
 | `src/Authagonal.Backup` | Backup, restore, merge and rollup library for the storage backends |
-| `src/Authagonal.Server` | ASP.NET Core host — OIDC, SAML, auth API, admin API |
+| `src/Authagonal.Server` | ASP.NET Core host, OIDC, SAML, auth API, admin API |
 | `login-app` | React/TypeScript login SPA (Vite), published as `@authagonal/login` |
 | `tools/Authagonal.Migration` | Duende IdentityServer → Table Storage migration tool |
 | `tools/Authagonal.Backup` | Azure Table Storage backup tool (incremental support) |
@@ -49,43 +49,43 @@ This starts the auth server on `http://localhost:8080` with an Azurite storage e
 
 ## Features
 
-- **OIDC Provider** — authorization_code + PKCE, client_credentials, refresh_token, device_code grants
-- **SAML 2.0 SP** — homebrew implementation, full Azure AD support
-- **Dynamic OIDC Federation** — Google, Apple, Azure AD — configure via API or `appsettings.json`
-- **SAML/OIDC from Config** — define identity providers in configuration, seeded on startup
-- **OAuth Consent Screen** — per-client `RequireConsent` flag, scope-aware re-consent, grant management UI
-- **Device Authorization Grant** — RFC 8628 flow for input-constrained devices (smart TVs, CLIs, IoT)
-- **Token Introspection** — RFC 7662 `POST /connect/introspect` for resource servers to verify token validity
-- **Token Revocation** — RFC 7009 `POST /connect/revocation`; revocations tracked in a persistent revocation list consulted by the introspection endpoint
-- **Dynamic Client Registration** — RFC 7591 `POST /connect/register` for clients to self-register at runtime (opt-in via `Auth:DynamicClientRegistrationEnabled`), advertised via the discovery document when enabled
-- **Scope Management** — admin CRUD for OAuth scopes (`/api/v1/scopes`); custom scopes advertised dynamically by discovery and surfaced on the consent screen
-- **Back-Channel Logout** — OIDC Back-Channel Logout 1.0; logout tokens sent to each client's `BackChannelLogoutUri`
-- **Front-Channel Logout** — OIDC Front-Channel Logout 1.0 (RFC 7711); logout notification via the browser with configurable session requirements per client
-- **Multi-Factor Authentication** — TOTP (authenticator apps), WebAuthn/passkeys, recovery codes. Per-client MFA policy (`Disabled`, `Enabled`, `Required`) with `IAuthHook` override for per-user control.
-- **Configurable Password Policy** — min length, character requirements, exposed via API for dynamic frontend validation
-- **TCC Provisioning** — Try-Confirm-Cancel provisioning into downstream apps on all user creation endpoints (admin, registration, SSO, SCIM). Pluggable via `IProvisioningAppProvider`.
-- **Auth Hooks** — `IAuthHook` extensibility point for audit logging, custom validation, webhooks. Multiple implementations run in registration order.
-- **Role-Based Access Control** — role CRUD, user-role assignment/removal via admin API (`/api/v1/roles`)
-- **Multi-Tenant Abstractions** — `ITenantContext` and `IKeyManager` interfaces for per-tenant configuration and signing key isolation
-- **HashiCorp Vault Transit** — remote JWT signing via Vault's Transit secrets engine. Private keys never leave Vault.
-- **Backup & Restore** — incremental backups with integrity verification (SHA-256), tombstone-based delete tracking, restore with upsert/merge/clean modes
-- **Native AOT Ready** — IL trimming and source-generated JSON serialization across all packages
-- **Composable Library** — `AddAuthagonal()` / `UseAuthagonal()` extension methods to host in your own project
-- **Session Invalidation** — SecurityStamp rotation on org change, password reset
-- **SCIM 2.0 Provisioning** — inbound user/group provisioning from Entra ID, Okta, OneLogin. Per-client static Bearer tokens, soft-delete deactivation, TCC downstream triggers
-- **Admin APIs** — user CRUD, SAML/OIDC provider management, token impersonation, SCIM token management
-- **Custom User Attributes** — arbitrary per-user metadata via `AuthUser.CustomAttributes`, persisted alongside standard profile fields
-- **Brandable Login UI** — runtime-configurable branding via `branding.json`, CSS custom properties, or install the npm package and override individual components
-- **Dark Mode** — light / dark / system theme toggle in the login SPA; `prefers-color-scheme` detection with persisted user preference. Tenant branding variables override theme defaults.
+- **OIDC Provider**: authorization_code + PKCE, client_credentials, refresh_token, device_code grants
+- **SAML 2.0 SP**: homebrew implementation, full Azure AD support
+- **Dynamic OIDC Federation**: Google, Apple, Azure AD, configure via API or `appsettings.json`
+- **SAML/OIDC from Config**: define identity providers in configuration, seeded on startup
+- **OAuth Consent Screen**: per-client `RequireConsent` flag, scope-aware re-consent, grant management UI
+- **Device Authorization Grant**: RFC 8628 flow for input-constrained devices (smart TVs, CLIs, IoT)
+- **Token Introspection**: RFC 7662 `POST /connect/introspect` for resource servers to verify token validity
+- **Token Revocation**: RFC 7009 `POST /connect/revocation`; revocations tracked in a persistent revocation list consulted by the introspection endpoint
+- **Dynamic Client Registration**: RFC 7591 `POST /connect/register` for clients to self-register at runtime (opt-in via `Auth:DynamicClientRegistrationEnabled`), advertised via the discovery document when enabled
+- **Scope Management**: admin CRUD for OAuth scopes (`/api/v1/scopes`); custom scopes advertised dynamically by discovery and surfaced on the consent screen
+- **Back-Channel Logout**: OIDC Back-Channel Logout 1.0; logout tokens sent to each client's `BackChannelLogoutUri`
+- **Front-Channel Logout**: OIDC Front-Channel Logout 1.0 (RFC 7711); logout notification via the browser with configurable session requirements per client
+- **Multi-Factor Authentication**: TOTP (authenticator apps), WebAuthn/passkeys, recovery codes. Per-client MFA policy (`Disabled`, `Enabled`, `Required`) with `IAuthHook` override for per-user control.
+- **Configurable Password Policy**: min length, character requirements, exposed via API for dynamic frontend validation
+- **TCC Provisioning**: Try-Confirm-Cancel provisioning into downstream apps on all user creation endpoints (admin, registration, SSO, SCIM). Pluggable via `IProvisioningAppProvider`.
+- **Auth Hooks**: `IAuthHook` extensibility point for audit logging, custom validation, webhooks. Multiple implementations run in registration order.
+- **Role-Based Access Control**: role CRUD, user-role assignment/removal via admin API (`/api/v1/roles`)
+- **Multi-Tenant Abstractions**: `ITenantContext` and `IKeyManager` interfaces for per-tenant configuration and signing key isolation
+- **HashiCorp Vault Transit**: remote JWT signing via Vault's Transit secrets engine. Private keys never leave Vault.
+- **Backup & Restore**: incremental backups with integrity verification (SHA-256), tombstone-based delete tracking, restore with upsert/merge/clean modes
+- **Native AOT Ready**: IL trimming and source-generated JSON serialization across all packages
+- **Composable Library**: `AddAuthagonal()` / `UseAuthagonal()` extension methods to host in your own project
+- **Session Invalidation**: SecurityStamp rotation on org change, password reset
+- **SCIM 2.0 Provisioning**: inbound user/group provisioning from Entra ID, Okta, OneLogin. Per-client static Bearer tokens, soft-delete deactivation, TCC downstream triggers
+- **Admin APIs**: user CRUD, SAML/OIDC provider management, token impersonation, SCIM token management
+- **Custom User Attributes**: arbitrary per-user metadata via `AuthUser.CustomAttributes`, persisted alongside standard profile fields
+- **Brandable Login UI**: runtime-configurable branding via `branding.json`, CSS custom properties, or install the npm package and override individual components
+- **Dark Mode**: light / dark / system theme toggle in the login SPA; `prefers-color-scheme` detection with persisted user preference. Tenant branding variables override theme defaults.
 
 ## Deployment Options
 
 | Option | Description |
 |---|---|
-| **Docker image** | `drawboardci/authagonal` — pre-built, configure via env vars and branding.json |
+| **Docker image** | `drawboardci/authagonal`, pre-built, configure via env vars and branding.json |
 | **NuGet library** | Reference `Authagonal.Server` + a provider (`Authagonal.AzureProvider` or `Authagonal.AwsProvider`), call `AddAuthagonal()`, override services |
-| **npm package** | `@authagonal/login` — the login SPA as a component library; import base components, override what you need |
-| **Managed cloud** | [Authagonal Cloud](https://authagonal.io) — we host and operate it for you |
+| **npm package** | `@authagonal/login`, the login SPA as a component library; import base components, override what you need |
+| **Managed cloud** | [Authagonal Cloud](https://authagonal.io), we host and operate it for you |
 
 ## Docker
 
@@ -132,8 +132,8 @@ See `demos/custom-server/` for a complete example.
 
 Two things every new deployment needs:
 
-- **Email** — set `Email:ResendApiKey` + `Email:SenderEmail` to activate the built-in [Resend](https://resend.com) sender, or register your own `IEmailService` before `AddAuthagonal`. Without one, verification and reset emails are discarded, and since login requires a confirmed email by default, self-registered users can't sign in (set `Auth:AutoConfirmEmailDomains` to skip verification for your domains).
-- **Admin API access** — seed a `client_credentials` client holding the `authagonal-admin` scope in the `Clients:` config section. Config-seeded clients are the only way to hold that scope; the API and dynamic registration refuse to grant it (so a runtime client can never escalate).
+- **Email**: set `Email:ResendApiKey` + `Email:SenderEmail` to activate the built-in [Resend](https://resend.com) sender, or register your own `IEmailService` before `AddAuthagonal`. Without one, verification and reset emails are discarded, and since login requires a confirmed email by default, self-registered users can't sign in (set `Auth:AutoConfirmEmailDomains` to skip verification for your domains).
+- **Admin API access**: seed a `client_credentials` client holding the `authagonal-admin` scope in the `Clients:` config section. Config-seeded clients are the only way to hold that scope; the API and dynamic registration refuse to grant it (so a runtime client can never escalate).
 
 ## Load Testing
 

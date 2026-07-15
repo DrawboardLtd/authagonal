@@ -1,6 +1,6 @@
 # Authagonal.Backup
 
-Programmatic backup, restore, merge, and rollup for Authagonal's Azure Table Storage data. This is the library that backs the `Authagonal.Backup` CLI — use it directly when you need the same operations from inside a host process (background services, custom orchestration).
+Programmatic backup, restore, merge, and rollup for Authagonal's Azure Table Storage data. This is the library that backs the `Authagonal.Backup` CLI, use it directly when you need the same operations from inside a host process (background services, custom orchestration).
 
 ## Quick start
 
@@ -39,12 +39,12 @@ var result = await restore.RunAsync(ct);
 | `IBackupSource` / `IBackupTarget` | Abstractions for plugging in non-filesystem stores |
 | `FileSystemBackupSource` / `FileSystemBackupTarget` | Default filesystem implementations |
 | `BackupManifest` / `TableBackupInfo` | The serialized manifest schema |
-| `BackupDefaults` | Default table list — every persistent Authagonal table, transient ones excluded |
+| `BackupDefaults` | Default table list, every persistent Authagonal table, transient ones excluded |
 | `BackupOptions` / `RestoreOptions` / `RestoreMode` | Per-run configuration |
 
 ## See also
 
-- [Backup & Restore docs](https://authagonal.github.io/authagonal/backup-restore.html) — full CLI reference, scheduling, Docker images.
+- [Backup & Restore docs](https://authagonal.github.io/authagonal/backup-restore.html), full CLI reference, scheduling, Docker images.
 
 ## Packages
 
@@ -53,7 +53,7 @@ var result = await restore.RunAsync(ct);
 | [Authagonal.Core](https://www.nuget.org/packages/Authagonal.Core) | Core models, interfaces, and abstractions |
 | [Authagonal.AzureProvider](https://www.nuget.org/packages/Authagonal.AzureProvider) | Azure Table Storage backend |
 | **Authagonal.Backup** | Backup/restore/merge/rollup library and CLI |
-| [Authagonal.Server](https://www.nuget.org/packages/Authagonal.Server) | Full auth server — endpoints, middleware, services, login UI |
+| [Authagonal.Server](https://www.nuget.org/packages/Authagonal.Server) | Full auth server, endpoints, middleware, services, login UI |
 
 ## Links
 

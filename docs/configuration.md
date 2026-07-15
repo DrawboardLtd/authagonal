@@ -9,12 +9,12 @@ Authagonal is configured via `appsettings.json` or environment variables. Enviro
 
 ## Required Settings
 
-Storage can be configured one of two ways — supply **either** `Storage:ConnectionString` **or** `Storage:TableServiceUri` (the managed-identity path, preferred in production).
+Storage can be configured one of two ways, supply **either** `Storage:ConnectionString` **or** `Storage:TableServiceUri` (the managed-identity path, preferred in production).
 
 | Setting | Env Variable | Description |
 |---|---|---|
 | `Storage:ConnectionString` | `Storage__ConnectionString` | Azure Table Storage connection string with an account key. Suitable for dev / Azurite. |
-| `Storage:TableServiceUri` | `Storage__TableServiceUri` | Managed-identity Table Storage endpoint, e.g. `https://{account}.table.core.windows.net/`. Alternative to `Storage:ConnectionString` and **preferred in production** — authenticates via `DefaultAzureCredential` so no access key ever lands in a secret. The host must grant the workload identity the **Storage Table Data Contributor** role. |
+| `Storage:TableServiceUri` | `Storage__TableServiceUri` | Managed-identity Table Storage endpoint, e.g. `https://{account}.table.core.windows.net/`. Alternative to `Storage:ConnectionString` and **preferred in production**: authenticates via `DefaultAzureCredential` so no access key ever lands in a secret. The host must grant the workload identity the **Storage Table Data Contributor** role. |
 | `Issuer` | `Issuer` | The public base URL of this server (e.g., `https://auth.example.com`) |
 
 ## Storage
@@ -23,7 +23,7 @@ Storage can be configured one of two ways — supply **either** `Storage:Connect
 |---|---|---|---|
 | `Storage:ConnectionString` | `Storage__ConnectionString` | *(none)* | Connection string with account key (see Required Settings). |
 | `Storage:TableServiceUri` | `Storage__TableServiceUri` | *(none)* | Managed-identity Table Storage URI (see Required Settings). Takes precedence over `Storage:ConnectionString` when both are set. |
-| `Storage:NameIndexesEnabled` | `Storage__NameIndexesEnabled` | `true` | Whether to maintain the `UserFirstNames` / `UserLastNames` prefix-search index tables that back admin name-prefix search. Set `false` on hosts that don't expose admin name search to skip those writes. **Scaling note:** these indexes use a single hot partition and cap throughput at roughly 2,000 ops/sec at scale — disable them if you don't need name search. |
+| `Storage:NameIndexesEnabled` | `Storage__NameIndexesEnabled` | `true` | Whether to maintain the `UserFirstNames` / `UserLastNames` prefix-search index tables that back admin name-prefix search. Set `false` on hosts that don't expose admin name search to skip those writes. **Scaling note:** these indexes use a single hot partition and cap throughput at roughly 2,000 ops/sec at scale, disable them if you don't need name search. |
 | `LoginAppUrl` | `LoginAppUrl` | `/login` | Base URL the `/connect/authorize` endpoint redirects to for the login SPA (login, step-up, and consent screens). Set this when the login UI is served from a different origin than the server; defaults to the relative `/login` path served by the bundled SPA. |
 
 ## Authentication
@@ -38,13 +38,13 @@ Storage can be configured one of two ways — supply **either** `Storage:Connect
 | `Auth:RegistrationWindowMinutes` | `60` | Registration rate limiting window |
 | `Auth:MaxPasswordResetsPerEmail` | `3` | Maximum password-reset emails per target address within the window (keyed on the email, not the caller IP, so one address can't be email-bombed) |
 | `Auth:PasswordResetWindowMinutes` | `60` | Password-reset rate limiting window |
-| `Auth:AutoConfirmEmailDomains` | *(empty)* | Email domains (string array) whose self-service registrations are auto-confirmed — they skip the verification email. Empty (the default) means every registration must verify. Intended only for dev/test; never list a domain that can receive real mail. |
+| `Auth:AutoConfirmEmailDomains` | *(empty)* | Email domains (string array) whose self-service registrations are auto-confirmed, they skip the verification email. Empty (the default) means every registration must verify. Intended only for dev/test; never list a domain that can receive real mail. |
 | `Auth:EmailVerificationExpiryHours` | `24` | Email verification link lifetime |
 | `Auth:PasswordResetExpiryMinutes` | `60` | Password reset link lifetime |
 | `Auth:MfaChallengeExpiryMinutes` | `5` | MFA challenge token lifetime |
 | `Auth:MfaSetupTokenExpiryMinutes` | `15` | MFA setup token lifetime (for forced enrollment) |
 | `Auth:Pbkdf2Iterations` | `100000` | PBKDF2 iteration count for password hashing |
-| `Auth:RefreshTokenReuseGraceSeconds` | `0` | Opt-in grace window (seconds) for concurrent refresh token reuse. `0` (default) keeps the strict posture: any reuse of a consumed refresh token revokes all tokens for that user+client. Set `> 0` to treat a reuse within the window as an idempotent retry (re-delivers the successor tokens) — useful for mobile clients with connectivity flaps. |
+| `Auth:RefreshTokenReuseGraceSeconds` | `0` | Opt-in grace window (seconds) for concurrent refresh token reuse. `0` (default) keeps the strict posture: any reuse of a consumed refresh token revokes all tokens for that user+client. Set `> 0` to treat a reuse within the window as an idempotent retry (re-delivers the successor tokens), useful for mobile clients with connectivity flaps. |
 | `Auth:DynamicClientRegistrationEnabled` | `false` | Enable the `POST /connect/register` dynamic client registration endpoint (RFC 7591). Off by default because open registration can be abused in multi-tenant deployments. See [Dynamic Client Registration](client-registration). |
 | `Auth:SigningKeyLifetimeDays` | `90` | RSA signing key lifetime before automatic rotation |
 | `Auth:SigningKeyCacheRefreshMinutes` | `60` | How often signing keys are reloaded from storage |
@@ -55,14 +55,14 @@ Storage can be configured one of two ways — supply **either** `Storage:Connect
 
 ## Data Protection
 
-ASP.NET Core Data Protection keys (which encrypt the session cookie) must be shared across instances — see [Scaling](scaling#cookie-encryption-data-protection). Persistence options, in precedence order:
+ASP.NET Core Data Protection keys (which encrypt the session cookie) must be shared across instances, see [Scaling](scaling#cookie-encryption-data-protection). Persistence options, in precedence order:
 
 | Setting | Default | Description |
 |---|---|---|
-| `DataProtection:BlobUri` | *(none)* | Explicit Azure Blob URI for the key ring (e.g. `https://{account}.blob.core.windows.net/dataprotection/keys.xml`). Authenticates via `DefaultAzureCredential` — the preferred production path alongside `Storage:TableServiceUri`. |
+| `DataProtection:BlobUri` | *(none)* | Explicit Azure Blob URI for the key ring (e.g. `https://{account}.blob.core.windows.net/dataprotection/keys.xml`). Authenticates via `DefaultAzureCredential`, the preferred production path alongside `Storage:TableServiceUri`. |
 | *(fallback)* | — | When `DataProtection:BlobUri` is unset and `Storage:ConnectionString` points at a real storage account (not Azurite), keys are persisted to a `dataprotection` container in that account automatically. With Azurite, keys fall back to the default file-based store. |
 
-On the AWS backend, pass an S3 client + bucket to `AddAuthagonalAwsStorage` to persist the key ring to S3 — see [Installation → AWS backend](installation#aws-backend).
+On the AWS backend, pass an S3 client + bucket to `AddAuthagonalAwsStorage` to persist the key ring to S3, see [Installation → AWS backend](installation#aws-backend).
 
 ## Cache and Timeouts
 
@@ -132,7 +132,7 @@ Clients are defined in the `Clients` array and seeded on startup. Each client ca
 
 | Value | Behavior |
 |---|---|
-| `OneTime` (default) | Each refresh issues a new refresh token and invalidates the old one. By default (`Auth:RefreshTokenReuseGraceSeconds = 0`) any reuse of a consumed token immediately revokes all tokens for that user+client — there is **no** grace window on by default. Set `Auth:RefreshTokenReuseGraceSeconds` to a positive value to opt into a retry-tolerance window. |
+| `OneTime` (default) | Each refresh issues a new refresh token and invalidates the old one. By default (`Auth:RefreshTokenReuseGraceSeconds = 0`) any reuse of a consumed token immediately revokes all tokens for that user+client, there is **no** grace window on by default. Set `Auth:RefreshTokenReuseGraceSeconds` to a positive value to opt into a retry-tolerance window. |
 | `ReUse` | Same refresh token is reused until expiry. |
 
 ### Provisioning Apps
@@ -252,7 +252,7 @@ Define SAML identity providers in configuration. These are seeded on startup:
 |---|---|---|
 | `ConnectionId` | Yes | Stable identifier (used in URLs like `/saml/{connectionId}/login`) |
 | `ConnectionName` | No | Display name (defaults to ConnectionId) |
-| `EntityId` | Yes | **This server's** SP entity ID — the identifier you register at the IdP, not the IdP's own entity ID |
+| `EntityId` | Yes | **This server's** SP entity ID, the identifier you register at the IdP, not the IdP's own entity ID |
 | `MetadataLocation` | Yes | URL to the IdP's SAML metadata XML |
 | `AllowedDomains` | No | Email domains routed to this provider via SSO |
 
@@ -298,7 +298,7 @@ Upstream OIDC client secrets and TOTP / MFA seeds can be stored in Azure Key Vau
 
 When configured, secret values that look like Key Vault references are resolved at runtime. Uses `DefaultAzureCredential` for authentication.
 
-> ⚠️ **Production: set `SecretProvider:VaultUri`.** The default secret provider is **plaintext**. When `SecretProvider:VaultUri` is unset, upstream OIDC client secrets and TOTP / MFA seeds are written to Azure Table Storage in cleartext — and therefore appear in cleartext in any [backup](backup-restore). For any production deployment, configure `SecretProvider:VaultUri` so these secrets are stored in Key Vault.
+> ⚠️ **Production: set `SecretProvider:VaultUri`.** The default secret provider is **plaintext**. When `SecretProvider:VaultUri` is unset, upstream OIDC client secrets and TOTP / MFA seeds are written to Azure Table Storage in cleartext, and therefore appear in cleartext in any [backup](backup-restore). For any production deployment, configure `SecretProvider:VaultUri` so these secrets are stored in Key Vault.
 
 ## Admin API
 
@@ -307,7 +307,7 @@ When configured, secret values that look like Key Vault references are resolved 
 | `AdminApi:Enabled` | `true` | **Enabled by default.** Set to `false` to disable all admin endpoints (they won't be registered). |
 | `AdminApi:Scope` | `authagonal-admin` | JWT scope required to access admin endpoints. Change this to match your existing scope name (e.g., `projects-identity-admin` for IdentityServer migrations). |
 
-> ⚠️ **The admin API is enabled by default and is highly privileged.** The admin scope grants full management and user impersonation — anyone holding a token with `AdminApi:Scope` can mint tokens for any user, manage clients, and read/write all configuration. Network-restrict the admin endpoints (the `/api/v1/*` admin routes), and tightly control who can be issued the admin scope. As a defence-in-depth measure the scope is *reserved*: it can never be granted to an OAuth client (see [Admin API](admin-api)) and cannot be issued through the impersonation endpoint. Set `AdminApi:Enabled = false` entirely if the admin API is not used.
+> ⚠️ **The admin API is enabled by default and is highly privileged.** The admin scope grants full management and user impersonation, anyone holding a token with `AdminApi:Scope` can mint tokens for any user, manage clients, and read/write all configuration. Network-restrict the admin endpoints (the `/api/v1/*` admin routes), and tightly control who can be issued the admin scope. As a defence-in-depth measure the scope is *reserved*: it can never be granted to an OAuth client (see [Admin API](admin-api)) and cannot be issued through the impersonation endpoint. Set `AdminApi:Enabled = false` entirely if the admin API is not used.
 
 ## Consent
 
@@ -337,7 +337,7 @@ Register a `BackChannelLogoutUri` on a client to receive OIDC Back-Channel Logou
 
 ## Email
 
-The built-in email sender uses [Resend](https://resend.com) and **activates automatically** when `Email:ResendApiKey` is configured — no service registration needed. To use a different provider, register your own `IEmailService` implementation before calling `AddAuthagonal()` (it takes precedence regardless of the `Email:*` keys).
+The built-in email sender uses [Resend](https://resend.com) and **activates automatically** when `Email:ResendApiKey` is configured, no service registration needed. To use a different provider, register your own `IEmailService` implementation before calling `AddAuthagonal()` (it takes precedence regardless of the `Email:*` keys).
 
 | Setting | Description |
 |---|---|
@@ -345,18 +345,18 @@ The built-in email sender uses [Resend](https://resend.com) and **activates auto
 | `Email:SenderEmail` | Sender email address |
 | `Email:SenderName` | Sender display name (defaults to `"Authagonal"`) |
 
-> ⚠️ **Without any email sender, self-registration is broken.** When `Email:ResendApiKey` is unset and no custom `IEmailService` is registered, a no-op service silently discards all mail — verification and password-reset emails never arrive, and because login requires a confirmed email by default, self-registered users can never sign in. `UseAuthagonal` logs a warning at startup in this state. Escape hatch for dev/test: `Auth:AutoConfirmEmailDomains` auto-confirms registrations for the listed domains.
+> ⚠️ **Without any email sender, self-registration is broken.** When `Email:ResendApiKey` is unset and no custom `IEmailService` is registered, a no-op service silently discards all mail, verification and password-reset emails never arrive, and because login requires a confirmed email by default, self-registered users can never sign in. `UseAuthagonal` logs a warning at startup in this state. Escape hatch for dev/test: `Auth:AutoConfirmEmailDomains` auto-confirms registrations for the listed domains.
 
 Emails to `@example.com` addresses are silently skipped (useful for testing).
 
 ## Cluster
 
-The clustering layer provides **leader election** (so leader-gated jobs like signing key rotation run on exactly one node) and a **cross-node event bus**, behind pluggable backends. The default is in-process: a single node is always its own leader — the right setting for single-node and local development, with zero configuration.
+The clustering layer provides **leader election** (so leader-gated jobs like signing key rotation run on exactly one node) and a **cross-node event bus**, behind pluggable backends. The default is in-process: a single node is always its own leader, the right setting for single-node and local development, with zero configuration.
 
 | Setting | Env Variable | Default | Description |
 |---|---|---|---|
 | `Cluster:Enabled` | `Cluster__Enabled` | `true` | Master switch. When `false` the node runs standalone (always leader, in-process event bus). |
-| `Cluster:Secret` | `Cluster__Secret` | *(none)* | Shared secret required on the internal-only `/_internal/backchannel-logout` endpoint. When set, callers must present it in the `X-Cluster-Secret` header (compared in constant time). When **unset**, the endpoint is reachable only from loopback / private (RFC 1918 / link-local / ULA) source IPs — an external request carrying a public IP is rejected. |
+| `Cluster:Secret` | `Cluster__Secret` | *(none)* | Shared secret required on the internal-only `/_internal/backchannel-logout` endpoint. When set, callers must present it in the `X-Cluster-Secret` header (compared in constant time). When **unset**, the endpoint is reachable only from loopback / private (RFC 1918 / link-local / ULA) source IPs, an external request carrying a public IP is rejected. |
 | `Cluster:LeaseTtlSeconds` | `Cluster__LeaseTtlSeconds` | `30` | Leadership lease duration. Renewed at roughly half this interval. |
 | `Cluster:PollIntervalSeconds` | `Cluster__PollIntervalSeconds` | `3` | How often the event-bus backend polls for messages published by other nodes. |
 
@@ -372,7 +372,7 @@ builder.Services.AddAuthagonal(builder.Configuration,
     cluster => cluster.UseAwsDynamo(dynamoDb));
 ```
 
-`UseAzureStorageBus` / `UseAwsDynamoBus` register the event bus only, keeping the in-process lease — for nodes that must receive cluster events but must never contend for leadership.
+`UseAzureStorageBus` / `UseAwsDynamoBus` register the event bus only, keeping the in-process lease, for nodes that must receive cluster events but must never contend for leadership.
 
 See [Scaling](scaling) for how leadership and the event bus behave across instances.
 
@@ -417,7 +417,7 @@ CORS is configured dynamically. Origins from all registered clients' `AllowedCor
 
 ## HashiCorp Vault Transit
 
-Authagonal can sign JWTs using HashiCorp Vault's Transit secrets engine. Private keys never leave Vault — only the signing operation is delegated remotely. Public keys are cached locally for verification.
+Authagonal can sign JWTs using HashiCorp Vault's Transit secrets engine. Private keys never leave Vault, only the signing operation is delegated remotely. Public keys are cached locally for verification.
 
 This is configured programmatically when hosting as a library. See [Extensibility](extensibility) for details.
 

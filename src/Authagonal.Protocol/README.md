@@ -2,7 +2,7 @@
 
 Embeddable OIDC / OAuth 2.0 protocol surface extracted from Authagonal.Server.
 
-Provides `/connect/authorize`, `/connect/token`, `/connect/userinfo`, `/connect/par` (RFC 9126 Pushed Authorization Requests), `/.well-known/openid-configuration`, and JWKS endpoints plus the token minting pipeline — nothing else. No user store, no SAML, no admin UI, no login pages.
+Provides `/connect/authorize`, `/connect/token`, `/connect/userinfo`, `/connect/par` (RFC 9126 Pushed Authorization Requests), `/.well-known/openid-configuration`, and JWKS endpoints plus the token minting pipeline, nothing else. No user store, no SAML, no admin UI, no login pages.
 
 Plug in your own identity via `IOidcSubjectResolver` and storage via `IClientStore` / `IGrantStore` / `IScopeStore` / `ISigningKeyStore`. Use this when you need to expose OIDC from an app that already has its own identity (e.g. share-link grants, service-to-service auth).
 
@@ -42,8 +42,8 @@ app.MapAuthagonalProtocolEndpoints();
 | [Authagonal.Core](https://www.nuget.org/packages/Authagonal.Core) | Core models, interfaces, and abstractions |
 | **Authagonal.Protocol** | Embeddable OIDC/OAuth 2.0 protocol surface |
 | [Authagonal.AzureProvider](https://www.nuget.org/packages/Authagonal.AzureProvider) | Azure Table Storage backend |
-| [Authagonal.AwsProvider](https://www.nuget.org/packages/Authagonal.AwsProvider) | AWS backend — DynamoDB / S3 / Secrets Manager |
-| [Authagonal.Server](https://www.nuget.org/packages/Authagonal.Server) | Full auth server — endpoints, middleware, services, login UI |
+| [Authagonal.AwsProvider](https://www.nuget.org/packages/Authagonal.AwsProvider) | AWS backend, DynamoDB / S3 / Secrets Manager |
+| [Authagonal.Server](https://www.nuget.org/packages/Authagonal.Server) | Full auth server, endpoints, middleware, services, login UI |
 
 ## Links
 

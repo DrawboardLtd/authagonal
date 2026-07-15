@@ -29,7 +29,7 @@ Your `.csproj` should contain:
 </ItemGroup>
 ```
 
-`Authagonal.AzureProvider` supplies the Azure Table Storage stores that `AddAuthagonal` wires up from the `Storage:*` configuration. To host on AWS instead, reference `Authagonal.AwsProvider` and call `AddAuthagonalAwsStorage(...)` before `AddAuthagonal` — see [Installation → AWS backend](installation#aws-backend).
+`Authagonal.AzureProvider` supplies the Azure Table Storage stores that `AddAuthagonal` wires up from the `Storage:*` configuration. To host on AWS instead, reference `Authagonal.AwsProvider` and call `AddAuthagonalAwsStorage(...)` before `AddAuthagonal`, see [Installation → AWS backend](installation#aws-backend).
 
 ### Configure Program.cs
 
@@ -90,7 +90,7 @@ app.Run();
 
 ### Extensibility points
 
-Register your implementations **before** calling `AddAuthagonal()` — Authagonal uses `TryAdd`, so your registrations win.
+Register your implementations **before** calling `AddAuthagonal()`, Authagonal uses `TryAdd`, so your registrations win.
 
 | Interface | Purpose | Default |
 |---|---|---|
@@ -153,7 +153,7 @@ public class AuditAuthHook(ILogger<AuditAuthHook> logger) : IAuthHook
 }
 ```
 
-The interface has further optional members with no-op default implementations (`OnMfaVerifyFailedAsync`, `OnEmailConfirmedAsync`, `OnMfaEnrolledAsync`, `OnMfaCredentialRemovedAsync`, `OnRecoveryCodesRegeneratedAsync`, `OnPasswordChangedAsync`) — override them only if you need those events.
+The interface has further optional members with no-op default implementations (`OnMfaVerifyFailedAsync`, `OnEmailConfirmedAsync`, `OnMfaEnrolledAsync`, `OnMfaCredentialRemovedAsync`, `OnRecoveryCodesRegeneratedAsync`, `OnPasswordChangedAsync`), override them only if you need those events.
 
 #### Example: email service
 
@@ -178,7 +178,7 @@ public class ConsoleEmailService(ILogger<ConsoleEmailService> logger) : IEmailSe
 }
 ```
 
-> **Email is the most common integration trap.** If you register no `IEmailService` and don't set `Email:ResendApiKey`, verification and password-reset mails are silently discarded — and because the confirmed-email login gate defaults to on, self-registered users can never log in (`UseAuthagonal` warns at startup). The built-in Resend sender activates automatically when `Email:ResendApiKey` + `Email:SenderEmail` are configured; for dev/test, `Auth:AutoConfirmEmailDomains` skips verification for listed domains. See [Configuration → Email](configuration#email).
+> **Email is the most common integration trap.** If you register no `IEmailService` and don't set `Email:ResendApiKey`, verification and password-reset mails are silently discarded, and because the confirmed-email login gate defaults to on, self-registered users can never log in (`UseAuthagonal` warns at startup). The built-in Resend sender activates automatically when `Email:ResendApiKey` + `Email:SenderEmail` are configured; for dev/test, `Auth:AutoConfirmEmailDomains` skips verification for listed domains. See [Configuration → Email](configuration#email).
 
 ### Add custom endpoints
 
@@ -415,7 +415,7 @@ Configure the login UI appearance without rebuilding:
 }
 ```
 
-The full schema — including localized welcome text, the language picker list, and per-mode dark/light colour and logo-background overrides — is on the [Branding](branding) page.
+The full schema, including localized welcome text, the language picker list, and per-mode dark/light colour and logo-background overrides, is on the [Branding](branding) page.
 
 ### Vite config
 

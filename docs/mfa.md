@@ -121,13 +121,13 @@ Users enroll MFA through the self-service setup endpoints. These require either 
 
 ### TOTP Setup
 
-1. Call `POST /api/auth/mfa/totp/setup` — returns a QR code (`data:image/png;base64,...`), a `manualKey` (Base32 for manual entry), and setup token
+1. Call `POST /api/auth/mfa/totp/setup`, returns a QR code (`data:image/png;base64,...`), a `manualKey` (Base32 for manual entry), and setup token
 2. User scans the QR code with their authenticator app
 3. User enters the 6-digit code to confirm: `POST /api/auth/mfa/totp/confirm`
 
 ### WebAuthn / Passkey Setup
 
-1. Call `POST /api/auth/mfa/webauthn/setup` — returns a `setupToken` and `PublicKeyCredentialCreationOptions`
+1. Call `POST /api/auth/mfa/webauthn/setup`, returns a `setupToken` and `PublicKeyCredentialCreationOptions`
 2. Client calls `navigator.credentials.create()` with the options
 3. Send the attestation response to `POST /api/auth/mfa/webauthn/confirm`
 
@@ -159,8 +159,8 @@ A passkey is phishing-resistant strong auth, so the resulting session carries th
 
 ### User Self-Service
 
-- `GET /api/auth/mfa/status` — view enrolled methods (also reports whether MFA is offered by any client)
-- `DELETE /api/auth/mfa/credentials/{id}` — remove a specific credential
+- `GET /api/auth/mfa/status`, view enrolled methods (also reports whether MFA is offered by any client)
+- `DELETE /api/auth/mfa/credentials/{id}`, remove a specific credential
 
 Removing a credential requires a real authenticated session; a setup token only authorizes adding a first factor and gets `session_required` here, so a leaked setup token can't downgrade a user's MFA.
 
@@ -170,9 +170,9 @@ If the last primary method is removed, MFA is disabled for the user.
 
 Administrators can manage MFA for any user via the [Admin API](admin-api):
 
-- `GET /api/v1/profile/{userId}/mfa` — view a user's MFA status
-- `DELETE /api/v1/profile/{userId}/mfa` — reset all MFA (for locked-out users)
-- `DELETE /api/v1/profile/{userId}/mfa/{id}` — remove a specific credential
+- `GET /api/v1/profile/{userId}/mfa`, view a user's MFA status
+- `DELETE /api/v1/profile/{userId}/mfa`, reset all MFA (for locked-out users)
+- `DELETE /api/v1/profile/{userId}/mfa/{id}`, remove a specific credential
 
 ### Audit Hooks
 
@@ -193,9 +193,9 @@ The full MFA lifecycle is hookable: `OnMfaVerifyFailedAsync` (a failed verify at
 
 If you're building a custom login UI, handle these responses from `POST /api/auth/login`:
 
-1. **Normal login** — `{ userId, email, name }` with cookie set. Redirect to `returnUrl`.
-2. **MFA required** — `{ mfaRequired: true, challengeId, methods, webAuthn? }`. Show MFA challenge form.
-3. **MFA setup required** — `{ mfaSetupRequired: true, setupToken }`. Show MFA enrollment flow.
+1. **Normal login**: `{ userId, email, name }` with cookie set. Redirect to `returnUrl`.
+2. **MFA required**: `{ mfaRequired: true, challengeId, methods, webAuthn? }`. Show MFA challenge form.
+3. **MFA setup required**: `{ mfaSetupRequired: true, setupToken }`. Show MFA enrollment flow.
 
 When handling `POST /api/auth/mfa/verify` errors: `invalid_code` and `assertion_failed` are retryable against the same `challengeId` (up to the attempt budget); `too_many_attempts` and `invalid_challenge` are terminal, so send the user back to the sign-in form.
 

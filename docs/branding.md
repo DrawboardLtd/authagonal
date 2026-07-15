@@ -5,7 +5,7 @@ title: Branding
 
 # Branding the Login UI
 
-The login SPA is runtime-configurable via a `branding.json` file served from the web root. No rebuild is required — just mount your config and assets.
+The login SPA is runtime-configurable via a `branding.json` file served from the web root. No rebuild is required, just mount your config and assets.
 
 ## How It Works
 
@@ -147,10 +147,10 @@ The login SPA ships with light, dark, and **system** themes. The theme toggle is
 
 ### How It Works
 
-- **Default** — until the visitor picks a theme, the `darkMode` branding option sets the default: `"off"` (light), `"auto"` (system, the default), or `"force"` (dark). Once the visitor uses the toggle, their choice always wins.
-- **Detection** — when the theme is "system", the SPA observes `window.matchMedia('(prefers-color-scheme: dark)')` and re-applies the theme automatically as the OS preference changes.
-- **Application** — the SPA toggles a `.dark` class on `<html>`. Tailwind's dark variant (`&:where(.dark, .dark *)`) activates the dark styles compiled into every component.
-- **Persistence** — explicit "light" / "dark" / "system" choices are stored in `localStorage`.
+- **Default**: until the visitor picks a theme, the `darkMode` branding option sets the default: `"off"` (light), `"auto"` (system, the default), or `"force"` (dark). Once the visitor uses the toggle, their choice always wins.
+- **Detection**: when the theme is "system", the SPA observes `window.matchMedia('(prefers-color-scheme: dark)')` and re-applies the theme automatically as the OS preference changes.
+- **Application**: the SPA toggles a `.dark` class on `<html>`. Tailwind's dark variant (`&:where(.dark, .dark *)`) activates the dark styles compiled into every component.
+- **Persistence**: explicit "light" / "dark" / "system" choices are stored in `localStorage`.
 
 ### CSS Variables
 
@@ -182,7 +182,7 @@ Tenant branding always wins. To force a single theme, set your own values in `cu
 }
 ```
 
-To remove the theme toggle entirely, use the npm package path — import `AuthLayout` and render without the toggle, or fork the SPA.
+To remove the theme toggle entirely, use the npm package path, import `AuthLayout` and render without the toggle, or fork the SPA.
 
 ### Data Attributes
 
@@ -223,10 +223,10 @@ body {
 
 | Level | What You Do | Update Path |
 |---|---|---|
-| **Config only** | Mount `branding.json` + logo | Seamless — update the Docker image, keep your mounts |
-| **Config + CSS** | Add `customCssUrl` with style overrides | Same — CSS classes are stable |
-| **npm package** | `npm install @authagonal/login`, customize `branding.json`, build into `wwwroot/` | Updatable — `npm update` pulls new versions |
-| **Fork the SPA** | Clone `login-app/`, modify source, build your own | You own the UI — server updates are independent |
-| **Write your own** | Build a completely custom frontend against the auth API | Full control — see [Auth API](auth-api) for the contract |
+| **Config only** | Mount `branding.json` + logo | Seamless, update the Docker image, keep your mounts |
+| **Config + CSS** | Add `customCssUrl` with style overrides | Same, CSS classes are stable |
+| **npm package** | `npm install @authagonal/login`, customize `branding.json`, build into `wwwroot/` | Updatable, `npm update` pulls new versions |
+| **Fork the SPA** | Clone `login-app/`, modify source, build your own | You own the UI, server updates are independent |
+| **Write your own** | Build a completely custom frontend against the auth API | Full control, see [Auth API](auth-api) for the contract |
 
 See `demos/custom-server/` for a working example with custom branding (green theme, "Acme Corp").

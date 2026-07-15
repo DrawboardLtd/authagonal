@@ -11,7 +11,7 @@ All endpoints are under `/api/v1/`.
 
 ## Bootstrapping the first admin token
 
-Every `/api/v1/*` endpoint requires a bearer token carrying the admin scope — but the admin API itself (and [dynamic client registration](client-registration)) **refuses to create or update any client holding that scope** (`403 forbidden_scope`), so a runtime-created client can never escalate to admin. The only way to mint an admin token is a **config-seeded client**: entries in the `Clients:` configuration section are upserted at startup by `ClientSeedService`, and config is trusted — the forbidden-scope guard applies only to the runtime APIs.
+Every `/api/v1/*` endpoint requires a bearer token carrying the admin scope, but the admin API itself (and [dynamic client registration](client-registration)) **refuses to create or update any client holding that scope** (`403 forbidden_scope`), so a runtime-created client can never escalate to admin. The only way to mint an admin token is a **config-seeded client**: entries in the `Clients:` configuration section are upserted at startup by `ClientSeedService`, and config is trusted, the forbidden-scope guard applies only to the runtime APIs.
 
 Seed a `client_credentials` client with the admin scope in `appsettings.json` (or the equivalent environment variables / secret store):
 
@@ -46,7 +46,7 @@ curl -X POST https://auth.example.com/connect/token \
 { "access_token": "eyJhbGci...", "token_type": "Bearer", "expires_in": 1800, "scope": "authagonal-admin" }
 ```
 
-The `client_credentials` grant validates the requested scope against the client's `AllowedScopes` — since the seeded client holds `authagonal-admin`, the token is issued. Use it as `Authorization: Bearer {access_token}` on every admin call:
+The `client_credentials` grant validates the requested scope against the client's `AllowedScopes`, since the seeded client holds `authagonal-admin`, the token is issued. Use it as `Authorization: Bearer {access_token}` on every admin call:
 
 ```bash
 curl https://auth.example.com/api/v1/clients -H "Authorization: Bearer eyJhbGci..."
@@ -70,7 +70,7 @@ Returns user details including external login links.
 GET /api/v1/profile/{userId}/exists
 ```
 
-Returns `204` if the user exists, `404` otherwise (a cheap existence probe — no body).
+Returns `204` if the user exists, `404` otherwise (a cheap existence probe, no body).
 
 ### Register User
 
@@ -88,7 +88,7 @@ Content-Type: application/json
 
 Creates a user and sends a verification email. Returns `409 user_exists` if the email is already taken.
 
-Optional admin-only fields: `userId` (caller-supplied id — `409 user_id_in_use` on collision), `emailConfirmed` (create the user already verified, skipping the verification email), `companyName`, `organizationId`, `phone`, `locale`, and `customAttributes` (a string map persisted on the user and forwarded to provisioning targets).
+Optional admin-only fields: `userId` (caller-supplied id, `409 user_id_in_use` on collision), `emailConfirmed` (create the user already verified, skipping the verification email), `companyName`, `organizationId`, `phone`, `locale`, and `customAttributes` (a string map persisted on the user and forwarded to provisioning targets).
 
 ### Update User
 
@@ -104,7 +104,7 @@ Content-Type: application/json
 }
 ```
 
-`userId` is required; every other field is optional — only provided fields are updated. Changing `organizationId` triggers:
+`userId` is required; every other field is optional, only provided fields are updated. Changing `organizationId` triggers:
 - SecurityStamp rotation (invalidates all cookie sessions within 30 minutes)
 - All refresh tokens revoked
 
@@ -184,7 +184,7 @@ PUT    /api/v1/saml/connections/{connectionId}     # Update (partial — only su
 DELETE /api/v1/saml/connections/{connectionId}     # Delete
 ```
 
-Create requires `connectionName`, `entityId`, and **exactly one of** `metadataLocation` (a metadata URL) or `metadataXml` (pasted IdP metadata, for IdPs without a metadata URL — it is parse-validated and condensed at save). Optional: `nameIdFormat` (omit for the emailAddress default, `"none"` to omit NameIDPolicy — recommended for ADFS, or a NameID format URN), `signAuthnRequests`, `iconUrl`, `allowedDomains`, `disableJitProvisioning`. Every connection gets a server-generated SP keypair; it is never returned by the API. See [SAML](saml) for details.
+Create requires `connectionName`, `entityId`, and **exactly one of** `metadataLocation` (a metadata URL) or `metadataXml` (pasted IdP metadata, for IdPs without a metadata URL, it is parse-validated and condensed at save). Optional: `nameIdFormat` (omit for the emailAddress default, `"none"` to omit NameIDPolicy, recommended for ADFS, or a NameID format URN), `signAuthnRequests`, `iconUrl`, `allowedDomains`, `disableJitProvisioning`. Every connection gets a server-generated SP keypair; it is never returned by the API. See [SAML](saml) for details.
 
 ### OIDC Providers
 
@@ -234,7 +234,7 @@ Content-Type: application/json
 Notes:
 
 - **Secret hashes are never returned.** `clientSecretHashes` is stripped from every response (list, get, create, update). On update, omitting `clientSecretHashes` preserves the stored secret; supplying new hashes rotates it.
-- **The admin scope cannot be granted to a client.** Requesting `AdminApi:Scope` (default `authagonal-admin`) in `allowedScopes` returns `403 forbidden_scope` — no client may hold the admin scope, otherwise a `client_credentials` client could mint admin tokens indefinitely.
+- **The admin scope cannot be granted to a client.** Requesting `AdminApi:Scope` (default `authagonal-admin`) in `allowedScopes` returns `403 forbidden_scope`, no client may hold the admin scope, otherwise a `client_credentials` client could mint admin tokens indefinitely.
 - Adding scopes the caller is not permitted to grant returns `403`.
 
 ## Scopes
@@ -393,7 +393,7 @@ Content-Type: application/json
 }
 ```
 
-`description` and `expiresInDays` are optional (omit `expiresInDays` for a non-expiring token). Returns the raw token once. Store it securely — it cannot be retrieved again.
+`description` and `expiresInDays` are optional (omit `expiresInDays` for a non-expiring token). Returns the raw token once. Store it securely, it cannot be retrieved again.
 
 ### List Tokens
 
@@ -417,7 +417,7 @@ DELETE /api/v1/scim/tokens/{tokenId}?clientId=client-id
 POST /api/v1/token?clientId=client-id&userId=user-id&scopes=openid%20profile
 ```
 
-Issues tokens (access, refresh, and — when `openid` is requested — id token) on behalf of a user without requiring their credentials. Useful for testing and support. Parameters are passed as query strings.
+Issues tokens (access, refresh, and, when `openid` is requested, id token) on behalf of a user without requiring their credentials. Useful for testing and support. Parameters are passed as query strings.
 
 | Query parameter | Required | Description |
 |---|---|---|
@@ -427,7 +427,7 @@ Issues tokens (access, refresh, and — when `openid` is requested — id token)
 
 Restrictions:
 
-- Scopes are constrained to the client's `AllowedScopes` — requesting any scope the client could not itself request returns `400 invalid_scope`.
+- Scopes are constrained to the client's `AllowedScopes`, requesting any scope the client could not itself request returns `400 invalid_scope`.
 - The admin scope (`AdminApi:Scope`, default `authagonal-admin`) **cannot** be issued through this endpoint; requesting it returns `403 forbidden_scope`. This prevents a (possibly time-limited) admin token from minting a long-lived admin access/refresh token.
 
 The response is a standard token response with `access_token`, `refresh_token`, optional `id_token`, `expires_in`, and the granted `scope` (space-separated).
