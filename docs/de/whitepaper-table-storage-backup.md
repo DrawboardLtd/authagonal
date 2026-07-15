@@ -4,33 +4,31 @@ title: Table Storage Backup Whitepaper
 locale: de
 ---
 
-> ⚠️ This page has not yet been translated; the English version is shown below.
+# Sicherung von Azure Table Storage: Ein praktischer Ansatz
 
-# Backing Up Azure Table Storage: A Practical Approach
-
-**How Authagonal implements full and incremental backup for a schemaless NoSQL store**
+**Wie Authagonal vollständige und inkrementelle Sicherungen für einen schemalosen NoSQL-Speicher implementiert**
 
 ---
 
-## The Problem
+## Das Problem
 
-Azure Table Storage is a cost-effective, massively scalable key-value store -- but it offers no native backup facility. There are no snapshots, no point-in-time restore, no export button. If a bad deployment corrupts data, or an operator accidentally deletes a table, recovery depends entirely on whatever you built yourself.
+Azure Table Storage ist ein kostengünstiger, massiv skalierbarer Key-Value-Speicher, bietet jedoch keine native Sicherungsfunktion. Es gibt keine Snapshots, keine Point-in-Time-Wiederherstellung, keinen Export-Button. Wenn ein fehlerhaftes Deployment Daten beschädigt oder ein Operator versehentlich eine Tabelle löscht, hängt die Wiederherstellung vollständig davon ab, was Sie selbst gebaut haben.
 
-For an identity platform like Authagonal -- where the tables hold users, credentials, OAuth grants, signing keys, SSO configurations, and SCIM provisioning state -- the stakes are high. Losing this data doesn't just break an application; it locks people out.
+Für eine Identitätsplattform wie Authagonal, deren Tabellen Benutzer, Anmeldeinformationen, OAuth-Grants, Signaturschlüssel, SSO-Konfigurationen und SCIM-Bereitstellungsstatus enthalten, steht viel auf dem Spiel. Der Verlust dieser Daten legt nicht nur eine Anwendung lahm, sondern sperrt Menschen aus.
 
-This paper describes the backup strategy Authagonal uses: how it exports data, how incremental backups work despite Table Storage's limited query model, how deletes are tracked, and how the pieces compose into a production-ready backup pipeline.
+Dieses Paper beschreibt die Sicherungsstrategie von Authagonal: wie Daten exportiert werden, wie inkrementelle Sicherungen trotz des eingeschränkten Abfragemodells von Table Storage funktionieren, wie Löschungen nachverfolgt werden und wie die einzelnen Teile zu einer produktionsreifen Sicherungs-Pipeline zusammenwirken.
 
-## Design Goals
+## Designziele
 
-1. **Full and incremental backups.** A daily full backup is fine for small deployments, but at scale, hourly incrementals keep the backup window short and storage costs low.
-2. **Faithful round-trip.** Every entity property -- strings, integers, booleans, DateTimeOffsets, GUIDs, binary -- must survive a backup/restore cycle without type coercion or data loss.
-3. **Multi-tenant support.** Authagonal uses table name prefixes to isolate tenants (e.g. `acmecorpUsers`, `acmecorpClients`). Backup and restore must be prefix-aware so a single storage account can host many tenants with independent backup schedules.
-4. **Pluggable storage.** Backups should work to a local filesystem during development and to blob storage (or any other target) in production, without changing the core logic.
-5. **Human-readable output.** When something goes wrong, an operator should be able to open a backup file in a text editor and see what's in it.
+1. **Vollständige und inkrementelle Sicherungen.** Eine tägliche vollständige Sicherung genügt für kleine Deployments, aber in großem Maßstab halten stündliche Inkremente das Sicherungsfenster kurz und die Speicherkosten niedrig.
+2. **Verlustfreier Round-Trip.** Jede Entitätseigenschaft, Strings, Ganzzahlen, Booleans, DateTimeOffsets, GUIDs, Binärdaten, muss einen Sicherungs-/Wiederherstellungszyklus ohne Typumwandlung oder Datenverlust überstehen.
+3. **Mandantenfähigkeit (Multi-Tenant).** Authagonal nutzt Tabellennamen-Präfixe, um Mandanten zu isolieren (z. B. `acmecorpUsers`, `acmecorpClients`). Sicherung und Wiederherstellung müssen präfixbewusst sein, damit ein einzelnes Speicherkonto viele Mandanten mit unabhängigen Sicherungsplänen hosten kann.
+4. **Austauschbarer Speicher.** Sicherungen sollten während der Entwicklung auf ein lokales Dateisystem und in der Produktion auf Blob Storage (oder ein beliebiges anderes Ziel) funktionieren, ohne die Kernlogik zu ändern.
+5. **Menschenlesbare Ausgabe.** Wenn etwas schiefgeht, sollte ein Operator eine Sicherungsdatei in einem Texteditor öffnen und sehen können, was darin enthalten ist.
 
-## Architecture
+## Architektur
 
-The backup system is structured as a .NET library (`Authagonal.Backup`) with thin CLI wrappers for backup and restore operations. The library is separated from the main Authagonal server so it can be used as a standalone tool, in a Docker container, or embedded in a scheduled job.
+Das Sicherungssystem ist als .NET-Bibliothek (`Authagonal.Backup`) mit schlanken CLI-Wrappern für Sicherungs- und Wiederherstellungsvorgänge aufgebaut. Die Bibliothek ist vom Hauptserver von Authagonal getrennt, sodass sie als eigenständiges Tool, in einem Docker-Container oder eingebettet in einen geplanten Job verwendet werden kann.
 
 ```
 Authagonal.Backup (library)
@@ -46,32 +44,32 @@ tools/Authagonal.Backup     -- CLI entry point for backup
 tools/Authagonal.Restore    -- CLI entry point for restore
 ```
 
-### Storage Abstraction
+### Speicherabstraktion
 
-The core services never touch the filesystem directly. They operate against two interfaces:
+Die Kerndienste greifen niemals direkt auf das Dateisystem zu. Sie arbeiten gegen zwei Schnittstellen:
 
-**IBackupTarget** provides four operations: open a writable stream for a backup file, write a manifest, get the last watermark (for incremental scheduling), and set a new watermark.
+**IBackupTarget** stellt vier Operationen bereit: das Öffnen eines beschreibbaren Streams für eine Sicherungsdatei, das Schreiben eines Manifests, das Abrufen des letzten Wasserzeichens (für die inkrementelle Planung) und das Setzen eines neuen Wasserzeichens.
 
-**IBackupSource** provides the read side: read a manifest, open a readable stream, list backup IDs chronologically, list files within a backup, and delete a backup.
+**IBackupSource** stellt die Leseseite bereit: das Lesen eines Manifests, das Öffnen eines lesbaren Streams, das chronologische Auflisten von Sicherungs-IDs, das Auflisten von Dateien innerhalb einer Sicherung und das Löschen einer Sicherung.
 
-The filesystem implementations are straightforward -- timestamped directories with JSONL files inside -- but the abstraction means swapping to Azure Blob Storage or S3 requires implementing just these two interfaces.
+Die Dateisystem-Implementierungen sind unkompliziert, zeitgestempelte Verzeichnisse mit JSONL-Dateien darin, aber die Abstraktion bedeutet, dass der Wechsel zu Azure Blob Storage oder S3 lediglich die Implementierung dieser beiden Schnittstellen erfordert.
 
-## Full Backup
+## Vollständige Sicherung
 
-A full backup iterates over every Authagonal table, queries all entities, and writes them to JSONL files (one JSON object per line, one file per table).
+Eine vollständige Sicherung iteriert über jede Authagonal-Tabelle, fragt alle Entitäten ab und schreibt sie in JSONL-Dateien (ein JSON-Objekt pro Zeile, eine Datei pro Tabelle).
 
-The backup process:
+Der Sicherungsprozess:
 
-1. Generate a backup ID from the current UTC timestamp (e.g. `20260329-120000`).
-2. For each of the 20 default Authagonal tables, query the Azure Table Storage SDK's `QueryAsync<TableEntity>` with a page size of 1,000.
-3. Serialize each entity to a flat JSON dictionary preserving all properties, including system properties (`PartitionKey`, `RowKey`, `Timestamp`, `ETag`).
-4. Write each serialized entity as a single line to `{TableName}.jsonl` (or `{TableName}.jsonl.gz` if compression is enabled).
-5. Record per-table entity counts and durations in a manifest (`_manifest.json`).
-6. Update the `.lastbackup` watermark file with the backup start time.
+1. Erzeugen einer Sicherungs-ID aus dem aktuellen UTC-Zeitstempel (z. B. `20260329-120000`).
+2. Für jede der 20 Standardtabellen von Authagonal wird das SDK von Azure Table Storage mit `QueryAsync<TableEntity>` bei einer Seitengröße von 1.000 abgefragt.
+3. Serialisieren jeder Entität in ein flaches JSON-Dictionary unter Beibehaltung aller Eigenschaften, einschließlich der Systemeigenschaften (`PartitionKey`, `RowKey`, `Timestamp`, `ETag`).
+4. Schreiben jeder serialisierten Entität als einzelne Zeile in `{TableName}.jsonl` (oder `{TableName}.jsonl.gz`, wenn Komprimierung aktiviert ist).
+5. Erfassen der Entitätsanzahl und Dauer pro Tabelle in einem Manifest (`_manifest.json`).
+6. Aktualisieren der Wasserzeichendatei `.lastbackup` mit dem Startzeitpunkt der Sicherung.
 
-Tables that don't exist in the storage account are silently skipped (HTTP 404 is caught and ignored). Transient tables like `SamlReplayCache` and `OidcStateStore` are excluded by default since their contents are ephemeral.
+Tabellen, die im Speicherkonto nicht existieren, werden stillschweigend übersprungen (HTTP 404 wird abgefangen und ignoriert). Transiente Tabellen wie `SamlReplayCache` und `OidcStateStore` werden standardmäßig ausgeschlossen, da ihr Inhalt flüchtig ist.
 
-### Output Format
+### Ausgabeformat
 
 ```
 backups/
@@ -84,154 +82,154 @@ backups/
     _manifest.json
 ```
 
-A single line in `Users.jsonl` looks like:
+Eine einzelne Zeile in `Users.jsonl` sieht so aus:
 
 ```json
 {"PartitionKey":"u_abc123","RowKey":"profile","Timestamp":"2026-03-28T09:14:22+00:00","ETag":"W/\"...\"","Email":"alice@example.com","DisplayName":"Alice","CreatedAt":"2025-11-01T00:00:00+00:00"}
 ```
 
-JSONL was chosen over CSV or a binary format because it preserves the schemaless, heterogeneous nature of Table Storage entities (different entities in the same table can have different properties), is streamable (no need to buffer the entire table in memory), and is directly inspectable with standard tools like `jq` or any text editor.
+JSONL wurde gegenüber CSV oder einem Binärformat bevorzugt, weil es die schemalose, heterogene Natur von Table-Storage-Entitäten bewahrt (unterschiedliche Entitäten in derselben Tabelle können unterschiedliche Eigenschaften haben), streambar ist (die gesamte Tabelle muss nicht im Speicher gepuffert werden) und mit Standardwerkzeugen wie `jq` oder einem beliebigen Texteditor direkt einsehbar ist.
 
-### Compression
+### Komprimierung
 
-When the `--gzip` flag is set, each JSONL file is wrapped in a GZip stream at `CompressionLevel.Optimal` before writing. The file extension changes to `.jsonl.gz`. The restore tool auto-detects GZip by inspecting the magic bytes (`0x1f 0x8b`) at the start of each file, so no flag is needed during restore.
+Wenn das Flag `--gzip` gesetzt ist, wird jede JSONL-Datei vor dem Schreiben in einen GZip-Stream mit `CompressionLevel.Optimal` verpackt. Die Dateiendung ändert sich zu `.jsonl.gz`. Das Wiederherstellungstool erkennt GZip automatisch, indem es die Magic Bytes (`0x1f 0x8b`) am Anfang jeder Datei prüft, sodass bei der Wiederherstellung kein Flag erforderlich ist.
 
-## Incremental Backup
+## Inkrementelle Sicherung
 
-### The Timestamp Trick
+### Der Timestamp-Trick
 
-Azure Table Storage automatically maintains a `Timestamp` property on every entity, updated on every insert or replace. This is a server-managed property -- applications cannot set it. The backup system exploits this by filtering queries to `Timestamp gt datetime'{watermark}'`, where the watermark is the start time of the last successful backup.
+Azure Table Storage pflegt automatisch eine `Timestamp`-Eigenschaft bei jeder Entität, die bei jedem Einfügen oder Ersetzen aktualisiert wird. Dies ist eine serverseitig verwaltete Eigenschaft, Anwendungen können sie nicht selbst setzen. Das Sicherungssystem nutzt dies, indem es Abfragen auf `Timestamp gt datetime'{watermark}'` filtert, wobei das Wasserzeichen der Startzeitpunkt der letzten erfolgreichen Sicherung ist.
 
-This means an incremental backup only downloads entities that were created or modified since the previous run. For a system with 500,000 entities where 200 changed in the last hour, the incremental backup transfers 200 rows instead of 500,000.
+Das bedeutet, eine inkrementelle Sicherung lädt nur Entitäten herunter, die seit dem letzten Lauf erstellt oder geändert wurden. Bei einem System mit 500.000 Entitäten, von denen 200 in der letzten Stunde geändert wurden, überträgt die inkrementelle Sicherung 200 Zeilen statt 500.000.
 
-The watermark is stored in a `.lastbackup` file in the backup root directory. If the file doesn't exist (first run, or after manual cleanup), the backup falls back to a full export. Incremental backup IDs include an `-incr` suffix (e.g. `20260329-180000-incr`) and the manifest records `"mode": "incremental"` with the watermark value that was used for filtering.
+Das Wasserzeichen wird in einer Datei `.lastbackup` im Wurzelverzeichnis der Sicherung gespeichert. Existiert die Datei nicht (erster Lauf oder nach manueller Bereinigung), greift die Sicherung auf einen vollständigen Export zurück. Inkrementelle Sicherungs-IDs enthalten ein Suffix `-incr` (z. B. `20260329-180000-incr`), und das Manifest verzeichnet `"mode": "incremental"` zusammen mit dem für die Filterung verwendeten Wasserzeichenwert.
 
-### Cost of the Timestamp Filter
+### Kosten des Timestamp-Filters
 
-It's worth being honest about a limitation: `Timestamp` is not indexed. Azure Table Storage only indexes `PartitionKey` and `RowKey`. A filter on `Timestamp gt datetime'...'` results in a full table scan -- Azure reads every entity server-side and evaluates the predicate before returning matches. The filtering reduces data transfer (only changed entities cross the wire), but not server-side read cost.
+Es lohnt sich, ehrlich über eine Einschränkung zu sein: `Timestamp` ist nicht indiziert. Azure Table Storage indiziert nur `PartitionKey` und `RowKey`. Ein Filter auf `Timestamp gt datetime'...'` führt zu einem vollständigen Tabellenscan, Azure liest serverseitig jede Entität und wertet das Prädikat aus, bevor Treffer zurückgegeben werden. Die Filterung reduziert die Datenübertragung (nur geänderte Entitäten werden übertragen), nicht aber die serverseitigen Lesekosten.
 
-More importantly, the current approach scans **all 20 tables** individually, even if only one table had changes. That's 20 full table scans per incremental backup, regardless of how few entities actually changed.
+Wichtiger noch: Der aktuelle Ansatz scannt **alle 20 Tabellen** einzeln, selbst wenn nur eine Tabelle Änderungen hatte. Das sind 20 vollständige Tabellenscans pro inkrementeller Sicherung, unabhängig davon, wie wenige Entitäten sich tatsächlich geändert haben.
 
-At Authagonal's typical identity-data volumes (tens of thousands of entities, not millions), this is perfectly acceptable -- scans are fast, reads are cheap ($0.00036 per 10,000 transactions), and the operation is read-only with no impact on live traffic. The section on [scaling beyond timestamp scans](#scaling-beyond-timestamp-scans) discusses how this could evolve.
+Bei den für Authagonal typischen Datenvolumina im Identitätsbereich (Zehntausende Entitäten, nicht Millionen) ist dies vollkommen akzeptabel: Scans sind schnell, Lesevorgänge sind günstig (0,00036 $ pro 10.000 Transaktionen), und der Vorgang ist rein lesend, ohne Auswirkung auf den Live-Traffic. Der Abschnitt zum [Skalieren über Timestamp-Scans hinaus](#scaling-beyond-timestamp-scans) beschreibt, wie sich dies weiterentwickeln könnte.
 
-### The Delete Problem
+### Das Löschproblem
 
-The `Timestamp` filter elegantly captures inserts and updates, but it cannot capture deletes. A deleted entity simply vanishes -- there is no `Timestamp` to filter on, no tombstone left behind by Table Storage itself.
+Der `Timestamp`-Filter erfasst Einfügungen und Aktualisierungen elegant, kann jedoch keine Löschungen erfassen. Eine gelöschte Entität verschwindet einfach, es gibt keinen `Timestamp`, nach dem gefiltert werden könnte, kein Tombstone, das von Table Storage selbst hinterlassen wird.
 
-Authagonal solves this with application-level tombstone tracking.
+Authagonal löst dies mit anwendungsseitiger Tombstone-Nachverfolgung.
 
-## Tombstone Tracking
+## Tombstone-Nachverfolgung
 
-Every data store in Authagonal (users, clients, grants, signing keys, SSO domains, SAML/OIDC providers, MFA credentials, SCIM resources, roles) accepts an optional `ITombstoneWriter` dependency. When a store deletes an entity, it writes a tombstone record to a dedicated `Tombstones` table:
+Jeder Datenspeicher in Authagonal (Benutzer, Clients, Grants, Signaturschlüssel, SSO-Domänen, SAML/OIDC-Provider, MFA-Anmeldeinformationen, SCIM-Ressourcen, Rollen) akzeptiert eine optionale `ITombstoneWriter`-Abhängigkeit. Wenn ein Store eine Entität löscht, schreibt er einen Tombstone-Datensatz in eine dedizierte Tabelle `Tombstones`:
 
-| Column | Value |
+| Spalte | Wert |
 |---|---|
-| `PartitionKey` | Logical table name (e.g. `"Users"`) |
+| `PartitionKey` | Logischer Tabellenname (z. B. `"Users"`) |
 | `RowKey` | `"{originalPartitionKey}\|{originalRowKey}"` |
-| `DeletedAt` | UTC timestamp of the deletion |
+| `DeletedAt` | UTC-Zeitstempel der Löschung |
 
-This is a lightweight, append-mostly side-channel. The tombstone write is a simple upsert, batched up to Azure's 100-entity transaction limit for bulk operations.
+Dies ist ein leichtgewichtiger, überwiegend anfügender Seitenkanal. Das Schreiben des Tombstones ist ein einfacher Upsert, in Batches bis zum 100-Entitäten-Transaktionslimit von Azure für Massenoperationen gebündelt.
 
-During an incremental backup, after exporting modified entities from each table, the backup service queries the `Tombstones` table for records with `Timestamp > watermark`. These are written to a separate `_tombstones.jsonl` file in the backup directory, with a normalized format:
+Während einer inkrementellen Sicherung fragt der Sicherungsdienst nach dem Export der geänderten Entitäten aus jeder Tabelle die Tabelle `Tombstones` nach Datensätzen mit `Timestamp > watermark` ab. Diese werden in eine separate Datei `_tombstones.jsonl` im Sicherungsverzeichnis geschrieben, mit einem normalisierten Format:
 
 ```json
 {"Table":"Users","PartitionKey":"u_abc123","RowKey":"profile","DeletedAt":"2026-03-29T14:30:00+00:00"}
 ```
 
-This means an incremental backup captures a complete picture of what changed: entities added/modified (from the per-table JSONL files) and entities deleted (from the tombstones file).
+Das bedeutet, eine inkrementelle Sicherung erfasst ein vollständiges Bild der Änderungen: hinzugefügte/geänderte Entitäten (aus den JSONL-Dateien pro Tabelle) und gelöschte Entitäten (aus der Tombstone-Datei).
 
-## Merge and Rollup
+## Zusammenführung und Rollup
 
-Over time, a backup directory accumulates one full backup and many incrementals. To restore to the current state, all of them would need to be applied in order. The **MergeService** consolidates them into a single full backup.
+Im Laufe der Zeit sammelt ein Sicherungsverzeichnis eine vollständige Sicherung und viele Inkremente an. Um den aktuellen Zustand wiederherzustellen, müssten alle der Reihe nach angewendet werden. Der **MergeService** konsolidiert sie zu einer einzigen vollständigen Sicherung.
 
-The merge algorithm:
+Der Zusammenführungsalgorithmus:
 
-1. Load the full backup's entity set for one table at a time (to bound memory usage).
-2. Layer each incremental on top in chronological order -- newer values overwrite older ones, keyed by `(PartitionKey, RowKey)`.
-3. Apply tombstones: for every `(Table, PartitionKey, RowKey)` tuple in the tombstone files, remove the entity from the merged set.
-4. Write the resulting entity set as a new full backup.
+1. Laden der Entitätsmenge der vollständigen Sicherung, jeweils eine Tabelle zur Zeit (um den Speicherverbrauch zu begrenzen).
+2. Schichten jedes Inkrements darüber in chronologischer Reihenfolge, neuere Werte überschreiben ältere, mit dem Schlüssel `(PartitionKey, RowKey)`.
+3. Anwenden der Tombstones: für jedes `(Table, PartitionKey, RowKey)`-Tupel in den Tombstone-Dateien wird die Entität aus der zusammengeführten Menge entfernt.
+4. Schreiben der resultierenden Entitätsmenge als neue vollständige Sicherung.
 
-The **RollupService** wraps this with cleanup: after a successful merge, it deletes the old full backup and all the incrementals that were folded in. This keeps storage usage from growing without bound.
+Der **RollupService** umschließt dies mit einer Bereinigung: Nach einer erfolgreichen Zusammenführung löscht er die alte vollständige Sicherung sowie alle Inkremente, die eingearbeitet wurden. Dies verhindert, dass der Speicherverbrauch unbegrenzt wächst.
 
-A typical production schedule might look like:
+Ein typischer Produktionsplan könnte so aussehen:
 
-- **Hourly:** Incremental backup
-- **Daily (2 AM):** Full backup
-- **Weekly:** Rollup (merge the previous week's daily + hourly incrementals, delete originals)
+- **Stündlich:** Inkrementelle Sicherung
+- **Täglich (2 Uhr):** Vollständige Sicherung
+- **Wöchentlich:** Rollup (Zusammenführen der täglichen + stündlichen Inkremente der vorherigen Woche, Löschen der Originale)
 
-## Restore
+## Wiederherstellung
 
-The restore tool reads a backup directory and writes entities back into Azure Table Storage. It supports three modes:
+Das Wiederherstellungstool liest ein Sicherungsverzeichnis und schreibt Entitäten zurück in Azure Table Storage. Es unterstützt drei Modi:
 
-**Upsert** (default): Each entity is inserted or replaced. Existing entities with the same key are overwritten. This is the safest mode for disaster recovery.
+**Upsert** (Standard): Jede Entität wird eingefügt oder ersetzt. Vorhandene Entitäten mit demselben Schlüssel werden überschrieben. Dies ist der sicherste Modus für die Notfallwiederherstellung (Disaster Recovery).
 
-**Merge**: Each entity is inserted or merged. Properties present in the backup overwrite the corresponding properties in the existing entity, but properties that exist in the live table but not in the backup are preserved. Useful for partial restores.
+**Merge**: Jede Entität wird eingefügt oder zusammengeführt. Im Backup vorhandene Eigenschaften überschreiben die entsprechenden Eigenschaften der vorhandenen Entität, aber Eigenschaften, die in der Live-Tabelle, aber nicht im Backup existieren, bleiben erhalten. Nützlich für partielle Wiederherstellungen.
 
-**Clean**: All existing entities in each target table are deleted before restoring. This produces an exact replica of the backup state, at the cost of a (potentially slow) full table scan to delete existing data.
+**Clean**: Alle vorhandenen Entitäten in jeder Zieltabelle werden vor der Wiederherstellung gelöscht. Dies erzeugt eine exakte Kopie des Sicherungszustands, auf Kosten eines (möglicherweise langsamen) vollständigen Tabellenscans zum Löschen der vorhandenen Daten.
 
-### Type Fidelity
+### Typtreue
 
-A key challenge in round-tripping Table Storage data through JSON is preserving property types. Table Storage natively supports strings, integers (Int32/Int64), doubles, booleans, DateTimeOffset, Guid, and binary. JSON has no native representation for most of these.
+Eine zentrale Herausforderung beim Round-Trip von Table-Storage-Daten durch JSON besteht darin, die Eigenschaftstypen zu bewahren. Table Storage unterstützt nativ Strings, Ganzzahlen (Int32/Int64), Fließkommazahlen, Booleans, DateTimeOffset, Guid und Binärdaten. JSON hat für die meisten davon keine native Repräsentation.
 
-The restore service uses heuristics to recover types from their JSON string representation:
+Der Wiederherstellungsdienst verwendet Heuristiken, um Typen aus ihrer JSON-String-Darstellung wiederherzustellen:
 
-- **DateTimeOffset**: Strings that are 19-35 characters long, start with a digit, and parse as ISO 8601 are restored as `DateTimeOffset`.
-- **Guid**: Strings that are exactly 36 characters and parse as a GUID are restored as `Guid`.
-- **Numbers**: JSON numbers are tried as `Int32`, then `Int64`, then `double`, in that order.
-- **Booleans and nulls**: Map directly.
+- **DateTimeOffset**: Strings, die 19-35 Zeichen lang sind, mit einer Ziffer beginnen und sich als ISO 8601 parsen lassen, werden als `DateTimeOffset` wiederhergestellt.
+- **Guid**: Strings, die genau 36 Zeichen lang sind und sich als GUID parsen lassen, werden als `Guid` wiederhergestellt.
+- **Zahlen**: JSON-Zahlen werden der Reihe nach als `Int32`, dann `Int64`, dann `double` versucht.
+- **Booleans und Nullwerte**: Werden direkt abgebildet.
 
-This heuristic approach covers Authagonal's actual data patterns without requiring a schema registry or type annotations in the backup format.
+Dieser heuristische Ansatz deckt die tatsächlichen Datenmuster von Authagonal ab, ohne eine Schemaregistrierung oder Typannotationen im Sicherungsformat zu erfordern.
 
-### Error Handling
+### Fehlerbehandlung
 
-Restore operations are fault-tolerant at the entity level. If an individual entity fails to write (e.g. due to a transient Azure error), the error count is incremented but the restore continues. The final result reports per-table success and error counts, and the process exits with code `2` for partial success -- distinct from `0` (full success) and `1` (fatal error).
+Wiederherstellungsvorgänge sind auf Entitätsebene fehlertolerant. Wenn das Schreiben einer einzelnen Entität fehlschlägt (z. B. aufgrund eines transienten Azure-Fehlers), wird der Fehlerzähler erhöht, aber die Wiederherstellung wird fortgesetzt. Das Endergebnis meldet Erfolgs- und Fehlerzahlen pro Tabelle, und der Prozess wird mit dem Code `2` für teilweisen Erfolg beendet, im Unterschied zu `0` (vollständiger Erfolg) und `1` (fataler Fehler).
 
-## Multi-Tenancy
+## Mandantenfähigkeit
 
-Authagonal supports multi-tenant deployments where each tenant's tables are prefixed (e.g. `acmecorpUsers`, `contosoclients`). Both backup and restore accept a `--prefix` flag that is prepended to logical table names when communicating with Azure Table Storage.
+Authagonal unterstützt mandantenfähige Deployments, bei denen die Tabellen jedes Mandanten mit einem Präfix versehen sind (z. B. `acmecorpUsers`, `contosoclients`). Sowohl Sicherung als auch Wiederherstellung akzeptieren ein Flag `--prefix`, das logischen Tabellennamen vorangestellt wird, wenn mit Azure Table Storage kommuniziert wird.
 
-This means:
-- Backup with `--prefix acmecorp` reads from `acmecorpUsers`, `acmecorpClients`, etc., but writes files named `Users.jsonl`, `Clients.jsonl` (logical names).
-- Restore with `--prefix contoso` reads `Users.jsonl` and writes to `contosoUsers`.
+Das bedeutet:
+- Eine Sicherung mit `--prefix acmecorp` liest aus `acmecorpUsers`, `acmecorpClients` usw., schreibt aber Dateien mit den Namen `Users.jsonl`, `Clients.jsonl` (logische Namen).
+- Eine Wiederherstellung mit `--prefix contoso` liest `Users.jsonl` und schreibt nach `contosoUsers`.
 
-This makes it straightforward to clone a tenant's data, migrate between environments, or restore one tenant without affecting others.
+Dies macht es unkompliziert, die Daten eines Mandanten zu klonen, zwischen Umgebungen zu migrieren oder einen Mandanten wiederherzustellen, ohne andere zu beeinträchtigen.
 
 ## Manifest
 
-Every backup includes a `_manifest.json` file recording:
+Jede Sicherung enthält eine Datei `_manifest.json`, die Folgendes verzeichnet:
 
-- **BackupId**: Timestamped identifier (e.g. `20260329-120000` or `20260329-180000-incr`)
-- **Mode**: `"full"` or `"incremental"`
-- **BackupTimestamp**: When the backup started (UTC)
-- **Watermark**: For incrementals, the cutoff timestamp used for filtering
-- **Compressed**: Whether files are GZip-compressed
-- **Tables**: A dictionary of table names to entity counts and durations
-- **TombstoneCount**: Number of tombstone records (incremental only)
-- **TotalEntities**: Aggregate entity count across all tables
-- **DurationSeconds**: Wall-clock time for the backup run
-- **FileHashes**: SHA-256 hashes of each backup file for integrity verification
+- **BackupId**: Zeitgestempelte Kennung (z. B. `20260329-120000` oder `20260329-180000-incr`)
+- **Mode**: `"full"` oder `"incremental"`
+- **BackupTimestamp**: Wann die Sicherung begonnen hat (UTC)
+- **Watermark**: Bei Inkrementen der für die Filterung verwendete Grenzzeitstempel
+- **Compressed**: Ob die Dateien GZip-komprimiert sind
+- **Tables**: Ein Dictionary von Tabellennamen zu Entitätsanzahlen und Dauern
+- **TombstoneCount**: Anzahl der Tombstone-Datensätze (nur bei Inkrementen)
+- **TotalEntities**: Aggregierte Entitätsanzahl über alle Tabellen
+- **DurationSeconds**: Wall-Clock-Zeit für den Sicherungslauf
+- **FileHashes**: SHA-256-Hashes jeder Sicherungsdatei zur Integritätsprüfung
 
-The manifest serves both as an operational dashboard (how big was the backup? how long did it take? which tables are largest?) and as a safety net (hash verification during restore detects corrupted or tampered files).
+Das Manifest dient sowohl als operatives Dashboard (wie groß war die Sicherung? wie lange hat sie gedauert? welche Tabellen sind am größten?) als auch als Sicherheitsnetz (die Hash-Überprüfung bei der Wiederherstellung erkennt beschädigte oder manipulierte Dateien).
 
-## Operational Characteristics
+## Operative Merkmale
 
-**Backup speed** is bounded by Azure Table Storage query throughput, which is typically 5,000-10,000 entities per second per table. A full backup of 100,000 entities across 20 tables completes in under a minute. Incremental backups of a few hundred changed entities finish in seconds.
+**Sicherungsgeschwindigkeit** wird durch den Abfragedurchsatz von Azure Table Storage begrenzt, der typischerweise bei 5.000-10.000 Entitäten pro Sekunde und Tabelle liegt. Eine vollständige Sicherung von 100.000 Entitäten über 20 Tabellen wird in unter einer Minute abgeschlossen. Inkrementelle Sicherungen von einigen hundert geänderten Entitäten sind in Sekunden erledigt.
 
-**Memory usage** is minimal. The backup service streams entities directly to disk -- it never loads an entire table into memory. The merge service processes one table at a time, loading only that table's entity set. For very large tables (millions of entities), the merge memory footprint is proportional to the largest single table.
+**Speicherverbrauch** ist minimal. Der Sicherungsdienst streamt Entitäten direkt auf die Festplatte, er lädt niemals eine ganze Tabelle in den Speicher. Der Merge-Dienst verarbeitet jeweils eine Tabelle zur Zeit und lädt nur die Entitätsmenge dieser Tabelle. Bei sehr großen Tabellen (Millionen von Entitäten) ist der Speicherbedarf der Zusammenführung proportional zur größten einzelnen Tabelle.
 
-**Retry policy** is configured with exponential backoff: 5 retries, starting at 500ms, capped at 30 seconds. This covers the transient throttling that Table Storage applies under heavy load.
+**Wiederholungsrichtlinie**: konfiguriert mit exponentiellem Backoff: 5 Wiederholungen, beginnend bei 500 ms, gedeckelt bei 30 Sekunden. Dies deckt die transiente Drosselung ab, die Table Storage unter hoher Last anwendet.
 
-**Dry run** mode (`--dry-run`) enumerates entities without writing any files, useful for validating connectivity and estimating backup size before committing to a full run.
+**Testlauf**-Modus (`--dry-run`) zählt Entitäten auf, ohne Dateien zu schreiben, nützlich zur Überprüfung der Konnektivität und zur Schätzung der Sicherungsgröße, bevor man sich auf einen vollständigen Lauf festlegt.
 
-## Scaling Beyond Timestamp Scans
+## Skalierung über Timestamp-Scans hinaus
 
-The `Timestamp`-based approach is pragmatic at moderate scale, but its cost is proportional to total data size, not to the number of changes. As tables grow, 20 full table scans per incremental backup become increasingly wasteful. The natural evolution is a **unified change log table**.
+Der auf `Timestamp` basierende Ansatz ist bei moderatem Umfang pragmatisch, aber seine Kosten sind proportional zur gesamten Datenmenge, nicht zur Anzahl der Änderungen. Mit wachsenden Tabellen werden 20 vollständige Tabellenscans pro inkrementeller Sicherung zunehmend verschwenderisch. Die natürliche Weiterentwicklung ist eine **einheitliche Änderungsprotokolltabelle** (Change-Log-Tabelle).
 
-The insight is that the tombstone mechanism already proves this pattern out for deletes. The `Tombstones` table is a single, compact, cross-table index: every delete across all 20 data tables is recorded in one place, queryable by timestamp. Extending this to cover all mutations -- inserts, updates, and deletes -- would eliminate the need to scan the data tables entirely.
+Die Erkenntnis ist, dass der Tombstone-Mechanismus dieses Muster für Löschungen bereits beweist. Die Tabelle `Tombstones` ist ein einziger, kompakter, tabellenübergreifender Index: Jede Löschung über alle 20 Datentabellen hinweg wird an einer Stelle erfasst, abfragbar nach Zeitstempel. Dies auf alle Mutationen auszuweiten, Einfügungen, Aktualisierungen und Löschungen, würde die Notwendigkeit, die Datentabellen zu scannen, vollständig beseitigen.
 
-### Change Log Design
+### Change-Log-Design
 
-A change log table with time-bucketed partition keys would look like:
+Eine Änderungsprotokolltabelle mit zeitlich gebündelten Partitionsschlüsseln (time-bucketed) würde so aussehen:
 
 | PartitionKey | RowKey | Properties |
 |---|---|---|
@@ -239,31 +237,31 @@ A change log table with time-bucketed partition keys would look like:
 | `2026-03-29T18` | `Clients\|c_456\|config` | `Op = "upsert"` |
 | `2026-03-29T18` | `Users\|u_xyz789\|profile` | `Op = "delete"` |
 
-The partition key is an hour bucket, so finding all changes since the last backup becomes a set of **partition key point queries** -- the fastest operation Table Storage supports. The backup service would:
+Der Partitionsschlüssel ist ein Stunden-Bucket, sodass das Auffinden aller Änderungen seit der letzten Sicherung zu einer Reihe von **Partitionsschlüssel-Punktabfragen** wird, der schnellsten Operation, die Table Storage unterstützt. Der Sicherungsdienst würde:
 
-1. Query the change log for all hour-bucket partitions since the watermark. This is an indexed operation, not a scan.
-2. For each `upsert` entry, fetch the current entity from the data table by its exact `PartitionKey`/`RowKey` -- also an indexed point read.
-3. For each `delete` entry, record the tombstone directly from the change log. No need for a separate tombstones table.
+1. Das Änderungsprotokoll für alle Stunden-Bucket-Partitionen seit dem Wasserzeichen abfragen. Dies ist eine indizierte Operation, kein Scan.
+2. Für jeden `upsert`-Eintrag die aktuelle Entität aus der Datentabelle anhand ihres exakten `PartitionKey`/`RowKey` abrufen, ebenfalls ein indizierter Punktzugriff.
+3. Für jeden `delete`-Eintrag das Tombstone direkt aus dem Änderungsprotokoll erfassen. Keine separate Tombstones-Tabelle nötig.
 
-This makes backup cost proportional to the number of changes, not the total data size. One query against a compact index table replaces 20 full table scans. It also unifies the tombstone mechanism -- the change log captures creates, updates, and deletes uniformly, so the separate `Tombstones` table becomes redundant.
+Dies macht die Sicherungskosten proportional zur Anzahl der Änderungen, nicht zur gesamten Datenmenge. Eine Abfrage gegen eine kompakte Indextabelle ersetzt 20 vollständige Tabellenscans. Es vereinheitlicht zudem den Tombstone-Mechanismus, das Änderungsprotokoll erfasst Erstellungen, Aktualisierungen und Löschungen einheitlich, sodass die separate Tabelle `Tombstones` überflüssig wird.
 
-### Why Not Yet
+### Warum noch nicht
 
-The tradeoff is write-path overhead. Every mutation in every store would need an additional write to the change log table. The plumbing is mostly there -- the `ITombstoneWriter` is already injected into every store and called on every delete. Widening it to an `IChangeTracker` that fires on upserts too is a straightforward refactor.
+Der Kompromiss liegt im Overhead auf dem Schreibpfad. Jede Mutation in jedem Store bräuchte ein zusätzliches Schreiben in die Änderungsprotokolltabelle. Die Verdrahtung ist größtenteils schon vorhanden, der `ITombstoneWriter` ist bereits in jeden Store injiziert und wird bei jeder Löschung aufgerufen. Ihn zu einem `IChangeTracker` zu erweitern, der auch bei Upserts auslöst, wäre ein unkompliziertes Refactoring.
 
-But "straightforward" isn't "free." It adds latency to every user-facing operation (one extra Table Storage write), increases storage transactions, and introduces a new consistency concern (what if the data write succeeds but the change log write fails?). At current volumes, the 20 timestamp-filtered scans complete in seconds and cost fractions of a cent. The change log would be the right move if tables grew to millions of entities, but for now, the simpler approach wins.
+Aber "unkompliziert" heißt nicht "kostenlos". Es fügt jeder benutzerseitigen Operation Latenz hinzu (ein zusätzliches Schreiben in Table Storage), erhöht die Speichertransaktionen und führt ein neues Konsistenzproblem ein (was, wenn das Schreiben der Daten gelingt, aber das Schreiben des Änderungsprotokolls fehlschlägt?). Bei den aktuellen Volumina sind die 20 zeitstempelgefilterten Scans in Sekunden abgeschlossen und kosten Bruchteile eines Cents. Das Änderungsprotokoll wäre der richtige Schritt, wenn die Tabellen auf Millionen von Entitäten anwachsen würden, aber vorerst gewinnt der einfachere Ansatz.
 
-## Summary
+## Zusammenfassung
 
-The approach is deliberately simple. Rather than building a complex change-data-capture pipeline or relying on Azure-specific features that may not exist for Table Storage, Authagonal uses the one piece of metadata that Azure *does* guarantee -- the server-managed `Timestamp` -- combined with application-level tombstone tracking for deletes.
+Der Ansatz ist bewusst einfach gehalten. Anstatt eine komplexe Change-Data-Capture-Pipeline aufzubauen oder sich auf Azure-spezifische Funktionen zu verlassen, die für Table Storage möglicherweise nicht existieren, nutzt Authagonal das eine Metadatum, das Azure *tatsächlich* garantiert, den serverseitig verwalteten `Timestamp`, kombiniert mit anwendungsseitiger Tombstone-Nachverfolgung für Löschungen.
 
-The result is a backup system that:
+Das Ergebnis ist ein Sicherungssystem, das:
 
-- Produces human-readable, portable JSONL files
-- Supports full and incremental modes with automatic watermark management
-- Correctly captures creates, updates, *and* deletes
-- Handles multi-tenant table prefixing transparently
-- Composes cleanly (merge, rollup, selective restore)
-- Runs as a standalone tool with no dependency on the Authagonal server
+- Menschenlesbare, portable JSONL-Dateien erzeugt
+- Vollständige und inkrementelle Modi mit automatischer Wasserzeichenverwaltung unterstützt
+- Erstellungen, Aktualisierungen *und* Löschungen korrekt erfasst
+- Mandantenübergreifende Tabellenpräfixe transparent handhabt
+- Sich sauber zusammensetzen lässt (Merge, Rollup, selektive Wiederherstellung)
+- Als eigenständiges Tool ohne Abhängigkeit vom Authagonal-Server läuft
 
-The storage abstraction means the same logic can target local disk, Azure Blob Storage, S3, or any other destination. The format is simple enough that even without the restore tool, an operator could reconstruct data with `jq` and the Azure CLI.
+Die Speicherabstraktion bedeutet, dass dieselbe Logik lokale Festplatten, Azure Blob Storage, S3 oder ein beliebiges anderes Ziel ansprechen kann. Das Format ist einfach genug, dass ein Operator auch ohne das Wiederherstellungstool Daten mit `jq` und der Azure CLI rekonstruieren könnte.

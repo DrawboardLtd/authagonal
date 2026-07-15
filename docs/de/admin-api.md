@@ -6,9 +6,54 @@ locale: de
 
 # Admin-API
 
-Admin-Endpunkte erfordern ein JWT-Zugriffstoken mit dem Bereich `authagonal-admin` (konfigurierbar über `AdminApi:Scope`).
+Admin-Endpunkte erfordern ein JWT-Zugriffstoken mit dem Scope `authagonal-admin` (konfigurierbar über `AdminApi:Scope`).
 
 Alle Endpunkte befinden sich unter `/api/v1/`.
+
+## Bootstrapping des ersten Admin-Tokens
+
+Jeder `/api/v1/*`-Endpunkt erfordert ein Bearer-Token mit dem Admin-Scope. Die Admin-API selbst (und die [dynamische Client-Registrierung](client-registration)) **verweigert jedoch das Erstellen oder Aktualisieren jedes Clients mit diesem Scope** (`403 forbidden_scope`), sodass ein zur Laufzeit erstellter Client niemals zum Admin eskalieren kann. Der einzige Weg, ein Admin-Token auszustellen, ist ein **konfigurationsseitig vordefinierter Client**: Einträge im Konfigurationsabschnitt `Clients:` werden beim Start vom `ClientSeedService` angelegt oder aktualisiert (Upsert). Der Konfiguration wird vertraut, der Schutz vor dem verbotenen Scope gilt nur für die Laufzeit-APIs.
+
+Legen Sie in `appsettings.json` (oder den entsprechenden Umgebungsvariablen bzw. dem Secret-Store) einen `client_credentials`-Client mit dem Admin-Scope an:
+
+```json
+{
+  "Clients": [
+    {
+      "Id": "admin-cli",
+      "Name": "Admin CLI",
+      "ClientSecret": "a-long-random-secret",
+      "GrantTypes": ["client_credentials"],
+      "Scopes": ["authagonal-admin"]
+    }
+  ]
+}
+```
+
+(`ClientSecret` wird beim Start gehasht; geben Sie stattdessen `SecretHashes` an, wenn Sie in der Konfiguration nur einen vorab gehashten Wert vorhalten möchten. `ClientId`/`ClientName`/`AllowedGrantTypes`/`AllowedScopes` werden als Aliase für `Id`/`Name`/`GrantTypes`/`Scopes` akzeptiert.)
+
+Tauschen Sie die Anmeldedaten anschließend am Standard-Token-Endpunkt gegen ein Token ein:
+
+```bash
+curl -X POST https://auth.example.com/connect/token \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -d "grant_type=client_credentials" \
+  -d "client_id=admin-cli" \
+  -d "client_secret=a-long-random-secret" \
+  -d "scope=authagonal-admin"
+```
+
+```json
+{ "access_token": "eyJhbGci...", "token_type": "Bearer", "expires_in": 1800, "scope": "authagonal-admin" }
+```
+
+Der `client_credentials`-Grant validiert den angeforderten Scope gegen die `AllowedScopes` des Clients: Da der vordefinierte Client `authagonal-admin` besitzt, wird das Token ausgestellt. Verwenden Sie es als `Authorization: Bearer {access_token}` bei jedem Admin-Aufruf:
+
+```bash
+curl https://auth.example.com/api/v1/clients -H "Authorization: Bearer eyJhbGci..."
+```
+
+Bewahren Sie das Secret des vordefinierten Clients in Ihrem Secret-Store auf; das Rotieren ist eine Konfigurationsänderung plus Neustart.
 
 ## Benutzer
 
@@ -18,7 +63,15 @@ Alle Endpunkte befinden sich unter `/api/v1/`.
 GET /api/v1/profile/{userId}
 ```
 
-Gibt Benutzerdetails einschließlich externer Login-Verknuepfungen zurück.
+Gibt Benutzerdetails einschließlich externer Login-Verknüpfungen zurück.
+
+### Benutzer vorhanden
+
+```
+GET /api/v1/profile/{userId}/exists
+```
+
+Gibt `204` zurück, wenn der Benutzer existiert, andernfalls `404` (eine kostengünstige Existenzprüfung, ohne Antworttext).
 
 ### Benutzer registrieren
 
@@ -34,7 +87,9 @@ Content-Type: application/json
 }
 ```
 
-Erstellt einen Benutzer und sendet eine Verifizierungs-E-Mail. Gibt `409` zurück, wenn die E-Mail bereits vergeben ist.
+Erstellt einen Benutzer und sendet eine Verifizierungs-E-Mail. Gibt `409 user_exists` zurück, wenn die E-Mail-Adresse bereits vergeben ist.
+
+Optionale, nur für Admins verfügbare Felder: `userId` (vom Aufrufer angegebene ID, bei Kollision `409 user_id_in_use`), `emailConfirmed` (legt den Benutzer bereits verifiziert an und überspringt die Verifizierungs-E-Mail), `companyName`, `organizationId`, `phone`, `locale` sowie `customAttributes` (eine String-Map, die beim Benutzer gespeichert und an Bereitstellungsziele weitergeleitet wird).
 
 ### Benutzer aktualisieren
 
@@ -50,9 +105,9 @@ Content-Type: application/json
 }
 ```
 
-Alle Felder sind optional -- nur angegebene Felder werden aktualisiert. Die Änderung von `organizationId` loest aus:
+`userId` ist erforderlich, alle anderen Felder sind optional: Es werden nur die angegebenen Felder aktualisiert. Das Ändern von `organizationId` löst Folgendes aus:
 - SecurityStamp-Rotation (macht alle Cookie-Sitzungen innerhalb von 30 Minuten ungültig)
-- Alle Refresh-Token werden widerrufen
+- Alle Refresh Token werden widerrufen
 
 ### Benutzer löschen
 
@@ -60,7 +115,7 @@ Alle Felder sind optional -- nur angegebene Felder werden aktualisiert. Die Änd
 DELETE /api/v1/profile/{userId}
 ```
 
-Löscht den Benutzer, widerruft alle Berechtigungen und deprovisioniert aus allen nachgelagerten Apps (Best-Effort).
+Löscht den Benutzer, widerruft alle Grants und deprovisioniert ihn aus allen nachgelagerten Apps (Best-Effort).
 
 ### E-Mail bestätigen
 
@@ -74,7 +129,7 @@ POST /api/v1/profile/confirm-email?token={token}
 POST /api/v1/profile/{userId}/send-verification-email
 ```
 
-### Externe Identität verknuepfen
+### Externe Identität verknüpfen
 
 ```
 POST /api/v1/profile/{userId}/identities
@@ -117,7 +172,7 @@ Entfernt alle MFA-Anmeldedaten und setzt `MfaEnabled=false`. Der Benutzer muss s
 DELETE /api/v1/profile/{userId}/mfa/{credentialId}
 ```
 
-Entfernt eine bestimmte MFA-Anmeldedaten (z.B. einen verlorenen Authenticator). Wenn die letzte primäre Methode entfernt wird, wird MFA deaktiviert.
+Entfernt bestimmte MFA-Anmeldedaten (z. B. einen verlorenen Authenticator). Wenn die letzte primäre Methode entfernt wird, wird MFA deaktiviert.
 
 ## SSO-Anbieter
 
@@ -125,20 +180,24 @@ Entfernt eine bestimmte MFA-Anmeldedaten (z.B. einen verlorenen Authenticator). 
 
 ```
 POST   /api/v1/saml/connections                    # Erstellen
-GET    /api/v1/saml/connections/{connectionId}     # Einzelnen abrufen
-PUT    /api/v1/saml/connections/{connectionId}     # Aktualisieren
+GET    /api/v1/saml/connections/{connectionId}     # Einzelne abrufen
+PUT    /api/v1/saml/connections/{connectionId}     # Aktualisieren (nur angegebene Felder ändern sich)
 DELETE /api/v1/saml/connections/{connectionId}     # Löschen
 ```
+
+Beim Erstellen sind `connectionName`, `entityId` sowie **genau eines von** `metadataLocation` (eine Metadaten-URL) oder `metadataXml` (eingefügte IdP-Metadaten, für IdPs ohne Metadaten-URL, werden beim Speichern parse-validiert und verdichtet) erforderlich. Optional: `nameIdFormat` (weglassen für den Standard `emailAddress`, `"none"`, um die NameIDPolicy wegzulassen, empfohlen für ADFS, oder eine NameID-Format-URN), `signAuthnRequests`, `iconUrl`, `allowedDomains`, `disableJitProvisioning`. Jede Verbindung erhält ein serverseitig generiertes SP-Schlüsselpaar; dieses wird von der API niemals zurückgegeben. Details siehe [SAML](saml).
 
 ### OIDC-Anbieter
 
 ```
 POST   /api/v1/oidc/connections                    # Erstellen
-GET    /api/v1/oidc/connections/{connectionId}     # Einzelnen abrufen
+GET    /api/v1/oidc/connections/{connectionId}     # Einzelne abrufen
 DELETE /api/v1/oidc/connections/{connectionId}     # Löschen
 ```
 
-### SSO-Domaenen
+Beim Erstellen sind `connectionName`, `metadataLocation`, `clientId`, `clientSecret` und `redirectUrl` erforderlich. Optional: `iconUrl`, `allowedDomains`, `passthroughParams`. Das Client-Secret wird verschlüsselt gespeichert und niemals zurückgegeben. Siehe [OIDC Federation](oidc-federation).
+
+### SSO-Domänen
 
 ```
 GET    /api/v1/sso/domains                 # Alle auflisten
@@ -146,7 +205,7 @@ GET    /api/v1/sso/domains                 # Alle auflisten
 
 ## Clients
 
-Verwalten Sie OAuth-Clients zur Laufzeit. Alle Routen erfordern die `IdentityAdmin`-Richtlinie (den Admin-Scope).
+Verwalten Sie OAuth-Clients zur Laufzeit. Alle Routen erfordern die Richtlinie `IdentityAdmin` (den Admin-Scope).
 
 ```
 GET    /api/v1/clients              # Alle Clients auflisten
@@ -171,12 +230,12 @@ Content-Type: application/json
 }
 ```
 
-`POST` gibt `409` zurück, wenn der Client bereits existiert. `PUT` aktualisiert einen vorhandenen Client (`404`, falls nicht gefunden); beim Aktualisieren werden nur neu hinzugefügte Scopes auf Eskalation geprueft.
+`POST` gibt `409` zurück, wenn der Client bereits existiert. `PUT` aktualisiert einen vorhandenen Client (`404`, falls nicht gefunden); beim Aktualisieren werden nur neu hinzugefügte Scopes auf Eskalation geprüft.
 
 Hinweise:
 
-- **Geheimnis-Hashes werden niemals zurückgegeben.** `clientSecretHashes` wird aus jeder Antwort entfernt (Liste, Abrufen, Erstellen, Aktualisieren). Beim Aktualisieren bewahrt das Weglassen von `clientSecretHashes` das gespeicherte Geheimnis; das Angeben neuer Hashes rotiert es.
-- **Der Admin-Scope kann keinem Client gewährt werden.** Das Anfordern von `AdminApi:Scope` (Standard `authagonal-admin`) in `allowedScopes` gibt `403 forbidden_scope` zurück — kein Client darf den Admin-Scope besitzen, andernfalls könnte ein `client_credentials`-Client unbegrenzt Admin-Token ausstellen.
+- **Secret-Hashes werden niemals zurückgegeben.** `clientSecretHashes` wird aus jeder Antwort entfernt (Liste, Abrufen, Erstellen, Aktualisieren). Beim Aktualisieren bewahrt das Weglassen von `clientSecretHashes` das gespeicherte Secret; das Angeben neuer Hashes rotiert es.
+- **Der Admin-Scope kann keinem Client gewährt werden.** Das Anfordern von `AdminApi:Scope` (Standard `authagonal-admin`) in `allowedScopes` gibt `403 forbidden_scope` zurück: Kein Client darf den Admin-Scope besitzen, da sonst ein `client_credentials`-Client unbegrenzt Admin-Token ausstellen könnte.
 - Das Hinzufügen von Scopes, die der Aufrufer nicht gewähren darf, gibt `403` zurück.
 
 ## Scopes
@@ -203,11 +262,11 @@ Content-Type: application/json
 }
 ```
 
-Gibt `201` beim Erstellen zurück (`409`, wenn der Scope bereits existiert), das Scope-JSON beim Abrufen/Aktualisieren und `204` beim Löschen.
+Gibt beim Erstellen `201` zurück (`409`, wenn der Scope bereits existiert), beim Abrufen/Aktualisieren das Scope-JSON und beim Löschen `204`.
 
 ## Bereitstellungs-Apps
 
-Verwalten Sie nachgelagerte Bereitstellungsziele zur Laufzeit. Alle Routen erfordern die `IdentityAdmin`-Richtlinie.
+Verwalten Sie nachgelagerte Bereitstellungsziele zur Laufzeit. Alle Routen erfordern die Richtlinie `IdentityAdmin`.
 
 ```
 GET    /api/v1/provisioning/apps               # Apps auflisten (gibt auch das konfigurierte Limit zurück)
@@ -233,7 +292,7 @@ Content-Type: application/json
 
 - `name` und `callbackUrl` sind erforderlich; `callbackUrl` muss eine absolute `http(s)`-URL sein.
 - `tryTimeoutSeconds` wird auf den Bereich 5–300 begrenzt.
-- **Der API-Schlüssel wird niemals zurückgegeben.** Antworten geben `hasApiKey` (einen Boolean) statt des Schlüssels selbst aus. Beim Aktualisieren lässt das Weglassen von `apiKey` ihn unverändert, ein leerer String löscht ihn und ein Wert ersetzt ihn.
+- **Der API-Schlüssel wird niemals zurückgegeben.** Antworten enthalten `hasApiKey` (einen Boolean) anstelle des Schlüssels selbst. Beim Aktualisieren lässt das Weglassen von `apiKey` ihn unverändert, ein leerer String löscht ihn, und ein Wert ersetzt ihn.
 - Die Erstellung unterliegt einem konfigurierbaren Kontingent pro Deployment (`IProvisioningAppQuota`); ein Überschreiten gibt `400 provisioning_app_limit` zurück. Die Listenantwort enthält das aktuelle `limit`.
 
 ### Eine Bereitstellungs-App testen
@@ -242,7 +301,7 @@ Content-Type: application/json
 POST /api/v1/provisioning/apps/{appId}/test
 ```
 
-Sendet ein synthetisches `POST {callbackUrl}/try` mit einer Beispiel-Payload (und dem API-Schlüssel der App als Bearer-Token, falls gesetzt) und gibt `{ success, statusCode, body }` zurück, damit Sie die Konnektivitaet aus der Admin-Oberflaeche verifizieren können.
+Sendet ein synthetisches `POST {callbackUrl}/try` mit einer Beispiel-Payload (und dem API-Schlüssel der App als Bearer-Token, falls gesetzt) und gibt `{ success, statusCode, body }` zurück, damit Sie die Konnektivität über die Admin-Oberfläche überprüfen können.
 
 ## Rollen
 
@@ -296,9 +355,11 @@ Content-Type: application/json
 
 {
   "userId": "user-id",
-  "roleId": "role-id"
+  "roleName": "admin"
 }
 ```
+
+Die Zuweisung erfolgt über den **Rollennamen**, nicht über die Rollen-ID. Gibt die aktualisierte Rollenliste des Benutzers zurück.
 
 ### Rolle von einem Benutzer entfernen
 
@@ -308,7 +369,7 @@ Content-Type: application/json
 
 {
   "userId": "user-id",
-  "roleId": "role-id"
+  "roleName": "admin"
 }
 ```
 
@@ -327,11 +388,13 @@ POST /api/v1/scim/tokens
 Content-Type: application/json
 
 {
-  "clientId": "client-id"
+  "clientId": "client-id",
+  "description": "Entra provisioning",
+  "expiresInDays": 365
 }
 ```
 
-Gibt das Roh-Token einmalig zurück. Speichern Sie es sicher -- es kann nicht erneut abgerufen werden.
+`description` und `expiresInDays` sind optional (lassen Sie `expiresInDays` weg, um ein nicht ablaufendes Token zu erhalten). Gibt das Roh-Token einmalig zurück. Bewahren Sie es sicher auf: Es kann nicht erneut abgerufen werden.
 
 ### Token auflisten
 
@@ -355,17 +418,17 @@ DELETE /api/v1/scim/tokens/{tokenId}?clientId=client-id
 POST /api/v1/token?clientId=client-id&userId=user-id&scopes=openid%20profile
 ```
 
-Stellt Token (Access, Refresh und — wenn `openid` angefordert wird — ID-Token) im Namen eines Benutzers aus, ohne dessen Anmeldedaten zu benötigen. Nützlich für Tests und Support. Parameter werden als Query-Strings übergeben.
+Stellt Token aus (Access, Refresh und, sofern `openid` angefordert wird, ID-Token) im Namen eines Benutzers, ohne dessen Anmeldedaten zu benötigen. Nützlich für Tests und Support. Parameter werden als Query-Strings übergeben.
 
 | Query-Parameter | Erforderlich | Beschreibung |
 |---|---|---|
 | `clientId` | Ja | Der Client, für den die Token ausgestellt werden. Die Token-Lebensdauern stammen aus der Konfiguration dieses Clients. |
 | `userId` | Ja | Der zu imitierende Benutzer. |
-| `scopes` | Nein | **Leerzeichengetrennte** Liste von Scopes (Leerzeichen URL-kodieren). Standardmäßig die `AllowedScopes` des Clients, wenn weggelassen. |
+| `scopes` | Nein | **Leerzeichengetrennte** Liste von Scopes (Leerzeichen URL-kodieren). Wenn weggelassen, werden standardmäßig die `AllowedScopes` des Clients verwendet. |
 
-Einschraenkungen:
+Einschränkungen:
 
-- Scopes sind auf die `AllowedScopes` des Clients beschraenkt — das Anfordern eines Scopes, den der Client selbst nicht anfordern könnte, gibt `400 invalid_scope` zurück.
+- Scopes sind auf die `AllowedScopes` des Clients beschränkt: Das Anfordern eines Scopes, den der Client selbst nicht anfordern könnte, gibt `400 invalid_scope` zurück.
 - Der Admin-Scope (`AdminApi:Scope`, Standard `authagonal-admin`) **kann** über diesen Endpunkt **nicht** ausgestellt werden; das Anfordern gibt `403 forbidden_scope` zurück. Dies verhindert, dass ein (möglicherweise zeitlich begrenztes) Admin-Token ein langlebiges Admin-Access-/Refresh-Token erzeugt.
 
 Die Antwort ist eine standardmäßige Token-Antwort mit `access_token`, `refresh_token`, optionalem `id_token`, `expires_in` und dem gewährten `scope` (leerzeichengetrennt).

@@ -6,7 +6,7 @@ locale: de
 
 # Lokalisierung
 
-Authagonal unterstützt acht Sprachen standardmäßig: Englisch, Vereinfachtes Chinesisch (`zh-Hans`), Deutsch (`de`), Franzoesisch (`fr`), Spanisch (`es`), Vietnamesisch (`vi`), Portugiesisch (`pt`) und Klingonisch (`tlh`). Die Lokalisierung umfasst die Server-API-Antworten, die Login-Oberflaeche und diese Dokumentationsseite.
+Authagonal unterstützt acht Sprachen standardmäßig: Englisch, Vereinfachtes Chinesisch (`zh-Hans`), Deutsch (`de`), Französisch (`fr`), Spanisch (`es`), Vietnamesisch (`vi`), Portugiesisch (`pt`) und Klingonisch (`tlh`). Die Lokalisierung umfasst die Server-API-Antworten, die Login-Oberfläche und diese Dokumentationsseite.
 
 ## Unterstutzte Sprachen
 
@@ -15,7 +15,7 @@ Authagonal unterstützt acht Sprachen standardmäßig: Englisch, Vereinfachtes C
 | `en` | Englisch (Standard) |
 | `zh-Hans` | Vereinfachtes Chinesisch |
 | `de` | Deutsch |
-| `fr` | Franzoesisch |
+| `fr` | Französisch |
 | `es` | Spanisch |
 | `vi` | Vietnamesisch |
 | `pt` | Portugiesisch |
@@ -35,7 +35,7 @@ Der Server verwendet die integrierte Lokalisierung von ASP.NET Core mit `IString
 
 ### Was NICHT lokalisiert ist
 
-- Maschinenlesbare `error`-Codes (`"email_required"`, `"invalid_credentials"` usw.) — diese sind API-Vertrage und bleiben konstant
+- Maschinenlesbare `error`-Codes (`"email_required"`, `"invalid_credentials"` usw.), diese sind API-Verträge und bleiben konstant
 - OAuth/OIDC-Fehlercodes und entwicklerbezogene Fehlerbeschreibungen an Token-, Autorisierungs- und Widerrufsendpunkten
 - Interne Protokollnachrichten und Ausnahmenachrichten
 
@@ -78,10 +78,10 @@ Die Login-SPA verwendet [react-i18next](https://react.i18next.com/) fur die clie
 
 Die Erkennungsreihenfolge ist:
 
-1. **localStorage** — gespeicherte Praeferenz von einem frueheren Besuch
-2. **Abfrageparameter** — `?lng=de` überschreibt die Browsererkennung
-3. **Browsersprache** — `navigator.language` (automatisch)
-4. **Fallback** — Englisch (`en`)
+1. **localStorage**: gespeicherte Präferenz von einem früheren Besuch
+2. **Abfrageparameter**: `?lng=de` überschreibt die Browsererkennung
+3. **Browsersprache**: `navigator.language` (automatisch)
+4. **Fallback**: Englisch (`en`)
 
 ### Ubersetzungsdateien
 

@@ -6,7 +6,7 @@ locale: de
 
 # Benutzerdefinierter Server -- Schnellstart
 
-Diese Anleitung zeigt, wie Sie Authagonal als Bibliothek in Ihrem eigenen ASP.NET Core-Projekt hosten und anschliessend die Login-Oberflaeche mit Ihren eigenen React-Komponenten anpassen.
+Diese Anleitung zeigt, wie Sie Authagonal als Bibliothek in Ihrem eigenen ASP.NET Core-Projekt hosten und anschliessend die Login-Oberfläche mit Ihren eigenen React-Komponenten anpassen.
 
 ## Teil 1: Server-Einrichtung
 
@@ -96,7 +96,7 @@ Registrieren Sie Ihre Implementierungen **vor** dem Aufruf von `AddAuthagonal()`
 | `IEmailService` | Versand von Verifizierungs- und Passwortzurücksetzungs-E-Mails | No-op (verwirft stillschweigend) |
 | `IAuthHook` | Login-, Registrierungs- und Token-Ereignisse abfangen oder auditieren | Leeroperationen |
 | `IProvisioningOrchestrator` | Benutzer bei der Autorisierung in nachgelagerte Apps bereitstellen | TCC-Bereitstellung |
-| `ISecretProvider` | Client-Geheimnisse aufloesen | Klartext (oder Key Vault mit `SecretProvider:VaultUri`) |
+| `ISecretProvider` | Client-Geheimnisse auflösen | Klartext (oder Key Vault mit `SecretProvider:VaultUri`) |
 
 #### Beispiel: Audit-Hook
 
@@ -168,7 +168,7 @@ app.MapGet("/custom/health", () => Results.Ok(new { status = "healthy" }));
 
 ### Admin-API deaktivieren
 
-Für öffentlich zugaengliche Deployments deaktivieren Sie die Admin-Endpunkte:
+Für öffentlich zugängliche Deployments deaktivieren Sie die Admin-Endpunkte:
 
 ```json
 {
@@ -178,17 +178,17 @@ Für öffentlich zugaengliche Deployments deaktivieren Sie die Admin-Endpunkte:
 }
 ```
 
-### Ausfuehren
+### Ausführen
 
 ```bash
 dotnet run
 ```
 
-Der Server startet auf der konfigurierten URL und stellt das OIDC Discovery-Dokument unter `/.well-known/openid-configuration`, die Login-Oberflaeche unter `/login` sowie alle Auth-/Admin-APIs bereit.
+Der Server startet auf der konfigurierten URL und stellt das OIDC Discovery-Dokument unter `/.well-known/openid-configuration`, die Login-Oberfläche unter `/login` sowie alle Auth-/Admin-APIs bereit.
 
 ---
 
-## Teil 2: Benutzerdefinierte Login-Oberflaeche
+## Teil 2: Benutzerdefinierte Login-Oberfläche
 
 Die Standard-Login-SPA funktioniert sofort, aber Sie können sie durch Ihre eigene React-App ersetzen, die Komponenten und API-Clients aus dem `@authagonal/login` npm-Paket importiert.
 
@@ -370,7 +370,7 @@ export default function MyLayout({ children }: { children: React.ReactNode }) {
 
 ### Branding (wwwroot/branding.json)
 
-Konfigurieren Sie das Erscheinungsbild der Login-Oberflaeche ohne Neuaufbau:
+Konfigurieren Sie das Erscheinungsbild der Login-Oberfläche ohne Neuaufbau:
 
 ```json
 {

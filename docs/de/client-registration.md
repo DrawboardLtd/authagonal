@@ -4,15 +4,13 @@ title: Dynamic Client Registration
 locale: de
 ---
 
-> ⚠️ This page has not yet been translated; the English version is shown below.
+# Dynamische Client-Registrierung
 
-# Dynamic Client Registration
+Authagonal implementiert die **dynamische OAuth-2.0-Client-Registrierung** ([RFC 7591](https://datatracker.ietf.org/doc/html/rfc7591)), die es Client-Anwendungen ermöglicht, sich zur Laufzeit selbst zu registrieren, ohne dass ein Administrator eingebunden werden muss.
 
-Authagonal implements **OAuth 2.0 Dynamic Client Registration** ([RFC 7591](https://datatracker.ietf.org/doc/html/rfc7591)), allowing client applications to register themselves at runtime without administrator involvement.
+## Aktivieren des Endpunkts
 
-## Enabling the Endpoint
-
-Dynamic registration is **disabled by default**. Opt in via configuration:
+Die dynamische Registrierung ist **standardmäßig deaktiviert**. Aktivieren Sie sie über die Konfiguration:
 
 ```json
 {
@@ -22,9 +20,9 @@ Dynamic registration is **disabled by default**. Opt in via configuration:
 }
 ```
 
-Or set `Auth__DynamicClientRegistrationEnabled=true` as an environment variable.
+Oder setzen Sie `Auth__DynamicClientRegistrationEnabled=true` als Umgebungsvariable.
 
-When enabled, the discovery document advertises the endpoint:
+Wenn aktiviert, gibt das Discovery-Dokument den Endpunkt bekannt:
 
 ```
 GET /.well-known/openid-configuration
@@ -35,7 +33,7 @@ GET /.well-known/openid-configuration
 }
 ```
 
-## Registering a Client
+## Einen Client registrieren
 
 ```
 POST /connect/register
@@ -56,7 +54,7 @@ Content-Type: application/json
 }
 ```
 
-### Response
+### Antwort
 
 ```
 HTTP/1.1 201 Created
@@ -77,41 +75,48 @@ Content-Type: application/json
 }
 ```
 
-The `client_secret` is returned **once** and cannot be retrieved later. Store it securely.
+Das `client_secret` wird **einmalig** zurückgegeben und kann später nicht erneut abgerufen werden. Bewahren Sie es sicher auf.
 
-## Request Parameters
+## Anfrageparameter
 
-| Parameter | Required | Notes |
+| Parameter | Erforderlich | Hinweise |
 |---|---|---|
-| `client_name` | no | Defaults to the generated `client_id` if omitted |
-| `redirect_uris` | conditional | Required when `grant_types` contains `authorization_code` or `implicit` |
-| `post_logout_redirect_uris` | no | Valid redirect targets after logout |
-| `grant_types` | no | Defaults to `["authorization_code"]`. `refresh_token` is added automatically if `offline_access` is requested. |
-| `token_endpoint_auth_method` | no | `client_secret_basic` (default), `client_secret_post`, or `none` for public clients |
-| `scope` | no | Space-separated scopes — must all be built-in or previously registered (see [Scopes](scopes)) |
-| `audiences` | no | JWT `aud` values added to access tokens |
-| `allowed_cors_origins` | no | Origins permitted to call the token endpoint from a browser |
-| `backchannel_logout_uri` | no | Enables [Back-Channel Logout](index#features) |
-| `frontchannel_logout_uri` | no | Enables [Front-Channel Logout](front-channel-logout) |
-| `frontchannel_logout_session_required` | no | Defaults to `true`; when `true`, the logout URL carries `iss` and `sid` parameters |
+| `client_name` | nein | Standardmäßig der generierte `client_id`, falls weggelassen |
+| `redirect_uris` | bedingt | Erforderlich, wenn `grant_types` `authorization_code` enthält. Muss absolute URIs sein; die Schemata `javascript:`/`data:`/`vbscript:`/`file:` werden abgelehnt (native benutzerdefinierte Schemata für mobile Deep-Links sind zulässig). |
+| `post_logout_redirect_uris` | nein | Gültige Weiterleitungsziele nach der Abmeldung |
+| `grant_types` | nein | Standardmäßig `["authorization_code"]`. **Nur `authorization_code` und `refresh_token` sind registrierbar**: `client_credentials`, `implicit`, Device und jeder andere Grant-Type werden mit `invalid_client_metadata` abgelehnt, sodass eine offene Registrierung niemals einen Machine-to-Machine-Client erzeugen kann. `refresh_token` wird automatisch hinzugefügt, wenn `offline_access` angefordert wird. |
+| `token_endpoint_auth_method` | nein | `client_secret_basic` (Standard), `client_secret_post` oder `none` für öffentliche Clients |
+| `scope` | nein | Durch Leerzeichen getrennte Scopes: müssen alle integriert oder zuvor registriert sein (siehe [Scopes](scopes)). Der administrative Scope (`AdminApi:Scope`, Standard `authagonal-admin`) kann niemals registriert werden. |
+| `audiences` | nein | JWT-`aud`-Werte, die Access Tokens hinzugefügt werden |
+| `allowed_cors_origins` | nein | Origins, die den Token-Endpunkt aus einem Browser heraus aufrufen dürfen |
+| `backchannel_logout_uri` | nein | Aktiviert [Back-Channel-Logout](index#features) |
+| `frontchannel_logout_uri` | nein | Aktiviert [Front-Channel-Logout](front-channel-logout) |
+| `frontchannel_logout_session_required` | nein | Standardmäßig `true`; wenn `true`, enthält die Logout-URL die Parameter `iss` und `sid` |
 
-## Defaults & Invariants
+## Standardwerte & Invarianten
 
-- **PKCE required** — `RequirePkce` is always `true` for dynamically registered clients.
-- **Public clients** — `token_endpoint_auth_method: "none"` produces a client without a secret. PKCE is still required.
-- **Offline access** — requesting scope `offline_access` implicitly adds `refresh_token` to `grant_types`.
+- **PKCE erforderlich**: `RequirePkce` ist bei dynamisch registrierten Clients immer `true`.
+- **Öffentliche Clients**: `token_endpoint_auth_method: "none"` erzeugt einen Client ohne Secret. PKCE bleibt trotzdem erforderlich.
+- **Offline-Zugriff**: Das Anfordern des Scopes `offline_access` fügt `grant_types` implizit `refresh_token` hinzu.
 
-## Error Responses
+## Fehlerantworten
 
-| HTTP | `error` | Cause |
+| HTTP | `error` | Ursache |
 |---|---|---|
-| `400` | `invalid_redirect_uri` | One of `redirect_uris` is not a valid absolute URI |
-| `400` | `invalid_client_metadata` | `redirect_uris` missing for a grant type that requires it |
-| `400` | `invalid_scope` | A requested scope is neither built-in nor registered |
-| `403` | `not_supported` | Dynamic client registration is not enabled |
+| `400` | `invalid_redirect_uri` | Eine der `redirect_uris` ist keine gültige absolute URI oder verwendet ein Script-/Data-/File-Pseudoschema |
+| `400` | `invalid_client_metadata` | Es wurde ein nicht registrierbarer Grant-Type angefordert, oder `redirect_uris` fehlt für einen Grant-Type, der dies erfordert |
+| `400` | `invalid_scope` | Ein angeforderter Scope ist weder integriert noch registriert |
+| `403` | `invalid_scope` | Der administrative Scope wurde angefordert: Er kann niemals über die Registrierung gewährt werden |
+| `403` | `not_supported` | Die dynamische Client-Registrierung ist nicht aktiviert |
+| `429` | `rate_limited` | Zu viele Registrierungen von dieser IP (10 pro Stunde) |
 
-## Security Considerations
+## Sicherheitsüberlegungen
 
-The registration endpoint is **unauthenticated by default**. In production, put it behind a rate limiter or an `IAuthHook` that validates an initial access token, a mutual-TLS certificate, or a software statement before allowing registration. Otherwise, anyone who can reach the endpoint can mint client credentials.
+Der Registrierungs-Endpunkt ist **nicht authentifiziert**, aber bewusst eingeschränkt konzipiert:
 
-Consider disabling dynamic registration entirely and managing clients via the admin API in environments where self-service registration is not a requirement.
+- **Ratenbegrenzt**: 10 Registrierungen pro IP und gleitender Stunde (`429 rate_limited`), sodass der Client-Store nicht geflutet werden kann.
+- **Grant-Types eingeschränkt**: nur `authorization_code` + `refresh_token`; ein registrierter Client benötigt immer einen benutzervermittelten Ablauf und kann niemals als Machine-to-Machine-Client agieren.
+- **Admin-Scope reserviert**: der Scope `authagonal-admin` (oder was auch immer `AdminApi:Scope` gesetzt ist) wird abgelehnt, sodass die Registrierung niemals einen Client erzeugen kann, der die [Admin-API](admin-api) erreicht.
+- **PKCE ist bei registrierten Clients immer erforderlich.**
+
+Für eine stärkere Zugriffskontrolle (initiale Access Tokens, mTLS, Software Statements) stellen Sie dem Endpunkt Ihre eigene Middleware oder einen `IAuthHook` vor. Erwägen Sie, die dynamische Registrierung in Umgebungen, in denen Self-Service-Registrierung keine Anforderung ist, ganz zu deaktivieren und Clients stattdessen über die Admin-API zu verwalten.

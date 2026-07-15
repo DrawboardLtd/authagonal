@@ -4,26 +4,24 @@ title: Front-Channel Logout
 locale: de
 ---
 
-> ⚠️ This page has not yet been translated; the English version is shown below.
-
 # Front-Channel Logout
 
-Authagonal implements **OpenID Connect Front-Channel Logout 1.0**, a browser-driven logout mechanism that complements [back-channel logout](index#features). Where back-channel logout is a server-to-server POST, front-channel logout renders the logout URL of each relying party in a hidden iframe so that each app's browser session (cookies, local storage) is cleaned up from inside the user's browser.
+Authagonal implementiert **OpenID Connect Front-Channel Logout 1.0**, einen browsergesteuerten Logout-Mechanismus, der das [Back-Channel Logout](index#features) ergänzt. Während Back-Channel Logout ein Server-zu-Server-POST ist, rendert Front-Channel Logout die Logout-URL jeder Relying Party in einem versteckten iframe, sodass die Browsersitzung jeder App (Cookies, lokaler Speicher) direkt im Browser des Benutzers bereinigt wird.
 
-## When to Use Which
+## Wann welches Verfahren verwenden
 
-| Concern | Back-Channel | Front-Channel |
+| Aspekt | Back-Channel | Front-Channel |
 |---|---|---|
-| Server-side sessions | ✅ | ❌ |
-| Browser cookies / local storage | ❌ | ✅ |
-| Works when the user's browser is offline | ✅ | ❌ |
-| Survives network errors (retry) | ✅ | ❌ (single best-effort attempt) |
+| Serverseitige Sitzungen | ✅ | ❌ |
+| Browser-Cookies / lokaler Speicher | ❌ | ✅ |
+| Funktioniert, wenn der Browser des Benutzers offline ist | ✅ | ❌ |
+| Übersteht Netzwerkfehler (Wiederholung) | ✅ | ❌ (einmaliger Best-Effort-Versuch) |
 
-Most apps benefit from configuring **both**. Back-channel guarantees the server is told; front-channel clears the browser.
+Die meisten Anwendungen profitieren davon, **beide** zu konfigurieren. Back-Channel garantiert, dass der Server informiert wird; Front-Channel bereinigt den Browser.
 
-## Client Configuration
+## Client-Konfiguration
 
-Add a front-channel logout URI to the `OAuthClient` record:
+Fügen Sie dem `OAuthClient`-Datensatz eine Front-Channel-Logout-URI hinzu:
 
 ```json
 {
@@ -33,50 +31,50 @@ Add a front-channel logout URI to the `OAuthClient` record:
 }
 ```
 
-| Field | Description |
+| Feld | Beschreibung |
 |---|---|
-| `FrontChannelLogoutUri` | The client's browser-visible logout endpoint |
-| `FrontChannelLogoutSessionRequired` | If `true` (default), the URL is called with `iss` and `sid` query parameters so the client can correlate the logout with the specific session |
+| `FrontChannelLogoutUri` | Der im Browser des Clients sichtbare Logout-Endpunkt |
+| `FrontChannelLogoutSessionRequired` | Wenn `true` (Standard), wird die URL mit den Query-Parametern `iss` und `sid` aufgerufen, damit der Client den Logout der jeweiligen Sitzung zuordnen kann |
 
-## How It Works
+## Funktionsweise
 
-When the browser visits `/connect/endsession`:
+Wenn der Browser `/connect/endsession` aufruft:
 
-1. The server finds all clients the user currently has grants with.
-2. For each client with a `FrontChannelLogoutUri`, the server builds a URL — appending `iss=<issuer>` and `sid=<session_id>` if `FrontChannelLogoutSessionRequired` is `true`.
-3. The server signs the user out of the authorization-server cookie, triggers back-channel logout notifications in the background, and returns an HTML page containing a hidden `<iframe>` for each client logout URL:
+1. Der Server ermittelt alle Clients, für die der Benutzer aktuell Grants besitzt.
+2. Für jeden Client mit einer `FrontChannelLogoutUri` erstellt der Server eine URL: Er hängt `iss=<issuer>` an (sowie `sid=<session_id>`, sofern die Sitzung eine hat), wenn `FrontChannelLogoutSessionRequired` den Wert `true` hat.
+3. Der Server meldet den Benutzer beim Cookie des Autorisierungsservers ab, löst im Hintergrund Back-Channel-Logout-Benachrichtigungen aus und liefert eine HTML-Seite mit einem versteckten `<iframe>` für jede Client-Logout-URL:
    ```html
    <iframe src="https://myapp.example.com/oidc/frontchannel?iss=https%3A%2F%2Fauth.example.com&sid=abc123" style="display:none"></iframe>
    ```
-4. After a 2-second grace period, the browser is redirected to `post_logout_redirect_uri` (if supplied and validated) or shown a "signed out" confirmation.
+4. Nach einer Karenzzeit von 2 Sekunden wird der Browser zur `post_logout_redirect_uri` weitergeleitet: Dies geschieht nur, wenn die Anfrage zusätzlich einen `id_token_hint` enthält, der den Client identifiziert, und die URI in den registrierten `PostLogoutRedirectUris` dieses Clients enthalten ist (ein `state`-Parameter wird, sofern angegeben, an die Weiterleitung angehängt). Andernfalls wird eine Bestätigung „Abgemeldet" angezeigt.
 
-## Client-Side Logout Handler
+## Client-seitiger Logout-Handler
 
-Each relying party should implement the URL referenced by `FrontChannelLogoutUri`. A minimal handler:
+Jede Relying Party sollte die von `FrontChannelLogoutUri` referenzierte URL implementieren. Ein minimaler Handler:
 
 ```http
 GET /oidc/frontchannel?iss=https://auth.example.com&sid=abc123
 ```
 
-1. Verify `iss` matches the expected authorization server.
-2. If `sid` is provided, confirm it matches the session cookie's session ID.
-3. Clear the local session (cookies, server-side session, SPA storage).
-4. Respond with `200 OK` and an empty body (or a tiny page) — the response is never visible to the user.
+1. Prüfen Sie, ob `iss` mit dem erwarteten Autorisierungsserver übereinstimmt.
+2. Falls `sid` angegeben ist, bestätigen Sie, dass sie mit der Sitzungs-ID des Sitzungscookies übereinstimmt.
+3. Löschen Sie die lokale Sitzung (Cookies, serverseitige Sitzung, SPA-Speicher).
+4. Antworten Sie mit `200 OK` und einem leeren Body (oder einer winzigen Seite): Die Antwort ist für den Benutzer ohnehin nie sichtbar.
 
 ```csharp
 app.MapGet("/oidc/frontchannel", (HttpContext ctx) =>
 {
     var iss = ctx.Request.Query["iss"].ToString();
     var sid = ctx.Request.Query["sid"].ToString();
-    // Validate iss/sid, then clear local session
+    // iss/sid validieren, dann lokale Sitzung löschen
     ctx.SignOutAsync();
     return Results.Ok();
 });
 ```
 
-## Discovery Document
+## Discovery-Dokument
 
-Front-channel logout is advertised in `/.well-known/openid-configuration`:
+Front-Channel Logout wird in `/.well-known/openid-configuration` angekündigt:
 
 ```json
 {
@@ -85,9 +83,9 @@ Front-channel logout is advertised in `/.well-known/openid-configuration`:
 }
 ```
 
-## Dynamic Client Registration
+## Dynamische Client-Registrierung
 
-Clients registered via [Dynamic Client Registration](client-registration) may include:
+Über [Dynamische Client-Registrierung](client-registration) registrierte Clients können Folgendes enthalten:
 
 ```json
 {
@@ -96,13 +94,13 @@ Clients registered via [Dynamic Client Registration](client-registration) may in
 }
 ```
 
-## Limitations
+## Einschränkungen
 
-- **Best effort** — iframes are loaded once. If a network error or browser extension blocks them, there is no retry. Pair with back-channel logout for reliability.
-- **Third-party cookies** — some browsers block cookies in cross-site iframes by default. If your RP relies on first-party cookies, confirm the logout handler does not depend on cookies being sent.
-- **Timeout** — the page waits ~2 seconds before redirecting/confirming. Heavy RP logout handlers may not complete in time.
+- **Best Effort**: iframes werden nur einmal geladen. Blockiert ein Netzwerkfehler oder eine Browsererweiterung sie, gibt es keine Wiederholung. Kombinieren Sie es für Zuverlässigkeit mit Back-Channel Logout.
+- **Cookies von Drittanbietern**: Manche Browser blockieren standardmäßig Cookies in Cross-Site-iframes. Falls Ihre Relying Party auf First-Party-Cookies angewiesen ist, stellen Sie sicher, dass der Logout-Handler nicht davon abhängt, dass Cookies gesendet werden.
+- **Timeout**: Die Seite wartet ca. 2 Sekunden vor der Weiterleitung bzw. Bestätigung. Aufwendige Logout-Handler der Relying Party werden möglicherweise nicht rechtzeitig fertig.
 
-## Related
+## Verwandte Themen
 
-- [Dynamic Client Registration](client-registration) — front-channel parameters in the registration request
-- [OAuth Scopes](scopes) — scope-aware consent complements the logout flow
+- [Dynamische Client-Registrierung](client-registration): Front-Channel-Parameter in der Registrierungsanfrage
+- [OAuth Scopes](scopes): Scope-bewusste Zustimmung ergänzt den Logout-Ablauf

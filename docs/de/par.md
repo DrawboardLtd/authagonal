@@ -4,31 +4,32 @@ title: Pushed Authorization Requests
 locale: de
 ---
 
-> ⚠️ This page has not yet been translated; the English version is shown below.
-
 # Pushed Authorization Requests (PAR)
 
-[RFC 9126](https://www.rfc-editor.org/rfc/rfc9126) lets a client POST its authorize-request parameters directly to the server with standard client authentication and receive a short-lived opaque `request_uri` to hand to the browser. The browser then visits `/connect/authorize?request_uri=...&client_id=...` instead of carrying every parameter on the URL.
+[RFC 9126](https://www.rfc-editor.org/rfc/rfc9126) erlaubt es einem Client, seine Autorisierungsparameter mit standardmäßiger Client-Authentifizierung direkt per POST an den Server zu senden und dafür einen kurzlebigen, opaken `request_uri` zu erhalten, den er an den Browser weitergibt. Der Browser ruft anschließend `/connect/authorize?request_uri=...&client_id=...` auf, anstatt sämtliche Parameter in der URL mitzuführen.
 
-Why use it:
+Warum PAR nutzen:
 
-- Authorize parameters never appear in browser history, server logs, or `Referer` headers.
-- The server authenticates the client at push time, so the parameters are integrity-checked before any redirect happens.
-- Long parameter sets (large `claims` requests, multi-resource flows) don't blow URL length limits.
+- Autorisierungsparameter erscheinen niemals im Browserverlauf, in Server-Logs oder in `Referer`-Headern.
+- Der Server authentifiziert den Client bereits beim Push, sodass die Parameter auf Integrität geprüft werden, bevor überhaupt eine Weiterleitung stattfindet.
+- Umfangreiche Parametermengen (große `claims`-Anfragen, Multi-Resource-Abläufe) sprengen keine URL-Längenbegrenzungen.
 
-## Endpoint
+## Endpunkt
 
 ```
 POST /connect/par
 Content-Type: application/x-www-form-urlencoded
 ```
 
-Authentication is the same as `/connect/token`: HTTP Basic with `client_id`/`client_secret`, or form-encoded credentials. Confidential clients must authenticate; public clients post without a secret.
+Die Authentifizierung erfolgt wie bei `/connect/token`: HTTP Basic mit `client_id`/`client_secret` oder formularkodierten Anmeldedaten. Vertrauliche (confidential) Clients müssen sich authentifizieren, öffentliche Clients senden ohne Secret. Fehler bei der Client-Authentifizierung liefern `401` (gemäß RFC 9126, anders als beim Token-Endpunkt, wo nur `invalid_client` einen 401 auslöst).
 
-The form body carries the same parameters that would normally go on `/connect/authorize` (`response_type`, `redirect_uri`, `scope`, `state`, `code_challenge`, `code_challenge_method`, `nonce`, `resource`, etc.). `request_uri` itself is rejected — chaining a PAR is forbidden by §2.1 of the spec.
+Der Formularkörper enthält dieselben Parameter, die normalerweise an `/connect/authorize` übergeben werden (`response_type`, `redirect_uri`, `scope`, `state`, `code_challenge`, `code_challenge_method`, `nonce`, `resource` usw.). `request_uri` selbst wird abgelehnt: Das Verketten mehrerer PAR-Aufrufe ist gemäß §2.1 der Spezifikation untersagt. Enthält der Body ein `client_id`, muss es mit dem authentifizierten Client übereinstimmen.
 
-### Response
+### Antwort
 
+```
+HTTP/1.1 201 Created
+```
 ```json
 {
   "request_uri": "urn:ietf:params:oauth:request_uri:abc123...",
@@ -36,19 +37,19 @@ The form body carries the same parameters that would normally go on `/connect/au
 }
 ```
 
-The `request_uri` is single-use. It's removed from the store once the matching `/connect/authorize` request consumes it (or when the 90-second window expires, whichever is sooner).
+Der `request_uri` ist nur einmal verwendbar. Er wird aus dem Store entfernt, sobald die passende `/connect/authorize`-Anfrage ihn verbraucht (oder sobald das 90-Sekunden-Fenster abläuft, je nachdem, was zuerst eintritt).
 
-### Authorization step
+### Autorisierungsschritt
 
 ```
 GET /connect/authorize?client_id=my-rp&request_uri=urn:ietf:params:oauth:request_uri:abc123...
 ```
 
-When `request_uri` is present, all other parameters are pulled from the pushed payload — anything else on the URL is ignored. The `client_id` on this request must match the client that pushed the payload.
+Ist `request_uri` vorhanden, werden alle anderen Parameter aus der gepushten Payload übernommen: Alles Übrige in der URL wird ignoriert. Das `client_id` dieser Anfrage muss mit dem Client übereinstimmen, der die Payload gepusht hat.
 
-## Requiring PAR per client
+## PAR pro Client erzwingen
 
-Set `RequirePushedAuthorizationRequests = true` on a client to refuse plain `/connect/authorize` requests from it. Any non-PAR authorize attempt returns `invalid_request` with the description "This client requires requests to be pushed via /connect/par".
+Setzen Sie `RequirePushedAuthorizationRequests = true` bei einem Client, um einfache `/connect/authorize`-Anfragen von ihm abzulehnen. Jeder Autorisierungsversuch ohne PAR liefert `invalid_request` mit der Beschreibung "This client requires requests to be pushed via /connect/par".
 
 ```csharp
 new OAuthClient
@@ -59,15 +60,15 @@ new OAuthClient
 }
 ```
 
-This is the recommended posture for clients that handle sensitive scopes — combined with PKCE, it removes the URL bar as an attack surface.
+Dies ist die empfohlene Haltung für Clients, die sensible Scopes verarbeiten: In Kombination mit PKCE entfällt die URL-Leiste als Angriffsfläche.
 
-## Lifetime and storage
+## Lebensdauer und Speicherung
 
-The `request_uri` lifetime is server-set at 90 seconds, matching the typical reference-IdP value. Pushed payloads are stored via the same `IGrantStore` as auth codes and refresh tokens, so they inherit the host's persistence and replication strategy automatically.
+Die Lebensdauer des `request_uri` ist serverseitig auf 90 Sekunden festgelegt, was dem typischen Wert eines Referenz-IdP entspricht. Gepushte Payloads werden über denselben `IGrantStore` gespeichert wie Auth-Codes und Refresh Tokens, sodass sie automatisch die Persistenz- und Replikationsstrategie des Hosts übernehmen.
 
 ## Discovery
 
-The PAR endpoint advertises itself in `.well-known/openid-configuration` as:
+Der PAR-Endpunkt kündigt sich in `.well-known/openid-configuration` wie folgt an:
 
 ```json
 {

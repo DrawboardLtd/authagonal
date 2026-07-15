@@ -16,7 +16,7 @@ docker compose up
 
 Dies startet Authagonal unter `http://localhost:8080` mit Azurite als Speicher.
 
-## 2. Funktionsfaehigkeit überprüfen
+## 2. Funktionsfähigkeit überprüfen
 
 ```bash
 # Health check
@@ -51,7 +51,7 @@ Fügen Sie einen Client zu Ihrer `appsettings.json` hinzu (oder übergeben Sie i
 }
 ```
 
-Clients werden beim Start initialisiert -- sicher bei jeder Bereitstellung ausfuehrbar.
+Clients werden beim Start initialisiert -- sicher bei jeder Bereitstellung ausführbar.
 
 ## 4. Login initiieren
 
@@ -92,7 +92,7 @@ Antwort:
 }
 ```
 
-## Funktionsfaehige Demo
+## Funktionsfähige Demo
 
 Das Verzeichnis `demos/sample-app/` enthält eine vollständige React SPA + API, die den gesamten oben beschriebenen OIDC-Ablauf implementiert. Anweisungen finden Sie in der [demos README](https://github.com/authagonal/authagonal/tree/master/demos).
 
@@ -100,6 +100,6 @@ Das Verzeichnis `demos/sample-app/` enthält eine vollständige React SPA + API,
 
 - [Konfiguration](configuration) -- vollständige Referenz aller Einstellungen
 - [Erweiterbarkeit](extensibility) -- als Bibliothek hosten, benutzerdefinierte Hooks hinzufügen
-- [Branding](branding) -- Login-Oberflaeche anpassen
+- [Branding](branding) -- Login-Oberfläche anpassen
 - [SAML](saml) -- SAML-SSO-Anbieter hinzufügen
 - [Bereitstellung](provisioning) -- Benutzer in nachgelagerte Anwendungen bereitstellen
