@@ -18,19 +18,24 @@ A single, self-contained deployment. The server and login UI ship as one Docker 
 ## Key Features
 
 - **OIDC Provider** — authorization_code + PKCE, client_credentials, refresh_token, device_code grants with one-time rotation
-- **SAML 2.0 SP** — homebrew implementation with full Azure AD support (signed response, assertion, or both)
+- **SAML 2.0 SP** — homebrew implementation with full Azure AD support (signed response, assertion, or both), a per-connection SP keypair for signed AuthnRequests + `EncryptedAssertion` decryption, and Single Logout (SP- and IdP-initiated)
 - **Dynamic OIDC Federation** — connect to Google, Apple, Azure AD, or any OIDC-compliant IdP
+- **Multi-Factor Authentication** — TOTP, WebAuthn/passkeys, recovery codes; per-client policy (`Disabled` / `Enabled` / `Required`) with `IAuthHook` per-user override, enforced for federated logins too
+- **SCIM 2.0 Provisioning** — inbound user/group provisioning from Entra ID, Okta, OneLogin; cursor-paged listing and blind-index-backed `eq` filters
 - **OAuth Consent Screen** — per-client consent with scope-aware re-prompt and grant management
 - **Device Authorization Grant** — RFC 8628 flow for input-constrained devices (smart TVs, CLIs, IoT)
 - **Token Introspection** — RFC 7662 for resource servers to verify token validity
 - **Back-Channel Logout** — OIDC Back-Channel Logout 1.0 notifications to relying parties
+- **GDPR Self-Service** — data export and scheduled account deletion from the hosted account page
 - **TCC Provisioning** — Try-Confirm-Cancel provisioning into downstream apps at authorize time
-- **Brandable Login UI** — runtime-configurable via a JSON file — logo, colors, CSS custom properties — no rebuild needed
+- **Brandable Login UI** — runtime-configurable via a JSON file — logo, colors, CSS custom properties — no rebuild needed; localized into 10 languages
 - **Auth Hooks** — `IAuthHook` extensibility for audit logging, custom validation, webhooks
+- **PII Encryption Seams** — `IFieldCipher` / `IIndexTokenizer` extension points for field-level encryption at rest with keyed blind-index (HMAC) search; recovery codes encrypted via `ISecretProvider`
 - **HashiCorp Vault Transit** — remote JWT signing without local private key access
 - **Composable Library** — `AddAuthagonal()` / `UseAuthagonal()` to host in your own project with custom service overrides
 - **Native AOT Ready** — IL trimming and source-generated JSON serialization for fast startup
 - **Pluggable cloud storage** — Azure Table Storage or AWS (DynamoDB / S3 / Secrets Manager); low-cost, serverless-friendly backends
+- **Backup & Restore** — incremental backups (change-log-driven with a full-scan backstop), integrity verification, tombstone-based delete tracking
 - **Admin APIs** — user CRUD, SAML/OIDC provider management, SSO domain routing, token impersonation
 
 ## Architecture

@@ -47,17 +47,15 @@ Add to `appsettings.json`:
       "ClientId": "your-google-client-id",
       "ClientSecret": "your-google-client-secret",
       "RedirectUrl": "https://auth.example.com/oidc/callback",
-      "AllowedDomains": ["example.com"],
-      "PassthroughParams": ["link_token"],
-      "SessionExpClaim": "exp"
+      "AllowedDomains": ["example.com"]
     }
   ]
 }
 ```
 
-Providers are seeded on startup. The `ClientSecret` is protected via `ISecretProvider` (Key Vault when configured, plaintext otherwise). SSO domain mappings are registered automatically from `AllowedDomains`.
+Providers are seeded on startup. The seedable fields are exactly those shown: `ConnectionId`, `ConnectionName`, `MetadataLocation`, `ClientId`, `ClientSecret`, `RedirectUrl`, `AllowedDomains`. The `ClientSecret` is protected via `ISecretProvider` (Key Vault when configured, plaintext otherwise). SSO domain mappings are registered automatically from `AllowedDomains`.
 
-`PassthroughParams` and `SessionExpClaim` are optional — see [Scope and claim flow-through](#scope-and-claim-flow-through) below.
+The connection model carries additional optional behavior — `PassthroughParams` (settable via the admin API create), plus `SessionExpClaim` and `DisableJitProvisioning` (store-level fields, set via `IOidcProviderStore` from hosting code) — see [Scope and claim flow-through](#scope-and-claim-flow-through) and [Session lifetime cap](#session-lifetime-cap) below.
 
 **Option B — Admin API (for runtime management):**
 
@@ -88,9 +86,9 @@ When `AllowedDomains` is specified (in config or via the create API), SSO domain
 
 ## Scope and claim flow-through
 
-The scope set requested by the downstream RP at `/connect/authorize` is forwarded verbatim to the upstream IdP (with `openid` always included). Whatever claims the upstream IdP scope-gates onto the id_token come back to Authagonal, get stashed on the cookie ticket as `federated:<name>` claims, and ride through into `OidcSubject.FederationClaims` at the next `/connect/authorize` traversal. From there `ProtocolTokenService` re-emits them on Authagonal-issued tokens, gated by the same `Scope.UserClaims` whitelist that gates `CustomAttributes`. Federation values win on key collision.
+The scope set requested by the downstream RP at `/connect/authorize` is forwarded to the upstream IdP, **filtered to the standard OIDC set** — `openid`, `profile`, `email`, `address`, `phone` — with `openid` always included. Anything else the RP requested (custom API scopes, `offline_access`, …) is dropped before the upstream call: a strict IdP like Google returns `invalid_scope` on unknown values, and the upstream only needs to identify the user — the RP's own scopes are honored on Authagonal-issued tokens, not upstream ones. Whatever claims the upstream IdP scope-gates onto the id_token come back to Authagonal, get stashed on the cookie ticket as `federated:<name>` claims, and ride through into `OidcSubject.FederationClaims` at the next `/connect/authorize` traversal. From there `ProtocolTokenService` re-emits them on Authagonal-issued tokens, gated by the same `Scope.UserClaims` whitelist that gates `CustomAttributes`. Federation values win on key collision.
 
-Net effect: the requested scope is the only switch. No per-connection allowlist of claims to preserve — just declare the scope at both ends with matching `UserClaims` and the right values flow through.
+Net effect: no per-connection allowlist of claims to preserve. Every non-protocol claim the upstream puts on the id_token is captured; which of them reach downstream tokens is controlled by the downstream scope's `UserClaims` — declare the claim there and the value flows through.
 
 `FederationClaims` survives refresh rotations distinct from `CustomAttributes`, so per-session federation context (e.g. a share-link token captured at the original authorize) stays intact while per-user attributes still re-read fresh from the user store.
 
@@ -107,10 +105,15 @@ When a key is whitelisted, Authagonal pulls its value from the original `/author
 ## Security Features
 
 - **PKCE** — code_challenge with S256 on every authorization request
-- **Nonce validation** — nonce stored in state, verified in the id_token
-- **State validation** — single-use, stored in Azure Table Storage with expiry
-- **id_token signature validation** — keys fetched from the IdP's JWKS endpoint
-- **Userinfo fallback** — if the id_token doesn't contain an email, the userinfo endpoint is tried
+- **Nonce validation** — nonce stored with the state, must be present in the id_token and match
+- **State validation** — single-use (consumed atomically via `IOidcStateStore`, persisted with expiry) **and browser-bound**: a `SameSite=Lax` cookie scoped to `/oidc` is set at login and must match the `state` on the callback, so an attacker can't complete a federation flow they started and deliver the callback URL to a victim (login CSRF)
+- **id_token signature validation** — keys fetched from the IdP's JWKS endpoint; issuer, audience and lifetime validated
+- **Userinfo fallback** — if the id_token doesn't contain an email, the userinfo endpoint is tried. The userinfo `sub` must match the id_token `sub` (OIDC Core 5.3.2), otherwise the response is ignored
+- **Stable identity linking** — a returning user is resolved by provider + `sub`, never by email alone. Attaching a federated identity to a **pre-existing** local account by email requires the connection's `AllowedDomains` to cover that email's domain — the admin's explicit vouch that the IdP owns it. An upstream-asserted `email_verified` is *not* sufficient to seize an existing account
+- **Domain enforcement** — when `AllowedDomains` is set, the connection may only assert identities within those domains (`access_denied` otherwise)
+- **JIT opt-out** — `DisableJitProvisioning` rejects unknown users instead of auto-creating them
+- **Open-redirect guard** — `returnUrl` must be a same-site relative path; protocol-relative (`//`) and backslash forms are rejected
+- **Local MFA still applies** — federation proves the first factor only. A user who is MFA-enrolled (or whose client policy requires MFA) is routed through the local MFA challenge/setup pages after the callback instead of being signed straight in; only then does the session carry the MFA marker
 
 ## Azure AD Specifics
 

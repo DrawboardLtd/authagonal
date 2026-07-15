@@ -81,11 +81,11 @@ The `client_secret` is returned **once** and cannot be retrieved later. Store it
 | Parameter | Required | Notes |
 |---|---|---|
 | `client_name` | no | Defaults to the generated `client_id` if omitted |
-| `redirect_uris` | conditional | Required when `grant_types` contains `authorization_code` or `implicit` |
+| `redirect_uris` | conditional | Required when `grant_types` contains `authorization_code`. Must be absolute URIs; `javascript:`/`data:`/`vbscript:`/`file:` schemes are rejected (native custom schemes for mobile deep links are fine). |
 | `post_logout_redirect_uris` | no | Valid redirect targets after logout |
-| `grant_types` | no | Defaults to `["authorization_code"]`. `refresh_token` is added automatically if `offline_access` is requested. |
+| `grant_types` | no | Defaults to `["authorization_code"]`. **Only `authorization_code` and `refresh_token` are registrable** — `client_credentials`, `implicit`, device and any other grant type are rejected with `invalid_client_metadata`, so open registration can never mint a machine-to-machine client. `refresh_token` is added automatically if `offline_access` is requested. |
 | `token_endpoint_auth_method` | no | `client_secret_basic` (default), `client_secret_post`, or `none` for public clients |
-| `scope` | no | Space-separated scopes — must all be built-in or previously registered (see [Scopes](scopes)) |
+| `scope` | no | Space-separated scopes — must all be built-in or previously registered (see [Scopes](scopes)). The administrative scope (`AdminApi:Scope`, default `authagonal-admin`) can never be registered. |
 | `audiences` | no | JWT `aud` values added to access tokens |
 | `allowed_cors_origins` | no | Origins permitted to call the token endpoint from a browser |
 | `backchannel_logout_uri` | no | Enables [Back-Channel Logout](index#features) |
@@ -102,13 +102,20 @@ The `client_secret` is returned **once** and cannot be retrieved later. Store it
 
 | HTTP | `error` | Cause |
 |---|---|---|
-| `400` | `invalid_redirect_uri` | One of `redirect_uris` is not a valid absolute URI |
-| `400` | `invalid_client_metadata` | `redirect_uris` missing for a grant type that requires it |
+| `400` | `invalid_redirect_uri` | One of `redirect_uris` is not a valid absolute URI, or uses a script/data/file pseudo-scheme |
+| `400` | `invalid_client_metadata` | A non-registrable grant type was requested, or `redirect_uris` is missing for a grant type that requires it |
 | `400` | `invalid_scope` | A requested scope is neither built-in nor registered |
+| `403` | `invalid_scope` | The administrative scope was requested — it can never be granted through registration |
 | `403` | `not_supported` | Dynamic client registration is not enabled |
+| `429` | `rate_limited` | Too many registrations from this IP (10 per hour) |
 
 ## Security Considerations
 
-The registration endpoint is **unauthenticated by default**. In production, put it behind a rate limiter or an `IAuthHook` that validates an initial access token, a mutual-TLS certificate, or a software statement before allowing registration. Otherwise, anyone who can reach the endpoint can mint client credentials.
+The registration endpoint is **unauthenticated**, but constrained by design:
 
-Consider disabling dynamic registration entirely and managing clients via the admin API in environments where self-service registration is not a requirement.
+- **Rate limited** — 10 registrations per IP per rolling hour (`429 rate_limited`), so the client store can't be flooded.
+- **Grant types restricted** — only `authorization_code` + `refresh_token`; a registered client always requires a user-mediated flow and can never act as a machine-to-machine client.
+- **Admin scope reserved** — the `authagonal-admin` scope (or whatever `AdminApi:Scope` is set to) is refused, so registration can never produce a client that reaches the [admin API](admin-api).
+- **PKCE always required** on registered clients.
+
+For stronger gating (initial access tokens, mTLS, software statements), front the endpoint with your own middleware or an `IAuthHook`. Consider disabling dynamic registration entirely and managing clients via the admin API in environments where self-service registration is not a requirement.

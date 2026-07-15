@@ -9,6 +9,51 @@ Admin endpoints require a JWT access token with the `authagonal-admin` scope (co
 
 All endpoints are under `/api/v1/`.
 
+## Bootstrapping the first admin token
+
+Every `/api/v1/*` endpoint requires a bearer token carrying the admin scope — but the admin API itself (and [dynamic client registration](client-registration)) **refuses to create or update any client holding that scope** (`403 forbidden_scope`), so a runtime-created client can never escalate to admin. The only way to mint an admin token is a **config-seeded client**: entries in the `Clients:` configuration section are upserted at startup by `ClientSeedService`, and config is trusted — the forbidden-scope guard applies only to the runtime APIs.
+
+Seed a `client_credentials` client with the admin scope in `appsettings.json` (or the equivalent environment variables / secret store):
+
+```json
+{
+  "Clients": [
+    {
+      "Id": "admin-cli",
+      "Name": "Admin CLI",
+      "ClientSecret": "a-long-random-secret",
+      "GrantTypes": ["client_credentials"],
+      "Scopes": ["authagonal-admin"]
+    }
+  ]
+}
+```
+
+(`ClientSecret` is hashed at startup; supply `SecretHashes` instead if you prefer to keep only a pre-hashed value in config. `ClientId`/`ClientName`/`AllowedGrantTypes`/`AllowedScopes` are accepted as aliases for `Id`/`Name`/`GrantTypes`/`Scopes`.)
+
+Then exchange the credentials for a token at the standard token endpoint:
+
+```bash
+curl -X POST https://auth.example.com/connect/token \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -d "grant_type=client_credentials" \
+  -d "client_id=admin-cli" \
+  -d "client_secret=a-long-random-secret" \
+  -d "scope=authagonal-admin"
+```
+
+```json
+{ "access_token": "eyJhbGci...", "token_type": "Bearer", "expires_in": 1800, "scope": "authagonal-admin" }
+```
+
+The `client_credentials` grant validates the requested scope against the client's `AllowedScopes` — since the seeded client holds `authagonal-admin`, the token is issued. Use it as `Authorization: Bearer {access_token}` on every admin call:
+
+```bash
+curl https://auth.example.com/api/v1/clients -H "Authorization: Bearer eyJhbGci..."
+```
+
+Keep the seeded client's secret in your deployment's secret store; rotating it is a config change + restart.
+
 ## Users
 
 ### Get User
@@ -18,6 +63,14 @@ GET /api/v1/profile/{userId}
 ```
 
 Returns user details including external login links.
+
+### User Exists
+
+```
+GET /api/v1/profile/{userId}/exists
+```
+
+Returns `204` if the user exists, `404` otherwise (a cheap existence probe — no body).
 
 ### Register User
 
@@ -33,7 +86,9 @@ Content-Type: application/json
 }
 ```
 
-Creates a user and sends a verification email. Returns `409` if the email is already taken.
+Creates a user and sends a verification email. Returns `409 user_exists` if the email is already taken.
+
+Optional admin-only fields: `userId` (caller-supplied id — `409 user_id_in_use` on collision), `emailConfirmed` (create the user already verified, skipping the verification email), `companyName`, `organizationId`, `phone`, `locale`, and `customAttributes` (a string map persisted on the user and forwarded to provisioning targets).
 
 ### Update User
 
@@ -49,7 +104,7 @@ Content-Type: application/json
 }
 ```
 
-All fields are optional — only provided fields are updated. Changing `organizationId` triggers:
+`userId` is required; every other field is optional — only provided fields are updated. Changing `organizationId` triggers:
 - SecurityStamp rotation (invalidates all cookie sessions within 30 minutes)
 - All refresh tokens revoked
 
@@ -125,9 +180,11 @@ Removes a specific MFA credential (e.g., a lost authenticator). If the last prim
 ```
 POST   /api/v1/saml/connections                    # Create
 GET    /api/v1/saml/connections/{connectionId}     # Get one
-PUT    /api/v1/saml/connections/{connectionId}     # Update
+PUT    /api/v1/saml/connections/{connectionId}     # Update (partial — only supplied fields change)
 DELETE /api/v1/saml/connections/{connectionId}     # Delete
 ```
+
+Create requires `connectionName`, `entityId`, and **exactly one of** `metadataLocation` (a metadata URL) or `metadataXml` (pasted IdP metadata, for IdPs without a metadata URL — it is parse-validated and condensed at save). Optional: `nameIdFormat` (omit for the emailAddress default, `"none"` to omit NameIDPolicy — recommended for ADFS, or a NameID format URN), `signAuthnRequests`, `iconUrl`, `allowedDomains`, `disableJitProvisioning`. Every connection gets a server-generated SP keypair; it is never returned by the API. See [SAML](saml) for details.
 
 ### OIDC Providers
 
@@ -136,6 +193,8 @@ POST   /api/v1/oidc/connections                    # Create
 GET    /api/v1/oidc/connections/{connectionId}     # Get one
 DELETE /api/v1/oidc/connections/{connectionId}     # Delete
 ```
+
+Create requires `connectionName`, `metadataLocation`, `clientId`, `clientSecret`, `redirectUrl`. Optional: `iconUrl`, `allowedDomains`, `passthroughParams`. The client secret is protected at rest and never returned. See [OIDC Federation](oidc-federation).
 
 ### SSO Domains
 
@@ -295,9 +354,11 @@ Content-Type: application/json
 
 {
   "userId": "user-id",
-  "roleId": "role-id"
+  "roleName": "admin"
 }
 ```
+
+Assignment is by **role name**, not role id. Returns the user's updated role list.
 
 ### Unassign Role from User
 
@@ -307,7 +368,7 @@ Content-Type: application/json
 
 {
   "userId": "user-id",
-  "roleId": "role-id"
+  "roleName": "admin"
 }
 ```
 
@@ -326,11 +387,13 @@ POST /api/v1/scim/tokens
 Content-Type: application/json
 
 {
-  "clientId": "client-id"
+  "clientId": "client-id",
+  "description": "Entra provisioning",
+  "expiresInDays": 365
 }
 ```
 
-Returns the raw token once. Store it securely — it cannot be retrieved again.
+`description` and `expiresInDays` are optional (omit `expiresInDays` for a non-expiring token). Returns the raw token once. Store it securely — it cannot be retrieved again.
 
 ### List Tokens
 

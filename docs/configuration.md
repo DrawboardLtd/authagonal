@@ -31,10 +31,14 @@ Storage can be configured one of two ways — supply **either** `Storage:Connect
 | Setting | Default | Description |
 |---|---|---|
 | `Authentication:CookieLifetimeHours` | `48` | Cookie session lifetime (sliding) |
+| `Authentication:AlwaysSecureCookie` | `false` | Force the session cookie's `Secure` flag unconditionally. The default (`SameAsRequest`) already yields a Secure cookie behind a TLS-terminating proxy that forwards `X-Forwarded-Proto: https`. |
 | `Auth:MaxFailedAttempts` | `5` | Failed login attempts before account lockout |
 | `Auth:LockoutDurationMinutes` | `10` | Account lockout duration after max failed attempts |
 | `Auth:MaxRegistrationsPerIp` | `5` | Maximum registrations per IP address within the window |
 | `Auth:RegistrationWindowMinutes` | `60` | Registration rate limiting window |
+| `Auth:MaxPasswordResetsPerEmail` | `3` | Maximum password-reset emails per target address within the window (keyed on the email, not the caller IP, so one address can't be email-bombed) |
+| `Auth:PasswordResetWindowMinutes` | `60` | Password-reset rate limiting window |
+| `Auth:AutoConfirmEmailDomains` | *(empty)* | Email domains (string array) whose self-service registrations are auto-confirmed — they skip the verification email. Empty (the default) means every registration must verify. Intended only for dev/test; never list a domain that can receive real mail. |
 | `Auth:EmailVerificationExpiryHours` | `24` | Email verification link lifetime |
 | `Auth:PasswordResetExpiryMinutes` | `60` | Password reset link lifetime |
 | `Auth:MfaChallengeExpiryMinutes` | `5` | MFA challenge token lifetime |
@@ -48,7 +52,17 @@ Storage can be configured one of two ways — supply **either** `Storage:Connect
 | `Auth:KeyRotationCheckIntervalMinutes` | `360` | How often to check if the active key needs rotation |
 | `Auth:KeyRotationLeadTimeDays` | `14` | Rotate when the active key expires within this many days |
 | `Auth:SecurityStampRevalidationMinutes` | `30` | Interval between cookie security stamp checks |
-| `DataProtection:BlobUri` | *(none)* | Azure Blob URI for persisting data protection keys across instances |
+
+## Data Protection
+
+ASP.NET Core Data Protection keys (which encrypt the session cookie) must be shared across instances — see [Scaling](scaling#cookie-encryption-data-protection). Persistence options, in precedence order:
+
+| Setting | Default | Description |
+|---|---|---|
+| `DataProtection:BlobUri` | *(none)* | Explicit Azure Blob URI for the key ring (e.g. `https://{account}.blob.core.windows.net/dataprotection/keys.xml`). Authenticates via `DefaultAzureCredential` — the preferred production path alongside `Storage:TableServiceUri`. |
+| *(fallback)* | — | When `DataProtection:BlobUri` is unset and `Storage:ConnectionString` points at a real storage account (not Azurite), keys are persisted to a `dataprotection` container in that account automatically. With Azurite, keys fall back to the default file-based store. |
+
+On the AWS backend, pass an S3 client + bucket to `AddAuthagonalAwsStorage` to persist the key ring to S3 — see [Installation → AWS backend](installation#aws-backend).
 
 ## Cache and Timeouts
 
@@ -169,7 +183,7 @@ Multi-factor authentication is enforced per-client via the `MfaPolicy` property:
 
 When `MfaPolicy` is `Required` and the user hasn't enrolled MFA, login returns `{ mfaSetupRequired: true, setupToken: "..." }`. The setup token authenticates the user to the MFA setup endpoints (via `X-MFA-Setup-Token` header) so they can enroll before getting a cookie session.
 
-Federated logins (SAML/OIDC) skip MFA — the external identity provider handles it.
+Federated logins (SAML/OIDC) honour the MFA policy too: an MFA-enrolled user is routed through the MFA challenge after the external IdP authenticates them, and `Required` forces enrollment for federated users without MFA.
 
 ### IAuthHook Override
 
@@ -238,7 +252,7 @@ Define SAML identity providers in configuration. These are seeded on startup:
 |---|---|---|
 | `ConnectionId` | Yes | Stable identifier (used in URLs like `/saml/{connectionId}/login`) |
 | `ConnectionName` | No | Display name (defaults to ConnectionId) |
-| `EntityId` | Yes | SAML Service Provider entity ID |
+| `EntityId` | Yes | **This server's** SP entity ID — the identifier you register at the IdP, not the IdP's own entity ID |
 | `MetadataLocation` | Yes | URL to the IdP's SAML metadata XML |
 | `AllowedDomains` | No | Email domains routed to this provider via SSO |
 
@@ -323,62 +337,44 @@ Register a `BackChannelLogoutUri` on a client to receive OIDC Back-Channel Logou
 
 ## Email
 
-By default, Authagonal uses a no-op email service that silently discards all emails. To enable email delivery, register an `IEmailService` implementation before calling `AddAuthagonal()`.
-
-The built-in `EmailService` uses [Resend](https://resend.com). To use it, register it explicitly:
-
-```csharp
-services.AddSingleton<IEmailService, EmailService>();
-services.AddAuthagonal(configuration);
-```
+The built-in email sender uses [Resend](https://resend.com) and **activates automatically** when `Email:ResendApiKey` is configured — no service registration needed. To use a different provider, register your own `IEmailService` implementation before calling `AddAuthagonal()` (it takes precedence regardless of the `Email:*` keys).
 
 | Setting | Description |
 |---|---|
-| `Email:ResendApiKey` | Resend API key for sending emails |
+| `Email:ResendApiKey` | Resend API key. When set, the built-in Resend sender is used. |
 | `Email:SenderEmail` | Sender email address |
 | `Email:SenderName` | Sender display name (defaults to `"Authagonal"`) |
+
+> ⚠️ **Without any email sender, self-registration is broken.** When `Email:ResendApiKey` is unset and no custom `IEmailService` is registered, a no-op service silently discards all mail — verification and password-reset emails never arrive, and because login requires a confirmed email by default, self-registered users can never sign in. `UseAuthagonal` logs a warning at startup in this state. Escape hatch for dev/test: `Auth:AutoConfirmEmailDomains` auto-confirms registrations for the listed domains.
 
 Emails to `@example.com` addresses are silently skipped (useful for testing).
 
 ## Cluster
 
-Authagonal instances automatically form a cluster to share rate limit state. Clustering is enabled by default with zero configuration.
+The clustering layer provides **leader election** (so leader-gated jobs like signing key rotation run on exactly one node) and a **cross-node event bus**, behind pluggable backends. The default is in-process: a single node is always its own leader — the right setting for single-node and local development, with zero configuration.
 
 | Setting | Env Variable | Default | Description |
 |---|---|---|---|
-| `Cluster:Enabled` | `Cluster__Enabled` | `true` | Master switch for clustering. Set to `false` for local-only rate limiting. |
-| `Cluster:MulticastGroup` | `Cluster__MulticastGroup` | `239.42.42.42` | UDP multicast group for peer discovery |
-| `Cluster:MulticastPort` | `Cluster__MulticastPort` | `19847` | UDP multicast port for peer discovery |
-| `Cluster:InternalUrl` | `Cluster__InternalUrl` | *(none)* | Load-balanced fallback URL for gossip when multicast is unavailable |
-| `Cluster:Secret` | `Cluster__Secret` | *(none)* | Shared secret required on the internal-only endpoints (`/_internal/cluster/gossip` and `/_internal/backchannel-logout`). When set, callers must present it in the `X-Cluster-Secret` header (compared in constant time). When **unset**, those endpoints are reachable only from loopback / private (RFC 1918 / link-local / ULA) source IPs — an external request carrying a public IP is rejected. Recommended whenever `InternalUrl` routes gossip through a load balancer. |
-| `Cluster:GossipIntervalSeconds` | `Cluster__GossipIntervalSeconds` | `5` | How often instances exchange rate limit state |
-| `Cluster:DiscoveryIntervalSeconds` | `Cluster__DiscoveryIntervalSeconds` | `10` | How often instances announce themselves via multicast |
-| `Cluster:PeerStaleAfterSeconds` | `Cluster__PeerStaleAfterSeconds` | `30` | Drop peers not heard from after this many seconds |
+| `Cluster:Enabled` | `Cluster__Enabled` | `true` | Master switch. When `false` the node runs standalone (always leader, in-process event bus). |
+| `Cluster:Secret` | `Cluster__Secret` | *(none)* | Shared secret required on the internal-only `/_internal/backchannel-logout` endpoint. When set, callers must present it in the `X-Cluster-Secret` header (compared in constant time). When **unset**, the endpoint is reachable only from loopback / private (RFC 1918 / link-local / ULA) source IPs — an external request carrying a public IP is rejected. |
+| `Cluster:LeaseTtlSeconds` | `Cluster__LeaseTtlSeconds` | `30` | Leadership lease duration. Renewed at roughly half this interval. |
+| `Cluster:PollIntervalSeconds` | `Cluster__PollIntervalSeconds` | `3` | How often the event-bus backend polls for messages published by other nodes. |
 
-**Zero-config (default):** Instances discover each other via UDP multicast. Works in Kubernetes, Docker Compose, or any shared network.
+**Multi-node deployments** swap in a real backend via the `configureClustering` callback on `AddAuthagonal` / `AddAuthagonalCore`:
 
-**Multicast disabled (e.g., some cloud VPCs):**
+```csharp
+// Azure: leadership via a blob lease, event bus via a table log (Authagonal.AzureProvider)
+builder.Services.AddAuthagonal(builder.Configuration,
+    cluster => cluster.UseAzureStorage(blobServiceClient, tableServiceClient));
 
-```json
-{
-  "Cluster": {
-    "InternalUrl": "http://authagonal-auth.svc.cluster.local:8080",
-    "Secret": "shared-secret-here"
-  }
-}
+// AWS equivalent (Authagonal.AwsProvider)
+builder.Services.AddAuthagonal(builder.Configuration,
+    cluster => cluster.UseAwsDynamo(dynamoDb));
 ```
 
-**Clustering fully disabled:**
+`UseAzureStorageBus` / `UseAwsDynamoBus` register the event bus only, keeping the in-process lease — for nodes that must receive cluster events but must never contend for leadership.
 
-```json
-{
-  "Cluster": {
-    "Enabled": false
-  }
-}
-```
-
-See [Scaling](scaling) for more details on how distributed rate limiting works.
+See [Scaling](scaling) for how leadership and the event bus behave across instances.
 
 ## Forwarded Headers (trusted proxy)
 
@@ -404,13 +400,16 @@ Authagonal keys rate limiting and account lockout on the client IP, and only emi
 
 ## Rate Limiting
 
-Built-in per-IP rate limits are enforced across all instances via the cluster gossip protocol:
+Built-in rate limits protect the abuse-prone endpoints:
 
-| Endpoint | Limit | Window |
-|---|---|---|
-| `POST /api/auth/register` | 5 registrations | 1 hour |
+| Endpoint | Limit | Window | Keyed on |
+|---|---|---|---|
+| `POST /api/auth/register` | 5 (`Auth:MaxRegistrationsPerIp`) | 1 hour (`Auth:RegistrationWindowMinutes`) | Client IP |
+| `POST /api/auth/forgot-password` | 3 (`Auth:MaxPasswordResetsPerEmail`) | 1 hour (`Auth:PasswordResetWindowMinutes`) | Target email |
+| `POST /connect/register` (when enabled) | 10 | 1 hour | Client IP |
+| SCIM endpoints | 200 | 1 minute | SCIM client |
 
-When clustering is enabled, these limits are consolidated across all instances. When disabled, each instance enforces its own limit independently.
+Limits are enforced **in-process per node** (behind the `IRateLimiter` seam), so with N instances the effective ceiling is N× the configured value. Treat these as a backstop and enforce the authoritative global limit at the edge (WAF / ingress / CDN). See [Scaling](scaling#rate-limiting).
 
 ## CORS
 

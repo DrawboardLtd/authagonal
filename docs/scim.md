@@ -16,10 +16,13 @@ SCIM is an inbound provisioning protocol: your identity provider pushes user and
 - User CRUD (create, read, update, delete via soft deactivation)
 - Group CRUD with member management
 - Filtering (`eq` and `co` operators on `userName`, `externalId`, `displayName`)
-- Pagination via `startIndex` and `count`
+- Pagination: cursor-based for user listings (`cursor`/`nextCursor`), `startIndex` and `count` for groups
 - PATCH for partial updates (including `active=false` deactivation)
+- Group-to-role mapping resolved at token issuance
 
 **Not supported:** bulk operations, sorting, ETags, password management via SCIM.
+
+All resources are scoped to the SCIM client that provisioned them: a user or group created by one SCIM token's client is invisible (404) to every other SCIM client.
 
 ## Generating a SCIM Token
 
@@ -37,17 +40,20 @@ Content-Type: application/json
 }
 ```
 
-The response includes the raw token **once** — store it securely:
+The response includes the raw token **once**. It is stored as a SHA-256 hash and cannot be recovered later, so store it securely:
 
 ```json
 {
   "tokenId": "abc123",
   "clientId": "your-client-id",
   "token": "base64-encoded-token",
+  "description": "Entra ID SCIM token",
   "createdAt": "2024-01-01T00:00:00Z",
   "expiresAt": "2025-01-01T00:00:00Z"
 }
 ```
+
+Omit `expiresInDays` (or pass `0`) for a non-expiring token.
 
 ### Listing tokens
 
@@ -119,6 +125,10 @@ Use **OAuth Bearer Token** with the token generated above.
 | GET | `/scim/v2/Schemas` | Schema definitions |
 | GET | `/scim/v2/ResourceTypes` | Resource types |
 
+Every endpoint is also mapped without the `/v2` segment (e.g. `/scim/Users`) for identity providers that append their own path. The discovery endpoints (`ServiceProviderConfig`, `Schemas`, `ResourceTypes`, and the bare `/scim/` and `/scim/v2/` base URLs, which return the ServiceProviderConfig) are anonymous; everything else requires a SCIM Bearer token.
+
+User endpoints are rate-limited to 200 requests per minute per SCIM client; excess requests receive a SCIM error with status `429`.
+
 ## Attribute Mapping
 
 ### User attributes
@@ -132,6 +142,7 @@ Use **OAuth Bearer Token** with the token generated above.
 | `emails[type eq "work"].value` | `Email` |
 | `active` | `IsActive` |
 | `externalId` | `ExternalId` |
+| `preferredLanguage` (falling back to `locale`) | `Locale` |
 
 ### Group attributes
 
@@ -146,14 +157,15 @@ Use **OAuth Bearer Token** with the token generated above.
 ### User creation
 - SCIM-provisioned users are created with `EmailConfirmed = true` (SSO-only, no password).
 - The `ScimProvisionedByClientId` field tracks which SCIM client created the user.
-- If the client has `ProvisioningApps` configured, TCC provisioning is triggered automatically.
+- If the client has `ProvisioningApps` configured, TCC provisioning is triggered automatically. If provisioning rejects the user, the SCIM create is rolled back with a `422` response.
+- Creating a user whose `userName` or `externalId` already exists returns a SCIM `409` conflict. Email changes via PUT or PATCH are conflict-checked the same way.
 
 ### User deactivation
-- `DELETE /scim/v2/Users/{id}` performs a **soft delete** by setting `IsActive = false`.
+- `DELETE /scim/v2/Users/{id}` performs a **soft delete** by setting `IsActive = false`. The user record is kept: a subsequent `GET /scim/v2/Users/{id}` still returns it (with `active: false`) rather than a 404.
 - `PATCH` with `active = false` also deactivates the user.
 - Deactivated users cannot log in via password, SAML, or OIDC.
-- All refresh tokens are revoked upon deactivation.
-- Deprovisioning is triggered for downstream apps.
+- All grants (refresh tokens, sessions) are revoked upon deactivation.
+- Deprovisioning of downstream apps is triggered by `DELETE` only; a `PATCH` deactivation revokes grants but leaves downstream apps untouched.
 
 ### Filtering
 Supported filter expressions:
@@ -163,10 +175,35 @@ Supported filter expressions:
 
 Only single-attribute filters are supported. Complex boolean expressions (`and`, `or`) are not supported.
 
+`eq` filters on `userName` and `externalId` (the lookups Entra and Okta issue before every create or update) are resolved via indexed point lookups rather than a listing scan, so they stay fast at any user count. Other filters (`co`, or filters on `displayName`) are applied while paging through the client's users.
+
+### Pagination
+User listings use **cursor pagination**. Each page of `GET /scim/v2/Users` returns a `nextCursor` property in the list response; pass it back as `?cursor=` to fetch the next page. When `nextCursor` is absent, the listing is complete. Page size is controlled by `count` (default 100, maximum 200).
+
+Requesting `startIndex` greater than 1 on the Users endpoint returns a `400` error directing you to cursor pagination; offset paging past the first page is not offered. `totalResults` reports the number of resources returned in the response (it is the true total only when `nextCursor` is absent).
+
+Group listings still use `startIndex`/`count` offset pagination.
+
+### Group membership via PATCH
+`PATCH /scim/v2/Groups/{id}` accepts the membership shapes the major identity providers actually send:
+
+- **Add members:** `op: "add"` with `path: "members"` and a value array of `{ "value": "user-id" }` objects. Duplicates are ignored.
+- **Replace members:** `op: "replace"` with `path: "members"` replaces the entire membership with the supplied array.
+- **Remove a specific member (value array):** `op: "remove"` with `path: "members"` and a value array of the member ids to remove (the shape Entra ID sends).
+- **Remove a specific member (path filter):** `op: "remove"` with `path: 'members[value eq "user-id"]'`, the id carried in the path filter with no value (the shape Okta sends for deprovisioning).
+- **Remove all members:** `op: "remove"` with `path: "members"` and no value clears the group.
+
+### Group-to-role mapping
+Membership in a SCIM group can grant application roles. Mappings are one row per (group, role) pair, and a group may grant several roles. They are resolved at **token issuance**: a user's effective roles are their directly assigned roles plus the roles of every mapped group they belong to, so adding or removing a group member takes effect on the next token without touching the user record. An empty mapping store is a no-op.
+
+Mappings are persisted via the `IScimGroupRoleMappingStore` (implemented by the Azure and AWS storage providers; an in-memory default is registered otherwise) and are managed by the hosting application's admin surface, not via the SCIM API itself.
+
+Optionally, a client with `IncludeGroupsInTokens` enabled also receives the user's SCIM group display names as a `groups` claim in issued tokens.
+
 ## Known Limitations
 
-- **No bulk operations** — users and groups must be provisioned individually.
-- **No sorting** — results are ordered by creation date.
-- **Filter subset** — only `eq` and `co` operators on `userName`, `externalId`, and `displayName`.
-- **No password management** — SCIM-provisioned users authenticate via SSO only.
-- **Soft delete only** — `DELETE` deactivates rather than permanently removes users.
+- **No bulk operations:** users and groups must be provisioned individually.
+- **No sorting:** user listings return storage order under cursor pagination; group listings are ordered by creation date.
+- **Filter subset:** only `eq` and `co` operators on `userName`, `externalId`, and `displayName` (groups: `displayName` and `externalId`).
+- **No password management:** SCIM-provisioned users authenticate via SSO only.
+- **Soft delete only:** `DELETE` deactivates rather than permanently removes users.

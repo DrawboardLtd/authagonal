@@ -10,12 +10,14 @@ Authagonal includes a migration tool for moving from Duende IdentityServer + SQL
 ## Running the Migration
 
 ```bash
-docker run authagonal-migration -- \
+docker run authagonal-migration \
   --Source:ConnectionString "Server=sql.example.com;Database=Identity;User Id=...;Password=...;" \
   --Target:ConnectionString "DefaultEndpointsProtocol=https;AccountName=...;AccountKey=...;TableEndpoint=https://..." \
   [--DryRun true] \
   [--MigrateRefreshTokens true]
 ```
+
+(No `--` separator after the image name: everything after it is passed straight to the tool, and a bare `--` breaks the option parsing.)
 
 Or from source:
 
@@ -30,12 +32,12 @@ dotnet run --project tools/Authagonal.Migration -- \
 
 | Source (SQL Server) | Target (Table Storage) | Notes |
 |---|---|---|
-| `AspNetUsers` + `AspNetUserClaims` | Users + UserEmails | Single JOIN query. Claims: given_name, family_name, company, org_id. Password hashes kept as-is (BCrypt auto-upgrades on login). |
+| `AspNetUsers` + `AspNetUserClaims` | Users + UserEmails + name indexes | Single JOIN query. Claims: given_name, family_name, company, org_id (types overridable, see below). Password hashes kept as-is; ASP.NET Identity V3 and BCrypt hashes verify unchanged and upgrade to Authagonal's native PBKDF2 format on the next successful login. |
 | `AspNetUserLogins` | UserLogins (forward + reverse index) | `409 Conflict` = skip (idempotent) |
 | Duende `SamlProviderConfigurations` | SamlProviders + SsoDomains | `AllowedDomains` CSV split into individual SSO domain records |
 | Duende `OidcProviderConfigurations` | OidcProviders + SsoDomains | Same domain splitting |
 | Duende `Clients` + child tables | Clients | ClientSecrets, GrantTypes, RedirectUris, PostLogoutRedirectUris, Scopes, CorsOrigins all merged into a single entity |
-| Duende `PersistedGrants` (refresh tokens) | Grants + GrantsBySubject | Opt-in via `--MigrateRefreshTokens true`. Only non-expired tokens. If skipped, users simply re-login. |
+| Duende `PersistedGrants` (refresh tokens) | Grants + GrantsBySubject + GrantsByExpiry | Opt-in via `--MigrateRefreshTokens true`. Only non-expired tokens. If skipped, users simply re-login. |
 
 ## Options
 
@@ -43,10 +45,11 @@ dotnet run --project tools/Authagonal.Migration -- \
 |---|---|---|
 | `--DryRun` | `false` | Log what would be migrated without writing to storage |
 | `--MigrateRefreshTokens` | `false` | Include active refresh tokens. If false, users re-authenticate after cutover. |
+| `--Source:ClaimMap:{claim}` | the OIDC claim name itself | Override the `AspNetUserClaims` ClaimType read for a mapped claim, e.g. `--Source:ClaimMap:given_name=FirstName`. Used for `given_name`, `family_name`, `company`, `org_id`. |
 
 ## Idempotency
 
-The migration is idempotent — safe to run multiple times. Existing records are upserted (not duplicated). This allows you to:
+The migration is idempotent and safe to run multiple times. Existing records are updated or skipped, never duplicated. This allows you to:
 
 1. Run the migration days ahead of cutover
 2. Run a final delta migration close to cutover
@@ -56,10 +59,10 @@ The migration is idempotent — safe to run multiple times. Existing records are
 
 These Authagonal features have no Duende equivalent and start empty after migration:
 
-- **Roles** — RBAC roles and user-role assignments
-- **MFA credentials** — TOTP, WebAuthn, and recovery code enrollments
-- **SCIM tokens and groups** — SCIM provisioning configuration
-- **User provisions** — TCC downstream app provisioning state
+- **Roles**: RBAC roles and user-role assignments
+- **MFA credentials**: TOTP, WebAuthn, and recovery code enrollments
+- **SCIM tokens and groups**: SCIM provisioning configuration
+- **User provisions**: TCC downstream app provisioning state
 
 Users will need to re-enroll MFA if your client's `MfaPolicy` is `Enabled` or `Required`.
 

@@ -5,19 +5,23 @@ title: Localization
 
 # Localization
 
-Authagonal supports eight languages out of the box: English, Simplified Chinese (`zh-Hans`), German (`de`), French (`fr`), Spanish (`es`), Vietnamese (`vi`), Portuguese (`pt`), and Klingon (`tlh`). Localization covers the server API responses, the login UI, and this documentation site.
+The login UI ships eleven locales out of the box: English, Simplified Chinese (`zh-Hans`), German (`de`), French (`fr`), Spanish (`es`), Vietnamese (`vi`), Portuguese (`pt`), Arabic (`ar`), Afrikaans (`af`), Hindi (`hi`), and a Klingon (`tlh`) novelty locale. Server API responses are localized in the first seven of these. Localization covers the server API responses, the login UI, and this documentation site.
 
 ## Supported Languages
 
-| Code | Language |
-|---|---|
-| `en` | English (default) |
-| `zh-Hans` | Simplified Chinese |
-| `de` | German |
-| `fr` | French |
-| `es` | Spanish |
-| `vi` | Vietnamese |
-| `pt` | Portuguese |
+| Code | Language | Login UI | Server API |
+|---|---|---|---|
+| `en` | English (default) | ✓ | ✓ |
+| `zh-Hans` | Simplified Chinese | ✓ | ✓ |
+| `de` | German | ✓ | ✓ |
+| `fr` | French | ✓ | ✓ |
+| `es` | Spanish | ✓ | ✓ |
+| `vi` | Vietnamese | ✓ | ✓ |
+| `pt` | Portuguese | ✓ | ✓ |
+| `ar` | Arabic (right-to-left) | ✓ | — |
+| `af` | Afrikaans | ✓ | — |
+| `hi` | Hindi | ✓ | — |
+| `tlh` | Klingon (novelty) | ✓ | — |
 
 ## Server (API Responses)
 
@@ -73,6 +77,10 @@ Resources/
 
 The login SPA uses [react-i18next](https://react.i18next.com/) for client-side localization. Language is auto-detected from the browser's `navigator.language` setting.
 
+The registered locales live in a single `LANGUAGES` registry in `login-app/src/i18n/index.ts`, which drives both the i18next resource registration and every language picker, so the two can't drift. Locales flagged `novelty` (currently `tlh`) stay fully functional (`?lng=tlh` works) but are excluded from the default picker; they only appear in a dropdown when a tenant's `BrandingConfig.languages` explicitly lists them. Tenants can also narrow the picker the same way: a `languages` array in `branding.json` replaces the default list entirely (see [Branding](branding)).
+
+The active language is mirrored onto `<html lang>` and `<html dir>`, so right-to-left languages (`ar`) flip the auth card automatically, including when the language is switched in place via the picker.
+
 ### Language detection
 
 The detection order is:
@@ -88,7 +96,7 @@ Translation JSON files are bundled with the app at `login-app/src/i18n/`:
 
 ```
 i18n/
-  index.ts        # i18n initialization
+  index.ts        # i18n initialization + the LANGUAGES registry
   en.json         # English
   zh-Hans.json    # Simplified Chinese
   de.json         # German
@@ -96,12 +104,15 @@ i18n/
   es.json         # Spanish
   vi.json         # Vietnamese
   pt.json         # Portuguese
-  tlh.json        # Klingon
+  ar.json         # Arabic
+  af.json         # Afrikaans
+  hi.json         # Hindi
+  tlh.json        # Klingon (novelty)
 ```
 
 ### Password policy labels
 
-The login UI translates password requirement labels client-side based on the `rule` key returned by `GET /api/auth/password-policy`, rather than using the server-provided `label` field. This ensures the password requirements are always shown in the user's browser language, even if the server `Accept-Language` header differs.
+The reset-password page translates its password requirement checklist client-side based on the `rule` key returned by `GET /api/auth/password-policy` (falling back to the server-provided `label` for unrecognized rules). This ensures the requirements follow the language selected in the UI, even if the browser's `Accept-Language` header differs. The registration page displays the server-provided `label` values, which are localized from `Accept-Language`.
 
 ### npm package consumers
 
@@ -116,7 +127,7 @@ i18n.changeLanguage('de');
 
 ## Documentation
 
-The docs site uses a directory-based approach. English pages are at the root, and translations are in locale subdirectories (`/zh-Hans/`, `/de/`, `/fr/`, `/es/`). A language switcher dropdown in the sidebar allows switching between languages.
+The docs site uses a directory-based approach. English pages are at the root, and translations are in locale subdirectories (`/zh-Hans/`, `/de/`, `/fr/`, `/es/`, `/vi/`, `/pt/`). A language switcher dropdown in the sidebar allows switching between languages.
 
 ## Adding a New Language
 
@@ -144,13 +155,13 @@ Create a new translation JSON file by copying `en.json` and translating the valu
 login-app/src/i18n/ja.json
 ```
 
-Register it in `login-app/src/i18n/index.ts`:
+Register it in the `LANGUAGES` array in `login-app/src/i18n/index.ts`. That one entry registers the i18next resource and adds the language to every picker:
 
 ```typescript
 import ja from './ja.json';
 
-// In the resources object:
-ja: { translation: ja },
+// In the LANGUAGES array:
+{ code: 'ja', label: '日本語', resource: ja },
 ```
 
 ### 3. Documentation

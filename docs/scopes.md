@@ -107,7 +107,7 @@ Only supplied fields are updated; omitted fields retain their current values.
 DELETE /api/v1/scopes/{name}
 ```
 
-Returns `204 No Content`. Tokens already issued that include this scope remain valid until they expire — revoke them explicitly if needed (see [Admin API](admin-api) token revocation).
+Returns `204 No Content` (`404` if the scope doesn't exist). Tokens already issued that include this scope remain valid until they expire — revoke them explicitly via `/connect/revocation` if needed.
 
 ## Discovery Document
 

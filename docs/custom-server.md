@@ -17,7 +17,7 @@ cd MyAuthServer
 
 # Add Authagonal packages (or project references for source builds)
 dotnet add package Authagonal.Server
-dotnet add package Authagonal.Storage
+dotnet add package Authagonal.AzureProvider
 ```
 
 Your `.csproj` should contain:
@@ -25,9 +25,11 @@ Your `.csproj` should contain:
 ```xml
 <ItemGroup>
   <PackageReference Include="Authagonal.Server" Version="*" />
-  <PackageReference Include="Authagonal.Storage" Version="*" />
+  <PackageReference Include="Authagonal.AzureProvider" Version="*" />
 </ItemGroup>
 ```
+
+`Authagonal.AzureProvider` supplies the Azure Table Storage stores that `AddAuthagonal` wires up from the `Storage:*` configuration. To host on AWS instead, reference `Authagonal.AwsProvider` and call `AddAuthagonalAwsStorage(...)` before `AddAuthagonal` — see [Installation → AWS backend](installation#aws-backend).
 
 ### Configure Program.cs
 
@@ -92,7 +94,7 @@ Register your implementations **before** calling `AddAuthagonal()` — Authagona
 
 | Interface | Purpose | Default |
 |---|---|---|
-| `IEmailService` | Send verification and password reset emails | No-op (silently discards) |
+| `IEmailService` | Send verification and password reset emails | Built-in Resend sender when `Email:ResendApiKey` is set; otherwise no-op (silently discards) |
 | `IAuthHook` | Gate or audit login, registration, and token events | No-op |
 | `IProvisioningOrchestrator` | Provision users into downstream apps at authorize time | TCC provisioning |
 | `ISecretProvider` | Resolve client secrets | Plaintext (or Key Vault with `SecretProvider:VaultUri`) |
@@ -100,6 +102,7 @@ Register your implementations **before** calling `AddAuthagonal()` — Authagona
 #### Example: audit hook
 
 ```csharp
+using Authagonal.Core.Models;
 using Authagonal.Core.Services;
 
 public class AuditAuthHook(ILogger<AuditAuthHook> logger) : IAuthHook
@@ -131,8 +134,26 @@ public class AuditAuthHook(ILogger<AuditAuthHook> logger) : IAuthHook
         logger.LogInformation("Token issued: {ClientId} ({GrantType})", clientId, grantType);
         return Task.CompletedTask;
     }
+
+    public Task<MfaPolicy> ResolveMfaPolicyAsync(string userId, string email,
+        MfaPolicy clientPolicy, string clientId, CancellationToken ct = default)
+        => Task.FromResult(clientPolicy);
+
+    public Task OnMfaVerifiedAsync(string userId, string email,
+        string mfaMethod, CancellationToken ct = default)
+        => Task.CompletedTask;
+
+    public Task OnUserUpdatedAsync(string userId, string email,
+        string updatedVia, CancellationToken ct = default)
+        => Task.CompletedTask;
+
+    public Task OnUserDeletedAsync(string userId, string email,
+        string deletedVia, CancellationToken ct = default)
+        => Task.CompletedTask;
 }
 ```
+
+The interface has further optional members with no-op default implementations (`OnMfaVerifyFailedAsync`, `OnEmailConfirmedAsync`, `OnMfaEnrolledAsync`, `OnMfaCredentialRemovedAsync`, `OnRecoveryCodesRegeneratedAsync`, `OnPasswordChangedAsync`) — override them only if you need those events.
 
 #### Example: email service
 
@@ -156,6 +177,8 @@ public class ConsoleEmailService(ILogger<ConsoleEmailService> logger) : IEmailSe
     }
 }
 ```
+
+> **Email is the most common integration trap.** If you register no `IEmailService` and don't set `Email:ResendApiKey`, verification and password-reset mails are silently discarded — and because the confirmed-email login gate defaults to on, self-registered users can never log in (`UseAuthagonal` warns at startup). The built-in Resend sender activates automatically when `Email:ResendApiKey` + `Email:SenderEmail` are configured; for dev/test, `Auth:AutoConfirmEmailDomains` skips verification for listed domains. See [Configuration → Email](configuration#email).
 
 ### Add custom endpoints
 
@@ -225,7 +248,7 @@ import {
 
 // API clients — call from your custom pages
 import {
-  login, logout, ssoCheck, forgotPassword, resetPassword,
+  login, register, logout, ssoCheck, forgotPassword, resetPassword,
   getSession, getProviders, getPasswordPolicy,
   mfaVerify, mfaStatus, mfaTotpSetup, mfaTotpConfirm,
   mfaWebAuthnSetup, mfaWebAuthnConfirm, mfaRecoveryGenerate,
@@ -386,9 +409,13 @@ Configure the login UI appearance without rebuilding:
   "primaryColor": "#059669",
   "supportEmail": "support@example.com",
   "showForgotPassword": true,
+  "showRegistration": false,
+  "darkMode": "auto",
   "customCssUrl": "/custom.css"
 }
 ```
+
+The full schema — including localized welcome text, the language picker list, and per-mode dark/light colour and logo-background overrides — is on the [Branding](branding) page.
 
 ### Vite config
 

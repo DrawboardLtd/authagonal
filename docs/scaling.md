@@ -9,7 +9,7 @@ Authagonal is designed to scale both vertically and horizontally with no special
 
 ## Stateless by design
 
-All persistent state is stored in Azure Table Storage. There is no in-process state that requires sticky sessions or coordination between instances:
+All persistent state is stored in the backing table store — Azure Table Storage, or DynamoDB on the AWS backend. There is no in-process state that requires sticky sessions or coordination between instances:
 
 - **Signing keys** — loaded from Table Storage, refreshed hourly
 - **Authorization codes and refresh tokens** — stored in Table Storage with single-use enforcement
@@ -23,7 +23,7 @@ ASP.NET Core's Data Protection keys are automatically persisted to Azure Blob St
 
 For local development with Azurite, data protection keys fall back to the default file-based store.
 
-You can also point to an explicit blob URI via configuration:
+You can also point to an explicit blob URI via configuration (the managed-identity path, preferred in production):
 
 ```json
 {
@@ -32,6 +32,8 @@ You can also point to an explicit blob URI via configuration:
   }
 }
 ```
+
+On the AWS backend, pass an S3 client + bucket to `AddAuthagonalAwsStorage` to persist the key ring to S3 — without it the key ring is in-memory and cookies break on restart and across nodes. See [Installation → AWS backend](installation#aws-backend).
 
 ## Per-instance caches
 
@@ -47,56 +49,42 @@ These caches are acceptable for production use. All durations are configurable v
 
 ## Rate limiting
 
-Registration endpoints are protected by a built-in distributed rate limiter (5 registrations per IP per hour). When running multiple instances, rate limit counts are automatically shared between all instances via a gossip protocol — no external coordination required.
+Abuse-prone endpoints (registration per IP, password reset per target email, SCIM per client, dynamic client registration per IP — see [Configuration → Rate Limiting](configuration#rate-limiting)) are protected by a built-in rate limiter.
 
-### How it works
+Limits are enforced **in-process per node** behind the `IRateLimiter` seam, so with N instances the effective ceiling is N× the configured value. That's deliberate: the limiter is a backstop against runaway abuse of a single node, and the authoritative global limit belongs at the edge (WAF / ingress / CDN), which sees all traffic before it's load-balanced.
 
-Each instance maintains its own counters in memory using a CRDT G-Counter. Instances discover each other via UDP multicast and exchange state over HTTP every few seconds. The consolidated count across all instances is used to make rate limiting decisions.
+## Clustering
 
-This means rate limits are enforced globally: if a client hits 3 different instances, all 3 know the total is 3, not 1 each.
+Multiple instances coordinate through a **leader election** and a **cross-node event bus**, both behind pluggable backends:
 
-### Node identity
+- **Leader election** — a lease-based election (`Cluster:LeaseTtlSeconds`, default 30s, renewed at roughly half that interval). Exactly one node holds the lease; leadership transfers automatically when the leader dies. Leader-gated work — currently signing key rotation (when enabled) — runs only on the leader to avoid concurrent key generation.
+- **Event bus** — cross-node notifications (e.g. cache invalidation in multi-tenant hosts), polled every `Cluster:PollIntervalSeconds` (default 3s).
 
-Each instance generates a random hex node ID at startup (e.g., `a3f1b2`). This ID identifies the instance in gossip messages and rate limit state. It is not persisted — a new ID is generated on each restart.
+Each instance generates a random 12-hex-char node ID at startup to identify itself; it is not persisted.
 
-A `ClusterLeaderService` runs on each instance, electing a single leader among discovered peers (lowest node ID wins). Leadership transfers automatically when the leader dies. The leader is used for cluster-wide coordination — currently, signing key rotation (when enabled) runs only on the leader to avoid concurrent key generation.
+### Backends
 
-### Cluster configuration
+The **default is in-process**: a single node is always its own leader, and events are local-only — correct for one instance with zero configuration. Multi-node deployments swap in a real backend via the `configureClustering` callback on `AddAuthagonal`:
 
-Clustering is **enabled by default** with zero configuration. Instances on the same network discover each other automatically via UDP multicast (`239.42.42.42:19847`).
+```csharp
+// Azure: leadership via a blob lease, event bus via a table log (Authagonal.AzureProvider)
+builder.Services.AddAuthagonal(builder.Configuration,
+    cluster => cluster.UseAzureStorage(blobServiceClient, tableServiceClient));
 
-For environments where multicast is unavailable (some cloud VPCs), configure a load-balanced internal URL as a fallback:
-
-```json
-{
-  "Cluster": {
-    "InternalUrl": "http://authagonal-auth.svc.cluster.local:8080",
-    "Secret": "shared-secret-here"
-  }
-}
+// AWS: leadership + event bus via DynamoDB (Authagonal.AwsProvider)
+builder.Services.AddAuthagonal(builder.Configuration,
+    cluster => cluster.UseAwsDynamo(dynamoDb));
 ```
 
-To disable clustering entirely (local-only rate limiting):
+`UseAzureStorageBus` / `UseAwsDynamoBus` register the event bus only, keeping the in-process (always-leader) lease — use them on nodes that must receive cluster events but must never contend for leadership.
 
-```json
-{
-  "Cluster": {
-    "Enabled": false
-  }
-}
-```
+> **Note:** with the in-process default on multiple nodes, *every* node believes it is the leader. That's harmless for most workloads, but enable a real lease backend before turning on `Auth:KeyRotationEnabled` across multiple instances.
 
-See the [Configuration](configuration) page for all cluster settings.
-
-### Graceful degradation
-
-- **No peers found** — works as a local-only rate limiter (each instance enforces its own limit)
-- **Peer unreachable** — that peer's last-known state is still used; stale peers are pruned after 30 seconds
-- **Multicast unavailable** — discovery fails silently; gossip falls back to `InternalUrl` if configured
+See the [Configuration](configuration#cluster) page for all cluster settings.
 
 ### Multi-tenant deployments
 
-In multi-tenant mode (`AddAuthagonalCore()`), background services like `GrantReconciliationService` and `SigningKeyRotationService` are not registered — the host manages these per-tenant. Only `TokenCleanupService` runs unconditionally.
+In multi-tenant mode (`AddAuthagonalCore()`), no background services are registered — `TokenCleanupService`, `GrantReconciliationService`, `SigningKeyRotationService`, and the config seed services are all part of the single-tenant `AddAuthagonal()` composition. The host manages these per-tenant.
 
 ## Name-index hot partition
 
@@ -107,7 +95,7 @@ Admin name-prefix search is backed by the `UserFirstNames` / `UserLastNames` ind
 When running multiple instances behind a load balancer:
 
 - **Forwarded headers** — rate limiting and lockout key on the client IP, resolved from `X-Forwarded-For`. Set `ForwardedHeaders:KnownNetworks` to your ingress / pod CIDR so the client IP can't be spoofed across instances. `ForwardedHeaders:ForwardLimit` defaults to `1`. See [Configuration](configuration#forwarded-headers-trusted-proxy).
-- **Internal endpoints** — `/_internal/cluster/gossip` and `/_internal/backchannel-logout` are guarded by source IP (loopback / private only) unless `Cluster:Secret` is set. When gossip is routed through a load balancer (`Cluster:InternalUrl`), the LB rewrites the source IP, so set `Cluster:Secret` and the gossip caller will present it in the `X-Cluster-Secret` header.
+- **Internal endpoints** — `/_internal/backchannel-logout` is guarded by source IP (loopback / private only) unless `Cluster:Secret` is set, in which case callers must present the secret in the `X-Cluster-Secret` header (compared in constant time). Set the secret whenever internal traffic is routed through anything that rewrites the source IP.
 
 ## Scaling recommendations
 

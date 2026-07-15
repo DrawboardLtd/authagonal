@@ -13,7 +13,7 @@ Pull and run the pre-built image:
 docker run -p 8080:8080 \
   -e Storage__ConnectionString="your-connection-string" \
   -e Issuer="https://auth.example.com" \
-  authagonal
+  drawboardci/authagonal
 ```
 
 ## Docker Compose
@@ -49,7 +49,7 @@ docker compose up
 ### Prerequisites
 
 - .NET 10 SDK
-- Node.js 22+
+- Node.js 24+
 
 ### Build
 
@@ -82,8 +82,10 @@ Reference the Authagonal packages in your own ASP.NET Core project:
 
 ```xml
 <PackageReference Include="Authagonal.Server" Version="x.y.z" />
-<PackageReference Include="Authagonal.Storage" Version="x.y.z" />
+<PackageReference Include="Authagonal.AzureProvider" Version="x.y.z" />
 ```
+
+The storage provider package is pluggable: `Authagonal.AzureProvider` for Azure Table Storage (the default `AddAuthagonal()` wiring), or `Authagonal.AwsProvider` for DynamoDB / S3 / Secrets Manager — see [AWS backend](#aws-backend) below.
 
 Then compose it into your `Program.cs`:
 
@@ -100,6 +102,29 @@ app.Run();
 ```
 
 See [Extensibility](extensibility) for all override points and [demos/custom-server/](https://github.com/authagonal/authagonal/tree/master/demos/custom-server) for a complete example.
+
+### Email
+
+The built-in [Resend](https://resend.com) sender activates automatically when `Email:ResendApiKey` and `Email:SenderEmail` are configured — no service registration needed. Without any `IEmailService`, verification and password-reset emails are **silently discarded**, and because login requires a confirmed email by default, self-registered users can never sign in (`UseAuthagonal` logs a warning at startup). Either set the `Email:*` keys, register your own `IEmailService` before `AddAuthagonal()`, or list your domains in `Auth:AutoConfirmEmailDomains` to skip verification (dev/test only). See [Configuration → Email](configuration#email).
+
+## AWS backend
+
+To run on AWS instead of Azure, reference `Authagonal.AwsProvider` and register the AWS bundle **before** `AddAuthagonal()` — those registrations are what make `AddAuthagonal()` skip its Azure Table Storage wiring:
+
+```csharp
+using Authagonal.AwsProvider;
+
+builder.Services.AddAuthagonalAwsStorage(
+    dynamoDb,                // IAmazonDynamoDB — required
+    secretsManager,          // IAmazonSecretsManager — optional; replaces the plaintext ISecretProvider
+    s3,                      // IAmazonS3 — optional; used for DataProtection keys
+    "my-auth-keys-bucket");  // S3 bucket for the DataProtection key ring
+builder.Services.AddAuthagonal(builder.Configuration);
+```
+
+The DynamoDB tables mirror the Azure layout one-for-one and are ensured on startup (idempotent — a no-op when they're already provisioned by Terraform). Credentials resolve via the standard AWS chain (env / EC2 instance role / IRSA), so there is no connection-string-vs-managed-identity split — no `Storage:*` configuration is needed.
+
+> ⚠️ **S3 DataProtection keys.** Without an S3 client + bucket, the ASP.NET Core Data Protection key ring is held in memory — fine for a single node in dev, but cookies and antiforgery tokens break on restart and across nodes in production. Always pass the S3 client and bucket for a production AWS deployment.
 
 ## Login SPA (npm)
 
@@ -118,7 +143,7 @@ Before exposing Authagonal to real traffic, confirm the following. Each item is 
 - **Run behind a TLS-terminating proxy.** Authagonal must sit behind a reverse proxy / ingress that terminates TLS. The session cookie uses `SecurePolicy = SameAsRequest` and HSTS is only emitted on HTTPS, so the proxy must forward `X-Forwarded-Proto: https`. Set `ForwardedHeaders:KnownNetworks` (or `KnownProxies`) to your ingress / pod CIDR so the client IP and scheme cannot be spoofed; `ForwardedHeaders:ForwardLimit` defaults to `1` (trust only the last hop).
 - **Set `SecretProvider:VaultUri`.** The default secret provider is **plaintext** — without Key Vault, upstream OIDC client secrets and TOTP / MFA seeds are stored in cleartext in Table Storage (and in backups). Configure Key Vault for any production deployment.
 - **Lock down the admin API.** `AdminApi:Enabled` defaults to **true**. The admin scope (`AdminApi:Scope`, default `authagonal-admin`) grants full management and user impersonation. Network-restrict the `/api/v1/*` admin routes and tightly control who is issued the admin scope, or set `AdminApi:Enabled = false` if unused.
-- **Protect internal endpoints.** Set `Cluster:Secret` so `/_internal/cluster/gossip` and `/_internal/backchannel-logout` require the `X-Cluster-Secret` header — especially when gossip is routed through a load balancer via `Cluster:InternalUrl`.
+- **Protect internal endpoints.** Set `Cluster:Secret` so the internal `/_internal/backchannel-logout` endpoint requires the `X-Cluster-Secret` header (compared in constant time). When unset, it accepts only loopback / private (RFC 1918 / link-local / ULA) source IPs — make sure your forwarded-headers trust is configured so an external caller can't appear internal.
 - **Encrypt backups.** With the plaintext secret provider, backups contain secrets. The `SigningKeys` table is excluded from backups by default; if you opt in via `Backup:IncludeSigningKeys`, the backup target must be encrypted at rest. See [Backup & Restore](backup-restore).
 
 ## Migration Tool
