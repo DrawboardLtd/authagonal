@@ -4,17 +4,15 @@ title: Pushed Authorization Requests
 locale: vi
 ---
 
-> ⚠️ This page has not yet been translated; the English version is shown below.
-
 # Pushed Authorization Requests (PAR)
 
-[RFC 9126](https://www.rfc-editor.org/rfc/rfc9126) lets a client POST its authorize-request parameters directly to the server with standard client authentication and receive a short-lived opaque `request_uri` to hand to the browser. The browser then visits `/connect/authorize?request_uri=...&client_id=...` instead of carrying every parameter on the URL.
+[RFC 9126](https://www.rfc-editor.org/rfc/rfc9126) cho phép một client POST các tham số của yêu cầu ủy quyền trực tiếp đến máy chủ với xác thực client tiêu chuẩn và nhận về một `request_uri` mờ, ngắn hạn để trao cho trình duyệt. Sau đó trình duyệt truy cập `/connect/authorize?request_uri=...&client_id=...` thay vì mang mọi tham số trên URL.
 
-Why use it:
+Vì sao nên dùng nó:
 
-- Authorize parameters never appear in browser history, server logs, or `Referer` headers.
-- The server authenticates the client at push time, so the parameters are integrity-checked before any redirect happens.
-- Long parameter sets (large `claims` requests, multi-resource flows) don't blow URL length limits.
+- Các tham số ủy quyền không bao giờ xuất hiện trong lịch sử trình duyệt, nhật ký máy chủ, hoặc header `Referer`.
+- Máy chủ xác thực client tại thời điểm đẩy (push), nên các tham số được kiểm tra tính toàn vẹn trước khi bất kỳ chuyển hướng nào xảy ra.
+- Các tập tham số dài (các yêu cầu `claims` lớn, các luồng đa tài nguyên) không làm vỡ giới hạn độ dài URL.
 
 ## Endpoint
 
@@ -23,11 +21,11 @@ POST /connect/par
 Content-Type: application/x-www-form-urlencoded
 ```
 
-Authentication is the same as `/connect/token`: HTTP Basic with `client_id`/`client_secret`, or form-encoded credentials. Confidential clients must authenticate; public clients post without a secret. Client-authentication failures return `401` (per RFC 9126 — unlike the token endpoint, where only `invalid_client` is a 401).
+Việc xác thực giống như `/connect/token`: HTTP Basic với `client_id`/`client_secret`, hoặc thông tin xác thực mã hóa dạng biểu mẫu. Các client bí mật phải xác thực; các client công khai đẩy mà không có secret. Các lỗi xác thực client trả về `401` (theo RFC 9126, khác với endpoint token, nơi chỉ `invalid_client` mới là 401).
 
-The form body carries the same parameters that would normally go on `/connect/authorize` (`response_type`, `redirect_uri`, `scope`, `state`, `code_challenge`, `code_challenge_method`, `nonce`, `resource`, etc.). `request_uri` itself is rejected — chaining a PAR is forbidden by §2.1 of the spec. If the body carries a `client_id`, it must match the authenticated client.
+Body của biểu mẫu mang cùng các tham số mà thông thường sẽ đi trên `/connect/authorize` (`response_type`, `redirect_uri`, `scope`, `state`, `code_challenge`, `code_challenge_method`, `nonce`, `resource`, v.v.). Bản thân `request_uri` bị từ chối: việc nối chuỗi một PAR bị cấm bởi §2.1 của đặc tả. Nếu body mang một `client_id`, nó phải khớp với client đã được xác thực.
 
-### Response
+### Phản hồi
 
 ```
 HTTP/1.1 201 Created
@@ -39,19 +37,19 @@ HTTP/1.1 201 Created
 }
 ```
 
-The `request_uri` is single-use. It's removed from the store once the matching `/connect/authorize` request consumes it (or when the 90-second window expires, whichever is sooner).
+`request_uri` chỉ dùng một lần. Nó được xóa khỏi kho một khi yêu cầu `/connect/authorize` khớp tiêu thụ nó (hoặc khi cửa sổ 90 giây hết hạn, tùy cái nào đến sớm hơn).
 
-### Authorization step
+### Bước ủy quyền
 
 ```
 GET /connect/authorize?client_id=my-rp&request_uri=urn:ietf:params:oauth:request_uri:abc123...
 ```
 
-When `request_uri` is present, all other parameters are pulled from the pushed payload — anything else on the URL is ignored. The `client_id` on this request must match the client that pushed the payload.
+Khi `request_uri` hiện diện, tất cả các tham số khác được lấy từ payload đã đẩy: mọi thứ khác trên URL đều bị bỏ qua. `client_id` trên yêu cầu này phải khớp với client đã đẩy payload.
 
-## Requiring PAR per client
+## Yêu cầu PAR theo từng client
 
-Set `RequirePushedAuthorizationRequests = true` on a client to refuse plain `/connect/authorize` requests from it. Any non-PAR authorize attempt returns `invalid_request` with the description "This client requires requests to be pushed via /connect/par".
+Đặt `RequirePushedAuthorizationRequests = true` trên một client để từ chối các yêu cầu `/connect/authorize` thuần túy từ nó. Bất kỳ nỗ lực ủy quyền không phải PAR nào cũng trả về `invalid_request` với mô tả "This client requires requests to be pushed via /connect/par".
 
 ```csharp
 new OAuthClient
@@ -62,15 +60,15 @@ new OAuthClient
 }
 ```
 
-This is the recommended posture for clients that handle sensitive scopes — combined with PKCE, it removes the URL bar as an attack surface.
+Đây là tư thế được khuyến nghị cho các client xử lý các scope nhạy cảm: kết hợp với PKCE, nó loại bỏ thanh URL như một bề mặt tấn công.
 
-## Lifetime and storage
+## Thời gian sống và lưu trữ
 
-The `request_uri` lifetime is server-set at 90 seconds, matching the typical reference-IdP value. Pushed payloads are stored via the same `IGrantStore` as auth codes and refresh tokens, so they inherit the host's persistence and replication strategy automatically.
+Thời gian sống của `request_uri` do máy chủ đặt ở 90 giây, khớp với giá trị IdP tham chiếu điển hình. Các payload đã đẩy được lưu trữ qua cùng `IGrantStore` như mã ủy quyền và refresh token, nên chúng tự động kế thừa chiến lược lưu trữ bền vững và sao chép của host.
 
-## Discovery
+## Khám phá
 
-The PAR endpoint advertises itself in `.well-known/openid-configuration` as:
+Endpoint PAR tự quảng bá trong `.well-known/openid-configuration` dưới dạng:
 
 ```json
 {

@@ -4,26 +4,24 @@ title: Front-Channel Logout
 locale: vi
 ---
 
-> ⚠️ This page has not yet been translated; the English version is shown below.
-
 # Front-Channel Logout
 
-Authagonal implements **OpenID Connect Front-Channel Logout 1.0**, a browser-driven logout mechanism that complements [back-channel logout](index#features). Where back-channel logout is a server-to-server POST, front-channel logout renders the logout URL of each relying party in a hidden iframe so that each app's browser session (cookies, local storage) is cleaned up from inside the user's browser.
+Authagonal triển khai **OpenID Connect Front-Channel Logout 1.0**, một cơ chế đăng xuất do trình duyệt điều khiển, bổ trợ cho [back-channel logout](index#features). Trong khi back-channel logout là một POST máy chủ tới máy chủ, front-channel logout kết xuất URL đăng xuất của mỗi relying party trong một iframe ẩn để phiên trình duyệt của mỗi ứng dụng (cookie, local storage) được dọn dẹp từ bên trong trình duyệt của người dùng.
 
-## When to Use Which
+## Khi nào dùng cái nào
 
-| Concern | Back-Channel | Front-Channel |
+| Vấn đề quan tâm | Back-Channel | Front-Channel |
 |---|---|---|
-| Server-side sessions | ✅ | ❌ |
-| Browser cookies / local storage | ❌ | ✅ |
-| Works when the user's browser is offline | ✅ | ❌ |
-| Survives network errors (retry) | ✅ | ❌ (single best-effort attempt) |
+| Phiên phía máy chủ | ✅ | ❌ |
+| Cookie trình duyệt / local storage | ❌ | ✅ |
+| Hoạt động khi trình duyệt của người dùng ngoại tuyến | ✅ | ❌ |
+| Chịu được lỗi mạng (thử lại) | ✅ | ❌ (một lần thử nỗ lực tốt nhất) |
 
-Most apps benefit from configuring **both**. Back-channel guarantees the server is told; front-channel clears the browser.
+Hầu hết các ứng dụng đều hưởng lợi từ việc cấu hình **cả hai**. Back-channel đảm bảo máy chủ được thông báo; front-channel dọn sạch trình duyệt.
 
-## Client Configuration
+## Cấu hình Client
 
-Add a front-channel logout URI to the `OAuthClient` record:
+Thêm một URI front-channel logout vào bản ghi `OAuthClient`:
 
 ```json
 {
@@ -33,35 +31,35 @@ Add a front-channel logout URI to the `OAuthClient` record:
 }
 ```
 
-| Field | Description |
+| Trường | Mô tả |
 |---|---|
-| `FrontChannelLogoutUri` | The client's browser-visible logout endpoint |
-| `FrontChannelLogoutSessionRequired` | If `true` (default), the URL is called with `iss` and `sid` query parameters so the client can correlate the logout with the specific session |
+| `FrontChannelLogoutUri` | Endpoint đăng xuất mà trình duyệt của client nhìn thấy |
+| `FrontChannelLogoutSessionRequired` | Nếu `true` (mặc định), URL được gọi với các tham số truy vấn `iss` và `sid` để client có thể liên kết việc đăng xuất với phiên cụ thể |
 
-## How It Works
+## Cách hoạt động
 
-When the browser visits `/connect/endsession`:
+Khi trình duyệt truy cập `/connect/endsession`:
 
-1. The server finds all clients the user currently has grants with.
-2. For each client with a `FrontChannelLogoutUri`, the server builds a URL — appending `iss=<issuer>` (and `sid=<session_id>`, when the session has one) if `FrontChannelLogoutSessionRequired` is `true`.
-3. The server signs the user out of the authorization-server cookie, triggers back-channel logout notifications in the background, and returns an HTML page containing a hidden `<iframe>` for each client logout URL:
+1. Máy chủ tìm tất cả các client mà người dùng hiện đang có cấp quyền với chúng.
+2. Với mỗi client có `FrontChannelLogoutUri`, máy chủ dựng một URL, nối thêm `iss=<issuer>` (và `sid=<session_id>`, khi phiên có một cái) nếu `FrontChannelLogoutSessionRequired` là `true`.
+3. Máy chủ đăng xuất người dùng khỏi cookie của máy chủ ủy quyền, kích hoạt các thông báo back-channel logout ở nền, và trả về một trang HTML chứa một `<iframe>` ẩn cho mỗi URL đăng xuất của client:
    ```html
    <iframe src="https://myapp.example.com/oidc/frontchannel?iss=https%3A%2F%2Fauth.example.com&sid=abc123" style="display:none"></iframe>
    ```
-4. After a 2-second grace period, the browser is redirected to `post_logout_redirect_uri` — honored only when the request also carries an `id_token_hint` identifying the client and the URI is in that client's registered `PostLogoutRedirectUris` (a `state` parameter, if supplied, is appended to the redirect). Otherwise a "signed out" confirmation is shown.
+4. Sau một khoảng ân hạn 2 giây, trình duyệt được chuyển hướng đến `post_logout_redirect_uri`, chỉ được tôn trọng khi yêu cầu cũng mang một `id_token_hint` xác định client và URI đó nằm trong `PostLogoutRedirectUris` đã đăng ký của client đó (một tham số `state`, nếu được cung cấp, sẽ được nối vào chuyển hướng). Nếu không, một xác nhận "đã đăng xuất" sẽ được hiển thị.
 
-## Client-Side Logout Handler
+## Trình xử lý đăng xuất phía Client
 
-Each relying party should implement the URL referenced by `FrontChannelLogoutUri`. A minimal handler:
+Mỗi relying party nên triển khai URL được tham chiếu bởi `FrontChannelLogoutUri`. Một trình xử lý tối thiểu:
 
 ```http
 GET /oidc/frontchannel?iss=https://auth.example.com&sid=abc123
 ```
 
-1. Verify `iss` matches the expected authorization server.
-2. If `sid` is provided, confirm it matches the session cookie's session ID.
-3. Clear the local session (cookies, server-side session, SPA storage).
-4. Respond with `200 OK` and an empty body (or a tiny page) — the response is never visible to the user.
+1. Xác minh `iss` khớp với máy chủ ủy quyền mong đợi.
+2. Nếu `sid` được cung cấp, xác nhận nó khớp với session ID của cookie phiên.
+3. Xóa phiên cục bộ (cookie, phiên phía máy chủ, bộ lưu trữ SPA).
+4. Phản hồi với `200 OK` và một body rỗng (hoặc một trang nhỏ xíu): phản hồi không bao giờ hiển thị với người dùng.
 
 ```csharp
 app.MapGet("/oidc/frontchannel", (HttpContext ctx) =>
@@ -74,9 +72,9 @@ app.MapGet("/oidc/frontchannel", (HttpContext ctx) =>
 });
 ```
 
-## Discovery Document
+## Tài liệu khám phá
 
-Front-channel logout is advertised in `/.well-known/openid-configuration`:
+Front-channel logout được quảng bá trong `/.well-known/openid-configuration`:
 
 ```json
 {
@@ -85,9 +83,9 @@ Front-channel logout is advertised in `/.well-known/openid-configuration`:
 }
 ```
 
-## Dynamic Client Registration
+## Đăng ký Client động
 
-Clients registered via [Dynamic Client Registration](client-registration) may include:
+Các client được đăng ký qua [Đăng ký Client động](client-registration) có thể bao gồm:
 
 ```json
 {
@@ -96,13 +94,13 @@ Clients registered via [Dynamic Client Registration](client-registration) may in
 }
 ```
 
-## Limitations
+## Các giới hạn
 
-- **Best effort** — iframes are loaded once. If a network error or browser extension blocks them, there is no retry. Pair with back-channel logout for reliability.
-- **Third-party cookies** — some browsers block cookies in cross-site iframes by default. If your RP relies on first-party cookies, confirm the logout handler does not depend on cookies being sent.
-- **Timeout** — the page waits ~2 seconds before redirecting/confirming. Heavy RP logout handlers may not complete in time.
+- **Nỗ lực tốt nhất**: các iframe được tải một lần. Nếu một lỗi mạng hoặc một tiện ích mở rộng trình duyệt chặn chúng, sẽ không có thử lại. Hãy kết hợp với back-channel logout để có độ tin cậy.
+- **Cookie của bên thứ ba**: một số trình duyệt chặn cookie trong các iframe xuyên trang theo mặc định. Nếu RP của bạn dựa vào cookie của bên thứ nhất, hãy xác nhận trình xử lý đăng xuất không phụ thuộc vào việc cookie được gửi đi.
+- **Thời gian chờ**: trang chờ khoảng 2 giây trước khi chuyển hướng/xác nhận. Các trình xử lý đăng xuất RP nặng có thể không hoàn tất kịp thời.
 
-## Related
+## Liên quan
 
-- [Dynamic Client Registration](client-registration) — front-channel parameters in the registration request
-- [OAuth Scopes](scopes) — scope-aware consent complements the logout flow
+- [Đăng ký Client động](client-registration): các tham số front-channel trong yêu cầu đăng ký
+- [OAuth Scope](scopes): sự đồng ý nhận biết scope bổ trợ cho luồng đăng xuất

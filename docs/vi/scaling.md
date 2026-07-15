@@ -12,15 +12,15 @@ Authagonal được thiết kế để mở rộng cả theo chiều dọc và c
 
 Tất cả trạng thái bền vững được lưu trữ trong table store nền tảng: Azure Table Storage, hoặc DynamoDB trên backend AWS. Không có trạng thái trong tiến trình nào yêu cầu sticky session hoặc phối hợp giữa các instance:
 
-- **Khóa ký** — được tải từ Table Storage, làm mới mỗi giờ
-- **Mã ủy quyền và refresh token** — được lưu trong Table Storage với cơ chế sử dụng một lần
-- **Chống phát lại SAML** — ID yêu cầu được theo dõi trong Table Storage với xóa nguyên tử
-- **OIDC state và PKCE verifier** — được lưu trong Table Storage
-- **Cấu hình client và provider** — được lấy theo từng yêu cầu từ Table Storage
+- **Khóa ký**: được tải từ Table Storage, làm mới mỗi giờ
+- **Mã ủy quyền và refresh token**: được lưu trong Table Storage với cơ chế sử dụng một lần
+- **Chống phát lại SAML**: ID yêu cầu được theo dõi trong Table Storage với xóa nguyên tử
+- **OIDC state và PKCE verifier**: được lưu trong Table Storage
+- **Cấu hình client và provider**: được lấy theo từng yêu cầu từ Table Storage
 
 ## Mã hóa cookie (Data Protection)
 
-Các khóa Data Protection của ASP.NET Core được tự động lưu trữ bền vững vào Azure Blob Storage khi sử dụng chuỗi kết nối Azure Storage thực. Điều này có nghĩa là cookie được ký bởi một instance có thể được giải mã bởi bất kỳ instance nào khác — không cần sticky session.
+Các khóa Data Protection của ASP.NET Core được tự động lưu trữ bền vững vào Azure Blob Storage khi sử dụng chuỗi kết nối Azure Storage thực. Điều này có nghĩa là cookie được ký bởi một instance có thể được giải mã bởi bất kỳ instance nào khác: không cần sticky session.
 
 Đối với phát triển local với Azurite, các khóa Data Protection sẽ sử dụng phương thức lưu trữ dựa trên tệp mặc định.
 
@@ -46,7 +46,7 @@ Một số lượng nhỏ các giá trị được đọc nhiều, thay đổi c
 | Metadata SAML IdP | 60 phút | Tương tự |
 | Các origin CORS được phép | 60 phút | Origin mới mất tối đa một giờ để lan truyền |
 
-Các bộ nhớ đệm này phù hợp cho môi trường production. Tất cả thời lượng đều có thể cấu hình qua phần cấu hình `Cache` — xem [Cấu hình](configuration). Nếu bạn cần lan truyền ngay lập tức, hãy khởi động lại các instance bị ảnh hưởng.
+Các bộ nhớ đệm này phù hợp cho môi trường production. Tất cả thời lượng đều có thể cấu hình qua phần cấu hình `Cache`, xem [Cấu hình](configuration). Nếu bạn cần lan truyền ngay lập tức, hãy khởi động lại các instance bị ảnh hưởng.
 
 ## Giới hạn tốc độ
 
@@ -95,13 +95,13 @@ Tìm kiếm theo tiền tố tên trong trang quản trị được hỗ trợ b
 
 Khi chạy nhiều instance phía sau một bộ cân bằng tải:
 
-- **Forwarded headers** — giới hạn tốc độ và khóa tài khoản lập khóa dựa trên IP của client, được phân giải từ `X-Forwarded-For`. Hãy đặt `ForwardedHeaders:KnownNetworks` thành CIDR của ingress / pod của bạn để IP của client không thể bị giả mạo giữa các instance. `ForwardedHeaders:ForwardLimit` mặc định là `1`. Xem [Cấu hình](configuration#forwarded-headers-proxy-tin-cậy).
+- **Forwarded headers**: giới hạn tốc độ và khóa tài khoản lập khóa dựa trên IP của client, được phân giải từ `X-Forwarded-For`. Hãy đặt `ForwardedHeaders:KnownNetworks` thành CIDR của ingress / pod của bạn để IP của client không thể bị giả mạo giữa các instance. `ForwardedHeaders:ForwardLimit` mặc định là `1`. Xem [Cấu hình](configuration#forwarded-headers-proxy-tin-cậy).
 - **Các endpoint nội bộ**: `/_internal/backchannel-logout` được bảo vệ bằng IP nguồn (chỉ loopback / riêng tư) trừ khi `Cluster:Secret` được đặt, trong trường hợp đó người gọi phải xuất trình bí mật trong header `X-Cluster-Secret` (so sánh trong thời gian hằng số). Hãy đặt bí mật mỗi khi lưu lượng nội bộ được định tuyến qua bất cứ thứ gì ghi đè IP nguồn.
 
 ## Khuyến nghị mở rộng quy mô
 
-**Mở rộng theo chiều dọc** — tăng CPU và bộ nhớ trên một instance đơn. Hữu ích để xử lý nhiều yêu cầu đồng thời hơn trên mỗi instance.
+**Mở rộng theo chiều dọc**: tăng CPU và bộ nhớ trên một instance đơn. Hữu ích để xử lý nhiều yêu cầu đồng thời hơn trên mỗi instance.
 
-**Mở rộng theo chiều ngang** — chạy nhiều instance phía sau bộ cân bằng tải. Không cần sticky session hoặc cache chia sẻ. Mỗi instance hoạt động hoàn toàn độc lập.
+**Mở rộng theo chiều ngang**: chạy nhiều instance phía sau bộ cân bằng tải. Không cần sticky session hoặc cache chia sẻ. Mỗi instance hoạt động hoàn toàn độc lập.
 
-**Thu nhỏ về không** — Authagonal hỗ trợ triển khai thu nhỏ về không (ví dụ: Azure Container Apps với `minReplicas: 0`). Yêu cầu đầu tiên sau thời gian nhàn rỗi sẽ có thời gian khởi động nguội vài giây trong khi runtime .NET khởi tạo và các khóa ký được tải từ bộ lưu trữ.
+**Thu nhỏ về không**: Authagonal hỗ trợ triển khai thu nhỏ về không (ví dụ: Azure Container Apps với `minReplicas: 0`). Yêu cầu đầu tiên sau thời gian nhàn rỗi sẽ có thời gian khởi động nguội vài giây trong khi runtime .NET khởi tạo và các khóa ký được tải từ bộ lưu trữ.

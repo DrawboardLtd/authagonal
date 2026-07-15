@@ -15,7 +15,7 @@ Có hai đường vào liên kết:
 **Dựa trên tên miền (đăng nhập tương tác):**
 
 1. Người dùng nhập email trên trang đăng nhập
-2. SPA gọi `/api/auth/sso-check` — nếu tên miền email được liên kết với nhà cung cấp OIDC, SSO là bắt buộc
+2. SPA gọi `/api/auth/sso-check`: nếu tên miền email được liên kết với nhà cung cấp OIDC, SSO là bắt buộc
 3. Người dùng nhấp "Tiếp tục với SSO" và được chuyển hướng đến IdP bên ngoài
 4. Sau khi xác thực, IdP chuyển hướng lại `/oidc/callback`
 5. Authagonal xác thực id_token, tạo/liên kết người dùng, và đặt cookie phiên
@@ -34,7 +34,7 @@ Khi yêu cầu chưa được xác thực, Authagonal chuyển hướng đến `
 
 ### 1. Tạo nhà cung cấp OIDC
 
-**Tùy chọn A — Cấu hình (khuyến nghị cho thiết lập tĩnh):**
+**Tùy chọn A: Cấu hình (khuyến nghị cho thiết lập tĩnh):**
 
 Thêm vào `appsettings.json`:
 
@@ -58,7 +58,7 @@ Các nhà cung cấp được khởi tạo khi khởi động. Các trường c�
 
 Mô hình kết nối còn mang thêm hành vi tùy chọn: `PassthroughParams` (đặt được qua API tạo của quản trị), cùng `SessionExpClaim` và `DisableJitProvisioning` (các trường cấp store, đặt qua `IOidcProviderStore` từ mã hosting), xem [Luồng scope và claim](#scope-and-claim-flow-through) và [Giới hạn thời gian phiên](#session-lifetime-cap) bên dưới.
 
-**Tùy chọn B — API Quản trị (cho quản lý tại thời điểm chạy):**
+**Tùy chọn B: API Quản trị (cho quản lý tại thời điểm chạy):**
 
 ```bash
 curl -X POST https://auth.example.com/api/v1/oidc/connections \

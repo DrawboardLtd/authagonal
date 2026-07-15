@@ -1,18 +1,16 @@
 ---
 layout: default
-title: Dynamic Client Registration
+title: Đăng ký Client động
 locale: vi
 ---
 
-> ⚠️ This page has not yet been translated; the English version is shown below.
+# Đăng ký Client động
 
-# Dynamic Client Registration
+Authagonal triển khai **OAuth 2.0 Dynamic Client Registration** ([RFC 7591](https://datatracker.ietf.org/doc/html/rfc7591)), cho phép các ứng dụng client tự đăng ký tại thời điểm chạy mà không cần sự tham gia của quản trị viên.
 
-Authagonal implements **OAuth 2.0 Dynamic Client Registration** ([RFC 7591](https://datatracker.ietf.org/doc/html/rfc7591)), allowing client applications to register themselves at runtime without administrator involvement.
+## Bật Endpoint
 
-## Enabling the Endpoint
-
-Dynamic registration is **disabled by default**. Opt in via configuration:
+Đăng ký động **bị tắt theo mặc định**. Bật tham gia qua cấu hình:
 
 ```json
 {
@@ -22,9 +20,9 @@ Dynamic registration is **disabled by default**. Opt in via configuration:
 }
 ```
 
-Or set `Auth__DynamicClientRegistrationEnabled=true` as an environment variable.
+Hoặc đặt `Auth__DynamicClientRegistrationEnabled=true` làm biến môi trường.
 
-When enabled, the discovery document advertises the endpoint:
+Khi được bật, tài liệu khám phá sẽ quảng bá endpoint:
 
 ```
 GET /.well-known/openid-configuration
@@ -35,7 +33,7 @@ GET /.well-known/openid-configuration
 }
 ```
 
-## Registering a Client
+## Đăng ký một Client
 
 ```
 POST /connect/register
@@ -56,7 +54,7 @@ Content-Type: application/json
 }
 ```
 
-### Response
+### Phản hồi
 
 ```
 HTTP/1.1 201 Created
@@ -77,48 +75,48 @@ Content-Type: application/json
 }
 ```
 
-The `client_secret` is returned **once** and cannot be retrieved later. Store it securely.
+`client_secret` được trả về **một lần duy nhất** và không thể lấy lại về sau. Hãy lưu trữ nó một cách an toàn.
 
-## Request Parameters
+## Các tham số yêu cầu
 
-| Parameter | Required | Notes |
+| Tham số | Bắt buộc | Ghi chú |
 |---|---|---|
-| `client_name` | no | Defaults to the generated `client_id` if omitted |
-| `redirect_uris` | conditional | Required when `grant_types` contains `authorization_code`. Must be absolute URIs; `javascript:`/`data:`/`vbscript:`/`file:` schemes are rejected (native custom schemes for mobile deep links are fine). |
-| `post_logout_redirect_uris` | no | Valid redirect targets after logout |
-| `grant_types` | no | Defaults to `["authorization_code"]`. **Only `authorization_code` and `refresh_token` are registrable** — `client_credentials`, `implicit`, device and any other grant type are rejected with `invalid_client_metadata`, so open registration can never mint a machine-to-machine client. `refresh_token` is added automatically if `offline_access` is requested. |
-| `token_endpoint_auth_method` | no | `client_secret_basic` (default), `client_secret_post`, or `none` for public clients |
-| `scope` | no | Space-separated scopes — must all be built-in or previously registered (see [Scopes](scopes)). The administrative scope (`AdminApi:Scope`, default `authagonal-admin`) can never be registered. |
-| `audiences` | no | JWT `aud` values added to access tokens |
-| `allowed_cors_origins` | no | Origins permitted to call the token endpoint from a browser |
-| `backchannel_logout_uri` | no | Enables [Back-Channel Logout](index#features) |
-| `frontchannel_logout_uri` | no | Enables [Front-Channel Logout](front-channel-logout) |
-| `frontchannel_logout_session_required` | no | Defaults to `true`; when `true`, the logout URL carries `iss` and `sid` parameters |
+| `client_name` | không | Mặc định là `client_id` được tạo nếu bỏ qua |
+| `redirect_uris` | có điều kiện | Bắt buộc khi `grant_types` chứa `authorization_code`. Phải là URI tuyệt đối; các scheme `javascript:`/`data:`/`vbscript:`/`file:` bị từ chối (các scheme tùy chỉnh gốc cho deep link di động thì được chấp nhận). |
+| `post_logout_redirect_uris` | không | Các đích chuyển hướng hợp lệ sau khi đăng xuất |
+| `grant_types` | không | Mặc định là `["authorization_code"]`. **Chỉ `authorization_code` và `refresh_token` là có thể đăng ký**: `client_credentials`, `implicit`, device và bất kỳ loại cấp quyền nào khác đều bị từ chối với `invalid_client_metadata`, nên đăng ký mở không bao giờ có thể tạo ra một client máy-với-máy. `refresh_token` được thêm tự động nếu `offline_access` được yêu cầu. |
+| `token_endpoint_auth_method` | không | `client_secret_basic` (mặc định), `client_secret_post`, hoặc `none` cho các client công khai |
+| `scope` | không | Các scope phân tách bằng dấu cách: tất cả phải là scope tích hợp sẵn hoặc đã được đăng ký trước đó (xem [Scope](scopes)). Scope quản trị (`AdminApi:Scope`, mặc định `authagonal-admin`) không bao giờ có thể được đăng ký. |
+| `audiences` | không | Các giá trị `aud` của JWT được thêm vào access token |
+| `allowed_cors_origins` | không | Các origin được phép gọi endpoint token từ trình duyệt |
+| `backchannel_logout_uri` | không | Bật [Back-Channel Logout](index#features) |
+| `frontchannel_logout_uri` | không | Bật [Front-Channel Logout](front-channel-logout) |
+| `frontchannel_logout_session_required` | không | Mặc định là `true`; khi `true`, URL đăng xuất mang các tham số `iss` và `sid` |
 
-## Defaults & Invariants
+## Mặc định & bất biến
 
-- **PKCE required** — `RequirePkce` is always `true` for dynamically registered clients.
-- **Public clients** — `token_endpoint_auth_method: "none"` produces a client without a secret. PKCE is still required.
-- **Offline access** — requesting scope `offline_access` implicitly adds `refresh_token` to `grant_types`.
+- **Yêu cầu PKCE**: `RequirePkce` luôn là `true` đối với các client được đăng ký động.
+- **Client công khai**: `token_endpoint_auth_method: "none"` tạo ra một client không có secret. PKCE vẫn được yêu cầu.
+- **Truy cập ngoại tuyến**: yêu cầu scope `offline_access` sẽ ngầm thêm `refresh_token` vào `grant_types`.
 
-## Error Responses
+## Các phản hồi lỗi
 
-| HTTP | `error` | Cause |
+| HTTP | `error` | Nguyên nhân |
 |---|---|---|
-| `400` | `invalid_redirect_uri` | One of `redirect_uris` is not a valid absolute URI, or uses a script/data/file pseudo-scheme |
-| `400` | `invalid_client_metadata` | A non-registrable grant type was requested, or `redirect_uris` is missing for a grant type that requires it |
-| `400` | `invalid_scope` | A requested scope is neither built-in nor registered |
-| `403` | `invalid_scope` | The administrative scope was requested — it can never be granted through registration |
-| `403` | `not_supported` | Dynamic client registration is not enabled |
-| `429` | `rate_limited` | Too many registrations from this IP (10 per hour) |
+| `400` | `invalid_redirect_uri` | Một trong các `redirect_uris` không phải là URI tuyệt đối hợp lệ, hoặc dùng một pseudo-scheme script/data/file |
+| `400` | `invalid_client_metadata` | Một loại cấp quyền không thể đăng ký đã được yêu cầu, hoặc thiếu `redirect_uris` cho một loại cấp quyền yêu cầu nó |
+| `400` | `invalid_scope` | Một scope được yêu cầu không phải là scope tích hợp sẵn cũng không được đăng ký |
+| `403` | `invalid_scope` | Scope quản trị đã được yêu cầu: nó không bao giờ có thể được cấp qua đăng ký |
+| `403` | `not_supported` | Đăng ký client động không được bật |
+| `429` | `rate_limited` | Quá nhiều lượt đăng ký từ IP này (10 mỗi giờ) |
 
-## Security Considerations
+## Cân nhắc bảo mật
 
-The registration endpoint is **unauthenticated**, but constrained by design:
+Endpoint đăng ký **không được xác thực**, nhưng bị ràng buộc theo thiết kế:
 
-- **Rate limited** — 10 registrations per IP per rolling hour (`429 rate_limited`), so the client store can't be flooded.
-- **Grant types restricted** — only `authorization_code` + `refresh_token`; a registered client always requires a user-mediated flow and can never act as a machine-to-machine client.
-- **Admin scope reserved** — the `authagonal-admin` scope (or whatever `AdminApi:Scope` is set to) is refused, so registration can never produce a client that reaches the [admin API](admin-api).
-- **PKCE always required** on registered clients.
+- **Giới hạn tốc độ**: 10 lượt đăng ký mỗi IP trong mỗi giờ trượt (`429 rate_limited`), nên kho client không thể bị làm ngập.
+- **Hạn chế loại cấp quyền**: chỉ `authorization_code` + `refresh_token`; một client đã đăng ký luôn yêu cầu một luồng có sự trung gian của người dùng và không bao giờ có thể hoạt động như một client máy-với-máy.
+- **Scope quản trị được dành riêng**: scope `authagonal-admin` (hoặc bất kỳ giá trị nào `AdminApi:Scope` được đặt) bị từ chối, nên đăng ký không bao giờ có thể tạo ra một client tiếp cận được [API Quản trị](admin-api).
+- **PKCE luôn được yêu cầu** trên các client đã đăng ký.
 
-For stronger gating (initial access tokens, mTLS, software statements), front the endpoint with your own middleware or an `IAuthHook`. Consider disabling dynamic registration entirely and managing clients via the admin API in environments where self-service registration is not a requirement.
+Để kiểm soát chặt hơn (initial access token, mTLS, software statement), hãy đặt trước endpoint bằng middleware của riêng bạn hoặc một `IAuthHook`. Hãy cân nhắc tắt hẳn đăng ký động và quản lý client qua API Quản trị trong các môi trường mà đăng ký tự phục vụ không phải là một yêu cầu.

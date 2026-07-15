@@ -39,7 +39,7 @@ May chu su dung tinh nang ban dia hoa tich hop cua ASP.NET Core voi `IStringLoca
 
 ### Nhung gi KHONG duoc ban dia hoa
 
-- Ma `error` co the doc bang may (`"email_required"`, `"invalid_credentials"`, v.v.) — day la cac hop dong API va khong thay doi
+- Ma `error` co the doc bang may (`"email_required"`, `"invalid_credentials"`, v.v.): day la cac hop dong API va khong thay doi
 - Ma loi OAuth/OIDC va mo ta loi danh cho nha phat trien tren cac diem cuoi token, uy quyen va thu hoi
 - Thong bao nhat ky noi bo va thong bao ngoai le
 
@@ -86,10 +86,10 @@ Ngôn ngữ đang hoạt động được phản chiếu lên `<html lang>` và 
 
 Thu tu phat hien la:
 
-1. **localStorage** — tuy chon da luu tu lan truy cap truoc
-2. **Tham so truy van** — `?lng=de` ghi de phat hien trinh duyet
-3. **Ngon ngu trinh duyet** — `navigator.language` (tu dong)
-4. **Du phong** — Tieng Anh (`en`)
+1. **localStorage**: tuy chon da luu tu lan truy cap truoc
+2. **Tham so truy van**: `?lng=de` ghi de phat hien trinh duyet
+3. **Ngon ngu trinh duyet**: `navigator.language` (tu dong)
+4. **Du phong**: Tieng Anh (`en`)
 
 ### Tep dich
 

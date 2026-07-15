@@ -10,12 +10,12 @@ Authagonal được cấu hình qua `appsettings.json` hoặc biến môi trư�
 
 ## Cài đặt bắt buộc
 
-Bộ lưu trữ có thể được cấu hình theo một trong hai cách — cung cấp **một trong hai** `Storage:ConnectionString` **hoặc** `Storage:TableServiceUri` (đường dẫn managed-identity, được ưu tiên trong production).
+Bộ lưu trữ có thể được cấu hình theo một trong hai cách: cung cấp **một trong hai** `Storage:ConnectionString` **hoặc** `Storage:TableServiceUri` (đường dẫn managed-identity, được ưu tiên trong production).
 
 | Cài đặt | Biến môi trường | Mô tả |
 |---|---|---|
 | `Storage:ConnectionString` | `Storage__ConnectionString` | Chuỗi kết nối Azure Table Storage với account key. Phù hợp cho dev / Azurite. |
-| `Storage:TableServiceUri` | `Storage__TableServiceUri` | Endpoint Table Storage dùng managed-identity, ví dụ `https://{account}.table.core.windows.net/`. Thay thế cho `Storage:ConnectionString` và **được ưu tiên trong production** — xác thực qua `DefaultAzureCredential` nên không có access key nào lọt vào một bí mật. Host phải cấp cho workload identity vai trò **Storage Table Data Contributor**. |
+| `Storage:TableServiceUri` | `Storage__TableServiceUri` | Endpoint Table Storage dùng managed-identity, ví dụ `https://{account}.table.core.windows.net/`. Thay thế cho `Storage:ConnectionString` và **được ưu tiên trong production**: xác thực qua `DefaultAzureCredential` nên không có access key nào lọt vào một bí mật. Host phải cấp cho workload identity vai trò **Storage Table Data Contributor**. |
 | `Issuer` | `Issuer` | URL công khai gốc của máy chủ này (ví dụ: `https://auth.example.com`) |
 
 ## Bộ lưu trữ
@@ -24,7 +24,7 @@ Bộ lưu trữ có thể được cấu hình theo một trong hai cách — cu
 |---|---|---|---|
 | `Storage:ConnectionString` | `Storage__ConnectionString` | *(không có)* | Chuỗi kết nối với account key (xem Cài đặt bắt buộc). |
 | `Storage:TableServiceUri` | `Storage__TableServiceUri` | *(không có)* | URI Table Storage dùng managed-identity (xem Cài đặt bắt buộc). Được ưu tiên hơn `Storage:ConnectionString` khi cả hai cùng được đặt. |
-| `Storage:NameIndexesEnabled` | `Storage__NameIndexesEnabled` | `true` | Có duy trì các bảng chỉ mục tìm kiếm theo tiền tố `UserFirstNames` / `UserLastNames` (hỗ trợ tìm kiếm theo tiền tố tên trong trang quản trị) hay không. Đặt `false` trên các host không cung cấp tìm kiếm theo tên trong trang quản trị để bỏ qua các lượt ghi đó. **Lưu ý về mở rộng:** các chỉ mục này dùng một phân vùng nóng duy nhất và giới hạn thông lượng ở khoảng 2.000 thao tác/giây ở quy mô lớn — hãy vô hiệu hóa chúng nếu bạn không cần tìm kiếm theo tên. |
+| `Storage:NameIndexesEnabled` | `Storage__NameIndexesEnabled` | `true` | Có duy trì các bảng chỉ mục tìm kiếm theo tiền tố `UserFirstNames` / `UserLastNames` (hỗ trợ tìm kiếm theo tiền tố tên trong trang quản trị) hay không. Đặt `false` trên các host không cung cấp tìm kiếm theo tên trong trang quản trị để bỏ qua các lượt ghi đó. **Lưu ý về mở rộng:** các chỉ mục này dùng một phân vùng nóng duy nhất và giới hạn thông lượng ở khoảng 2.000 thao tác/giây ở quy mô lớn: hãy vô hiệu hóa chúng nếu bạn không cần tìm kiếm theo tên. |
 | `LoginAppUrl` | `LoginAppUrl` | `/login` | URL gốc mà endpoint `/connect/authorize` chuyển hướng đến cho SPA đăng nhập (màn hình đăng nhập, step-up và đồng ý). Đặt giá trị này khi giao diện đăng nhập được phục vụ từ một origin khác với máy chủ; mặc định là đường dẫn tương đối `/login` do SPA tích hợp phục vụ. |
 
 ## Xác thực
@@ -45,7 +45,7 @@ Bộ lưu trữ có thể được cấu hình theo một trong hai cách — cu
 | `Auth:MfaChallengeExpiryMinutes` | `5` | Thời gian hiệu lực token xác thực MFA |
 | `Auth:MfaSetupTokenExpiryMinutes` | `15` | Thời gian hiệu lực token thiết lập MFA (cho đăng ký bắt buộc) |
 | `Auth:Pbkdf2Iterations` | `100000` | Số lần lặp PBKDF2 cho băm mật khẩu |
-| `Auth:RefreshTokenReuseGraceSeconds` | `0` | Cửa sổ ân hạn (giây) tùy chọn cho việc sử dụng lại refresh token đồng thời. `0` (mặc định) giữ thế phòng thủ nghiêm ngặt: bất kỳ lần sử dụng lại nào của một refresh token đã tiêu thụ đều thu hồi tất cả token của người dùng+client đó. Đặt giá trị `> 0` để coi một lần sử dụng lại trong cửa sổ như một lần thử lại idempotent (cấp lại các token kế thừa) — hữu ích cho các client di động có kết nối chập chờn. |
+| `Auth:RefreshTokenReuseGraceSeconds` | `0` | Cửa sổ ân hạn (giây) tùy chọn cho việc sử dụng lại refresh token đồng thời. `0` (mặc định) giữ thế phòng thủ nghiêm ngặt: bất kỳ lần sử dụng lại nào của một refresh token đã tiêu thụ đều thu hồi tất cả token của người dùng+client đó. Đặt giá trị `> 0` để coi một lần sử dụng lại trong cửa sổ như một lần thử lại idempotent (cấp lại các token kế thừa), hữu ích cho các client di động có kết nối chập chờn. |
 | `Auth:DynamicClientRegistrationEnabled` | `false` | Bật endpoint đăng ký client động `POST /connect/register` (RFC 7591). Tắt theo mặc định vì đăng ký mở có thể bị lạm dụng trong các triển khai đa tenant. Xem [Đăng ký Client động](client-registration). |
 | `Auth:SigningKeyLifetimeDays` | `90` | Thời gian hiệu lực khóa ký RSA trước khi tự động xoay vòng |
 | `Auth:SigningKeyCacheRefreshMinutes` | `60` | Tần suất tải lại khóa ký từ bộ lưu trữ |
@@ -133,7 +133,7 @@ Các client được định nghĩa trong mảng `Clients` và được khởi t
 
 | Giá trị | Hành vi |
 |---|---|
-| `OneTime` (mặc định) | Mỗi lần làm mới sẽ cấp một refresh token mới và vô hiệu hóa token cũ. Theo mặc định (`Auth:RefreshTokenReuseGraceSeconds = 0`) bất kỳ lần sử dụng lại nào của một token đã tiêu thụ sẽ ngay lập tức thu hồi tất cả token của người dùng+client đó — **không có** cửa sổ ân hạn nào được bật theo mặc định. Đặt `Auth:RefreshTokenReuseGraceSeconds` thành một giá trị dương để tùy chọn bật cửa sổ dung sai cho việc thử lại. |
+| `OneTime` (mặc định) | Mỗi lần làm mới sẽ cấp một refresh token mới và vô hiệu hóa token cũ. Theo mặc định (`Auth:RefreshTokenReuseGraceSeconds = 0`) bất kỳ lần sử dụng lại nào của một token đã tiêu thụ sẽ ngay lập tức thu hồi tất cả token của người dùng+client đó: **không có** cửa sổ ân hạn nào được bật theo mặc định. Đặt `Auth:RefreshTokenReuseGraceSeconds` thành một giá trị dương để tùy chọn bật cửa sổ dung sai cho việc thử lại. |
 | `ReUse` | Cùng một refresh token được sử dụng lại cho đến khi hết hạn. |
 
 ### Ứng dụng cấp phát
@@ -299,7 +299,7 @@ Bí mật của client OIDC thượng nguồn và seed TOTP / MFA có thể đư
 
 Khi được cấu hình, các giá trị bí mật trông giống tham chiếu Key Vault sẽ được giải quyết tại thời điểm chạy. Sử dụng `DefaultAzureCredential` để xác thực.
 
-> ⚠️ **Production: hãy đặt `SecretProvider:VaultUri`.** Nhà cung cấp bí mật mặc định là **văn bản thuần**. Khi `SecretProvider:VaultUri` không được đặt, bí mật của client OIDC thượng nguồn và seed TOTP / MFA được ghi vào Azure Table Storage dưới dạng văn bản rõ — và do đó xuất hiện dưới dạng văn bản rõ trong bất kỳ [bản sao lưu](backup-restore) nào. Đối với bất kỳ triển khai production nào, hãy cấu hình `SecretProvider:VaultUri` để các bí mật này được lưu trong Key Vault.
+> ⚠️ **Production: hãy đặt `SecretProvider:VaultUri`.** Nhà cung cấp bí mật mặc định là **văn bản thuần**. Khi `SecretProvider:VaultUri` không được đặt, bí mật của client OIDC thượng nguồn và seed TOTP / MFA được ghi vào Azure Table Storage dưới dạng văn bản rõ, và do đó xuất hiện dưới dạng văn bản rõ trong bất kỳ [bản sao lưu](backup-restore) nào. Đối với bất kỳ triển khai production nào, hãy cấu hình `SecretProvider:VaultUri` để các bí mật này được lưu trong Key Vault.
 
 ## API Quản trị
 
@@ -308,7 +308,7 @@ Khi được cấu hình, các giá trị bí mật trông giống tham chiếu 
 | `AdminApi:Enabled` | `true` | **Được bật theo mặc định.** Đặt thành `false` để vô hiệu hóa tất cả endpoint quản trị (chúng sẽ không được đăng ký). |
 | `AdminApi:Scope` | `authagonal-admin` | Scope JWT cần thiết để truy cập các endpoint quản trị. Thay đổi giá trị này để khớp với tên scope hiện có của bạn (ví dụ: `projects-identity-admin` cho việc di chuyển từ IdentityServer). |
 
-> ⚠️ **API quản trị được bật theo mặc định và có đặc quyền rất cao.** Scope quản trị cấp toàn quyền quản lý và giả mạo người dùng — bất kỳ ai nắm giữ token có `AdminApi:Scope` đều có thể cấp token cho bất kỳ người dùng nào, quản lý client, và đọc/ghi toàn bộ cấu hình. Hãy giới hạn mạng cho các endpoint quản trị (các route quản trị `/api/v1/*`), và kiểm soát chặt chẽ ai có thể được cấp scope quản trị. Như một biện pháp phòng thủ theo chiều sâu, scope này được *dành riêng*: nó không bao giờ có thể được cấp cho một OAuth client (xem [API Quản trị](admin-api)) và không thể được cấp qua endpoint giả mạo. Hãy đặt `AdminApi:Enabled = false` hoàn toàn nếu không sử dụng API quản trị.
+> ⚠️ **API quản trị được bật theo mặc định và có đặc quyền rất cao.** Scope quản trị cấp toàn quyền quản lý và giả mạo người dùng: bất kỳ ai nắm giữ token có `AdminApi:Scope` đều có thể cấp token cho bất kỳ người dùng nào, quản lý client, và đọc/ghi toàn bộ cấu hình. Hãy giới hạn mạng cho các endpoint quản trị (các route quản trị `/api/v1/*`), và kiểm soát chặt chẽ ai có thể được cấp scope quản trị. Như một biện pháp phòng thủ theo chiều sâu, scope này được *dành riêng*: nó không bao giờ có thể được cấp cho một OAuth client (xem [API Quản trị](admin-api)) và không thể được cấp qua endpoint giả mạo. Hãy đặt `AdminApi:Enabled = false` hoàn toàn nếu không sử dụng API quản trị.
 
 ## Đồng ý
 
@@ -418,7 +418,7 @@ CORS được cấu hình động. Các origin từ `AllowedCorsOrigins` của t
 
 ## HashiCorp Vault Transit
 
-Authagonal có thể ký JWT bằng công cụ secrets Transit của HashiCorp Vault. Khóa riêng không bao giờ rời khỏi Vault — chỉ thao tác ký được ủy quyền từ xa. Khóa công khai được lưu trong bộ nhớ đệm cục bộ để xác minh.
+Authagonal có thể ký JWT bằng công cụ secrets Transit của HashiCorp Vault. Khóa riêng không bao giờ rời khỏi Vault: chỉ thao tác ký được ủy quyền từ xa. Khóa công khai được lưu trong bộ nhớ đệm cục bộ để xác minh.
 
 Điều này được cấu hình bằng lập trình khi host dưới dạng thư viện. Xem [Khả năng mở rộng](extensibility) để biết chi tiết.
 

@@ -51,7 +51,7 @@ Thêm client vào tệp `appsettings.json` (hoặc truyền qua biến môi trư
 }
 ```
 
-Các client được khởi tạo khi khởi động — an toàn để chạy trong mỗi lần triển khai.
+Các client được khởi tạo khi khởi động: an toàn để chạy trong mỗi lần triển khai.
 
 ## 4. Khởi tạo đăng nhập
 
@@ -100,8 +100,8 @@ Thư mục `demos/sample-app/` chứa một ứng dụng React SPA + API hoàn c
 
 ## Bước tiếp theo
 
-- [Cấu hình](configuration) — tài liệu tham khảo đầy đủ cho tất cả cài đặt
-- [Khả năng mở rộng](extensibility) — tích hợp như thư viện, thêm hook tùy chỉnh
-- [Tùy chỉnh giao diện](branding) — tùy chỉnh giao diện đăng nhập
-- [SAML](saml) — thêm nhà cung cấp SSO qua SAML
-- [Cấp phát](provisioning) — cấp phát người dùng vào các ứng dụng phía sau
+- [Cấu hình](configuration): tài liệu tham khảo đầy đủ cho tất cả cài đặt
+- [Khả năng mở rộng](extensibility): tích hợp như thư viện, thêm hook tùy chỉnh
+- [Tùy chỉnh giao diện](branding): tùy chỉnh giao diện đăng nhập
+- [SAML](saml): thêm nhà cung cấp SSO qua SAML
+- [Cấp phát](provisioning): cấp phát người dùng vào các ứng dụng phía sau

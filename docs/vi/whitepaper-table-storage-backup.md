@@ -1,36 +1,34 @@
 ---
 layout: default
-title: Table Storage Backup Whitepaper
+title: Sách trắng Sao lưu Table Storage
 locale: vi
 ---
 
-> ⚠️ This page has not yet been translated; the English version is shown below.
+# Sao lưu Azure Table Storage: Một cách tiếp cận thực tiễn
 
-# Backing Up Azure Table Storage: A Practical Approach
-
-**How Authagonal implements full and incremental backup for a schemaless NoSQL store**
+**Cách Authagonal triển khai sao lưu đầy đủ và tăng dần cho một kho NoSQL không lược đồ**
 
 ---
 
-## The Problem
+## Vấn đề
 
-Azure Table Storage is a cost-effective, massively scalable key-value store -- but it offers no native backup facility. There are no snapshots, no point-in-time restore, no export button. If a bad deployment corrupts data, or an operator accidentally deletes a table, recovery depends entirely on whatever you built yourself.
+Azure Table Storage là một kho key-value có chi phí thấp và khả năng mở rộng cực lớn, nhưng nó không cung cấp cơ chế sao lưu gốc nào. Không có snapshot, không có khôi phục theo thời điểm, không có nút xuất dữ liệu. Nếu một lần triển khai tồi làm hỏng dữ liệu, hoặc một người vận hành vô tình xóa một bảng, việc khôi phục hoàn toàn phụ thuộc vào bất cứ thứ gì bạn tự xây dựng.
 
-For an identity platform like Authagonal -- where the tables hold users, credentials, OAuth grants, signing keys, SSO configurations, and SCIM provisioning state -- the stakes are high. Losing this data doesn't just break an application; it locks people out.
+Đối với một nền tảng danh tính như Authagonal, nơi các bảng lưu giữ người dùng, thông tin xác thực, các cấp quyền OAuth, khóa ký, cấu hình SSO, và trạng thái cung cấp SCIM, thì rủi ro rất lớn. Mất dữ liệu này không chỉ làm hỏng một ứng dụng; nó khóa mọi người ở ngoài.
 
-This paper describes the backup strategy Authagonal uses: how it exports data, how incremental backups work despite Table Storage's limited query model, how deletes are tracked, and how the pieces compose into a production-ready backup pipeline.
+Bài viết này mô tả chiến lược sao lưu mà Authagonal sử dụng: cách nó xuất dữ liệu, cách các bản sao lưu tăng dần hoạt động bất chấp mô hình truy vấn hạn chế của Table Storage, cách theo dõi các thao tác xóa, và cách các phần ghép lại thành một pipeline sao lưu sẵn sàng cho production.
 
-## Design Goals
+## Mục tiêu thiết kế
 
-1. **Full and incremental backups.** A daily full backup is fine for small deployments, but at scale, hourly incrementals keep the backup window short and storage costs low.
-2. **Faithful round-trip.** Every entity property -- strings, integers, booleans, DateTimeOffsets, GUIDs, binary -- must survive a backup/restore cycle without type coercion or data loss.
-3. **Multi-tenant support.** Authagonal uses table name prefixes to isolate tenants (e.g. `acmecorpUsers`, `acmecorpClients`). Backup and restore must be prefix-aware so a single storage account can host many tenants with independent backup schedules.
-4. **Pluggable storage.** Backups should work to a local filesystem during development and to blob storage (or any other target) in production, without changing the core logic.
-5. **Human-readable output.** When something goes wrong, an operator should be able to open a backup file in a text editor and see what's in it.
+1. **Sao lưu đầy đủ và tăng dần.** Một bản sao lưu đầy đủ hàng ngày là ổn cho các triển khai nhỏ, nhưng ở quy mô lớn, các bản tăng dần theo giờ giữ cho cửa sổ sao lưu ngắn và chi phí lưu trữ thấp.
+2. **Vòng lặp trung thực.** Mọi thuộc tính của thực thể (chuỗi, số nguyên, boolean, DateTimeOffset, GUID, nhị phân) đều phải sống sót qua một chu kỳ sao lưu/khôi phục mà không bị ép kiểu hay mất dữ liệu.
+3. **Hỗ trợ đa tenant.** Authagonal dùng tiền tố tên bảng để cô lập các tenant (ví dụ `acmecorpUsers`, `acmecorpClients`). Sao lưu và khôi phục phải nhận biết tiền tố để một storage account đơn có thể chứa nhiều tenant với các lịch sao lưu độc lập.
+4. **Lưu trữ có thể cắm được.** Các bản sao lưu nên hoạt động với hệ thống tệp cục bộ trong quá trình phát triển và với blob storage (hoặc bất kỳ đích nào khác) trong production, mà không thay đổi logic lõi.
+5. **Đầu ra dễ đọc cho con người.** Khi có sự cố, một người vận hành nên có thể mở một tệp sao lưu trong trình soạn thảo văn bản và thấy những gì bên trong nó.
 
-## Architecture
+## Kiến trúc
 
-The backup system is structured as a .NET library (`Authagonal.Backup`) with thin CLI wrappers for backup and restore operations. The library is separated from the main Authagonal server so it can be used as a standalone tool, in a Docker container, or embedded in a scheduled job.
+Hệ thống sao lưu được cấu trúc như một thư viện .NET (`Authagonal.Backup`) với các lớp bọc CLI mỏng cho các thao tác sao lưu và khôi phục. Thư viện được tách khỏi máy chủ Authagonal chính để nó có thể được dùng như một công cụ độc lập, trong một container Docker, hoặc nhúng vào một công việc theo lịch.
 
 ```
 Authagonal.Backup (library)
@@ -46,32 +44,32 @@ tools/Authagonal.Backup     -- CLI entry point for backup
 tools/Authagonal.Restore    -- CLI entry point for restore
 ```
 
-### Storage Abstraction
+### Trừu tượng hóa lưu trữ
 
-The core services never touch the filesystem directly. They operate against two interfaces:
+Các dịch vụ lõi không bao giờ chạm trực tiếp vào hệ thống tệp. Chúng vận hành dựa trên hai interface:
 
-**IBackupTarget** provides four operations: open a writable stream for a backup file, write a manifest, get the last watermark (for incremental scheduling), and set a new watermark.
+**IBackupTarget** cung cấp bốn thao tác: mở một stream có thể ghi cho một tệp sao lưu, ghi một manifest, lấy watermark cuối cùng (để lập lịch tăng dần), và đặt một watermark mới.
 
-**IBackupSource** provides the read side: read a manifest, open a readable stream, list backup IDs chronologically, list files within a backup, and delete a backup.
+**IBackupSource** cung cấp phía đọc: đọc một manifest, mở một stream có thể đọc, liệt kê các ID sao lưu theo trình tự thời gian, liệt kê các tệp trong một bản sao lưu, và xóa một bản sao lưu.
 
-The filesystem implementations are straightforward -- timestamped directories with JSONL files inside -- but the abstraction means swapping to Azure Blob Storage or S3 requires implementing just these two interfaces.
+Các triển khai trên hệ thống tệp rất đơn giản (các thư mục có dấu thời gian với các tệp JSONL bên trong), nhưng sự trừu tượng hóa nghĩa là việc chuyển sang Azure Blob Storage hoặc S3 chỉ đòi hỏi triển khai đúng hai interface này.
 
-## Full Backup
+## Sao lưu đầy đủ
 
-A full backup iterates over every Authagonal table, queries all entities, and writes them to JSONL files (one JSON object per line, one file per table).
+Một bản sao lưu đầy đủ lặp qua mọi bảng Authagonal, truy vấn tất cả thực thể, và ghi chúng vào các tệp JSONL (một đối tượng JSON mỗi dòng, một tệp mỗi bảng).
 
-The backup process:
+Quy trình sao lưu:
 
-1. Generate a backup ID from the current UTC timestamp (e.g. `20260329-120000`).
-2. For each of the 20 default Authagonal tables, query the Azure Table Storage SDK's `QueryAsync<TableEntity>` with a page size of 1,000.
-3. Serialize each entity to a flat JSON dictionary preserving all properties, including system properties (`PartitionKey`, `RowKey`, `Timestamp`, `ETag`).
-4. Write each serialized entity as a single line to `{TableName}.jsonl` (or `{TableName}.jsonl.gz` if compression is enabled).
-5. Record per-table entity counts and durations in a manifest (`_manifest.json`).
-6. Update the `.lastbackup` watermark file with the backup start time.
+1. Tạo một ID sao lưu từ dấu thời gian UTC hiện tại (ví dụ `20260329-120000`).
+2. Với mỗi bảng trong số 20 bảng Authagonal mặc định, truy vấn `QueryAsync<TableEntity>` của SDK Azure Table Storage với kích thước trang là 1.000.
+3. Tuần tự hóa mỗi thực thể thành một từ điển JSON phẳng, giữ lại tất cả thuộc tính, bao gồm các thuộc tính hệ thống (`PartitionKey`, `RowKey`, `Timestamp`, `ETag`).
+4. Ghi mỗi thực thể đã tuần tự hóa thành một dòng đơn vào `{TableName}.jsonl` (hoặc `{TableName}.jsonl.gz` nếu nén được bật).
+5. Ghi số lượng thực thể và thời lượng theo từng bảng vào một manifest (`_manifest.json`).
+6. Cập nhật tệp watermark `.lastbackup` bằng thời gian bắt đầu sao lưu.
 
-Tables that don't exist in the storage account are silently skipped (HTTP 404 is caught and ignored). Transient tables like `SamlReplayCache` and `OidcStateStore` are excluded by default since their contents are ephemeral.
+Các bảng không tồn tại trong storage account sẽ bị bỏ qua âm thầm (HTTP 404 được bắt và bỏ qua). Các bảng tạm thời như `SamlReplayCache` và `OidcStateStore` bị loại trừ theo mặc định vì nội dung của chúng chỉ tồn tại thoáng qua.
 
-### Output Format
+### Định dạng đầu ra
 
 ```
 backups/
@@ -84,186 +82,186 @@ backups/
     _manifest.json
 ```
 
-A single line in `Users.jsonl` looks like:
+Một dòng đơn trong `Users.jsonl` trông như thế này:
 
 ```json
 {"PartitionKey":"u_abc123","RowKey":"profile","Timestamp":"2026-03-28T09:14:22+00:00","ETag":"W/\"...\"","Email":"alice@example.com","DisplayName":"Alice","CreatedAt":"2025-11-01T00:00:00+00:00"}
 ```
 
-JSONL was chosen over CSV or a binary format because it preserves the schemaless, heterogeneous nature of Table Storage entities (different entities in the same table can have different properties), is streamable (no need to buffer the entire table in memory), and is directly inspectable with standard tools like `jq` or any text editor.
+JSONL được chọn thay vì CSV hay một định dạng nhị phân vì nó bảo toàn bản chất không lược đồ, không đồng nhất của các thực thể Table Storage (các thực thể khác nhau trong cùng một bảng có thể có các thuộc tính khác nhau), có thể stream được (không cần đệm toàn bộ bảng vào bộ nhớ), và có thể kiểm tra trực tiếp bằng các công cụ tiêu chuẩn như `jq` hoặc bất kỳ trình soạn thảo văn bản nào.
 
-### Compression
+### Nén
 
-When the `--gzip` flag is set, each JSONL file is wrapped in a GZip stream at `CompressionLevel.Optimal` before writing. The file extension changes to `.jsonl.gz`. The restore tool auto-detects GZip by inspecting the magic bytes (`0x1f 0x8b`) at the start of each file, so no flag is needed during restore.
+Khi cờ `--gzip` được đặt, mỗi tệp JSONL được bọc trong một stream GZip ở mức `CompressionLevel.Optimal` trước khi ghi. Phần mở rộng tệp đổi thành `.jsonl.gz`. Công cụ khôi phục tự động phát hiện GZip bằng cách kiểm tra các magic byte (`0x1f 0x8b`) ở đầu mỗi tệp, nên không cần cờ nào trong lúc khôi phục.
 
-## Incremental Backup
+## Sao lưu tăng dần
 
-### The Timestamp Trick
+### Mẹo dùng Timestamp
 
-Azure Table Storage automatically maintains a `Timestamp` property on every entity, updated on every insert or replace. This is a server-managed property -- applications cannot set it. The backup system exploits this by filtering queries to `Timestamp gt datetime'{watermark}'`, where the watermark is the start time of the last successful backup.
+Azure Table Storage tự động duy trì một thuộc tính `Timestamp` trên mọi thực thể, được cập nhật ở mỗi lần chèn hoặc thay thế. Đây là một thuộc tính do máy chủ quản lý, các ứng dụng không thể đặt nó. Hệ thống sao lưu khai thác điều này bằng cách lọc các truy vấn thành `Timestamp gt datetime'{watermark}'`, trong đó watermark là thời gian bắt đầu của bản sao lưu thành công gần nhất.
 
-This means an incremental backup only downloads entities that were created or modified since the previous run. For a system with 500,000 entities where 200 changed in the last hour, the incremental backup transfers 200 rows instead of 500,000.
+Điều này nghĩa là một bản sao lưu tăng dần chỉ tải về các thực thể đã được tạo hoặc sửa đổi kể từ lần chạy trước. Với một hệ thống có 500.000 thực thể mà 200 thực thể đã thay đổi trong giờ vừa qua, bản sao lưu tăng dần chuyển 200 hàng thay vì 500.000.
 
-The watermark is stored in a `.lastbackup` file in the backup root directory. If the file doesn't exist (first run, or after manual cleanup), the backup falls back to a full export. Incremental backup IDs include an `-incr` suffix (e.g. `20260329-180000-incr`) and the manifest records `"mode": "incremental"` with the watermark value that was used for filtering.
+Watermark được lưu trong một tệp `.lastbackup` ở thư mục gốc của bản sao lưu. Nếu tệp không tồn tại (lần chạy đầu tiên, hoặc sau khi dọn dẹp thủ công), bản sao lưu quay về một lần xuất đầy đủ. Các ID sao lưu tăng dần bao gồm một hậu tố `-incr` (ví dụ `20260329-180000-incr`) và manifest ghi lại `"mode": "incremental"` cùng với giá trị watermark đã được dùng để lọc.
 
-### Cost of the Timestamp Filter
+### Chi phí của bộ lọc Timestamp
 
-It's worth being honest about a limitation: `Timestamp` is not indexed. Azure Table Storage only indexes `PartitionKey` and `RowKey`. A filter on `Timestamp gt datetime'...'` results in a full table scan -- Azure reads every entity server-side and evaluates the predicate before returning matches. The filtering reduces data transfer (only changed entities cross the wire), but not server-side read cost.
+Cần thành thật về một hạn chế: `Timestamp` không được lập chỉ mục. Azure Table Storage chỉ lập chỉ mục `PartitionKey` và `RowKey`. Một bộ lọc trên `Timestamp gt datetime'...'` dẫn đến một lần quét toàn bảng: Azure đọc mọi thực thể ở phía máy chủ và đánh giá điều kiện trước khi trả về các kết quả khớp. Việc lọc giảm lượng dữ liệu truyền tải (chỉ các thực thể đã thay đổi mới đi qua đường truyền), nhưng không giảm chi phí đọc ở phía máy chủ.
 
-More importantly, the current approach scans **all 20 tables** individually, even if only one table had changes. That's 20 full table scans per incremental backup, regardless of how few entities actually changed.
+Quan trọng hơn, cách tiếp cận hiện tại quét **cả 20 bảng** một cách riêng lẻ, ngay cả khi chỉ một bảng có thay đổi. Đó là 20 lần quét toàn bảng cho mỗi bản sao lưu tăng dần, bất kể thực tế có bao nhiêu thực thể đã thay đổi.
 
-At Authagonal's typical identity-data volumes (tens of thousands of entities, not millions), this is perfectly acceptable -- scans are fast, reads are cheap ($0.00036 per 10,000 transactions), and the operation is read-only with no impact on live traffic. The section on [scaling beyond timestamp scans](#scaling-beyond-timestamp-scans) discusses how this could evolve.
+Ở khối lượng dữ liệu danh tính điển hình của Authagonal (hàng chục nghìn thực thể, không phải hàng triệu), điều này hoàn toàn chấp nhận được: các lần quét nhanh, việc đọc rẻ ($0.00036 cho mỗi 10.000 giao dịch), và thao tác chỉ đọc mà không ảnh hưởng đến lưu lượng đang hoạt động. Phần về [mở rộng vượt ra ngoài quét theo timestamp](#scaling-beyond-timestamp-scans) thảo luận cách điều này có thể tiến hóa.
 
-### The Delete Problem
+### Vấn đề xóa
 
-The `Timestamp` filter elegantly captures inserts and updates, but it cannot capture deletes. A deleted entity simply vanishes -- there is no `Timestamp` to filter on, no tombstone left behind by Table Storage itself.
+Bộ lọc `Timestamp` nắm bắt một cách thanh lịch các thao tác chèn và cập nhật, nhưng nó không thể nắm bắt các thao tác xóa. Một thực thể đã xóa đơn giản là biến mất: không có `Timestamp` để lọc, không có tombstone nào do chính Table Storage để lại.
 
-Authagonal solves this with application-level tombstone tracking.
+Authagonal giải quyết điều này bằng việc theo dõi tombstone ở cấp ứng dụng.
 
-## Tombstone Tracking
+## Theo dõi Tombstone
 
-Every data store in Authagonal (users, clients, grants, signing keys, SSO domains, SAML/OIDC providers, MFA credentials, SCIM resources, roles) accepts an optional `ITombstoneWriter` dependency. When a store deletes an entity, it writes a tombstone record to a dedicated `Tombstones` table:
+Mọi kho dữ liệu trong Authagonal (người dùng, client, cấp quyền, khóa ký, tên miền SSO, nhà cung cấp SAML/OIDC, thông tin xác thực MFA, tài nguyên SCIM, vai trò) đều chấp nhận một phụ thuộc `ITombstoneWriter` tùy chọn. Khi một kho xóa một thực thể, nó ghi một bản ghi tombstone vào một bảng `Tombstones` chuyên dụng:
 
-| Column | Value |
+| Cột | Giá trị |
 |---|---|
-| `PartitionKey` | Logical table name (e.g. `"Users"`) |
+| `PartitionKey` | Tên bảng logic (ví dụ `"Users"`) |
 | `RowKey` | `"{originalPartitionKey}\|{originalRowKey}"` |
-| `DeletedAt` | UTC timestamp of the deletion |
+| `DeletedAt` | Dấu thời gian UTC của lần xóa |
 
-This is a lightweight, append-mostly side-channel. The tombstone write is a simple upsert, batched up to Azure's 100-entity transaction limit for bulk operations.
+Đây là một kênh phụ nhẹ, chủ yếu là nối thêm. Việc ghi tombstone là một upsert đơn giản, được gộp lô đến giới hạn giao dịch 100 thực thể của Azure cho các thao tác hàng loạt.
 
-During an incremental backup, after exporting modified entities from each table, the backup service queries the `Tombstones` table for records with `Timestamp > watermark`. These are written to a separate `_tombstones.jsonl` file in the backup directory, with a normalized format:
+Trong một bản sao lưu tăng dần, sau khi xuất các thực thể đã sửa đổi từ mỗi bảng, dịch vụ sao lưu truy vấn bảng `Tombstones` để tìm các bản ghi có `Timestamp > watermark`. Chúng được ghi vào một tệp `_tombstones.jsonl` riêng trong thư mục sao lưu, với một định dạng đã chuẩn hóa:
 
 ```json
 {"Table":"Users","PartitionKey":"u_abc123","RowKey":"profile","DeletedAt":"2026-03-29T14:30:00+00:00"}
 ```
 
-This means an incremental backup captures a complete picture of what changed: entities added/modified (from the per-table JSONL files) and entities deleted (from the tombstones file).
+Điều này nghĩa là một bản sao lưu tăng dần nắm bắt một bức tranh hoàn chỉnh về những gì đã thay đổi: các thực thể được thêm/sửa đổi (từ các tệp JSONL theo từng bảng) và các thực thể bị xóa (từ tệp tombstones).
 
-## Merge and Rollup
+## Hợp nhất và Rollup
 
-Over time, a backup directory accumulates one full backup and many incrementals. To restore to the current state, all of them would need to be applied in order. The **MergeService** consolidates them into a single full backup.
+Theo thời gian, một thư mục sao lưu tích lũy một bản sao lưu đầy đủ và nhiều bản tăng dần. Để khôi phục về trạng thái hiện tại, tất cả chúng sẽ cần được áp dụng theo thứ tự. **MergeService** hợp nhất chúng thành một bản sao lưu đầy đủ duy nhất.
 
-The merge algorithm:
+Thuật toán hợp nhất:
 
-1. Load the full backup's entity set for one table at a time (to bound memory usage).
-2. Layer each incremental on top in chronological order -- newer values overwrite older ones, keyed by `(PartitionKey, RowKey)`.
-3. Apply tombstones: for every `(Table, PartitionKey, RowKey)` tuple in the tombstone files, remove the entity from the merged set.
-4. Write the resulting entity set as a new full backup.
+1. Nạp tập thực thể của bản sao lưu đầy đủ cho mỗi lần một bảng (để giới hạn mức sử dụng bộ nhớ).
+2. Xếp từng bản tăng dần lên trên theo thứ tự thời gian: các giá trị mới hơn ghi đè các giá trị cũ hơn, khóa theo `(PartitionKey, RowKey)`.
+3. Áp dụng các tombstone: với mỗi bộ `(Table, PartitionKey, RowKey)` trong các tệp tombstone, xóa thực thể khỏi tập đã hợp nhất.
+4. Ghi tập thực thể kết quả thành một bản sao lưu đầy đủ mới.
 
-The **RollupService** wraps this with cleanup: after a successful merge, it deletes the old full backup and all the incrementals that were folded in. This keeps storage usage from growing without bound.
+**RollupService** bọc điều này kèm dọn dẹp: sau một lần hợp nhất thành công, nó xóa bản sao lưu đầy đủ cũ và tất cả các bản tăng dần đã được gộp vào. Điều này giữ cho mức sử dụng lưu trữ không tăng vô hạn.
 
-A typical production schedule might look like:
+Một lịch production điển hình có thể trông như thế này:
 
-- **Hourly:** Incremental backup
-- **Daily (2 AM):** Full backup
-- **Weekly:** Rollup (merge the previous week's daily + hourly incrementals, delete originals)
+- **Hàng giờ:** Sao lưu tăng dần
+- **Hàng ngày (2 giờ sáng):** Sao lưu đầy đủ
+- **Hàng tuần:** Rollup (hợp nhất các bản tăng dần hàng ngày + hàng giờ của tuần trước, xóa các bản gốc)
 
-## Restore
+## Khôi phục
 
-The restore tool reads a backup directory and writes entities back into Azure Table Storage. It supports three modes:
+Công cụ khôi phục đọc một thư mục sao lưu và ghi các thực thể trở lại vào Azure Table Storage. Nó hỗ trợ ba chế độ:
 
-**Upsert** (default): Each entity is inserted or replaced. Existing entities with the same key are overwritten. This is the safest mode for disaster recovery.
+**Upsert** (mặc định): Mỗi thực thể được chèn hoặc thay thế. Các thực thể hiện có với cùng khóa sẽ bị ghi đè. Đây là chế độ an toàn nhất cho việc khôi phục sau thảm họa.
 
-**Merge**: Each entity is inserted or merged. Properties present in the backup overwrite the corresponding properties in the existing entity, but properties that exist in the live table but not in the backup are preserved. Useful for partial restores.
+**Merge**: Mỗi thực thể được chèn hoặc hợp nhất. Các thuộc tính có trong bản sao lưu ghi đè các thuộc tính tương ứng trong thực thể hiện có, nhưng các thuộc tính tồn tại trong bảng đang hoạt động mà không có trong bản sao lưu sẽ được giữ lại. Hữu ích cho các lần khôi phục một phần.
 
-**Clean**: All existing entities in each target table are deleted before restoring. This produces an exact replica of the backup state, at the cost of a (potentially slow) full table scan to delete existing data.
+**Clean**: Tất cả các thực thể hiện có trong mỗi bảng đích bị xóa trước khi khôi phục. Điều này tạo ra một bản sao chính xác của trạng thái sao lưu, với cái giá là một lần quét toàn bảng (có thể chậm) để xóa dữ liệu hiện có.
 
-### Type Fidelity
+### Độ trung thực kiểu dữ liệu
 
-A key challenge in round-tripping Table Storage data through JSON is preserving property types. Table Storage natively supports strings, integers (Int32/Int64), doubles, booleans, DateTimeOffset, Guid, and binary. JSON has no native representation for most of these.
+Một thách thức chính khi đưa dữ liệu Table Storage đi vòng qua JSON là bảo toàn các kiểu thuộc tính. Table Storage hỗ trợ sẵn các chuỗi, số nguyên (Int32/Int64), double, boolean, DateTimeOffset, Guid, và nhị phân. JSON không có biểu diễn gốc cho hầu hết các kiểu này.
 
-The restore service uses heuristics to recover types from their JSON string representation:
+Dịch vụ khôi phục dùng các phương pháp phỏng đoán để phục hồi các kiểu từ biểu diễn chuỗi JSON của chúng:
 
-- **DateTimeOffset**: Strings that are 19-35 characters long, start with a digit, and parse as ISO 8601 are restored as `DateTimeOffset`.
-- **Guid**: Strings that are exactly 36 characters and parse as a GUID are restored as `Guid`.
-- **Numbers**: JSON numbers are tried as `Int32`, then `Int64`, then `double`, in that order.
-- **Booleans and nulls**: Map directly.
+- **DateTimeOffset**: Các chuỗi dài từ 19 đến 35 ký tự, bắt đầu bằng một chữ số, và phân tích được thành ISO 8601 sẽ được khôi phục thành `DateTimeOffset`.
+- **Guid**: Các chuỗi có đúng 36 ký tự và phân tích được thành một GUID sẽ được khôi phục thành `Guid`.
+- **Số**: Các số JSON được thử lần lượt là `Int32`, rồi `Int64`, rồi `double`, theo thứ tự đó.
+- **Boolean và null**: Ánh xạ trực tiếp.
 
-This heuristic approach covers Authagonal's actual data patterns without requiring a schema registry or type annotations in the backup format.
+Cách tiếp cận phỏng đoán này bao phủ các mẫu dữ liệu thực tế của Authagonal mà không đòi hỏi một sổ đăng ký lược đồ hay các chú thích kiểu trong định dạng sao lưu.
 
-### Error Handling
+### Xử lý lỗi
 
-Restore operations are fault-tolerant at the entity level. If an individual entity fails to write (e.g. due to a transient Azure error), the error count is incremented but the restore continues. The final result reports per-table success and error counts, and the process exits with code `2` for partial success -- distinct from `0` (full success) and `1` (fatal error).
+Các thao tác khôi phục có khả năng chịu lỗi ở cấp thực thể. Nếu một thực thể riêng lẻ ghi thất bại (ví dụ do một lỗi Azure thoáng qua), bộ đếm lỗi được tăng nhưng việc khôi phục vẫn tiếp tục. Kết quả cuối cùng báo cáo số lượng thành công và lỗi theo từng bảng, và tiến trình thoát với mã `2` cho thành công một phần, khác với `0` (thành công hoàn toàn) và `1` (lỗi nghiêm trọng).
 
-## Multi-Tenancy
+## Đa tenant
 
-Authagonal supports multi-tenant deployments where each tenant's tables are prefixed (e.g. `acmecorpUsers`, `contosoclients`). Both backup and restore accept a `--prefix` flag that is prepended to logical table names when communicating with Azure Table Storage.
+Authagonal hỗ trợ các triển khai đa tenant, nơi các bảng của mỗi tenant được đặt tiền tố (ví dụ `acmecorpUsers`, `contosoclients`). Cả sao lưu và khôi phục đều chấp nhận một cờ `--prefix` được thêm vào trước các tên bảng logic khi giao tiếp với Azure Table Storage.
 
-This means:
-- Backup with `--prefix acmecorp` reads from `acmecorpUsers`, `acmecorpClients`, etc., but writes files named `Users.jsonl`, `Clients.jsonl` (logical names).
-- Restore with `--prefix contoso` reads `Users.jsonl` and writes to `contosoUsers`.
+Điều này nghĩa là:
+- Sao lưu với `--prefix acmecorp` đọc từ `acmecorpUsers`, `acmecorpClients`, v.v., nhưng ghi các tệp có tên `Users.jsonl`, `Clients.jsonl` (tên logic).
+- Khôi phục với `--prefix contoso` đọc `Users.jsonl` và ghi vào `contosoUsers`.
 
-This makes it straightforward to clone a tenant's data, migrate between environments, or restore one tenant without affecting others.
+Điều này giúp dễ dàng nhân bản dữ liệu của một tenant, di chuyển giữa các môi trường, hoặc khôi phục một tenant mà không ảnh hưởng đến các tenant khác.
 
 ## Manifest
 
-Every backup includes a `_manifest.json` file recording:
+Mọi bản sao lưu đều bao gồm một tệp `_manifest.json` ghi lại:
 
-- **BackupId**: Timestamped identifier (e.g. `20260329-120000` or `20260329-180000-incr`)
-- **Mode**: `"full"` or `"incremental"`
-- **BackupTimestamp**: When the backup started (UTC)
-- **Watermark**: For incrementals, the cutoff timestamp used for filtering
-- **Compressed**: Whether files are GZip-compressed
-- **Tables**: A dictionary of table names to entity counts and durations
-- **TombstoneCount**: Number of tombstone records (incremental only)
-- **TotalEntities**: Aggregate entity count across all tables
-- **DurationSeconds**: Wall-clock time for the backup run
-- **FileHashes**: SHA-256 hashes of each backup file for integrity verification
+- **BackupId**: Mã định danh có dấu thời gian (ví dụ `20260329-120000` hoặc `20260329-180000-incr`)
+- **Mode**: `"full"` hoặc `"incremental"`
+- **BackupTimestamp**: Thời điểm bản sao lưu bắt đầu (UTC)
+- **Watermark**: Với các bản tăng dần, dấu thời gian ngưỡng dùng để lọc
+- **Compressed**: Các tệp có được nén GZip hay không
+- **Tables**: Một từ điển ánh xạ tên bảng đến số lượng thực thể và thời lượng
+- **TombstoneCount**: Số lượng bản ghi tombstone (chỉ với bản tăng dần)
+- **TotalEntities**: Tổng số lượng thực thể trên tất cả các bảng
+- **DurationSeconds**: Thời gian thực tế cho lần chạy sao lưu
+- **FileHashes**: Các băm SHA-256 của mỗi tệp sao lưu để xác minh tính toàn vẹn
 
-The manifest serves both as an operational dashboard (how big was the backup? how long did it take? which tables are largest?) and as a safety net (hash verification during restore detects corrupted or tampered files).
+Manifest vừa đóng vai trò một bảng điều khiển vận hành (bản sao lưu lớn cỡ nào? mất bao lâu? bảng nào lớn nhất?) vừa là một lưới an toàn (việc xác minh băm trong lúc khôi phục phát hiện các tệp bị hỏng hoặc bị can thiệp).
 
-## Operational Characteristics
+## Đặc tính vận hành
 
-**Backup speed** is bounded by Azure Table Storage query throughput, which is typically 5,000-10,000 entities per second per table. A full backup of 100,000 entities across 20 tables completes in under a minute. Incremental backups of a few hundred changed entities finish in seconds.
+**Tốc độ sao lưu** bị giới hạn bởi thông lượng truy vấn của Azure Table Storage, thường là 5.000-10.000 thực thể mỗi giây mỗi bảng. Một bản sao lưu đầy đủ gồm 100.000 thực thể trên 20 bảng hoàn tất trong chưa đầy một phút. Các bản sao lưu tăng dần với vài trăm thực thể đã thay đổi hoàn tất trong vài giây.
 
-**Memory usage** is minimal. The backup service streams entities directly to disk -- it never loads an entire table into memory. The merge service processes one table at a time, loading only that table's entity set. For very large tables (millions of entities), the merge memory footprint is proportional to the largest single table.
+**Mức sử dụng bộ nhớ** là tối thiểu. Dịch vụ sao lưu stream các thực thể trực tiếp ra đĩa, nó không bao giờ nạp toàn bộ một bảng vào bộ nhớ. Dịch vụ hợp nhất xử lý mỗi lần một bảng, chỉ nạp tập thực thể của bảng đó. Với các bảng rất lớn (hàng triệu thực thể), dấu chân bộ nhớ khi hợp nhất tỷ lệ thuận với bảng đơn lớn nhất.
 
-**Retry policy** is configured with exponential backoff: 5 retries, starting at 500ms, capped at 30 seconds. This covers the transient throttling that Table Storage applies under heavy load.
+**Chính sách thử lại** được cấu hình với backoff theo cấp số mũ: 5 lần thử lại, bắt đầu ở 500ms, tối đa 30 giây. Điều này bao phủ việc điều tiết thoáng qua mà Table Storage áp dụng khi tải nặng.
 
-**Dry run** mode (`--dry-run`) enumerates entities without writing any files, useful for validating connectivity and estimating backup size before committing to a full run.
+Chế độ **Dry run** (`--dry-run`) liệt kê các thực thể mà không ghi bất kỳ tệp nào, hữu ích để xác thực kết nối và ước tính kích thước sao lưu trước khi cam kết chạy đầy đủ.
 
-## Scaling Beyond Timestamp Scans
+## Mở rộng vượt ra ngoài quét theo Timestamp
 
-The `Timestamp`-based approach is pragmatic at moderate scale, but its cost is proportional to total data size, not to the number of changes. As tables grow, 20 full table scans per incremental backup become increasingly wasteful. The natural evolution is a **unified change log table**.
+Cách tiếp cận dựa trên `Timestamp` là thực dụng ở quy mô vừa phải, nhưng chi phí của nó tỷ lệ thuận với tổng kích thước dữ liệu, chứ không phải với số lượng thay đổi. Khi các bảng lớn lên, 20 lần quét toàn bảng cho mỗi bản sao lưu tăng dần ngày càng trở nên lãng phí. Sự tiến hóa tự nhiên là một **bảng nhật ký thay đổi hợp nhất**.
 
-The insight is that the tombstone mechanism already proves this pattern out for deletes. The `Tombstones` table is a single, compact, cross-table index: every delete across all 20 data tables is recorded in one place, queryable by timestamp. Extending this to cover all mutations -- inserts, updates, and deletes -- would eliminate the need to scan the data tables entirely.
+Điểm mấu chốt là cơ chế tombstone đã chứng minh mẫu này cho các thao tác xóa. Bảng `Tombstones` là một chỉ mục xuyên bảng duy nhất, gọn nhẹ: mọi thao tác xóa trên cả 20 bảng dữ liệu đều được ghi lại ở một nơi, có thể truy vấn theo timestamp. Việc mở rộng điều này để bao phủ mọi thao tác thay đổi (chèn, cập nhật, và xóa) sẽ loại bỏ hoàn toàn nhu cầu quét các bảng dữ liệu.
 
-### Change Log Design
+### Thiết kế nhật ký thay đổi
 
-A change log table with time-bucketed partition keys would look like:
+Một bảng nhật ký thay đổi với các khóa phân vùng theo lô thời gian sẽ trông như thế này:
 
-| PartitionKey | RowKey | Properties |
+| PartitionKey | RowKey | Thuộc tính |
 |---|---|---|
 | `2026-03-29T18` | `Users\|u_abc123\|profile` | `Op = "upsert"` |
 | `2026-03-29T18` | `Clients\|c_456\|config` | `Op = "upsert"` |
 | `2026-03-29T18` | `Users\|u_xyz789\|profile` | `Op = "delete"` |
 
-The partition key is an hour bucket, so finding all changes since the last backup becomes a set of **partition key point queries** -- the fastest operation Table Storage supports. The backup service would:
+Khóa phân vùng là một lô theo giờ, nên việc tìm tất cả các thay đổi kể từ bản sao lưu cuối cùng trở thành một tập các **truy vấn điểm theo khóa phân vùng**, thao tác nhanh nhất mà Table Storage hỗ trợ. Dịch vụ sao lưu sẽ:
 
-1. Query the change log for all hour-bucket partitions since the watermark. This is an indexed operation, not a scan.
-2. For each `upsert` entry, fetch the current entity from the data table by its exact `PartitionKey`/`RowKey` -- also an indexed point read.
-3. For each `delete` entry, record the tombstone directly from the change log. No need for a separate tombstones table.
+1. Truy vấn nhật ký thay đổi cho tất cả các phân vùng lô theo giờ kể từ watermark. Đây là một thao tác có chỉ mục, không phải một lần quét.
+2. Với mỗi mục `upsert`, lấy thực thể hiện tại từ bảng dữ liệu theo đúng `PartitionKey`/`RowKey` của nó, cũng là một lần đọc điểm có chỉ mục.
+3. Với mỗi mục `delete`, ghi lại tombstone trực tiếp từ nhật ký thay đổi. Không cần một bảng tombstones riêng.
 
-This makes backup cost proportional to the number of changes, not the total data size. One query against a compact index table replaces 20 full table scans. It also unifies the tombstone mechanism -- the change log captures creates, updates, and deletes uniformly, so the separate `Tombstones` table becomes redundant.
+Điều này làm cho chi phí sao lưu tỷ lệ thuận với số lượng thay đổi, chứ không phải tổng kích thước dữ liệu. Một truy vấn vào một bảng chỉ mục gọn nhẹ thay thế cho 20 lần quét toàn bảng. Nó cũng hợp nhất cơ chế tombstone: nhật ký thay đổi nắm bắt các thao tác tạo, cập nhật, và xóa một cách đồng nhất, nên bảng `Tombstones` riêng trở nên dư thừa.
 
-### Why Not Yet
+### Vì sao chưa làm
 
-The tradeoff is write-path overhead. Every mutation in every store would need an additional write to the change log table. The plumbing is mostly there -- the `ITombstoneWriter` is already injected into every store and called on every delete. Widening it to an `IChangeTracker` that fires on upserts too is a straightforward refactor.
+Sự đánh đổi là chi phí phụ trên đường ghi. Mọi thao tác thay đổi trong mọi kho sẽ cần thêm một lần ghi vào bảng nhật ký thay đổi. Hạ tầng gần như đã có sẵn: `ITombstoneWriter` đã được tiêm vào mọi kho và được gọi ở mỗi lần xóa. Việc mở rộng nó thành một `IChangeTracker` cũng kích hoạt ở các lần upsert là một lần tái cấu trúc đơn giản.
 
-But "straightforward" isn't "free." It adds latency to every user-facing operation (one extra Table Storage write), increases storage transactions, and introduces a new consistency concern (what if the data write succeeds but the change log write fails?). At current volumes, the 20 timestamp-filtered scans complete in seconds and cost fractions of a cent. The change log would be the right move if tables grew to millions of entities, but for now, the simpler approach wins.
+Nhưng "đơn giản" không có nghĩa là "miễn phí". Nó thêm độ trễ vào mọi thao tác hướng đến người dùng (một lần ghi Table Storage bổ sung), làm tăng số giao dịch lưu trữ, và giới thiệu một mối lo ngại mới về tính nhất quán (điều gì xảy ra nếu lần ghi dữ liệu thành công nhưng lần ghi nhật ký thay đổi thất bại?). Ở khối lượng hiện tại, 20 lần quét được lọc theo timestamp hoàn tất trong vài giây và tốn một phần nhỏ của một xu. Nhật ký thay đổi sẽ là nước đi đúng đắn nếu các bảng phát triển đến hàng triệu thực thể, nhưng hiện tại, cách tiếp cận đơn giản hơn thắng.
 
-## Summary
+## Tóm tắt
 
-The approach is deliberately simple. Rather than building a complex change-data-capture pipeline or relying on Azure-specific features that may not exist for Table Storage, Authagonal uses the one piece of metadata that Azure *does* guarantee -- the server-managed `Timestamp` -- combined with application-level tombstone tracking for deletes.
+Cách tiếp cận này cố ý giữ sự đơn giản. Thay vì xây dựng một pipeline change-data-capture phức tạp hoặc dựa vào các tính năng đặc thù của Azure vốn có thể không tồn tại cho Table Storage, Authagonal dùng một mẩu siêu dữ liệu mà Azure *thực sự* đảm bảo, đó là `Timestamp` do máy chủ quản lý, kết hợp với việc theo dõi tombstone ở cấp ứng dụng cho các thao tác xóa.
 
-The result is a backup system that:
+Kết quả là một hệ thống sao lưu mà:
 
-- Produces human-readable, portable JSONL files
-- Supports full and incremental modes with automatic watermark management
-- Correctly captures creates, updates, *and* deletes
-- Handles multi-tenant table prefixing transparently
-- Composes cleanly (merge, rollup, selective restore)
-- Runs as a standalone tool with no dependency on the Authagonal server
+- Tạo ra các tệp JSONL dễ đọc cho con người, khả chuyển
+- Hỗ trợ các chế độ đầy đủ và tăng dần với quản lý watermark tự động
+- Nắm bắt chính xác các thao tác tạo, cập nhật, *và* xóa
+- Xử lý việc đặt tiền tố bảng đa tenant một cách trong suốt
+- Kết hợp gọn gàng (hợp nhất, rollup, khôi phục chọn lọc)
+- Chạy như một công cụ độc lập không phụ thuộc vào máy chủ Authagonal
 
-The storage abstraction means the same logic can target local disk, Azure Blob Storage, S3, or any other destination. The format is simple enough that even without the restore tool, an operator could reconstruct data with `jq` and the Azure CLI.
+Sự trừu tượng hóa lưu trữ nghĩa là cùng một logic có thể nhắm đến đĩa cục bộ, Azure Blob Storage, S3, hoặc bất kỳ đích nào khác. Định dạng đủ đơn giản đến mức ngay cả khi không có công cụ khôi phục, một người vận hành vẫn có thể tái tạo dữ liệu bằng `jq` và Azure CLI.

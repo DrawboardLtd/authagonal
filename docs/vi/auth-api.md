@@ -253,7 +253,7 @@ Với cấu hình mặc định, mật khẩu phải đáp ứng tất cả các
 - Ít nhất một ký tự không phải chữ và số
 - Ít nhất 2 ký tự khác nhau
 
-Các yêu cầu này có thể được tùy chỉnh qua phần cấu hình `PasswordPolicy` — xem [Cấu hình](configuration).
+Các yêu cầu này có thể được tùy chỉnh qua phần cấu hình `PasswordPolicy`, xem [Cấu hình](configuration).
 
 ## Endpoint MFA
 

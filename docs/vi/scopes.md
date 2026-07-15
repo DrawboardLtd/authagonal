@@ -1,31 +1,29 @@
 ---
 layout: default
-title: OAuth Scopes
+title: OAuth Scope
 locale: vi
 ---
 
-> ⚠️ This page has not yet been translated; the English version is shown below.
+# OAuth Scope
 
-# OAuth Scopes
+Authagonal hỗ trợ cả các scope OAuth/OIDC **tích hợp sẵn** lẫn các scope **tùy chỉnh** được quản lý tại thời điểm chạy. Các scope tùy chỉnh được lưu trữ bền vững, được quảng bá qua tài liệu khám phá, và được hiển thị trên màn hình đồng ý cùng với các scope tích hợp sẵn.
 
-Authagonal supports both **built-in** OAuth/OIDC scopes and **custom** scopes managed at runtime. Custom scopes are persisted, advertised via the discovery document, and surfaced on the consent screen alongside built-ins.
+## Các scope tích hợp sẵn
 
-## Built-in Scopes
+Các scope này luôn khả dụng và không cần phải đăng ký:
 
-These scopes are always available and do not need to be registered:
-
-| Scope | Purpose |
+| Scope | Mục đích |
 |---|---|
-| `openid` | Required to initiate an OIDC flow. Issues an ID token. |
-| `profile` | Standard profile claims (name, family_name, given_name, etc.) |
-| `email` | Email address and `email_verified` claims |
-| `offline_access` | Issues a refresh token alongside the access token |
+| `openid` | Bắt buộc để khởi tạo một luồng OIDC. Cấp một ID token. |
+| `profile` | Các claim hồ sơ tiêu chuẩn (name, family_name, given_name, v.v.) |
+| `email` | Các claim địa chỉ email và `email_verified` |
+| `offline_access` | Cấp một refresh token cùng với access token |
 
-## Custom Scopes
+## Các scope tùy chỉnh
 
-Custom scopes are managed through the admin API at `/api/v1/scopes`. They require a JWT access token with the `authagonal-admin` scope (configurable via `AdminApi:Scope`).
+Các scope tùy chỉnh được quản lý qua API Quản trị tại `/api/v1/scopes`. Chúng yêu cầu một JWT access token với scope `authagonal-admin` (có thể cấu hình qua `AdminApi:Scope`).
 
-### Scope Model
+### Mô hình Scope
 
 ```csharp
 public sealed class Scope
@@ -42,35 +40,35 @@ public sealed class Scope
 }
 ```
 
-| Field | Description |
+| Trường | Mô tả |
 |---|---|
-| `Name` | The scope identifier sent in token requests (e.g., `billing.read`) |
-| `DisplayName` | Human-readable name shown on the consent screen |
-| `Description` | Longer description shown on the consent screen |
-| `Emphasize` | If `true`, the consent screen highlights this scope as sensitive |
-| `Required` | If `true`, the user cannot deselect this scope when consenting |
-| `ShowInDiscoveryDocument` | If `true`, the scope appears in `/.well-known/openid-configuration` under `scopes_supported` |
-| `UserClaims` | Claims added to the access token when this scope is granted |
+| `Name` | Mã định danh scope được gửi trong các yêu cầu token (ví dụ, `billing.read`) |
+| `DisplayName` | Tên dễ đọc được hiển thị trên màn hình đồng ý |
+| `Description` | Mô tả dài hơn được hiển thị trên màn hình đồng ý |
+| `Emphasize` | Nếu `true`, màn hình đồng ý làm nổi bật scope này như một scope nhạy cảm |
+| `Required` | Nếu `true`, người dùng không thể bỏ chọn scope này khi đồng ý |
+| `ShowInDiscoveryDocument` | Nếu `true`, scope xuất hiện trong `/.well-known/openid-configuration` dưới `scopes_supported` |
+| `UserClaims` | Các claim được thêm vào access token khi scope này được cấp |
 
-## Admin Endpoints
+## Các endpoint quản trị
 
-### List Scopes
+### Liệt kê Scope
 
 ```
 GET /api/v1/scopes
 ```
 
-Returns `{ "scopes": [ ... ] }`.
+Trả về `{ "scopes": [ ... ] }`.
 
-### Get Scope
+### Lấy Scope
 
 ```
 GET /api/v1/scopes/{name}
 ```
 
-Returns the scope or `404` if not found.
+Trả về scope hoặc `404` nếu không tìm thấy.
 
-### Create Scope
+### Tạo Scope
 
 ```
 POST /api/v1/scopes
@@ -87,9 +85,9 @@ Content-Type: application/json
 }
 ```
 
-Returns `201 Created` with the scope. Returns `409` if a scope with the same name already exists.
+Trả về `201 Created` kèm scope. Trả về `409` nếu một scope trùng tên đã tồn tại.
 
-### Update Scope
+### Cập nhật Scope
 
 ```
 PUT /api/v1/scopes/{name}
@@ -102,19 +100,19 @@ Content-Type: application/json
 }
 ```
 
-Only supplied fields are updated; omitted fields retain their current values.
+Chỉ các trường được cung cấp mới được cập nhật; các trường bị bỏ qua giữ nguyên giá trị hiện tại của chúng.
 
-### Delete Scope
+### Xóa Scope
 
 ```
 DELETE /api/v1/scopes/{name}
 ```
 
-Returns `204 No Content` (`404` if the scope doesn't exist). Tokens already issued that include this scope remain valid until they expire — revoke them explicitly via `/connect/revocation` if needed.
+Trả về `204 No Content` (`404` nếu scope không tồn tại). Các token đã được cấp có chứa scope này vẫn hợp lệ cho đến khi hết hạn: hãy thu hồi chúng một cách tường minh qua `/connect/revocation` nếu cần.
 
-## Discovery Document
+## Tài liệu khám phá
 
-Scopes with `ShowInDiscoveryDocument = true` appear under `scopes_supported` in `/.well-known/openid-configuration`. Built-in scopes are always advertised.
+Các scope có `ShowInDiscoveryDocument = true` xuất hiện dưới `scopes_supported` trong `/.well-known/openid-configuration`. Các scope tích hợp sẵn luôn được quảng bá.
 
 ```json
 {
@@ -122,12 +120,12 @@ Scopes with `ShowInDiscoveryDocument = true` appear under `scopes_supported` in 
 }
 ```
 
-## Consent Screen
+## Màn hình đồng ý
 
-When a client requests a scope that is not in its consent-skip list, the consent page lists each requested scope by `DisplayName` (falling back to `Name`) with the `Description` underneath. Scopes with `Emphasize = true` receive a distinct visual treatment. `Required` scopes cannot be deselected.
+Khi một client yêu cầu một scope không nằm trong danh sách bỏ qua đồng ý của nó, trang đồng ý liệt kê từng scope được yêu cầu theo `DisplayName` (dự phòng về `Name`) với `Description` bên dưới. Các scope có `Emphasize = true` nhận một cách trình bày trực quan riêng biệt. Các scope `Required` không thể bị bỏ chọn.
 
-See [OAuth Consent Screen](index#features) for the user-facing flow.
+Xem [Màn hình đồng ý OAuth](index#features) để biết luồng hướng đến người dùng.
 
-## Dynamic Client Registration
+## Đăng ký Client động
 
-Clients registered via [Dynamic Client Registration](client-registration) may only request scopes that are either built-in or previously created via the admin API. Unknown scopes are rejected with `invalid_scope`.
+Các client được đăng ký qua [Đăng ký Client động](client-registration) chỉ có thể yêu cầu các scope hoặc là tích hợp sẵn hoặc đã được tạo trước đó qua API Quản trị. Các scope không xác định bị từ chối với `invalid_scope`.

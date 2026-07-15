@@ -122,13 +122,13 @@ Người dùng đăng ký MFA thông qua các endpoint thiết lập tự phục
 
 ### Thiết lập TOTP
 
-1. Gọi `POST /api/auth/mfa/totp/setup` — trả về mã QR (`data:image/png;base64,...`), `manualKey` (Base32 để nhập thủ công) và token thiết lập
+1. Gọi `POST /api/auth/mfa/totp/setup`: trả về mã QR (`data:image/png;base64,...`), `manualKey` (Base32 để nhập thủ công) và token thiết lập
 2. Người dùng quét mã QR bằng ứng dụng xác thực của họ
 3. Người dùng nhập mã 6 chữ số để xác nhận: `POST /api/auth/mfa/totp/confirm`
 
 ### Thiết lập WebAuthn / Passkey
 
-1. Gọi `POST /api/auth/mfa/webauthn/setup` — trả về một `setupToken` và `PublicKeyCredentialCreationOptions`
+1. Gọi `POST /api/auth/mfa/webauthn/setup`: trả về một `setupToken` và `PublicKeyCredentialCreationOptions`
 2. Client gọi `navigator.credentials.create()` với các tùy chọn
 3. Gửi phản hồi chứng thực đến `POST /api/auth/mfa/webauthn/confirm`
 
@@ -160,8 +160,8 @@ Một passkey là xác thực mạnh chống lừa đảo, nên phiên tạo ra 
 
 ### Tự phục vụ người dùng
 
-- `GET /api/auth/mfa/status` — xem các phương thức đã đăng ký (cũng báo cáo liệu MFA có được bất kỳ client nào cung cấp không)
-- `DELETE /api/auth/mfa/credentials/{id}` — xóa một thông tin xác thực cụ thể
+- `GET /api/auth/mfa/status`: xem các phương thức đã đăng ký (cũng báo cáo liệu MFA có được bất kỳ client nào cung cấp không)
+- `DELETE /api/auth/mfa/credentials/{id}`: xóa một thông tin xác thực cụ thể
 
 Việc xóa một thông tin xác thực yêu cầu một phiên đã xác thực thật sự; một token thiết lập chỉ cho phép thêm một yếu tố đầu tiên và nhận `session_required` ở đây, nên một token thiết lập bị rò rỉ không thể hạ cấp MFA của người dùng.
 
@@ -171,9 +171,9 @@ Nếu phương thức chính cuối cùng bị xóa, MFA sẽ bị vô hiệu h�
 
 Quản trị viên có thể quản lý MFA cho bất kỳ người dùng nào thông qua [API quản trị](admin-api):
 
-- `GET /api/v1/profile/{userId}/mfa` — xem trạng thái MFA của người dùng
-- `DELETE /api/v1/profile/{userId}/mfa` — đặt lại tất cả MFA (cho người dùng bị khóa)
-- `DELETE /api/v1/profile/{userId}/mfa/{id}` — xóa một thông tin xác thực cụ thể
+- `GET /api/v1/profile/{userId}/mfa`: xem trạng thái MFA của người dùng
+- `DELETE /api/v1/profile/{userId}/mfa`: đặt lại tất cả MFA (cho người dùng bị khóa)
+- `DELETE /api/v1/profile/{userId}/mfa/{id}`: xóa một thông tin xác thực cụ thể
 
 ### Các hook kiểm tra
 
@@ -194,9 +194,9 @@ Toàn bộ vòng đời MFA đều có thể gắn hook: `OnMfaVerifyFailedAsync
 
 Nếu bạn đang xây dựng giao diện đăng nhập tùy chỉnh, hãy xử lý các phản hồi này từ `POST /api/auth/login`:
 
-1. **Đăng nhập bình thường** — `{ userId, email, name }` với cookie được đặt. Chuyển hướng đến `returnUrl`.
-2. **MFA bắt buộc** — `{ mfaRequired: true, challengeId, methods, webAuthn? }`. Hiển thị biểu mẫu thách thức MFA.
-3. **Cần thiết lập MFA** — `{ mfaSetupRequired: true, setupToken }`. Hiển thị luồng đăng ký MFA.
+1. **Đăng nhập bình thường**: `{ userId, email, name }` với cookie được đặt. Chuyển hướng đến `returnUrl`.
+2. **MFA bắt buộc**: `{ mfaRequired: true, challengeId, methods, webAuthn? }`. Hiển thị biểu mẫu thách thức MFA.
+3. **Cần thiết lập MFA**: `{ mfaSetupRequired: true, setupToken }`. Hiển thị luồng đăng ký MFA.
 
 Khi xử lý các lỗi của `POST /api/auth/mfa/verify`: `invalid_code` và `assertion_failed` có thể thử lại với cùng `challengeId` (trong giới hạn ngân sách thử); `too_many_attempts` và `invalid_challenge` là kết thúc, nên hãy đưa người dùng trở lại biểu mẫu đăng nhập.
 

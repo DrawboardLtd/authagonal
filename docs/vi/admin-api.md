@@ -235,7 +235,7 @@ Content-Type: application/json
 Lưu ý:
 
 - **Hash bí mật không bao giờ được trả về.** `clientSecretHashes` bị loại bỏ khỏi mọi phản hồi (liệt kê, lấy, tạo, cập nhật). Khi cập nhật, việc bỏ qua `clientSecretHashes` sẽ giữ nguyên bí mật đã lưu; cung cấp hash mới sẽ xoay vòng nó.
-- **Scope quản trị không thể được cấp cho một client.** Yêu cầu `AdminApi:Scope` (mặc định `authagonal-admin`) trong `allowedScopes` sẽ trả về `403 forbidden_scope` — không client nào được giữ scope quản trị, nếu không một client `client_credentials` có thể cấp token quản trị vô thời hạn.
+- **Scope quản trị không thể được cấp cho một client.** Yêu cầu `AdminApi:Scope` (mặc định `authagonal-admin`) trong `allowedScopes` sẽ trả về `403 forbidden_scope`: không client nào được giữ scope quản trị, nếu không một client `client_credentials` có thể cấp token quản trị vô thời hạn.
 - Thêm các scope mà người gọi không được phép cấp sẽ trả về `403`.
 
 ## Scope
@@ -418,7 +418,7 @@ DELETE /api/v1/scim/tokens/{tokenId}?clientId=client-id
 POST /api/v1/token?clientId=client-id&userId=user-id&scopes=openid%20profile
 ```
 
-Cấp token (access, refresh, và — khi `openid` được yêu cầu — id token) thay mặt người dùng mà không cần thông tin đăng nhập của họ. Hữu ích cho kiểm thử và hỗ trợ. Các tham số được truyền dưới dạng query string.
+Cấp token (access, refresh, và, khi `openid` được yêu cầu, id token) thay mặt người dùng mà không cần thông tin đăng nhập của họ. Hữu ích cho kiểm thử và hỗ trợ. Các tham số được truyền dưới dạng query string.
 
 | Tham số query | Bắt buộc | Mô tả |
 |---|---|---|
@@ -428,7 +428,7 @@ Cấp token (access, refresh, và — khi `openid` được yêu cầu — id to
 
 Hạn chế:
 
-- Các scope bị giới hạn trong `AllowedScopes` của client — yêu cầu bất kỳ scope nào mà chính client không thể tự yêu cầu sẽ trả về `400 invalid_scope`.
+- Các scope bị giới hạn trong `AllowedScopes` của client: yêu cầu bất kỳ scope nào mà chính client không thể tự yêu cầu sẽ trả về `400 invalid_scope`.
 - Scope quản trị (`AdminApi:Scope`, mặc định `authagonal-admin`) **không thể** được cấp qua endpoint này; yêu cầu nó sẽ trả về `403 forbidden_scope`. Điều này ngăn một token quản trị (có thể có thời hạn giới hạn) cấp một access/refresh token quản trị tồn tại lâu dài.
 
 Phản hồi là một phản hồi token tiêu chuẩn với `access_token`, `refresh_token`, `id_token` tùy chọn, `expires_in`, và `scope` được cấp (phân cách bằng dấu cách).
