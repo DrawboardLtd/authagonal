@@ -51,7 +51,7 @@ Adicione um cliente ao seu `appsettings.json` (ou passe via variáveis de ambien
 }
 ```
 
-Os clientes são semeados na inicialização — seguro executar em cada implantação.
+Os clientes são semeados na inicialização: seguro executar em cada implantação.
 
 ## 4. Iniciar um Login
 
@@ -100,8 +100,8 @@ O diretório `demos/sample-app/` contém um SPA React completo + API que impleme
 
 ## Próximos Passos
 
-- [Configuração](configuration) — referência completa de todas as definições
-- [Extensibilidade](extensibility) — hospedar como biblioteca, adicionar hooks personalizados
-- [Personalização Visual](branding) — personalizar a interface de login
-- [SAML](saml) — adicionar provedores SSO SAML
-- [Provisionamento](provisioning) — provisionar utilizadores em aplicações downstream
+- [Configuração](configuration): referência completa de todas as definições
+- [Extensibilidade](extensibility): hospedar como biblioteca, adicionar hooks personalizados
+- [Personalização Visual](branding): personalizar a interface de login
+- [SAML](saml): adicionar provedores SSO SAML
+- [Provisionamento](provisioning): provisionar utilizadores em aplicações downstream

@@ -10,12 +10,12 @@ O Authagonal é configurado via `appsettings.json` ou variáveis de ambiente. As
 
 ## Definições Obrigatórias
 
-O armazenamento pode ser configurado de uma de duas formas — forneça **ou** `Storage:ConnectionString` **ou** `Storage:TableServiceUri` (o caminho de identidade gerida, preferido em produção).
+O armazenamento pode ser configurado de uma de duas formas: forneça **ou** `Storage:ConnectionString` **ou** `Storage:TableServiceUri` (o caminho de identidade gerida, preferido em produção).
 
 | Definição | Variável de Ambiente | Descrição |
 |---|---|---|
 | `Storage:ConnectionString` | `Storage__ConnectionString` | String de conexão do Azure Table Storage com uma chave de conta. Adequada para dev / Azurite. |
-| `Storage:TableServiceUri` | `Storage__TableServiceUri` | Endpoint do Table Storage por identidade gerida, ex.: `https://{account}.table.core.windows.net/`. Alternativa a `Storage:ConnectionString` e **preferida em produção** — autentica-se via `DefaultAzureCredential`, portanto nenhuma chave de acesso é alguma vez colocada num segredo. O host deve conceder à identidade da carga de trabalho o papel **Storage Table Data Contributor**. |
+| `Storage:TableServiceUri` | `Storage__TableServiceUri` | Endpoint do Table Storage por identidade gerida, ex.: `https://{account}.table.core.windows.net/`. Alternativa a `Storage:ConnectionString` e **preferida em produção**: autentica-se via `DefaultAzureCredential`, portanto nenhuma chave de acesso é alguma vez colocada num segredo. O host deve conceder à identidade da carga de trabalho o papel **Storage Table Data Contributor**. |
 | `Issuer` | `Issuer` | A URL base pública deste servidor (ex.: `https://auth.example.com`) |
 
 ## Armazenamento
@@ -24,7 +24,7 @@ O armazenamento pode ser configurado de uma de duas formas — forneça **ou** `
 |---|---|---|---|
 | `Storage:ConnectionString` | `Storage__ConnectionString` | *(nenhum)* | String de conexão com chave de conta (consulte Definições Obrigatórias). |
 | `Storage:TableServiceUri` | `Storage__TableServiceUri` | *(nenhum)* | URI do Table Storage por identidade gerida (consulte Definições Obrigatórias). Tem precedência sobre `Storage:ConnectionString` quando ambos estão definidos. |
-| `Storage:NameIndexesEnabled` | `Storage__NameIndexesEnabled` | `true` | Se devem ser mantidas as tabelas de índice de pesquisa por prefixo `UserFirstNames` / `UserLastNames` que suportam a pesquisa por prefixo de nome no admin. Defina `false` em hosts que não exponham a pesquisa de nomes no admin para evitar essas gravações. **Nota de escalabilidade:** estes índices usam uma única partição quente e limitam o débito a cerca de 2.000 ops/seg em escala — desabilite-os se não precisar de pesquisa por nome. |
+| `Storage:NameIndexesEnabled` | `Storage__NameIndexesEnabled` | `true` | Se devem ser mantidas as tabelas de índice de pesquisa por prefixo `UserFirstNames` / `UserLastNames` que suportam a pesquisa por prefixo de nome no admin. Defina `false` em hosts que não exponham a pesquisa de nomes no admin para evitar essas gravações. **Nota de escalabilidade:** estes índices usam uma única partição quente e limitam o débito a cerca de 2.000 ops/seg em escala: desabilite-os se não precisar de pesquisa por nome. |
 | `LoginAppUrl` | `LoginAppUrl` | `/login` | URL base para a qual o endpoint `/connect/authorize` redireciona para a SPA de login (telas de login, step-up e consentimento). Defina isto quando a interface de login for servida a partir de uma origem diferente da do servidor; por padrão usa o caminho relativo `/login` servido pela SPA incluída. |
 
 ## Autenticação
@@ -45,7 +45,7 @@ O armazenamento pode ser configurado de uma de duas formas — forneça **ou** `
 | `Auth:MfaChallengeExpiryMinutes` | `5` | Tempo de vida do token de verificação MFA |
 | `Auth:MfaSetupTokenExpiryMinutes` | `15` | Tempo de vida do token de configuração MFA (para inscrição forçada) |
 | `Auth:Pbkdf2Iterations` | `100000` | Contagem de iterações PBKDF2 para hashing de senhas |
-| `Auth:RefreshTokenReuseGraceSeconds` | `0` | Janela de tolerância opcional (segundos) para reutilização concorrente de refresh token. `0` (padrão) mantém a postura estrita: qualquer reutilização de um refresh token consumido revoga todos os tokens para aquele utilizador+cliente. Defina `> 0` para tratar uma reutilização dentro da janela como uma repetição idempotente (reentrega os tokens sucessores) — útil para clientes móveis com falhas de conectividade. |
+| `Auth:RefreshTokenReuseGraceSeconds` | `0` | Janela de tolerância opcional (segundos) para reutilização concorrente de refresh token. `0` (padrão) mantém a postura estrita: qualquer reutilização de um refresh token consumido revoga todos os tokens para aquele utilizador+cliente. Defina `> 0` para tratar uma reutilização dentro da janela como uma repetição idempotente (reentrega os tokens sucessores), útil para clientes móveis com falhas de conectividade. |
 | `Auth:DynamicClientRegistrationEnabled` | `false` | Habilita o endpoint de registo dinâmico de clientes `POST /connect/register` (RFC 7591). Desabilitado por padrão porque o registo aberto pode ser abusado em implantações multi-tenant. Consulte [Registo Dinâmico de Clientes](client-registration). |
 | `Auth:SigningKeyLifetimeDays` | `90` | Tempo de vida da chave de assinatura RSA antes da rotação automática |
 | `Auth:SigningKeyCacheRefreshMinutes` | `60` | Frequência de recarregamento das chaves de assinatura do armazenamento |
@@ -133,7 +133,7 @@ Os clientes são definidos no array `Clients` e semeados na inicialização. Cad
 
 | Valor | Comportamento |
 |---|---|
-| `OneTime` (padrão) | Cada refresh emite um novo refresh token e invalida o antigo. Por padrão (`Auth:RefreshTokenReuseGraceSeconds = 0`) qualquer reutilização de um token consumido revoga imediatamente todos os tokens para aquele utilizador+cliente — **não** há janela de tolerância ativa por padrão. Defina `Auth:RefreshTokenReuseGraceSeconds` para um valor positivo para optar por uma janela de tolerância a repetições. |
+| `OneTime` (padrão) | Cada refresh emite um novo refresh token e invalida o antigo. Por padrão (`Auth:RefreshTokenReuseGraceSeconds = 0`) qualquer reutilização de um token consumido revoga imediatamente todos os tokens para aquele utilizador+cliente: **não** há janela de tolerância ativa por padrão. Defina `Auth:RefreshTokenReuseGraceSeconds` para um valor positivo para optar por uma janela de tolerância a repetições. |
 | `ReUse` | O mesmo refresh token é reutilizado até expirar. |
 
 ### Aplicações de Provisionamento
@@ -299,7 +299,7 @@ Os segredos de clientes OIDC upstream e as sementes TOTP / MFA podem ser armazen
 
 Quando configurado, os valores de segredo que se assemelham a referências do Key Vault são resolvidos em tempo de execução. Usa `DefaultAzureCredential` para autenticação.
 
-> ⚠️ **Produção: defina `SecretProvider:VaultUri`.** O provedor de segredos padrão é **texto simples**. Quando `SecretProvider:VaultUri` não está definido, os segredos de clientes OIDC upstream e as sementes TOTP / MFA são escritos no Azure Table Storage em texto claro — e, portanto, aparecem em texto claro em qualquer [backup](backup-restore). Para qualquer implantação em produção, configure `SecretProvider:VaultUri` para que esses segredos sejam armazenados no Key Vault.
+> ⚠️ **Produção: defina `SecretProvider:VaultUri`.** O provedor de segredos padrão é **texto simples**. Quando `SecretProvider:VaultUri` não está definido, os segredos de clientes OIDC upstream e as sementes TOTP / MFA são escritos no Azure Table Storage em texto claro e, portanto, aparecem em texto claro em qualquer [backup](backup-restore). Para qualquer implantação em produção, configure `SecretProvider:VaultUri` para que esses segredos sejam armazenados no Key Vault.
 
 ## API de Administração
 
@@ -308,7 +308,7 @@ Quando configurado, os valores de segredo que se assemelham a referências do Ke
 | `AdminApi:Enabled` | `true` | **Habilitada por padrão.** Defina como `false` para desabilitar todos os endpoints de administração (não serão registados). |
 | `AdminApi:Scope` | `authagonal-admin` | Scope JWT necessário para aceder aos endpoints de administração. Altere isto para corresponder ao seu nome de scope existente (ex.: `projects-identity-admin` para migrações do IdentityServer). |
 
-> ⚠️ **A API de administração está habilitada por padrão e é altamente privilegiada.** O scope de administração concede gestão total e impersonação de utilizadores — qualquer pessoa que possua um token com `AdminApi:Scope` pode emitir tokens para qualquer utilizador, gerir clientes e ler/escrever toda a configuração. Restrinja a nível de rede os endpoints de administração (as rotas de administração `/api/v1/*`) e controle rigorosamente quem pode receber o scope de administração. Como medida de defesa em profundidade, o scope é *reservado*: nunca pode ser concedido a um cliente OAuth (consulte [API de Administração](admin-api)) e não pode ser emitido através do endpoint de impersonação. Defina `AdminApi:Enabled = false` por completo se a API de administração não for usada.
+> ⚠️ **A API de administração está habilitada por padrão e é altamente privilegiada.** O scope de administração concede gestão total e impersonação de utilizadores: qualquer pessoa que possua um token com `AdminApi:Scope` pode emitir tokens para qualquer utilizador, gerir clientes e ler/escrever toda a configuração. Restrinja a nível de rede os endpoints de administração (as rotas de administração `/api/v1/*`) e controle rigorosamente quem pode receber o scope de administração. Como medida de defesa em profundidade, o scope é *reservado*: nunca pode ser concedido a um cliente OAuth (consulte [API de Administração](admin-api)) e não pode ser emitido através do endpoint de impersonação. Defina `AdminApi:Enabled = false` por completo se a API de administração não for usada.
 
 ## Consentimento
 
@@ -418,7 +418,7 @@ O CORS é configurado dinamicamente. As origens de todos os `AllowedCorsOrigins`
 
 ## HashiCorp Vault Transit
 
-O Authagonal pode assinar JWTs usando o motor de segredos Transit do HashiCorp Vault. As chaves privadas nunca saem do Vault — apenas a operação de assinatura é delegada remotamente. As chaves públicas são armazenadas em cache localmente para verificação.
+O Authagonal pode assinar JWTs usando o motor de segredos Transit do HashiCorp Vault. As chaves privadas nunca saem do Vault: apenas a operação de assinatura é delegada remotamente. As chaves públicas são armazenadas em cache localmente para verificação.
 
 Isto é configurado programaticamente ao hospedar como biblioteca. Consulte [Extensibilidade](extensibility) para detalhes.
 

@@ -253,7 +253,7 @@ Com a configuração padrão, as senhas devem cumprir todos os seguintes requisi
 - Pelo menos um caractere não alfanumérico
 - Pelo menos 2 caracteres únicos
 
-Estes podem ser personalizados via a seção de configuração `PasswordPolicy` — consulte [Configuração](configuration).
+Estes podem ser personalizados via a seção de configuração `PasswordPolicy`, consulte [Configuração](configuration).
 
 ## Endpoints de MFA
 
@@ -310,18 +310,18 @@ POST /api/auth/mfa/totp/setup
 
 POST /api/auth/mfa/totp/confirm
 { "setupToken": "...", "code": "123456" }
--> { "success": true }
+→ { "success": true }
 ```
 
 ### Configuração WebAuthn / Passkey
 
 ```
 POST /api/auth/mfa/webauthn/setup
--> { "setupToken": "...", "options": { /* PublicKeyCredentialCreationOptions */ } }
+→ { "setupToken": "...", "options": { /* PublicKeyCredentialCreationOptions */ } }
 
 POST /api/auth/mfa/webauthn/confirm
 { "setupToken": "...", "attestationResponse": "..." }
--> { "success": true, "credentialId": "..." }
+→ { "success": true, "credentialId": "..." }
 ```
 
 A inscrição de passkey requer primeiro uma **credencial TOTP confirmada** (`400 totp_required_first`): as passkeys são uma conveniência por dispositivo assente num fator base portátil, portanto uma conta nunca pode acabar apenas com passkey e presa a um dispositivo. Os utilizadores cujo domínio de e-mail é encaminhado por SSO não podem inscrever uma passkey local (`400 sso_managed`): isso contornaria o IdP do tenant. Um ID de credencial já registado para outro utilizador é rejeitado com `409 credential_already_registered`.
@@ -330,7 +330,7 @@ A inscrição de passkey requer primeiro uma **credencial TOTP confirmada** (`40
 
 ```
 POST /api/auth/mfa/recovery/generate
--> { "codes": ["ABCD-1234", "EFGH-5678", ...] }
+→ { "codes": ["ABCD-1234", "EFGH-5678", ...] }
 ```
 
 Gera 10 códigos de recuperação de uso único. Requer que pelo menos um método primário (TOTP ou WebAuthn) esteja inscrito. Regenerar substitui todos os códigos de recuperação existentes.
@@ -339,7 +339,7 @@ Gera 10 códigos de recuperação de uso único. Requer que pelo menos um métod
 
 ```
 DELETE /api/auth/mfa/credentials/{credentialId}
--> { "success": true }
+→ { "success": true }
 ```
 
 Remove uma credencial MFA específica. Se o último método primário for removido, o MFA é desativado para o utilizador. Requer uma sessão de cookie real: um token de configuração é rejeitado com `403 session_required` (os tokens de configuração existem apenas para adicionar um primeiro fator, nunca para reduzir o MFA).

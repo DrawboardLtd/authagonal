@@ -235,7 +235,7 @@ Content-Type: application/json
 Notas:
 
 - **Os hashes de segredo nunca são retornados.** `clientSecretHashes` é removido de todas as respostas (listar, obter, criar, atualizar). Na atualização, omitir `clientSecretHashes` preserva o segredo armazenado; fornecer novos hashes faz a sua rotação.
-- **O scope de administração não pode ser concedido a um cliente.** Solicitar `AdminApi:Scope` (padrão `authagonal-admin`) em `allowedScopes` retorna `403 forbidden_scope` — nenhum cliente pode possuir o scope de administração, caso contrário um cliente `client_credentials` poderia emitir tokens de administração indefinidamente.
+- **O scope de administração não pode ser concedido a um cliente.** Solicitar `AdminApi:Scope` (padrão `authagonal-admin`) em `allowedScopes` retorna `403 forbidden_scope`: nenhum cliente pode possuir o scope de administração, caso contrário um cliente `client_credentials` poderia emitir tokens de administração indefinidamente.
 - Adicionar scopes que o chamador não está autorizado a conceder retorna `403`.
 
 ## Scopes
@@ -418,7 +418,7 @@ DELETE /api/v1/scim/tokens/{tokenId}?clientId=client-id
 POST /api/v1/token?clientId=client-id&userId=user-id&scopes=openid%20profile
 ```
 
-Emite tokens (access, refresh e — quando `openid` é solicitado — id token) em nome de um utilizador sem exigir as suas credenciais. Útil para testes e suporte. Os parâmetros são passados como query strings.
+Emite tokens (access, refresh e, quando `openid` é solicitado, id token) em nome de um utilizador sem exigir as suas credenciais. Útil para testes e suporte. Os parâmetros são passados como query strings.
 
 | Parâmetro de query | Obrigatório | Descrição |
 |---|---|---|
@@ -428,7 +428,7 @@ Emite tokens (access, refresh e — quando `openid` é solicitado — id token) 
 
 Restrições:
 
-- Os scopes estão limitados aos `AllowedScopes` do cliente — solicitar qualquer scope que o próprio cliente não poderia solicitar retorna `400 invalid_scope`.
+- Os scopes estão limitados aos `AllowedScopes` do cliente: solicitar qualquer scope que o próprio cliente não poderia solicitar retorna `400 invalid_scope`.
 - O scope de administração (`AdminApi:Scope`, padrão `authagonal-admin`) **não pode** ser emitido através deste endpoint; solicitá-lo retorna `403 forbidden_scope`. Isto impede que um token de administração (possivelmente com tempo limitado) emita um token de acesso/refresh de administração de longa duração.
 
 A resposta é uma resposta de token padrão com `access_token`, `refresh_token`, opcionalmente `id_token`, `expires_in` e o `scope` concedido (separado por espaço).

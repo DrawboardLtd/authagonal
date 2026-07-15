@@ -6,19 +6,23 @@ locale: pt
 
 # Localização
 
-O Authagonal suporta oito idiomas prontos a usar: Inglês, Chinês Simplificado (`zh-Hans`), Alemão (`de`), Francês (`fr`), Espanhol (`es`), Vietnamita (`vi`), Português (`pt`) e Klingon (`tlh`). A localização abrange as respostas da API do servidor, a interface de login e este site de documentação.
+A interface de login inclui onze idiomas prontos a usar: Inglês, Chinês Simplificado (`zh-Hans`), Alemão (`de`), Francês (`fr`), Espanhol (`es`), Vietnamita (`vi`), Português (`pt`), Árabe (`ar`), Afrikaans (`af`), Hindi (`hi`) e um idioma de novidade Klingon (`tlh`). As respostas da API do servidor são localizadas nos primeiros sete destes. A localização abrange as respostas da API do servidor, a interface de login e este site de documentação.
 
 ## Idiomas Suportados
 
-| Código | Idioma |
-|---|---|
-| `en` | Inglês (padrão) |
-| `zh-Hans` | Chinês Simplificado |
-| `de` | Alemão |
-| `fr` | Francês |
-| `es` | Espanhol |
-| `vi` | Vietnamita |
-| `pt` | Português |
+| Código | Idioma | Interface de Login | API do Servidor |
+|---|---|---|---|
+| `en` | Inglês (padrão) | ✓ | ✓ |
+| `zh-Hans` | Chinês Simplificado | ✓ | ✓ |
+| `de` | Alemão | ✓ | ✓ |
+| `fr` | Francês | ✓ | ✓ |
+| `es` | Espanhol | ✓ | ✓ |
+| `vi` | Vietnamita | ✓ | ✓ |
+| `pt` | Português | ✓ | ✓ |
+| `ar` | Árabe (da direita para a esquerda) | ✓ | — |
+| `af` | Afrikaans | ✓ | — |
+| `hi` | Hindi | ✓ | — |
+| `tlh` | Klingon (novidade) | ✓ | — |
 
 ## Servidor (Respostas da API)
 
@@ -35,7 +39,7 @@ O servidor usa a localização integrada do ASP.NET Core com `IStringLocalizer<T
 
 ### O que NÃO é localizado
 
-- Códigos de `error` legíveis por máquina (`"email_required"`, `"invalid_credentials"`, etc.) — estes são contratos da API e permanecem constantes
+- Códigos de `error` legíveis por máquina (`"email_required"`, `"invalid_credentials"`, etc.): estes são contratos da API e permanecem constantes
 - Códigos de erro OAuth/OIDC e descrições de erros direcionadas a desenvolvedores nos endpoints de token, autorização e revogação
 - Mensagens internas de log e mensagens de exceção
 
@@ -74,14 +78,18 @@ Resources/
 
 O SPA de login usa [react-i18next](https://react.i18next.com/) para localização do lado do cliente. O idioma é detetado automaticamente a partir da definição `navigator.language` do navegador.
 
+Os idiomas registados vivem num único registo `LANGUAGES` em `login-app/src/i18n/index.ts`, que controla tanto o registo de recursos do i18next como todos os seletores de idioma, para que os dois não possam divergir. Os idiomas marcados como `novelty` (atualmente `tlh`) permanecem totalmente funcionais (`?lng=tlh` funciona), mas são excluídos do seletor predefinido; só aparecem numa lista pendente quando o `BrandingConfig.languages` de um inquilino os lista explicitamente. Os inquilinos também podem restringir o seletor da mesma forma: um array `languages` em `branding.json` substitui a lista predefinida por completo (ver [Personalização Visual](branding)).
+
+O idioma ativo é refletido em `<html lang>` e `<html dir>`, pelo que os idiomas da direita para a esquerda (`ar`) invertem o cartão de autenticação automaticamente, incluindo quando o idioma é alterado no momento através do seletor.
+
 ### Deteção de idioma
 
 A ordem de deteção é:
 
-1. **localStorage** — preferência persistida de uma visita anterior
-2. **Parâmetro de query** — `?lng=de` sobrepõe a deteção do navegador
-3. **Idioma do navegador** — `navigator.language` (automático)
-4. **Fallback** — Inglês (`en`)
+1. **localStorage**: preferência persistida de uma visita anterior
+2. **Parâmetro de query**: `?lng=de` sobrepõe a deteção do navegador
+3. **Idioma do navegador**: `navigator.language` (automático)
+4. **Fallback**: Inglês (`en`)
 
 ### Ficheiros de tradução
 
@@ -89,7 +97,7 @@ Os ficheiros JSON de tradução são empacotados com a aplicação em `login-app
 
 ```
 i18n/
-  index.ts        # i18n initialization
+  index.ts        # i18n initialization + the LANGUAGES registry
   en.json         # English
   zh-Hans.json    # Simplified Chinese
   de.json         # German
@@ -97,12 +105,15 @@ i18n/
   es.json         # Spanish
   vi.json         # Vietnamese
   pt.json         # Portuguese
-  tlh.json        # Klingon
+  ar.json         # Arabic
+  af.json         # Afrikaans
+  hi.json         # Hindi
+  tlh.json        # Klingon (novelty)
 ```
 
 ### Rótulos da política de senhas
 
-A interface de login traduz os rótulos dos requisitos de senha do lado do cliente com base na chave `rule` retornada por `GET /api/auth/password-policy`, em vez de usar o campo `label` fornecido pelo servidor. Isto garante que os requisitos de senha são sempre exibidos no idioma do navegador do utilizador, mesmo que o cabeçalho `Accept-Language` do servidor seja diferente.
+A página de redefinição de senha traduz a sua lista de verificação de requisitos de senha do lado do cliente com base na chave `rule` retornada por `GET /api/auth/password-policy` (recorrendo ao `label` fornecido pelo servidor para regras não reconhecidas). Isto garante que os requisitos seguem o idioma selecionado na interface, mesmo que o cabeçalho `Accept-Language` do navegador seja diferente. A página de registo exibe os valores `label` fornecidos pelo servidor, que são localizados a partir de `Accept-Language`.
 
 ### Consumidores do pacote npm
 
@@ -117,7 +128,7 @@ i18n.changeLanguage('de');
 
 ## Documentação
 
-O site de documentação usa uma abordagem baseada em diretórios. As páginas em inglês estão na raiz, e as traduções estão em subdiretórios de idioma (`/zh-Hans/`, `/de/`, `/fr/`, `/es/`). Um seletor de idioma no menu lateral permite alternar entre idiomas.
+O site de documentação usa uma abordagem baseada em diretórios. As páginas em inglês estão na raiz, e as traduções estão em subdiretórios de idioma (`/zh-Hans/`, `/de/`, `/fr/`, `/es/`, `/vi/`, `/pt/`). Um seletor de idioma no menu lateral permite alternar entre idiomas.
 
 ## Adicionar um Novo Idioma
 
@@ -145,13 +156,13 @@ Crie um novo ficheiro JSON de tradução copiando `en.json` e traduzindo os valo
 login-app/src/i18n/ja.json
 ```
 
-Registe-o em `login-app/src/i18n/index.ts`:
+Registe-o no array `LANGUAGES` em `login-app/src/i18n/index.ts`. Essa única entrada regista o recurso do i18next e adiciona o idioma a todos os seletores:
 
 ```typescript
 import ja from './ja.json';
 
-// In the resources object:
-ja: { translation: ja },
+// In the LANGUAGES array:
+{ code: 'ja', label: '日本語', resource: ja },
 ```
 
 ### 3. Documentação
