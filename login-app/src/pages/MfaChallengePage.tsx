@@ -46,10 +46,12 @@ export default function MfaChallengePage() {
 
   // Escape hatch: the page state is driven entirely by the URL, so a stale/expired challengeId would
   // otherwise trap the user on this form (every submit re-POSTs the dead challenge). Always offer a
-  // way back to the login form, preserving the OIDC returnUrl so the flow resumes.
+  // way back to the login form, preserving the OIDC returnUrl so the flow resumes. The App router's
+  // basename is /login, so the target is app-relative "/" (LoginPage) — NOT "/login" (which would
+  // resolve to /login/login, miss every route, and hit the catch-all redirect that drops the query).
   const loginLink = returnUrl
-    ? `/login?returnUrl=${encodeURIComponent(returnUrl)}`
-    : '/login';
+    ? `/?returnUrl=${encodeURIComponent(returnUrl)}`
+    : '/';
 
   const hasWebAuthn = availableMethods.includes('webauthn');
   // Default to a device-independent factor (TOTP) when the user has one, so a login on a device that

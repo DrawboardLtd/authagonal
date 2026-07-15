@@ -136,6 +136,8 @@ export default function AuthLayout({ children }: AuthLayoutProps) {
     add(light, '--auth-card-bg', branding.lightCardBg);
     add(dark, '--auth-bg', branding.darkBg);
     add(dark, '--auth-card-bg', branding.darkCardBg);
+    add(light, '--auth-logo-bg', branding.lightLogoBg);
+    add(dark, '--auth-logo-bg', branding.darkLogoBg);
 
     let styleEl: HTMLStyleElement | undefined;
     if (light.length || dark.length) {
@@ -170,7 +172,16 @@ export default function AuthLayout({ children }: AuthLayoutProps) {
       <Card style={{ background: 'var(--auth-card-bg)', borderRadius: 'var(--auth-radius, 0.5rem)', fontFamily: 'var(--auth-font, inherit)' }}>
         <div className="text-center mb-6" data-auth="header">
           {branding.logoUrl ? (
-            <img src={branding.logoUrl} alt={branding.appName} className="max-h-12 max-w-full object-contain mx-auto" data-auth="logo" />
+            // Optional per-mode logo "chip": padding + background only when a logo bg is configured, so
+            // tenants that don't set one keep the logo flush on the card (unchanged). The background var
+            // is emitted per theme by the effect above, so it can differ light vs dark.
+            <span
+              className={`inline-block max-w-full${(branding.lightLogoBg || branding.darkLogoBg) ? ' rounded-lg p-3' : ''}`}
+              style={{ background: 'var(--auth-logo-bg)' }}
+              data-auth="logo-chip"
+            >
+              <img src={branding.logoUrl} alt={branding.appName} className="max-h-12 max-w-full object-contain block" data-auth="logo" />
+            </span>
           ) : (
             <h1 className="text-2xl font-bold tracking-tight" data-auth="app-name" style={{ color: 'var(--auth-heading)' }}>{branding.appName}</h1>
           )}

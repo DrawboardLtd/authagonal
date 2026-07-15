@@ -26,6 +26,10 @@ export interface BrandingConfig {
   darkBg: string | null;
   darkCardBg: string | null;
   darkPrimaryColor: string | null;
+  /** Optional background for the logo "chip" per mode, so a logo with white/transparent artwork stays
+   *  visible against a light card. null = no chip (logo sits directly on the card, current behaviour). */
+  lightLogoBg: string | null;
+  darkLogoBg: string | null;
 }
 
 const defaults: BrandingConfig = {
@@ -46,6 +50,8 @@ const defaults: BrandingConfig = {
   darkBg: null,
   darkCardBg: null,
   darkPrimaryColor: null,
+  lightLogoBg: null,
+  darkLogoBg: null,
 };
 
 /**
