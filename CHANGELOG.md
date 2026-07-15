@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+### Added
+
+- **AWS provider parity** — `DynamoUserStore` now implements the full modern `IUserStore` surface: PII document encryption + blind-index lookup keys via the `IFieldCipher`/`IIndexTokenizer` seams (with plaintext dual-read and reindex/migration backfills), native cursor paging, id/login-state enumeration for retention sweeps, email-domain search, and attribute-only login stamps. New `AddAuthagonalAwsStorage(...)` one-call composition (DynamoDB + Secrets Manager + S3 DataProtection). The AWS lane is now covered by DynamoDB-Local integration tests (stores, crypto, clustering).
+- **Email auto-wire** — the built-in Resend sender activates when `Email:ResendApiKey` is configured; `UseAuthagonal` warns at startup when mail would be discarded while the confirmed-email login gate is on.
+
+### Fixed
+
+- **Back-channel logout never notified relying parties** — the logout-token `events` claim used an anonymous object, which the JWT handler cannot serialize (IDX11025); the per-client catch swallowed the failure, so every RP was counted as failed and no request was ever sent. Both the internal fan-out and end-session mints are fixed and now covered by tests that observe the real HTTP fan-out.
+- **Admin token mint issued a refresh token unconditionally** — `POST /api/v1/token` now issues one only when `offline_access` is requested and the client allows offline access.
+- `appsettings.json` shipped dead SendGrid email keys; replaced with the real `Email:ResendApiKey`/`SenderEmail`/`SenderName`.
+
 ## [0.7.7] – [0.7.8] — 2026-07-15
 
 ### Fixed
