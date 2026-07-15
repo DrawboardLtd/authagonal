@@ -35,17 +35,25 @@ Implement these to plug in your own storage backend:
 | `IUserProvisionStore` | Downstream app provisioning state |
 | `IMfaStore` | MFA credentials and challenges |
 | `IRoleStore` | Role CRUD and user-role assignments |
+| `IScopeStore` | Custom OAuth scope definitions |
 | `IScimTokenStore` | SCIM Bearer token storage |
 | `IScimGroupStore` | SCIM group storage |
+| `IRevokedTokenStore` | Revoked-token (jti) tracking for introspection |
+| `IProvisioningAppStore` | Downstream provisioning app registrations |
+| `ISamlReplayCache` | SAML assertion replay protection + AuthnRequest state |
+| `IOidcStateStore` | Upstream OIDC federation state |
+| `IChangeWriter` | Change-log capture (upserts + delete tombstones) for incremental backups |
 
 ## Extensibility hooks
 
 | Interface | Purpose |
 |-----------|---------|
-| `IAuthHook` | Lifecycle callbacks — `OnUserAuthenticated`, `OnUserCreated`, `OnUserUpdated`, `OnUserDeleted`, `OnLoginFailed`, `OnTokenIssued`, `ResolveMfaPolicy`, `OnMfaVerified`. Multiple implementations run in registration order. |
+| `IAuthHook` | Lifecycle callbacks — `OnUserAuthenticated`, `OnUserCreated`, `OnUserUpdated`, `OnUserDeleted`, `OnLoginFailed`, `OnTokenIssued`, `ResolveMfaPolicy`, `OnMfaVerified`, `OnMfaVerifyFailed`, `OnMfaEnrolled`, `OnEmailConfirmed`, and more. Multiple implementations run in registration order. |
 | `IEmailService` | Email delivery — verification, password reset |
 | `IProvisioningOrchestrator` | User provisioning into downstream apps (TCC protocol) |
-| `ISecretProvider` | Secret resolution (plaintext or Key Vault) |
+| `ISecretProvider` | Reversible secret protection at rest (plaintext default; Key Vault or your own) |
+| `IFieldCipher` | Field-level encryption of PII at rest (passthrough default) |
+| `IIndexTokenizer` | Blind-index tokenization so encrypted fields stay searchable (passthrough default) |
 | `ITenantContext` | Tenant resolution for multi-tenant deployments |
 | `IKeyManager` | Signing key management — override for per-tenant key isolation |
 
@@ -55,7 +63,9 @@ Implement these to plug in your own storage backend:
 |---------|-------------|
 | **Authagonal.Core** | Core models, interfaces, and abstractions |
 | [Authagonal.Protocol](https://www.nuget.org/packages/Authagonal.Protocol) | Embeddable OIDC/OAuth 2.0 protocol surface (no UI, no user store) |
-| [Authagonal.Storage](https://www.nuget.org/packages/Authagonal.Storage) | Azure Table Storage backend |
+| [Authagonal.AzureProvider](https://www.nuget.org/packages/Authagonal.AzureProvider) | Azure Table Storage backend |
+| [Authagonal.AwsProvider](https://www.nuget.org/packages/Authagonal.AwsProvider) | AWS backend — DynamoDB / S3 / Secrets Manager |
+| [Authagonal.Backup](https://www.nuget.org/packages/Authagonal.Backup) | Backup, restore, merge, and rollup for the storage backends |
 | [Authagonal.Server](https://www.nuget.org/packages/Authagonal.Server) | Full auth server — endpoints, middleware, services, login UI |
 
 ## Links

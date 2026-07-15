@@ -2,6 +2,122 @@
 
 ## [Unreleased]
 
+## [0.7.7] – [0.7.8] — 2026-07-15
+
+### Fixed
+
+- **MFA challenge burn** — a wrong TOTP/recovery/WebAuthn code no longer consumes the one-time challenge; the code is validated first and the challenge is consumed only on success, with a bounded retry budget (5 attempts) before it burns. Fixes the "first typo traps you on the MFA page" bug.
+- **MFA page escape** — the hosted MFA challenge page has a persistent "Back to sign in" link, and its back-links preserve the return URL.
+
+### Added
+
+- **Login logo background chip** — optional per-mode (`lightLogoBg`/`darkLogoBg`) background behind the login logo so white/transparent artwork stays visible on light cards. Non-regressive when unset.
+
+## [0.7.5] – [0.7.6] — 2026-07-15
+
+### Fixed
+
+- **Login-page CSP** — the server-inlined boot payload is now a non-executable `<script type="application/json">` tag (no longer blocked by `script-src`), and `font-src 'self' data:` allows inlined font subsets.
+- **Packaging** — `Authagonal.AwsProvider` floats its `Microsoft.Extensions.*.Abstractions` references on `10.*`, fixing the NU1605 that blocked the whole NuGet publish. Note: the v0.7.5 NuGets were never published because of that failure (only npm went out) — use v0.7.6 as the effective release.
+
+## [0.7.3] – [0.7.4] — 2026-07-14 → 07-15
+
+### Added
+
+- **SAML vendor-quirk readiness** — pasted-metadata support with a condensing parser (vendor metadata routinely exceeds storage limits), friendly-name + OID attribute aliases, multi-valued group attributes, per-connection `NameIdFormat` (including ADFS-safe omission), signature-failure metadata refetch, and the post-login return URL riding the stored AuthnRequest instead of RelayState.
+- **SAML SP keypair** — per-connection self-signed SP certificate: signed AuthnRequests (auto-enabled when the IdP wants them), `EncryptedAssertion` decryption (RSA-OAEP/1.5 + AES-CBC/3DES; AES-GCM is not supported by .NET's `EncryptedXml` and reports a clear error), and SP metadata publishing signing + encryption key descriptors.
+- **SAML Single Logout** — SP-initiated `/saml/{id}/logout` and IdP-initiated `/saml/{id}/slo` (Redirect + POST bindings), with session-bound safety for unsigned IdP logout requests.
+
+## [0.7.0] – [0.7.2] — 2026-07-12 → 07-13
+
+### Added
+
+- **Cursor-paged user listing** — `IUserStore.ListPageAsync`/`ListByScimClientPageAsync` with native continuation tokens; SCIM listing uses cursor pagination and SCIM `eq` filters resolve via blind-index point lookups.
+- **`IUserStore.EnumerateLoginStatesAsync`** — a non-PII login-state stream for retention sweeps.
+- **GDPR "Your data"** — self-service data export and account-deletion request on the hosted account page.
+
+### Security
+
+- **OIDC/federation + grant-store hardening (F32–F48)** — atomic grant consumption (`TryMarkConsumedAsync`), recovery-code encryption at rest, open-redirect fixes (backslash bypass; disabled/unknown-client redirect guard on both authorize endpoints), upstream-IdP scope filtering, federated logins now route MFA-enrolled users through the MFA challenge, device-flow `slow_down`, OIDC state atomicity + subject consistency checks, and tombstone-first expired-grant removal.
+
+## [0.6.0] – [0.6.6] — 2026-07-10 → 07-12
+
+### Added
+
+- **Change-log-driven incremental backups** — stores write every mutation to a change-log so incremental backups point-read changed rows instead of full-table scans. Opt-in via `BackupOptions.ChangeLoggedTables`; a daily full-scan backstop guarantees coverage. Includes the F24 restore-chain correctness cluster: exact EDM type round-trips, restores apply tombstones, a clock-skew margin on incremental filters, and tombstone-first delete ordering in every store.
+- **Server-inlinable login boot payload** — the host can inline branding + providers as a JSON script tag to save a round-trip.
+
+### Changed
+
+- **BREAKING: `ITombstoneWriter` → `IChangeWriter`** — the change-log seam gained upsert capture (`WriteUpsertAsync`/`WriteUpsertBatchAsync`) and was renamed. Implementations and registrations must follow.
+
+## [0.5.0] – [0.5.1] — 2026-07-10
+
+### Changed
+
+- **BREAKING: OIDC endpoint plumbing deduplicated into `Authagonal.Protocol`** — discovery/JWKS/OAuth-error models moved to `Authagonal.Protocol.Endpoints`; embeddable hosts map them via `MapAuthagonalProtocolEndpoints`.
+
+### Fixed
+
+- **Grant re-key on re-store** — fetched grants are re-keyed before persisting, restoring device approval + refresh rotation (the store never persists the plaintext handle).
+
+## [0.4.38] – [0.4.41] — 2026-07-07 → 07-10
+
+### Added
+
+- **Encryption backfills** — legacy plaintext `UserExternalIds` index rows re-keyed; `UserLogins` and provisioning-app API keys encrypted at rest with backfills.
+
+### Changed
+
+- **Perf** — blind-index tokenization + login encryption batched into single Vault round-trips.
+
+## [0.4.23] – [0.4.37] — 2026-07-03 → 07-06
+
+### Added
+
+- **PII encryption at rest (searchable)** — Vault Transit (`aes256-gcm96`) field encryption behind the `IFieldCipher` seam for user PII and grant data, with keyed-HMAC blind indexes (`IIndexTokenizer`) for email, first/last-name prefixes, external IDs, email domain, and email local-part prefix — exact search over encrypted data, with lazy migration and an `ReindexUserAsync` backfill. Index updates write-before-delete so a Vault hiccup can't lock out logins.
+- **Back to app** — client home URIs + a default application, so hosted pages (account, verification, reset) can send the user back to the right app; the originating client is threaded through verification + reset emails.
+- **`OnMfaVerifyFailedAsync`** — auth-hook event for failed MFA/passkey verification.
+
+### Fixed
+
+- **Language pickers** — derive from the locale registry (hi/af/ar were missing).
+
+## [0.4.15] – [0.4.22] — 2026-07-01 → 07-02
+
+### Added
+
+- **Passkeys (WebAuthn)** — passwordless passkey login via conditional mediation, multiple passkeys per user, passkey enrollment gated behind TOTP, per-request relying-party config (multi-tenant-safe), and tenant-policy gating on self-service setup.
+- **Edge-cacheable discovery** — `Cache-Control` on the OIDC discovery + JWKS documents.
+- **Publish-ahead key rotation** — sign with a specific Transit key version.
+
+## [0.4.6] – [0.4.14] — 2026-06-24 → 06-28
+
+### Added
+
+- **Provider branding on the login screen** — icons + SAML connections surfaced on the hosted login page.
+- **Per-tenant email-confirmation login gate** + an email-confirmed auth-hook event.
+- **`extraRoutes` seam** — the host owns product routes inside the hosted login app.
+- **Per-theme branding** — `darkMode`, `darkPrimaryColor`, and per-theme background/card colours.
+- **Locales** — Hindi and Afrikaans added to the hosted auth pages.
+- **Auth-hook events** for self-service MFA + password changes.
+
+### Fixed
+
+- **Email verification links** — served on GET (were POST-only) and the reset-password link prefix corrected.
+
+## [0.4.1] – [0.4.5] — 2026-06-21 → 06-23
+
+### Added
+
+- **User locale (preferred language)** — stored on the profile, editable on the new self-service account page, mapped from SCIM `preferredLanguage`, and used for localized email.
+- **Arabic translation + RTL support** on the hosted login pages.
+
+### Fixed
+
+- **Storage→AzureProvider rename** completed across build files, tests, and `tag.sh`.
+- **Login layout** — consent/grants pages no longer double-wrap `AuthLayout`; the "Powered by Authagonal" footer renders again.
+
 ## [0.4.0] — 2026-06-17
 
 ### Added

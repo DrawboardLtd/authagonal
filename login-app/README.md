@@ -1,6 +1,6 @@
 # @authagonal/login
 
-Default login UI for [Authagonal](https://github.com/authagonal/authagonal) — an OAuth 2.0 / OpenID Connect authentication server backed by Azure Table Storage.
+Default login UI for [Authagonal](https://github.com/authagonal/authagonal) — a self-hosted OAuth 2.0 / OpenID Connect / SAML 2.0 authentication server with pluggable storage (Azure Table Storage or AWS DynamoDB).
 
 Use as a standalone app (built into the Authagonal Docker image) or as an npm package to build a custom login experience while reusing the API client, branding, i18n, and base components.
 
@@ -154,9 +154,16 @@ Place a `branding.json` in your public directory. The `AuthLayout` component loa
 | `primaryColor` | `string` | `"#2563eb"` | Buttons, links, focus rings via CSS custom properties |
 | `supportEmail` | `string \| null` | `null` | Contact email shown in the footer |
 | `showForgotPassword` | `boolean` | `true` | Toggle the forgot password link |
+| `showRegistration` | `boolean` | `false` | Toggle the self-registration link on the login page |
 | `customCssUrl` | `string \| null` | `null` | URL to additional CSS for deeper styling |
 | `welcomeTitle` | `LocalizedString` | `null` | Override the login page title |
 | `welcomeSubtitle` | `LocalizedString` | `null` | Override the login page subtitle |
+| `languages` | `{code, label}[] \| null` | `null` | Restrict/override the language picker entries |
+| `poweredBy` | `boolean` | `true` | Show the "Powered by Authagonal" footer |
+| `darkMode` | `"off" \| "auto" \| "force"` | `"auto"` | Default theme when the visitor hasn't picked one; the visitor's toggle wins |
+| `lightBg` / `lightCardBg` / `darkBg` / `darkCardBg` | `string \| null` | `null` | Per-mode page/card surface colour overrides |
+| `darkPrimaryColor` | `string \| null` | `null` | Overrides `primaryColor` in dark mode |
+| `lightLogoBg` / `darkLogoBg` | `string \| null` | `null` | Optional per-mode background "chip" behind the logo, for white/transparent artwork |
 
 ### Localized strings
 
@@ -184,7 +191,7 @@ const title = resolveLocalized(branding.welcomeTitle, i18n.language) ?? 'Default
 
 ## i18n
 
-Built-in support for 8 languages:
+Built-in support for 10 languages (plus a Klingon easter egg):
 
 | Code | Language |
 |---|---|
@@ -195,7 +202,10 @@ Built-in support for 8 languages:
 | `es` | Spanish |
 | `vi` | Vietnamese |
 | `pt` | Portuguese |
-| `tlh` | Klingon |
+| `ar` | Arabic (RTL) |
+| `af` | Afrikaans |
+| `hi` | Hindi |
+| `tlh` | Klingon (novelty; hidden from default pickers) |
 
 Language is auto-detected from the browser and persisted to `localStorage`. Force a language via query string: `?lng=es`.
 

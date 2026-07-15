@@ -51,7 +51,7 @@ var result = await restore.RunAsync(ct);
 | Package | Description |
 |---------|-------------|
 | [Authagonal.Core](https://www.nuget.org/packages/Authagonal.Core) | Core models, interfaces, and abstractions |
-| [Authagonal.Storage](https://www.nuget.org/packages/Authagonal.Storage) | Azure Table Storage backend |
+| [Authagonal.AzureProvider](https://www.nuget.org/packages/Authagonal.AzureProvider) | Azure Table Storage backend |
 | **Authagonal.Backup** | Backup/restore/merge/rollup library and CLI |
 | [Authagonal.Server](https://www.nuget.org/packages/Authagonal.Server) | Full auth server — endpoints, middleware, services, login UI |
 

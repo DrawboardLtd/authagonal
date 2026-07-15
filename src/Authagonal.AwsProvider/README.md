@@ -1,7 +1,7 @@
 # Authagonal.AwsProvider
 
 AWS implementation of the Authagonal storage and clustering seams — the counterpart to
-`Authagonal.Storage` (Azure). All cloud-vendor coupling lives here; `Authagonal.Core` and
+`Authagonal.AzureProvider`. All cloud-vendor coupling lives here; `Authagonal.Core` and
 `Authagonal.Protocol` stay vendor-neutral.
 
 | Authagonal seam | AWS service | Notes |
@@ -27,6 +27,6 @@ builder.UseAwsDynamo(dynamoDbClient);        // auth nodes (leader + bus)
 builder.UseAwsDynamoBus(dynamoDbClient);     // portal/admin nodes (bus only)
 ```
 
-> **Status:** foundation + `IClientStore`, `ISigningKeyStore`, `IGrantStore`, clustering, and secrets
-> are implemented. The remaining stores (user, MFA, OIDC/SAML/SSO, SCIM, roles, scopes, revoked tokens,
-> provisioning apps, user provisions) are a mechanical port of the same patterns.
+> **Status:** every `Authagonal.Core` store and clustering interface has a DynamoDB implementation
+> (users, grants, clients, MFA, OIDC/SAML/SSO, SCIM, roles, scopes, revoked tokens, provisioning,
+> replay caches, change-log capture). `Authagonal.Backup` remains Azure-only.

@@ -100,6 +100,9 @@ docker build -f Dockerfile.migration -t authagonal-migration .
 ## Development
 
 ```bash
+# Storage emulator (the default appsettings.json expects Azurite on its default ports)
+docker run -d -p 10000-10002:10000-10002 mcr.microsoft.com/azure-storage/azurite
+
 # Server (requires .NET 10 SDK)
 dotnet run --project src/Authagonal.Server
 
@@ -126,6 +129,11 @@ app.Run();
 ```
 
 See `demos/custom-server/` for a complete example.
+
+Two things every new deployment needs:
+
+- **Email** — set `Email:ResendApiKey` + `Email:SenderEmail` to activate the built-in [Resend](https://resend.com) sender, or register your own `IEmailService` before `AddAuthagonal`. Without one, verification and reset emails are discarded, and since login requires a confirmed email by default, self-registered users can't sign in (set `Auth:AutoConfirmEmailDomains` to skip verification for your domains).
+- **Admin API access** — seed a `client_credentials` client holding the `authagonal-admin` scope in the `Clients:` config section. Config-seeded clients are the only way to hold that scope; the API and dynamic registration refuse to grant it (so a runtime client can never escalate).
 
 ## Load Testing
 

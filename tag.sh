@@ -17,16 +17,24 @@ echo "Latest tag: ${latest:-none}"
 echo "Next tag:   $next ($version)"
 echo ""
 
-# Update package references
+# Update the npm package version (CI derives the publish version from the tag,
+# but the in-repo version should not drift). The demos float on 0.x / "0.x"
+# references, so they no longer need per-release bumps.
 sed -i "s/\"version\": \"0\.[0-9]*\.[0-9]*\"/\"version\": \"$version\"/" login-app/package.json
-sed -i "s|\"@authagonal/login\": \"0\.[0-9]*\.[0-9]*\"|\"@authagonal/login\": \"$version\"|" demos/custom-server/login-app/package.json
-sed -i "s/Version=\"0\.[0-9]*\.[0-9]*\"/Version=\"$version\"/g" demos/custom-server/CustomAuthServer.csproj
 
 echo "Updated package references:"
 grep '"version"' login-app/package.json
-grep '@authagonal/login' demos/custom-server/login-app/package.json
-grep 'Version=' demos/custom-server/CustomAuthServer.csproj
 echo ""
+
+# The CHANGELOG rotted from 0.4.0 to 0.7.8 because tags were minted without it —
+# refuse to tag until the release is written up (content under [Unreleased] or a
+# [$version] entry).
+unreleased_lines=$(sed -n '/^## \[Unreleased\]/,/^## \[/p' CHANGELOG.md | sed '1d;$d' | grep -c -v '^[[:space:]]*$' || true)
+if [ "$unreleased_lines" -eq 0 ] && ! grep -q "\[$version\]" CHANGELOG.md; then
+  echo "ERROR: CHANGELOG.md has an empty [Unreleased] section and no [$version] entry."
+  echo "Write the changelog entry for $next, then re-run."
+  exit 1
+fi
 
 # Commit and tag
 git add -A
