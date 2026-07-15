@@ -60,7 +60,16 @@ export interface AuthagonalBoot {
 }
 
 export function getBoot(): AuthagonalBoot | undefined {
-  return (window as { __AUTHAGONAL_BOOT__?: AuthagonalBoot }).__AUTHAGONAL_BOOT__;
+  // Read the server-inlined boot payload from a non-executable <script type="application/json">
+  // tag. A JSON script block is not subject to CSP script-src, so a host with a strict script-src
+  // (no 'unsafe-inline'/nonce) can serve it. Absent or malformed → undefined (fetch fallback).
+  const el = document.getElementById('authagonal-boot');
+  if (!el?.textContent) return undefined;
+  try {
+    return JSON.parse(el.textContent) as AuthagonalBoot;
+  } catch {
+    return undefined;
+  }
 }
 
 export async function loadBranding(): Promise<BrandingConfig> {

@@ -486,8 +486,8 @@ public static class AuthagonalExtensions
         var csp = turnstileConfigured
             ? "default-src 'self'; script-src 'self' https://challenges.cloudflare.com; " +
               "frame-src https://challenges.cloudflare.com; img-src 'self' data: https:; " +
-              "style-src 'self' 'unsafe-inline'; frame-ancestors 'none'; object-src 'none'"
-            : "default-src 'self'; img-src 'self' data: https:; style-src 'self' 'unsafe-inline'; frame-ancestors 'none'; object-src 'none'";
+              "font-src 'self' data:; style-src 'self' 'unsafe-inline'; frame-ancestors 'none'; object-src 'none'"
+            : "default-src 'self'; img-src 'self' data: https:; font-src 'self' data:; style-src 'self' 'unsafe-inline'; frame-ancestors 'none'; object-src 'none'";
 
         app.Use(async (context, next) =>
         {
