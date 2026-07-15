@@ -23,7 +23,9 @@ Cấp phát chạy tự động mỗi khi người dùng được tạo, bất k
 
 Các tổ hợp ứng dụng/người dùng đã được cấp phát sẽ bị bỏ qua (được theo dõi trong bảng `UserProvisions`).
 
-**Khi bị từ chối:** Nếu bất kỳ ứng dụng cấp phát nào từ chối người dùng trong giai đoạn Try, người dùng sẽ bị xóa và endpoint trả về `422 Unprocessable Entity` với lý do từ chối. Điều này ngăn chặn việc tạo người dùng không hoàn chỉnh.
+Các đường dẫn tạo người dùng cấp phát vào **mọi ứng dụng đã cấu hình**. Endpoint authorize chỉ cấp phát vào danh sách `ProvisioningApps` của client.
+
+**Khi bị từ chối:** Nếu bất kỳ ứng dụng cấp phát nào từ chối người dùng trong giai đoạn Try, người dùng vừa được tạo sẽ bị xóa. Điều này ngăn chặn việc tạo người dùng không hoàn chỉnh. Các đường dẫn tạo qua API (quản trị, đăng ký, SCIM) trả về `422 Unprocessable Entity` với lý do từ chối; các callback SSO SAML/OIDC trả về `400 Bad Request`; endpoint authorize chuyển hướng lại client với `error=access_denied`.
 
 ## Cấu hình
 
@@ -36,25 +38,25 @@ Trong `appsettings.json`:
   "ProvisioningApps": {
     "my-backend": {
       "CallbackUrl": "https://api.example.com/provisioning",
-      "ApiKey": "secret-bearer-token"
+      "ApiKey": "secret-bearer-token",
+      "TryTimeoutSeconds": 60
     }
   }
 }
 ```
 
+`TryTimeoutSeconds` là tùy chọn (mặc định 60). Hãy tăng nó khi ứng dụng phía sau làm công việc thực sự trong giai đoạn Try. Confirm và Cancel luôn dùng một thời gian chờ cố định ngắn (10 giây) và không điều chỉnh được; chúng luôn nên rẻ.
+
 ### 2. Gán ứng dụng cho client
 
-Mỗi client khai báo các ứng dụng mà người dùng phải được cấp phát vào:
+Mỗi client khai báo các ứng dụng mà người dùng phải được cấp phát vào, qua trường `provisioningApps` trên bản ghi client. Hãy đặt nó qua API quản trị client (cấu hình khởi tạo `Clients` không mang trường này):
 
-```json
+```
+PUT /api/v1/clients/web-app
 {
-  "Clients": [
-    {
-      "ClientId": "web-app",
-      "ProvisioningApps": ["my-backend"],
-      ...
-    }
-  ]
+  "clientId": "web-app",
+  "provisioningApps": ["my-backend"],
+  ...
 }
 ```
 
@@ -75,9 +77,12 @@ Authagonal thực hiện ba loại gọi HTTP đến endpoint cấp phát của 
   "email": "user@example.com",
   "firstName": "Jane",
   "lastName": "Doe",
-  "organizationId": "org-id-or-null"
+  "organizationId": "org-id-or-null",
+  "customAttributes": { "key": "value" }
 }
 ```
+
+Các trường null (bao gồm `customAttributes` khi người dùng không có) được lược khỏi payload.
 
 **Phản hồi mong đợi:**
 
@@ -88,6 +93,8 @@ Authagonal thực hiện ba loại gọi HTTP đến endpoint cấp phát của 
 | Không phải 2xx | Bất kỳ | Được xử lý như thất bại. |
 
 `transactionId` xác định lần cấp phát này. Ứng dụng của bạn nên lưu nó cùng với bản ghi đang chờ.
+
+Một phản hồi chấp thuận cũng có thể trả về `organizationId` và/hoặc `customAttributes`. Authagonal hợp nhất chúng vào người dùng: `organizationId` chỉ được áp dụng nếu người dùng chưa có (các ứng dụng sau trong cùng giao dịch thấy được giá trị đã gán trước đó), và các mục `customAttributes` được hợp nhất theo từng khóa. Cả hai đều chảy lên token (claim `org_id`; thuộc tính tùy chỉnh qua cấu hình `UserClaims` của scope).
 
 ### Giai đoạn 2: Confirm
 
@@ -117,7 +124,7 @@ Chỉ được gọi nếu **tất cả** ứng dụng trả về `approved: tru
 
 **Phản hồi mong đợi:** `200` (body bất kỳ). Ứng dụng của bạn xóa bản ghi đang chờ.
 
-Cancel là nỗ lực tốt nhất — nếu thất bại, Authagonal ghi nhật ký lỗi và tiếp tục. Ứng dụng của bạn nên **dọn dẹp các bản ghi chưa xác nhận sau TTL** (ví dụ: 1 giờ) như biện pháp an toàn.
+Cancel là nỗ lực tốt nhất: nếu thất bại, Authagonal ghi nhật ký lỗi và tiếp tục. Ứng dụng của bạn nên **dọn dẹp các bản ghi chưa xác nhận sau TTL** (ví dụ: 1 giờ) như biện pháp an toàn.
 
 ## Sơ đồ luồng
 
@@ -156,11 +163,11 @@ Authorize Endpoint
 
 ### Khi xác nhận thất bại một phần
 
-Nếu một số xác nhận thành công nhưng một xác nhận thất bại, các ứng dụng được xác nhận thành công sẽ có bản ghi cấp phát được lưu (nên sẽ không bị thử lại). Người dùng thấy lỗi và có thể thử lại — chỉ ứng dụng thất bại sẽ được thử lại lần sau.
+Nếu một số xác nhận thành công nhưng một xác nhận thất bại, các ứng dụng được xác nhận thành công sẽ có bản ghi cấp phát được lưu (nên sẽ không bị thử lại), và mọi ứng dụng còn đang chờ xác nhận sẽ bị hủy. Người dùng thấy lỗi và có thể thử lại; chỉ những ứng dụng chưa xác nhận sẽ được thử lại lần sau.
 
 ## Giải quyết ứng dụng tùy chỉnh
 
-Mặc định, các ứng dụng cấp phát được đọc từ phần cấu hình `ProvisioningApps` thông qua `ConfigProvisioningAppProvider`. Ghi đè `IProvisioningAppProvider` để giải quyết ứng dụng một cách động — ví dụ, từ cơ sở dữ liệu hoặc theo tenant:
+Mặc định, các ứng dụng cấp phát được đọc từ phần cấu hình `ProvisioningApps` thông qua `ConfigProvisioningAppProvider`. Ghi đè `IProvisioningAppProvider` để giải quyết ứng dụng một cách động, ví dụ từ cơ sở dữ liệu hoặc theo tenant:
 
 ```csharp
 builder.Services.AddSingleton<IProvisioningAppProvider, MyAppProvider>();
@@ -169,9 +176,11 @@ builder.Services.AddAuthagonal(builder.Configuration);
 
 Provider trả về danh sách các ứng dụng và URL callback của chúng. `TccProvisioningOrchestrator` gọi Try/Confirm/Cancel trên mỗi ứng dụng.
 
+Để CRUD tại thời điểm chạy mà không cần provider tùy chỉnh, thư viện cung cấp sẵn `StoreProvisioningAppProvider`, dựa trên `IProvisioningAppStore`. Hãy đăng ký nó một cách tường minh (cùng mẫu như trên) và quản lý các ứng dụng qua API quản trị tại `/api/v1/provisioning/apps` (liệt kê/tạo/cập nhật/xóa, cùng `POST /{appId}/test` để thăm dò endpoint Try của một ứng dụng).
+
 ## Hủy cấp phát
 
-Khi người dùng bị xóa qua API quản trị (`DELETE /api/v1/profile/{userId}`), Authagonal gọi `DELETE {CallbackUrl}/users/{userId}` trên mỗi ứng dụng mà người dùng đã được cấp phát vào. Đây là nỗ lực tốt nhất — các lỗi được ghi nhật ký nhưng không chặn việc xóa.
+Khi người dùng bị xóa qua API quản trị (`DELETE /api/v1/profile/{userId}`) hoặc bị hủy cấp phát qua SCIM (`DELETE /scim/v2/Users/{id}`, một soft-delete vô hiệu hóa người dùng), Authagonal gọi `DELETE {CallbackUrl}/users/{userId}` trên mỗi ứng dụng mà người dùng đã được cấp phát vào. Đây là nỗ lực tốt nhất: các lỗi được ghi nhật ký nhưng không chặn việc xóa.
 
 ## Triển khai các endpoint phía trên
 

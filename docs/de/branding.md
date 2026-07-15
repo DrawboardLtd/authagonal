@@ -6,7 +6,7 @@ locale: de
 
 # Login-Oberflaeche anpassen
 
-Die Login-SPA ist zur Laufzeit ueber eine `branding.json`-Datei konfigurierbar, die aus dem Web-Root bereitgestellt wird. Kein Neuaufbau erforderlich -- montieren Sie einfach Ihre Konfiguration und Assets.
+Die Login-SPA ist zur Laufzeit über eine `branding.json`-Datei konfigurierbar, die aus dem Web-Root bereitgestellt wird. Kein Neuaufbau erforderlich -- montieren Sie einfach Ihre Konfiguration und Assets.
 
 ## Funktionsweise
 
@@ -16,7 +16,7 @@ Beim Start ruft die SPA `/branding.json` ab. Wenn die Datei nicht existiert oder
 - Logo-Bild
 - Primaerfarbe (Schaltflaechen, Links, Fokusringe)
 - Sichtbarkeit des Passwort-vergessen-Links
-- Benutzerdefiniertes CSS fuer tiefgreifendere Gestaltung
+- Benutzerdefiniertes CSS für tiefgreifendere Gestaltung
 
 ## Konfiguration
 
@@ -39,13 +39,13 @@ Platzieren Sie eine `branding.json`-Datei im `wwwroot/`-Verzeichnis (oder montie
 |---|---|---|---|
 | `appName` | `string` | `"Authagonal"` | Wird in der Kopfzeile und im Browser-Tab-Titel angezeigt |
 | `logoUrl` | `string \| null` | `null` | URL zu einem Logo-Bild. Wenn gesetzt, ersetzt es die Textkopfzeile. |
-| `primaryColor` | `string` | `"#2563eb"` | Hex-Farbe fuer Schaltflaechen, Links und Fokus-Indikatoren |
-| `supportEmail` | `string \| null` | `null` | Support-Kontakt-E-Mail (fuer zukuenftige Verwendung reserviert) |
+| `primaryColor` | `string` | `"#2563eb"` | Hex-Farbe für Schaltflaechen, Links und Fokus-Indikatoren |
+| `supportEmail` | `string \| null` | `null` | Support-Kontakt-E-Mail (für zukuenftige Verwendung reserviert) |
 | `showForgotPassword` | `boolean` | `true` | Anzeigen/Ausblenden des "Passwort vergessen?"-Links auf der Login-Seite |
 | `showRegistration` | `boolean` | `false` | Anzeigen/Ausblenden des Self-Service-Registrierungslinks |
 | `customCssUrl` | `string \| null` | `null` | URL zu einer benutzerdefinierten CSS-Datei, die nach den Standardstilen geladen wird |
-| `welcomeTitle` | `LocalizedString` | `null` | Ueberschreibt den Titel der Login-Seite (einfacher String oder `{ "en": "...", "de": "..." }`) |
-| `welcomeSubtitle` | `LocalizedString` | `null` | Ueberschreibt den Untertitel der Login-Seite |
+| `welcomeTitle` | `LocalizedString` | `null` | Überschreibt den Titel der Login-Seite (einfacher String oder `{ "en": "...", "de": "..." }`) |
+| `welcomeSubtitle` | `LocalizedString` | `null` | Überschreibt den Untertitel der Login-Seite |
 | `languages` | `array \| null` | `null` | Sprachauswahl-Optionen (`[{ "code": "en", "label": "English" }, ...]`) |
 
 ## Docker-Beispiel
@@ -80,11 +80,11 @@ services:
 
 ## Benutzerdefiniertes CSS
 
-Die Option `customCssUrl` laedt ein zusaetzliches Stylesheet nach den Standardstilen, sodass Ihre Regeln Vorrang haben. Nuetzlich zum Aendern von Schriftarten, Anpassen von Abstaenden oder Neugestalten bestimmter Elemente.
+Die Option `customCssUrl` lädt ein zusätzliches Stylesheet nach den Standardstilen, sodass Ihre Regeln Vorrang haben. Nützlich zum Ändern von Schriftarten, Anpassen von Abständen oder Neugestalten bestimmter Elemente.
 
 ### CSS Custom Properties
 
-Die Primaerfarbe wird ueber die CSS Custom Property `--brand-primary` gesetzt (die in das Tailwind-Theme einfliesst). Ueberschreiben Sie sie in Ihrem benutzerdefinierten CSS anstatt `branding.json` zu verwenden:
+Die Primaerfarbe wird über die CSS Custom Property `--brand-primary` gesetzt (die in das Tailwind-Theme einfliesst). Überschreiben Sie sie in Ihrem benutzerdefinierten CSS anstatt `branding.json` zu verwenden:
 
 ```css
 :root {
@@ -109,9 +109,9 @@ body {
 | Stufe | Vorgehensweise | Aktualisierungspfad |
 |---|---|---|
 | **Nur Konfiguration** | `branding.json` + Logo montieren | Nahtlos -- Docker-Image aktualisieren, Ihre Mounts behalten |
-| **Konfiguration + CSS** | `customCssUrl` mit Stil-Ueberschreibungen hinzufuegen | Gleich -- CSS-Klassen sind stabil |
+| **Konfiguration + CSS** | `customCssUrl` mit Stil-Überschreibungen hinzufügen | Gleich -- CSS-Klassen sind stabil |
 | **npm-Paket** | `npm install @authagonal/login`, `branding.json` anpassen, in `wwwroot/` erstellen | Aktualisierbar -- `npm update` zieht neue Versionen |
-| **SPA forken** | `login-app/` klonen, Quellcode aendern, eigene Version erstellen | Sie besitzen die Oberflaeche -- Server-Updates sind unabhaengig |
-| **Eigene schreiben** | Vollstaendig benutzerdefiniertes Frontend gegen die Auth-API erstellen | Volle Kontrolle -- siehe [Auth-API](auth-api) fuer die Schnittstellenspezifikation |
+| **SPA forken** | `login-app/` klonen, Quellcode ändern, eigene Version erstellen | Sie besitzen die Oberflaeche -- Server-Updates sind unabhängig |
+| **Eigene schreiben** | Vollständig benutzerdefiniertes Frontend gegen die Auth-API erstellen | Volle Kontrolle -- siehe [Auth-API](auth-api) für die Schnittstellenspezifikation |
 
-Siehe `demos/custom-server/` fuer ein funktionierendes Beispiel mit benutzerdefiniertem Branding (gruenes Design, "Acme Corp").
+Siehe `demos/custom-server/` für ein funktionierendes Beispiel mit benutzerdefiniertem Branding (gruenes Design, "Acme Corp").

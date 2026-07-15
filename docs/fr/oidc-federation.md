@@ -40,7 +40,7 @@ Ajoutez dans `appsettings.json` :
 }
 ```
 
-Les fournisseurs sont injectes au demarrage. Le `ClientSecret` est protege via `ISecretProvider` (Key Vault lorsqu'il est configure, texte brut sinon). Les mappages de domaines SSO sont enregistres automatiquement a partir de `AllowedDomains`.
+Les fournisseurs sont injectes au demarrage. Les champs injectables sont exactement ceux affiches : `ConnectionId`, `ConnectionName`, `MetadataLocation`, `ClientId`, `ClientSecret`, `RedirectUrl`, `AllowedDomains`. Le `ClientSecret` est protege via `ISecretProvider` (Key Vault lorsqu'il est configure, texte brut sinon). Les mappages de domaines SSO sont enregistres automatiquement a partir de `AllowedDomains`.
 
 **Option B -- API d'administration (pour la gestion a l'execution) :**
 
@@ -72,10 +72,15 @@ Lorsque `AllowedDomains` est specifie (dans la configuration ou via l'API de cre
 ## Fonctionnalites de securite
 
 - **PKCE** -- code_challenge avec S256 sur chaque requete d'autorisation
-- **Validation du nonce** -- le nonce est stocke dans le state, verifie dans l'id_token
-- **Validation du state** -- a usage unique, stocke dans Azure Table Storage avec expiration
-- **Validation de la signature de l'id_token** -- les cles sont recuperees depuis le point d'acces JWKS de l'IdP
-- **Repli sur userinfo** -- si l'id_token ne contient pas d'email, le point d'acces userinfo est essaye
+- **Validation du nonce** -- le nonce est stocke avec le state, doit etre present dans l'id_token et correspondre
+- **Validation du state** -- a usage unique (consomme de maniere atomique via `IOidcStateStore`, persiste avec expiration) **et lie au navigateur** : un cookie `SameSite=Lax` limite a `/oidc` est defini a la connexion et doit correspondre au `state` du rappel, de sorte qu'un attaquant ne peut pas terminer un flux de federation qu'il a initie puis livrer l'URL de rappel a une victime (login CSRF)
+- **Validation de la signature de l'id_token** -- les cles sont recuperees depuis le point d'acces JWKS de l'IdP ; l'emetteur, l'audience et la duree de vie sont valides
+- **Repli sur userinfo** -- si l'id_token ne contient pas d'email, le point d'acces userinfo est essaye. Le `sub` de userinfo doit correspondre au `sub` de l'id_token (OIDC Core 5.3.2), sinon la reponse est ignoree
+- **Liaison d'identite stable** -- un utilisateur qui revient est resolu par fournisseur + `sub`, jamais par email seul. Rattacher une identite federee a un compte local **preexistant** par email exige que les `AllowedDomains` de la connexion couvrent le domaine de cet email, l'attestation explicite de l'administrateur que l'IdP le possede. Un `email_verified` affirme en amont n'est *pas* suffisant pour s'emparer d'un compte existant
+- **Application du domaine** -- lorsque `AllowedDomains` est defini, la connexion ne peut affirmer que des identites au sein de ces domaines (`access_denied` sinon)
+- **Desactivation du JIT** -- `DisableJitProvisioning` rejette les utilisateurs inconnus au lieu de les creer automatiquement
+- **Protection contre les redirections ouvertes** -- `returnUrl` doit etre un chemin relatif de meme site ; les formes relatives au protocole (`//`) et avec barre oblique inverse sont rejetees
+- **La MFA locale s'applique toujours** -- la federation ne prouve que le premier facteur. Un utilisateur inscrit a la MFA (ou dont la politique client exige la MFA) est dirige vers les pages locales de defi/configuration MFA apres le rappel au lieu d'etre connecte directement ; ce n'est qu'alors que la session porte le marqueur MFA
 
 ## Specificites Azure AD
 

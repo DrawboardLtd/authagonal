@@ -6,19 +6,23 @@ locale: vi
 
 # Ban dia hoa
 
-Authagonal ho tro tam ngon ngu ngay tu dau: tieng Anh, tieng Trung gian the (`zh-Hans`), tieng Duc (`de`), tieng Phap (`fr`), tieng Tay Ban Nha (`es`), tieng Viet (`vi`), tieng Bo Dao Nha (`pt`) va tieng Klingon (`tlh`). Ban dia hoa bao gom cac phan hoi API cua may chu, giao dien dang nhap va trang tai lieu nay.
+Giao diện đăng nhập cung cấp sẵn mười một locale: tiếng Anh, tiếng Trung giản thể (`zh-Hans`), tiếng Đức (`de`), tiếng Pháp (`fr`), tiếng Tây Ban Nha (`es`), tiếng Việt (`vi`), tiếng Bồ Đào Nha (`pt`), tiếng Ả Rập (`ar`), tiếng Afrikaans (`af`), tiếng Hindi (`hi`), và một locale vui tiếng Klingon (`tlh`). Các phản hồi API của máy chủ được bản địa hóa trong bảy ngôn ngữ đầu tiên. Bản địa hóa bao gồm các phản hồi API của máy chủ, giao diện đăng nhập và trang tài liệu này.
 
 ## Cac ngon ngu duoc ho tro
 
-| Ma | Ngon ngu |
-|---|---|
-| `en` | Tieng Anh (mac dinh) |
-| `zh-Hans` | Tieng Trung gian the |
-| `de` | Tieng Duc |
-| `fr` | Tieng Phap |
-| `es` | Tieng Tay Ban Nha |
-| `vi` | Tieng Viet |
-| `pt` | Tieng Bo Dao Nha |
+| Mã | Ngôn ngữ | Giao diện đăng nhập | API máy chủ |
+|---|---|---|---|
+| `en` | Tiếng Anh (mặc định) | ✓ | ✓ |
+| `zh-Hans` | Tiếng Trung giản thể | ✓ | ✓ |
+| `de` | Tiếng Đức | ✓ | ✓ |
+| `fr` | Tiếng Pháp | ✓ | ✓ |
+| `es` | Tiếng Tây Ban Nha | ✓ | ✓ |
+| `vi` | Tiếng Việt | ✓ | ✓ |
+| `pt` | Tiếng Bồ Đào Nha | ✓ | ✓ |
+| `ar` | Tiếng Ả Rập (phải sang trái) | ✓ | — |
+| `af` | Tiếng Afrikaans | ✓ | — |
+| `hi` | Tiếng Hindi | ✓ | — |
+| `tlh` | Tiếng Klingon (locale vui) | ✓ | — |
 
 ## May chu (phan hoi API)
 
@@ -74,6 +78,10 @@ Resources/
 
 Ung dung SPA dang nhap su dung [react-i18next](https://react.i18next.com/) de ban dia hoa phia may khach. Ngon ngu duoc tu dong phat hien tu cai dat `navigator.language` cua trinh duyet.
 
+Các locale đã đăng ký nằm trong một registry `LANGUAGES` duy nhất tại `login-app/src/i18n/index.ts`, nơi điều khiển cả việc đăng ký tài nguyên i18next lẫn mọi bộ chọn ngôn ngữ, nên hai bên không thể lệch nhau. Các locale được gắn cờ `novelty` (hiện là `tlh`) vẫn hoạt động đầy đủ (`?lng=tlh` dùng được) nhưng bị loại khỏi bộ chọn mặc định; chúng chỉ xuất hiện trong danh sách thả xuống khi `BrandingConfig.languages` của một tenant liệt kê chúng một cách tường minh. Tenant cũng có thể thu hẹp bộ chọn theo cùng cách: một mảng `languages` trong `branding.json` thay thế hoàn toàn danh sách mặc định (xem [Tùy chỉnh giao diện](branding)).
+
+Ngôn ngữ đang hoạt động được phản chiếu lên `<html lang>` và `<html dir>`, nên các ngôn ngữ viết phải sang trái (`ar`) tự động lật thẻ xác thực, kể cả khi ngôn ngữ được chuyển tại chỗ qua bộ chọn.
+
 ### Phat hien ngon ngu
 
 Thu tu phat hien la:
@@ -89,7 +97,7 @@ Cac tep JSON dich duoc dong goi cung ung dung tai `login-app/src/i18n/`:
 
 ```
 i18n/
-  index.ts        # i18n initialization
+  index.ts        # i18n initialization + the LANGUAGES registry
   en.json         # English
   zh-Hans.json    # Simplified Chinese
   de.json         # German
@@ -97,12 +105,15 @@ i18n/
   es.json         # Spanish
   vi.json         # Vietnamese
   pt.json         # Portuguese
-  tlh.json        # Klingon
+  ar.json         # Arabic
+  af.json         # Afrikaans
+  hi.json         # Hindi
+  tlh.json        # Klingon (novelty)
 ```
 
 ### Nhan chinh sach mat khau
 
-Giao dien dang nhap dich cac nhan yeu cau mat khau phia may khach dua tren khoa `rule` duoc tra ve boi `GET /api/auth/password-policy`, thay vi su dung truong `label` do may chu cung cap. Dieu nay dam bao cac yeu cau mat khau luon duoc hien thi bang ngon ngu trinh duyet cua nguoi dung, ngay ca khi tieu de `Accept-Language` cua may chu khac.
+Trang đặt lại mật khẩu dịch danh sách kiểm tra yêu cầu mật khẩu của nó phía máy khách dựa trên khóa `rule` được trả về bởi `GET /api/auth/password-policy` (rơi về `label` do máy chủ cung cấp với các rule không nhận diện được). Điều này đảm bảo các yêu cầu đi theo ngôn ngữ được chọn trong giao diện, ngay cả khi tiêu đề `Accept-Language` của trình duyệt khác đi. Trang đăng ký hiển thị các giá trị `label` do máy chủ cung cấp, vốn được bản địa hóa từ `Accept-Language`.
 
 ### Nguoi dung goi npm
 
@@ -117,7 +128,7 @@ i18n.changeLanguage('de');
 
 ## Tai lieu
 
-Trang tai lieu su dung cach tiep can dua tren thu muc. Cac trang tieng Anh nam o thu muc goc va cac ban dich nam trong cac thu muc con theo ngon ngu (`/zh-Hans/`, `/de/`, `/fr/`, `/es/`). Mot menu tha xuong chuyen doi ngon ngu trong thanh ben cho phep chuyen doi giua cac ngon ngu.
+Trang tai lieu su dung cach tiep can dua tren thu muc. Cac trang tieng Anh nam o thu muc goc va cac ban dich nam trong cac thu muc con theo ngon ngu (`/zh-Hans/`, `/de/`, `/fr/`, `/es/`, `/vi/`, `/pt/`). Mot menu tha xuong chuyen doi ngon ngu trong thanh ben cho phep chuyen doi giua cac ngon ngu.
 
 ## Them ngon ngu moi
 
@@ -145,13 +156,13 @@ Tao tep JSON dich moi bang cach sao chep `en.json` va dich cac gia tri:
 login-app/src/i18n/ja.json
 ```
 
-Dang ky trong `login-app/src/i18n/index.ts`:
+Đăng ký nó trong mảng `LANGUAGES` tại `login-app/src/i18n/index.ts`. Một mục duy nhất đó vừa đăng ký tài nguyên i18next vừa thêm ngôn ngữ vào mọi bộ chọn:
 
 ```typescript
 import ja from './ja.json';
 
-// In the resources object:
-ja: { translation: ja },
+// In the LANGUAGES array:
+{ code: 'ja', label: '日本語', resource: ja },
 ```
 
 ### 3. Tai lieu

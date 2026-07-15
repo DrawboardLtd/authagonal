@@ -14,7 +14,7 @@ Telechargez et executez l'image preconstruite :
 docker run -p 8080:8080 \
   -e Storage__ConnectionString="your-connection-string" \
   -e Issuer="https://auth.example.com" \
-  authagonal
+  drawboardci/authagonal
 ```
 
 ## Docker Compose
@@ -50,7 +50,7 @@ docker compose up
 ### Prerequis
 
 - .NET 10 SDK
-- Node.js 22+
+- Node.js 24+
 
 ### Compilation
 
@@ -83,8 +83,10 @@ Referencez les packages Authagonal dans votre propre projet ASP.NET Core :
 
 ```xml
 <PackageReference Include="Authagonal.Server" Version="x.y.z" />
-<PackageReference Include="Authagonal.Storage" Version="x.y.z" />
+<PackageReference Include="Authagonal.AzureProvider" Version="x.y.z" />
 ```
+
+Le package du fournisseur de stockage est interchangeable : `Authagonal.AzureProvider` pour Azure Table Storage (le cablage par defaut de `AddAuthagonal()`), ou `Authagonal.AwsProvider` pour DynamoDB / S3 / Secrets Manager, voir [backend AWS](#aws-backend) ci-dessous.
 
 Puis composez-le dans votre `Program.cs` :
 
@@ -101,6 +103,29 @@ app.Run();
 ```
 
 Consultez [Extensibilite](extensibility) pour tous les points de substitution et [demos/custom-server/](https://github.com/authagonal/authagonal/tree/master/demos/custom-server) pour un exemple complet.
+
+### Email
+
+L'expediteur [Resend](https://resend.com) integre s'active automatiquement lorsque `Email:ResendApiKey` et `Email:SenderEmail` sont configures, sans enregistrement de service. Sans aucun `IEmailService`, les emails de verification et de reinitialisation de mot de passe sont **ignores silencieusement**, et comme la connexion exige un email confirme par defaut, les utilisateurs auto-inscrits ne peuvent jamais se connecter (`UseAuthagonal` journalise un avertissement au demarrage). Definissez les cles `Email:*`, enregistrez votre propre `IEmailService` avant `AddAuthagonal()`, ou listez vos domaines dans `Auth:AutoConfirmEmailDomains` pour ignorer la verification (dev/test uniquement). Voir [Configuration → Email](configuration#email).
+
+## Backend AWS
+
+Pour executer sur AWS plutot que sur Azure, referencez `Authagonal.AwsProvider` et enregistrez le bundle AWS **avant** `AddAuthagonal()` : ce sont ces enregistrements qui font que `AddAuthagonal()` ignore son cablage Azure Table Storage :
+
+```csharp
+using Authagonal.AwsProvider;
+
+builder.Services.AddAuthagonalAwsStorage(
+    dynamoDb,                // IAmazonDynamoDB — required
+    secretsManager,          // IAmazonSecretsManager — optional; replaces the plaintext ISecretProvider
+    s3,                      // IAmazonS3 — optional; used for DataProtection keys
+    "my-auth-keys-bucket");  // S3 bucket for the DataProtection key ring
+builder.Services.AddAuthagonal(builder.Configuration);
+```
+
+Les tables DynamoDB refletent la disposition Azure une pour une et sont garanties au demarrage (idempotent : sans effet lorsqu'elles sont deja provisionnees par Terraform). Les identifiants sont resolus via la chaine AWS standard (env / role d'instance EC2 / IRSA), il n'y a donc pas de distinction chaine-de-connexion contre identite-geree : aucune configuration `Storage:*` n'est necessaire.
+
+> ⚠️ **Cles S3 DataProtection.** Sans client S3 + bucket, le trousseau de cles ASP.NET Core Data Protection est conserve en memoire, ce qui convient pour un noeud unique en dev, mais les cookies et les jetons antiforgery cessent de fonctionner apres un redemarrage et entre les noeuds en production. Passez toujours le client S3 et le bucket pour un deploiement AWS de production.
 
 ## SPA de connexion (npm)
 
@@ -119,7 +144,7 @@ Avant d'exposer Authagonal a du trafic reel, verifiez les points suivants. Chaqu
 - **Executez derriere un proxy terminant le TLS.** Authagonal doit etre place derriere un reverse proxy / ingress qui termine le TLS. Le cookie de session utilise `SecurePolicy = SameAsRequest` et HSTS n'est emis que sur HTTPS, le proxy doit donc transferer `X-Forwarded-Proto: https`. Definissez `ForwardedHeaders:KnownNetworks` (ou `KnownProxies`) sur le CIDR de votre ingress / de vos pods afin que l'IP du client et le schema ne puissent pas etre usurpes ; `ForwardedHeaders:ForwardLimit` vaut `1` par defaut (ne faire confiance qu'au dernier saut).
 - **Definissez `SecretProvider:VaultUri`.** Le fournisseur de secrets par defaut est **en texte brut** — sans Key Vault, les secrets des clients OIDC en amont et les graines TOTP / MFA sont stockes en clair dans Table Storage (et dans les sauvegardes). Configurez Key Vault pour tout deploiement en production.
 - **Verrouillez l'API d'administration.** `AdminApi:Enabled` vaut **true** par defaut. Le scope d'administration (`AdminApi:Scope`, par defaut `authagonal-admin`) accorde la gestion complete et l'usurpation d'identite des utilisateurs. Restreignez l'acces reseau aux routes d'administration `/api/v1/*` et controlez strictement a qui le scope d'administration est emis, ou definissez `AdminApi:Enabled = false` s'il n'est pas utilise.
-- **Protegez les points d'acces internes.** Definissez `Cluster:Secret` pour que `/_internal/cluster/gossip` et `/_internal/backchannel-logout` exigent l'en-tete `X-Cluster-Secret` — en particulier lorsque le gossip est achemine via un equilibreur de charge avec `Cluster:InternalUrl`.
+- **Protegez les points d'acces internes.** Definissez `Cluster:Secret` pour que le point d'acces interne `/_internal/backchannel-logout` exige l'en-tete `X-Cluster-Secret` (compare en temps constant). Lorsqu'il n'est pas defini, il n'accepte que les IP source de boucle locale / privees (RFC 1918 / lien-local / ULA) : assurez-vous que la confiance des en-tetes transferes est configuree pour qu'un appelant externe ne puisse pas paraitre interne.
 - **Chiffrez les sauvegardes.** Avec le fournisseur de secrets en texte brut, les sauvegardes contiennent des secrets. La table `SigningKeys` est exclue des sauvegardes par defaut ; si vous l'activez via `Backup:IncludeSigningKeys`, la cible de sauvegarde doit etre chiffree au repos. Voir [Sauvegarde et restauration](backup-restore).
 
 ## Outil de migration

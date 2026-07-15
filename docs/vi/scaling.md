@@ -10,7 +10,7 @@ Authagonal được thiết kế để mở rộng cả theo chiều dọc và c
 
 ## Không trạng thái theo thiết kế
 
-Tất cả trạng thái bền vững được lưu trữ trong Azure Table Storage. Không có trạng thái trong tiến trình nào yêu cầu sticky session hoặc phối hợp giữa các instance:
+Tất cả trạng thái bền vững được lưu trữ trong table store nền tảng: Azure Table Storage, hoặc DynamoDB trên backend AWS. Không có trạng thái trong tiến trình nào yêu cầu sticky session hoặc phối hợp giữa các instance:
 
 - **Khóa ký** — được tải từ Table Storage, làm mới mỗi giờ
 - **Mã ủy quyền và refresh token** — được lưu trong Table Storage với cơ chế sử dụng một lần
@@ -24,7 +24,7 @@ Các khóa Data Protection của ASP.NET Core được tự động lưu trữ b
 
 Đối với phát triển local với Azurite, các khóa Data Protection sẽ sử dụng phương thức lưu trữ dựa trên tệp mặc định.
 
-Bạn cũng có thể chỉ định một blob URI cụ thể thông qua cấu hình:
+Bạn cũng có thể chỉ định một blob URI cụ thể thông qua cấu hình (đường dẫn managed-identity, được ưu tiên trong production):
 
 ```json
 {
@@ -33,6 +33,8 @@ Bạn cũng có thể chỉ định một blob URI cụ thể thông qua cấu h
   }
 }
 ```
+
+Trên backend AWS, hãy truyền một S3 client + bucket cho `AddAuthagonalAwsStorage` để lưu bền vững vòng khóa vào S3; nếu không có nó, vòng khóa nằm trong bộ nhớ và cookie sẽ hỏng khi khởi động lại và giữa các node. Xem [Cài đặt → Backend AWS](installation#aws-backend).
 
 ## Bộ nhớ đệm theo instance
 
@@ -48,56 +50,42 @@ Các bộ nhớ đệm này phù hợp cho môi trường production. Tất cả
 
 ## Giới hạn tốc độ
 
-Các endpoint đăng ký được bảo vệ bởi bộ giới hạn tốc độ phân tán tích hợp sẵn (5 lượt đăng ký mỗi IP mỗi giờ). Khi chạy nhiều instance, số lượt giới hạn tốc độ được tự động chia sẻ giữa tất cả các instance thông qua giao thức gossip — không cần phối hợp bên ngoài.
+Các endpoint dễ bị lạm dụng (đăng ký theo IP, đặt lại mật khẩu theo email đích, SCIM theo client, đăng ký client động theo IP, xem [Cấu hình → Giới hạn tốc độ](configuration#giới-hạn-tốc-độ)) được bảo vệ bởi một bộ giới hạn tốc độ tích hợp sẵn.
 
-### Cách hoạt động
+Các giới hạn được thực thi **trong tiến trình trên mỗi node** phía sau seam `IRateLimiter`, nên với N instance thì trần hiệu dụng là N× giá trị được cấu hình. Điều đó là có chủ đích: bộ giới hạn là một phương án dự phòng chống lại việc lạm dụng mất kiểm soát một node đơn lẻ, còn giới hạn toàn cục có thẩm quyền thuộc về biên (WAF / ingress / CDN), nơi thấy toàn bộ lưu lượng trước khi nó được cân bằng tải.
 
-Mỗi instance duy trì bộ đếm riêng trong bộ nhớ bằng CRDT G-Counter. Các instance phát hiện lẫn nhau qua UDP multicast và trao đổi trạng thái qua HTTP mỗi vài giây. Tổng số hợp nhất trên tất cả các instance được sử dụng để đưa ra quyết định giới hạn tốc độ.
+## Clustering
 
-Điều này có nghĩa là giới hạn tốc độ được thực thi trên toàn cục: nếu một client truy cập 3 instance khác nhau, cả 3 đều biết tổng số là 3, không phải mỗi instance là 1.
+Nhiều instance phối hợp thông qua một **cuộc bầu chọn leader** và một **event bus xuyên node**, cả hai đều nằm phía sau các backend có thể thay thế:
 
-### Định danh node
+- **Bầu chọn leader**: một cuộc bầu chọn dựa trên lease (`Cluster:LeaseTtlSeconds`, mặc định 30s, được gia hạn ở khoảng nửa khoảng thời gian đó). Đúng một node giữ lease; quyền leader được chuyển giao tự động khi leader ngừng hoạt động. Công việc do-leader-đảm-nhận (hiện tại là xoay vòng khóa ký, khi được bật) chỉ chạy trên leader để tránh việc sinh khóa đồng thời.
+- **Event bus**: các thông báo xuyên node (ví dụ vô hiệu hóa cache trong các host đa tenant), được thăm dò mỗi `Cluster:PollIntervalSeconds` (mặc định 3s).
 
-Mỗi instance tạo một ID node hex ngẫu nhiên khi khởi động (ví dụ: `a3f1b2`). ID này xác định instance trong các thông điệp gossip và trạng thái giới hạn tốc độ. Nó không được lưu trữ bền vững — một ID mới được tạo mỗi lần khởi động lại.
+Mỗi instance tạo một ID node ngẫu nhiên 12 ký tự hex khi khởi động để tự định danh; nó không được lưu trữ bền vững.
 
-Một `ClusterLeaderService` chạy trên mỗi instance, bầu chọn một leader duy nhất trong số các peer được phát hiện (ID node thấp nhất thắng). Quyền leader được chuyển giao tự động khi leader ngừng hoạt động. Leader được sử dụng cho việc phối hợp trên toàn cụm — hiện tại, xoay vòng khóa ký (khi được bật) chỉ chạy trên leader để tránh việc sinh khóa đồng thời.
+### Backends
 
-### Cấu hình cluster
+**Mặc định là trong tiến trình**: một node đơn luôn là leader của chính nó, và các sự kiện chỉ mang tính cục bộ, đúng cho một instance với không cấu hình. Các triển khai đa node thay bằng một backend thực qua callback `configureClustering` trên `AddAuthagonal`:
 
-Clustering được **bật mặc định** mà không cần cấu hình. Các instance trên cùng mạng tự động phát hiện lẫn nhau qua UDP multicast (`239.42.42.42:19847`).
+```csharp
+// Azure: leadership via a blob lease, event bus via a table log (Authagonal.AzureProvider)
+builder.Services.AddAuthagonal(builder.Configuration,
+    cluster => cluster.UseAzureStorage(blobServiceClient, tableServiceClient));
 
-Đối với các môi trường không hỗ trợ multicast (một số cloud VPC), hãy cấu hình một URL nội bộ có cân bằng tải làm phương án dự phòng:
-
-```json
-{
-  "Cluster": {
-    "InternalUrl": "http://authagonal-auth.svc.cluster.local:8080",
-    "Secret": "shared-secret-here"
-  }
-}
+// AWS: leadership + event bus via DynamoDB (Authagonal.AwsProvider)
+builder.Services.AddAuthagonal(builder.Configuration,
+    cluster => cluster.UseAwsDynamo(dynamoDb));
 ```
 
-Để tắt hoàn toàn clustering (giới hạn tốc độ chỉ trên local):
+`UseAzureStorageBus` / `UseAwsDynamoBus` chỉ đăng ký event bus, giữ lại lease trong tiến trình (luôn-là-leader); hãy dùng chúng trên các node phải nhận các sự kiện cụm nhưng không bao giờ được tranh giành quyền leader.
 
-```json
-{
-  "Cluster": {
-    "Enabled": false
-  }
-}
-```
+> **Lưu ý:** với mặc định trong tiến trình trên nhiều node, *mọi* node đều tin rằng mình là leader. Điều đó vô hại với hầu hết khối lượng công việc, nhưng hãy bật một backend lease thực trước khi bật `Auth:KeyRotationEnabled` trên nhiều instance.
 
-Xem trang [Cấu hình](configuration) để biết tất cả các thiết lập cluster.
-
-### Suy giảm mềm
-
-- **Không tìm thấy peer** — hoạt động như bộ giới hạn tốc độ chỉ trên local (mỗi instance thực thi giới hạn riêng)
-- **Peer không thể truy cập** — trạng thái được biết cuối cùng của peer đó vẫn được sử dụng; các peer cũ được loại bỏ sau 30 giây
-- **Multicast không khả dụng** — phát hiện thất bại trong im lặng; gossip chuyển sang sử dụng `InternalUrl` nếu đã được cấu hình
+Xem trang [Cấu hình](configuration#cluster) để biết tất cả các thiết lập cluster.
 
 ### Triển khai đa tenant
 
-Trong chế độ đa tenant (`AddAuthagonalCore()`), các dịch vụ nền như `GrantReconciliationService` và `SigningKeyRotationService` không được đăng ký — host quản lý chúng theo từng tenant. Chỉ `TokenCleanupService` chạy vô điều kiện.
+Trong chế độ đa tenant (`AddAuthagonalCore()`), không có dịch vụ nền nào được đăng ký: `TokenCleanupService`, `GrantReconciliationService`, `SigningKeyRotationService`, và các dịch vụ seed cấu hình đều là một phần của thành phần đơn tenant `AddAuthagonal()`. Host quản lý chúng theo từng tenant.
 
 ## Phân vùng nóng của chỉ mục tên
 
@@ -108,7 +96,7 @@ Tìm kiếm theo tiền tố tên trong trang quản trị được hỗ trợ b
 Khi chạy nhiều instance phía sau một bộ cân bằng tải:
 
 - **Forwarded headers** — giới hạn tốc độ và khóa tài khoản lập khóa dựa trên IP của client, được phân giải từ `X-Forwarded-For`. Hãy đặt `ForwardedHeaders:KnownNetworks` thành CIDR của ingress / pod của bạn để IP của client không thể bị giả mạo giữa các instance. `ForwardedHeaders:ForwardLimit` mặc định là `1`. Xem [Cấu hình](configuration#forwarded-headers-proxy-tin-cậy).
-- **Các endpoint nội bộ** — `/_internal/cluster/gossip` và `/_internal/backchannel-logout` được bảo vệ bằng IP nguồn (chỉ loopback / riêng tư) trừ khi `Cluster:Secret` được đặt. Khi gossip được định tuyến qua một bộ cân bằng tải (`Cluster:InternalUrl`), LB ghi đè IP nguồn, nên hãy đặt `Cluster:Secret` và người gọi gossip sẽ xuất trình nó trong header `X-Cluster-Secret`.
+- **Các endpoint nội bộ**: `/_internal/backchannel-logout` được bảo vệ bằng IP nguồn (chỉ loopback / riêng tư) trừ khi `Cluster:Secret` được đặt, trong trường hợp đó người gọi phải xuất trình bí mật trong header `X-Cluster-Secret` (so sánh trong thời gian hằng số). Hãy đặt bí mật mỗi khi lưu lượng nội bộ được định tuyến qua bất cứ thứ gì ghi đè IP nguồn.
 
 ## Khuyến nghị mở rộng quy mô
 

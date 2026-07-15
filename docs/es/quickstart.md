@@ -70,6 +70,8 @@ http://localhost:8080/connect/authorize
 
 El usuario ve la pagina de inicio de sesion, se autentica y es redirigido con un codigo de autorizacion.
 
+> **Primer usuario:** registre uno en `http://localhost:8080/login/register`, o cree uno mediante la [API de administracion](admin-api). El autorregistro envia un correo de verificacion y, sin un remitente de correo configurado (el valor predeterminado local), ese correo se descarta, asi que para pruebas locales establezca `Auth__AutoConfirmEmailDomains__0=example.dev` (cualquier dominio con el que se registre) para omitir la verificacion, o configure `Email:ResendApiKey` + `Email:SenderEmail`. Consulte [Configuracion → Email](configuration#email).
+
 ## 5. Intercambiar el codigo
 
 ```bash

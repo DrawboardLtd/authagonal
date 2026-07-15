@@ -70,6 +70,8 @@ http://localhost:8080/connect/authorize
 
 用户将看到登录页面，完成认证后被重定向回来，携带授权码。
 
+> **第一个用户：** 在 `http://localhost:8080/login/register` 注册一个，或通过 [管理 API](admin-api) 创建。自助注册会发送一封验证邮件，而在未配置邮件发送器时（本地默认情况），该邮件会被丢弃 -- 因此在本地测试时，可设置 `Auth__AutoConfirmEmailDomains__0=example.dev`（填入您注册时使用的任意域名）以跳过验证，或配置 `Email:ResendApiKey` + `Email:SenderEmail`。参见 [配置 → 邮件](configuration#email)。
+
 ## 5. 兑换授权码
 
 ```bash

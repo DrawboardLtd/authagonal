@@ -43,12 +43,12 @@ Add a front-channel logout URI to the `OAuthClient` record:
 When the browser visits `/connect/endsession`:
 
 1. The server finds all clients the user currently has grants with.
-2. For each client with a `FrontChannelLogoutUri`, the server builds a URL — appending `iss=<issuer>` and `sid=<session_id>` if `FrontChannelLogoutSessionRequired` is `true`.
+2. For each client with a `FrontChannelLogoutUri`, the server builds a URL — appending `iss=<issuer>` (and `sid=<session_id>`, when the session has one) if `FrontChannelLogoutSessionRequired` is `true`.
 3. The server signs the user out of the authorization-server cookie, triggers back-channel logout notifications in the background, and returns an HTML page containing a hidden `<iframe>` for each client logout URL:
    ```html
    <iframe src="https://myapp.example.com/oidc/frontchannel?iss=https%3A%2F%2Fauth.example.com&sid=abc123" style="display:none"></iframe>
    ```
-4. After a 2-second grace period, the browser is redirected to `post_logout_redirect_uri` (if supplied and validated) or shown a "signed out" confirmation.
+4. After a 2-second grace period, the browser is redirected to `post_logout_redirect_uri` — honored only when the request also carries an `id_token_hint` identifying the client and the URI is in that client's registered `PostLogoutRedirectUris` (a `state` parameter, if supplied, is appended to the redirect). Otherwise a "signed out" confirmation is shown.
 
 ## Client-Side Logout Handler
 

@@ -6,19 +6,23 @@ locale: zh-Hans
 
 # 本地化
 
-Authagonal 开箱即支持八种语言：英语、简体中文 (`zh-Hans`)、德语 (`de`)、法语 (`fr`)、西班牙语 (`es`)、越南语 (`vi`)、葡萄牙语 (`pt`) 和克林贡语 (`tlh`)。本地化涵盖服务器 API 响应、登录界面以及本文档站点。
+登录界面开箱即支持十一种语言/区域设置：英语、简体中文 (`zh-Hans`)、德语 (`de`)、法语 (`fr`)、西班牙语 (`es`)、越南语 (`vi`)、葡萄牙语 (`pt`)、阿拉伯语 (`ar`)、南非荷兰语 (`af`)、印地语 (`hi`)，以及作为趣味区域设置的克林贡语 (`tlh`)。服务器 API 响应对其中前七种进行本地化。本地化涵盖服务器 API 响应、登录界面以及本文档站点。
 
 ## 支持的语言
 
-| 代码 | 语言 |
-|---|---|
-| `en` | 英语（默认） |
-| `zh-Hans` | 简体中文 |
-| `de` | 德语 |
-| `fr` | 法语 |
-| `es` | 西班牙语 |
-| `vi` | 越南语 |
-| `pt` | 葡萄牙语 |
+| 代码 | 语言 | 登录界面 | 服务器 API |
+|---|---|---|---|
+| `en` | 英语（默认） | ✓ | ✓ |
+| `zh-Hans` | 简体中文 | ✓ | ✓ |
+| `de` | 德语 | ✓ | ✓ |
+| `fr` | 法语 | ✓ | ✓ |
+| `es` | 西班牙语 | ✓ | ✓ |
+| `vi` | 越南语 | ✓ | ✓ |
+| `pt` | 葡萄牙语 | ✓ | ✓ |
+| `ar` | 阿拉伯语（从右到左） | ✓ | — |
+| `af` | 南非荷兰语 | ✓ | — |
+| `hi` | 印地语 | ✓ | — |
+| `tlh` | 克林贡语（趣味） | ✓ | — |
 
 ## 服务器（API 响应）
 
@@ -74,6 +78,10 @@ Resources/
 
 登录单页应用使用 [react-i18next](https://react.i18next.com/) 进行客户端本地化。语言根据浏览器的 `navigator.language` 设置自动检测。
 
+已注册的语言/区域设置集中在 `login-app/src/i18n/index.ts` 中的单个 `LANGUAGES` 注册表内，它同时驱动 i18next 资源注册和每个语言选择器，因此两者不会出现偏差。标记为 `novelty` 的区域设置（目前是 `tlh`）仍完全可用（`?lng=tlh` 有效），但会从默认选择器中排除；只有当某个租户的 `BrandingConfig.languages` 显式列出它们时，它们才会出现在下拉菜单中。租户也可以用同样的方式收窄选择器：`branding.json` 中的 `languages` 数组会完全替换默认列表（参见 [品牌定制](branding)）。
+
+当前语言会同步反映到 `<html lang>` 和 `<html dir>` 上，因此从右到左的语言（`ar`）会自动翻转认证卡片，包括通过选择器就地切换语言时。
+
 ### 语言检测
 
 检测顺序如下：
@@ -89,7 +97,7 @@ Resources/
 
 ```
 i18n/
-  index.ts        # i18n initialization
+  index.ts        # i18n initialization + the LANGUAGES registry
   en.json         # English
   zh-Hans.json    # Simplified Chinese
   de.json         # German
@@ -97,12 +105,15 @@ i18n/
   es.json         # Spanish
   vi.json         # Vietnamese
   pt.json         # Portuguese
-  tlh.json        # Klingon
+  ar.json         # Arabic
+  af.json         # Afrikaans
+  hi.json         # Hindi
+  tlh.json        # Klingon (novelty)
 ```
 
 ### 密码策略标签
 
-登录界面根据 `GET /api/auth/password-policy` 返回的 `rule` 键在客户端翻译密码要求标签，而不是使用服务器提供的 `label` 字段。这确保密码要求始终以用户浏览器的语言显示，即使服务器的 `Accept-Language` 头不同。
+重置密码页面根据 `GET /api/auth/password-policy` 返回的 `rule` 键在客户端翻译其密码要求清单（对无法识别的规则回退到服务器提供的 `label`）。这确保要求遵循 UI 中所选的语言，即使浏览器的 `Accept-Language` 头不同。注册页面显示服务器提供的 `label` 值，这些值根据 `Accept-Language` 进行本地化。
 
 ### npm 包使用者
 
@@ -117,7 +128,7 @@ i18n.changeLanguage('de');
 
 ## 文档
 
-文档站点采用基于目录的方式。英语页面位于根目录，翻译版本位于语言子目录中（`/zh-Hans/`、`/de/`、`/fr/`、`/es/`）。侧边栏中的语言切换下拉菜单允许在不同语言之间切换。
+文档站点采用基于目录的方式。英语页面位于根目录，翻译版本位于语言子目录中（`/zh-Hans/`、`/de/`、`/fr/`、`/es/`、`/vi/`、`/pt/`）。侧边栏中的语言切换下拉菜单允许在不同语言之间切换。
 
 ## 添加新语言
 
@@ -145,13 +156,13 @@ var supportedCultures = new[] { "en", "zh-Hans", "de", "fr", "es", "vi", "pt", "
 login-app/src/i18n/ja.json
 ```
 
-在 `login-app/src/i18n/index.ts` 中注册：
+在 `login-app/src/i18n/index.ts` 的 `LANGUAGES` 数组中注册。这一条目会注册 i18next 资源并将该语言添加到每个选择器：
 
 ```typescript
 import ja from './ja.json';
 
-// In the resources object:
-ja: { translation: ja },
+// In the LANGUAGES array:
+{ code: 'ja', label: '日本語', resource: ja },
 ```
 
 ### 3. 文档

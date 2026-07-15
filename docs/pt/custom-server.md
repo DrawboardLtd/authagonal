@@ -18,7 +18,7 @@ cd MyAuthServer
 
 # Add Authagonal packages (or project references for source builds)
 dotnet add package Authagonal.Server
-dotnet add package Authagonal.Storage
+dotnet add package Authagonal.AzureProvider
 ```
 
 Seu arquivo `.csproj` deve conter:
@@ -26,9 +26,11 @@ Seu arquivo `.csproj` deve conter:
 ```xml
 <ItemGroup>
   <PackageReference Include="Authagonal.Server" Version="*" />
-  <PackageReference Include="Authagonal.Storage" Version="*" />
+  <PackageReference Include="Authagonal.AzureProvider" Version="*" />
 </ItemGroup>
 ```
+
+`Authagonal.AzureProvider` fornece os stores do Azure Table Storage que o `AddAuthagonal` configura a partir da configuração `Storage:*`. Para hospedar na AWS, referencie `Authagonal.AwsProvider` e chame `AddAuthagonalAwsStorage(...)` antes de `AddAuthagonal`; consulte [Instalação → Backend AWS](installation#aws-backend).
 
 ### Configurar Program.cs
 
@@ -93,7 +95,7 @@ Registre suas implementações **antes** de chamar `AddAuthagonal()` -- o Authag
 
 | Interface | Finalidade | Padrão |
 |---|---|---|
-| `IEmailService` | Enviar e-mails de verificação e redefinição de senha | No-op (descarta silenciosamente) |
+| `IEmailService` | Enviar e-mails de verificação e redefinição de senha | Remetente Resend integrado quando `Email:ResendApiKey` está definido; caso contrário, no-op (descarta silenciosamente) |
 | `IAuthHook` | Interceptar ou auditar eventos de login, registro e token | Sem operação |
 | `IProvisioningOrchestrator` | Provisionar usuários em aplicações downstream no momento da autorização | Provisionamento TCC |
 | `ISecretProvider` | Resolver segredos de cliente | Texto simples (ou Key Vault com `SecretProvider:VaultUri`) |
@@ -101,6 +103,7 @@ Registre suas implementações **antes** de chamar `AddAuthagonal()` -- o Authag
 #### Exemplo: hook de auditoria
 
 ```csharp
+using Authagonal.Core.Models;
 using Authagonal.Core.Services;
 
 public class AuditAuthHook(ILogger<AuditAuthHook> logger) : IAuthHook
@@ -132,8 +135,26 @@ public class AuditAuthHook(ILogger<AuditAuthHook> logger) : IAuthHook
         logger.LogInformation("Token issued: {ClientId} ({GrantType})", clientId, grantType);
         return Task.CompletedTask;
     }
+
+    public Task<MfaPolicy> ResolveMfaPolicyAsync(string userId, string email,
+        MfaPolicy clientPolicy, string clientId, CancellationToken ct = default)
+        => Task.FromResult(clientPolicy);
+
+    public Task OnMfaVerifiedAsync(string userId, string email,
+        string mfaMethod, CancellationToken ct = default)
+        => Task.CompletedTask;
+
+    public Task OnUserUpdatedAsync(string userId, string email,
+        string updatedVia, CancellationToken ct = default)
+        => Task.CompletedTask;
+
+    public Task OnUserDeletedAsync(string userId, string email,
+        string deletedVia, CancellationToken ct = default)
+        => Task.CompletedTask;
 }
 ```
+
+A interface tem outros membros opcionais com implementações padrão no-op (`OnMfaVerifyFailedAsync`, `OnEmailConfirmedAsync`, `OnMfaEnrolledAsync`, `OnMfaCredentialRemovedAsync`, `OnRecoveryCodesRegeneratedAsync`, `OnPasswordChangedAsync`); sobrescreva-os apenas se precisar desses eventos.
 
 #### Exemplo: serviço de e-mail
 
@@ -157,6 +178,8 @@ public class ConsoleEmailService(ILogger<ConsoleEmailService> logger) : IEmailSe
     }
 }
 ```
+
+> **E-mail é a armadilha de integração mais comum.** Se você não registrar nenhum `IEmailService` e não definir `Email:ResendApiKey`, os e-mails de verificação e redefinição de senha são descartados silenciosamente e, como a exigência de e-mail confirmado no login vem ativada por padrão, usuários auto-registrados nunca conseguem entrar (`UseAuthagonal` avisa na inicialização). O remetente Resend integrado é ativado automaticamente quando `Email:ResendApiKey` + `Email:SenderEmail` estão configurados; para dev/teste, `Auth:AutoConfirmEmailDomains` pula a verificação para os domínios listados. Consulte [Configuração → Email](configuration#email).
 
 ### Adicionar endpoints personalizados
 
@@ -223,7 +246,7 @@ import {
 
 // API clients — call from your custom pages
 import {
-  login, logout, ssoCheck, forgotPassword, resetPassword,
+  login, register, logout, ssoCheck, forgotPassword, resetPassword,
   getSession, getProviders, getPasswordPolicy,
   mfaVerify, mfaStatus, mfaTotpSetup, mfaTotpConfirm,
   mfaWebAuthnSetup, mfaWebAuthnConfirm, mfaRecoveryGenerate,
@@ -379,9 +402,13 @@ Configure a aparência da interface de login sem precisar reconstruir:
   "primaryColor": "#059669",
   "supportEmail": "support@example.com",
   "showForgotPassword": true,
+  "showRegistration": false,
+  "darkMode": "auto",
   "customCssUrl": "/custom.css"
 }
 ```
+
+O esquema completo, incluindo texto de boas-vindas localizado, a lista do seletor de idiomas e substituições por modo de cor e de fundo do logotipo (claro/escuro), está na página de [Marca](branding).
 
 ### Configuração do Vite
 

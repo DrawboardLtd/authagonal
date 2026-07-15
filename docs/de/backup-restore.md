@@ -21,10 +21,10 @@ dotnet run --project tools/Authagonal.Backup -- \
 |---|---|
 | `--connection-string <conn>` | Azure Table Storage-Verbindungszeichenfolge (oder die Umgebungsvariable `STORAGE_CONNECTION_STRING` setzen) |
 | `--output <dir>` | Ausgabeverzeichnis (Standard: `./backups`) |
-| `--incremental` | Nur Entitaeten sichern, die seit der letzten Sicherung geaendert wurden |
+| `--incremental` | Nur Entitaeten sichern, die seit der letzten Sicherung geändert wurden |
 | `--tables <t1,t2,...>` | Kommagetrennte Liste von Tabellen (Standard: alle Authagonal-Tabellen) |
 | `--gzip` | Sicherungsdateien mit gzip komprimieren (`.jsonl.gz`) |
-| `--dry-run` | Zeigt an, was gesichert wuerde, ohne zu schreiben |
+| `--dry-run` | Zeigt an, was gesichert würde, ohne zu schreiben |
 
 ### Ausgabeformat
 
@@ -43,31 +43,31 @@ backups/
     _manifest.json
 ```
 
-Jede `.jsonl`-Datei enthaelt ein JSON-Objekt pro Zeile (eines pro Tabellenentitaet). Mit `--gzip` werden Dateien als `.jsonl.gz` komprimiert. Die Datei `_manifest.json` zeichnet den Sicherungszeitstempel, den Modus, die Komprimierung, die Anzahl der Entitaeten und SHA-256-Dateihashes zur Integritaetspruefung auf.
+Jede `.jsonl`-Datei enthält ein JSON-Objekt pro Zeile (eines pro Tabellenentitaet). Mit `--gzip` werden Dateien als `.jsonl.gz` komprimiert. Die Datei `_manifest.json` zeichnet den Sicherungszeitstempel, den Modus, die Komprimierung, die Anzahl der Entitaeten und SHA-256-Dateihashes zur Integritaetspruefung auf.
 
 ### Integritaetspruefung
 
-Jedes Sicherungsmanifest enthaelt ein `FileHashes`-Verzeichnis, das Dateinamen ihren SHA-256-Hashes zuordnet. Waehrend der Wiederherstellung wird die Dateiintegritaet automatisch anhand dieser Hashes verifiziert, bevor Daten geschrieben werden. Wird eine Hash-Abweichung erkannt, bricht die Wiederherstellung mit einem Fehler ab.
+Jedes Sicherungsmanifest enthält ein `FileHashes`-Verzeichnis, das Dateinamen ihren SHA-256-Hashes zuordnet. Während der Wiederherstellung wird die Dateiintegritaet automatisch anhand dieser Hashes verifiziert, bevor Daten geschrieben werden. Wird eine Hash-Abweichung erkannt, bricht die Wiederherstellung mit einem Fehler ab.
 
 ### Inkrementelle Sicherungen
 
-Uebergeben Sie `--incremental`, um nur Entitaeten zu sichern, die seit der letzten erfolgreichen Sicherung geaendert wurden. Das Tool verwendet die integrierte `Timestamp`-Eigenschaft von Azure Table Storage zur Filterung und verfolgt den Hoechstwert in einer `.lastbackup`-Datei im Ausgabeverzeichnis.
+Übergeben Sie `--incremental`, um nur Entitaeten zu sichern, die seit der letzten erfolgreichen Sicherung geändert wurden. Das Tool verwendet die integrierte `Timestamp`-Eigenschaft von Azure Table Storage zur Filterung und verfolgt den Hoechstwert in einer `.lastbackup`-Datei im Ausgabeverzeichnis.
 
-Wenn keine `.lastbackup`-Datei existiert, fuehrt der erste inkrementelle Lauf eine vollstaendige Sicherung durch.
+Wenn keine `.lastbackup`-Datei existiert, führt der erste inkrementelle Lauf eine vollständige Sicherung durch.
 
 ### Standardtabellen
 
-Das Sicherungstool schliesst standardmaessig alle Authagonal-Tabellen ein:
+Das Sicherungstool schließt standardmäßig alle Authagonal-Tabellen ein:
 
 `Users`, `UserEmails`, `UserLogins`, `UserExternalIds`, `Clients`, `Grants`, `GrantsBySubject`, `GrantsByExpiry`, `SsoDomains`, `SamlProviders`, `OidcProviders`, `UserProvisions`, `MfaCredentials`, `MfaChallenges`, `MfaWebAuthnIndex`, `ScimTokens`, `ScimGroups`, `ScimGroupExternalIds`, `Roles`
 
-Transiente Tabellen (`SamlReplayCache`, `OidcStateStore`) sind standardmaessig ausgeschlossen — fuegen Sie diese bei Bedarf explizit mit `--tables` hinzu.
+Transiente Tabellen (`SamlReplayCache`, `OidcStateStore`) sind standardmäßig ausgeschlossen — fügen Sie diese bei Bedarf explizit mit `--tables` hinzu.
 
-### Signaturschluessel sind standardmaessig ausgeschlossen
+### Signaturschlüssel sind standardmäßig ausgeschlossen
 
-Die Tabelle `SigningKeys` ist **standardmaessig von Sicherungen ausgeschlossen** (`Backup:IncludeSigningKeys` ist standardmaessig `false`). Bei Hosts, die die lokale (in der Tabelle gespeicherte) Schluesselquelle verwenden, enthaelt diese Tabelle den **privaten** JWT-Signaturschluessel — ihn in eine Klartext-Sicherungsdatei zu schreiben, wuerde es jedem, der die Sicherung liest, ermoeglichen, Token zu faelschen. (Hosts, die ueber HashiCorp Vault Transit signieren, halten keinen privaten Schluessel in der Tabelle, sodass dieses Problem fuer sie nicht gilt.)
+Die Tabelle `SigningKeys` ist **standardmäßig von Sicherungen ausgeschlossen** (`Backup:IncludeSigningKeys` ist standardmäßig `false`). Bei Hosts, die die lokale (in der Tabelle gespeicherte) Schlüsselquelle verwenden, enthält diese Tabelle den **privaten** JWT-Signaturschlüssel — ihn in eine Klartext-Sicherungsdatei zu schreiben, würde es jedem, der die Sicherung liest, ermöglichen, Token zu faelschen. (Hosts, die über HashiCorp Vault Transit signieren, halten keinen privaten Schlüssel in der Tabelle, sodass dieses Problem für sie nicht gilt.)
 
-> ⚠️ Aktivieren Sie `Backup:IncludeSigningKeys` nur, wenn das Sicherungsziel selbst im Ruhezustand verschluesselt und zugriffskontrolliert ist. Dasselbe gilt fuer den Rest der Sicherung: Mit dem standardmaessigen **Klartext**-Geheimnis-Anbieter enthalten Sicherungen auch Geheimnisse von vorgelagerten OIDC-Clients sowie TOTP-/MFA-Seeds im Klartext — siehe [Konfiguration → Geheimnis-Anbieter](configuration#secret-provider).
+> ⚠️ Aktivieren Sie `Backup:IncludeSigningKeys` nur, wenn das Sicherungsziel selbst im Ruhezustand verschlüsselt und zugriffskontrolliert ist. Dasselbe gilt für den Rest der Sicherung: Mit dem standardmäßigen **Klartext**-Geheimnis-Anbieter enthalten Sicherungen auch Geheimnisse von vorgelagerten OIDC-Clients sowie TOTP-/MFA-Seeds im Klartext — siehe [Konfiguration → Geheimnis-Anbieter](configuration#secret-provider).
 
 Bei der Wiederherstellung wird die Dateiintegritaet anhand der SHA-256-Hashes des Manifests verifiziert, bevor Daten geschrieben werden (siehe [Integritaetspruefung](#integritaetspruefung)); eine Hash-Abweichung bricht die Wiederherstellung ab.
 
@@ -87,29 +87,29 @@ dotnet run --project tools/Authagonal.Restore -- \
 | `--input <dir>` | Sicherungsverzeichnis, aus dem wiederhergestellt werden soll |
 | `--mode <mode>` | Wiederherstellungsmodus: `upsert` (Standard), `merge` oder `clean` |
 | `--tables <t1,t2,...>` | Kommagetrennte Liste der wiederherzustellenden Tabellen (Standard: alle `.jsonl`/`.jsonl.gz`-Dateien in der Sicherung) |
-| `--dry-run` | Zeigt an, was wiederhergestellt wuerde, ohne zu schreiben |
+| `--dry-run` | Zeigt an, was wiederhergestellt würde, ohne zu schreiben |
 
 ### Wiederherstellungsmodi
 
 | Modus | Verhalten |
 |---|---|
-| `upsert` | Jede Entitaet einfuegen oder ersetzen. Vorhandene Daten werden ueberschrieben. |
-| `merge` | Einfuegen oder zusammenfuehren. Vorhandene Eigenschaften, die nicht in der Sicherung enthalten sind, bleiben erhalten. |
-| `clean` | Alle vorhandenen Daten in jeder Tabelle vor der Wiederherstellung loeschen. |
+| `upsert` | Jede Entitaet einfügen oder ersetzen. Vorhandene Daten werden überschrieben. |
+| `merge` | Einfügen oder zusammenfuehren. Vorhandene Eigenschaften, die nicht in der Sicherung enthalten sind, bleiben erhalten. |
+| `clean` | Alle vorhandenen Daten in jeder Tabelle vor der Wiederherstellung löschen. |
 
-Mit gzip komprimierte Sicherungsdateien (`.jsonl.gz`) werden automatisch erkannt und dekomprimiert — keine zusaetzlichen Flags erforderlich.
+Mit gzip komprimierte Sicherungsdateien (`.jsonl.gz`) werden automatisch erkannt und dekomprimiert — keine zusätzlichen Flags erforderlich.
 
 ### Exit-Codes
 
 | Code | Bedeutung |
 |---|---|
 | `0` | Erfolg |
-| `1` | Fehler (fehlende Argumente, ungueltige Eingabe) |
+| `1` | Fehler (fehlende Argumente, ungültige Eingabe) |
 | `2` | Teilerfolg (einige Entitaeten hatten Fehler) |
 
 ## Docker
 
-Fuer beide Tools sind Docker-Images verfuegbar, um sie in CI oder ohne installiertes .NET SDK auszufuehren:
+Für beide Tools sind Docker-Images verfügbar, um sie in CI oder ohne installiertes .NET SDK auszufuehren:
 
 ```bash
 # Backup
@@ -125,7 +125,7 @@ docker run --rm -v $(pwd)/backups:/backups \
 
 ## Sicherungen planen
 
-Fuer den Produktionseinsatz fuehren Sie das Sicherungstool nach einem Zeitplan aus (z. B. taeglich vollstaendig + stuendlich inkrementell):
+Für den Produktionseinsatz fuehren Sie das Sicherungstool nach einem Zeitplan aus (z. B. täglich vollständig + stuendlich inkrementell):
 
 ```bash
 # Daily full backup (compressed)

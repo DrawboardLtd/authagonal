@@ -19,13 +19,18 @@ locale: zh-Hans
 ## 核心功能
 
 - **OIDC 提供者** -- authorization_code + PKCE、client_credentials、带一次性轮换的 refresh_token 授权类型
-- **SAML 2.0 SP** -- 自研实现，全面支持 Azure AD（签名响应、断言或两者兼有）
+- **SAML 2.0 SP** -- 自研实现，全面支持 Azure AD（签名响应、断言或两者兼有）、用于签名 AuthnRequest 的按连接 SP 密钥对 + `EncryptedAssertion` 解密，以及单点登出（SP 发起和 IdP 发起）
 - **动态 OIDC 联合** -- 连接 Google、Apple、Azure AD 或任何符合 OIDC 标准的 IdP
+- **多因素认证** -- TOTP、WebAuthn/通行密钥、恢复码；按客户端的策略（`Disabled` / `Enabled` / `Required`），可通过 `IAuthHook` 进行按用户覆盖，联合登录同样强制执行
+- **SCIM 2.0 预配** -- 从 Entra ID、Okta、OneLogin 入站预配用户 / 组；游标分页列表和基于盲索引的 `eq` 过滤
+- **GDPR 自助服务** -- 从托管的账户页面导出数据并计划删除账户
 - **TCC 预配** -- 在授权时通过 Try-Confirm-Cancel 模式将用户预配到下游应用
-- **可定制登录界面** -- 通过 JSON 文件进行运行时配置 -- 徽标、颜色、自定义 CSS -- 无需重新构建
+- **可定制登录界面** -- 通过 JSON 文件进行运行时配置 -- 徽标、颜色、自定义 CSS -- 无需重新构建；已本地化为 10 种语言
 - **认证钩子** -- `IAuthHook` 扩展性，支持审计日志、自定义验证、Webhook
+- **PII 加密接缝** -- `IFieldCipher` / `IIndexTokenizer` 扩展点，用于静态字段级加密并支持带密钥的盲索引（HMAC）搜索；恢复码通过 `ISecretProvider` 加密
 - **可组合库** -- `AddAuthagonal()` / `UseAuthagonal()` 可在您自己的项目中托管，并支持自定义服务覆盖
 - **可插拔的云存储** -- Azure Table Storage 或 AWS（DynamoDB / S3 / Secrets Manager）；低成本、无服务器友好的后端
+- **备份与恢复** -- 增量备份（由变更日志驱动，并带全量扫描兜底）、完整性校验、基于墓碑的删除跟踪
 - **管理 API** -- 用户 CRUD、SAML/OIDC 提供者管理、SSO 域路由、令牌模拟
 
 ## 架构

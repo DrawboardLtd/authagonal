@@ -18,7 +18,7 @@ cd MyAuthServer
 
 # Add Authagonal packages (or project references for source builds)
 dotnet add package Authagonal.Server
-dotnet add package Authagonal.Storage
+dotnet add package Authagonal.AzureProvider
 ```
 
 Su archivo `.csproj` debe contener:
@@ -26,9 +26,11 @@ Su archivo `.csproj` debe contener:
 ```xml
 <ItemGroup>
   <PackageReference Include="Authagonal.Server" Version="*" />
-  <PackageReference Include="Authagonal.Storage" Version="*" />
+  <PackageReference Include="Authagonal.AzureProvider" Version="*" />
 </ItemGroup>
 ```
+
+`Authagonal.AzureProvider` proporciona los stores de Azure Table Storage que `AddAuthagonal` conecta a partir de la configuracion `Storage:*`. Para alojar en AWS en su lugar, referencie `Authagonal.AwsProvider` y llame a `AddAuthagonalAwsStorage(...)` antes de `AddAuthagonal`, ver [Instalacion → Backend de AWS](installation#aws-backend).
 
 ### Configurar Program.cs
 
@@ -93,7 +95,7 @@ Registre sus implementaciones **antes** de llamar a `AddAuthagonal()` -- Authago
 
 | Interfaz | Proposito | Predeterminado |
 |---|---|---|
-| `IEmailService` | Enviar correos de verificacion y restablecimiento de contrasena | No-op (descarta silenciosamente) |
+| `IEmailService` | Enviar correos de verificacion y restablecimiento de contrasena | Emisor Resend integrado cuando `Email:ResendApiKey` esta establecido; de lo contrario no-op (descarta silenciosamente) |
 | `IAuthHook` | Interceptar o auditar eventos de inicio de sesion, registro y token | Sin operacion |
 | `IProvisioningOrchestrator` | Aprovisionar usuarios en aplicaciones posteriores durante la autorizacion | Aprovisionamiento TCC |
 | `ISecretProvider` | Resolver secretos de cliente | Texto plano (o Key Vault con `SecretProvider:VaultUri`) |
@@ -101,6 +103,7 @@ Registre sus implementaciones **antes** de llamar a `AddAuthagonal()` -- Authago
 #### Ejemplo: hook de auditoria
 
 ```csharp
+using Authagonal.Core.Models;
 using Authagonal.Core.Services;
 
 public class AuditAuthHook(ILogger<AuditAuthHook> logger) : IAuthHook
@@ -132,8 +135,26 @@ public class AuditAuthHook(ILogger<AuditAuthHook> logger) : IAuthHook
         logger.LogInformation("Token issued: {ClientId} ({GrantType})", clientId, grantType);
         return Task.CompletedTask;
     }
+
+    public Task<MfaPolicy> ResolveMfaPolicyAsync(string userId, string email,
+        MfaPolicy clientPolicy, string clientId, CancellationToken ct = default)
+        => Task.FromResult(clientPolicy);
+
+    public Task OnMfaVerifiedAsync(string userId, string email,
+        string mfaMethod, CancellationToken ct = default)
+        => Task.CompletedTask;
+
+    public Task OnUserUpdatedAsync(string userId, string email,
+        string updatedVia, CancellationToken ct = default)
+        => Task.CompletedTask;
+
+    public Task OnUserDeletedAsync(string userId, string email,
+        string deletedVia, CancellationToken ct = default)
+        => Task.CompletedTask;
 }
 ```
+
+La interfaz tiene mas miembros opcionales con implementaciones predeterminadas no-op (`OnMfaVerifyFailedAsync`, `OnEmailConfirmedAsync`, `OnMfaEnrolledAsync`, `OnMfaCredentialRemovedAsync`, `OnRecoveryCodesRegeneratedAsync`, `OnPasswordChangedAsync`); sobreescribalas solo si necesita esos eventos.
 
 #### Ejemplo: servicio de correo electronico
 
@@ -157,6 +178,8 @@ public class ConsoleEmailService(ILogger<ConsoleEmailService> logger) : IEmailSe
     }
 }
 ```
+
+> **El correo electronico es la trampa de integracion mas comun.** Si no registra ningun `IEmailService` y no establece `Email:ResendApiKey`, los correos de verificacion y de restablecimiento de contrasena se descartan silenciosamente, y como la puerta de inicio de sesion de correo confirmado esta activada de forma predeterminada, los usuarios que se registran por si mismos nunca pueden iniciar sesion (`UseAuthagonal` avisa al inicio). El emisor Resend integrado se activa automaticamente cuando `Email:ResendApiKey` + `Email:SenderEmail` estan configurados; para dev/test, `Auth:AutoConfirmEmailDomains` omite la verificacion para los dominios listados. Ver [Configuracion → Correo](configuration#email).
 
 ### Agregar endpoints personalizados
 
@@ -223,7 +246,7 @@ import {
 
 // API clients — call from your custom pages
 import {
-  login, logout, ssoCheck, forgotPassword, resetPassword,
+  login, register, logout, ssoCheck, forgotPassword, resetPassword,
   getSession, getProviders, getPasswordPolicy,
   mfaVerify, mfaStatus, mfaTotpSetup, mfaTotpConfirm,
   mfaWebAuthnSetup, mfaWebAuthnConfirm, mfaRecoveryGenerate,
@@ -379,9 +402,13 @@ Configure la apariencia de la interfaz de inicio de sesion sin reconstruir:
   "primaryColor": "#059669",
   "supportEmail": "support@example.com",
   "showForgotPassword": true,
+  "showRegistration": false,
+  "darkMode": "auto",
   "customCssUrl": "/custom.css"
 }
 ```
+
+El esquema completo, incluidos el texto de bienvenida localizado, la lista del selector de idioma y las sustituciones de color y de fondo de logotipo por modo claro/oscuro, esta en la pagina de [Marca](branding).
 
 ### Configuracion de Vite
 

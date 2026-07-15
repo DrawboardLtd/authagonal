@@ -10,7 +10,7 @@ Authagonal 设计为无需特殊配置即可进行垂直和水平扩展。
 
 ## 无状态设计
 
-所有持久化状态存储在 Azure Table Storage 中。没有需要粘性会话或实例间协调的进程内状态：
+所有持久化状态存储在后端表存储中——Azure Table Storage，或 AWS 后端上的 DynamoDB。没有需要粘性会话或实例间协调的进程内状态：
 
 - **签名密钥** — 从 Table Storage 加载，每小时刷新
 - **授权码和刷新令牌** — 存储在 Table Storage 中，并强制单次使用
@@ -24,7 +24,7 @@ ASP.NET Core 的 Data Protection 密钥在使用真实 Azure Storage 连接字�
 
 对于使用 Azurite 的本地开发，Data Protection 密钥会回退到默认的基于文件的存储。
 
-您也可以通过配置指定显式的 blob URI：
+您也可以通过配置指定显式的 blob URI（托管标识路径，生产环境首选）：
 
 ```json
 {
@@ -33,6 +33,8 @@ ASP.NET Core 的 Data Protection 密钥在使用真实 Azure Storage 连接字�
   }
 }
 ```
+
+在 AWS 后端上，将 S3 客户端 + 存储桶传给 `AddAuthagonalAwsStorage`，即可将密钥环持久化到 S3；否则密钥环仅在内存中，Cookie 会在重启后以及跨节点时失效。参见[安装 → AWS 后端](installation#aws-backend)。
 
 ## 每实例缓存
 
@@ -48,56 +50,42 @@ ASP.NET Core 的 Data Protection 密钥在使用真实 Azure Storage 连接字�
 
 ## 速率限制
 
-注册端点受内置的分布式速率限制器保护（每个 IP 每小时 5 次注册）。运行多个实例时，速率限制计数会通过 gossip 协议在所有实例之间自动共享 — 无需外部协调。
+易被滥用的端点（按 IP 的注册、按目标邮箱的密码重置、按客户端的 SCIM、按 IP 的动态客户端注册，参见[配置 → 速率限制](configuration#rate-limiting)）受内置速率限制器保护。
 
-### 工作原理
+限制在 `IRateLimiter` 接缝之后**按节点在进程内**执行，因此 N 个实例的有效上限是配置值的 N 倍。这是刻意为之：该限制器是针对单个节点失控滥用的兜底，而权威的全局限制应当放在边缘（WAF / 入口 / CDN），因为边缘在流量被负载均衡之前就能看到全部流量。
 
-每个实例使用 CRDT G-Counter 在内存中维护自己的计数器。实例通过 UDP 多播相互发现，并每隔几秒通过 HTTP 交换状态。所有实例的合并计数用于做出速率限制决策。
+## 集群
 
-这意味着速率限制是全局执行的：如果一个客户端访问了 3 个不同的实例，所有 3 个实例都知道总数是 3，而不是各自为 1。
+多个实例通过**领导者选举**和**跨节点事件总线**进行协调，两者都位于可插拔后端之后：
 
-### 节点标识
+- **领导者选举** — 基于租约的选举（`Cluster:LeaseTtlSeconds`，默认 30 秒，大约每过一半间隔续约一次）。恰好一个节点持有租约；当领导者下线时，领导权自动转移。需要领导者把关的工作（目前是启用时的签名密钥轮换）仅在领导者上运行，以避免并发的密钥生成。
+- **事件总线** — 跨节点通知（例如多租户宿主中的缓存失效），按 `Cluster:PollIntervalSeconds`（默认 3 秒）轮询。
 
-每个实例在启动时生成一个随机的十六进制节点 ID（例如 `a3f1b2`）。此 ID 用于在 gossip 消息和速率限制状态中标识实例。它不会持久化 -- 每次重启都会生成新的 ID。
+每个实例在启动时生成一个随机的 12 位十六进制字符节点 ID 用于标识自己；它不会持久化。
 
-`ClusterLeaderService` 在每个实例上运行，在已发现的对等节点中选举单个领导者（最小节点 ID 获胜）。当领导者下线时，领导权自动转移。领导者用于集群范围的协调——目前，签名密钥轮换（启用时）仅在领导者上运行，以避免并发的密钥生成。
+### 后端
 
-### 集群配置
+**默认是进程内实现**：单个节点始终是自己的领导者，事件仅在本地传递，对单实例而言无需任何配置即是正确的。多节点部署通过 `AddAuthagonal` 上的 `configureClustering` 回调换入真实后端：
 
-集群功能**默认启用**，无需任何配置。同一网络上的实例通过 UDP 多播（`239.42.42.42:19847`）自动相互发现。
+```csharp
+// Azure: leadership via a blob lease, event bus via a table log (Authagonal.AzureProvider)
+builder.Services.AddAuthagonal(builder.Configuration,
+    cluster => cluster.UseAzureStorage(blobServiceClient, tableServiceClient));
 
-对于多播不可用的环境（某些云 VPC），可以配置一个负载均衡的内部 URL 作为备用方案：
-
-```json
-{
-  "Cluster": {
-    "InternalUrl": "http://authagonal-auth.svc.cluster.local:8080",
-    "Secret": "shared-secret-here"
-  }
-}
+// AWS: leadership + event bus via DynamoDB (Authagonal.AwsProvider)
+builder.Services.AddAuthagonal(builder.Configuration,
+    cluster => cluster.UseAwsDynamo(dynamoDb));
 ```
 
-要完全禁用集群功能（仅本地速率限制）：
+`UseAzureStorageBus` / `UseAwsDynamoBus` 仅注册事件总线，保留进程内（始终为领导者）的租约——在那些必须接收集群事件、但绝不能参与领导权竞争的节点上使用它们。
 
-```json
-{
-  "Cluster": {
-    "Enabled": false
-  }
-}
-```
+> **注意：** 在多个节点上使用进程内默认实现时，*每个*节点都认为自己是领导者。这对大多数工作负载无害，但在多个实例上开启 `Auth:KeyRotationEnabled` 之前，请先启用真实的租约后端。
 
-有关所有集群设置，请参阅[配置](configuration)页面。
-
-### 优雅降级
-
-- **未找到对等节点** — 作为仅本地速率限制器运行（每个实例执行自己的限制）
-- **对等节点不可达** — 仍使用该节点的最后已知状态；过期节点在 30 秒后被清除
-- **多播不可用** — 发现静默失败；如果已配置，gossip 回退到 `InternalUrl`
+有关所有集群设置，请参阅[配置](configuration#cluster)页面。
 
 ### 多租户部署
 
-在多租户模式下（`AddAuthagonalCore()`），后台服务如 `GrantReconciliationService` 和 `SigningKeyRotationService` 不会被注册 -- 由宿主按租户管理这些服务。只有 `TokenCleanupService` 会无条件运行。
+在多租户模式下（`AddAuthagonalCore()`），不会注册任何后台服务——`TokenCleanupService`、`GrantReconciliationService`、`SigningKeyRotationService` 以及配置种子服务都属于单租户 `AddAuthagonal()` 组合的一部分。由宿主按租户管理这些服务。
 
 ## 姓名索引热分区
 
@@ -108,7 +96,7 @@ ASP.NET Core 的 Data Protection 密钥在使用真实 Azure Storage 连接字�
 在负载均衡器后面运行多个实例时：
 
 - **转发头** — 速率限制和锁定以客户端 IP 为键，该 IP 从 `X-Forwarded-For` 解析。将 `ForwardedHeaders:KnownNetworks` 设为您的入口 / Pod CIDR，使客户端 IP 无法跨实例被伪造。`ForwardedHeaders:ForwardLimit` 默认为 `1`。参见[配置](configuration#forwarded-headers-trusted-proxy)。
-- **内部端点** — `/_internal/cluster/gossip` 和 `/_internal/backchannel-logout` 受源 IP 保护（仅环回 / 私有），除非设置了 `Cluster:Secret`。当 gossip 通过负载均衡器路由（`Cluster:InternalUrl`）时，负载均衡器会改写源 IP，因此请设置 `Cluster:Secret`，gossip 调用方将在 `X-Cluster-Secret` 请求头中提供它。
+- **内部端点** — `/_internal/backchannel-logout` 受源 IP 保护（仅环回 / 私有），除非设置了 `Cluster:Secret`；设置后，调用方必须在 `X-Cluster-Secret` 请求头中提供该密钥（以恒定时间比较）。只要内部流量经过任何会改写源 IP 的组件，就应设置该密钥。
 
 ## 扩展建议
 

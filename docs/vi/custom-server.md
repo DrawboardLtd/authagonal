@@ -18,7 +18,7 @@ cd MyAuthServer
 
 # Add Authagonal packages (or project references for source builds)
 dotnet add package Authagonal.Server
-dotnet add package Authagonal.Storage
+dotnet add package Authagonal.AzureProvider
 ```
 
 File `.csproj` của bạn cần chứa:
@@ -26,9 +26,11 @@ File `.csproj` của bạn cần chứa:
 ```xml
 <ItemGroup>
   <PackageReference Include="Authagonal.Server" Version="*" />
-  <PackageReference Include="Authagonal.Storage" Version="*" />
+  <PackageReference Include="Authagonal.AzureProvider" Version="*" />
 </ItemGroup>
 ```
+
+`Authagonal.AzureProvider` cung cấp các store Azure Table Storage mà `AddAuthagonal` khởi tạo từ cấu hình `Storage:*`. Để lưu trữ trên AWS thay vào đó, hãy tham chiếu `Authagonal.AwsProvider` và gọi `AddAuthagonalAwsStorage(...)` trước `AddAuthagonal` (xem [Cài đặt → backend AWS](installation#aws-backend)).
 
 ### Cấu hình Program.cs
 
@@ -93,7 +95,7 @@ app.Run();
 
 | Interface | Mục đích | Mặc định |
 |---|---|---|
-| `IEmailService` | Gửi email xác minh và đặt lại mật khẩu | Không thực hiện gì (bỏ qua im lặng) |
+| `IEmailService` | Gửi email xác minh và đặt lại mật khẩu | Trình gửi Resend tích hợp sẵn khi `Email:ResendApiKey` được đặt; nếu không thì không thực hiện gì (bỏ qua im lặng) |
 | `IAuthHook` | Chặn hoặc kiểm tra các sự kiện đăng nhập, đăng ký và token | Không thực hiện gì |
 | `IProvisioningOrchestrator` | Cung cấp người dùng cho các ứng dụng hạ nguồn tại thời điểm ủy quyền | Cung cấp TCC |
 | `ISecretProvider` | Giải quyết secret của client | Văn bản thuần (hoặc Key Vault với `SecretProvider:VaultUri`) |
@@ -101,6 +103,7 @@ app.Run();
 #### Ví dụ: hook kiểm toán
 
 ```csharp
+using Authagonal.Core.Models;
 using Authagonal.Core.Services;
 
 public class AuditAuthHook(ILogger<AuditAuthHook> logger) : IAuthHook
@@ -132,8 +135,26 @@ public class AuditAuthHook(ILogger<AuditAuthHook> logger) : IAuthHook
         logger.LogInformation("Token issued: {ClientId} ({GrantType})", clientId, grantType);
         return Task.CompletedTask;
     }
+
+    public Task<MfaPolicy> ResolveMfaPolicyAsync(string userId, string email,
+        MfaPolicy clientPolicy, string clientId, CancellationToken ct = default)
+        => Task.FromResult(clientPolicy);
+
+    public Task OnMfaVerifiedAsync(string userId, string email,
+        string mfaMethod, CancellationToken ct = default)
+        => Task.CompletedTask;
+
+    public Task OnUserUpdatedAsync(string userId, string email,
+        string updatedVia, CancellationToken ct = default)
+        => Task.CompletedTask;
+
+    public Task OnUserDeletedAsync(string userId, string email,
+        string deletedVia, CancellationToken ct = default)
+        => Task.CompletedTask;
 }
 ```
+
+Interface còn có thêm các thành viên tùy chọn với triển khai mặc định không thực hiện gì (`OnMfaVerifyFailedAsync`, `OnEmailConfirmedAsync`, `OnMfaEnrolledAsync`, `OnMfaCredentialRemovedAsync`, `OnRecoveryCodesRegeneratedAsync`, `OnPasswordChangedAsync`); chỉ ghi đè chúng nếu bạn cần các sự kiện đó.
 
 #### Ví dụ: dịch vụ email
 
@@ -157,6 +178,8 @@ public class ConsoleEmailService(ILogger<ConsoleEmailService> logger) : IEmailSe
     }
 }
 ```
+
+> **Email là cái bẫy tích hợp phổ biến nhất.** Nếu bạn không đăng ký `IEmailService` nào và không đặt `Email:ResendApiKey`, email xác minh và đặt lại mật khẩu sẽ bị bỏ qua im lặng, và vì cổng đăng nhập yêu-cầu-email-đã-xác-nhận mặc định bật, người dùng tự đăng ký sẽ không bao giờ đăng nhập được (`UseAuthagonal` cảnh báo lúc khởi động). Trình gửi Resend tích hợp sẵn tự động kích hoạt khi `Email:ResendApiKey` + `Email:SenderEmail` được cấu hình; cho dev/test, `Auth:AutoConfirmEmailDomains` bỏ qua xác minh cho các tên miền được liệt kê. Xem [Cấu hình → Email](configuration#email).
 
 ### Thêm endpoint tùy chỉnh
 
@@ -223,7 +246,7 @@ import {
 
 // API clients — call from your custom pages
 import {
-  login, logout, ssoCheck, forgotPassword, resetPassword,
+  login, register, logout, ssoCheck, forgotPassword, resetPassword,
   getSession, getProviders, getPasswordPolicy,
   mfaVerify, mfaStatus, mfaTotpSetup, mfaTotpConfirm,
   mfaWebAuthnSetup, mfaWebAuthnConfirm, mfaRecoveryGenerate,
@@ -379,9 +402,13 @@ Cấu hình giao diện đăng nhập mà không cần build lại:
   "primaryColor": "#059669",
   "supportEmail": "support@example.com",
   "showForgotPassword": true,
+  "showRegistration": false,
+  "darkMode": "auto",
   "customCssUrl": "/custom.css"
 }
 ```
+
+Toàn bộ schema (bao gồm văn bản chào mừng đã bản địa hóa, danh sách bộ chọn ngôn ngữ, và các ghi đè màu sáng/tối cùng nền logo theo từng chế độ) nằm ở trang [Tùy chỉnh giao diện](branding).
 
 ### Cấu hình Vite
 

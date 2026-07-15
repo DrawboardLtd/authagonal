@@ -11,12 +11,14 @@ O Authagonal inclui uma ferramenta de migração para mover do Duende IdentitySe
 ## Executar a Migração
 
 ```bash
-docker run authagonal-migration -- \
+docker run authagonal-migration \
   --Source:ConnectionString "Server=sql.example.com;Database=Identity;User Id=...;Password=...;" \
   --Target:ConnectionString "DefaultEndpointsProtocol=https;AccountName=...;AccountKey=...;TableEndpoint=https://..." \
   [--DryRun true] \
   [--MigrateRefreshTokens true]
 ```
+
+(Sem separador `--` após o nome da imagem: tudo o que vem depois é passado diretamente para a ferramenta, e um `--` isolado quebra a análise das opções.)
 
 Ou a partir do código-fonte:
 
@@ -31,12 +33,12 @@ dotnet run --project tools/Authagonal.Migration -- \
 
 | Origem (SQL Server) | Destino (Table Storage) | Notas |
 |---|---|---|
-| `AspNetUsers` + `AspNetUserClaims` | Users + UserEmails | Query JOIN única. Claims: given_name, family_name, company, org_id. Hashes de senha mantidos como estão (BCrypt faz upgrade automático no login). |
+| `AspNetUsers` + `AspNetUserClaims` | Users + UserEmails + índices de nome | Query JOIN única. Claims: given_name, family_name, company, org_id (tipos substituíveis, ver abaixo). Hashes de senha mantidos como estão; hashes ASP.NET Identity V3 e BCrypt verificam sem alteração e são atualizados para o formato nativo PBKDF2 do Authagonal no próximo login bem-sucedido. |
 | `AspNetUserLogins` | UserLogins (índice direto + reverso) | `409 Conflict` = ignorar (idempotente) |
 | Duende `SamlProviderConfigurations` | SamlProviders + SsoDomains | `AllowedDomains` CSV dividido em registos individuais de domínio SSO |
 | Duende `OidcProviderConfigurations` | OidcProviders + SsoDomains | Mesma divisão de domínios |
 | Duende `Clients` + tabelas filhas | Clients | ClientSecrets, GrantTypes, RedirectUris, PostLogoutRedirectUris, Scopes, CorsOrigins todos fundidos numa única entidade |
-| Duende `PersistedGrants` (refresh tokens) | Grants + GrantsBySubject | Opcional via `--MigrateRefreshTokens true`. Apenas tokens não expirados. Se omitido, os utilizadores simplesmente fazem login novamente. |
+| Duende `PersistedGrants` (refresh tokens) | Grants + GrantsBySubject + GrantsByExpiry | Opcional via `--MigrateRefreshTokens true`. Apenas tokens não expirados. Se omitido, os utilizadores simplesmente fazem login novamente. |
 
 ## Opções
 
@@ -44,10 +46,11 @@ dotnet run --project tools/Authagonal.Migration -- \
 |---|---|---|
 | `--DryRun` | `false` | Registar o que seria migrado sem escrever no armazenamento |
 | `--MigrateRefreshTokens` | `false` | Incluir refresh tokens ativos. Se falso, os utilizadores reautenticam-se após a transição. |
+| `--Source:ClaimMap:{claim}` | o próprio nome do claim OIDC | Substitui o ClaimType de `AspNetUserClaims` lido para um claim mapeado, por exemplo `--Source:ClaimMap:given_name=FirstName`. Usado para `given_name`, `family_name`, `company`, `org_id`. |
 
 ## Idempotência
 
-A migração é idempotente — segura para executar múltiplas vezes. Os registos existentes são inseridos/atualizados (não duplicados). Isto permite-lhe:
+A migração é idempotente e segura para executar múltiplas vezes. Os registos existentes são atualizados ou ignorados, nunca duplicados. Isto permite-lhe:
 
 1. Executar a migração dias antes da transição
 2. Executar uma migração delta final perto da transição
@@ -57,10 +60,10 @@ A migração é idempotente — segura para executar múltiplas vezes. Os regist
 
 Estas funcionalidades do Authagonal não têm equivalente no Duende e começam vazias após a migração:
 
-- **Roles** — Roles RBAC e atribuições de roles a utilizadores
-- **Credenciais MFA** — Inscrições de TOTP, WebAuthn e códigos de recuperação
-- **Tokens e grupos SCIM** — Configuração de provisionamento SCIM
-- **Provisionamentos de utilizadores** — Estado de provisionamento TCC para aplicações downstream
+- **Roles**: Roles RBAC e atribuições de roles a utilizadores
+- **Credenciais MFA**: Inscrições de TOTP, WebAuthn e códigos de recuperação
+- **Tokens e grupos SCIM**: Configuração de provisionamento SCIM
+- **Provisionamentos de utilizadores**: Estado de provisionamento TCC para aplicações downstream
 
 Os utilizadores precisarão inscrever-se novamente no MFA se a `MfaPolicy` do seu cliente for `Enabled` ou `Required`.
 

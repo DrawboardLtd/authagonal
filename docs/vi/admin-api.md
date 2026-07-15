@@ -10,6 +10,51 @@ Các endpoint quản trị yêu cầu JWT access token với scope `authagonal-a
 
 Tất cả endpoint nằm dưới `/api/v1/`.
 
+## Khởi tạo token quản trị đầu tiên
+
+Mọi endpoint `/api/v1/*` đều yêu cầu một bearer token mang scope quản trị, nhưng bản thân API quản trị (và [đăng ký client động](client-registration)) **từ chối tạo hoặc cập nhật bất kỳ client nào giữ scope đó** (`403 forbidden_scope`), nên một client được tạo tại thời điểm chạy không bao giờ có thể leo thang thành quản trị. Cách duy nhất để cấp một token quản trị là một **client được seed từ cấu hình**: các mục trong phần cấu hình `Clients:` được upsert khi khởi động bởi `ClientSeedService`, và cấu hình được tin cậy, nên lớp bảo vệ forbidden-scope chỉ áp dụng cho các API tại thời điểm chạy.
+
+Seed một client `client_credentials` với scope quản trị trong `appsettings.json` (hoặc các biến môi trường / kho bí mật tương đương):
+
+```json
+{
+  "Clients": [
+    {
+      "Id": "admin-cli",
+      "Name": "Admin CLI",
+      "ClientSecret": "a-long-random-secret",
+      "GrantTypes": ["client_credentials"],
+      "Scopes": ["authagonal-admin"]
+    }
+  ]
+}
+```
+
+(`ClientSecret` được băm khi khởi động; hãy cung cấp `SecretHashes` thay thế nếu bạn muốn chỉ giữ một giá trị đã băm sẵn trong cấu hình. `ClientId`/`ClientName`/`AllowedGrantTypes`/`AllowedScopes` được chấp nhận như các bí danh cho `Id`/`Name`/`GrantTypes`/`Scopes`.)
+
+Sau đó đổi thông tin đăng nhập lấy token tại endpoint token tiêu chuẩn:
+
+```bash
+curl -X POST https://auth.example.com/connect/token \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -d "grant_type=client_credentials" \
+  -d "client_id=admin-cli" \
+  -d "client_secret=a-long-random-secret" \
+  -d "scope=authagonal-admin"
+```
+
+```json
+{ "access_token": "eyJhbGci...", "token_type": "Bearer", "expires_in": 1800, "scope": "authagonal-admin" }
+```
+
+Cấp quyền `client_credentials` kiểm tra scope được yêu cầu so với `AllowedScopes` của client, và vì client được seed giữ `authagonal-admin`, token sẽ được cấp. Dùng nó dưới dạng `Authorization: Bearer {access_token}` trên mọi lệnh gọi quản trị:
+
+```bash
+curl https://auth.example.com/api/v1/clients -H "Authorization: Bearer eyJhbGci..."
+```
+
+Hãy giữ bí mật của client được seed trong kho bí mật của triển khai của bạn; xoay vòng nó là một thay đổi cấu hình + khởi động lại.
+
 ## Người dùng
 
 ### Lấy thông tin người dùng
@@ -19,6 +64,14 @@ GET /api/v1/profile/{userId}
 ```
 
 Trả về chi tiết người dùng bao gồm các liên kết đăng nhập bên ngoài.
+
+### Người dùng có tồn tại
+
+```
+GET /api/v1/profile/{userId}/exists
+```
+
+Trả về `204` nếu người dùng tồn tại, `404` nếu không (một phép thăm dò tồn tại chi phí thấp, không có body).
 
 ### Đăng ký người dùng
 
@@ -34,7 +87,9 @@ Content-Type: application/json
 }
 ```
 
-Tạo người dùng và gửi email xác minh. Trả về `409` nếu email đã được sử dụng.
+Tạo người dùng và gửi email xác minh. Trả về `409 user_exists` nếu email đã được sử dụng.
+
+Các trường tùy chọn chỉ dành cho quản trị: `userId` (id do người gọi cung cấp, `409 user_id_in_use` khi trùng), `emailConfirmed` (tạo người dùng đã được xác minh sẵn, bỏ qua email xác minh), `companyName`, `organizationId`, `phone`, `locale`, và `customAttributes` (một map chuỗi được lưu trên người dùng và chuyển tiếp đến các đích cấp phát).
 
 ### Cập nhật người dùng
 
@@ -50,7 +105,7 @@ Content-Type: application/json
 }
 ```
 
-Tất cả trường là tùy chọn — chỉ các trường được cung cấp mới được cập nhật. Thay đổi `organizationId` kích hoạt:
+`userId` là bắt buộc; mọi trường khác là tùy chọn, chỉ các trường được cung cấp mới được cập nhật. Thay đổi `organizationId` kích hoạt:
 - Xoay vòng SecurityStamp (vô hiệu hóa tất cả phiên cookie trong vòng 30 phút)
 - Thu hồi tất cả refresh token
 
@@ -126,9 +181,11 @@ Xóa một thông tin xác thực MFA cụ thể (ví dụ: ứng dụng xác th
 ```
 POST   /api/v1/saml/connections                    # Tạo mới
 GET    /api/v1/saml/connections/{connectionId}     # Lấy một
-PUT    /api/v1/saml/connections/{connectionId}     # Cập nhật
+PUT    /api/v1/saml/connections/{connectionId}     # Cập nhật (một phần, chỉ các trường được cung cấp mới thay đổi)
 DELETE /api/v1/saml/connections/{connectionId}     # Xóa
 ```
+
+Việc tạo yêu cầu `connectionName`, `entityId`, và **đúng một trong** `metadataLocation` (một URL metadata) hoặc `metadataXml` (metadata IdP được dán vào, cho các IdP không có URL metadata, nó được kiểm tra cú pháp và cô đọng khi lưu). Tùy chọn: `nameIdFormat` (bỏ qua để dùng mặc định emailAddress, `"none"` để bỏ NameIDPolicy, được khuyến nghị cho ADFS, hoặc một URN định dạng NameID), `signAuthnRequests`, `iconUrl`, `allowedDomains`, `disableJitProvisioning`. Mỗi connection nhận một cặp khóa SP do máy chủ tạo; nó không bao giờ được API trả về. Xem [SAML](saml) để biết chi tiết.
 
 ### Nhà cung cấp OIDC
 
@@ -137,6 +194,8 @@ POST   /api/v1/oidc/connections                    # Tạo mới
 GET    /api/v1/oidc/connections/{connectionId}     # Lấy một
 DELETE /api/v1/oidc/connections/{connectionId}     # Xóa
 ```
+
+Việc tạo yêu cầu `connectionName`, `metadataLocation`, `clientId`, `clientSecret`, `redirectUrl`. Tùy chọn: `iconUrl`, `allowedDomains`, `passthroughParams`. Client secret được bảo vệ khi lưu trữ và không bao giờ được trả về. Xem [Liên kết OIDC](oidc-federation).
 
 ### Tên miền SSO
 
@@ -296,9 +355,11 @@ Content-Type: application/json
 
 {
   "userId": "user-id",
-  "roleId": "role-id"
+  "roleName": "admin"
 }
 ```
+
+Việc gán theo **tên vai trò**, không phải id vai trò. Trả về danh sách vai trò đã cập nhật của người dùng.
 
 ### Hủy gán vai trò khỏi người dùng
 
@@ -308,7 +369,7 @@ Content-Type: application/json
 
 {
   "userId": "user-id",
-  "roleId": "role-id"
+  "roleName": "admin"
 }
 ```
 
@@ -327,11 +388,13 @@ POST /api/v1/scim/tokens
 Content-Type: application/json
 
 {
-  "clientId": "client-id"
+  "clientId": "client-id",
+  "description": "Entra provisioning",
+  "expiresInDays": 365
 }
 ```
 
-Trả về token thô một lần. Lưu trữ an toàn — không thể truy xuất lại.
+`description` và `expiresInDays` là tùy chọn (bỏ qua `expiresInDays` để có token không hết hạn). Trả về token thô một lần. Lưu trữ an toàn, không thể truy xuất lại.
 
 ### Liệt kê token
 

@@ -32,10 +32,14 @@ O armazenamento pode ser configurado de uma de duas formas — forneça **ou** `
 | Definição | Padrão | Descrição |
 |---|---|---|
 | `Authentication:CookieLifetimeHours` | `48` | Tempo de vida da sessão do cookie (deslizante) |
+| `Authentication:AlwaysSecureCookie` | `false` | Força incondicionalmente a flag `Secure` do cookie de sessão. O padrão (`SameAsRequest`) já produz um cookie Secure atrás de um proxy com terminação TLS que encaminha `X-Forwarded-Proto: https`. |
 | `Auth:MaxFailedAttempts` | `5` | Tentativas de login falhadas antes do bloqueio da conta |
 | `Auth:LockoutDurationMinutes` | `10` | Duração do bloqueio da conta após o máximo de tentativas falhadas |
 | `Auth:MaxRegistrationsPerIp` | `5` | Máximo de registos por endereço IP dentro da janela |
 | `Auth:RegistrationWindowMinutes` | `60` | Janela de limitação de taxa de registo |
+| `Auth:MaxPasswordResetsPerEmail` | `3` | Máximo de e-mails de redefinição de senha por endereço de destino dentro da janela (indexado pelo e-mail, não pelo IP do chamador, para que um endereço não possa ser bombardeado com e-mails) |
+| `Auth:PasswordResetWindowMinutes` | `60` | Janela de limitação de taxa de redefinição de senha |
+| `Auth:AutoConfirmEmailDomains` | *(vazio)* | Domínios de e-mail (array de strings) cujos registos self-service são confirmados automaticamente: eles ignoram o e-mail de verificação. Vazio (o padrão) significa que cada registo deve ser verificado. Destinado apenas a dev/test; nunca liste um domínio que possa receber e-mail real. |
 | `Auth:EmailVerificationExpiryHours` | `24` | Tempo de vida do link de verificação de e-mail |
 | `Auth:PasswordResetExpiryMinutes` | `60` | Tempo de vida do link de redefinição de senha |
 | `Auth:MfaChallengeExpiryMinutes` | `5` | Tempo de vida do token de verificação MFA |
@@ -49,7 +53,17 @@ O armazenamento pode ser configurado de uma de duas formas — forneça **ou** `
 | `Auth:KeyRotationCheckIntervalMinutes` | `360` | Frequência de verificação se a chave ativa precisa de rotação |
 | `Auth:KeyRotationLeadTimeDays` | `14` | Rodar quando a chave ativa expirar dentro deste número de dias |
 | `Auth:SecurityStampRevalidationMinutes` | `30` | Intervalo entre verificações do carimbo de segurança do cookie |
-| `DataProtection:BlobUri` | *(nenhum)* | URI de Blob do Azure para persistir chaves de Data Protection entre instâncias |
+
+## Data Protection
+
+As chaves de Data Protection do ASP.NET Core (que cifram o cookie de sessão) devem ser partilhadas entre instâncias, consulte [Escalabilidade](scaling#cookie-encryption-data-protection). Opções de persistência, por ordem de precedência:
+
+| Definição | Padrão | Descrição |
+|---|---|---|
+| `DataProtection:BlobUri` | *(nenhum)* | URI de Blob do Azure explícito para o conjunto de chaves (ex.: `https://{account}.blob.core.windows.net/dataprotection/keys.xml`). Autentica-se via `DefaultAzureCredential`, o caminho de produção preferido a par de `Storage:TableServiceUri`. |
+| *(fallback)* | — | Quando `DataProtection:BlobUri` não está definido e `Storage:ConnectionString` aponta para uma conta de armazenamento real (não Azurite), as chaves são persistidas automaticamente num contentor `dataprotection` nessa conta. Com o Azurite, as chaves recorrem ao armazenamento padrão baseado em ficheiros. |
+
+No backend AWS, passe um cliente S3 + bucket a `AddAuthagonalAwsStorage` para persistir o conjunto de chaves no S3, consulte [Instalação → backend AWS](installation#aws-backend).
 
 ## Cache e Tempos Limite
 
@@ -170,7 +184,7 @@ A autenticação multifator é aplicada por cliente através da propriedade `Mfa
 
 Quando `MfaPolicy` é `Required` e o utilizador não tem MFA inscrito, o login retorna `{ mfaSetupRequired: true, setupToken: "..." }`. O token de configuração autentica o utilizador nos endpoints de configuração de MFA (via cabeçalho `X-MFA-Setup-Token`) para que possam inscrever-se antes de obter uma sessão de cookie.
 
-Logins federados (SAML/OIDC) ignoram o MFA — o provedor de identidade externo trata disso.
+Logins federados (SAML/OIDC) também respeitam a política de MFA: um utilizador com MFA inscrito é encaminhado pelo desafio MFA após o IdP externo o autenticar, e `Required` força a inscrição para utilizadores federados sem MFA.
 
 ### Substituição via IAuthHook
 
@@ -239,7 +253,7 @@ Defina provedores de identidade SAML na configuração. Estes são semeados na i
 |---|---|---|
 | `ConnectionId` | Sim | Identificador estável (usado em URLs como `/saml/{connectionId}/login`) |
 | `ConnectionName` | Não | Nome de exibição (padrão: ConnectionId) |
-| `EntityId` | Sim | ID da entidade do Service Provider SAML |
+| `EntityId` | Sim | O ID de entidade do SP **deste servidor**: o identificador que regista no IdP, não o próprio ID de entidade do IdP |
 | `MetadataLocation` | Sim | URL para o XML de metadados SAML do IdP |
 | `AllowedDomains` | Não | Domínios de e-mail roteados para este provedor via SSO |
 
@@ -324,62 +338,44 @@ Registe um `BackChannelLogoutUri` num cliente para receber notificações de OID
 
 ## E-mail
 
-Por padrão, o Authagonal usa um serviço de e-mail no-op que descarta silenciosamente todos os e-mails. Para habilitar o envio de e-mails, registre uma implementação de `IEmailService` antes de chamar `AddAuthagonal()`.
-
-O `EmailService` integrado usa o [Resend](https://resend.com). Para usá-lo, registre-o explicitamente:
-
-```csharp
-services.AddSingleton<IEmailService, EmailService>();
-services.AddAuthagonal(configuration);
-```
+O remetente de e-mail integrado usa o [Resend](https://resend.com) e **ativa-se automaticamente** quando `Email:ResendApiKey` está configurada: não é necessário registar nenhum serviço. Para usar um provedor diferente, registe a sua própria implementação de `IEmailService` antes de chamar `AddAuthagonal()` (tem precedência independentemente das chaves `Email:*`).
 
 | Definição | Descrição |
 |---|---|
-| `Email:ResendApiKey` | Chave de API do Resend para envio de e-mails |
+| `Email:ResendApiKey` | Chave de API do Resend. Quando definida, é usado o remetente Resend integrado. |
 | `Email:SenderEmail` | Endereço de e-mail do remetente |
 | `Email:SenderName` | Nome de exibição do remetente (padrão: `"Authagonal"`) |
+
+> ⚠️ **Sem nenhum remetente de e-mail, o auto-registo fica quebrado.** Quando `Email:ResendApiKey` não está definida e nenhum `IEmailService` personalizado está registado, um serviço no-op descarta silenciosamente todo o e-mail: os e-mails de verificação e de redefinição de senha nunca chegam e, como o login exige um e-mail confirmado por padrão, os utilizadores auto-registados nunca conseguem entrar. O `UseAuthagonal` regista um aviso na inicialização neste estado. Válvula de escape para dev/test: `Auth:AutoConfirmEmailDomains` confirma automaticamente os registos para os domínios listados.
 
 E-mails para endereços `@example.com` são silenciosamente ignorados (útil para testes).
 
 ## Cluster
 
-As instâncias do Authagonal formam automaticamente um cluster para partilhar o estado de limitação de taxa. O clustering é habilitado por padrão sem necessidade de configuração.
+A camada de clustering fornece **eleição de líder** (para que trabalhos restritos ao líder, como a rotação da chave de assinatura, sejam executados em exatamente um nó) e um **barramento de eventos entre nós**, por trás de backends plugáveis. O padrão é em processo: um único nó é sempre o seu próprio líder, a definição certa para nó único e desenvolvimento local, sem qualquer configuração.
 
 | Definição | Variável de Ambiente | Padrão | Descrição |
 |---|---|---|---|
-| `Cluster:Enabled` | `Cluster__Enabled` | `true` | Interruptor principal do clustering. Defina como `false` para limitação de taxa apenas local. |
-| `Cluster:MulticastGroup` | `Cluster__MulticastGroup` | `239.42.42.42` | Grupo multicast UDP para descoberta de peers |
-| `Cluster:MulticastPort` | `Cluster__MulticastPort` | `19847` | Porta multicast UDP para descoberta de peers |
-| `Cluster:InternalUrl` | `Cluster__InternalUrl` | *(nenhum)* | URL com balanceamento de carga como fallback para gossip quando o multicast não está disponível |
-| `Cluster:Secret` | `Cluster__Secret` | *(nenhum)* | Segredo partilhado exigido nos endpoints exclusivamente internos (`/_internal/cluster/gossip` e `/_internal/backchannel-logout`). Quando definido, os chamadores devem apresentá-lo no cabeçalho `X-Cluster-Secret` (comparado em tempo constante). Quando **não definido**, esses endpoints só são acessíveis a partir de IPs de origem de loopback / privados (RFC 1918 / link-local / ULA) — um pedido externo com um IP público é rejeitado. Recomendado sempre que `InternalUrl` rotear o gossip através de um balanceador de carga. |
-| `Cluster:GossipIntervalSeconds` | `Cluster__GossipIntervalSeconds` | `5` | Frequência com que as instâncias trocam estado de limitação de taxa |
-| `Cluster:DiscoveryIntervalSeconds` | `Cluster__DiscoveryIntervalSeconds` | `10` | Frequência com que as instâncias se anunciam via multicast |
-| `Cluster:PeerStaleAfterSeconds` | `Cluster__PeerStaleAfterSeconds` | `30` | Descartar peers sem comunicação após este número de segundos |
+| `Cluster:Enabled` | `Cluster__Enabled` | `true` | Interruptor principal. Quando `false`, o nó é executado de forma autónoma (sempre líder, barramento de eventos em processo). |
+| `Cluster:Secret` | `Cluster__Secret` | *(nenhum)* | Segredo partilhado exigido no endpoint exclusivamente interno `/_internal/backchannel-logout`. Quando definido, os chamadores devem apresentá-lo no cabeçalho `X-Cluster-Secret` (comparado em tempo constante). Quando **não definido**, o endpoint só é acessível a partir de IPs de origem de loopback / privados (RFC 1918 / link-local / ULA): um pedido externo com um IP público é rejeitado. |
+| `Cluster:LeaseTtlSeconds` | `Cluster__LeaseTtlSeconds` | `30` | Duração da concessão de liderança. Renovada aproximadamente a metade deste intervalo. |
+| `Cluster:PollIntervalSeconds` | `Cluster__PollIntervalSeconds` | `3` | Frequência com que o backend do barramento de eventos sonda mensagens publicadas por outros nós. |
 
-**Zero-config (padrão):** As instâncias descobrem-se mutuamente via multicast UDP. Funciona em Kubernetes, Docker Compose ou qualquer rede partilhada.
+**Implantações multi-nó** substituem por um backend real através do callback `configureClustering` em `AddAuthagonal` / `AddAuthagonalCore`:
 
-**Multicast desabilitado (ex.: algumas VPCs na cloud):**
+```csharp
+// Azure: leadership via a blob lease, event bus via a table log (Authagonal.AzureProvider)
+builder.Services.AddAuthagonal(builder.Configuration,
+    cluster => cluster.UseAzureStorage(blobServiceClient, tableServiceClient));
 
-```json
-{
-  "Cluster": {
-    "InternalUrl": "http://authagonal-auth.svc.cluster.local:8080",
-    "Secret": "shared-secret-here"
-  }
-}
+// AWS equivalent (Authagonal.AwsProvider)
+builder.Services.AddAuthagonal(builder.Configuration,
+    cluster => cluster.UseAwsDynamo(dynamoDb));
 ```
 
-**Clustering totalmente desabilitado:**
+`UseAzureStorageBus` / `UseAwsDynamoBus` registam apenas o barramento de eventos, mantendo a concessão em processo, para nós que devem receber eventos do cluster mas nunca devem disputar a liderança.
 
-```json
-{
-  "Cluster": {
-    "Enabled": false
-  }
-}
-```
-
-Consulte [Escalabilidade](scaling) para mais detalhes sobre como funciona a limitação de taxa distribuída.
+Consulte [Escalabilidade](scaling) para saber como a liderança e o barramento de eventos se comportam entre instâncias.
 
 ## Cabeçalhos Encaminhados (proxy confiável)
 
@@ -405,13 +401,16 @@ O Authagonal indexa a limitação de taxa e o bloqueio de conta pelo IP do clien
 
 ## Limitação de Taxa
 
-Limites de taxa integrados por IP são aplicados em todas as instâncias através do protocolo de gossip do cluster:
+Limites de taxa integrados protegem os endpoints propensos a abuso:
 
-| Endpoint | Limite | Janela |
-|---|---|---|
-| `POST /api/auth/register` | 5 registos | 1 hora |
+| Endpoint | Limite | Janela | Indexado por |
+|---|---|---|---|
+| `POST /api/auth/register` | 5 (`Auth:MaxRegistrationsPerIp`) | 1 hora (`Auth:RegistrationWindowMinutes`) | IP do cliente |
+| `POST /api/auth/forgot-password` | 3 (`Auth:MaxPasswordResetsPerEmail`) | 1 hora (`Auth:PasswordResetWindowMinutes`) | E-mail de destino |
+| `POST /connect/register` (quando habilitado) | 10 | 1 hora | IP do cliente |
+| Endpoints SCIM | 200 | 1 minuto | Cliente SCIM |
 
-Quando o clustering está habilitado, estes limites são consolidados entre todas as instâncias. Quando desabilitado, cada instância aplica o seu próprio limite de forma independente.
+Os limites são aplicados **em processo por nó** (por trás do seam `IRateLimiter`), portanto com N instâncias o teto efetivo é N× o valor configurado. Trate-os como uma rede de segurança e aplique o limite global autoritativo na borda (WAF / ingress / CDN). Consulte [Escalabilidade](scaling#rate-limiting).
 
 ## CORS
 

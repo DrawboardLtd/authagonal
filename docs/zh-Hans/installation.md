@@ -14,7 +14,7 @@ locale: zh-Hans
 docker run -p 8080:8080 \
   -e Storage__ConnectionString="your-connection-string" \
   -e Issuer="https://auth.example.com" \
-  authagonal
+  drawboardci/authagonal
 ```
 
 ## Docker Compose
@@ -50,7 +50,7 @@ docker compose up
 ### 前提条件
 
 - .NET 10 SDK
-- Node.js 22+
+- Node.js 24+
 
 ### 构建
 
@@ -83,8 +83,10 @@ docker build -f Dockerfile.migration -t authagonal-migration .
 
 ```xml
 <PackageReference Include="Authagonal.Server" Version="x.y.z" />
-<PackageReference Include="Authagonal.Storage" Version="x.y.z" />
+<PackageReference Include="Authagonal.AzureProvider" Version="x.y.z" />
 ```
+
+存储提供者包是可插拔的：`Authagonal.AzureProvider` 用于 Azure Table Storage（默认的 `AddAuthagonal()` 接线），或 `Authagonal.AwsProvider` 用于 DynamoDB / S3 / Secrets Manager——参见下方的 [AWS 后端](#aws-backend)。
 
 然后在您的 `Program.cs` 中进行组合：
 
@@ -101,6 +103,29 @@ app.Run();
 ```
 
 有关所有覆盖点，请参阅[扩展性](extensibility)；完整示例请参阅 [demos/custom-server/](https://github.com/authagonal/authagonal/tree/master/demos/custom-server)。
+
+### 邮件
+
+内置的 [Resend](https://resend.com) 发送器会在配置了 `Email:ResendApiKey` 和 `Email:SenderEmail` 时自动激活——无需注册服务。如果没有任何 `IEmailService`，验证邮件和密码重置邮件会被**静默丢弃**，而由于登录默认要求已确认的邮箱，自助注册的用户将永远无法登录（`UseAuthagonal` 会在启动时记录一条警告）。请设置 `Email:*` 键、在 `AddAuthagonal()` 之前注册您自己的 `IEmailService`，或在 `Auth:AutoConfirmEmailDomains` 中列出您的域名以跳过验证（仅限开发/测试）。参见 [配置 → 邮件](configuration#email)。
+
+## AWS 后端
+
+要在 AWS 而非 Azure 上运行，请引用 `Authagonal.AwsProvider` 并在 `AddAuthagonal()` **之前**注册 AWS 套件——正是这些注册让 `AddAuthagonal()` 跳过其 Azure Table Storage 接线：
+
+```csharp
+using Authagonal.AwsProvider;
+
+builder.Services.AddAuthagonalAwsStorage(
+    dynamoDb,                // IAmazonDynamoDB — required
+    secretsManager,          // IAmazonSecretsManager — optional; replaces the plaintext ISecretProvider
+    s3,                      // IAmazonS3 — optional; used for DataProtection keys
+    "my-auth-keys-bucket");  // S3 bucket for the DataProtection key ring
+builder.Services.AddAuthagonal(builder.Configuration);
+```
+
+DynamoDB 表与 Azure 布局一一对应，并在启动时确保存在（幂等——当它们已由 Terraform 预配时则为空操作）。凭据通过标准的 AWS 链解析（环境变量 / EC2 实例角色 / IRSA），因此不存在连接字符串与托管标识之分——无需任何 `Storage:*` 配置。
+
+> ⚠️ **S3 DataProtection 密钥。** 若没有 S3 客户端 + 存储桶，ASP.NET Core Data Protection 密钥环会保存在内存中——在开发环境的单个节点上没问题，但在生产环境中，cookie 和防伪令牌会在重启时以及跨节点时失效。对于生产环境的 AWS 部署，请始终传入 S3 客户端和存储桶。
 
 ## 登录 SPA（npm）
 
@@ -119,7 +144,7 @@ npm install @authagonal/login
 - **运行在 TLS 终止代理后面。** Authagonal 必须位于终止 TLS 的反向代理 / 入口（ingress）后面。会话 cookie 使用 `SecurePolicy = SameAsRequest`，且 HSTS 仅在 HTTPS 上发出，因此代理必须转发 `X-Forwarded-Proto: https`。将 `ForwardedHeaders:KnownNetworks`（或 `KnownProxies`）设为您的入口 / Pod CIDR，使客户端 IP 和协议无法被伪造；`ForwardedHeaders:ForwardLimit` 默认为 `1`（仅信任最后一跳）。
 - **设置 `SecretProvider:VaultUri`。** 默认密钥提供者为**纯文本**——若无 Key Vault，上游 OIDC 客户端密钥和 TOTP / MFA 种子会以明文存储在 Table Storage（以及备份）中。对于任何生产部署，请配置 Key Vault。
 - **锁定管理 API。** `AdminApi:Enabled` 默认为 **true**。管理作用域（`AdminApi:Scope`，默认 `authagonal-admin`）授予完整的管理权限和用户模拟能力。请对 `/api/v1/*` 管理路由进行网络限制，并严格控制谁能被签发管理作用域；如果未使用，请设置 `AdminApi:Enabled = false`。
-- **保护内部端点。** 设置 `Cluster:Secret`，使 `/_internal/cluster/gossip` 和 `/_internal/backchannel-logout` 要求 `X-Cluster-Secret` 请求头——尤其是当 gossip 通过 `Cluster:InternalUrl` 经由负载均衡器路由时。
+- **保护内部端点。** 设置 `Cluster:Secret`，使内部的 `/_internal/backchannel-logout` 端点要求 `X-Cluster-Secret` 请求头（以恒定时间比较）。未设置时，它只接受回环 / 私有（RFC 1918 / 链路本地 / ULA）源 IP——请确保已配置您的 forwarded-headers 信任，使外部调用者无法伪装成内部调用者。
 - **加密备份。** 使用纯文本密钥提供者时，备份包含密钥。`SigningKeys` 表默认从备份中排除；如果您通过 `Backup:IncludeSigningKeys` 选择启用，备份目标必须静态加密。参见[备份与恢复](backup-restore)。
 
 ## 迁移工具

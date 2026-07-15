@@ -8,7 +8,7 @@ locale: de
 
 Diese Endpunkte betreiben die Login-SPA. Sie verwenden Cookie-Authentifizierung (`SameSite=Lax`, `HttpOnly`).
 
-Wenn Sie eine benutzerdefinierte Login-Oberflaeche erstellen, sind dies die Endpunkte, gegen die Sie implementieren muessen.
+Wenn Sie eine benutzerdefinierte Login-Oberflaeche erstellen, sind dies die Endpunkte, gegen die Sie implementieren müssen.
 
 ## Endpunkte
 
@@ -24,7 +24,7 @@ Content-Type: application/json
 }
 ```
 
-**Erfolg (200):** Setzt ein Auth-Cookie und gibt zurueck:
+**Erfolg (200):** Setzt ein Auth-Cookie und gibt zurück:
 
 ```json
 {
@@ -56,7 +56,7 @@ Der Client sollte zu einer MFA-Abfrageseite weiterleiten und `POST /api/auth/mfa
 }
 ```
 
-Der Client sollte zu einer MFA-Einrichtungsseite weiterleiten. Das Setup-Token authentifiziert den Benutzer bei den MFA-Setup-Endpunkten ueber den `X-MFA-Setup-Token`-Header.
+Der Client sollte zu einer MFA-Einrichtungsseite weiterleiten. Das Setup-Token authentifiziert den Benutzer bei den MFA-Setup-Endpunkten über den `X-MFA-Setup-Token`-Header.
 
 **Fehlerantworten:**
 
@@ -83,15 +83,15 @@ Content-Type: application/json
 }
 ```
 
-Erstellt ein neues Benutzerkonto und sendet eine Verifizierungs-E-Mail. Gibt `409` zurueck, wenn die E-Mail bereits registriert ist.
+Erstellt ein neues Benutzerkonto und sendet eine Verifizierungs-E-Mail. Gibt `409` zurück, wenn die E-Mail bereits registriert ist.
 
-### E-Mail bestaetigen
+### E-Mail bestätigen
 
 ```
 POST /api/auth/confirm-email?token={token}
 ```
 
-Bestaetigt die E-Mail-Adresse des Benutzers mit dem Token aus der Verifizierungs-E-Mail.
+Bestätigt die E-Mail-Adresse des Benutzers mit dem Token aus der Verifizierungs-E-Mail.
 
 ### Anbieter
 
@@ -99,7 +99,7 @@ Bestaetigt die E-Mail-Adresse des Benutzers mit dem Token aus der Verifizierungs
 GET /api/auth/providers
 ```
 
-Gibt die Liste der konfigurierten externen Identitaetsanbieter zurueck (zum Rendern von SSO-Schaltflaechen):
+Gibt die Liste der konfigurierten externen Identitaetsanbieter zurück (zum Rendern von SSO-Schaltflaechen):
 
 ```json
 {
@@ -115,7 +115,7 @@ Gibt die Liste der konfigurierten externen Identitaetsanbieter zurueck (zum Rend
 POST /api/auth/logout
 ```
 
-Loescht das Auth-Cookie. Gibt `200 { success: true }` zurueck.
+Löscht das Auth-Cookie. Gibt `200 { success: true }` zurück.
 
 ### Passwort vergessen
 
@@ -128,9 +128,9 @@ Content-Type: application/json
 }
 ```
 
-Gibt immer `200` zurueck (Anti-Enumeration). Wenn der Benutzer existiert, wird eine Zuruecksetzungs-E-Mail gesendet.
+Gibt immer `200` zurück (Anti-Enumeration). Wenn der Benutzer existiert, wird eine Zurücksetzungs-E-Mail gesendet.
 
-### Passwort zuruecksetzen
+### Passwort zurücksetzen
 
 ```
 POST /api/auth/reset-password
@@ -146,7 +146,7 @@ Content-Type: application/json
 |---|---|
 | `weak_password` | Erfuellt nicht die Staerkeanforderungen |
 | `invalid_token` | Token ist fehlerhaft |
-| `token_expired` | Token ist abgelaufen (standardmaessig 60 Minuten Gueltigkeit, konfigurierbar ueber `Auth:PasswordResetExpiryMinutes`) |
+| `token_expired` | Token ist abgelaufen (standardmäßig 60 Minuten Gültigkeit, konfigurierbar über `Auth:PasswordResetExpiryMinutes`) |
 
 ### Sitzung
 
@@ -154,7 +154,7 @@ Content-Type: application/json
 GET /api/auth/session
 ```
 
-Gibt aktuelle Sitzungsinformationen zurueck, wenn authentifiziert:
+Gibt aktuelle Sitzungsinformationen zurück, wenn authentifiziert:
 
 ```json
 {
@@ -165,7 +165,7 @@ Gibt aktuelle Sitzungsinformationen zurueck, wenn authentifiziert:
 }
 ```
 
-Gibt `401` zurueck, wenn nicht authentifiziert.
+Gibt `401` zurück, wenn nicht authentifiziert.
 
 ### SSO-Pruefung
 
@@ -198,7 +198,7 @@ Wenn SSO nicht erforderlich ist:
 GET /api/auth/password-policy
 ```
 
-Gibt die Passwortanforderungen des Servers zurueck (konfiguriert ueber `PasswordPolicy` in den Einstellungen):
+Gibt die Passwortanforderungen des Servers zurück (konfiguriert über `PasswordPolicy` in den Einstellungen):
 
 ```json
 {
@@ -212,11 +212,11 @@ Gibt die Passwortanforderungen des Servers zurueck (konfiguriert ueber `Password
 }
 ```
 
-Die Standard-Login-Oberflaeche ruft diesen Endpunkt auf der Passwort-zuruecksetzen-Seite ab, um Anforderungen dynamisch anzuzeigen.
+Die Standard-Login-Oberflaeche ruft diesen Endpunkt auf der Passwort-zurücksetzen-Seite ab, um Anforderungen dynamisch anzuzeigen.
 
 ## Standard-Passwortanforderungen
 
-Mit Standardkonfiguration muessen Passwoerter alle folgenden Kriterien erfuellen:
+Mit Standardkonfiguration müssen Passwörter alle folgenden Kriterien erfuellen:
 
 - Mindestens 8 Zeichen
 - Mindestens ein Grossbuchstabe
@@ -225,7 +225,7 @@ Mit Standardkonfiguration muessen Passwoerter alle folgenden Kriterien erfuellen
 - Mindestens ein nicht-alphanumerisches Zeichen
 - Mindestens 2 verschiedene Zeichen
 
-Diese koennen ueber den Konfigurationsabschnitt `PasswordPolicy` angepasst werden -- siehe [Konfiguration](configuration).
+Diese können über den Konfigurationsabschnitt `PasswordPolicy` angepasst werden -- siehe [Konfiguration](configuration).
 
 ## MFA-Endpunkte
 
@@ -242,7 +242,7 @@ Content-Type: application/json
 }
 ```
 
-Verifiziert eine MFA-Abfrage. Bei Erfolg wird das Auth-Cookie gesetzt und Benutzerinformationen zurueckgegeben.
+Verifiziert eine MFA-Abfrage. Bei Erfolg wird das Auth-Cookie gesetzt und Benutzerinformationen zurückgegeben.
 
 **Methoden:**
 
@@ -258,7 +258,7 @@ Verifiziert eine MFA-Abfrage. Bei Erfolg wird das Auth-Cookie gesetzt und Benutz
 GET /api/auth/mfa/status
 ```
 
-Gibt die registrierten MFA-Methoden des Benutzers zurueck. Erfordert Cookie-Authentifizierung oder den `X-MFA-Setup-Token`-Header.
+Gibt die registrierten MFA-Methoden des Benutzers zurück. Erfordert Cookie-Authentifizierung oder den `X-MFA-Setup-Token`-Header.
 
 ```json
 {
@@ -298,7 +298,7 @@ POST /api/auth/mfa/recovery/generate
 → { "codes": ["ABCD-1234", "EFGH-5678", ...] }
 ```
 
-Generiert 10 Einmal-Wiederherstellungscodes. Erfordert, dass mindestens eine primaere Methode (TOTP oder WebAuthn) registriert ist. Eine Neugenerierung ersetzt alle bestehenden Wiederherstellungscodes.
+Generiert 10 Einmal-Wiederherstellungscodes. Erfordert, dass mindestens eine primäre Methode (TOTP oder WebAuthn) registriert ist. Eine Neugenerierung ersetzt alle bestehenden Wiederherstellungscodes.
 
 ### MFA-Anmeldedaten entfernen
 
@@ -307,7 +307,7 @@ DELETE /api/auth/mfa/credentials/{credentialId}
 → { "success": true }
 ```
 
-Entfernt eine bestimmte MFA-Anmeldedaten. Wenn die letzte primaere Methode entfernt wird, wird MFA fuer den Benutzer deaktiviert.
+Entfernt eine bestimmte MFA-Anmeldedaten. Wenn die letzte primäre Methode entfernt wird, wird MFA für den Benutzer deaktiviert.
 
 ## Benutzerdefinierte Login-Oberflaeche erstellen
 
@@ -316,9 +316,9 @@ Die Standard-SPA (`login-app/`) ist eine Implementierung dieser API. Um Ihre eig
 1. Stellen Sie Ihre Oberflaeche unter den Pfaden `/login`, `/forgot-password`, `/reset-password` bereit
 2. Der Autorisierungsendpunkt leitet nicht authentifizierte Benutzer zu `/login?returnUrl={encoded-authorize-url}` weiter
 3. Nach erfolgreicher Anmeldung (Cookie gesetzt) leiten Sie den Benutzer zur `returnUrl` weiter
-4. Passwort-Zuruecksetzungslinks verwenden `{Issuer}/reset-password?p={token}`
+4. Passwort-Zurücksetzungslinks verwenden `{Issuer}/reset-password?p={token}`
 
 Ihre Oberflaeche muss vom **selben Ursprung** wie die API bereitgestellt werden, da:
 - Cookie-Authentifizierung `SameSite=Lax` + `HttpOnly` verwendet
 - Der Autorisierungsendpunkt zu `/login` weiterleitet (relativ)
-- Zuruecksetzungslinks `{Issuer}/reset-password` verwenden
+- Zurücksetzungslinks `{Issuer}/reset-password` verwenden

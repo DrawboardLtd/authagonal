@@ -18,7 +18,7 @@ Alle Endpunkte befinden sich unter `/api/v1/`.
 GET /api/v1/profile/{userId}
 ```
 
-Gibt Benutzerdetails einschliesslich externer Login-Verknuepfungen zurueck.
+Gibt Benutzerdetails einschließlich externer Login-Verknuepfungen zurück.
 
 ### Benutzer registrieren
 
@@ -34,7 +34,7 @@ Content-Type: application/json
 }
 ```
 
-Erstellt einen Benutzer und sendet eine Verifizierungs-E-Mail. Gibt `409` zurueck, wenn die E-Mail bereits vergeben ist.
+Erstellt einen Benutzer und sendet eine Verifizierungs-E-Mail. Gibt `409` zurück, wenn die E-Mail bereits vergeben ist.
 
 ### Benutzer aktualisieren
 
@@ -50,19 +50,19 @@ Content-Type: application/json
 }
 ```
 
-Alle Felder sind optional -- nur angegebene Felder werden aktualisiert. Die Aenderung von `organizationId` loest aus:
-- SecurityStamp-Rotation (macht alle Cookie-Sitzungen innerhalb von 30 Minuten ungueltig)
+Alle Felder sind optional -- nur angegebene Felder werden aktualisiert. Die Änderung von `organizationId` loest aus:
+- SecurityStamp-Rotation (macht alle Cookie-Sitzungen innerhalb von 30 Minuten ungültig)
 - Alle Refresh-Token werden widerrufen
 
-### Benutzer loeschen
+### Benutzer löschen
 
 ```
 DELETE /api/v1/profile/{userId}
 ```
 
-Loescht den Benutzer, widerruft alle Berechtigungen und deprovisioniert aus allen nachgelagerten Apps (Best-Effort).
+Löscht den Benutzer, widerruft alle Berechtigungen und deprovisioniert aus allen nachgelagerten Apps (Best-Effort).
 
-### E-Mail bestaetigen
+### E-Mail bestätigen
 
 ```
 POST /api/v1/profile/confirm-email?token={token}
@@ -74,7 +74,7 @@ POST /api/v1/profile/confirm-email?token={token}
 POST /api/v1/profile/{userId}/send-verification-email
 ```
 
-### Externe Identitaet verknuepfen
+### Externe Identität verknuepfen
 
 ```
 POST /api/v1/profile/{userId}/identities
@@ -87,7 +87,7 @@ Content-Type: application/json
 }
 ```
 
-### Externe Identitaet trennen
+### Externe Identität trennen
 
 ```
 DELETE /api/v1/profile/{userId}/identities/{provider}/{externalUserId}
@@ -101,9 +101,9 @@ DELETE /api/v1/profile/{userId}/identities/{provider}/{externalUserId}
 GET /api/v1/profile/{userId}/mfa
 ```
 
-Gibt den MFA-Status und die registrierten Methoden eines Benutzers zurueck.
+Gibt den MFA-Status und die registrierten Methoden eines Benutzers zurück.
 
-### Alle MFA zuruecksetzen
+### Alle MFA zurücksetzen
 
 ```
 DELETE /api/v1/profile/{userId}/mfa
@@ -117,7 +117,7 @@ Entfernt alle MFA-Anmeldedaten und setzt `MfaEnabled=false`. Der Benutzer muss s
 DELETE /api/v1/profile/{userId}/mfa/{credentialId}
 ```
 
-Entfernt eine bestimmte MFA-Anmeldedaten (z.B. einen verlorenen Authenticator). Wenn die letzte primaere Methode entfernt wird, wird MFA deaktiviert.
+Entfernt eine bestimmte MFA-Anmeldedaten (z.B. einen verlorenen Authenticator). Wenn die letzte primäre Methode entfernt wird, wird MFA deaktiviert.
 
 ## SSO-Anbieter
 
@@ -127,7 +127,7 @@ Entfernt eine bestimmte MFA-Anmeldedaten (z.B. einen verlorenen Authenticator). 
 POST   /api/v1/saml/connections                    # Erstellen
 GET    /api/v1/saml/connections/{connectionId}     # Einzelnen abrufen
 PUT    /api/v1/saml/connections/{connectionId}     # Aktualisieren
-DELETE /api/v1/saml/connections/{connectionId}     # Loeschen
+DELETE /api/v1/saml/connections/{connectionId}     # Löschen
 ```
 
 ### OIDC-Anbieter
@@ -135,7 +135,7 @@ DELETE /api/v1/saml/connections/{connectionId}     # Loeschen
 ```
 POST   /api/v1/oidc/connections                    # Erstellen
 GET    /api/v1/oidc/connections/{connectionId}     # Einzelnen abrufen
-DELETE /api/v1/oidc/connections/{connectionId}     # Loeschen
+DELETE /api/v1/oidc/connections/{connectionId}     # Löschen
 ```
 
 ### SSO-Domaenen
@@ -153,7 +153,7 @@ GET    /api/v1/clients              # Alle Clients auflisten
 GET    /api/v1/clients/{clientId}   # Einen Client abrufen
 POST   /api/v1/clients              # Einen Client erstellen
 PUT    /api/v1/clients/{clientId}   # Einen Client aktualisieren
-DELETE /api/v1/clients/{clientId}   # Einen Client loeschen
+DELETE /api/v1/clients/{clientId}   # Einen Client löschen
 ```
 
 ### Client erstellen / aktualisieren
@@ -171,24 +171,24 @@ Content-Type: application/json
 }
 ```
 
-`POST` gibt `409` zurueck, wenn der Client bereits existiert. `PUT` aktualisiert einen vorhandenen Client (`404`, falls nicht gefunden); beim Aktualisieren werden nur neu hinzugefuegte Scopes auf Eskalation geprueft.
+`POST` gibt `409` zurück, wenn der Client bereits existiert. `PUT` aktualisiert einen vorhandenen Client (`404`, falls nicht gefunden); beim Aktualisieren werden nur neu hinzugefügte Scopes auf Eskalation geprueft.
 
 Hinweise:
 
-- **Geheimnis-Hashes werden niemals zurueckgegeben.** `clientSecretHashes` wird aus jeder Antwort entfernt (Liste, Abrufen, Erstellen, Aktualisieren). Beim Aktualisieren bewahrt das Weglassen von `clientSecretHashes` das gespeicherte Geheimnis; das Angeben neuer Hashes rotiert es.
-- **Der Admin-Scope kann keinem Client gewaehrt werden.** Das Anfordern von `AdminApi:Scope` (Standard `authagonal-admin`) in `allowedScopes` gibt `403 forbidden_scope` zurueck — kein Client darf den Admin-Scope besitzen, andernfalls koennte ein `client_credentials`-Client unbegrenzt Admin-Token ausstellen.
-- Das Hinzufuegen von Scopes, die der Aufrufer nicht gewaehren darf, gibt `403` zurueck.
+- **Geheimnis-Hashes werden niemals zurückgegeben.** `clientSecretHashes` wird aus jeder Antwort entfernt (Liste, Abrufen, Erstellen, Aktualisieren). Beim Aktualisieren bewahrt das Weglassen von `clientSecretHashes` das gespeicherte Geheimnis; das Angeben neuer Hashes rotiert es.
+- **Der Admin-Scope kann keinem Client gewährt werden.** Das Anfordern von `AdminApi:Scope` (Standard `authagonal-admin`) in `allowedScopes` gibt `403 forbidden_scope` zurück — kein Client darf den Admin-Scope besitzen, andernfalls könnte ein `client_credentials`-Client unbegrenzt Admin-Token ausstellen.
+- Das Hinzufügen von Scopes, die der Aufrufer nicht gewähren darf, gibt `403` zurück.
 
 ## Scopes
 
-Verwalten Sie benutzerdefinierte OAuth-Scopes zur Laufzeit. Das vollstaendige Scope-Modell finden Sie unter [OAuth-Scopes](scopes).
+Verwalten Sie benutzerdefinierte OAuth-Scopes zur Laufzeit. Das vollständige Scope-Modell finden Sie unter [OAuth-Scopes](scopes).
 
 ```
 GET    /api/v1/scopes           # Alle Scopes auflisten
 GET    /api/v1/scopes/{name}    # Einen Scope abrufen
 POST   /api/v1/scopes           # Einen Scope erstellen
-PUT    /api/v1/scopes/{name}    # Einen Scope aktualisieren (nur angegebene Felder aendern sich)
-DELETE /api/v1/scopes/{name}    # Einen Scope loeschen
+PUT    /api/v1/scopes/{name}    # Einen Scope aktualisieren (nur angegebene Felder ändern sich)
+DELETE /api/v1/scopes/{name}    # Einen Scope löschen
 ```
 
 ```
@@ -203,17 +203,17 @@ Content-Type: application/json
 }
 ```
 
-Gibt `201` beim Erstellen zurueck (`409`, wenn der Scope bereits existiert), das Scope-JSON beim Abrufen/Aktualisieren und `204` beim Loeschen.
+Gibt `201` beim Erstellen zurück (`409`, wenn der Scope bereits existiert), das Scope-JSON beim Abrufen/Aktualisieren und `204` beim Löschen.
 
 ## Bereitstellungs-Apps
 
 Verwalten Sie nachgelagerte Bereitstellungsziele zur Laufzeit. Alle Routen erfordern die `IdentityAdmin`-Richtlinie.
 
 ```
-GET    /api/v1/provisioning/apps               # Apps auflisten (gibt auch das konfigurierte Limit zurueck)
+GET    /api/v1/provisioning/apps               # Apps auflisten (gibt auch das konfigurierte Limit zurück)
 POST   /api/v1/provisioning/apps               # Eine App erstellen
 PUT    /api/v1/provisioning/apps/{appId}       # Eine App aktualisieren
-DELETE /api/v1/provisioning/apps/{appId}       # Eine App loeschen
+DELETE /api/v1/provisioning/apps/{appId}       # Eine App löschen
 POST   /api/v1/provisioning/apps/{appId}/test  # Einen Test-/try-Aufruf an den Callback der App senden
 ```
 
@@ -233,8 +233,8 @@ Content-Type: application/json
 
 - `name` und `callbackUrl` sind erforderlich; `callbackUrl` muss eine absolute `http(s)`-URL sein.
 - `tryTimeoutSeconds` wird auf den Bereich 5–300 begrenzt.
-- **Der API-Schluessel wird niemals zurueckgegeben.** Antworten geben `hasApiKey` (einen Boolean) statt des Schluessels selbst aus. Beim Aktualisieren laesst das Weglassen von `apiKey` ihn unveraendert, ein leerer String loescht ihn und ein Wert ersetzt ihn.
-- Die Erstellung unterliegt einem konfigurierbaren Kontingent pro Deployment (`IProvisioningAppQuota`); ein Ueberschreiten gibt `400 provisioning_app_limit` zurueck. Die Listenantwort enthaelt das aktuelle `limit`.
+- **Der API-Schlüssel wird niemals zurückgegeben.** Antworten geben `hasApiKey` (einen Boolean) statt des Schlüssels selbst aus. Beim Aktualisieren lässt das Weglassen von `apiKey` ihn unverändert, ein leerer String löscht ihn und ein Wert ersetzt ihn.
+- Die Erstellung unterliegt einem konfigurierbaren Kontingent pro Deployment (`IProvisioningAppQuota`); ein Überschreiten gibt `400 provisioning_app_limit` zurück. Die Listenantwort enthält das aktuelle `limit`.
 
 ### Eine Bereitstellungs-App testen
 
@@ -242,7 +242,7 @@ Content-Type: application/json
 POST /api/v1/provisioning/apps/{appId}/test
 ```
 
-Sendet ein synthetisches `POST {callbackUrl}/try` mit einer Beispiel-Payload (und dem API-Schluessel der App als Bearer-Token, falls gesetzt) und gibt `{ success, statusCode, body }` zurueck, damit Sie die Konnektivitaet aus der Admin-Oberflaeche verifizieren koennen.
+Sendet ein synthetisches `POST {callbackUrl}/try` mit einer Beispiel-Payload (und dem API-Schlüssel der App als Bearer-Token, falls gesetzt) und gibt `{ success, statusCode, body }` zurück, damit Sie die Konnektivitaet aus der Admin-Oberflaeche verifizieren können.
 
 ## Rollen
 
@@ -282,7 +282,7 @@ Content-Type: application/json
 }
 ```
 
-### Rolle loeschen
+### Rolle löschen
 
 ```
 DELETE /api/v1/roles/{roleId}
@@ -331,7 +331,7 @@ Content-Type: application/json
 }
 ```
 
-Gibt das Roh-Token einmalig zurueck. Speichern Sie es sicher -- es kann nicht erneut abgerufen werden.
+Gibt das Roh-Token einmalig zurück. Speichern Sie es sicher -- es kann nicht erneut abgerufen werden.
 
 ### Token auflisten
 
@@ -339,7 +339,7 @@ Gibt das Roh-Token einmalig zurueck. Speichern Sie es sicher -- es kann nicht er
 GET /api/v1/scim/tokens?clientId=client-id
 ```
 
-Gibt Token-Metadaten (ID, Erstellungsdatum) ohne den Roh-Token-Wert zurueck.
+Gibt Token-Metadaten (ID, Erstellungsdatum) ohne den Roh-Token-Wert zurück.
 
 ### Token widerrufen
 
@@ -355,17 +355,17 @@ DELETE /api/v1/scim/tokens/{tokenId}?clientId=client-id
 POST /api/v1/token?clientId=client-id&userId=user-id&scopes=openid%20profile
 ```
 
-Stellt Token (Access, Refresh und — wenn `openid` angefordert wird — ID-Token) im Namen eines Benutzers aus, ohne dessen Anmeldedaten zu benoetigen. Nuetzlich fuer Tests und Support. Parameter werden als Query-Strings uebergeben.
+Stellt Token (Access, Refresh und — wenn `openid` angefordert wird — ID-Token) im Namen eines Benutzers aus, ohne dessen Anmeldedaten zu benötigen. Nützlich für Tests und Support. Parameter werden als Query-Strings übergeben.
 
 | Query-Parameter | Erforderlich | Beschreibung |
 |---|---|---|
-| `clientId` | Ja | Der Client, fuer den die Token ausgestellt werden. Die Token-Lebensdauern stammen aus der Konfiguration dieses Clients. |
+| `clientId` | Ja | Der Client, für den die Token ausgestellt werden. Die Token-Lebensdauern stammen aus der Konfiguration dieses Clients. |
 | `userId` | Ja | Der zu imitierende Benutzer. |
-| `scopes` | Nein | **Leerzeichengetrennte** Liste von Scopes (Leerzeichen URL-kodieren). Standardmaessig die `AllowedScopes` des Clients, wenn weggelassen. |
+| `scopes` | Nein | **Leerzeichengetrennte** Liste von Scopes (Leerzeichen URL-kodieren). Standardmäßig die `AllowedScopes` des Clients, wenn weggelassen. |
 
 Einschraenkungen:
 
-- Scopes sind auf die `AllowedScopes` des Clients beschraenkt — das Anfordern eines Scopes, den der Client selbst nicht anfordern koennte, gibt `400 invalid_scope` zurueck.
-- Der Admin-Scope (`AdminApi:Scope`, Standard `authagonal-admin`) **kann** ueber diesen Endpunkt **nicht** ausgestellt werden; das Anfordern gibt `403 forbidden_scope` zurueck. Dies verhindert, dass ein (moeglicherweise zeitlich begrenztes) Admin-Token ein langlebiges Admin-Access-/Refresh-Token erzeugt.
+- Scopes sind auf die `AllowedScopes` des Clients beschraenkt — das Anfordern eines Scopes, den der Client selbst nicht anfordern könnte, gibt `400 invalid_scope` zurück.
+- Der Admin-Scope (`AdminApi:Scope`, Standard `authagonal-admin`) **kann** über diesen Endpunkt **nicht** ausgestellt werden; das Anfordern gibt `403 forbidden_scope` zurück. Dies verhindert, dass ein (möglicherweise zeitlich begrenztes) Admin-Token ein langlebiges Admin-Access-/Refresh-Token erzeugt.
 
-Die Antwort ist eine standardmaessige Token-Antwort mit `access_token`, `refresh_token`, optionalem `id_token`, `expires_in` und dem gewaehrten `scope` (leerzeichengetrennt).
+Die Antwort ist eine standardmäßige Token-Antwort mit `access_token`, `refresh_token`, optionalem `id_token`, `expires_in` und dem gewährten `scope` (leerzeichengetrennt).

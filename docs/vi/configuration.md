@@ -32,10 +32,14 @@ Bộ lưu trữ có thể được cấu hình theo một trong hai cách — cu
 | Cài đặt | Mặc định | Mô tả |
 |---|---|---|
 | `Authentication:CookieLifetimeHours` | `48` | Thời gian sống phiên cookie (trượt) |
+| `Authentication:AlwaysSecureCookie` | `false` | Buộc cờ `Secure` của cookie phiên một cách vô điều kiện. Giá trị mặc định (`SameAsRequest`) đã tạo ra cookie Secure khi chạy phía sau một proxy kết thúc TLS có chuyển tiếp `X-Forwarded-Proto: https`. |
 | `Auth:MaxFailedAttempts` | `5` | Số lần đăng nhập thất bại trước khi khóa tài khoản |
 | `Auth:LockoutDurationMinutes` | `10` | Thời gian khóa tài khoản sau khi vượt quá số lần thất bại tối đa |
 | `Auth:MaxRegistrationsPerIp` | `5` | Số lượt đăng ký tối đa mỗi địa chỉ IP trong cửa sổ thời gian |
 | `Auth:RegistrationWindowMinutes` | `60` | Cửa sổ giới hạn tốc độ đăng ký |
+| `Auth:MaxPasswordResetsPerEmail` | `3` | Số email đặt lại mật khẩu tối đa cho mỗi địa chỉ đích trong cửa sổ thời gian (lập khóa theo email chứ không theo IP người gọi, nên một địa chỉ không thể bị dội bom email) |
+| `Auth:PasswordResetWindowMinutes` | `60` | Cửa sổ giới hạn tốc độ đặt lại mật khẩu |
+| `Auth:AutoConfirmEmailDomains` | *(rỗng)* | Các tên miền email (mảng chuỗi) mà các lượt đăng ký tự phục vụ được tự động xác nhận, chúng bỏ qua email xác minh. Giá trị rỗng (mặc định) nghĩa là mọi lượt đăng ký đều phải xác minh. Chỉ dành cho dev/test; không bao giờ liệt kê một tên miền có thể nhận email thật. |
 | `Auth:EmailVerificationExpiryHours` | `24` | Thời gian hiệu lực liên kết xác minh email |
 | `Auth:PasswordResetExpiryMinutes` | `60` | Thời gian hiệu lực liên kết đặt lại mật khẩu |
 | `Auth:MfaChallengeExpiryMinutes` | `5` | Thời gian hiệu lực token xác thực MFA |
@@ -49,7 +53,17 @@ Bộ lưu trữ có thể được cấu hình theo một trong hai cách — cu
 | `Auth:KeyRotationCheckIntervalMinutes` | `360` | Tần suất kiểm tra xem khóa đang hoạt động có cần xoay vòng hay không |
 | `Auth:KeyRotationLeadTimeDays` | `14` | Xoay vòng khi khóa đang hoạt động hết hạn trong vòng số ngày này |
 | `Auth:SecurityStampRevalidationMinutes` | `30` | Khoảng cách giữa các lần kiểm tra dấu bảo mật cookie |
-| `DataProtection:BlobUri` | *(không có)* | Azure Blob URI để lưu trữ bền vững các khóa Data Protection giữa các instance |
+
+## Data Protection
+
+Các khóa ASP.NET Core Data Protection (dùng để mã hóa cookie phiên) phải được chia sẻ giữa các instance, xem [Mở rộng](scaling#cookie-encryption-data-protection). Các tùy chọn lưu trữ bền vững, theo thứ tự ưu tiên:
+
+| Cài đặt | Mặc định | Mô tả |
+|---|---|---|
+| `DataProtection:BlobUri` | *(không có)* | Azure Blob URI rõ ràng cho key ring (ví dụ `https://{account}.blob.core.windows.net/dataprotection/keys.xml`). Xác thực qua `DefaultAzureCredential`, là đường dẫn production được ưu tiên đi kèm với `Storage:TableServiceUri`. |
+| *(dự phòng)* | — | Khi `DataProtection:BlobUri` không được đặt và `Storage:ConnectionString` trỏ đến một storage account thật (không phải Azurite), các khóa được tự động lưu vào một container `dataprotection` trong account đó. Với Azurite, các khóa quay về bộ lưu trữ dựa trên tệp mặc định. |
+
+Trên backend AWS, hãy truyền một S3 client + bucket vào `AddAuthagonalAwsStorage` để lưu key ring vào S3, xem [Cài đặt → AWS backend](installation#aws-backend).
 
 ## Bộ nhớ đệm và thời gian chờ
 
@@ -170,7 +184,7 @@ Xác thực đa yếu tố được áp dụng theo từng client thông qua thu
 
 Khi `MfaPolicy` là `Required` và người dùng chưa đăng ký MFA, đăng nhập trả về `{ mfaSetupRequired: true, setupToken: "..." }`. Token thiết lập xác thực người dùng đến các endpoint thiết lập MFA (qua header `X-MFA-Setup-Token`) để họ có thể đăng ký trước khi nhận phiên cookie.
 
-Đăng nhập liên kết (SAML/OIDC) bỏ qua MFA — nhà cung cấp danh tính bên ngoài xử lý việc này.
+Đăng nhập liên kết (SAML/OIDC) cũng tuân theo chính sách MFA: một người dùng đã đăng ký MFA sẽ được dẫn qua bước xác thực MFA sau khi IdP bên ngoài xác thực họ, và `Required` bắt buộc đăng ký cho những người dùng liên kết chưa có MFA.
 
 ### Ghi đè IAuthHook
 
@@ -239,7 +253,7 @@ Chính sách được áp dụng khi đặt lại mật khẩu và đăng ký ng
 |---|---|---|
 | `ConnectionId` | Có | Mã định danh ổn định (dùng trong URL như `/saml/{connectionId}/login`) |
 | `ConnectionName` | Không | Tên hiển thị (mặc định là ConnectionId) |
-| `EntityId` | Có | Entity ID của SAML Service Provider |
+| `EntityId` | Có | Entity ID của SP của **máy chủ này**, mã định danh bạn đăng ký tại IdP, không phải entity ID của chính IdP |
 | `MetadataLocation` | Có | URL đến tệp XML metadata SAML của IdP |
 | `AllowedDomains` | Không | Các tên miền email được định tuyến đến nhà cung cấp này qua SSO |
 
@@ -324,62 +338,44 @@ Người dùng có thể xem và thu hồi các cấp quyền đồng ý của h
 
 ## Email
 
-Mặc định, Authagonal sử dụng dịch vụ email no-op âm thầm bỏ qua tất cả email. Để bật gửi email, đăng ký triển khai `IEmailService` trước khi gọi `AddAuthagonal()`.
-
-Dịch vụ tích hợp `EmailService` sử dụng [Resend](https://resend.com). Để dùng nó, hãy đăng ký một cách rõ ràng:
-
-```csharp
-services.AddSingleton<IEmailService, EmailService>();
-services.AddAuthagonal(configuration);
-```
+Bộ gửi email tích hợp sử dụng [Resend](https://resend.com) và **tự động kích hoạt** khi `Email:ResendApiKey` được cấu hình, không cần đăng ký dịch vụ. Để dùng một nhà cung cấp khác, hãy đăng ký triển khai `IEmailService` của riêng bạn trước khi gọi `AddAuthagonal()` (nó được ưu tiên bất kể các khóa `Email:*`).
 
 | Cài đặt | Mô tả |
 |---|---|
-| `Email:ResendApiKey` | Khóa API Resend để gửi email |
+| `Email:ResendApiKey` | Khóa API Resend. Khi được đặt, bộ gửi Resend tích hợp sẽ được dùng. |
 | `Email:SenderEmail` | Địa chỉ email người gửi |
 | `Email:SenderName` | Tên hiển thị người gửi (mặc định là `"Authagonal"`) |
+
+> ⚠️ **Nếu không có bộ gửi email nào, việc tự đăng ký sẽ hỏng.** Khi `Email:ResendApiKey` không được đặt và không có `IEmailService` tùy chỉnh nào được đăng ký, một dịch vụ no-op sẽ âm thầm bỏ qua tất cả email: email xác minh và đặt lại mật khẩu không bao giờ đến, và vì đăng nhập theo mặc định yêu cầu email đã xác nhận, người dùng tự đăng ký không bao giờ đăng nhập được. `UseAuthagonal` ghi một cảnh báo khi khởi động trong trạng thái này. Lối thoát cho dev/test: `Auth:AutoConfirmEmailDomains` tự động xác nhận các lượt đăng ký cho những tên miền được liệt kê.
 
 Email gửi đến địa chỉ `@example.com` sẽ được bỏ qua im lặng (hữu ích cho kiểm thử).
 
 ## Cluster
 
-Các instance Authagonal tự động hình thành cụm để chia sẻ trạng thái giới hạn tốc độ. Clustering được bật mặc định mà không cần cấu hình.
+Lớp clustering cung cấp **bầu chọn leader** (để các công việc do leader điều phối như xoay vòng khóa ký chỉ chạy trên đúng một node) và một **event bus xuyên node**, phía sau các backend có thể thay thế. Mặc định là in-process: một node đơn luôn là leader của chính nó, đây là cài đặt phù hợp cho triển khai một node và phát triển cục bộ, không cần cấu hình.
 
 | Cài đặt | Biến môi trường | Mặc định | Mô tả |
 |---|---|---|---|
-| `Cluster:Enabled` | `Cluster__Enabled` | `true` | Công tắc chính cho clustering. Đặt thành `false` để chỉ giới hạn tốc độ cục bộ. |
-| `Cluster:MulticastGroup` | `Cluster__MulticastGroup` | `239.42.42.42` | Nhóm UDP multicast để khám phá peer |
-| `Cluster:MulticastPort` | `Cluster__MulticastPort` | `19847` | Cổng UDP multicast để khám phá peer |
-| `Cluster:InternalUrl` | `Cluster__InternalUrl` | *(không có)* | URL cân bằng tải dự phòng cho gossip khi multicast không khả dụng |
-| `Cluster:Secret` | `Cluster__Secret` | *(không có)* | Bí mật dùng chung bắt buộc trên các endpoint nội bộ (`/_internal/cluster/gossip` và `/_internal/backchannel-logout`). Khi được đặt, người gọi phải xuất trình nó trong header `X-Cluster-Secret` (so sánh trong thời gian hằng số). Khi **không được đặt**, các endpoint đó chỉ có thể truy cập từ các IP nguồn loopback / riêng tư (RFC 1918 / link-local / ULA) — một yêu cầu bên ngoài mang IP công khai sẽ bị từ chối. Khuyến nghị mỗi khi `InternalUrl` định tuyến gossip qua bộ cân bằng tải. |
-| `Cluster:GossipIntervalSeconds` | `Cluster__GossipIntervalSeconds` | `5` | Tần suất các instance trao đổi trạng thái giới hạn tốc độ |
-| `Cluster:DiscoveryIntervalSeconds` | `Cluster__DiscoveryIntervalSeconds` | `10` | Tần suất các instance thông báo qua multicast |
-| `Cluster:PeerStaleAfterSeconds` | `Cluster__PeerStaleAfterSeconds` | `30` | Loại bỏ peer không phản hồi sau số giây này |
+| `Cluster:Enabled` | `Cluster__Enabled` | `true` | Công tắc chính. Khi `false`, node chạy độc lập (luôn là leader, event bus in-process). |
+| `Cluster:Secret` | `Cluster__Secret` | *(không có)* | Bí mật dùng chung bắt buộc trên endpoint chỉ nội bộ `/_internal/backchannel-logout`. Khi được đặt, người gọi phải xuất trình nó trong header `X-Cluster-Secret` (so sánh trong thời gian hằng số). Khi **không được đặt**, endpoint chỉ có thể truy cập từ các IP nguồn loopback / riêng tư (RFC 1918 / link-local / ULA), một yêu cầu bên ngoài mang IP công khai sẽ bị từ chối. |
+| `Cluster:LeaseTtlSeconds` | `Cluster__LeaseTtlSeconds` | `30` | Thời gian lease quyền leader. Được gia hạn ở khoảng một nửa khoảng thời gian này. |
+| `Cluster:PollIntervalSeconds` | `Cluster__PollIntervalSeconds` | `3` | Tần suất backend event-bus thăm dò các thông điệp do các node khác phát hành. |
 
-**Không cần cấu hình (mặc định):** Các instance khám phá lẫn nhau qua UDP multicast. Hoạt động trong Kubernetes, Docker Compose, hoặc bất kỳ mạng chia sẻ nào.
+**Triển khai nhiều node** thay bằng một backend thật qua callback `configureClustering` trên `AddAuthagonal` / `AddAuthagonalCore`:
 
-**Multicast bị vô hiệu hóa (ví dụ: một số cloud VPC):**
+```csharp
+// Azure: leadership via a blob lease, event bus via a table log (Authagonal.AzureProvider)
+builder.Services.AddAuthagonal(builder.Configuration,
+    cluster => cluster.UseAzureStorage(blobServiceClient, tableServiceClient));
 
-```json
-{
-  "Cluster": {
-    "InternalUrl": "http://authagonal-auth.svc.cluster.local:8080",
-    "Secret": "shared-secret-here"
-  }
-}
+// AWS equivalent (Authagonal.AwsProvider)
+builder.Services.AddAuthagonal(builder.Configuration,
+    cluster => cluster.UseAwsDynamo(dynamoDb));
 ```
 
-**Tắt hoàn toàn clustering:**
+`UseAzureStorageBus` / `UseAwsDynamoBus` chỉ đăng ký event bus, giữ lease in-process, dành cho các node phải nhận sự kiện cụm nhưng không bao giờ được tranh quyền leader.
 
-```json
-{
-  "Cluster": {
-    "Enabled": false
-  }
-}
-```
-
-Xem [Mở rộng](scaling) để biết thêm chi tiết về cách giới hạn tốc độ phân tán hoạt động.
+Xem [Mở rộng](scaling) để biết cách quyền leader và event bus hoạt động giữa các instance.
 
 ## Forwarded Headers (proxy tin cậy)
 
@@ -405,13 +401,16 @@ Authagonal lập khóa giới hạn tốc độ và khóa tài khoản dựa tr�
 
 ## Giới hạn tốc độ
 
-Giới hạn tốc độ theo IP tích hợp sẵn được áp dụng trên tất cả các instance thông qua giao thức gossip của cụm:
+Giới hạn tốc độ tích hợp sẵn bảo vệ các endpoint dễ bị lạm dụng:
 
-| Endpoint | Giới hạn | Cửa sổ |
-|---|---|---|
-| `POST /api/auth/register` | 5 lượt đăng ký | 1 giờ |
+| Endpoint | Giới hạn | Cửa sổ | Lập khóa theo |
+|---|---|---|---|
+| `POST /api/auth/register` | 5 (`Auth:MaxRegistrationsPerIp`) | 1 giờ (`Auth:RegistrationWindowMinutes`) | IP của client |
+| `POST /api/auth/forgot-password` | 3 (`Auth:MaxPasswordResetsPerEmail`) | 1 giờ (`Auth:PasswordResetWindowMinutes`) | Email đích |
+| `POST /connect/register` (khi được bật) | 10 | 1 giờ | IP của client |
+| Các endpoint SCIM | 200 | 1 phút | SCIM client |
 
-Khi clustering được bật, các giới hạn này được tổng hợp trên tất cả các instance. Khi tắt, mỗi instance áp dụng giới hạn riêng một cách độc lập.
+Các giới hạn được áp dụng **in-process theo từng node** (phía sau seam `IRateLimiter`), nên với N instance thì trần hiệu dụng là N× giá trị được cấu hình. Hãy coi chúng như một lớp phòng bị và thực thi giới hạn toàn cục có thẩm quyền ở biên (WAF / ingress / CDN). Xem [Mở rộng](scaling#rate-limiting).
 
 ## CORS
 

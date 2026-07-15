@@ -6,19 +6,23 @@ locale: fr
 
 # Localisation
 
-Authagonal prend en charge huit langues par defaut : anglais, chinois simplifie (`zh-Hans`), allemand (`de`), francais (`fr`), espagnol (`es`), vietnamien (`vi`), portugais (`pt`) et klingon (`tlh`). La localisation couvre les reponses de l'API serveur, l'interface de connexion et ce site de documentation.
+L'interface de connexion est livree avec onze locales par defaut : anglais, chinois simplifie (`zh-Hans`), allemand (`de`), francais (`fr`), espagnol (`es`), vietnamien (`vi`), portugais (`pt`), arabe (`ar`), afrikaans (`af`), hindi (`hi`) et une locale fantaisie klingon (`tlh`). Les reponses de l'API serveur sont localisees dans les sept premieres. La localisation couvre les reponses de l'API serveur, l'interface de connexion et ce site de documentation.
 
 ## Langues prises en charge
 
-| Code | Langue |
-|---|---|
-| `en` | Anglais (par defaut) |
-| `zh-Hans` | Chinois simplifie |
-| `de` | Allemand |
-| `fr` | Francais |
-| `es` | Espagnol |
-| `vi` | Vietnamien |
-| `pt` | Portugais |
+| Code | Langue | Interface de connexion | API serveur |
+|---|---|---|---|
+| `en` | Anglais (par defaut) | ✓ | ✓ |
+| `zh-Hans` | Chinois simplifie | ✓ | ✓ |
+| `de` | Allemand | ✓ | ✓ |
+| `fr` | Francais | ✓ | ✓ |
+| `es` | Espagnol | ✓ | ✓ |
+| `vi` | Vietnamien | ✓ | ✓ |
+| `pt` | Portugais | ✓ | ✓ |
+| `ar` | Arabe (droite a gauche) | ✓ | — |
+| `af` | Afrikaans | ✓ | — |
+| `hi` | Hindi | ✓ | — |
+| `tlh` | Klingon (fantaisie) | ✓ | — |
 
 ## Serveur (reponses API)
 
@@ -74,6 +78,10 @@ Resources/
 
 La SPA de connexion utilise [react-i18next](https://react.i18next.com/) pour la localisation cote client. La langue est detectee automatiquement a partir du parametre `navigator.language` du navigateur.
 
+Les locales enregistrees vivent dans un registre `LANGUAGES` unique dans `login-app/src/i18n/index.ts`, qui pilote a la fois l'enregistrement des ressources i18next et chaque selecteur de langue, de sorte que les deux ne peuvent pas diverger. Les locales marquees `novelty` (actuellement `tlh`) restent pleinement fonctionnelles (`?lng=tlh` fonctionne) mais sont exclues du selecteur par defaut ; elles n'apparaissent dans un menu deroulant que lorsque le `BrandingConfig.languages` d'un tenant les liste explicitement. Les tenants peuvent aussi restreindre le selecteur de la meme facon : un tableau `languages` dans `branding.json` remplace entierement la liste par defaut (voir [Marque](branding)).
+
+La langue active est refletee sur `<html lang>` et `<html dir>`, de sorte que les langues de droite a gauche (`ar`) retournent automatiquement la carte d'authentification, y compris lorsque la langue est changee sur place via le selecteur.
+
 ### Detection de la langue
 
 L'ordre de detection est :
@@ -89,7 +97,7 @@ Les fichiers JSON de traduction sont integres a l'application dans `login-app/sr
 
 ```
 i18n/
-  index.ts        # i18n initialization
+  index.ts        # i18n initialization + the LANGUAGES registry
   en.json         # English
   zh-Hans.json    # Simplified Chinese
   de.json         # German
@@ -97,12 +105,15 @@ i18n/
   es.json         # Spanish
   vi.json         # Vietnamese
   pt.json         # Portuguese
-  tlh.json        # Klingon
+  ar.json         # Arabic
+  af.json         # Afrikaans
+  hi.json         # Hindi
+  tlh.json        # Klingon (novelty)
 ```
 
 ### Labels de la politique de mot de passe
 
-L'interface de connexion traduit les labels des exigences de mot de passe cote client en fonction de la cle `rule` renvoyee par `GET /api/auth/password-policy`, plutot que d'utiliser le champ `label` fourni par le serveur. Cela garantit que les exigences de mot de passe sont toujours affichees dans la langue du navigateur de l'utilisateur, meme si l'en-tete `Accept-Language` du serveur differe.
+La page de reinitialisation de mot de passe traduit sa liste d'exigences de mot de passe cote client en fonction de la cle `rule` renvoyee par `GET /api/auth/password-policy` (avec repli sur le champ `label` fourni par le serveur pour les regles non reconnues). Cela garantit que les exigences suivent la langue selectionnee dans l'interface, meme si l'en-tete `Accept-Language` du navigateur differe. La page d'inscription affiche les valeurs `label` fournies par le serveur, qui sont localisees a partir de `Accept-Language`.
 
 ### Consommateurs du paquet npm
 
@@ -117,7 +128,7 @@ i18n.changeLanguage('de');
 
 ## Documentation
 
-Le site de documentation utilise une approche basee sur les repertoires. Les pages en anglais se trouvent a la racine et les traductions dans des sous-repertoires de langue (`/zh-Hans/`, `/de/`, `/fr/`, `/es/`). Un menu deroulant de changement de langue dans la barre laterale permet de basculer entre les langues.
+Le site de documentation utilise une approche basee sur les repertoires. Les pages en anglais se trouvent a la racine et les traductions dans des sous-repertoires de langue (`/zh-Hans/`, `/de/`, `/fr/`, `/es/`, `/vi/`, `/pt/`). Un menu deroulant de changement de langue dans la barre laterale permet de basculer entre les langues.
 
 ## Ajouter une nouvelle langue
 
@@ -145,13 +156,13 @@ Creez un nouveau fichier JSON de traduction en copiant `en.json` et en traduisan
 login-app/src/i18n/ja.json
 ```
 
-Enregistrez-le dans `login-app/src/i18n/index.ts` :
+Enregistrez-le dans le tableau `LANGUAGES` de `login-app/src/i18n/index.ts`. Cette seule entree enregistre la ressource i18next et ajoute la langue a chaque selecteur :
 
 ```typescript
 import ja from './ja.json';
 
-// In the resources object:
-ja: { translation: ja },
+// In the LANGUAGES array:
+{ code: 'ja', label: '日本語', resource: ja },
 ```
 
 ### 3. Documentation

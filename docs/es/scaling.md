@@ -10,7 +10,7 @@ Authagonal esta disenado para escalar tanto vertical como horizontalmente sin co
 
 ## Sin estado por diseno
 
-Todos los estados persistentes se almacenan en Azure Table Storage. No hay estado en proceso que requiera sesiones persistentes o coordinacion entre instancias:
+Todos los estados persistentes se almacenan en el almacen de tablas de respaldo -- Azure Table Storage, o DynamoDB en el backend de AWS. No hay estado en proceso que requiera sesiones persistentes o coordinacion entre instancias:
 
 - **Claves de firma** — cargadas desde Table Storage, actualizadas cada hora
 - **Codigos de autorizacion y tokens de actualizacion** — almacenados en Table Storage con aplicacion de uso unico
@@ -24,7 +24,7 @@ Las claves de Data Protection de ASP.NET Core se persisten automaticamente en Az
 
 Para el desarrollo local con Azurite, las claves de Data Protection recurren al almacenamiento predeterminado basado en archivos.
 
-Tambien puede especificar una URI de blob explicita a traves de la configuracion:
+Tambien puede especificar una URI de blob explicita a traves de la configuracion (la ruta de identidad administrada, preferida en produccion):
 
 ```json
 {
@@ -33,6 +33,8 @@ Tambien puede especificar una URI de blob explicita a traves de la configuracion
   }
 }
 ```
+
+En el backend de AWS, pase un cliente S3 mas un bucket a `AddAuthagonalAwsStorage` para persistir el conjunto de claves en S3 -- sin ello el conjunto de claves queda en memoria y las cookies se rompen al reiniciar y entre nodos. Ver [Instalacion → backend de AWS](installation#aws-backend).
 
 ## Caches por instancia
 
@@ -48,56 +50,42 @@ Estos caches son aceptables para uso en produccion. Todas las duraciones son con
 
 ## Limitacion de velocidad
 
-Los endpoints de registro estan protegidos por un limitador de velocidad distribuido integrado (5 registros por IP por hora). Al ejecutar multiples instancias, los conteos de limite de velocidad se comparten automaticamente entre todas las instancias a traves de un protocolo de difusion (gossip) — no se requiere coordinacion externa.
+Los endpoints propensos a abuso (registro por IP, restablecimiento de contrasena por correo de destino, SCIM por cliente, registro dinamico de clientes por IP -- ver [Configuracion → Limitacion de velocidad](configuration#rate-limiting)) estan protegidos por un limitador de velocidad integrado.
 
-### Como funciona
+Los limites se aplican **en proceso por nodo** detras del seam `IRateLimiter`, por lo que con N instancias el techo efectivo es N× el valor configurado. Esto es deliberado: el limitador es una red de seguridad contra el abuso descontrolado de un solo nodo, y el limite global autoritativo pertenece al borde (WAF / ingress / CDN), que ve todo el trafico antes de que se balancee.
 
-Cada instancia mantiene sus propios contadores en memoria utilizando un CRDT G-Counter. Las instancias se descubren entre si a traves de UDP multicast e intercambian estado por HTTP cada pocos segundos. El conteo consolidado de todas las instancias se utiliza para tomar decisiones de limitacion de velocidad.
+## Clustering
 
-Esto significa que los limites de velocidad se aplican globalmente: si un cliente accede a 3 instancias diferentes, las 3 saben que el total es 3, no 1 cada una.
+Multiples instancias se coordinan a traves de una **eleccion de lider** y un **bus de eventos entre nodos**, ambos detras de backends conectables:
 
-### Identidad de nodo
+- **Eleccion de lider** -- una eleccion basada en arrendamiento (`Cluster:LeaseTtlSeconds`, predeterminado 30s, renovado aproximadamente a la mitad de ese intervalo). Exactamente un nodo mantiene el arrendamiento; el liderazgo se transfiere automaticamente cuando el lider muere. El trabajo restringido al lider -- actualmente la rotacion de claves de firma (cuando esta habilitada) -- se ejecuta solo en el lider para evitar la generacion concurrente de claves.
+- **Bus de eventos** -- notificaciones entre nodos (por ejemplo, invalidacion de cache en hosts multi-tenant), consultadas cada `Cluster:PollIntervalSeconds` (predeterminado 3s).
 
-Cada instancia genera un identificador de nodo hexadecimal aleatorio al inicio (por ejemplo, `a3f1b2`). Este identificador identifica la instancia en los mensajes de gossip y el estado de limites de velocidad. No se persiste — se genera uno nuevo en cada reinicio.
+Cada instancia genera un identificador de nodo aleatorio de 12 caracteres hexadecimales al inicio para identificarse; no se persiste.
 
-Un `ClusterLeaderService` se ejecuta en cada instancia, eligiendo un unico lider entre los pares descubiertos (el identificador de nodo mas bajo gana). El liderazgo se transfiere automaticamente cuando el lider muere. El lider se utiliza para la coordinacion a nivel de cluster: actualmente, la rotacion de claves de firma (cuando esta habilitada) se ejecuta solo en el lider para evitar la generacion concurrente de claves.
+### Backends
 
-### Configuracion del cluster
+El **valor predeterminado es en proceso**: un solo nodo siempre es su propio lider, y los eventos son solo locales -- correcto para una instancia sin configuracion alguna. Los despliegues multi-nodo intercambian un backend real mediante el callback `configureClustering` en `AddAuthagonal`:
 
-El clustering esta **habilitado por defecto** sin necesidad de configuracion. Las instancias en la misma red se descubren automaticamente a traves de UDP multicast (`239.42.42.42:19847`).
+```csharp
+// Azure: leadership via a blob lease, event bus via a table log (Authagonal.AzureProvider)
+builder.Services.AddAuthagonal(builder.Configuration,
+    cluster => cluster.UseAzureStorage(blobServiceClient, tableServiceClient));
 
-Para entornos donde el multicast no esta disponible (algunas VPCs en la nube), configure una URL interna con balanceo de carga como alternativa:
-
-```json
-{
-  "Cluster": {
-    "InternalUrl": "http://authagonal-auth.svc.cluster.local:8080",
-    "Secret": "shared-secret-here"
-  }
-}
+// AWS: leadership + event bus via DynamoDB (Authagonal.AwsProvider)
+builder.Services.AddAuthagonal(builder.Configuration,
+    cluster => cluster.UseAwsDynamo(dynamoDb));
 ```
 
-Para deshabilitar el clustering por completo (limitacion de velocidad solo local):
+`UseAzureStorageBus` / `UseAwsDynamoBus` registran solo el bus de eventos, manteniendo el arrendamiento en proceso (siempre lider) -- uselos en nodos que deben recibir eventos del cluster pero nunca deben competir por el liderazgo.
 
-```json
-{
-  "Cluster": {
-    "Enabled": false
-  }
-}
-```
+> **Nota:** con el valor predeterminado en proceso en multiples nodos, *cada* nodo cree que es el lider. Eso es inofensivo para la mayoria de las cargas de trabajo, pero habilite un backend de arrendamiento real antes de activar `Auth:KeyRotationEnabled` en multiples instancias.
 
-Consulte la pagina de [Configuracion](configuration) para todas las opciones del cluster.
-
-### Degradacion elegante
-
-- **Sin pares encontrados** — funciona como un limitador de velocidad solo local (cada instancia aplica su propio limite)
-- **Par inaccesible** — el ultimo estado conocido de ese par se sigue utilizando; los pares obsoletos se eliminan despues de 30 segundos
-- **Multicast no disponible** — el descubrimiento falla silenciosamente; el protocolo de difusion recurre a `InternalUrl` si esta configurado
+Consulte la pagina de [Configuracion](configuration#cluster) para todas las opciones del cluster.
 
 ### Despliegues multi-tenant
 
-En el modo multi-tenant (`AddAuthagonalCore()`), los servicios en segundo plano como `GrantReconciliationService` y `SigningKeyRotationService` no se registran — el host los gestiona por tenant. Solo `TokenCleanupService` se ejecuta incondicionalmente.
+En el modo multi-tenant (`AddAuthagonalCore()`), no se registra ningun servicio en segundo plano -- `TokenCleanupService`, `GrantReconciliationService`, `SigningKeyRotationService`, y los servicios de siembra de configuracion son todos parte de la composicion de un solo tenant `AddAuthagonal()`. El host los gestiona por tenant.
 
 ## Particion caliente del indice de nombres
 
@@ -108,7 +96,7 @@ La busqueda de nombres por prefijo del administrador se respalda en las tablas d
 Al ejecutar multiples instancias detras de un balanceador de carga:
 
 - **Encabezados reenviados** — la limitacion de velocidad y el bloqueo se basan en la IP del cliente, resuelta desde `X-Forwarded-For`. Establezca `ForwardedHeaders:KnownNetworks` con el CIDR de su ingress / pod para que la IP del cliente no pueda suplantarse entre instancias. `ForwardedHeaders:ForwardLimit` tiene el valor predeterminado `1`. Ver [Configuracion](configuration#forwarded-headers-trusted-proxy).
-- **Endpoints internos** — `/_internal/cluster/gossip` y `/_internal/backchannel-logout` estan protegidos por IP de origen (solo loopback / privada) a menos que se establezca `Cluster:Secret`. Cuando el gossip se enruta a traves de un balanceador de carga (`Cluster:InternalUrl`), el LB reescribe la IP de origen, por lo que debe establecer `Cluster:Secret` y el llamador de gossip lo presentara en el encabezado `X-Cluster-Secret`.
+- **Endpoints internos** -- `/_internal/backchannel-logout` esta protegido por IP de origen (solo loopback / privada) a menos que se establezca `Cluster:Secret`, en cuyo caso los llamadores deben presentar el secreto en el encabezado `X-Cluster-Secret` (comparado en tiempo constante). Establezca el secreto siempre que el trafico interno se enrute a traves de cualquier cosa que reescriba la IP de origen.
 
 ## Recomendaciones de escalabilidad
 

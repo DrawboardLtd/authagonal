@@ -6,17 +6,17 @@ locale: fr
 
 # Authentification multi-facteurs (MFA)
 
-Authagonal prend en charge l'authentification multi-facteurs pour les connexions par mot de passe. Trois méthodes sont disponibles : TOTP (applications d'authentification), WebAuthn/clés d'accès (clés matérielles et données biométriques) et codes de récupération à usage unique.
+Authagonal prend en charge l'authentification multi-facteurs. Trois méthodes sont disponibles : TOTP (applications d'authentification), WebAuthn/clés d'accès (clés matérielles et données biométriques) et codes de récupération à usage unique. Les clés d'accès peuvent aussi servir à la [connexion sans mot de passe](#passwordless-passkey-login).
 
-Les connexions fédérées (SAML/OIDC) ignorent la MFA — le fournisseur d'identité externe gère l'authentification à second facteur.
+Les connexions fédérées (SAML/OIDC) sont également couvertes : une assertion SAML ou OIDC prouve le premier facteur, pas le second. Un utilisateur fédéré ayant inscrit la MFA passe par le même défi MFA local qu'une connexion par mot de passe, et une politique `Required` force l'inscription avant l'émission de toute session. Ce n'est que lorsque la MFA n'est ni inscrite ni requise que la fédération se suffit à elle-même.
 
 ## Méthodes prises en charge
 
 | Méthode | Description |
 |---|---|
-| **TOTP** | Mots de passe à usage unique basés sur le temps (RFC 6238). Fonctionne avec n'importe quelle application d'authentification — Google Authenticator, Authy, 1Password, etc. |
-| **WebAuthn / Clés d'accès** | Clés de sécurité matérielles FIDO2, données biométriques de la plateforme (Touch ID, Windows Hello) et clés d'accès synchronisées. |
-| **Codes de récupération** | 10 codes de sauvegarde à usage unique (format `XXXX-XXXX`) pour la récupération de compte lorsque les autres méthodes ne sont pas disponibles. |
+| **TOTP** | Mots de passe à usage unique basés sur le temps (RFC 6238) : 6 chiffres, pas de 30 secondes, SHA-1, vérifiés avec une fenêtre de dérive d'horloge d'un pas. Fonctionne avec n'importe quelle application d'authentification (Google Authenticator, Authy, 1Password, etc.). Un code déjà accepté ne peut pas être rejoué dans sa fenêtre de validité. |
+| **WebAuthn / Clés d'accès** | Clés de sécurité matérielles FIDO2, données biométriques de la plateforme (Touch ID, Windows Hello) et clés d'accès synchronisées. Les utilisateurs peuvent enregistrer plusieurs clés d'accès, et les clés d'accès permettent la connexion sans mot de passe. |
+| **Codes de récupération** | 10 codes de sauvegarde à usage unique (format `XXXX-XXXX`) pour la récupération de compte lorsque les autres méthodes ne sont pas disponibles. Stockés hachés et chiffrés au repos. |
 
 ## Politique MFA
 
@@ -24,9 +24,11 @@ L'application de la MFA est configurée **par client** via la propriété `MfaPo
 
 | Valeur | Comportement |
 |---|---|
-| `Disabled` (par défaut) | Aucune vérification MFA, même si l'utilisateur a inscrit la MFA |
-| `Enabled` | Vérifier les utilisateurs qui ont inscrit la MFA ; ne pas forcer l'inscription |
-| `Required` | Vérifier les utilisateurs inscrits ; forcer l'inscription pour les utilisateurs sans MFA |
+| `Disabled` (par défaut) | Ne pas forcer l'inscription ; l'interface de configuration en libre-service masque la MFA lorsque chaque client est `Disabled` |
+| `Enabled` | Proposer l'inscription à la MFA ; ne pas la forcer |
+| `Required` | Forcer l'inscription pour les utilisateurs sans MFA |
+
+Un utilisateur qui a inscrit la MFA est **toujours soumis au défi à la connexion, quelle que soit la politique du client**. La MFA est une propriété de l'utilisateur et de sa session, pas du client demandeur : une requête acheminée via un client `Disabled` ne peut donc pas servir à contourner le second facteur d'un utilisateur inscrit.
 
 ```json
 {
@@ -66,6 +68,8 @@ public Task<MfaPolicy> ResolveMfaPolicyAsync(
 }
 ```
 
+La politique résolue gouverne l'inscription (proposée ou forcée). Elle n'exempte pas du défi un utilisateur déjà inscrit ; les utilisateurs inscrits sont toujours soumis au défi.
+
 Consultez [Extensibilité](extensibility) pour la documentation complète des hooks.
 
 ## Flux de connexion
@@ -78,21 +82,39 @@ Le flux de connexion avec MFA fonctionne comme suit :
 
 | Politique | L'utilisateur a la MFA ? | Résultat |
 |---|---|---|
-| `Disabled` | — | Cookie défini, connexion terminée |
-| `Enabled` | Non | Cookie défini, connexion terminée |
-| `Enabled` | Oui | Retourne `mfaRequired` — l'utilisateur doit vérifier |
-| `Required` | Non | Retourne `mfaSetupRequired` — l'utilisateur doit s'inscrire |
-| `Required` | Oui | Retourne `mfaRequired` — l'utilisateur doit vérifier |
+| Toute politique | Oui | Retourne `mfaRequired` : l'utilisateur doit vérifier |
+| `Disabled` / `Enabled` | Non | Cookie défini, connexion terminée |
+| `Required` | Non | Retourne `mfaSetupRequired` : l'utilisateur doit s'inscrire |
 
 ### Défi MFA
 
-Lorsque `mfaRequired` est retourné, la réponse de connexion inclut un `challengeId` et les méthodes disponibles de l'utilisateur. Le client redirige vers une page de défi MFA où l'utilisateur vérifie avec l'une de ses méthodes inscrites via `POST /api/auth/mfa/verify`.
+Lorsque `mfaRequired` est retourné, la réponse de connexion inclut un `challengeId`, les `methods` disponibles de l'utilisateur et (lorsque l'utilisateur possède des clés d'accès) des options d'assertion `webAuthn`. Le client redirige vers une page de défi MFA où l'utilisateur vérifie avec l'une de ses méthodes inscrites via `POST /api/auth/mfa/verify` :
 
-Les défis expirent après 5 minutes et sont à usage unique.
+```json
+{
+  "challengeId": "...",
+  "method": "totp",
+  "code": "123456"
+}
+```
+
+`method` vaut `totp`, `recovery` ou `webauthn` (WebAuthn envoie une `assertion` au lieu d'un `code`).
+
+Les défis expirent après 5 minutes (configurable via `Auth:MfaChallengeExpiryMinutes`) et sont consommés lors d'une vérification réussie.
+
+#### Budget de nouvelles tentatives
+
+Un code erroné ne brûle pas le défi. Le point de terminaison de vérification valide d'abord le code et ne consomme le défi qu'en cas de succès : un chiffre TOTP mal saisi peut donc simplement être retenté avec le même `challengeId`. Les tentatives échouées retournent `invalid_code` (ou `assertion_failed` pour WebAuthn) avec un 401 et incrémentent un compteur borné sur le défi ; la cinquième tentative erronée consomme le défi et retourne `too_many_attempts`, forçant une nouvelle connexion. Cela s'applique aux trois méthodes et borne la force brute TOTP à 5 essais par défi.
+
+Un défi manquant, expiré ou déjà consommé retourne `invalid_challenge`.
+
+### Connexions fédérées
+
+Après une assertion SAML ou OIDC réussie, le serveur résout la même politique MFA effective. Un utilisateur ayant inscrit la MFA est redirigé vers la page de défi MFA hébergée (avec un `challengeId`) au lieu de recevoir une session ; un utilisateur sans MFA sous une politique `Required` est redirigé vers la page de configuration MFA (avec un `setupToken`). La session n'est marquée comme authentifiée par MFA qu'une fois la vérification terminée.
 
 ### Inscription forcée
 
-Lorsque `mfaSetupRequired` est retourné, la réponse inclut un `setupToken`. Ce jeton authentifie l'utilisateur auprès des points de terminaison de configuration MFA (via l'en-tête `X-MFA-Setup-Token`) afin qu'il puisse inscrire une méthode avant d'obtenir une session cookie.
+Lorsque `mfaSetupRequired` est retourné, la réponse inclut un `setupToken`. Ce jeton authentifie l'utilisateur auprès des points de terminaison de configuration MFA (via l'en-tête `X-MFA-Setup-Token`) afin qu'il puisse inscrire une méthode avant d'obtenir une session cookie. Les jetons de configuration expirent après 15 minutes (configurable via `Auth:MfaSetupTokenExpiryMinutes`).
 
 ## Inscription à la MFA
 
@@ -106,9 +128,13 @@ Les utilisateurs s'inscrivent à la MFA via les points de terminaison de configu
 
 ### Configuration WebAuthn / Clé d'accès
 
-1. Appeler `POST /api/auth/mfa/webauthn/setup` — retourne `PublicKeyCredentialCreationOptions`
+1. Appeler `POST /api/auth/mfa/webauthn/setup` — retourne un `setupToken` et `PublicKeyCredentialCreationOptions`
 2. Le client appelle `navigator.credentials.create()` avec les options
 3. Envoyer la réponse d'attestation à `POST /api/auth/mfa/webauthn/confirm`
+
+L'inscription d'une clé d'accès exige d'abord un identifiant TOTP confirmé (`totp_required_first`). Les clés d'accès sont une commodité par appareil superposée à un facteur de base portable : chaque compte conserve ainsi un facteur indépendant de l'appareil, et une politique `Required` ne peut pas être satisfaite par une clé d'accès seule.
+
+Les utilisateurs peuvent enregistrer plusieurs clés d'accès (une par appareil). Un identifiant de credential déjà enregistré pour un autre utilisateur est rejeté (`credential_already_registered`), et les utilisateurs dont le domaine d'email est acheminé vers un IdP externe via SSO forcé ne peuvent pas inscrire de clé d'accès locale (`sso_managed`), car elle contournerait l'IdP et son déprovisionnement.
 
 ### Codes de récupération
 

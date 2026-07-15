@@ -11,12 +11,14 @@ Authagonal 包含一个迁移工具，用于从 Duende IdentityServer + SQL Serv
 ## 运行迁移
 
 ```bash
-docker run authagonal-migration -- \
+docker run authagonal-migration \
   --Source:ConnectionString "Server=sql.example.com;Database=Identity;User Id=...;Password=...;" \
   --Target:ConnectionString "DefaultEndpointsProtocol=https;AccountName=...;AccountKey=...;TableEndpoint=https://..." \
   [--DryRun true] \
   [--MigrateRefreshTokens true]
 ```
+
+（镜像名称后没有 `--` 分隔符：其后的所有内容都会直接传给该工具，而单独的 `--` 会破坏选项解析。）
 
 或从源代码运行：
 
@@ -31,12 +33,12 @@ dotnet run --project tools/Authagonal.Migration -- \
 
 | 源（SQL Server） | 目标（Table Storage） | 说明 |
 |---|---|---|
-| `AspNetUsers` + `AspNetUserClaims` | Users + UserEmails | 单次 JOIN 查询。声明：given_name、family_name、company、org_id。密码哈希保持原样（BCrypt 在登录时自动升级）。 |
+| `AspNetUsers` + `AspNetUserClaims` | Users + UserEmails + 姓名索引 | 单次 JOIN 查询。声明：given_name、family_name、company、org_id（类型可覆盖，见下文）。密码哈希保持原样；ASP.NET Identity V3 和 BCrypt 哈希无需更改即可验证，并在下次成功登录时升级为 Authagonal 原生的 PBKDF2 格式。 |
 | `AspNetUserLogins` | UserLogins（正向 + 反向索引） | `409 Conflict` = 跳过（幂等） |
 | Duende `SamlProviderConfigurations` | SamlProviders + SsoDomains | `AllowedDomains` CSV 拆分为单独的 SSO 域记录 |
 | Duende `OidcProviderConfigurations` | OidcProviders + SsoDomains | 相同的域拆分 |
 | Duende `Clients` + 子表 | Clients | ClientSecrets、GrantTypes、RedirectUris、PostLogoutRedirectUris、Scopes、CorsOrigins 全部合并为单个实体 |
-| Duende `PersistedGrants`（刷新令牌） | Grants + GrantsBySubject | 通过 `--MigrateRefreshTokens true` 启用。仅迁移未过期的令牌。如跳过，用户只需重新登录。 |
+| Duende `PersistedGrants`（刷新令牌） | Grants + GrantsBySubject + GrantsByExpiry | 通过 `--MigrateRefreshTokens true` 启用。仅迁移未过期的令牌。如跳过，用户只需重新登录。 |
 
 ## 选项
 
@@ -44,10 +46,11 @@ dotnet run --project tools/Authagonal.Migration -- \
 |---|---|---|
 | `--DryRun` | `false` | 记录将要迁移的内容但不写入存储 |
 | `--MigrateRefreshTokens` | `false` | 包含活跃的刷新令牌。如为 false，用户在切换后需重新认证。 |
+| `--Source:ClaimMap:{claim}` | 该 OIDC 声明名称本身 | 覆盖某个映射声明所读取的 `AspNetUserClaims` ClaimType，例如 `--Source:ClaimMap:given_name=FirstName`。用于 `given_name`、`family_name`、`company`、`org_id`。 |
 
 ## 幂等性
 
-迁移是幂等的 -- 可以安全地多次运行。现有记录会被 upsert（不会重复）。这允许您：
+迁移是幂等的，可以安全地多次运行。现有记录会被更新或跳过，绝不重复。这允许您：
 
 1. 在切换前数天运行迁移
 2. 在接近切换时运行最终增量迁移
@@ -57,10 +60,10 @@ dotnet run --project tools/Authagonal.Migration -- \
 
 以下 Authagonal 功能在 Duende 中没有对应项，迁移后将从空开始：
 
-- **角色** — RBAC 角色和用户-角色分配
-- **MFA 凭据** — TOTP、WebAuthn 和恢复代码注册
-- **SCIM 令牌和组** — SCIM 预配配置
-- **用户预配** — TCC 下游应用预配状态
+- **角色**：RBAC 角色和用户-角色分配
+- **MFA 凭据**：TOTP、WebAuthn 和恢复代码注册
+- **SCIM 令牌和组**：SCIM 预配配置
+- **用户预配**：TCC 下游应用预配状态
 
 如果您的客户端的 `MfaPolicy` 为 `Enabled` 或 `Required`，用户将需要重新注册 MFA。
 

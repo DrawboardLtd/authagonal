@@ -81,9 +81,9 @@ app.Run();
 }
 ```
 
-| Schluessel | Beschreibung |
+| Schlüssel | Beschreibung |
 |---|---|
-| `Issuer` | Die oeffentliche URL Ihres Auth-Servers. Wird in Tokens und OIDC Discovery verwendet. |
+| `Issuer` | Die öffentliche URL Ihres Auth-Servers. Wird in Tokens und OIDC Discovery verwendet. |
 | `Storage:ConnectionString` | Azure Table Storage Verbindungszeichenfolge. |
 | `Clients` | Array von OAuth-Clients, die beim Start geseedet werden. |
 
@@ -93,7 +93,7 @@ Registrieren Sie Ihre Implementierungen **vor** dem Aufruf von `AddAuthagonal()`
 
 | Schnittstelle | Zweck | Standard |
 |---|---|---|
-| `IEmailService` | Versand von Verifizierungs- und Passwortzuruecksetzungs-E-Mails | No-op (verwirft stillschweigend) |
+| `IEmailService` | Versand von Verifizierungs- und Passwortzurücksetzungs-E-Mails | No-op (verwirft stillschweigend) |
 | `IAuthHook` | Login-, Registrierungs- und Token-Ereignisse abfangen oder auditieren | Leeroperationen |
 | `IProvisioningOrchestrator` | Benutzer bei der Autorisierung in nachgelagerte Apps bereitstellen | TCC-Bereitstellung |
 | `ISecretProvider` | Client-Geheimnisse aufloesen | Klartext (oder Key Vault mit `SecretProvider:VaultUri`) |
@@ -158,9 +158,9 @@ public class ConsoleEmailService(ILogger<ConsoleEmailService> logger) : IEmailSe
 }
 ```
 
-### Benutzerdefinierte Endpunkte hinzufuegen
+### Benutzerdefinierte Endpunkte hinzufügen
 
-Sie koennen neben den Authagonal-Endpunkten eigene Endpunkte hinzufuegen:
+Sie können neben den Authagonal-Endpunkten eigene Endpunkte hinzufügen:
 
 ```csharp
 app.MapGet("/custom/health", () => Results.Ok(new { status = "healthy" }));
@@ -168,7 +168,7 @@ app.MapGet("/custom/health", () => Results.Ok(new { status = "healthy" }));
 
 ### Admin-API deaktivieren
 
-Fuer oeffentlich zugaengliche Deployments deaktivieren Sie die Admin-Endpunkte:
+Für öffentlich zugaengliche Deployments deaktivieren Sie die Admin-Endpunkte:
 
 ```json
 {
@@ -190,7 +190,7 @@ Der Server startet auf der konfigurierten URL und stellt das OIDC Discovery-Doku
 
 ## Teil 2: Benutzerdefinierte Login-Oberflaeche
 
-Die Standard-Login-SPA funktioniert sofort, aber Sie koennen sie durch Ihre eigene React-App ersetzen, die Komponenten und API-Clients aus dem `@authagonal/login` npm-Paket importiert.
+Die Standard-Login-SPA funktioniert sofort, aber Sie können sie durch Ihre eigene React-App ersetzen, die Komponenten und API-Clients aus dem `@authagonal/login` npm-Paket importiert.
 
 ### Frontend-Projekt aufsetzen
 
@@ -350,7 +350,7 @@ export default function MyLoginPage() {
 
 ### Benutzerdefiniertes Layout
 
-Umschliessen Sie das Basis-`AuthLayout`, um Ihr eigenes Branding hinzuzufuegen:
+Umschliessen Sie das Basis-`AuthLayout`, um Ihr eigenes Branding hinzuzufügen:
 
 ```tsx
 import { AuthLayout } from '@authagonal/login';
@@ -385,7 +385,7 @@ Konfigurieren Sie das Erscheinungsbild der Login-Oberflaeche ohne Neuaufbau:
 
 ### Vite-Konfiguration
 
-API-Aufrufe waehrend der Entwicklung an das Backend weiterleiten:
+API-Aufrufe während der Entwicklung an das Backend weiterleiten:
 
 ```typescript
 import { defineConfig } from 'vite';
@@ -409,7 +409,7 @@ export default defineConfig({
 
 ### Erstellen und bereitstellen
 
-Fuegen Sie ein Build-Target zu Ihrer `.csproj` hinzu, um die SPA automatisch zu erstellen und nach `wwwroot` zu kopieren:
+Fügen Sie ein Build-Target zu Ihrer `.csproj` hinzu, um die SPA automatisch zu erstellen und nach `wwwroot` zu kopieren:
 
 ```xml
 <Target Name="BuildLoginApp" BeforeTargets="Build" Condition="!Exists('wwwroot/index.html')">

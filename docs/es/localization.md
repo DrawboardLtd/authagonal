@@ -6,19 +6,23 @@ locale: es
 
 # Localizacion
 
-Authagonal admite ocho idiomas de forma predeterminada: ingles, chino simplificado (`zh-Hans`), aleman (`de`), frances (`fr`), espanol (`es`), vietnamita (`vi`), portugues (`pt`) y klingon (`tlh`). La localizacion abarca las respuestas de la API del servidor, la interfaz de inicio de sesion y este sitio de documentacion.
+La interfaz de inicio de sesion incluye once idiomas de forma predeterminada: ingles, chino simplificado (`zh-Hans`), aleman (`de`), frances (`fr`), espanol (`es`), vietnamita (`vi`), portugues (`pt`), arabe (`ar`), afrikaans (`af`), hindi (`hi`) y un idioma novedad, klingon (`tlh`). Las respuestas de la API del servidor estan localizadas en los primeros siete de estos. La localizacion abarca las respuestas de la API del servidor, la interfaz de inicio de sesion y este sitio de documentacion.
 
 ## Idiomas admitidos
 
-| Codigo | Idioma |
-|---|---|
-| `en` | Ingles (predeterminado) |
-| `zh-Hans` | Chino simplificado |
-| `de` | Aleman |
-| `fr` | Frances |
-| `es` | Espanol |
-| `vi` | Vietnamita |
-| `pt` | Portugues |
+| Codigo | Idioma | Interfaz de inicio de sesion | API del servidor |
+|---|---|---|---|
+| `en` | Ingles (predeterminado) | ✓ | ✓ |
+| `zh-Hans` | Chino simplificado | ✓ | ✓ |
+| `de` | Aleman | ✓ | ✓ |
+| `fr` | Frances | ✓ | ✓ |
+| `es` | Espanol | ✓ | ✓ |
+| `vi` | Vietnamita | ✓ | ✓ |
+| `pt` | Portugues | ✓ | ✓ |
+| `ar` | Arabe (de derecha a izquierda) | ✓ | — |
+| `af` | Afrikaans | ✓ | — |
+| `hi` | Hindi | ✓ | — |
+| `tlh` | Klingon (novedad) | ✓ | — |
 
 ## Servidor (respuestas de la API)
 
@@ -74,6 +78,10 @@ Resources/
 
 La SPA de inicio de sesion utiliza [react-i18next](https://react.i18next.com/) para la localizacion del lado del cliente. El idioma se detecta automaticamente a partir de la configuracion `navigator.language` del navegador.
 
+Los idiomas registrados se encuentran en un unico registro `LANGUAGES` en `login-app/src/i18n/index.ts`, que gobierna tanto el registro de recursos de i18next como cada selector de idioma, de modo que ambos no pueden desincronizarse. Los idiomas marcados como `novelty` (actualmente `tlh`) siguen siendo plenamente funcionales (`?lng=tlh` funciona) pero se excluyen del selector predeterminado; solo aparecen en un desplegable cuando el `BrandingConfig.languages` de un tenant los enumera explicitamente. Los tenants tambien pueden acotar el selector de la misma manera: un arreglo `languages` en `branding.json` reemplaza por completo la lista predeterminada (ver [Personalizacion visual](branding)).
+
+El idioma activo se refleja en `<html lang>` y `<html dir>`, de modo que los idiomas de derecha a izquierda (`ar`) invierten la tarjeta de autenticacion automaticamente, incluso cuando el idioma se cambia en el momento mediante el selector.
+
 ### Deteccion de idioma
 
 El orden de deteccion es:
@@ -89,7 +97,7 @@ Los archivos JSON de traduccion se empaquetan con la aplicacion en `login-app/sr
 
 ```
 i18n/
-  index.ts        # i18n initialization
+  index.ts        # i18n initialization + the LANGUAGES registry
   en.json         # English
   zh-Hans.json    # Simplified Chinese
   de.json         # German
@@ -97,12 +105,15 @@ i18n/
   es.json         # Spanish
   vi.json         # Vietnamese
   pt.json         # Portuguese
-  tlh.json        # Klingon
+  ar.json         # Arabic
+  af.json         # Afrikaans
+  hi.json         # Hindi
+  tlh.json        # Klingon (novelty)
 ```
 
 ### Etiquetas de la politica de contrasenas
 
-La interfaz de inicio de sesion traduce las etiquetas de requisitos de contrasena del lado del cliente basandose en la clave `rule` devuelta por `GET /api/auth/password-policy`, en lugar de usar el campo `label` proporcionado por el servidor. Esto garantiza que los requisitos de contrasena siempre se muestren en el idioma del navegador del usuario, incluso si el encabezado `Accept-Language` del servidor difiere.
+La pagina de restablecimiento de contrasena traduce su lista de verificacion de requisitos de contrasena del lado del cliente basandose en la clave `rule` devuelta por `GET /api/auth/password-policy` (recurriendo al campo `label` proporcionado por el servidor para reglas no reconocidas). Esto garantiza que los requisitos sigan el idioma seleccionado en la interfaz, incluso si el encabezado `Accept-Language` del navegador difiere. La pagina de registro muestra los valores `label` proporcionados por el servidor, que se localizan a partir de `Accept-Language`.
 
 ### Consumidores del paquete npm
 
@@ -117,7 +128,7 @@ i18n.changeLanguage('de');
 
 ## Documentacion
 
-El sitio de documentacion utiliza un enfoque basado en directorios. Las paginas en ingles estan en la raiz y las traducciones en subdirectorios de idioma (`/zh-Hans/`, `/de/`, `/fr/`, `/es/`). Un selector desplegable de idioma en la barra lateral permite cambiar entre idiomas.
+El sitio de documentacion utiliza un enfoque basado en directorios. Las paginas en ingles estan en la raiz y las traducciones en subdirectorios de idioma (`/zh-Hans/`, `/de/`, `/fr/`, `/es/`, `/vi/`, `/pt/`). Un selector desplegable de idioma en la barra lateral permite cambiar entre idiomas.
 
 ## Agregar un nuevo idioma
 
@@ -145,13 +156,13 @@ Cree un nuevo archivo JSON de traduccion copiando `en.json` y traduciendo los va
 login-app/src/i18n/ja.json
 ```
 
-Registrelo en `login-app/src/i18n/index.ts`:
+Registrelo en el arreglo `LANGUAGES` de `login-app/src/i18n/index.ts`. Esa unica entrada registra el recurso de i18next y agrega el idioma a cada selector:
 
 ```typescript
 import ja from './ja.json';
 
-// In the resources object:
-ja: { translation: ja },
+// In the LANGUAGES array:
+{ code: 'ja', label: '日本語', resource: ja },
 ```
 
 ### 3. Documentacion

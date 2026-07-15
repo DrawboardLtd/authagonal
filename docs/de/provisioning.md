@@ -6,11 +6,11 @@ locale: de
 
 # TCC-Bereitstellung
 
-Authagonal stellt Benutzer in nachgelagerte Anwendungen ueber das **Try-Confirm-Cancel (TCC)**-Muster bereit. Dies stellt sicher, dass alle Apps zustimmen, bevor ein Benutzer Zugang erhaelt, mit sauberem Rollback, falls eine App ablehnt.
+Authagonal stellt Benutzer in nachgelagerte Anwendungen über das **Try-Confirm-Cancel (TCC)**-Muster bereit. Dies stellt sicher, dass alle Apps zustimmen, bevor ein Benutzer Zugang erhält, mit sauberem Rollback, falls eine App ablehnt.
 
 ## Wann die Bereitstellung laeuft
 
-Die Bereitstellung laeuft automatisch, wenn ein Benutzer erstellt wird, unabhaengig vom Erstellungspfad:
+Die Bereitstellung laeuft automatisch, wenn ein Benutzer erstellt wird, unabhängig vom Erstellungspfad:
 
 | Endpunkt | Ausloeser |
 |---|---|
@@ -19,11 +19,11 @@ Die Bereitstellung laeuft automatisch, wenn ein Benutzer erstellt wird, unabhaen
 | SAML ACS (`POST /saml/{id}/acs`) | Erster SSO-Login (neuer Benutzer) |
 | OIDC-Callback (`GET /oidc/callback`) | Erster SSO-Login (neuer Benutzer) |
 | SCIM (`POST /scim/v2/Users`) | Identity-Provider-Bereitstellung |
-| `GET /connect/authorize` | Erste Autorisierung ueber einen Client mit `ProvisioningApps` |
+| `GET /connect/authorize` | Erste Autorisierung über einen Client mit `ProvisioningApps` |
 
-Bereits bereitgestellte App/Benutzer-Kombinationen werden uebersprungen (nachverfolgt in der `UserProvisions`-Tabelle).
+Bereits bereitgestellte App/Benutzer-Kombinationen werden übersprungen (nachverfolgt in der `UserProvisions`-Tabelle).
 
-**Bei Ablehnung:** Wenn eine Bereitstellungs-App den Benutzer in der Try-Phase ablehnt, wird der Benutzer geloescht und der Endpunkt gibt `422 Unprocessable Entity` mit dem Ablehnungsgrund zurueck. Dies verhindert halb erstellte Benutzer.
+**Bei Ablehnung:** Wenn eine Bereitstellungs-App den Benutzer in der Try-Phase ablehnt, wird der Benutzer gelöscht und der Endpunkt gibt `422 Unprocessable Entity` mit dem Ablehnungsgrund zurück. Dies verhindert halb erstellte Benutzer.
 
 ## Konfiguration
 
@@ -44,7 +44,7 @@ In `appsettings.json`:
 
 ### 2. Apps Clients zuweisen
 
-Jeder Client deklariert, in welche Apps seine Benutzer bereitgestellt werden muessen:
+Jeder Client deklariert, in welche Apps seine Benutzer bereitgestellt werden müssen:
 
 ```json
 {
@@ -58,11 +58,11 @@ Jeder Client deklariert, in welche Apps seine Benutzer bereitgestellt werden mue
 }
 ```
 
-Wenn sich ein Benutzer ueber `web-app` autorisiert, wird er in `my-backend` bereitgestellt, sofern dies noch nicht geschehen ist.
+Wenn sich ein Benutzer über `web-app` autorisiert, wird er in `my-backend` bereitgestellt, sofern dies noch nicht geschehen ist.
 
 ## TCC-Protokoll
 
-Authagonal fuehrt drei Arten von HTTP-Aufrufen an Ihren Bereitstellungsendpunkt durch. Alle verwenden `POST` mit JSON-Koerper und `Authorization: Bearer {ApiKey}`.
+Authagonal führt drei Arten von HTTP-Aufrufen an Ihren Bereitstellungsendpunkt durch. Alle verwenden `POST` mit JSON-Koerper und `Authorization: Bearer {ApiKey}`.
 
 ### Phase 1: Versuch (Try)
 
@@ -89,9 +89,9 @@ Authagonal fuehrt drei Arten von HTTP-Aufrufen an Ihren Bereitstellungsendpunkt 
 
 Die `transactionId` identifiziert diesen Bereitstellungsversuch. Ihre App sollte sie zusammen mit dem ausstehenden Datensatz speichern.
 
-### Phase 2: Bestaetigung (Confirm)
+### Phase 2: Bestätigung (Confirm)
 
-Wird nur aufgerufen, wenn **alle** Apps in der Versuchsphase `approved: true` zurueckgegeben haben.
+Wird nur aufgerufen, wenn **alle** Apps in der Versuchsphase `approved: true` zurückgegeben haben.
 
 **Anfrage:** `POST {CallbackUrl}/confirm`
 
@@ -101,7 +101,7 @@ Wird nur aufgerufen, wenn **alle** Apps in der Versuchsphase `approved: true` zu
 }
 ```
 
-**Erwartete Antwort:** `200` (beliebiger Antwortkoerper). Ihre App befoeerdert den ausstehenden Datensatz zum bestaetigten.
+**Erwartete Antwort:** `200` (beliebiger Antwortkoerper). Ihre App befoeerdert den ausstehenden Datensatz zum bestätigten.
 
 ### Phase 3: Abbruch (Cancel)
 
@@ -115,9 +115,9 @@ Wird aufgerufen, wenn der Versuch **einer** App abgelehnt wurde oder fehlgeschla
 }
 ```
 
-**Erwartete Antwort:** `200` (beliebiger Antwortkoerper). Ihre App loescht den ausstehenden Datensatz.
+**Erwartete Antwort:** `200` (beliebiger Antwortkoerper). Ihre App löscht den ausstehenden Datensatz.
 
-Der Abbruch erfolgt auf Best-Effort-Basis -- bei Fehlschlag protokolliert Authagonal den Fehler und faehrt fort. Ihre App sollte **unbestaetigte Datensaetze nach einer TTL bereinigen** (z.B. 1 Stunde) als Sicherheitsnetz.
+Der Abbruch erfolgt auf Best-Effort-Basis -- bei Fehlschlag protokolliert Authagonal den Fehler und faehrt fort. Ihre App sollte **unbestätigte Datensaetze nach einer TTL bereinigen** (z.B. 1 Stunde) als Sicherheitsnetz.
 
 ## Ablaufdiagramm
 
@@ -154,24 +154,24 @@ Authorize Endpoint
     └─ Redirect with error=access_denied
 ```
 
-### Bei teilweisem Bestaetigungsfehler
+### Bei teilweisem Bestätigungsfehler
 
-Wenn einige Bestaetigungen erfolgreich sind, aber eine fehlschlaegt, werden die erfolgreich bestaetigten Apps mit ihren Bereitstellungsdatensaetzen gespeichert (sodass sie nicht erneut versucht werden). Der Benutzer sieht einen Fehler und kann es erneut versuchen -- nur die fehlgeschlagene App wird beim naechsten Mal versucht.
+Wenn einige Bestätigungen erfolgreich sind, aber eine fehlschlaegt, werden die erfolgreich bestätigten Apps mit ihren Bereitstellungsdatensaetzen gespeichert (sodass sie nicht erneut versucht werden). Der Benutzer sieht einen Fehler und kann es erneut versuchen -- nur die fehlgeschlagene App wird beim nächsten Mal versucht.
 
-## Benutzerdefinierte App-Aufloesung
+## Benutzerdefinierte App-Auflösung
 
-Standardmaessig werden Bereitstellungs-Apps aus dem Konfigurationsabschnitt `ProvisioningApps` ueber `ConfigProvisioningAppProvider` gelesen. Ueberschreiben Sie `IProvisioningAppProvider`, um Apps dynamisch aufzuloesen -- beispielsweise aus einer Datenbank oder pro Mandant:
+Standardmäßig werden Bereitstellungs-Apps aus dem Konfigurationsabschnitt `ProvisioningApps` über `ConfigProvisioningAppProvider` gelesen. Überschreiben Sie `IProvisioningAppProvider`, um Apps dynamisch aufzuloesen -- beispielsweise aus einer Datenbank oder pro Mandant:
 
 ```csharp
 builder.Services.AddSingleton<IProvisioningAppProvider, MyAppProvider>();
 builder.Services.AddAuthagonal(builder.Configuration);
 ```
 
-Der Provider gibt eine Liste von Apps und deren Callback-URLs zurueck. Der `TccProvisioningOrchestrator` ruft Try/Confirm/Cancel fuer jede App auf.
+Der Provider gibt eine Liste von Apps und deren Callback-URLs zurück. Der `TccProvisioningOrchestrator` ruft Try/Confirm/Cancel für jede App auf.
 
 ## Deprovisioning
 
-Wenn ein Benutzer ueber die Admin-API geloescht wird (`DELETE /api/v1/profile/{userId}`), ruft Authagonal `DELETE {CallbackUrl}/users/{userId}` fuer jede App auf, in der der Benutzer bereitgestellt war. Dies erfolgt auf Best-Effort-Basis -- Fehler werden protokolliert, blockieren aber nicht die Loeschung.
+Wenn ein Benutzer über die Admin-API gelöscht wird (`DELETE /api/v1/profile/{userId}`), ruft Authagonal `DELETE {CallbackUrl}/users/{userId}` für jede App auf, in der der Benutzer bereitgestellt war. Dies erfolgt auf Best-Effort-Basis -- Fehler werden protokolliert, blockieren aber nicht die Löschung.
 
 ## Upstream-Endpunkte implementieren
 

@@ -70,6 +70,8 @@ http://localhost:8080/connect/authorize
 
 Người dùng sẽ thấy trang đăng nhập, xác thực, và được chuyển hướng trở lại với mã ủy quyền.
 
+> **Người dùng đầu tiên:** đăng ký một người dùng tại `http://localhost:8080/login/register`, hoặc tạo một người dùng qua [Admin API](admin-api). Việc tự đăng ký sẽ gửi một email xác minh, và khi chưa cấu hình trình gửi email (mặc định cục bộ) thì email đó bị loại bỏ, nên để kiểm thử cục bộ hãy đặt `Auth__AutoConfirmEmailDomains__0=example.dev` (bất kỳ tên miền nào bạn dùng để đăng ký) để bỏ qua xác minh, hoặc cấu hình `Email:ResendApiKey` + `Email:SenderEmail`. Xem [Cấu hình → Email](configuration#email).
+
 ## 5. Đổi mã lấy token
 
 ```bash

@@ -6,7 +6,7 @@ locale: de
 
 # Lokalisierung
 
-Authagonal unterstuetzt acht Sprachen standardmaessig: Englisch, Vereinfachtes Chinesisch (`zh-Hans`), Deutsch (`de`), Franzoesisch (`fr`), Spanisch (`es`), Vietnamesisch (`vi`), Portugiesisch (`pt`) und Klingonisch (`tlh`). Die Lokalisierung umfasst die Server-API-Antworten, die Login-Oberflaeche und diese Dokumentationsseite.
+Authagonal unterstützt acht Sprachen standardmäßig: Englisch, Vereinfachtes Chinesisch (`zh-Hans`), Deutsch (`de`), Franzoesisch (`fr`), Spanisch (`es`), Vietnamesisch (`vi`), Portugiesisch (`pt`) und Klingonisch (`tlh`). Die Lokalisierung umfasst die Server-API-Antworten, die Login-Oberflaeche und diese Dokumentationsseite.
 
 ## Unterstutzte Sprachen
 
@@ -79,7 +79,7 @@ Die Login-SPA verwendet [react-i18next](https://react.i18next.com/) fur die clie
 Die Erkennungsreihenfolge ist:
 
 1. **localStorage** — gespeicherte Praeferenz von einem frueheren Besuch
-2. **Abfrageparameter** — `?lng=de` ueberschreibt die Browsererkennung
+2. **Abfrageparameter** — `?lng=de` überschreibt die Browsererkennung
 3. **Browsersprache** — `navigator.language` (automatisch)
 4. **Fallback** — Englisch (`en`)
 

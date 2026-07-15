@@ -6,7 +6,7 @@ locale: de
 
 # Erweiterbarkeit
 
-Authagonal kann als Bibliothek in Ihrem eigenen ASP.NET Core-Projekt gehostet werden, mit voller Kontrolle ueber Service-Implementierungen.
+Authagonal kann als Bibliothek in Ihrem eigenen ASP.NET Core-Projekt gehostet werden, mit voller Kontrolle über Service-Implementierungen.
 
 ## Erweiterungsmethoden
 
@@ -25,7 +25,7 @@ app.Run();
 
 ### Multi-Mandanten-Hosting
 
-Fuer Multi-Mandanten-Deployments verwenden Sie stattdessen `AddAuthagonalCore()`. Es registriert Endpunkte, Middleware und Kerndienste, ueberspringt aber Storage, `KeyManager` und Hintergrunddienste -- diese stellen Sie pro Mandant bereit:
+Für Multi-Mandanten-Deployments verwenden Sie stattdessen `AddAuthagonalCore()`. Es registriert Endpunkte, Middleware und Kerndienste, überspringt aber Storage, `KeyManager` und Hintergrunddienste -- diese stellen Sie pro Mandant bereit:
 
 ```csharp
 builder.Services.AddScoped<ITenantContext, MyTenantContext>();
@@ -33,9 +33,9 @@ builder.Services.AddScoped<IKeyManager, MyPerTenantKeyManager>();
 builder.Services.AddAuthagonalCore(builder.Configuration);
 ```
 
-`IKeyManager` und Store-Schnittstellen (`IClientStore`, `IScimTokenStore` usw.) werden zur Anforderungszeit aus `HttpContext.RequestServices` aufgeloest, sodass Scoped-Registrierungen fuer die mandantenspezifische Isolierung korrekt funktionieren.
+`IKeyManager` und Store-Schnittstellen (`IClientStore`, `IScimTokenStore` usw.) werden zur Anforderungszeit aus `HttpContext.RequestServices` aufgeloest, sodass Scoped-Registrierungen für die mandantenspezifische Isolierung korrekt funktionieren.
 
-## Services ueberschreiben
+## Services überschreiben
 
 Registrieren Sie Ihre benutzerdefinierten Implementierungen **vor** dem Aufruf von `AddAuthagonal()`. Authagonal verwendet intern `TryAdd`, sodass Ihre Registrierungen Vorrang haben:
 
@@ -53,13 +53,13 @@ builder.Services.AddAuthagonal(builder.Configuration);
 
 | Schnittstelle | Standardimplementierung | Zweck |
 |---|---|---|
-| `IAuthHook` | `NullAuthHook` (Leeroperationen) | Lebenszyklus-Hooks fuer Auth-Ereignisse -- Audit-Protokollierung, benutzerdefinierte Validierung, Webhooks |
-| `IEmailService` | `NullEmailService` (No-op) | E-Mail-Versand fuer Verifizierung und Passwortzuruecksetzung |
+| `IAuthHook` | `NullAuthHook` (Leeroperationen) | Lebenszyklus-Hooks für Auth-Ereignisse -- Audit-Protokollierung, benutzerdefinierte Validierung, Webhooks |
+| `IEmailService` | `NullEmailService` (No-op) | E-Mail-Versand für Verifizierung und Passwortzurücksetzung |
 | `IProvisioningOrchestrator` | `TccProvisioningOrchestrator` | Benutzerbereitstellung in nachgelagerte Apps |
-| `ISecretProvider` | `PlaintextSecretProvider` | Geheimnis-Aufloesung (Key Vault, AWS Secrets Manager usw.) |
-| `ITenantContext` | `DefaultTenantContext` (liest aus `IConfiguration`) | Mandantenaufloesung fuer Multi-Mandanten-Deployments |
-| `IKeyManager` | `KeyManager` (Singleton) | Signaturschluessel-Verwaltung -- ueberschreiben fuer mandantenspezifische Schluesselisolierung |
-| `IProvisioningAppProvider` | `ConfigProvisioningAppProvider` | Aufloesen verfuegbarer Bereitstellungs-Apps -- ueberschreiben fuer dynamische oder mandantenspezifische App-Aufloesung |
+| `ISecretProvider` | `PlaintextSecretProvider` | Geheimnis-Auflösung (Key Vault, AWS Secrets Manager usw.) |
+| `ITenantContext` | `DefaultTenantContext` (liest aus `IConfiguration`) | Mandantenauflösung für Multi-Mandanten-Deployments |
+| `IKeyManager` | `KeyManager` (Singleton) | Signaturschlüssel-Verwaltung -- überschreiben für mandantenspezifische Schlüsselisolierung |
+| `IProvisioningAppProvider` | `ConfigProvisioningAppProvider` | Aufloesen verfügbarer Bereitstellungs-Apps -- überschreiben für dynamische oder mandantenspezifische App-Auflösung |
 
 ## IAuthHook
 
@@ -90,8 +90,8 @@ public interface IAuthHook
 | `OnUserAuthenticatedAsync` | `"password"`, `"saml"`, `"oidc"` |
 | `OnUserCreatedAsync` | `"admin"`, `"saml"`, `"oidc"` |
 | `OnLoginFailedAsync` | `"invalid_password"`, `"locked_out"` usw. |
-| `OnTokenIssuedAsync` | Gewaehrungstypen: `"authorization_code"`, `"refresh_token"`, `"client_credentials"` |
-| `ResolveMfaPolicyAsync` | Gibt die effektive MFA-Richtlinie fuer einen Benutzer zurueck. Standard: `clientPolicy` unveraendert zurueckgeben. |
+| `OnTokenIssuedAsync` | Gewährungstypen: `"authorization_code"`, `"refresh_token"`, `"client_credentials"` |
+| `ResolveMfaPolicyAsync` | Gibt die effektive MFA-Richtlinie für einen Benutzer zurück. Standard: `clientPolicy` unverändert zurückgeben. |
 | `OnMfaVerifiedAsync` | `"totp"`, `"webauthn"`, `"recovery"` |
 
 ### Beispiel: Audit-Logger
@@ -152,7 +152,7 @@ public sealed class DomainRestrictionHook : IAuthHook
 
 ## Benutzerdefinierte Endpunkte
 
-Fuegen Sie Ihre eigenen Endpunkte neben denen von Authagonal hinzu:
+Fügen Sie Ihre eigenen Endpunkte neben denen von Authagonal hinzu:
 
 ```csharp
 app.UseAuthagonal();
@@ -192,5 +192,5 @@ public sealed class SmtpEmailService(SmtpClient smtp) : IEmailService
 
 ## Siehe auch
 
-- [demos/custom-server/](https://github.com/authagonal/authagonal/tree/master/demos/custom-server) -- vollstaendiges funktionierendes Beispiel
+- [demos/custom-server/](https://github.com/authagonal/authagonal/tree/master/demos/custom-server) -- vollständiges funktionierendes Beispiel
 - [demos/sample-app/](https://github.com/authagonal/authagonal/tree/master/demos/sample-app) -- Client-App-Beispiel

@@ -10,6 +10,51 @@ Los endpoints de administracion requieren un token de acceso JWT con el scope `a
 
 Todos los endpoints estan bajo `/api/v1/`.
 
+## Arranque del primer token de administracion
+
+Cada endpoint `/api/v1/*` requiere un token bearer que porte el scope de administracion -- pero la propia API de administracion (y el [registro dinamico de clientes](client-registration)) **se niega a crear o actualizar cualquier cliente que posea ese scope** (`403 forbidden_scope`), por lo que un cliente creado en tiempo de ejecucion nunca puede escalar a administrador. La unica forma de emitir un token de administracion es un **cliente sembrado por configuracion**: las entradas de la seccion de configuracion `Clients:` son insertadas o actualizadas al inicio por `ClientSeedService`, y la configuracion es de confianza -- la proteccion de scope prohibido solo se aplica a las APIs en tiempo de ejecucion.
+
+Siembre un cliente `client_credentials` con el scope de administracion en `appsettings.json` (o las variables de entorno / almacen de secretos equivalentes):
+
+```json
+{
+  "Clients": [
+    {
+      "Id": "admin-cli",
+      "Name": "Admin CLI",
+      "ClientSecret": "a-long-random-secret",
+      "GrantTypes": ["client_credentials"],
+      "Scopes": ["authagonal-admin"]
+    }
+  ]
+}
+```
+
+(`ClientSecret` se hashea al inicio; proporcione `SecretHashes` en su lugar si prefiere mantener solo un valor pre-hasheado en la configuracion. `ClientId`/`ClientName`/`AllowedGrantTypes`/`AllowedScopes` se aceptan como alias de `Id`/`Name`/`GrantTypes`/`Scopes`.)
+
+Luego intercambie las credenciales por un token en el endpoint de token estandar:
+
+```bash
+curl -X POST https://auth.example.com/connect/token \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -d "grant_type=client_credentials" \
+  -d "client_id=admin-cli" \
+  -d "client_secret=a-long-random-secret" \
+  -d "scope=authagonal-admin"
+```
+
+```json
+{ "access_token": "eyJhbGci...", "token_type": "Bearer", "expires_in": 1800, "scope": "authagonal-admin" }
+```
+
+La concesion `client_credentials` valida el scope solicitado contra los `AllowedScopes` del cliente -- dado que el cliente sembrado posee `authagonal-admin`, se emite el token. Uselo como `Authorization: Bearer {access_token}` en cada llamada de administracion:
+
+```bash
+curl https://auth.example.com/api/v1/clients -H "Authorization: Bearer eyJhbGci..."
+```
+
+Mantenga el secreto del cliente sembrado en el almacen de secretos de su despliegue; rotarlo es un cambio de configuracion mas un reinicio.
+
 ## Usuarios
 
 ### Obtener usuario
@@ -19,6 +64,14 @@ GET /api/v1/profile/{userId}
 ```
 
 Devuelve los detalles del usuario, incluyendo los vinculos de inicio de sesion externo.
+
+### El usuario existe
+
+```
+GET /api/v1/profile/{userId}/exists
+```
+
+Devuelve `204` si el usuario existe, `404` en caso contrario (una comprobacion economica de existencia -- sin cuerpo).
 
 ### Registrar usuario
 
@@ -34,7 +87,9 @@ Content-Type: application/json
 }
 ```
 
-Crea un usuario y envia un correo de verificacion. Devuelve `409` si el correo ya esta en uso.
+Crea un usuario y envia un correo de verificacion. Devuelve `409 user_exists` si el correo ya esta en uso.
+
+Campos opcionales solo para administradores: `userId` (id proporcionado por el llamador -- `409 user_id_in_use` en caso de colision), `emailConfirmed` (crea el usuario ya verificado, omitiendo el correo de verificacion), `companyName`, `organizationId`, `phone`, `locale`, y `customAttributes` (un mapa de cadenas persistido en el usuario y reenviado a los destinos de aprovisionamiento).
 
 ### Actualizar usuario
 
@@ -50,7 +105,7 @@ Content-Type: application/json
 }
 ```
 
-Todos los campos son opcionales -- solo los campos proporcionados se actualizan. Cambiar `organizationId` desencadena:
+`userId` es requerido; todos los demas campos son opcionales -- solo los campos proporcionados se actualizan. Cambiar `organizationId` desencadena:
 - Rotacion del SecurityStamp (invalida todas las sesiones por cookie dentro de 30 minutos)
 - Revocacion de todos los tokens de actualizacion
 
@@ -126,9 +181,11 @@ Elimina una credencial MFA especifica (por ejemplo, un autenticador perdido). Si
 ```
 POST   /api/v1/saml/connections                    # Crear
 GET    /api/v1/saml/connections/{connectionId}     # Obtener uno
-PUT    /api/v1/saml/connections/{connectionId}     # Actualizar
+PUT    /api/v1/saml/connections/{connectionId}     # Actualizar (parcial -- solo cambian los campos proporcionados)
 DELETE /api/v1/saml/connections/{connectionId}     # Eliminar
 ```
+
+La creacion requiere `connectionName`, `entityId`, y **exactamente uno de** `metadataLocation` (una URL de metadatos) o `metadataXml` (metadatos del IdP pegados, para IdPs sin una URL de metadatos -- se validan al analizarse y se condensan al guardar). Opcional: `nameIdFormat` (omitalo para el valor predeterminado emailAddress, `"none"` para omitir NameIDPolicy -- recomendado para ADFS, o una URN de formato NameID), `signAuthnRequests`, `iconUrl`, `allowedDomains`, `disableJitProvisioning`. Cada conexion obtiene un par de claves SP generado por el servidor; nunca lo devuelve la API. Ver [SAML](saml) para mas detalles.
 
 ### Proveedores OIDC
 
@@ -137,6 +194,8 @@ POST   /api/v1/oidc/connections                    # Crear
 GET    /api/v1/oidc/connections/{connectionId}     # Obtener uno
 DELETE /api/v1/oidc/connections/{connectionId}     # Eliminar
 ```
+
+La creacion requiere `connectionName`, `metadataLocation`, `clientId`, `clientSecret`, `redirectUrl`. Opcional: `iconUrl`, `allowedDomains`, `passthroughParams`. El secreto del cliente se protege en reposo y nunca se devuelve. Ver [Federacion OIDC](oidc-federation).
 
 ### Dominios SSO
 
@@ -296,9 +355,11 @@ Content-Type: application/json
 
 {
   "userId": "user-id",
-  "roleId": "role-id"
+  "roleName": "admin"
 }
 ```
+
+La asignacion es por **nombre de rol**, no por id de rol. Devuelve la lista de roles actualizada del usuario.
 
 ### Desasignar rol de usuario
 
@@ -308,7 +369,7 @@ Content-Type: application/json
 
 {
   "userId": "user-id",
-  "roleId": "role-id"
+  "roleName": "admin"
 }
 ```
 
@@ -327,11 +388,13 @@ POST /api/v1/scim/tokens
 Content-Type: application/json
 
 {
-  "clientId": "client-id"
+  "clientId": "client-id",
+  "description": "Entra provisioning",
+  "expiresInDays": 365
 }
 ```
 
-Devuelve el token en texto plano una sola vez. Almacenelo de forma segura — no se puede recuperar de nuevo.
+`description` y `expiresInDays` son opcionales (omita `expiresInDays` para un token que no expira). Devuelve el token en texto plano una sola vez. Almacenelo de forma segura -- no se puede recuperar de nuevo.
 
 ### Listar tokens
 

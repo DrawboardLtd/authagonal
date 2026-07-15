@@ -10,6 +10,51 @@ locale: zh-Hans
 
 所有端点都在 `/api/v1/` 下。
 
+## 引导第一个管理令牌
+
+每个 `/api/v1/*` 端点都需要携带管理作用域的 bearer 令牌——但管理 API 本身（以及[动态客户端注册](client-registration)）**拒绝创建或更新任何持有该作用域的客户端**（`403 forbidden_scope`），因此运行时创建的客户端永远无法提权为管理员。铸造管理令牌的唯一途径是**配置播种的客户端**：`Clients:` 配置节中的条目会在启动时由 `ClientSeedService` 更新插入，而配置是受信任的——forbidden-scope 防护只作用于运行时 API。
+
+在 `appsettings.json`（或等效的环境变量 / 机密存储）中播种一个持有管理作用域的 `client_credentials` 客户端：
+
+```json
+{
+  "Clients": [
+    {
+      "Id": "admin-cli",
+      "Name": "Admin CLI",
+      "ClientSecret": "a-long-random-secret",
+      "GrantTypes": ["client_credentials"],
+      "Scopes": ["authagonal-admin"]
+    }
+  ]
+}
+```
+
+（`ClientSecret` 在启动时被哈希；如果您希望配置中只保留预哈希的值，可改为提供 `SecretHashes`。`ClientId`/`ClientName`/`AllowedGrantTypes`/`AllowedScopes` 可作为 `Id`/`Name`/`GrantTypes`/`Scopes` 的别名使用。）
+
+然后在标准令牌端点用凭据换取令牌：
+
+```bash
+curl -X POST https://auth.example.com/connect/token \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -d "grant_type=client_credentials" \
+  -d "client_id=admin-cli" \
+  -d "client_secret=a-long-random-secret" \
+  -d "scope=authagonal-admin"
+```
+
+```json
+{ "access_token": "eyJhbGci...", "token_type": "Bearer", "expires_in": 1800, "scope": "authagonal-admin" }
+```
+
+`client_credentials` 授权会将请求的作用域与该客户端的 `AllowedScopes` 进行校验——由于播种的客户端持有 `authagonal-admin`，令牌得以签发。在每个管理调用上以 `Authorization: Bearer {access_token}` 使用它：
+
+```bash
+curl https://auth.example.com/api/v1/clients -H "Authorization: Bearer eyJhbGci..."
+```
+
+请将播种客户端的密钥保存在部署的机密存储中；轮换它是一次配置更改 + 重启。
+
 ## 用户
 
 ### 获取用户

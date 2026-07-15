@@ -32,10 +32,14 @@ Authagonal 通过 `appsettings.json` 或环境变量进行配置。环境变量�
 | 设置 | 默认值 | 描述 |
 |---|---|---|
 | `Authentication:CookieLifetimeHours` | `48` | Cookie 会话生命周期（滑动过期） |
+| `Authentication:AlwaysSecureCookie` | `false` | 无条件强制会话 Cookie 的 `Secure` 标志。默认值（`SameAsRequest`）在会转发 `X-Forwarded-Proto: https` 的 TLS 终止代理之后，已经会产生 Secure Cookie。 |
 | `Auth:MaxFailedAttempts` | `5` | 账户锁定前允许的登录失败次数 |
 | `Auth:LockoutDurationMinutes` | `10` | 达到最大失败次数后的账户锁定时长 |
 | `Auth:MaxRegistrationsPerIp` | `5` | 时间窗口内每个 IP 地址的最大注册数 |
 | `Auth:RegistrationWindowMinutes` | `60` | 注册速率限制时间窗口 |
+| `Auth:MaxPasswordResetsPerEmail` | `3` | 时间窗口内每个目标地址的最大密码重置邮件数（以邮箱为键，而非调用方 IP，因此单个地址不会被邮件轰炸） |
+| `Auth:PasswordResetWindowMinutes` | `60` | 密码重置速率限制时间窗口 |
+| `Auth:AutoConfirmEmailDomains` | *（空）* | 其自助注册会被自动确认的邮箱域名（字符串数组）——它们会跳过验证邮件。为空（默认）表示每个注册都必须完成验证。仅用于开发 / 测试；切勿列入能接收真实邮件的域名。 |
 | `Auth:EmailVerificationExpiryHours` | `24` | 邮箱验证链接有效期 |
 | `Auth:PasswordResetExpiryMinutes` | `60` | 密码重置链接有效期 |
 | `Auth:MfaChallengeExpiryMinutes` | `5` | MFA 验证令牌有效期 |
@@ -49,7 +53,17 @@ Authagonal 通过 `appsettings.json` 或环境变量进行配置。环境变量�
 | `Auth:KeyRotationCheckIntervalMinutes` | `360` | 检查活动密钥是否需要轮换的频率 |
 | `Auth:KeyRotationLeadTimeDays` | `14` | 当活动密钥在此天数内过期时进行轮换 |
 | `Auth:SecurityStampRevalidationMinutes` | `30` | Cookie 安全标记检查间隔 |
-| `DataProtection:BlobUri` | *（无）* | 用于跨实例持久化 Data Protection 密钥的 Azure Blob URI |
+
+## 数据保护
+
+ASP.NET Core Data Protection 密钥（用于加密会话 Cookie）必须在各实例之间共享——参见[扩展](scaling#cookie-encryption-data-protection)。持久化选项按优先级顺序如下：
+
+| 设置 | 默认值 | 描述 |
+|---|---|---|
+| `DataProtection:BlobUri` | *（无）* | 密钥环的显式 Azure Blob URI（例如 `https://{account}.blob.core.windows.net/dataprotection/keys.xml`）。通过 `DefaultAzureCredential` 认证——与 `Storage:TableServiceUri` 并列的生产环境首选路径。 |
+| *（回退）* | — | 当 `DataProtection:BlobUri` 未设置且 `Storage:ConnectionString` 指向真实的存储账户（而非 Azurite）时，密钥会自动持久化到该账户中的 `dataprotection` 容器。使用 Azurite 时，密钥回退到默认的基于文件的存储。 |
+
+在 AWS 后端上，向 `AddAuthagonalAwsStorage` 传入 S3 客户端 + 存储桶，即可将密钥环持久化到 S3——参见[安装 → AWS 后端](installation#aws-backend)。
 
 ## 缓存与超时
 
@@ -170,7 +184,7 @@ Authagonal 通过 `appsettings.json` 或环境变量进行配置。环境变量�
 
 当 `MfaPolicy` 为 `Required` 且用户尚未注册 MFA 时，登录返回 `{ mfaSetupRequired: true, setupToken: "..." }`。设置令牌通过 `X-MFA-Setup-Token` 请求头对用户进行认证，以便在获得 Cookie 会话之前完成 MFA 注册。
 
-联合登录（SAML/OIDC）跳过 MFA -- 由外部身份提供者处理。
+联合登录（SAML/OIDC）同样遵守 MFA 策略：已注册 MFA 的用户在外部 IdP 完成认证后，会被引导通过 MFA 验证挑战；而 `Required` 会对未启用 MFA 的联合用户强制要求注册。
 
 ### IAuthHook 覆盖
 
@@ -239,7 +253,7 @@ public Task<MfaPolicy> ResolveMfaPolicyAsync(
 |---|---|---|
 | `ConnectionId` | 是 | 稳定标识符（用于 `/saml/{connectionId}/login` 等 URL） |
 | `ConnectionName` | 否 | 显示名称（默认为 ConnectionId） |
-| `EntityId` | 是 | SAML 服务提供者实体 ID |
+| `EntityId` | 是 | **本服务器的** SP 实体 ID——即您在 IdP 处注册的标识符，而非 IdP 自身的实体 ID |
 | `MetadataLocation` | 是 | IdP 的 SAML 元数据 XML 的 URL |
 | `AllowedDomains` | 否 | 通过 SSO 路由到此提供者的电子邮件域 |
 
@@ -324,62 +338,44 @@ public Task<MfaPolicy> ResolveMfaPolicyAsync(
 
 ## 电子邮件
 
-默认情况下，Authagonal 使用空操作邮件服务，静默丢弃所有邮件。要启用邮件发送，请在调用 `AddAuthagonal()` 之前注册 `IEmailService` 实现。
-
-内置的 `EmailService` 使用 [Resend](https://resend.com)。要使用它，请显式注册：
-
-```csharp
-services.AddSingleton<IEmailService, EmailService>();
-services.AddAuthagonal(configuration);
-```
+内置的邮件发送器使用 [Resend](https://resend.com)，并在配置了 `Email:ResendApiKey` 时**自动启用**——无需注册任何服务。若要使用其他提供者，请在调用 `AddAuthagonal()` 之前注册您自己的 `IEmailService` 实现（无论 `Email:*` 键如何设置，它都会优先生效）。
 
 | 设置 | 描述 |
 |---|---|
-| `Email:ResendApiKey` | 用于发送邮件的 Resend API 密钥 |
+| `Email:ResendApiKey` | Resend API 密钥。设置后即使用内置的 Resend 发送器。 |
 | `Email:SenderEmail` | 发件人电子邮件地址 |
 | `Email:SenderName` | 发件人显示名称（默认为 `"Authagonal"`） |
+
+> ⚠️ **在没有任何邮件发送器时，自助注册将无法正常工作。** 当 `Email:ResendApiKey` 未设置且未注册自定义 `IEmailService` 时，一个空操作服务会静默丢弃所有邮件——验证邮件和密码重置邮件永远不会送达，而由于默认情况下登录要求邮箱已确认，自助注册的用户将永远无法登录。在此状态下，`UseAuthagonal` 会在启动时记录一条警告。开发 / 测试的应急出口：`Auth:AutoConfirmEmailDomains` 会自动确认所列域名的注册。
 
 发送到 `@example.com` 地址的邮件会被静默跳过（便于测试）。
 
 ## 集群
 
-Authagonal 实例自动组成集群以共享速率限制状态。集群功能默认启用，无需任何配置。
+集群层提供**领导者选举**（使得诸如签名密钥轮换之类的领导者门控作业只在恰好一个节点上运行）和一个**跨节点事件总线**，二者均位于可插拔的后端之后。默认采用进程内实现：单个节点始终是它自己的领导者——这正是单节点和本地开发的合适设置，且无需任何配置。
 
 | 设置 | 环境变量 | 默认值 | 描述 |
 |---|---|---|---|
-| `Cluster:Enabled` | `Cluster__Enabled` | `true` | 集群主开关。设为 `false` 则仅使用本地速率限制。 |
-| `Cluster:MulticastGroup` | `Cluster__MulticastGroup` | `239.42.42.42` | 用于对等发现的 UDP 多播组 |
-| `Cluster:MulticastPort` | `Cluster__MulticastPort` | `19847` | 用于对等发现的 UDP 多播端口 |
-| `Cluster:InternalUrl` | `Cluster__InternalUrl` | *（无）* | 多播不可用时用于 gossip 的负载均衡回退 URL |
-| `Cluster:Secret` | `Cluster__Secret` | *（无）* | 内部专用端点（`/_internal/cluster/gossip` 和 `/_internal/backchannel-logout`）所需的共享密钥。设置后，调用方必须在 `X-Cluster-Secret` 请求头中提供它（以恒定时间比较）。**未设置**时，这些端点仅可从环回 / 私有（RFC 1918 / 链路本地 / ULA）源 IP 访问——携带公网 IP 的外部请求将被拒绝。当 `InternalUrl` 通过负载均衡器路由 gossip 时建议配置。 |
-| `Cluster:GossipIntervalSeconds` | `Cluster__GossipIntervalSeconds` | `5` | 实例交换速率限制状态的频率（秒） |
-| `Cluster:DiscoveryIntervalSeconds` | `Cluster__DiscoveryIntervalSeconds` | `10` | 实例通过多播宣告自身的频率（秒） |
-| `Cluster:PeerStaleAfterSeconds` | `Cluster__PeerStaleAfterSeconds` | `30` | 超过此秒数未响应的对等节点将被移除 |
+| `Cluster:Enabled` | `Cluster__Enabled` | `true` | 主开关。设为 `false` 时节点独立运行（始终为领导者，使用进程内事件总线）。 |
+| `Cluster:Secret` | `Cluster__Secret` | *（无）* | 内部专用端点 `/_internal/backchannel-logout` 所需的共享密钥。设置后，调用方必须在 `X-Cluster-Secret` 请求头中提供它（以恒定时间比较）。**未设置**时，该端点仅可从环回 / 私有（RFC 1918 / 链路本地 / ULA）源 IP 访问——携带公网 IP 的外部请求将被拒绝。 |
+| `Cluster:LeaseTtlSeconds` | `Cluster__LeaseTtlSeconds` | `30` | 领导权租约时长。大约每隔其一半的间隔续约一次。 |
+| `Cluster:PollIntervalSeconds` | `Cluster__PollIntervalSeconds` | `3` | 事件总线后端轮询其他节点所发布消息的频率。 |
 
-**零配置（默认）：** 实例通过 UDP 多播互相发现。适用于 Kubernetes、Docker Compose 或任何共享网络。
+**多节点部署**通过 `AddAuthagonal` / `AddAuthagonalCore` 上的 `configureClustering` 回调换入真实的后端：
 
-**多播不可用时（例如某些云 VPC）：**
+```csharp
+// Azure: leadership via a blob lease, event bus via a table log (Authagonal.AzureProvider)
+builder.Services.AddAuthagonal(builder.Configuration,
+    cluster => cluster.UseAzureStorage(blobServiceClient, tableServiceClient));
 
-```json
-{
-  "Cluster": {
-    "InternalUrl": "http://authagonal-auth.svc.cluster.local:8080",
-    "Secret": "shared-secret-here"
-  }
-}
+// AWS equivalent (Authagonal.AwsProvider)
+builder.Services.AddAuthagonal(builder.Configuration,
+    cluster => cluster.UseAwsDynamo(dynamoDb));
 ```
 
-**完全禁用集群：**
+`UseAzureStorageBus` / `UseAwsDynamoBus` 仅注册事件总线，保留进程内租约——适用于必须接收集群事件、但绝不能争夺领导权的节点。
 
-```json
-{
-  "Cluster": {
-    "Enabled": false
-  }
-}
-```
-
-详情请参阅[扩展](scaling)了解分布式速率限制的工作原理。
+详情请参阅[扩展](scaling)了解领导权和事件总线在各实例间的行为。
 
 ## 转发头（受信任代理）
 
@@ -405,13 +401,16 @@ Authagonal 以客户端 IP 作为速率限制和账户锁定的键，并且仅�
 
 ## 速率限制
 
-内置的按 IP 速率限制通过集群 gossip 协议在所有实例间同步执行：
+内置的速率限制保护那些易被滥用的端点：
 
-| 端点 | 限制 | 时间窗口 |
-|---|---|---|
-| `POST /api/auth/register` | 5 次注册 | 1 小时 |
+| 端点 | 限制 | 时间窗口 | 键 |
+|---|---|---|---|
+| `POST /api/auth/register` | 5（`Auth:MaxRegistrationsPerIp`） | 1 小时（`Auth:RegistrationWindowMinutes`） | 客户端 IP |
+| `POST /api/auth/forgot-password` | 3（`Auth:MaxPasswordResetsPerEmail`） | 1 小时（`Auth:PasswordResetWindowMinutes`） | 目标邮箱 |
+| `POST /connect/register`（启用时） | 10 | 1 小时 | 客户端 IP |
+| SCIM 端点 | 200 | 1 分钟 | SCIM 客户端 |
 
-启用集群时，这些限制在所有实例间合并统计。禁用集群时，每个实例独立执行各自的限制。
+这些限制在**每个节点进程内**执行（位于 `IRateLimiter` 接缝之后），因此在 N 个实例下，有效上限是所配置值的 N 倍。请将它们视为一道兜底防线，并在边缘（WAF / 入口 / CDN）执行权威的全局限制。参见[扩展](scaling#rate-limiting)。
 
 ## CORS
 

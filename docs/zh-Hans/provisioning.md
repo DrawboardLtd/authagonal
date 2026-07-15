@@ -23,7 +23,9 @@ Authagonal 使用 **Try-Confirm-Cancel (TCC)** 模式将用户预配到下游应
 
 已预配的应用/用户组合会被跳过（在 `UserProvisions` 表中跟踪）。
 
-**被拒绝时：** 如果任何预配应用在 Try 阶段拒绝了用户，该用户将被删除，端点返回 `422 Unprocessable Entity` 并附带拒绝原因。这可以防止产生半创建的用户。
+用户创建路径会预配到**每一个已配置的应用**。授权端点只预配到客户端的 `ProvisioningApps` 列表中的应用。
+
+**被拒绝时：** 如果任何预配应用在 Try 阶段拒绝了用户，则新创建的用户将被删除。这可以防止产生半创建的用户。API 创建路径（管理员、注册、SCIM）返回 `422 Unprocessable Entity` 并附带拒绝原因；SAML/OIDC SSO 回调返回 `400 Bad Request`；授权端点则带 `error=access_denied` 重定向回客户端。
 
 ## 配置
 
@@ -36,25 +38,25 @@ Authagonal 使用 **Try-Confirm-Cancel (TCC)** 模式将用户预配到下游应
   "ProvisioningApps": {
     "my-backend": {
       "CallbackUrl": "https://api.example.com/provisioning",
-      "ApiKey": "secret-bearer-token"
+      "ApiKey": "secret-bearer-token",
+      "TryTimeoutSeconds": 60
     }
   }
 }
 ```
 
+`TryTimeoutSeconds` 是可选的（默认 60）。当下游应用在 Try 阶段执行实际工作时，请调高它。Confirm 和 Cancel 始终使用较短的固定超时（10 秒）且不可调；它们应始终是廉价的操作。
+
 ### 2. 将应用分配给客户端
 
-每个客户端声明其用户必须被预配到哪些应用：
+每个客户端通过客户端记录上的 `provisioningApps` 字段声明其用户必须被预配到哪些应用。请通过客户端管理 API 设置它（`Clients` 种子配置不携带此字段）：
 
-```json
+```
+PUT /api/v1/clients/web-app
 {
-  "Clients": [
-    {
-      "ClientId": "web-app",
-      "ProvisioningApps": ["my-backend"],
-      ...
-    }
-  ]
+  "clientId": "web-app",
+  "provisioningApps": ["my-backend"],
+  ...
 }
 ```
 
@@ -75,9 +77,12 @@ Authagonal 向您的预配端点发出三种类型的 HTTP 调用。所有调用
   "email": "user@example.com",
   "firstName": "Jane",
   "lastName": "Doe",
-  "organizationId": "org-id-or-null"
+  "organizationId": "org-id-or-null",
+  "customAttributes": { "key": "value" }
 }
 ```
+
+空字段（包括用户没有自定义属性时的 `customAttributes`）会从载荷中省略。
 
 **预期响应：**
 
@@ -88,6 +93,8 @@ Authagonal 向您的预配端点发出三种类型的 HTTP 调用。所有调用
 | 非 2xx | 任何 | 视为失败。 |
 
 `transactionId` 标识此次预配尝试。您的应用应将其与待定记录一起存储。
+
+被批准的响应还可以返回 `organizationId` 和/或 `customAttributes`。Authagonal 会将它们合并到用户上：`organizationId` 仅在用户尚未拥有时才应用（同一事务中较晚的应用会看到较早的赋值），`customAttributes` 条目则逐键合并。两者都会流入令牌（`org_id` 声明；自定义属性通过作用域的 `UserClaims` 配置）。
 
 ### 阶段 2：确认（Confirm）
 
@@ -117,7 +124,7 @@ Authagonal 向您的预配端点发出三种类型的 HTTP 调用。所有调用
 
 **预期响应：** `200`（任何响应体）。您的应用删除待定记录。
 
-取消操作是尽力而为的 -- 如果失败，Authagonal 会记录错误并继续。您的应用应**在 TTL 过期后垃圾回收未确认的记录**（例如 1 小时）作为安全网。
+取消操作是尽力而为的：如果失败，Authagonal 会记录错误并继续。您的应用应**在 TTL 过期后垃圾回收未确认的记录**（例如 1 小时）作为安全网。
 
 ## 流程图
 
@@ -156,11 +163,11 @@ Authorize Endpoint
 
 ### 部分确认失败时
 
-如果部分确认成功但有一个失败，成功确认的应用会存储其预配记录（这样就不会重试）。用户会看到错误消息并可以重试 -- 只有失败的应用会在下次尝试。
+如果部分确认成功但有一个失败，成功确认的应用会存储其预配记录（这样就不会重试），任何仍在等待确认的应用都会被取消。用户会看到错误消息并可以重试；只有未确认的应用会在下次尝试。
 
 ## 自定义应用解析
 
-默认情况下，预配应用通过 `ConfigProvisioningAppProvider` 从 `ProvisioningApps` 配置节读取。覆盖 `IProvisioningAppProvider` 以动态解析应用 -- 例如，从数据库或按租户解析：
+默认情况下，预配应用通过 `ConfigProvisioningAppProvider` 从 `ProvisioningApps` 配置节读取。覆盖 `IProvisioningAppProvider` 以动态解析应用，例如从数据库或按租户解析：
 
 ```csharp
 builder.Services.AddSingleton<IProvisioningAppProvider, MyAppProvider>();
@@ -169,9 +176,11 @@ builder.Services.AddAuthagonal(builder.Configuration);
 
 Provider 返回应用列表及其回调 URL。`TccProvisioningOrchestrator` 对每个应用调用 Try/Confirm/Cancel。
 
+如果无需自定义 provider 就想进行运行时 CRUD，库中提供了由 `IProvisioningAppStore` 支撑的 `StoreProvisioningAppProvider`。显式注册它（与上面相同的模式），并通过 `/api/v1/provisioning/apps` 处的管理 API 管理应用（列出/创建/更新/删除，以及 `POST /{appId}/test` 以探测应用的 Try 端点）。
+
 ## 取消预配
 
-当通过管理 API 删除用户时（`DELETE /api/v1/profile/{userId}`），Authagonal 会对用户被预配到的每个应用调用 `DELETE {CallbackUrl}/users/{userId}`。这是尽力而为的 -- 失败会被记录但不会阻止删除。
+当通过管理 API 删除用户时（`DELETE /api/v1/profile/{userId}`）或通过 SCIM 取消预配时（`DELETE /scim/v2/Users/{id}`，一种停用用户的软删除），Authagonal 会对用户被预配到的每个应用调用 `DELETE {CallbackUrl}/users/{userId}`。这是尽力而为的：失败会被记录但不会阻止删除。
 
 ## 实现上游端点
 
