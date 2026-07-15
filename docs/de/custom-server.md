@@ -6,7 +6,7 @@ locale: de
 
 # Benutzerdefinierter Server -- Schnellstart
 
-Diese Anleitung zeigt, wie Sie Authagonal als Bibliothek in Ihrem eigenen ASP.NET Core-Projekt hosten und anschliessend die Login-Oberfläche mit Ihren eigenen React-Komponenten anpassen.
+Diese Anleitung zeigt, wie Sie Authagonal als Bibliothek in Ihrem eigenen ASP.NET Core-Projekt hosten und anschließend die Login-Oberfläche mit Ihren eigenen React-Komponenten anpassen.
 
 ## Teil 1: Server-Einrichtung
 
@@ -18,7 +18,7 @@ cd MyAuthServer
 
 # Add Authagonal packages (or project references for source builds)
 dotnet add package Authagonal.Server
-dotnet add package Authagonal.Storage
+dotnet add package Authagonal.AzureProvider
 ```
 
 Ihre `.csproj` sollte enthalten:
@@ -26,9 +26,11 @@ Ihre `.csproj` sollte enthalten:
 ```xml
 <ItemGroup>
   <PackageReference Include="Authagonal.Server" Version="*" />
-  <PackageReference Include="Authagonal.Storage" Version="*" />
+  <PackageReference Include="Authagonal.AzureProvider" Version="*" />
 </ItemGroup>
 ```
+
+`Authagonal.AzureProvider` stellt die Azure Table Storage-Speicher bereit, die `AddAuthagonal` aus der `Storage:*`-Konfiguration verdrahtet. Um stattdessen auf AWS zu hosten, referenzieren Sie `Authagonal.AwsProvider` und rufen Sie `AddAuthagonalAwsStorage(...)` vor `AddAuthagonal` auf -- siehe [Installation → AWS-Backend](installation#aws-backend).
 
 ### Program.cs konfigurieren
 
@@ -93,7 +95,7 @@ Registrieren Sie Ihre Implementierungen **vor** dem Aufruf von `AddAuthagonal()`
 
 | Schnittstelle | Zweck | Standard |
 |---|---|---|
-| `IEmailService` | Versand von Verifizierungs- und Passwortzurücksetzungs-E-Mails | No-op (verwirft stillschweigend) |
+| `IEmailService` | Versand von Verifizierungs- und Passwortzurücksetzungs-E-Mails | Integrierter Resend-Absender, wenn `Email:ResendApiKey` gesetzt ist; andernfalls No-op (verwirft stillschweigend) |
 | `IAuthHook` | Login-, Registrierungs- und Token-Ereignisse abfangen oder auditieren | Leeroperationen |
 | `IProvisioningOrchestrator` | Benutzer bei der Autorisierung in nachgelagerte Apps bereitstellen | TCC-Bereitstellung |
 | `ISecretProvider` | Client-Geheimnisse auflösen | Klartext (oder Key Vault mit `SecretProvider:VaultUri`) |
@@ -101,6 +103,7 @@ Registrieren Sie Ihre Implementierungen **vor** dem Aufruf von `AddAuthagonal()`
 #### Beispiel: Audit-Hook
 
 ```csharp
+using Authagonal.Core.Models;
 using Authagonal.Core.Services;
 
 public class AuditAuthHook(ILogger<AuditAuthHook> logger) : IAuthHook
@@ -132,8 +135,26 @@ public class AuditAuthHook(ILogger<AuditAuthHook> logger) : IAuthHook
         logger.LogInformation("Token issued: {ClientId} ({GrantType})", clientId, grantType);
         return Task.CompletedTask;
     }
+
+    public Task<MfaPolicy> ResolveMfaPolicyAsync(string userId, string email,
+        MfaPolicy clientPolicy, string clientId, CancellationToken ct = default)
+        => Task.FromResult(clientPolicy);
+
+    public Task OnMfaVerifiedAsync(string userId, string email,
+        string mfaMethod, CancellationToken ct = default)
+        => Task.CompletedTask;
+
+    public Task OnUserUpdatedAsync(string userId, string email,
+        string updatedVia, CancellationToken ct = default)
+        => Task.CompletedTask;
+
+    public Task OnUserDeletedAsync(string userId, string email,
+        string deletedVia, CancellationToken ct = default)
+        => Task.CompletedTask;
 }
 ```
+
+Die Schnittstelle hat weitere optionale Mitglieder mit No-op-Standardimplementierungen (`OnMfaVerifyFailedAsync`, `OnEmailConfirmedAsync`, `OnMfaEnrolledAsync`, `OnMfaCredentialRemovedAsync`, `OnRecoveryCodesRegeneratedAsync`, `OnPasswordChangedAsync`), überschreiben Sie diese nur, wenn Sie diese Ereignisse benötigen.
 
 #### Beispiel: E-Mail-Dienst
 
@@ -157,6 +178,8 @@ public class ConsoleEmailService(ILogger<ConsoleEmailService> logger) : IEmailSe
     }
 }
 ```
+
+> **E-Mail ist die häufigste Integrationsfalle.** Wenn Sie keinen `IEmailService` registrieren und `Email:ResendApiKey` nicht setzen, werden Verifizierungs- und Passwortzurücksetzungs-E-Mails stillschweigend verworfen, und da das Login-Gate für bestätigte E-Mails standardmäßig aktiviert ist, können sich selbst registrierte Benutzer niemals anmelden (`UseAuthagonal` warnt beim Start). Der integrierte Resend-Absender aktiviert sich automatisch, wenn `Email:ResendApiKey` + `Email:SenderEmail` konfiguriert sind; für Entwicklung/Tests überspringt `Auth:AutoConfirmEmailDomains` die Verifizierung für aufgelistete Domains. Siehe [Konfiguration → E-Mail](configuration#email).
 
 ### Benutzerdefinierte Endpunkte hinzufügen
 
@@ -213,6 +236,9 @@ import {
   MfaChallengePage,
   MfaSetupPage,
   RegisterPage,
+  ConsentPage,
+  GrantsPage,
+  DevicePage,
   App,              // Standalone SPA with full routing
 } from '@authagonal/login';
 
@@ -223,7 +249,7 @@ import {
 
 // API clients — call from your custom pages
 import {
-  login, logout, ssoCheck, forgotPassword, resetPassword,
+  login, register, logout, ssoCheck, forgotPassword, resetPassword,
   getSession, getProviders, getPasswordPolicy,
   mfaVerify, mfaStatus, mfaTotpSetup, mfaTotpConfirm,
   mfaWebAuthnSetup, mfaWebAuthnConfirm, mfaRecoveryGenerate,
@@ -276,7 +302,9 @@ Benutzerdefinierte Seiten mit den Basispaket-Seiten kombinieren:
 
 ```tsx
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
-import { ForgotPasswordPage, ResetPasswordPage } from '@authagonal/login';
+import {
+  ForgotPasswordPage, ResetPasswordPage, ConsentPage, DevicePage, GrantsPage,
+} from '@authagonal/login';
 import MyLoginPage from './MyLoginPage';
 import MyLayout from './MyLayout';
 
@@ -288,6 +316,9 @@ export default function App() {
           <Route path="/login" element={<MyLoginPage />} />
           <Route path="/forgot-password" element={<ForgotPasswordPage />} />
           <Route path="/reset-password" element={<ResetPasswordPage />} />
+          <Route path="/consent" element={<ConsentPage />} />
+          <Route path="/device" element={<DevicePage />} />
+          <Route path="/grants" element={<GrantsPage />} />
           <Route path="*" element={<Navigate to="/login" replace />} />
         </Routes>
       </MyLayout>
@@ -350,7 +381,7 @@ export default function MyLoginPage() {
 
 ### Benutzerdefiniertes Layout
 
-Umschliessen Sie das Basis-`AuthLayout`, um Ihr eigenes Branding hinzuzufügen:
+Umschließen Sie das Basis-`AuthLayout`, um Ihr eigenes Branding hinzuzufügen:
 
 ```tsx
 import { AuthLayout } from '@authagonal/login';
@@ -379,9 +410,13 @@ Konfigurieren Sie das Erscheinungsbild der Login-Oberfläche ohne Neuaufbau:
   "primaryColor": "#059669",
   "supportEmail": "support@example.com",
   "showForgotPassword": true,
+  "showRegistration": false,
+  "darkMode": "auto",
   "customCssUrl": "/custom.css"
 }
 ```
+
+Das vollständige Schema, einschließlich lokalisiertem Willkommenstext, der Sprachauswahlliste und modusabhängiger Dunkel-/Hell-Farb- und Logo-Hintergrund-Überschreibungen, finden Sie auf der [Branding](branding)-Seite.
 
 ### Vite-Konfiguration
 

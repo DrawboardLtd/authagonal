@@ -6,32 +6,36 @@ locale: de
 
 # Lokalisierung
 
-Authagonal unterstützt acht Sprachen standardmäßig: Englisch, Vereinfachtes Chinesisch (`zh-Hans`), Deutsch (`de`), Französisch (`fr`), Spanisch (`es`), Vietnamesisch (`vi`), Portugiesisch (`pt`) und Klingonisch (`tlh`). Die Lokalisierung umfasst die Server-API-Antworten, die Login-Oberfläche und diese Dokumentationsseite.
+Die Login-Oberfläche liefert standardmäßig elf Sprachen: Englisch, Vereinfachtes Chinesisch (`zh-Hans`), Deutsch (`de`), Französisch (`fr`), Spanisch (`es`), Vietnamesisch (`vi`), Portugiesisch (`pt`), Arabisch (`ar`), Afrikaans (`af`), Hindi (`hi`) und eine Klingonisch-Neuheitssprache (`tlh`). Die Server-API-Antworten sind in den ersten sieben davon lokalisiert. Die Lokalisierung umfasst die Server-API-Antworten, die Login-Oberfläche und diese Dokumentationsseite.
 
-## Unterstutzte Sprachen
+## Unterstützte Sprachen
 
-| Code | Sprache |
-|---|---|
-| `en` | Englisch (Standard) |
-| `zh-Hans` | Vereinfachtes Chinesisch |
-| `de` | Deutsch |
-| `fr` | Französisch |
-| `es` | Spanisch |
-| `vi` | Vietnamesisch |
-| `pt` | Portugiesisch |
+| Code | Sprache | Login-UI | Server-API |
+|---|---|---|---|
+| `en` | Englisch (Standard) | ✓ | ✓ |
+| `zh-Hans` | Vereinfachtes Chinesisch | ✓ | ✓ |
+| `de` | Deutsch | ✓ | ✓ |
+| `fr` | Französisch | ✓ | ✓ |
+| `es` | Spanisch | ✓ | ✓ |
+| `vi` | Vietnamesisch | ✓ | ✓ |
+| `pt` | Portugiesisch | ✓ | ✓ |
+| `ar` | Arabisch (rechts-nach-links) | ✓ | — |
+| `af` | Afrikaans | ✓ | — |
+| `hi` | Hindi | ✓ | — |
+| `tlh` | Klingonisch (Neuheit) | ✓ | — |
 
 ## Server (API-Antworten)
 
-Der Server verwendet die integrierte Lokalisierung von ASP.NET Core mit `IStringLocalizer<T>` und `.resx`-Ressourcendateien. Die Sprache wird aus dem `Accept-Language`-HTTP-Header ausgewahlt.
+Der Server verwendet die integrierte Lokalisierung von ASP.NET Core mit `IStringLocalizer<T>` und `.resx`-Ressourcendateien. Die Sprache wird aus dem `Accept-Language`-HTTP-Header ausgewählt.
 
 ### Was lokalisiert ist
 
 - Passwort-Validierungsfehlermeldungen
 - Passwortrichtlinien-Labels (`GET /api/auth/password-policy`)
-- Nachrichten zum Passwort-Zurucksetzen (Token-Fehler, Ablauf, Erfolg)
+- Nachrichten zum Passwort-Zurücksetzen (Token-Fehler, Ablauf, Erfolg)
 - Allgemeine Fehlerbeschreibungen der Ausnahmebehandlungs-Middleware
-- Admin-Benutzerverwaltungsnachrichten (E-Mail-Bestatigung, Verifizierung usw.)
-- Bestatigungsnachricht zum Beenden der Sitzung
+- Admin-Benutzerverwaltungsnachrichten (E-Mail-Bestätigung, Verifizierung usw.)
+- Bestätigungsnachricht zum Beenden der Sitzung
 
 ### Was NICHT lokalisiert ist
 
@@ -56,7 +60,7 @@ curl -H "Accept-Language: de" https://auth.example.com/api/auth/password-policy
 
 ### Ressourcendateien
 
-Alle Server-Ubersetzungszeichenketten befinden sich in `.resx`-Dateien unter `src/Authagonal.Server/Resources/`:
+Alle Server-Übersetzungszeichenketten befinden sich in `.resx`-Dateien unter `src/Authagonal.Server/Resources/`:
 
 ```
 Resources/
@@ -70,9 +74,13 @@ Resources/
   SharedMessages.pt.resx
 ```
 
-## Login-Oberflache
+## Login-Oberfläche
 
-Die Login-SPA verwendet [react-i18next](https://react.i18next.com/) fur die clientseitige Lokalisierung. Die Sprache wird automatisch aus der `navigator.language`-Einstellung des Browsers erkannt.
+Die Login-SPA verwendet [react-i18next](https://react.i18next.com/) für die clientseitige Lokalisierung. Die Sprache wird automatisch aus der `navigator.language`-Einstellung des Browsers erkannt.
+
+Die registrierten Sprachen befinden sich in einer einzigen `LANGUAGES`-Registry in `login-app/src/i18n/index.ts`, die sowohl die i18next-Ressourcenregistrierung als auch jede Sprachauswahl steuert, sodass die beiden nicht auseinanderdriften können. Als `novelty` gekennzeichnete Sprachen (derzeit `tlh`) bleiben voll funktionsfähig (`?lng=tlh` funktioniert), sind aber von der Standardauswahl ausgeschlossen; sie erscheinen nur dann in einem Dropdown, wenn die `BrandingConfig.languages` eines Mandanten sie ausdrücklich auflistet. Mandanten können die Auswahl auf die gleiche Weise einschränken: Ein `languages`-Array in `branding.json` ersetzt die Standardliste vollständig (siehe [Branding](branding)).
+
+Die aktive Sprache wird auf `<html lang>` und `<html dir>` gespiegelt, sodass Rechts-nach-links-Sprachen (`ar`) die Auth-Karte automatisch umkehren, auch wenn die Sprache über die Auswahl direkt gewechselt wird.
 
 ### Spracherkennung
 
@@ -83,13 +91,13 @@ Die Erkennungsreihenfolge ist:
 3. **Browsersprache**: `navigator.language` (automatisch)
 4. **Fallback**: Englisch (`en`)
 
-### Ubersetzungsdateien
+### Übersetzungsdateien
 
-Ubersetzungs-JSON-Dateien sind mit der App gebundelt unter `login-app/src/i18n/`:
+Übersetzungs-JSON-Dateien sind mit der App gebündelt unter `login-app/src/i18n/`:
 
 ```
 i18n/
-  index.ts        # i18n initialization
+  index.ts        # i18n initialization + the LANGUAGES registry
   en.json         # English
   zh-Hans.json    # Simplified Chinese
   de.json         # German
@@ -97,16 +105,19 @@ i18n/
   es.json         # Spanish
   vi.json         # Vietnamese
   pt.json         # Portuguese
-  tlh.json        # Klingon
+  ar.json         # Arabic
+  af.json         # Afrikaans
+  hi.json         # Hindi
+  tlh.json        # Klingon (novelty)
 ```
 
 ### Passwortrichtlinien-Labels
 
-Die Login-Oberflache ubersetzt Passwortanforderungs-Labels clientseitig basierend auf dem `rule`-Schlussel, der von `GET /api/auth/password-policy` zuruckgegeben wird, anstatt das vom Server bereitgestellte `label`-Feld zu verwenden. Dies stellt sicher, dass die Passwortanforderungen immer in der Browsersprache des Benutzers angezeigt werden, auch wenn der `Accept-Language`-Header des Servers abweicht.
+Die Passwort-Zurücksetzungsseite übersetzt ihre Passwortanforderungs-Checkliste clientseitig basierend auf dem `rule`-Schlüssel, der von `GET /api/auth/password-policy` zurückgegeben wird (mit Rückfall auf das vom Server bereitgestellte `label` für nicht erkannte Regeln). Dies stellt sicher, dass die Anforderungen der in der Oberfläche gewählten Sprache folgen, auch wenn der `Accept-Language`-Header des Browsers abweicht. Die Registrierungsseite zeigt die vom Server bereitgestellten `label`-Werte an, die aus `Accept-Language` lokalisiert werden.
 
 ### npm-Paketnutzer
 
-Wenn Sie die Login-App uber `@authagonal/login` nutzen, wird die i18n-Instanz exportiert:
+Wenn Sie die Login-App über `@authagonal/login` nutzen, wird die i18n-Instanz exportiert:
 
 ```typescript
 import { i18n } from '@authagonal/login';
@@ -117,46 +128,46 @@ i18n.changeLanguage('de');
 
 ## Dokumentation
 
-Die Dokumentationsseite verwendet einen verzeichnisbasierten Ansatz. Englische Seiten befinden sich im Stammverzeichnis und Ubersetzungen in Sprachunterverzeichnissen (`/zh-Hans/`, `/de/`, `/fr/`, `/es/`). Ein Sprachumschalter-Dropdown in der Seitenleiste ermoglicht das Wechseln zwischen Sprachen.
+Die Dokumentationsseite verwendet einen verzeichnisbasierten Ansatz. Englische Seiten befinden sich im Stammverzeichnis und Übersetzungen in Sprachunterverzeichnissen (`/zh-Hans/`, `/de/`, `/fr/`, `/es/`, `/vi/`, `/pt/`). Ein Sprachumschalter-Dropdown in der Seitenleiste ermöglicht das Wechseln zwischen Sprachen.
 
-## Eine neue Sprache hinzufugen
+## Eine neue Sprache hinzufügen
 
-Um Unterstutzung fur eine neue Sprache hinzuzufugen (z.B. Japanisch `ja`):
+Um Unterstützung für eine neue Sprache hinzuzufügen (z.B. Japanisch `ja`):
 
 ### 1. Server
 
-Erstellen Sie eine neue `.resx`-Datei, indem Sie die englische kopieren und die Werte ubersetzen:
+Erstellen Sie eine neue `.resx`-Datei, indem Sie die englische kopieren und die Werte übersetzen:
 
 ```
 src/Authagonal.Server/Resources/SharedMessages.ja.resx
 ```
 
-Fugen Sie `"ja"` zum Array der unterstutzten Kulturen in `AuthagonalExtensions.cs` hinzu:
+Fügen Sie `"ja"` zum Array der unterstützten Kulturen in `AuthagonalExtensions.cs` hinzu:
 
 ```csharp
 var supportedCultures = new[] { "en", "zh-Hans", "de", "fr", "es", "vi", "pt", "ja" };
 ```
 
-### 2. Login-Oberflache
+### 2. Login-Oberfläche
 
-Erstellen Sie eine neue Ubersetzungs-JSON-Datei, indem Sie `en.json` kopieren und die Werte ubersetzen:
+Erstellen Sie eine neue Übersetzungs-JSON-Datei, indem Sie `en.json` kopieren und die Werte übersetzen:
 
 ```
 login-app/src/i18n/ja.json
 ```
 
-Registrieren Sie sie in `login-app/src/i18n/index.ts`:
+Registrieren Sie sie im `LANGUAGES`-Array in `login-app/src/i18n/index.ts`. Dieser eine Eintrag registriert die i18next-Ressource und fügt die Sprache zu jeder Auswahl hinzu:
 
 ```typescript
 import ja from './ja.json';
 
-// In the resources object:
-ja: { translation: ja },
+// In the LANGUAGES array:
+{ code: 'ja', label: '日本語', resource: ja },
 ```
 
 ### 3. Dokumentation
 
-Erstellen Sie ein neues Verzeichnis mit ubersetzten Markdown-Dateien:
+Erstellen Sie ein neues Verzeichnis mit übersetzten Markdown-Dateien:
 
 ```
 docs/ja/
@@ -166,7 +177,7 @@ docs/ja/
   ...
 ```
 
-Fugen Sie einen Sprach-Standard in `docs/_config.yml` hinzu:
+Fügen Sie einen Sprach-Standard in `docs/_config.yml` hinzu:
 
 ```yaml
 defaults:
@@ -176,14 +187,14 @@ defaults:
       locale: "ja"
 ```
 
-Fugen Sie die Sprachoption zum Umschalter in `docs/_layouts/default.html` hinzu.
+Fügen Sie die Sprachoption zum Umschalter in `docs/_layouts/default.html` hinzu.
 
-## Neue Zeichenketten hinzufugen
+## Neue Zeichenketten hinzufügen
 
 ### Server
 
-1. Fugen Sie den Schlussel und den englischen Wert zu `SharedMessages.resx` hinzu
-2. Fugen Sie ubersetzte Werte zu jeder `.resx`-Datei der jeweiligen Sprache hinzu
+1. Fügen Sie den Schlüssel und den englischen Wert zu `SharedMessages.resx` hinzu
+2. Fügen Sie übersetzte Werte zu jeder `.resx`-Datei der jeweiligen Sprache hinzu
 3. Verwenden Sie `IStringLocalizer<SharedMessages>`, um auf die Zeichenkette zuzugreifen:
 
 ```csharp
@@ -197,10 +208,10 @@ localizer["MyNewKey"].Value
 string.Format(localizer["MyNewKey"].Value, param1)
 ```
 
-### Login-Oberflache
+### Login-Oberfläche
 
-1. Fugen Sie den Schlussel und den englischen Wert zu `en.json` hinzu
-2. Fugen Sie ubersetzte Werte zu jeder JSON-Datei der jeweiligen Sprache hinzu
+1. Fügen Sie den Schlüssel und den englischen Wert zu `en.json` hinzu
+2. Fügen Sie übersetzte Werte zu jeder JSON-Datei der jeweiligen Sprache hinzu
 3. Verwenden Sie die `t()`-Funktion in Komponenten:
 
 ```tsx
