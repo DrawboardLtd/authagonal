@@ -1,0 +1,183 @@
+using Authagonal.Core.Models;
+using Authagonal.Protocol.Services;
+using Authagonal.Server.Services;
+using Authagonal.Tests.Infrastructure;
+using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
+
+namespace Authagonal.Tests;
+
+/// <summary>
+/// Signing-key rotation decision logic. Rotation is two-phased: <see cref="ProtocolSigningKeyOps.CheckAndRotateAsync"/>
+/// deactivates a key approaching expiry (returns true so the caller force-refreshes), and the key
+/// manager's refresh path (<see cref="ProtocolSigningKeyOps.EnsureActiveKeyAsync"/>) mints the
+/// replacement. The old key stays in storage until it actually expires, so
+/// <see cref="ProtocolSigningKeyOps.BuildJwksAsync"/> keeps publishing it — tokens signed
+/// pre-rotation stay verifiable (publish-ahead overlap).
+/// </summary>
+public class SigningKeyRotationTests
+{
+    private const int LifetimeDays = 90;
+    private const int LeadTimeDays = 14;
+
+    private readonly InMemorySigningKeyStore _store = new();
+
+    /// <summary>Real ES256 key whose age is driven by back-dating CreatedAt (no clock seam in the ops class).</summary>
+    private static SigningKeyInfo KeyCreatedDaysAgo(double daysAgo) =>
+        ProtocolSigningKeyOps.GenerateNewKey(DateTimeOffset.UtcNow.AddDays(-daysAgo), LifetimeDays);
+
+    private Task<bool> CheckAndRotateAsync() =>
+        ProtocolSigningKeyOps.CheckAndRotateAsync(_store, LifetimeDays, LeadTimeDays, NullLogger.Instance);
+
+    // ── No-rotation cases ────────────────────────────────────────────
+
+    [Fact]
+    public async Task FreshKey_OutsideLeadTime_DoesNotRotate()
+    {
+        var key = KeyCreatedDaysAgo(0); // expires in 90 days, threshold 14
+        await _store.StoreAsync(key);
+
+        Assert.False(await CheckAndRotateAsync());
+
+        var active = await _store.GetActiveKeyAsync();
+        Assert.NotNull(active);
+        Assert.Equal(key.KeyId, active!.KeyId);
+        Assert.True(active.IsActive);
+    }
+
+    [Fact]
+    public async Task NoActiveKey_ReturnsFalse_WithoutGenerating()
+    {
+        Assert.False(await CheckAndRotateAsync());
+        Assert.Empty(await _store.GetAllAsync());
+    }
+
+    // ── Rotation inside the lead time ────────────────────────────────
+
+    [Fact]
+    public async Task KeyInsideLeadTime_Rotates_AndDeactivatesOldKey()
+    {
+        var old = KeyCreatedDaysAgo(85); // expires in ~5 days < 14-day lead
+        await _store.StoreAsync(old);
+
+        Assert.True(await CheckAndRotateAsync());
+
+        // Old key deactivated but NOT deleted — it must survive for verification overlap.
+        var all = await _store.GetAllAsync();
+        var stored = Assert.Single(all);
+        Assert.Equal(old.KeyId, stored.KeyId);
+        Assert.False(stored.IsActive);
+        Assert.Null(await _store.GetActiveKeyAsync());
+    }
+
+    [Fact]
+    public async Task Rotation_PublishAhead_NewKeyActive_OldKeyStillInJwks()
+    {
+        var old = KeyCreatedDaysAgo(85);
+        await _store.StoreAsync(old);
+
+        // The rotation service's real sequence: rotate, then the key manager refresh
+        // (which funnels through EnsureActiveKeyAsync) mints the replacement.
+        Assert.True(await CheckAndRotateAsync());
+        var fresh = await ProtocolSigningKeyOps.EnsureActiveKeyAsync(_store, LifetimeDays, NullLogger.Instance);
+
+        Assert.NotEqual(old.KeyId, fresh.KeyId);
+        Assert.True(fresh.IsActive);
+        Assert.Equal(fresh.KeyId, (await _store.GetActiveKeyAsync())!.KeyId);
+
+        // JWKS publishes both: the new signer AND the not-yet-expired old key, so
+        // tokens signed before rotation still verify.
+        var jwks = await ProtocolSigningKeyOps.BuildJwksAsync(_store);
+        Assert.Equal(2, jwks.Count);
+        Assert.Contains(jwks, k => k.Kid == old.KeyId);
+        Assert.Contains(jwks, k => k.Kid == fresh.KeyId);
+    }
+
+    // ── Idempotence ──────────────────────────────────────────────────
+
+    [Fact]
+    public async Task CheckTwice_WithoutRefreshBetween_SecondCallIsNoOp()
+    {
+        await _store.StoreAsync(KeyCreatedDaysAgo(85));
+
+        Assert.True(await CheckAndRotateAsync());
+        // Active key is now deactivated; a second sweep before the key manager refreshed
+        // must not throw or double-rotate.
+        Assert.False(await CheckAndRotateAsync());
+        Assert.Single(await _store.GetAllAsync());
+    }
+
+    [Fact]
+    public async Task AfterFullRotation_SecondCheck_DoesNotRotateFreshKey()
+    {
+        await _store.StoreAsync(KeyCreatedDaysAgo(85));
+        Assert.True(await CheckAndRotateAsync());
+        var fresh = await ProtocolSigningKeyOps.EnsureActiveKeyAsync(_store, LifetimeDays, NullLogger.Instance);
+
+        Assert.False(await CheckAndRotateAsync());
+
+        Assert.Equal(fresh.KeyId, (await _store.GetActiveKeyAsync())!.KeyId);
+        Assert.Equal(2, (await _store.GetAllAsync()).Count); // no third key minted
+    }
+
+    // ── EnsureActiveKeyAsync generation cases ────────────────────────
+
+    [Fact]
+    public async Task EnsureActiveKey_EmptyStore_GeneratesActiveEs256Key()
+    {
+        var key = await ProtocolSigningKeyOps.EnsureActiveKeyAsync(_store, LifetimeDays, NullLogger.Instance);
+
+        Assert.True(key.IsActive);
+        Assert.Equal(ProtocolSigningKeyOps.Algorithm, key.Algorithm);
+        Assert.True(key.ExpiresAt > DateTimeOffset.UtcNow.AddDays(LifetimeDays - 1));
+        Assert.Equal(key.KeyId, (await _store.GetActiveKeyAsync())!.KeyId);
+    }
+
+    [Fact]
+    public async Task EnsureActiveKey_UnsupportedLegacyAlgorithm_IsReplaced()
+    {
+        var legacyRsa = new SigningKeyInfo
+        {
+            KeyId = "legacy-rsa",
+            Algorithm = "RS256",
+            KeyMaterialJson = "{}",
+            IsActive = true,
+            CreatedAt = DateTimeOffset.UtcNow,
+            ExpiresAt = DateTimeOffset.UtcNow.AddDays(30), // not expired — replaced purely for the algorithm
+        };
+        await _store.StoreAsync(legacyRsa);
+
+        var key = await ProtocolSigningKeyOps.EnsureActiveKeyAsync(_store, LifetimeDays, NullLogger.Instance);
+
+        Assert.NotEqual("legacy-rsa", key.KeyId);
+        Assert.Equal(ProtocolSigningKeyOps.Algorithm, key.Algorithm);
+        var all = await _store.GetAllAsync();
+        Assert.False(all.Single(k => k.KeyId == "legacy-rsa").IsActive);
+    }
+
+    // ── SigningKeyRotationService (host wrapper) ─────────────────────
+
+    [Fact]
+    public async Task RotationService_Disabled_CompletesWithoutTouchingCollaborators()
+    {
+        // KeyRotationEnabled defaults to false; the service must short-circuit before ever
+        // dereferencing the leader election, scope factory, or key manager (nulls prove it —
+        // any touch would fault ExecuteTask).
+        var service = new SigningKeyRotationService(
+            scopeFactory: null!,
+            leaderService: null!,
+            keyManager: null!,
+            Options.Create(new AuthOptions { KeyRotationEnabled = false }),
+            NullLogger<SigningKeyRotationService>.Instance);
+
+        await service.StartAsync(CancellationToken.None);
+
+        // ExecuteAsync may start deferred rather than synchronously; if the disabled guard were
+        // missing it would either hang on the interval delay (→ timeout) or NRE on a null
+        // collaborator (→ the await throws). Completing cleanly within the window proves the
+        // short-circuit.
+        Assert.NotNull(service.ExecuteTask);
+        await service.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.True(service.ExecuteTask.IsCompletedSuccessfully);
+    }
+}

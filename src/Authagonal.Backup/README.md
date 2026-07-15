@@ -13,7 +13,7 @@ var serviceClient = new TableServiceClient(connectionString);
 // Backup
 var backupOptions = new BackupOptions
 {
-    Tables = BackupDefaults.AllTables,
+    Tables = BackupDefaults.Tables,
     Incremental = false,
     Gzip = true,
 };

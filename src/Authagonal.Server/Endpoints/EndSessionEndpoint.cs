@@ -204,9 +204,10 @@ public static class EndSessionEndpoint
         var claims = new Dictionary<string, object>
         {
             ["sub"] = subjectId,
+            // Must be JSON-serializable — an anonymous type throws IDX11025 at CreateToken (silent RP-notify failure).
             ["events"] = new Dictionary<string, object>
             {
-                ["http://schemas.openid.net/event/backchannel-logout"] = new { }
+                ["http://schemas.openid.net/event/backchannel-logout"] = new Dictionary<string, object>()
             },
             ["jti"] = Guid.NewGuid().ToString("N")
         };

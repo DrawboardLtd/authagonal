@@ -65,7 +65,12 @@ public static class TokenEndpoints
         var subject = await subjectResolver.BuildSubjectAsync(user, client, ct: ct);
 
         var accessToken = await tokenService.CreateAccessTokenAsync(subject, client, scopes, ct: ct);
-        var refreshToken = await tokenService.CreateRefreshTokenAsync(subject, client, scopes, ct: ct);
+        // Refresh token only when offline access was actually requested and the client allows it —
+        // an unconditional mint handed every impersonation call a long-lived credential, the exact
+        // persistence the admin-scope guard above exists to prevent.
+        string? refreshToken = null;
+        if (scopes.Contains("offline_access", StringComparer.OrdinalIgnoreCase) && client.AllowOfflineAccess)
+            refreshToken = await tokenService.CreateRefreshTokenAsync(subject, client, scopes, ct: ct);
 
         string? idToken = null;
         if (scopes.Contains("openid", StringComparer.OrdinalIgnoreCase))

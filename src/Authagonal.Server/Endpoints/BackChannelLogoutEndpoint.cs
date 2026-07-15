@@ -125,9 +125,11 @@ public static class BackChannelLogoutEndpoint
             Claims = new Dictionary<string, object>
             {
                 ["sub"] = subjectId,
+                // The event value must be a JSON-serializable empty object — an anonymous type makes
+                // JsonWebTokenHandler.CreateToken throw IDX11025, which silently failed every RP notification.
                 ["events"] = new Dictionary<string, object>
                 {
-                    ["http://schemas.openid.net/event/backchannel-logout"] = new { }
+                    ["http://schemas.openid.net/event/backchannel-logout"] = new Dictionary<string, object>()
                 },
                 ["jti"] = Guid.NewGuid().ToString("N")
             },
