@@ -122,7 +122,7 @@ Los usuarios registran MFA a través de los puntos de conexión de configuració
 
 ### Configuración de TOTP
 
-1. Llamar a `POST /api/auth/mfa/totp/setup` — devuelve un código QR (`data:image/png;base64,...`), una clave manual (`manualKey` en Base32 para entrada manual) y un token de configuración
+1. Llamar a `POST /api/auth/mfa/totp/setup`: devuelve un código QR (`data:image/png;base64,...`), una clave manual (`manualKey` en Base32 para entrada manual) y un token de configuración
 2. El usuario escanea el código QR con su aplicación de autenticación
 3. El usuario introduce el código de 6 dígitos para confirmar: `POST /api/auth/mfa/totp/confirm`
 
@@ -161,7 +161,7 @@ Una llave de acceso es autenticación fuerte resistente al phishing, por lo que 
 ### Autoservicio del usuario
 
 - `GET /api/auth/mfa/status`: ver los métodos registrados (también informa si algún cliente ofrece MFA)
-- `DELETE /api/auth/mfa/credentials/{id}` — eliminar una credencial específica
+- `DELETE /api/auth/mfa/credentials/{id}`: eliminar una credencial específica
 
 Eliminar una credencial requiere una sesión autenticada real; un token de configuración solo autoriza agregar un primer factor y obtiene `session_required` aquí, por lo que un token de configuración filtrado no puede degradar la MFA de un usuario.
 
@@ -171,9 +171,9 @@ Si se elimina el último método principal, la MFA se deshabilita para el usuari
 
 Los administradores pueden gestionar la MFA para cualquier usuario a través de la [API de administración](admin-api):
 
-- `GET /api/v1/profile/{userId}/mfa` — ver el estado de MFA de un usuario
-- `DELETE /api/v1/profile/{userId}/mfa` — restablecer toda la MFA (para usuarios bloqueados)
-- `DELETE /api/v1/profile/{userId}/mfa/{id}` — eliminar una credencial específica
+- `GET /api/v1/profile/{userId}/mfa`: ver el estado de MFA de un usuario
+- `DELETE /api/v1/profile/{userId}/mfa`: restablecer toda la MFA (para usuarios bloqueados)
+- `DELETE /api/v1/profile/{userId}/mfa/{id}`: eliminar una credencial específica
 
 ### Hooks de auditoría
 
@@ -194,9 +194,9 @@ El ciclo de vida completo de MFA es enganchable: `OnMfaVerifyFailedAsync` (un in
 
 Si está creando una interfaz de inicio de sesión personalizada, gestione estas respuestas de `POST /api/auth/login`:
 
-1. **Inicio de sesión normal** — `{ userId, email, name }` con cookie establecida. Redirigir a `returnUrl`.
-2. **MFA requerida** — `{ mfaRequired: true, challengeId, methods, webAuthn? }`. Mostrar el formulario de desafío MFA.
-3. **Configuración de MFA requerida** — `{ mfaSetupRequired: true, setupToken }`. Mostrar el flujo de registro de MFA.
+1. **Inicio de sesión normal**: `{ userId, email, name }` con cookie establecida. Redirigir a `returnUrl`.
+2. **MFA requerida**: `{ mfaRequired: true, challengeId, methods, webAuthn? }`. Mostrar el formulario de desafío MFA.
+3. **Configuración de MFA requerida**: `{ mfaSetupRequired: true, setupToken }`. Mostrar el flujo de registro de MFA.
 
 Al gestionar errores de `POST /api/auth/mfa/verify`: `invalid_code` y `assertion_failed` son reintentables contra el mismo `challengeId` (hasta el presupuesto de intentos); `too_many_attempts` e `invalid_challenge` son terminales, por lo que debe devolver al usuario al formulario de inicio de sesión.
 

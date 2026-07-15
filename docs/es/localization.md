@@ -1,51 +1,51 @@
 ---
 layout: default
-title: Localizacion
+title: Localización
 locale: es
 ---
 
-# Localizacion
+# Localización
 
-La interfaz de inicio de sesion incluye once idiomas de forma predeterminada: ingles, chino simplificado (`zh-Hans`), aleman (`de`), frances (`fr`), espanol (`es`), vietnamita (`vi`), portugues (`pt`), arabe (`ar`), afrikaans (`af`), hindi (`hi`) y un idioma novedad, klingon (`tlh`). Las respuestas de la API del servidor estan localizadas en los primeros siete de estos. La localizacion abarca las respuestas de la API del servidor, la interfaz de inicio de sesion y este sitio de documentacion.
+La interfaz de inicio de sesión incluye once idiomas de forma predeterminada: inglés, chino simplificado (`zh-Hans`), alemán (`de`), francés (`fr`), español (`es`), vietnamita (`vi`), portugués (`pt`), árabe (`ar`), afrikaans (`af`), hindi (`hi`) y un idioma novedad, klingon (`tlh`). Las respuestas de la API del servidor están localizadas en los primeros siete de estos. La localización abarca las respuestas de la API del servidor, la interfaz de inicio de sesión y este sitio de documentación.
 
 ## Idiomas admitidos
 
-| Codigo | Idioma | Interfaz de inicio de sesion | API del servidor |
+| Código | Idioma | Interfaz de inicio de sesión | API del servidor |
 |---|---|---|---|
-| `en` | Ingles (predeterminado) | ✓ | ✓ |
+| `en` | Inglés (predeterminado) | ✓ | ✓ |
 | `zh-Hans` | Chino simplificado | ✓ | ✓ |
-| `de` | Aleman | ✓ | ✓ |
-| `fr` | Frances | ✓ | ✓ |
-| `es` | Espanol | ✓ | ✓ |
+| `de` | Alemán | ✓ | ✓ |
+| `fr` | Francés | ✓ | ✓ |
+| `es` | Español | ✓ | ✓ |
 | `vi` | Vietnamita | ✓ | ✓ |
-| `pt` | Portugues | ✓ | ✓ |
-| `ar` | Arabe (de derecha a izquierda) | ✓ | — |
+| `pt` | Portugués | ✓ | ✓ |
+| `ar` | Árabe (de derecha a izquierda) | ✓ | — |
 | `af` | Afrikaans | ✓ | — |
 | `hi` | Hindi | ✓ | — |
 | `tlh` | Klingon (novedad) | ✓ | — |
 
 ## Servidor (respuestas de la API)
 
-El servidor utiliza la localizacion integrada de ASP.NET Core con `IStringLocalizer<T>` y archivos de recursos `.resx`. El idioma se selecciona a partir del encabezado HTTP `Accept-Language`.
+El servidor utiliza la localización integrada de ASP.NET Core con `IStringLocalizer<T>` y archivos de recursos `.resx`. El idioma se selecciona a partir del encabezado HTTP `Accept-Language`.
 
-### Que esta localizado
+### Qué está localizado
 
-- Mensajes de error de validacion de contrasena
-- Etiquetas de la politica de contrasenas (`GET /api/auth/password-policy`)
-- Mensajes del flujo de restablecimiento de contrasena (errores de token, expiracion, exito)
-- Descripciones de errores genericos del middleware de manejo de excepciones
-- Mensajes de administracion de usuarios (confirmacion de correo electronico, verificacion, etc.)
-- Mensaje de confirmacion de cierre de sesion
+- Mensajes de error de validación de contraseña
+- Etiquetas de la política de contraseñas (`GET /api/auth/password-policy`)
+- Mensajes del flujo de restablecimiento de contraseña (errores de token, expiración, éxito)
+- Descripciones de errores genéricos del middleware de manejo de excepciones
+- Mensajes de administración de usuarios (confirmación de correo electrónico, verificación, etc.)
+- Mensaje de confirmación de cierre de sesión
 
-### Que NO esta localizado
+### Qué NO está localizado
 
-- Codigos `error` legibles por maquina (`"email_required"`, `"invalid_credentials"`, etc.) — estos son contratos de API y permanecen constantes
-- Codigos de error OAuth/OIDC y descripciones de errores orientadas a desarrolladores en los endpoints de token, autorizacion y revocacion
+- Códigos `error` legibles por máquina (`"email_required"`, `"invalid_credentials"`, etc.), estos son contratos de API y permanecen constantes
+- Códigos de error OAuth/OIDC y descripciones de errores orientadas a desarrolladores en los endpoints de token, autorización y revocación
 - Mensajes de registro internos y mensajes de excepciones
 
-### Probar la localizacion del servidor
+### Probar la localización del servidor
 
-Envie un encabezado `Accept-Language` a cualquier endpoint localizado:
+Envíe un encabezado `Accept-Language` a cualquier endpoint localizado:
 
 ```bash
 # English (default)
@@ -60,7 +60,7 @@ curl -H "Accept-Language: de" https://auth.example.com/api/auth/password-policy
 
 ### Archivos de recursos
 
-Todas las cadenas de traduccion del servidor se encuentran en archivos `.resx` bajo `src/Authagonal.Server/Resources/`:
+Todas las cadenas de traducción del servidor se encuentran en archivos `.resx` bajo `src/Authagonal.Server/Resources/`:
 
 ```
 Resources/
@@ -74,26 +74,26 @@ Resources/
   SharedMessages.pt.resx
 ```
 
-## Interfaz de inicio de sesion
+## Interfaz de inicio de sesión
 
-La SPA de inicio de sesion utiliza [react-i18next](https://react.i18next.com/) para la localizacion del lado del cliente. El idioma se detecta automaticamente a partir de la configuracion `navigator.language` del navegador.
+La SPA de inicio de sesión utiliza [react-i18next](https://react.i18next.com/) para la localización del lado del cliente. El idioma se detecta automáticamente a partir de la configuración `navigator.language` del navegador.
 
-Los idiomas registrados se encuentran en un unico registro `LANGUAGES` en `login-app/src/i18n/index.ts`, que gobierna tanto el registro de recursos de i18next como cada selector de idioma, de modo que ambos no pueden desincronizarse. Los idiomas marcados como `novelty` (actualmente `tlh`) siguen siendo plenamente funcionales (`?lng=tlh` funciona) pero se excluyen del selector predeterminado; solo aparecen en un desplegable cuando el `BrandingConfig.languages` de un tenant los enumera explicitamente. Los tenants tambien pueden acotar el selector de la misma manera: un arreglo `languages` en `branding.json` reemplaza por completo la lista predeterminada (ver [Personalizacion visual](branding)).
+Los idiomas registrados se encuentran en un único registro `LANGUAGES` en `login-app/src/i18n/index.ts`, que gobierna tanto el registro de recursos de i18next como cada selector de idioma, de modo que ambos no pueden desincronizarse. Los idiomas marcados como `novelty` (actualmente `tlh`) siguen siendo plenamente funcionales (`?lng=tlh` funciona) pero se excluyen del selector predeterminado; solo aparecen en un desplegable cuando el `BrandingConfig.languages` de un tenant los enumera explícitamente. Los tenants también pueden acotar el selector de la misma manera: un arreglo `languages` en `branding.json` reemplaza por completo la lista predeterminada (ver [Personalización visual](branding)).
 
-El idioma activo se refleja en `<html lang>` y `<html dir>`, de modo que los idiomas de derecha a izquierda (`ar`) invierten la tarjeta de autenticacion automaticamente, incluso cuando el idioma se cambia en el momento mediante el selector.
+El idioma activo se refleja en `<html lang>` y `<html dir>`, de modo que los idiomas de derecha a izquierda (`ar`) invierten la tarjeta de autenticación automáticamente, incluso cuando el idioma se cambia en el momento mediante el selector.
 
-### Deteccion de idioma
+### Detección de idioma
 
-El orden de deteccion es:
+El orden de detección es:
 
-1. **localStorage** — preferencia persistida de una visita anterior
-2. **Parametro de consulta** — `?lng=de` anula la deteccion del navegador
-3. **Idioma del navegador** — `navigator.language` (automatico)
-4. **Respaldo** — Ingles (`en`)
+1. **localStorage**: preferencia persistida de una visita anterior
+2. **Parámetro de consulta**: `?lng=de` anula la detección del navegador
+3. **Idioma del navegador**: `navigator.language` (automático)
+4. **Respaldo**: inglés (`en`)
 
-### Archivos de traduccion
+### Archivos de traducción
 
-Los archivos JSON de traduccion se empaquetan con la aplicacion en `login-app/src/i18n/`:
+Los archivos JSON de traducción se empaquetan con la aplicación en `login-app/src/i18n/`:
 
 ```
 i18n/
@@ -111,13 +111,13 @@ i18n/
   tlh.json        # Klingon (novelty)
 ```
 
-### Etiquetas de la politica de contrasenas
+### Etiquetas de la política de contraseñas
 
-La pagina de restablecimiento de contrasena traduce su lista de verificacion de requisitos de contrasena del lado del cliente basandose en la clave `rule` devuelta por `GET /api/auth/password-policy` (recurriendo al campo `label` proporcionado por el servidor para reglas no reconocidas). Esto garantiza que los requisitos sigan el idioma seleccionado en la interfaz, incluso si el encabezado `Accept-Language` del navegador difiere. La pagina de registro muestra los valores `label` proporcionados por el servidor, que se localizan a partir de `Accept-Language`.
+La página de restablecimiento de contraseña traduce su lista de verificación de requisitos de contraseña del lado del cliente basándose en la clave `rule` devuelta por `GET /api/auth/password-policy` (recurriendo al campo `label` proporcionado por el servidor para reglas no reconocidas). Esto garantiza que los requisitos sigan el idioma seleccionado en la interfaz, incluso si el encabezado `Accept-Language` del navegador difiere. La página de registro muestra los valores `label` proporcionados por el servidor, que se localizan a partir de `Accept-Language`.
 
 ### Consumidores del paquete npm
 
-Si consume la aplicacion de inicio de sesion a traves de `@authagonal/login`, la instancia de i18n esta exportada:
+Si consume la aplicación de inicio de sesión a través de `@authagonal/login`, la instancia de i18n está exportada:
 
 ```typescript
 import { i18n } from '@authagonal/login';
@@ -126,17 +126,17 @@ import { i18n } from '@authagonal/login';
 i18n.changeLanguage('de');
 ```
 
-## Documentacion
+## Documentación
 
-El sitio de documentacion utiliza un enfoque basado en directorios. Las paginas en ingles estan en la raiz y las traducciones en subdirectorios de idioma (`/zh-Hans/`, `/de/`, `/fr/`, `/es/`, `/vi/`, `/pt/`). Un selector desplegable de idioma en la barra lateral permite cambiar entre idiomas.
+El sitio de documentación utiliza un enfoque basado en directorios. Las páginas en inglés están en la raíz y las traducciones en subdirectorios de idioma (`/zh-Hans/`, `/de/`, `/fr/`, `/es/`, `/vi/`, `/pt/`). Un selector desplegable de idioma en la barra lateral permite cambiar entre idiomas.
 
 ## Agregar un nuevo idioma
 
-Para agregar soporte para un nuevo idioma (por ejemplo, japones `ja`):
+Para agregar soporte para un nuevo idioma (por ejemplo, japonés `ja`):
 
 ### 1. Servidor
 
-Cree un nuevo archivo `.resx` copiando el de ingles y traduciendo los valores:
+Cree un nuevo archivo `.resx` copiando el de inglés y traduciendo los valores:
 
 ```
 src/Authagonal.Server/Resources/SharedMessages.ja.resx
@@ -148,15 +148,15 @@ Agregue `"ja"` al arreglo de culturas admitidas en `AuthagonalExtensions.cs`:
 var supportedCultures = new[] { "en", "zh-Hans", "de", "fr", "es", "vi", "pt", "ja" };
 ```
 
-### 2. Interfaz de inicio de sesion
+### 2. Interfaz de inicio de sesión
 
-Cree un nuevo archivo JSON de traduccion copiando `en.json` y traduciendo los valores:
+Cree un nuevo archivo JSON de traducción copiando `en.json` y traduciendo los valores:
 
 ```
 login-app/src/i18n/ja.json
 ```
 
-Registrelo en el arreglo `LANGUAGES` de `login-app/src/i18n/index.ts`. Esa unica entrada registra el recurso de i18next y agrega el idioma a cada selector:
+Regístrelo en el arreglo `LANGUAGES` de `login-app/src/i18n/index.ts`. Esa única entrada registra el recurso de i18next y agrega el idioma a cada selector:
 
 ```typescript
 import ja from './ja.json';
@@ -165,7 +165,7 @@ import ja from './ja.json';
 { code: 'ja', label: '日本語', resource: ja },
 ```
 
-### 3. Documentacion
+### 3. Documentación
 
 Cree un nuevo directorio con archivos markdown traducidos:
 
@@ -187,13 +187,13 @@ defaults:
       locale: "ja"
 ```
 
-Agregue la opcion de idioma al selector en `docs/_layouts/default.html`.
+Agregue la opción de idioma al selector en `docs/_layouts/default.html`.
 
 ## Agregar nuevas cadenas
 
 ### Servidor
 
-1. Agregue la clave y el valor en ingles a `SharedMessages.resx`
+1. Agregue la clave y el valor en inglés a `SharedMessages.resx`
 2. Agregue los valores traducidos al archivo `.resx` de cada idioma
 3. Use `IStringLocalizer<SharedMessages>` para acceder a la cadena:
 
@@ -208,11 +208,11 @@ localizer["MyNewKey"].Value
 string.Format(localizer["MyNewKey"].Value, param1)
 ```
 
-### Interfaz de inicio de sesion
+### Interfaz de inicio de sesión
 
-1. Agregue la clave y el valor en ingles a `en.json`
+1. Agregue la clave y el valor en inglés a `en.json`
 2. Agregue los valores traducidos al archivo JSON de cada idioma
-3. Use la funcion `t()` en los componentes:
+3. Use la función `t()` en los componentes:
 
 ```tsx
 const { t } = useTranslation();

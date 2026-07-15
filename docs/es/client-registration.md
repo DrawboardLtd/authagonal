@@ -1,18 +1,16 @@
 ---
 layout: default
-title: Dynamic Client Registration
+title: Registro dinámico de clientes
 locale: es
 ---
 
-> ⚠️ This page has not yet been translated; the English version is shown below.
+# Registro dinámico de clientes
 
-# Dynamic Client Registration
+Authagonal implementa el **registro dinámico de clientes de OAuth 2.0** ([RFC 7591](https://datatracker.ietf.org/doc/html/rfc7591)), lo que permite que las aplicaciones cliente se registren a sí mismas en tiempo de ejecución sin intervención del administrador.
 
-Authagonal implements **OAuth 2.0 Dynamic Client Registration** ([RFC 7591](https://datatracker.ietf.org/doc/html/rfc7591)), allowing client applications to register themselves at runtime without administrator involvement.
+## Habilitar el endpoint
 
-## Enabling the Endpoint
-
-Dynamic registration is **disabled by default**. Opt in via configuration:
+El registro dinámico está **deshabilitado de forma predeterminada**. Actívelo mediante la configuración:
 
 ```json
 {
@@ -22,9 +20,9 @@ Dynamic registration is **disabled by default**. Opt in via configuration:
 }
 ```
 
-Or set `Auth__DynamicClientRegistrationEnabled=true` as an environment variable.
+O establezca `Auth__DynamicClientRegistrationEnabled=true` como una variable de entorno.
 
-When enabled, the discovery document advertises the endpoint:
+Cuando está habilitado, el documento de descubrimiento anuncia el endpoint:
 
 ```
 GET /.well-known/openid-configuration
@@ -35,7 +33,7 @@ GET /.well-known/openid-configuration
 }
 ```
 
-## Registering a Client
+## Registrar un cliente
 
 ```
 POST /connect/register
@@ -56,7 +54,7 @@ Content-Type: application/json
 }
 ```
 
-### Response
+### Respuesta
 
 ```
 HTTP/1.1 201 Created
@@ -77,48 +75,48 @@ Content-Type: application/json
 }
 ```
 
-The `client_secret` is returned **once** and cannot be retrieved later. Store it securely.
+El `client_secret` se devuelve **una sola vez** y no puede recuperarse más tarde. Almacénelo de forma segura.
 
-## Request Parameters
+## Parámetros de la solicitud
 
-| Parameter | Required | Notes |
+| Parámetro | Requerido | Notas |
 |---|---|---|
-| `client_name` | no | Defaults to the generated `client_id` if omitted |
-| `redirect_uris` | conditional | Required when `grant_types` contains `authorization_code`. Must be absolute URIs; `javascript:`/`data:`/`vbscript:`/`file:` schemes are rejected (native custom schemes for mobile deep links are fine). |
-| `post_logout_redirect_uris` | no | Valid redirect targets after logout |
-| `grant_types` | no | Defaults to `["authorization_code"]`. **Only `authorization_code` and `refresh_token` are registrable** — `client_credentials`, `implicit`, device and any other grant type are rejected with `invalid_client_metadata`, so open registration can never mint a machine-to-machine client. `refresh_token` is added automatically if `offline_access` is requested. |
-| `token_endpoint_auth_method` | no | `client_secret_basic` (default), `client_secret_post`, or `none` for public clients |
-| `scope` | no | Space-separated scopes — must all be built-in or previously registered (see [Scopes](scopes)). The administrative scope (`AdminApi:Scope`, default `authagonal-admin`) can never be registered. |
-| `audiences` | no | JWT `aud` values added to access tokens |
-| `allowed_cors_origins` | no | Origins permitted to call the token endpoint from a browser |
-| `backchannel_logout_uri` | no | Enables [Back-Channel Logout](index#features) |
-| `frontchannel_logout_uri` | no | Enables [Front-Channel Logout](front-channel-logout) |
-| `frontchannel_logout_session_required` | no | Defaults to `true`; when `true`, the logout URL carries `iss` and `sid` parameters |
+| `client_name` | no | Por defecto es el `client_id` generado si se omite |
+| `redirect_uris` | condicional | Requerido cuando `grant_types` contiene `authorization_code`. Deben ser URIs absolutas; los esquemas `javascript:`/`data:`/`vbscript:`/`file:` se rechazan (los esquemas personalizados nativos para enlaces profundos móviles son válidos). |
+| `post_logout_redirect_uris` | no | Destinos de redirección válidos tras el cierre de sesión |
+| `grant_types` | no | Por defecto es `["authorization_code"]`. **Solo `authorization_code` y `refresh_token` son registrables**: `client_credentials`, `implicit`, el de dispositivo y cualquier otro tipo de concesión se rechazan con `invalid_client_metadata`, de modo que el registro abierto nunca puede crear un cliente de máquina a máquina. `refresh_token` se añade automáticamente si se solicita `offline_access`. |
+| `token_endpoint_auth_method` | no | `client_secret_basic` (predeterminado), `client_secret_post`, o `none` para clientes públicos |
+| `scope` | no | Scopes separados por espacios: todos deben ser integrados o estar previamente registrados (ver [Scopes](scopes)). El scope administrativo (`AdminApi:Scope`, predeterminado `authagonal-admin`) nunca puede registrarse. |
+| `audiences` | no | Valores `aud` de JWT añadidos a los tokens de acceso |
+| `allowed_cors_origins` | no | Orígenes autorizados a llamar al endpoint de token desde un navegador |
+| `backchannel_logout_uri` | no | Habilita el [cierre de sesión por canal trasero](index#features) |
+| `frontchannel_logout_uri` | no | Habilita el [cierre de sesión por canal frontal](front-channel-logout) |
+| `frontchannel_logout_session_required` | no | Por defecto es `true`; cuando es `true`, la URL de cierre de sesión lleva los parámetros `iss` y `sid` |
 
-## Defaults & Invariants
+## Valores predeterminados e invariantes
 
-- **PKCE required** — `RequirePkce` is always `true` for dynamically registered clients.
-- **Public clients** — `token_endpoint_auth_method: "none"` produces a client without a secret. PKCE is still required.
-- **Offline access** — requesting scope `offline_access` implicitly adds `refresh_token` to `grant_types`.
+- **PKCE requerido**: `RequirePkce` siempre es `true` para los clientes registrados dinámicamente.
+- **Clientes públicos**: `token_endpoint_auth_method: "none"` produce un cliente sin secreto. PKCE sigue siendo obligatorio.
+- **Acceso sin conexión**: solicitar el scope `offline_access` añade implícitamente `refresh_token` a `grant_types`.
 
-## Error Responses
+## Respuestas de error
 
-| HTTP | `error` | Cause |
+| HTTP | `error` | Causa |
 |---|---|---|
-| `400` | `invalid_redirect_uri` | One of `redirect_uris` is not a valid absolute URI, or uses a script/data/file pseudo-scheme |
-| `400` | `invalid_client_metadata` | A non-registrable grant type was requested, or `redirect_uris` is missing for a grant type that requires it |
-| `400` | `invalid_scope` | A requested scope is neither built-in nor registered |
-| `403` | `invalid_scope` | The administrative scope was requested — it can never be granted through registration |
-| `403` | `not_supported` | Dynamic client registration is not enabled |
-| `429` | `rate_limited` | Too many registrations from this IP (10 per hour) |
+| `400` | `invalid_redirect_uri` | Una de las `redirect_uris` no es una URI absoluta válida, o usa un pseudoesquema script/data/file |
+| `400` | `invalid_client_metadata` | Se solicitó un tipo de concesión no registrable, o faltan las `redirect_uris` para un tipo de concesión que las requiere |
+| `400` | `invalid_scope` | Un scope solicitado no es ni integrado ni registrado |
+| `403` | `invalid_scope` | Se solicitó el scope administrativo: nunca puede otorgarse mediante el registro |
+| `403` | `not_supported` | El registro dinámico de clientes no está habilitado |
+| `429` | `rate_limited` | Demasiados registros desde esta IP (10 por hora) |
 
-## Security Considerations
+## Consideraciones de seguridad
 
-The registration endpoint is **unauthenticated**, but constrained by design:
+El endpoint de registro **no está autenticado**, pero está restringido por diseño:
 
-- **Rate limited** — 10 registrations per IP per rolling hour (`429 rate_limited`), so the client store can't be flooded.
-- **Grant types restricted** — only `authorization_code` + `refresh_token`; a registered client always requires a user-mediated flow and can never act as a machine-to-machine client.
-- **Admin scope reserved** — the `authagonal-admin` scope (or whatever `AdminApi:Scope` is set to) is refused, so registration can never produce a client that reaches the [admin API](admin-api).
-- **PKCE always required** on registered clients.
+- **Con límite de velocidad**: 10 registros por IP en una ventana móvil de una hora (`429 rate_limited`), de modo que el almacén de clientes no puede inundarse.
+- **Tipos de concesión restringidos**: solo `authorization_code` + `refresh_token`; un cliente registrado siempre requiere un flujo mediado por el usuario y nunca puede actuar como un cliente de máquina a máquina.
+- **Scope de administración reservado**: el scope `authagonal-admin` (o el valor que tenga `AdminApi:Scope`) se rechaza, de modo que el registro nunca puede producir un cliente que alcance la [API de administración](admin-api).
+- **PKCE siempre obligatorio** en los clientes registrados.
 
-For stronger gating (initial access tokens, mTLS, software statements), front the endpoint with your own middleware or an `IAuthHook`. Consider disabling dynamic registration entirely and managing clients via the admin API in environments where self-service registration is not a requirement.
+Para un control más estricto (tokens de acceso iniciales, mTLS, software statements), anteponga su propio middleware o un `IAuthHook` al endpoint. Considere deshabilitar el registro dinámico por completo y gestionar los clientes mediante la API de administración en entornos donde el registro de autoservicio no sea un requisito.

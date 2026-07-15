@@ -1,20 +1,20 @@
 ---
 layout: default
-title: API de administracion
+title: API de administración
 locale: es
 ---
 
-# API de administracion
+# API de administración
 
-Los endpoints de administracion requieren un token de acceso JWT con el scope `authagonal-admin` (configurable via `AdminApi:Scope`).
+Los endpoints de administración requieren un token de acceso JWT con el scope `authagonal-admin` (configurable vía `AdminApi:Scope`).
 
-Todos los endpoints estan bajo `/api/v1/`.
+Todos los endpoints están bajo `/api/v1/`.
 
-## Arranque del primer token de administracion
+## Arranque del primer token de administración
 
-Cada endpoint `/api/v1/*` requiere un token bearer que porte el scope de administracion -- pero la propia API de administracion (y el [registro dinamico de clientes](client-registration)) **se niega a crear o actualizar cualquier cliente que posea ese scope** (`403 forbidden_scope`), por lo que un cliente creado en tiempo de ejecucion nunca puede escalar a administrador. La unica forma de emitir un token de administracion es un **cliente sembrado por configuracion**: las entradas de la seccion de configuracion `Clients:` son insertadas o actualizadas al inicio por `ClientSeedService`, y la configuracion es de confianza -- la proteccion de scope prohibido solo se aplica a las APIs en tiempo de ejecucion.
+Cada endpoint `/api/v1/*` requiere un token bearer que porte el scope de administración, pero la propia API de administración (y el [registro dinámico de clientes](client-registration)) **se niega a crear o actualizar cualquier cliente que posea ese scope** (`403 forbidden_scope`), por lo que un cliente creado en tiempo de ejecución nunca puede escalar a administrador. La única forma de emitir un token de administración es un **cliente sembrado por configuración**: las entradas de la sección de configuración `Clients:` son insertadas o actualizadas al inicio por `ClientSeedService`, y la configuración es de confianza: la protección de scope prohibido solo se aplica a las APIs en tiempo de ejecución.
 
-Siembre un cliente `client_credentials` con el scope de administracion en `appsettings.json` (o las variables de entorno / almacen de secretos equivalentes):
+Siembre un cliente `client_credentials` con el scope de administración en `appsettings.json` (o las variables de entorno / almacén de secretos equivalentes):
 
 ```json
 {
@@ -30,9 +30,9 @@ Siembre un cliente `client_credentials` con el scope de administracion en `appse
 }
 ```
 
-(`ClientSecret` se hashea al inicio; proporcione `SecretHashes` en su lugar si prefiere mantener solo un valor pre-hasheado en la configuracion. `ClientId`/`ClientName`/`AllowedGrantTypes`/`AllowedScopes` se aceptan como alias de `Id`/`Name`/`GrantTypes`/`Scopes`.)
+(`ClientSecret` se hashea al inicio; proporcione `SecretHashes` en su lugar si prefiere mantener solo un valor pre-hasheado en la configuración. `ClientId`/`ClientName`/`AllowedGrantTypes`/`AllowedScopes` se aceptan como alias de `Id`/`Name`/`GrantTypes`/`Scopes`.)
 
-Luego intercambie las credenciales por un token en el endpoint de token estandar:
+Luego intercambie las credenciales por un token en el endpoint de token estándar:
 
 ```bash
 curl -X POST https://auth.example.com/connect/token \
@@ -47,13 +47,13 @@ curl -X POST https://auth.example.com/connect/token \
 { "access_token": "eyJhbGci...", "token_type": "Bearer", "expires_in": 1800, "scope": "authagonal-admin" }
 ```
 
-La concesion `client_credentials` valida el scope solicitado contra los `AllowedScopes` del cliente -- dado que el cliente sembrado posee `authagonal-admin`, se emite el token. Uselo como `Authorization: Bearer {access_token}` en cada llamada de administracion:
+La concesión `client_credentials` valida el scope solicitado contra los `AllowedScopes` del cliente, dado que el cliente sembrado posee `authagonal-admin`, se emite el token. Úselo como `Authorization: Bearer {access_token}` en cada llamada de administración:
 
 ```bash
 curl https://auth.example.com/api/v1/clients -H "Authorization: Bearer eyJhbGci..."
 ```
 
-Mantenga el secreto del cliente sembrado en el almacen de secretos de su despliegue; rotarlo es un cambio de configuracion mas un reinicio.
+Mantenga el secreto del cliente sembrado en el almacén de secretos de su despliegue; rotarlo es un cambio de configuración más un reinicio.
 
 ## Usuarios
 
@@ -63,7 +63,7 @@ Mantenga el secreto del cliente sembrado en el almacen de secretos de su desplie
 GET /api/v1/profile/{userId}
 ```
 
-Devuelve los detalles del usuario, incluyendo los vinculos de inicio de sesion externo.
+Devuelve los detalles del usuario, incluyendo los vínculos de inicio de sesión externo.
 
 ### El usuario existe
 
@@ -71,7 +71,7 @@ Devuelve los detalles del usuario, incluyendo los vinculos de inicio de sesion e
 GET /api/v1/profile/{userId}/exists
 ```
 
-Devuelve `204` si el usuario existe, `404` en caso contrario (una comprobacion economica de existencia -- sin cuerpo).
+Devuelve `204` si el usuario existe, `404` en caso contrario (una comprobación económica de existencia, sin cuerpo).
 
 ### Registrar usuario
 
@@ -87,9 +87,9 @@ Content-Type: application/json
 }
 ```
 
-Crea un usuario y envia un correo de verificacion. Devuelve `409 user_exists` si el correo ya esta en uso.
+Crea un usuario y envía un correo de verificación. Devuelve `409 user_exists` si el correo ya está en uso.
 
-Campos opcionales solo para administradores: `userId` (id proporcionado por el llamador -- `409 user_id_in_use` en caso de colision), `emailConfirmed` (crea el usuario ya verificado, omitiendo el correo de verificacion), `companyName`, `organizationId`, `phone`, `locale`, y `customAttributes` (un mapa de cadenas persistido en el usuario y reenviado a los destinos de aprovisionamiento).
+Campos opcionales solo para administradores: `userId` (id proporcionado por el llamador; `409 user_id_in_use` en caso de colisión), `emailConfirmed` (crea el usuario ya verificado, omitiendo el correo de verificación), `companyName`, `organizationId`, `phone`, `locale`, y `customAttributes` (un mapa de cadenas persistido en el usuario y reenviado a los destinos de aprovisionamiento).
 
 ### Actualizar usuario
 
@@ -105,9 +105,9 @@ Content-Type: application/json
 }
 ```
 
-`userId` es requerido; todos los demas campos son opcionales -- solo los campos proporcionados se actualizan. Cambiar `organizationId` desencadena:
-- Rotacion del SecurityStamp (invalida todas las sesiones por cookie dentro de 30 minutos)
-- Revocacion de todos los tokens de actualizacion
+`userId` es requerido; todos los demás campos son opcionales: solo los campos proporcionados se actualizan. Cambiar `organizationId` desencadena:
+- Rotación del SecurityStamp (invalida todas las sesiones por cookie dentro de 30 minutos)
+- Revocación de todos los tokens de actualización
 
 ### Eliminar usuario
 
@@ -117,13 +117,13 @@ DELETE /api/v1/profile/{userId}
 
 Elimina al usuario, revoca todos los otorgamientos y desaprovisiona de todas las aplicaciones posteriores (mejor esfuerzo).
 
-### Confirmar correo electronico
+### Confirmar correo electrónico
 
 ```
 POST /api/v1/profile/confirm-email?token={token}
 ```
 
-### Enviar correo de verificacion
+### Enviar correo de verificación
 
 ```
 POST /api/v1/profile/{userId}/send-verification-email
@@ -148,7 +148,7 @@ Content-Type: application/json
 DELETE /api/v1/profile/{userId}/identities/{provider}/{externalUserId}
 ```
 
-## Gestion de MFA
+## Gestión de MFA
 
 ### Obtener estado de MFA
 
@@ -156,7 +156,7 @@ DELETE /api/v1/profile/{userId}/identities/{provider}/{externalUserId}
 GET /api/v1/profile/{userId}/mfa
 ```
 
-Devuelve el estado de MFA y los metodos inscritos de un usuario.
+Devuelve el estado de MFA y los métodos inscritos de un usuario.
 
 ### Restablecer todo MFA
 
@@ -164,55 +164,55 @@ Devuelve el estado de MFA y los metodos inscritos de un usuario.
 DELETE /api/v1/profile/{userId}/mfa
 ```
 
-Elimina todas las credenciales MFA y establece `MfaEnabled=false`. El usuario debera volver a inscribirse si es requerido.
+Elimina todas las credenciales MFA y establece `MfaEnabled=false`. El usuario deberá volver a inscribirse si es requerido.
 
-### Eliminar credencial MFA especifica
+### Eliminar credencial MFA específica
 
 ```
 DELETE /api/v1/profile/{userId}/mfa/{credentialId}
 ```
 
-Elimina una credencial MFA especifica (por ejemplo, un autenticador perdido). Si se elimina el ultimo metodo primario, MFA se desactiva.
+Elimina una credencial MFA específica (por ejemplo, un autenticador perdido). Si se elimina el último método primario, MFA se desactiva.
 
 ## Proveedores SSO
 
 ### Proveedores SAML
 
 ```
-POST   /api/v1/saml/connections                    # Crear
-GET    /api/v1/saml/connections/{connectionId}     # Obtener uno
-PUT    /api/v1/saml/connections/{connectionId}     # Actualizar (parcial -- solo cambian los campos proporcionados)
-DELETE /api/v1/saml/connections/{connectionId}     # Eliminar
+POST   /api/v1/saml/connections                    # Create
+GET    /api/v1/saml/connections/{connectionId}     # Get one
+PUT    /api/v1/saml/connections/{connectionId}     # Update (partial — only supplied fields change)
+DELETE /api/v1/saml/connections/{connectionId}     # Delete
 ```
 
-La creacion requiere `connectionName`, `entityId`, y **exactamente uno de** `metadataLocation` (una URL de metadatos) o `metadataXml` (metadatos del IdP pegados, para IdPs sin una URL de metadatos -- se validan al analizarse y se condensan al guardar). Opcional: `nameIdFormat` (omitalo para el valor predeterminado emailAddress, `"none"` para omitir NameIDPolicy -- recomendado para ADFS, o una URN de formato NameID), `signAuthnRequests`, `iconUrl`, `allowedDomains`, `disableJitProvisioning`. Cada conexion obtiene un par de claves SP generado por el servidor; nunca lo devuelve la API. Ver [SAML](saml) para mas detalles.
+La creación requiere `connectionName`, `entityId`, y **exactamente uno de** `metadataLocation` (una URL de metadatos) o `metadataXml` (metadatos del IdP pegados, para IdPs sin una URL de metadatos; se validan al analizarse y se condensan al guardar). Opcional: `nameIdFormat` (omítalo para el valor predeterminado emailAddress, `"none"` para omitir NameIDPolicy, recomendado para ADFS, o una URN de formato NameID), `signAuthnRequests`, `iconUrl`, `allowedDomains`, `disableJitProvisioning`. Cada conexión obtiene un par de claves SP generado por el servidor; nunca lo devuelve la API. Ver [SAML](saml) para más detalles.
 
 ### Proveedores OIDC
 
 ```
-POST   /api/v1/oidc/connections                    # Crear
-GET    /api/v1/oidc/connections/{connectionId}     # Obtener uno
-DELETE /api/v1/oidc/connections/{connectionId}     # Eliminar
+POST   /api/v1/oidc/connections                    # Create
+GET    /api/v1/oidc/connections/{connectionId}     # Get one
+DELETE /api/v1/oidc/connections/{connectionId}     # Delete
 ```
 
-La creacion requiere `connectionName`, `metadataLocation`, `clientId`, `clientSecret`, `redirectUrl`. Opcional: `iconUrl`, `allowedDomains`, `passthroughParams`. El secreto del cliente se protege en reposo y nunca se devuelve. Ver [Federacion OIDC](oidc-federation).
+La creación requiere `connectionName`, `metadataLocation`, `clientId`, `clientSecret`, `redirectUrl`. Opcional: `iconUrl`, `allowedDomains`, `passthroughParams`. El secreto del cliente se protege en reposo y nunca se devuelve. Ver [Federación OIDC](oidc-federation).
 
 ### Dominios SSO
 
 ```
-GET    /api/v1/sso/domains                 # Listar todos
+GET    /api/v1/sso/domains                 # List all
 ```
 
 ## Clientes
 
-Gestione los clientes OAuth en tiempo de ejecucion. Todas las rutas requieren la politica `IdentityAdmin` (el scope de administracion).
+Gestione los clientes OAuth en tiempo de ejecución. Todas las rutas requieren la política `IdentityAdmin` (el scope de administración).
 
 ```
-GET    /api/v1/clients              # Listar todos los clientes
-GET    /api/v1/clients/{clientId}   # Obtener un cliente
-POST   /api/v1/clients              # Crear un cliente
-PUT    /api/v1/clients/{clientId}   # Actualizar un cliente
-DELETE /api/v1/clients/{clientId}   # Eliminar un cliente
+GET    /api/v1/clients              # List all clients
+GET    /api/v1/clients/{clientId}   # Get one client
+POST   /api/v1/clients              # Create a client
+PUT    /api/v1/clients/{clientId}   # Update a client
+DELETE /api/v1/clients/{clientId}   # Delete a client
 ```
 
 ### Crear / actualizar cliente
@@ -230,24 +230,24 @@ Content-Type: application/json
 }
 ```
 
-`POST` devuelve `409` si el cliente ya existe. `PUT` actualiza un cliente existente (`404` si no se encuentra); en una actualizacion, solo los scopes recien anadidos se comprueban contra escalada de privilegios.
+`POST` devuelve `409` si el cliente ya existe. `PUT` actualiza un cliente existente (`404` si no se encuentra); en una actualización, solo los scopes recién añadidos se comprueban contra escalada de privilegios.
 
 Notas:
 
-- **Los hashes de secretos nunca se devuelven.** `clientSecretHashes` se elimina de cada respuesta (listar, obtener, crear, actualizar). En una actualizacion, omitir `clientSecretHashes` conserva el secreto almacenado; proporcionar nuevos hashes lo rota.
-- **El scope de administracion no puede otorgarse a un cliente.** Solicitar `AdminApi:Scope` (predeterminado `authagonal-admin`) en `allowedScopes` devuelve `403 forbidden_scope`: ningun cliente puede poseer el scope de administracion, de lo contrario un cliente `client_credentials` podria emitir tokens de administracion indefinidamente.
-- Anadir scopes que el llamador no esta autorizado a otorgar devuelve `403`.
+- **Los hashes de secretos nunca se devuelven.** `clientSecretHashes` se elimina de cada respuesta (listar, obtener, crear, actualizar). En una actualización, omitir `clientSecretHashes` conserva el secreto almacenado; proporcionar nuevos hashes lo rota.
+- **El scope de administración no puede otorgarse a un cliente.** Solicitar `AdminApi:Scope` (predeterminado `authagonal-admin`) en `allowedScopes` devuelve `403 forbidden_scope`: ningún cliente puede poseer el scope de administración, de lo contrario un cliente `client_credentials` podría emitir tokens de administración indefinidamente.
+- Añadir scopes que el llamador no está autorizado a otorgar devuelve `403`.
 
 ## Scopes
 
-Gestione scopes OAuth personalizados en tiempo de ejecucion. Ver [Scopes de OAuth](scopes) para el modelo completo de scopes.
+Gestione scopes OAuth personalizados en tiempo de ejecución. Ver [Scopes de OAuth](scopes) para el modelo completo de scopes.
 
 ```
-GET    /api/v1/scopes           # Listar todos los scopes
-GET    /api/v1/scopes/{name}    # Obtener un scope
-POST   /api/v1/scopes           # Crear un scope
-PUT    /api/v1/scopes/{name}    # Actualizar un scope (solo cambian los campos proporcionados)
-DELETE /api/v1/scopes/{name}    # Eliminar un scope
+GET    /api/v1/scopes           # List all scopes
+GET    /api/v1/scopes/{name}    # Get one scope
+POST   /api/v1/scopes           # Create a scope
+PUT    /api/v1/scopes/{name}    # Update a scope (only supplied fields change)
+DELETE /api/v1/scopes/{name}    # Delete a scope
 ```
 
 ```
@@ -266,17 +266,17 @@ Devuelve `201` al crear (`409` si el scope ya existe), el JSON del scope al obte
 
 ## Aplicaciones de aprovisionamiento
 
-Gestione los destinos de aprovisionamiento posteriores en tiempo de ejecucion. Todas las rutas requieren la politica `IdentityAdmin`.
+Gestione los destinos de aprovisionamiento posteriores en tiempo de ejecución. Todas las rutas requieren la política `IdentityAdmin`.
 
 ```
-GET    /api/v1/provisioning/apps               # Listar apps (tambien devuelve el limite configurado)
-POST   /api/v1/provisioning/apps               # Crear una app
-PUT    /api/v1/provisioning/apps/{appId}       # Actualizar una app
-DELETE /api/v1/provisioning/apps/{appId}       # Eliminar una app
-POST   /api/v1/provisioning/apps/{appId}/test  # Enviar una llamada /try de prueba al callback de la app
+GET    /api/v1/provisioning/apps               # List apps (also returns the configured limit)
+POST   /api/v1/provisioning/apps               # Create an app
+PUT    /api/v1/provisioning/apps/{appId}       # Update an app
+DELETE /api/v1/provisioning/apps/{appId}       # Delete an app
+POST   /api/v1/provisioning/apps/{appId}/test  # Send a test /try call to the app's callback
 ```
 
-### Crear / actualizar aplicacion de aprovisionamiento
+### Crear / actualizar aplicación de aprovisionamiento
 
 ```
 POST /api/v1/provisioning/apps
@@ -292,16 +292,16 @@ Content-Type: application/json
 
 - `name` y `callbackUrl` son requeridos; `callbackUrl` debe ser una URL `http(s)` absoluta.
 - `tryTimeoutSeconds` se limita al rango 5–300.
-- **La clave API nunca se devuelve.** Las respuestas exponen `hasApiKey` (un booleano) en lugar de la clave en si. En una actualizacion, omitir `apiKey` la deja sin cambios, una cadena vacia la borra, y un valor la reemplaza.
-- La creacion esta sujeta a una cuota configurable por despliegue (`IProvisioningAppQuota`); excederla devuelve `400 provisioning_app_limit`. La respuesta de listado incluye el `limit` actual.
+- **La clave API nunca se devuelve.** Las respuestas exponen `hasApiKey` (un booleano) en lugar de la clave en sí. En una actualización, omitir `apiKey` la deja sin cambios, una cadena vacía la borra, y un valor la reemplaza.
+- La creación está sujeta a una cuota configurable por despliegue (`IProvisioningAppQuota`); excederla devuelve `400 provisioning_app_limit`. La respuesta de listado incluye el `limit` actual.
 
-### Probar una aplicacion de aprovisionamiento
+### Probar una aplicación de aprovisionamiento
 
 ```
 POST /api/v1/provisioning/apps/{appId}/test
 ```
 
-Envia un `POST {callbackUrl}/try` sintetico con una carga util de ejemplo (y la clave API de la app como token bearer si esta establecida) y devuelve `{ success, statusCode, body }` para que pueda verificar la conectividad desde la interfaz de administracion.
+Envía un `POST {callbackUrl}/try` sintético con una carga útil de ejemplo (y la clave API de la app como token bearer si está establecida) y devuelve `{ success, statusCode, body }` para que pueda verificar la conectividad desde la interfaz de administración.
 
 ## Roles
 
@@ -359,7 +359,7 @@ Content-Type: application/json
 }
 ```
 
-La asignacion es por **nombre de rol**, no por id de rol. Devuelve la lista de roles actualizada del usuario.
+La asignación es por **nombre de rol**, no por id de rol. Devuelve la lista de roles actualizada del usuario.
 
 ### Desasignar rol de usuario
 
@@ -394,7 +394,7 @@ Content-Type: application/json
 }
 ```
 
-`description` y `expiresInDays` son opcionales (omita `expiresInDays` para un token que no expira). Devuelve el token en texto plano una sola vez. Almacenelo de forma segura -- no se puede recuperar de nuevo.
+`description` y `expiresInDays` son opcionales (omita `expiresInDays` para un token que no expira). Devuelve el token en texto plano una sola vez. Almacénelo de forma segura: no se puede recuperar de nuevo.
 
 ### Listar tokens
 
@@ -402,7 +402,7 @@ Content-Type: application/json
 GET /api/v1/scim/tokens?clientId=client-id
 ```
 
-Devuelve los metadatos del token (ID, fecha de creacion) sin el valor del token en texto plano.
+Devuelve los metadatos del token (ID, fecha de creación) sin el valor del token en texto plano.
 
 ### Revocar token
 
@@ -418,17 +418,17 @@ DELETE /api/v1/scim/tokens/{tokenId}?clientId=client-id
 POST /api/v1/token?clientId=client-id&userId=user-id&scopes=openid%20profile
 ```
 
-Emite tokens (de acceso, de actualizacion y —cuando se solicita `openid`— token de identidad) en nombre de un usuario sin requerir sus credenciales. Util para pruebas y soporte. Los parametros se pasan como cadenas de consulta.
+Emite tokens (de acceso, de actualización y, cuando se solicita `openid`, token de identidad) en nombre de un usuario sin requerir sus credenciales. Útil para pruebas y soporte. Los parámetros se pasan como cadenas de consulta.
 
-| Parametro de consulta | Requerido | Descripcion |
+| Parámetro de consulta | Requerido | Descripción |
 |---|---|---|
-| `clientId` | Si | El cliente para el que se emiten los tokens. Los tiempos de vida de los tokens provienen de la configuracion de este cliente. |
-| `userId` | Si | El usuario a suplantar. |
+| `clientId` | Sí | El cliente para el que se emiten los tokens. Los tiempos de vida de los tokens provienen de la configuración de este cliente. |
+| `userId` | Sí | El usuario a suplantar. |
 | `scopes` | No | Lista de scopes **separados por espacios** (codifique los espacios en la URL). Por defecto, los `AllowedScopes` del cliente cuando se omite. |
 
 Restricciones:
 
-- Los scopes estan limitados a los `AllowedScopes` del cliente: solicitar cualquier scope que el propio cliente no podria solicitar devuelve `400 invalid_scope`.
-- El scope de administracion (`AdminApi:Scope`, predeterminado `authagonal-admin`) **no** puede emitirse a traves de este endpoint; solicitarlo devuelve `403 forbidden_scope`. Esto evita que un token de administracion (posiblemente de tiempo limitado) emita un token de acceso/actualizacion de administracion de larga duracion.
+- Los scopes están limitados a los `AllowedScopes` del cliente: solicitar cualquier scope que el propio cliente no podría solicitar devuelve `400 invalid_scope`.
+- El scope de administración (`AdminApi:Scope`, predeterminado `authagonal-admin`) **no** puede emitirse a través de este endpoint; solicitarlo devuelve `403 forbidden_scope`. Esto evita que un token de administración (posiblemente de tiempo limitado) emita un token de acceso/actualización de administración de larga duración.
 
-La respuesta es una respuesta de token estandar con `access_token`, `refresh_token`, opcionalmente `id_token`, `expires_in` y el `scope` otorgado (separado por espacios).
+La respuesta es una respuesta de token estándar con `access_token`, `refresh_token`, opcionalmente `id_token`, `expires_in` y el `scope` otorgado (separado por espacios).

@@ -1,30 +1,30 @@
 ---
 layout: default
-title: Personalizacion visual
+title: Personalización visual
 locale: es
 ---
 
-# Personalizacion de la interfaz de inicio de sesion
+# Personalización de la interfaz de inicio de sesión
 
-La SPA de inicio de sesion es configurable en tiempo de ejecucion mediante un archivo `branding.json` servido desde la raiz web. No se requiere recompilacion -- simplemente monte su configuracion y recursos.
+La SPA de inicio de sesión es configurable en tiempo de ejecución mediante un archivo `branding.json` servido desde la raíz web. No se requiere recompilación: simplemente monte su configuración y recursos.
 
-## Como funciona
+## Cómo funciona
 
-Al iniciar, la SPA obtiene `/branding.json`. Si el archivo no existe o no es accesible, se usan los valores predeterminados. (Un servidor host tambien puede incrustar la configuracion como una carga de arranque `<script type="application/json" id="authagonal-boot">`; cuando esta presente, la SPA la lee en lugar de hacer la solicitud.) La configuracion controla:
+Al iniciar, la SPA obtiene `/branding.json`. Si el archivo no existe o no es accesible, se usan los valores predeterminados. (Un servidor host también puede incrustar la configuración como una carga de arranque `<script type="application/json" id="authagonal-boot">`; cuando está presente, la SPA la lee en lugar de hacer la solicitud.) La configuración controla:
 
-- El nombre de la aplicacion (mostrado en el encabezado y titulo de la pagina)
+- El nombre de la aplicación (mostrado en el encabezado y título de la página)
 - La imagen del logotipo, con un "chip" de fondo opcional por modo
 - El color principal (botones, enlaces, indicadores de enfoque), con una variante opcional para modo oscuro
-- Los colores de fondo de la pagina y de la tarjeta, por modo
-- La visibilidad de los enlaces de contrasena olvidada y de registro
+- Los colores de fondo de la página y de la tarjeta, por modo
+- La visibilidad de los enlaces de contraseña olvidada y de registro
 - El valor predeterminado del modo oscuro (claro / seguir el sistema operativo / oscuro)
 - Las opciones del selector de idioma
-- El pie de pagina "Powered by Authagonal"
-- CSS personalizado para una estilizacion mas profunda
+- El pie de página "Powered by Authagonal"
+- CSS personalizado para una estilización más profunda
 
-## Configuracion
+## Configuración
 
-Coloque un archivo `branding.json` en el directorio `wwwroot/` (o montelo en el contenedor Docker):
+Coloque un archivo `branding.json` en el directorio `wwwroot/` (o móntelo en el contenedor Docker):
 
 ```json
 {
@@ -41,29 +41,29 @@ Coloque un archivo `branding.json` en el directorio `wwwroot/` (o montelo en el 
 
 ### Opciones
 
-| Propiedad | Tipo | Predeterminado | Descripcion |
+| Propiedad | Tipo | Predeterminado | Descripción |
 |---|---|---|---|
-| `appName` | `string` | `"Authagonal"` | Se muestra en el encabezado y titulo de la pestana del navegador |
+| `appName` | `string` | `"Authagonal"` | Se muestra en el encabezado y título de la pestaña del navegador |
 | `logoUrl` | `string \| null` | `null` | URL a una imagen de logotipo. Cuando se establece, reemplaza el encabezado de texto. |
 | `primaryColor` | `string` | `"#2563eb"` | Color hexadecimal para botones, enlaces e indicadores de enfoque |
-| `supportEmail` | `string \| null` | `null` | Correo electronico de soporte (reservado para uso futuro) |
-| `showForgotPassword` | `boolean` | `true` | Mostrar/ocultar el enlace "Contrasena olvidada?" en la pagina de inicio de sesion |
+| `supportEmail` | `string \| null` | `null` | Correo electrónico de soporte (reservado para uso futuro) |
+| `showForgotPassword` | `boolean` | `true` | Mostrar/ocultar el enlace "¿Contraseña olvidada?" en la página de inicio de sesión |
 | `showRegistration` | `boolean` | `false` | Mostrar/ocultar el enlace de registro de autoservicio |
-| `customCssUrl` | `string \| null` | `null` | URL a un archivo CSS personalizado cargado despues de los estilos predeterminados |
-| `welcomeTitle` | `LocalizedString` | `null` | Anular el titulo de la pagina de inicio de sesion (cadena simple o `{ "en": "...", "de": "..." }`) |
-| `welcomeSubtitle` | `LocalizedString` | `null` | Anular el subtitulo de la pagina de inicio de sesion |
-| `languages` | `array \| null` | `null` | Opciones del selector de idioma (`[{ "code": "en", "label": "English" }, ...]`). `null` muestra todos los idiomas incluidos excepto los locales de novedad (ver [Localizacion](localization)). |
-| `poweredBy` | `boolean` | `true` | Mostrar/ocultar el pie de pagina "Powered by Authagonal" en las paginas de autenticacion |
+| `customCssUrl` | `string \| null` | `null` | URL a un archivo CSS personalizado cargado después de los estilos predeterminados |
+| `welcomeTitle` | `LocalizedString` | `null` | Anular el título de la página de inicio de sesión (cadena simple o `{ "en": "...", "de": "..." }`) |
+| `welcomeSubtitle` | `LocalizedString` | `null` | Anular el subtítulo de la página de inicio de sesión |
+| `languages` | `array \| null` | `null` | Opciones del selector de idioma (`[{ "code": "en", "label": "English" }, ...]`). `null` muestra todos los idiomas incluidos excepto los locales de novedad (ver [Localización](localization)). |
+| `poweredBy` | `boolean` | `true` | Mostrar/ocultar el pie de página "Powered by Authagonal" en las páginas de autenticación |
 | `darkMode` | `"off" \| "auto" \| "force"` | `"auto"` | Tema predeterminado cuando el visitante no ha elegido uno: `"off"` (solo claro), `"auto"` (seguir la preferencia del sistema operativo), `"force"` (siempre oscuro). El interruptor de tema del visitante sigue teniendo prioridad. |
-| `lightBg` | `string \| null` | `null` | Color de fondo de la pagina en modo claro |
+| `lightBg` | `string \| null` | `null` | Color de fondo de la página en modo claro |
 | `lightCardBg` | `string \| null` | `null` | Color de fondo de la tarjeta/formulario en modo claro |
-| `darkBg` | `string \| null` | `null` | Color de fondo de la pagina en modo oscuro |
+| `darkBg` | `string \| null` | `null` | Color de fondo de la página en modo oscuro |
 | `darkCardBg` | `string \| null` | `null` | Color de fondo de la tarjeta/formulario en modo oscuro |
 | `darkPrimaryColor` | `string \| null` | `null` | Anula `primaryColor` en modo oscuro |
-| `lightLogoBg` | `string \| null` | `null` | Fondo del chip del logotipo en modo claro (ver mas abajo) |
-| `darkLogoBg` | `string \| null` | `null` | Fondo del chip del logotipo en modo oscuro (ver mas abajo) |
+| `lightLogoBg` | `string \| null` | `null` | Fondo del chip del logotipo en modo claro (ver más abajo) |
+| `darkLogoBg` | `string \| null` | `null` | Fondo del chip del logotipo en modo oscuro (ver más abajo) |
 
-Los valores de color deben ser un color hexadecimal (`#rgb`, `#rrggbb`, `#rrggbbaa`) o una expresion `rgb()`/`rgba()`/`hsl()`/`hsla()`; cualquier otra cosa se ignora. Los colores por modo se inyectan como una regla `<style id="branding-theme-vars">` despues de los estilos incluidos (los valores claros en `:root`, los oscuros en `.dark`), por lo que un valor oscuro puede diferir de su contraparte clara.
+Los valores de color deben ser un color hexadecimal (`#rgb`, `#rrggbb`, `#rrggbbaa`) o una expresión `rgb()`/`rgba()`/`hsl()`/`hsla()`; cualquier otra cosa se ignora. Los colores por modo se inyectan como una regla `<style id="branding-theme-vars">` después de los estilos incluidos (los valores claros en `:root`, los oscuros en `.dark`), por lo que un valor oscuro puede diferir de su contraparte clara.
 
 ### Chip de fondo del logotipo
 
@@ -81,7 +81,7 @@ El chip (un contenedor `data-auth="logo-chip"` controlado por la variable CSS `-
 
 ## Ejemplo Docker
 
-Monte sus archivos de personalizacion en el contenedor:
+Monte sus archivos de personalización en el contenedor:
 
 ```bash
 docker run -p 8080:8080 \
@@ -111,25 +111,25 @@ services:
 
 ## CSS personalizado
 
-La opcion `customCssUrl` carga una hoja de estilos adicional despues de los estilos predeterminados, por lo que sus reglas tienen prioridad. Util para cambiar fuentes, ajustar espaciado o reestilizar elementos especificos. La URL debe ser del mismo origen (las URLs relativas como `/branding/custom.css` estan bien); las hojas de estilo de origen cruzado se omiten silenciosamente.
+La opción `customCssUrl` carga una hoja de estilos adicional después de los estilos predeterminados, por lo que sus reglas tienen prioridad. Útil para cambiar fuentes, ajustar espaciado o reestilizar elementos específicos. La URL debe ser del mismo origen (las URLs relativas como `/branding/custom.css` están bien); las hojas de estilo de origen cruzado se omiten silenciosamente.
 
 ### Propiedades CSS personalizadas
 
-La interfaz de inicio de sesion expone varias propiedades CSS personalizadas para un control detallado:
+La interfaz de inicio de sesión expone varias propiedades CSS personalizadas para un control detallado:
 
-| Propiedad | Predeterminado | Descripcion |
+| Propiedad | Predeterminado | Descripción |
 |---|---|---|
 | `--brand-primary` | `#2563eb` | Color principal para botones, enlaces, indicadores de enfoque |
-| `--auth-bg` | `#f3f4f6` | Color de fondo de la pagina |
+| `--auth-bg` | `#f3f4f6` | Color de fondo de la página |
 | `--auth-card-bg` | `#ffffff` | Color de fondo de la tarjeta/formulario |
 | `--auth-logo-bg` | `transparent` | Fondo del chip del logotipo (el relleno del chip solo aparece cuando se configura un fondo de logotipo) |
-| `--auth-radius` | `0.5rem` | Radio de borde de la tarjeta de autenticacion |
-| `--auth-font` | *(heredado; pila de fuentes del sistema)* | Familia de fuentes de la tarjeta de autenticacion |
+| `--auth-radius` | `0.5rem` | Radio de borde de la tarjeta de autenticación |
+| `--auth-font` | *(heredado; pila de fuentes del sistema)* | Familia de fuentes de la tarjeta de autenticación |
 | `--auth-heading` | `#111827` | Color del texto de los encabezados |
 
-Las variables de color aqui se corresponden directamente con campos de configuracion (`primaryColor`, `lightBg`/`darkBg`, `lightCardBg`/`darkCardBg`, `lightLogoBg`/`darkLogoBg`), asi que prefiera la configuracion para cambios de color simples y reserve el CSS personalizado para todo lo demas.
+Las variables de color aquí se corresponden directamente con campos de configuración (`primaryColor`, `lightBg`/`darkBg`, `lightCardBg`/`darkCardBg`, `lightLogoBg`/`darkLogoBg`), así que prefiera la configuración para cambios de color simples y reserve el CSS personalizado para todo lo demás.
 
-Anulelas en su CSS personalizado:
+Anúlelas en su CSS personalizado:
 
 ```css
 :root {
@@ -140,22 +140,22 @@ Anulelas en su CSS personalizado:
 }
 ```
 
-La interfaz de inicio de sesion utiliza Tailwind CSS. El CSS personalizado puede apuntar a elementos HTML estandar y clases de utilidad de Tailwind. Los componentes de UI exportados (`Button`, `Input`, `Card`, `Alert`, etc.) usan Tailwind internamente.
+La interfaz de inicio de sesión utiliza Tailwind CSS. El CSS personalizado puede apuntar a elementos HTML estándar y clases de utilidad de Tailwind. Los componentes de UI exportados (`Button`, `Input`, `Card`, `Alert`, etc.) usan Tailwind internamente.
 
 ## Modo oscuro
 
-La SPA de inicio de sesion incluye temas claro, oscuro y **de sistema**. El interruptor de tema siempre esta visible en el diseno. La seleccion del usuario se persiste en `localStorage` bajo la clave `auth-theme`.
+La SPA de inicio de sesión incluye temas claro, oscuro y **de sistema**. El interruptor de tema siempre está visible en el diseño. La selección del usuario se persiste en `localStorage` bajo la clave `auth-theme`.
 
-### Como funciona
+### Cómo funciona
 
-- **Predeterminado** -- hasta que el visitante elige un tema, la opcion de personalizacion `darkMode` establece el valor predeterminado: `"off"` (claro), `"auto"` (sistema, el predeterminado) o `"force"` (oscuro). Una vez que el visitante usa el interruptor, su eleccion siempre tiene prioridad.
-- **Deteccion** -- cuando el tema es "system", la SPA observa `window.matchMedia('(prefers-color-scheme: dark)')` y vuelve a aplicar el tema automaticamente a medida que cambia la preferencia del sistema operativo.
-- **Aplicacion** -- la SPA alterna una clase `.dark` en `<html>`. La variante oscura de Tailwind (`&:where(.dark, .dark *)`) activa los estilos oscuros compilados en cada componente.
-- **Persistencia** -- las elecciones explicitas "light" / "dark" / "system" se almacenan en `localStorage`.
+- **Predeterminado**: hasta que el visitante elige un tema, la opción de personalización `darkMode` establece el valor predeterminado: `"off"` (claro), `"auto"` (sistema, el predeterminado) o `"force"` (oscuro). Una vez que el visitante usa el interruptor, su elección siempre tiene prioridad.
+- **Detección**: cuando el tema es "system", la SPA observa `window.matchMedia('(prefers-color-scheme: dark)')` y vuelve a aplicar el tema automáticamente a medida que cambia la preferencia del sistema operativo.
+- **Aplicación**: la SPA alterna una clase `.dark` en `<html>`. La variante oscura de Tailwind (`&:where(.dark, .dark *)`) activa los estilos oscuros compilados en cada componente.
+- **Persistencia**: las elecciones explícitas "light" / "dark" / "system" se almacenan en `localStorage`.
 
 ### Variables CSS
 
-Los valores claros se declaran en `:root`; las anulaciones de modo oscuro tienen alcance en `.dark`, por lo que la personalizacion del inquilino en `customCssUrl` siempre tiene prioridad cuando se proporciona.
+Los valores claros se declaran en `:root`; las anulaciones de modo oscuro tienen alcance en `.dark`, por lo que la personalización del inquilino en `customCssUrl` siempre tiene prioridad cuando se proporciona.
 
 | Variable | Claro | Oscuro |
 |---|---|---|
@@ -167,7 +167,7 @@ Los valores claros se declaran en `:root`; las anulaciones de modo oscuro tienen
 
 ### Deshabilitar o anular
 
-La personalizacion del inquilino siempre tiene prioridad. Para forzar un unico tema, establezca sus propios valores en `customCssUrl`:
+La personalización del inquilino siempre tiene prioridad. Para forzar un único tema, establezca sus propios valores en `customCssUrl`:
 
 ```css
 /* Force dark palette regardless of user choice */
@@ -187,22 +187,22 @@ Para eliminar por completo el interruptor de tema, use la ruta del paquete npm: 
 
 ### Atributos de datos
 
-Todos los elementos del formulario de inicio de sesion tienen atributos `data-auth` para segmentacion CSS y automatizacion de pruebas:
+Todos los elementos del formulario de inicio de sesión tienen atributos `data-auth` para segmentación CSS y automatización de pruebas:
 
 | Atributo | Elemento |
 |---|---|
-| `data-auth="page"` | Contenedor principal de la pagina |
-| `data-auth="header"` | Seccion del encabezado |
+| `data-auth="page"` | Contenedor principal de la página |
+| `data-auth="header"` | Sección del encabezado |
 | `data-auth="logo-chip"` | Contenedor alrededor de la imagen del logotipo (con relleno solo cuando se establece un fondo de logotipo) |
 | `data-auth="logo"` | Imagen del logotipo |
-| `data-auth="app-name"` | Encabezado del nombre de la aplicacion |
-| `data-auth="content"` | Area de contenido principal |
+| `data-auth="app-name"` | Encabezado del nombre de la aplicación |
+| `data-auth="content"` | Área de contenido principal |
 | `data-auth="languages"` | Selector de idioma |
-| `data-auth="language-trigger"` | Boton disparador del selector de idioma |
+| `data-auth="language-trigger"` | Botón disparador del selector de idioma |
 | `data-auth="theme-toggle"` | Interruptor de tema claro/sistema/oscuro |
-| `data-auth="powered-by"` | Pie de pagina "Powered by Authagonal" |
+| `data-auth="powered-by"` | Pie de página "Powered by Authagonal" |
 
-Segmentelos en su CSS personalizado:
+Segméntelos en su CSS personalizado:
 
 ```css
 [data-auth="header"] {
@@ -220,14 +220,14 @@ body {
 }
 ```
 
-## Niveles de personalizacion
+## Niveles de personalización
 
-| Nivel | Lo que hace | Ruta de actualizacion |
+| Nivel | Lo que hace | Ruta de actualización |
 |---|---|---|
-| **Solo configuracion** | Monte `branding.json` + logotipo | Transparente -- actualice la imagen Docker, mantenga sus montajes |
-| **Configuracion + CSS** | Agregue `customCssUrl` con sustituciones de estilo | Igual -- las clases CSS son estables |
-| **Paquete npm** | `npm install @authagonal/login`, personalice `branding.json`, compile en `wwwroot/` | Actualizable -- `npm update` obtiene nuevas versiones |
-| **Bifurcar la SPA** | Clone `login-app/`, modifique el codigo fuente, compile su propia version | Usted es dueno de la interfaz -- las actualizaciones del servidor son independientes |
-| **Escribir la suya** | Construya un frontend completamente personalizado contra la API de autenticacion | Control total -- ver [API de autenticacion](auth-api) para el contrato |
+| **Solo configuración** | Monte `branding.json` + logotipo | Transparente: actualice la imagen Docker, mantenga sus montajes |
+| **Configuración + CSS** | Agregue `customCssUrl` con sustituciones de estilo | Igual: las clases CSS son estables |
+| **Paquete npm** | `npm install @authagonal/login`, personalice `branding.json`, compile en `wwwroot/` | Actualizable: `npm update` obtiene nuevas versiones |
+| **Bifurcar la SPA** | Clone `login-app/`, modifique el código fuente, compile su propia versión | Usted es dueño de la interfaz: las actualizaciones del servidor son independientes |
+| **Escribir la suya** | Construya un frontend completamente personalizado contra la API de autenticación | Control total: ver [API de autenticación](auth-api) para el contrato |
 
-Consulte `demos/custom-server/` para un ejemplo funcional con personalizacion visual (tema verde, "Acme Corp").
+Consulte `demos/custom-server/` para un ejemplo funcional con personalización visual (tema verde, "Acme Corp").

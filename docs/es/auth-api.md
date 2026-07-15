@@ -1,18 +1,18 @@
 ---
 layout: default
-title: API de autenticacion
+title: API de autenticación
 locale: es
 ---
 
-# API de autenticacion
+# API de autenticación
 
-Estos endpoints alimentan la SPA de inicio de sesion. Usan autenticacion por cookie (`SameSite=Lax`, `HttpOnly`).
+Estos endpoints alimentan la SPA de inicio de sesión. Usan autenticación por cookie (`SameSite=Lax`, `HttpOnly`).
 
-Si esta construyendo una interfaz de inicio de sesion personalizada, estos son los endpoints que necesita implementar.
+Si está construyendo una interfaz de inicio de sesión personalizada, estos son los endpoints que necesita implementar.
 
 ## Endpoints
 
-### Inicio de sesion
+### Inicio de sesión
 
 ```
 POST /api/auth/login
@@ -24,7 +24,7 @@ Content-Type: application/json
 }
 ```
 
-**Exito (200):** Establece una cookie de autenticacion y devuelve:
+**Éxito (200):** Establece una cookie de autenticación y devuelve:
 
 ```json
 {
@@ -35,9 +35,9 @@ Content-Type: application/json
 }
 ```
 
-`mfaAvailable` es `true` cuando la `MfaPolicy` del cliente es `Enabled` pero el usuario aun no se ha inscrito (la interfaz puede ofrecer la configuracion); en ese caso tambien se incluye un campo `clientId`.
+`mfaAvailable` es `true` cuando la `MfaPolicy` del cliente es `Enabled` pero el usuario aún no se ha inscrito (la interfaz puede ofrecer la configuración); en ese caso también se incluye un campo `clientId`.
 
-**MFA requerido (200):** Si el usuario tiene MFA inscrito, **siempre** se le presenta el desafio, independientemente de la `MfaPolicy` del cliente que hace la peticion (MFA es una propiedad del usuario/sesion, no del cliente):
+**MFA requerido (200):** Si el usuario tiene MFA inscrito, **siempre** se le presenta el desafío, independientemente de la `MfaPolicy` del cliente que hace la petición (MFA es una propiedad del usuario/sesión, no del cliente):
 
 ```json
 {
@@ -48,9 +48,9 @@ Content-Type: application/json
 }
 ```
 
-El cliente debe redirigir a una pagina de desafio MFA y llamar a `POST /api/auth/mfa/verify`.
+El cliente debe redirigir a una página de desafío MFA y llamar a `POST /api/auth/mfa/verify`.
 
-**Configuracion de MFA requerida (200):** Si `MfaPolicy` es `Required` y el usuario no tiene MFA inscrito:
+**Configuración de MFA requerida (200):** Si `MfaPolicy` es `Required` y el usuario no tiene MFA inscrito:
 
 ```json
 {
@@ -59,20 +59,20 @@ El cliente debe redirigir a una pagina de desafio MFA y llamar a `POST /api/auth
 }
 ```
 
-El cliente debe redirigir a una pagina de configuracion de MFA. El token de configuracion autentica al usuario en los endpoints de configuracion de MFA mediante el encabezado `X-MFA-Setup-Token`.
+El cliente debe redirigir a una página de configuración de MFA. El token de configuración autentica al usuario en los endpoints de configuración de MFA mediante el encabezado `X-MFA-Setup-Token`.
 
 **Respuestas de error:**
 
-| `error` | Estado | Descripcion |
+| `error` | Estado | Descripción |
 |---|---|---|
-| `invalid_credentials` | 401 | Correo electronico o contrasena incorrectos. Deliberadamente identico para correos desconocidos (anti-enumeracion). |
-| `locked_out` | 423 | Demasiados intentos fallidos. `retryAfter` (segundos) esta incluido. |
-| `account_disabled` | 403 | La cuenta esta desactivada (solo se revela tras una contrasena correcta) |
-| `email_not_confirmed` | 403 | Correo electronico aun no verificado (solo se revela tras una contrasena correcta) |
-| `sso_required` | 409 | El dominio requiere SSO. `redirectUrl` apunta al inicio de sesion SSO. |
-| `captcha_failed` | 400 | La verificacion de Turnstile fallo (solo cuando Turnstile esta configurado; las peticiones necesitan entonces un campo `turnstileToken`) |
-| `email_required` | 400 | El campo de correo electronico esta vacio |
-| `password_required` | 400 | El campo de contrasena esta vacio |
+| `invalid_credentials` | 401 | Correo electrónico o contraseña incorrectos. Deliberadamente idéntico para correos desconocidos (anti-enumeración). |
+| `locked_out` | 423 | Demasiados intentos fallidos. `retryAfter` (segundos) está incluido. |
+| `account_disabled` | 403 | La cuenta está desactivada (solo se revela tras una contraseña correcta) |
+| `email_not_confirmed` | 403 | Correo electrónico aún no verificado (solo se revela tras una contraseña correcta) |
+| `sso_required` | 409 | El dominio requiere SSO. `redirectUrl` apunta al inicio de sesión SSO. |
+| `captcha_failed` | 400 | La verificación de Turnstile falló (solo cuando Turnstile está configurado; las peticiones necesitan entonces un campo `turnstileToken`) |
+| `email_required` | 400 | El campo de correo electrónico está vacío |
+| `password_required` | 400 | El campo de contraseña está vacío |
 
 ### Registro
 
@@ -88,18 +88,18 @@ Content-Type: application/json
 }
 ```
 
-Crea una nueva cuenta de usuario y envia un correo de verificacion. Devuelve `201 { "success": true, "userId": "..." }`. Campos opcionales: `locale` (etiqueta BCP-47 que se persiste en el usuario) y `customAttributes` (un mapa de cadenas).
+Crea una nueva cuenta de usuario y envía un correo de verificación. Devuelve `201 { "success": true, "userId": "..." }`. Campos opcionales: `locale` (etiqueta BCP-47 que se persiste en el usuario) y `customAttributes` (un mapa de cadenas).
 
-El registro es deliberadamente **neutral ante la enumeracion**: si el correo ya esta registrado, la respuesta es el mismo `201` neutral (con un `userId` desechable) y en su lugar se envia al propietario real un aviso de inicio de sesion/restablecimiento. El registro tambien esta limitado por IP: `429 rate_limited` cuando se supera el limite (la ventana y el tope se configuran mediante `Auth:MaxRegistrationsPerIp` / `Auth:RegistrationWindowMinutes`).
+El registro es deliberadamente **neutral ante la enumeración**: si el correo ya está registrado, la respuesta es el mismo `201` neutral (con un `userId` desechable) y en su lugar se envía al propietario real un aviso de inicio de sesión/restablecimiento. El registro también está limitado por IP: `429 rate_limited` cuando se supera el límite (la ventana y el tope se configuran mediante `Auth:MaxRegistrationsPerIp` / `Auth:RegistrationWindowMinutes`).
 
-### Confirmar correo electronico
+### Confirmar correo electrónico
 
 ```
 GET  /api/auth/confirm-email?token={token}
 POST /api/auth/confirm-email?token={token}
 ```
 
-Confirma la direccion de correo electronico del usuario usando el token del correo de verificacion. `GET` es el enlace clicable del correo: redirige a `/login?email_confirmed=1` (mas un parametro `continue_client` cuando el registro se origino en un flujo OAuth). `POST` es la ruta programatica y devuelve JSON (el token tambien puede proporcionarse en un cuerpo JSON como `{ "token": "..." }`); la respuesta incluye un `appLink` opcional (destino "continuar a la aplicacion").
+Confirma la dirección de correo electrónico del usuario usando el token del correo de verificación. `GET` es el enlace clicable del correo: redirige a `/login?email_confirmed=1` (más un parámetro `continue_client` cuando el registro se originó en un flujo OAuth). `POST` es la ruta programática y devuelve JSON (el token también puede proporcionarse en un cuerpo JSON como `{ "token": "..." }`); la respuesta incluye un `appLink` opcional (destino "continuar a la aplicación").
 
 ### Proveedores
 
@@ -118,17 +118,17 @@ Devuelve la lista de proveedores de identidad externos configurados (para render
 }
 ```
 
-Las conexiones con `AllowedDomains` configurados quedan **excluidas**: a esas se llega primero por correo mediante `/api/auth/sso-check` en lugar de un boton. `turnstileSiteKey` se establece cuando Cloudflare Turnstile esta configurado (la interfaz de inicio de sesion debe entonces enviar un `turnstileToken` con las peticiones de inicio de sesion/registro/contrasena).
+Las conexiones con `AllowedDomains` configurados quedan **excluidas**: a esas se llega primero por correo mediante `/api/auth/sso-check` en lugar de un botón. `turnstileSiteKey` se establece cuando Cloudflare Turnstile está configurado (la interfaz de inicio de sesión debe entonces enviar un `turnstileToken` con las peticiones de inicio de sesión/registro/contraseña).
 
-### Cierre de sesion
+### Cierre de sesión
 
 ```
 POST /api/auth/logout
 ```
 
-Borra la cookie de autenticacion. Devuelve `200 { success: true }`.
+Borra la cookie de autenticación. Devuelve `200 { success: true }`.
 
-### Contrasena olvidada
+### Contraseña olvidada
 
 ```
 POST /api/auth/forgot-password
@@ -139,9 +139,9 @@ Content-Type: application/json
 }
 ```
 
-Siempre devuelve `200` (anti-enumeracion). Si el usuario existe, se envia un correo de restablecimiento.
+Siempre devuelve `200` (anti-enumeración). Si el usuario existe, se envía un correo de restablecimiento.
 
-### Restablecer contrasena
+### Restablecer contraseña
 
 ```
 POST /api/auth/reset-password
@@ -153,19 +153,19 @@ Content-Type: application/json
 }
 ```
 
-| `error` | Descripcion |
+| `error` | Descripción |
 |---|---|
 | `weak_password` | No cumple con los requisitos de robustez |
-| `invalid_token` | El token esta mal formado |
+| `invalid_token` | El token está mal formado |
 | `token_expired` | El token ha expirado (validez predeterminada de 60 minutos, configurable mediante `Auth:PasswordResetExpiryMinutes`) |
 
-### Sesion
+### Sesión
 
 ```
 GET /api/auth/session
 ```
 
-Devuelve la informacion de la sesion actual si esta autenticado:
+Devuelve la información de la sesión actual si está autenticado:
 
 ```json
 {
@@ -176,7 +176,7 @@ Devuelve la informacion de la sesion actual si esta autenticado:
 }
 ```
 
-Devuelve `401` si no esta autenticado.
+Devuelve `401` si no está autenticado.
 
 ### Aplicaciones
 
@@ -184,7 +184,7 @@ Devuelve `401` si no esta autenticado.
 GET /api/auth/apps
 ```
 
-Devuelve los enlaces a las aplicaciones del inquilino para el lanzador "volver a la aplicacion" de la pagina de cuenta: clientes habilitados que tienen una URI de inicio (`initiateLoginUri` tiene prioridad sobre `clientUri`). Cada entrada es `{ clientId, clientName, homeUri, logoUri, isDefault }`; exactamente una aplicacion se marca como predeterminada (el cliente marcado, o el unico cliente con una URI de inicio). Requiere autenticacion por cookie.
+Devuelve los enlaces a las aplicaciones del inquilino para el lanzador "volver a la aplicación" de la página de cuenta: clientes habilitados que tienen una URI de inicio (`initiateLoginUri` tiene prioridad sobre `clientUri`). Cada entrada es `{ clientId, clientName, homeUri, logoUri, isDefault }`; exactamente una aplicación se marca como predeterminada (el cliente marcado, o el único cliente con una URI de inicio). Requiere autenticación por cookie.
 
 ### Perfil (autoservicio)
 
@@ -193,15 +193,15 @@ GET   /api/auth/profile
 PATCH /api/auth/profile
 ```
 
-El usuario autenticado lee/actualiza sus propios campos de perfil no sensibles: `firstName`, `lastName`, `companyName`, `phone`, `locale`. Los campos nulos quedan sin cambios; el correo electronico, la contrasena, los roles, el estado activo y la organizacion **no** son editables aqui. Ambos devuelven el perfil `{ email, emailConfirmed, firstName, lastName, companyName, phone, locale }`.
+El usuario autenticado lee/actualiza sus propios campos de perfil no sensibles: `firstName`, `lastName`, `companyName`, `phone`, `locale`. Los campos nulos quedan sin cambios; el correo electrónico, la contraseña, los roles, el estado activo y la organización **no** son editables aquí. Ambos devuelven el perfil `{ email, emailConfirmed, firstName, lastName, companyName, phone, locale }`.
 
-### Verificacion SSO
+### Verificación SSO
 
 ```
 GET /api/auth/sso-check?email=user@acme.com
 ```
 
-Verifica si el dominio del correo electronico requiere SSO:
+Verifica si el dominio del correo electrónico requiere SSO:
 
 ```json
 {
@@ -220,13 +220,13 @@ Si no se requiere SSO:
 }
 ```
 
-### Politica de contrasenas
+### Política de contraseñas
 
 ```
 GET /api/auth/password-policy
 ```
 
-Devuelve los requisitos de contrasena del servidor (configurados mediante `PasswordPolicy` en los ajustes):
+Devuelve los requisitos de contraseña del servidor (configurados mediante `PasswordPolicy` en los ajustes):
 
 ```json
 {
@@ -240,20 +240,20 @@ Devuelve los requisitos de contrasena del servidor (configurados mediante `Passw
 }
 ```
 
-La interfaz de inicio de sesion predeterminada obtiene este endpoint en la pagina de restablecimiento de contrasena para mostrar los requisitos dinamicamente.
+La interfaz de inicio de sesión predeterminada obtiene este endpoint en la página de restablecimiento de contraseña para mostrar los requisitos dinámicamente.
 
-## Requisitos de contrasena predeterminados
+## Requisitos de contraseña predeterminados
 
-Con la configuracion predeterminada, las contrasenas deben cumplir todos estos requisitos:
+Con la configuración predeterminada, las contraseñas deben cumplir todos estos requisitos:
 
 - Al menos 8 caracteres
-- Al menos una letra mayuscula
-- Al menos una letra minuscula
-- Al menos un digito
-- Al menos un caracter no alfanumerico
+- Al menos una letra mayúscula
+- Al menos una letra minúscula
+- Al menos un dígito
+- Al menos un carácter no alfanumérico
 - Al menos 2 caracteres distintos
 
-Estos pueden personalizarse mediante la seccion de configuracion `PasswordPolicy` -- ver [Configuracion](configuration).
+Estos pueden personalizarse mediante la sección de configuración `PasswordPolicy`, ver [Configuración](configuration).
 
 ## Endpoints de MFA
 
@@ -270,17 +270,17 @@ Content-Type: application/json
 }
 ```
 
-Verifica un desafio MFA. En caso de exito, establece la cookie de autenticacion y devuelve la informacion del usuario.
+Verifica un desafío MFA. En caso de éxito, establece la cookie de autenticación y devuelve la información del usuario.
 
-**Metodos:**
+**Métodos:**
 
-| `method` | Campos requeridos | Descripcion |
+| `method` | Campos requeridos | Descripción |
 |---|---|---|
-| `totp` | `code` (6 digitos) | Contrasena de un solo uso basada en tiempo desde una aplicacion de autenticacion |
-| `webauthn` | `assertion` (cadena JSON) | Respuesta de asercion WebAuthn de `navigator.credentials.get()` |
-| `recovery` | `code` (`XXXX-XXXX`) | Codigo de recuperacion de un solo uso (se consume al usarse) |
+| `totp` | `code` (6 dígitos) | Contraseña de un solo uso basada en tiempo desde una aplicación de autenticación |
+| `webauthn` | `assertion` (cadena JSON) | Respuesta de aserción WebAuthn de `navigator.credentials.get()` |
+| `recovery` | `code` (`XXXX-XXXX`) | Código de recuperación de un solo uso (se consume al usarse) |
 
-**Semantica de reintentos:** un codigo incorrecto **no** quema el desafio: el codigo se valida primero y el desafio se consume solo en caso de exito, por lo que el usuario puede reintentar con el mismo `challengeId` tras teclear mal un digito (`401 invalid_code` / `assertion_failed`). Cada desafio tolera **5 intentos fallidos**; el quinto fallo lo consume y devuelve `401 too_many_attempts`, forzando un nuevo inicio de sesion (esto acota la fuerza bruta de TOTP a 5 intentos por desafio). Los desafios tambien expiran (predeterminado 5 minutos, `Auth:MfaChallengeExpiryMinutes`); un `challengeId` expirado, desconocido o ya consumido devuelve `invalid_challenge`. Los codigos TOTP estan ademas protegidos contra reproduccion: se rechaza un codigo de un paso de tiempo ya utilizado.
+**Semántica de reintentos:** un código incorrecto **no** quema el desafío: el código se valida primero y el desafío se consume solo en caso de éxito, por lo que el usuario puede reintentar con el mismo `challengeId` tras teclear mal un dígito (`401 invalid_code` / `assertion_failed`). Cada desafío tolera **5 intentos fallidos**; el quinto fallo lo consume y devuelve `401 too_many_attempts`, forzando un nuevo inicio de sesión (esto acota la fuerza bruta de TOTP a 5 intentos por desafío). Los desafíos también expiran (predeterminado 5 minutos, `Auth:MfaChallengeExpiryMinutes`); un `challengeId` expirado, desconocido o ya consumido devuelve `invalid_challenge`. Los códigos TOTP están además protegidos contra reproducción: se rechaza un código de un paso de tiempo ya utilizado.
 
 ### Estado de MFA
 
@@ -288,7 +288,7 @@ Verifica un desafio MFA. En caso de exito, establece la cookie de autenticacion 
 GET /api/auth/mfa/status
 ```
 
-Devuelve los metodos MFA inscritos del usuario. Requiere autenticacion por cookie o encabezado `X-MFA-Setup-Token`.
+Devuelve los métodos MFA inscritos del usuario. Requiere autenticación por cookie o encabezado `X-MFA-Setup-Token`.
 
 ```json
 {
@@ -300,66 +300,66 @@ Devuelve los metodos MFA inscritos del usuario. Requiere autenticacion por cooki
 }
 ```
 
-`offered` es `false` cuando la `MfaPolicy` de todos los clientes es `Disabled`: el inquilino tiene MFA desactivado, por lo que la interfaz de configuracion puede ocultarse. Las entradas de codigos de recuperacion llevan ademas `isConsumed`.
+`offered` es `false` cuando la `MfaPolicy` de todos los clientes es `Disabled`: el inquilino tiene MFA desactivado, por lo que la interfaz de configuración puede ocultarse. Las entradas de códigos de recuperación llevan además `isConsumed`.
 
-### Configuracion de TOTP
+### Configuración de TOTP
 
 ```
 POST /api/auth/mfa/totp/setup
--> { "setupToken": "...", "qrCodeDataUri": "data:image/png;base64,...", "manualKey": "BASE32..." }
+→ { "setupToken": "...", "qrCodeDataUri": "data:image/png;base64,...", "manualKey": "BASE32..." }
 
 POST /api/auth/mfa/totp/confirm
 { "setupToken": "...", "code": "123456" }
--> { "success": true }
+→ { "success": true }
 ```
 
-### Configuracion de WebAuthn / Passkey
+### Configuración de WebAuthn / Passkey
 
 ```
 POST /api/auth/mfa/webauthn/setup
--> { "setupToken": "...", "options": { /* PublicKeyCredentialCreationOptions */ } }
+→ { "setupToken": "...", "options": { /* PublicKeyCredentialCreationOptions */ } }
 
 POST /api/auth/mfa/webauthn/confirm
 { "setupToken": "...", "attestationResponse": "..." }
--> { "success": true, "credentialId": "..." }
+→ { "success": true, "credentialId": "..." }
 ```
 
-La inscripcion de passkey requiere **primero una credencial TOTP confirmada** (`400 totp_required_first`): las passkeys son una comodidad por dispositivo superpuesta a un factor base portatil, por lo que una cuenta nunca puede acabar solo con passkey y bloqueada a un dispositivo. Los usuarios cuyo dominio de correo esta enrutado por SSO no pueden inscribir una passkey local (`400 sso_managed`): eludiria el IdP del inquilino. Un ID de credencial ya registrado para otro usuario se rechaza con `409 credential_already_registered`.
+La inscripción de passkey requiere **primero una credencial TOTP confirmada** (`400 totp_required_first`): las passkeys son una comodidad por dispositivo superpuesta a un factor base portátil, por lo que una cuenta nunca puede acabar solo con passkey y bloqueada a un dispositivo. Los usuarios cuyo dominio de correo está enrutado por SSO no pueden inscribir una passkey local (`400 sso_managed`): eludiría el IdP del inquilino. Un ID de credencial ya registrado para otro usuario se rechaza con `409 credential_already_registered`.
 
-### Codigos de recuperacion
+### Códigos de recuperación
 
 ```
 POST /api/auth/mfa/recovery/generate
--> { "codes": ["ABCD-1234", "EFGH-5678", ...] }
+→ { "codes": ["ABCD-1234", "EFGH-5678", ...] }
 ```
 
-Genera 10 codigos de recuperacion de un solo uso. Requiere que al menos un metodo primario (TOTP o WebAuthn) este inscrito. Regenerar reemplaza todos los codigos de recuperacion existentes.
+Genera 10 códigos de recuperación de un solo uso. Requiere que al menos un método primario (TOTP o WebAuthn) esté inscrito. Regenerar reemplaza todos los códigos de recuperación existentes.
 
 ### Eliminar credencial MFA
 
 ```
 DELETE /api/auth/mfa/credentials/{credentialId}
--> { "success": true }
+→ { "success": true }
 ```
 
-Elimina una credencial MFA especifica. Si se elimina el ultimo metodo primario, MFA se desactiva para el usuario. Requiere una sesion de cookie real: un token de configuracion se rechaza con `403 session_required` (los tokens de configuracion existen solo para anadir un primer factor, nunca para degradar MFA).
+Elimina una credencial MFA específica. Si se elimina el último método primario, MFA se desactiva para el usuario. Requiere una sesión de cookie real: un token de configuración se rechaza con `403 session_required` (los tokens de configuración existen solo para añadir un primer factor, nunca para degradar MFA).
 
-### Inicio de sesion con passkey sin contrasena
+### Inicio de sesión con passkey sin contraseña
 
 ```
 POST /api/auth/mfa/passwordless/begin
--> { "challengeId": "...", "options": { /* PublicKeyCredentialRequestOptions */ } }
+→ { "challengeId": "...", "options": { /* PublicKeyCredentialRequestOptions */ } }
 
 POST /api/auth/mfa/passwordless/complete
 { "challengeId": "...", "assertion": "..." }
--> { "userId": "...", "email": "...", "name": "..." }
+→ { "userId": "...", "email": "...", "name": "..." }
 ```
 
-Inicio de sesion con credencial descubrible (passkey residente) sin contexto de usuario previo: `begin` emite un desafio de asercion con una lista `allowCredentials` vacia, y `complete` resuelve al usuario **a partir de** la passkey elegida, verifica la asercion e inicia su sesion (la sesion lleva el marcador de MFA: una passkey es autenticacion fuerte resistente al phishing). Si el dominio de correo del usuario resuelto esta enrutado por SSO, el inicio de sesion se rechaza con `409 sso_required` + `redirectUrl` para que una passkey local no pueda esquivar un IdP forzado.
+Inicio de sesión con credencial descubrible (passkey residente) sin contexto de usuario previo: `begin` emite un desafío de aserción con una lista `allowCredentials` vacía, y `complete` resuelve al usuario **a partir de** la passkey elegida, verifica la aserción e inicia su sesión (la sesión lleva el marcador de MFA: una passkey es autenticación fuerte resistente al phishing). Si el dominio de correo del usuario resuelto está enrutado por SSO, el inicio de sesión se rechaza con `409 sso_required` + `redirectUrl` para que una passkey local no pueda esquivar un IdP forzado.
 
-## Autorizacion de dispositivo (RFC 8628)
+## Autorización de dispositivo (RFC 8628)
 
-### Solicitar codigo de dispositivo
+### Solicitar código de dispositivo
 
 ```
 POST /connect/deviceauthorization
@@ -368,7 +368,7 @@ Content-Type: application/x-www-form-urlencoded
 client_id=my-cli&scope=openid+profile
 ```
 
-Devuelve un codigo de dispositivo, un codigo de usuario y una URI de verificacion:
+Devuelve un código de dispositivo, un código de usuario y una URI de verificación:
 
 ```json
 {
@@ -381,7 +381,7 @@ Devuelve un codigo de dispositivo, un codigo de usuario y una URI de verificacio
 }
 ```
 
-`expires_in` proviene del `DeviceCodeLifetimeSeconds` del cliente (predeterminado 300). El dispositivo muestra la `verification_uri` y el `user_code` al usuario, luego sondea el endpoint de token con el `device_code`, no mas rapido que cada `interval` segundos, o el endpoint de token responde `slow_down` (RFC 8628 §3.5). Mientras el usuario no haya aprobado, el endpoint de token devuelve `authorization_pending`. El usuario visita la URI de verificacion, inicia sesion e introduce el codigo de usuario para aprobar.
+`expires_in` proviene del `DeviceCodeLifetimeSeconds` del cliente (predeterminado 300). El dispositivo muestra la `verification_uri` y el `user_code` al usuario, luego sondea el endpoint de token con el `device_code`, no más rápido que cada `interval` segundos, o el endpoint de token responde `slow_down` (RFC 8628 §3.5). Mientras el usuario no haya aprobado, el endpoint de token devuelve `authorization_pending`. El usuario visita la URI de verificación, inicia sesión e introduce el código de usuario para aprobar.
 
 ### Aprobar dispositivo
 
@@ -394,9 +394,9 @@ Content-Type: application/json
 }
 ```
 
-Requiere autenticacion por cookie. Aprueba el codigo de dispositivo para el usuario actual. El dispositivo puede entonces intercambiar el codigo de dispositivo por tokens mediante el endpoint de token usando el tipo de concesion `urn:ietf:params:oauth:grant-type:device_code`.
+Requiere autenticación por cookie. Aprueba el código de dispositivo para el usuario actual. El dispositivo puede entonces intercambiar el código de dispositivo por tokens mediante el endpoint de token usando el tipo de concesión `urn:ietf:params:oauth:grant-type:device_code`.
 
-## Introspeccion de tokens (RFC 7662)
+## Introspección de tokens (RFC 7662)
 
 ```
 POST /connect/introspect
@@ -430,17 +430,17 @@ Devuelve los metadatos del token:
 }
 ```
 
-Los tokens inactivos o invalidos devuelven `{ "active": false }`. Admite tanto tokens de acceso JWT como tokens de actualizacion opacos.
+Los tokens inactivos o inválidos devuelven `{ "active": false }`. Admite tanto tokens de acceso JWT como tokens de actualización opacos.
 
 ## Endpoints de consentimiento
 
-### Informacion de consentimiento
+### Información de consentimiento
 
 ```
 GET /consent/info?client_id=my-app&scope=openid%20profile%20email
 ```
 
-Devuelve los detalles del cliente y los scopes solicitados para la pagina de consentimiento (`scope` es `openid` de forma predeterminada cuando se omite):
+Devuelve los detalles del cliente y los scopes solicitados para la página de consentimiento (`scope` es `openid` de forma predeterminada cuando se omite):
 
 ```json
 {
@@ -469,7 +469,7 @@ Content-Type: application/json
 }
 ```
 
-Registra la decision de consentimiento del usuario (requiere autenticacion por cookie) y devuelve `{ "redirect": "..." }` para que la SPA navegue a el. Al permitir, los scopes concedidos se persisten (filtrados a los `AllowedScopes` del cliente: un cuerpo manipulado no puede registrar scopes que el cliente no podia solicitar) y la redireccion apunta de vuelta al flujo de autorizacion. Con `"decision": "deny"`, la redireccion apunta al `redirect_uri` del cliente con un error `access_denied`.
+Registra la decisión de consentimiento del usuario (requiere autenticación por cookie) y devuelve `{ "redirect": "..." }` para que la SPA navegue a él. Al permitir, los scopes concedidos se persisten (filtrados a los `AllowedScopes` del cliente: un cuerpo manipulado no puede registrar scopes que el cliente no podía solicitar) y la redirección apunta de vuelta al flujo de autorización. Con `"decision": "deny"`, la redirección apunta al `redirect_uri` del cliente con un error `access_denied`.
 
 ### Listar concesiones
 
@@ -490,24 +490,24 @@ Devuelve todas las aplicaciones que el usuario ha autorizado:
 ]
 ```
 
-### Revocar concesion
+### Revocar concesión
 
 ```
 DELETE /consent/grants/{clientId}
 ```
 
-Revoca el consentimiento para una aplicacion especifica. Se le pedira al usuario que vuelva a consentir en su proximo inicio de sesion.
+Revoca el consentimiento para una aplicación específica. Se le pedirá al usuario que vuelva a consentir en su próximo inicio de sesión.
 
-## Construir una interfaz de inicio de sesion personalizada
+## Construir una interfaz de inicio de sesión personalizada
 
-La SPA predeterminada (`login-app/`) es una implementacion de esta API. Para construir la suya:
+La SPA predeterminada (`login-app/`) es una implementación de esta API. Para construir la suya:
 
 1. Sirva su interfaz en las rutas `/login`, `/forgot-password`, `/reset-password`
-2. El endpoint de autorizacion redirige a los usuarios no autenticados a `/login?returnUrl={encoded-authorize-url}`
-3. Despues de un inicio de sesion exitoso (cookie establecida), redirija al usuario al `returnUrl`
-4. Los enlaces de restablecimiento de contrasena usan `{Issuer}/login/reset-password?p={token}` (la SPA de inicio de sesion se monta bajo `/login`)
+2. El endpoint de autorización redirige a los usuarios no autenticados a `/login?returnUrl={encoded-authorize-url}`
+3. Después de un inicio de sesión exitoso (cookie establecida), redirija al usuario al `returnUrl`
+4. Los enlaces de restablecimiento de contraseña usan `{Issuer}/login/reset-password?p={token}` (la SPA de inicio de sesión se monta bajo `/login`)
 
 Su interfaz debe servirse desde el **mismo origen** que la API porque:
-- La autenticacion por cookie usa `SameSite=Lax` + `HttpOnly`
-- El endpoint de autorizacion redirige a `/login` (relativo)
+- La autenticación por cookie usa `SameSite=Lax` + `HttpOnly`
+- El endpoint de autorización redirige a `/login` (relativo)
 - Los enlaces de restablecimiento usan `{Issuer}/login/reset-password`

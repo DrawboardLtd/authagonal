@@ -1,89 +1,89 @@
 ---
 layout: default
-title: Configuracion
+title: Configuración
 locale: es
 ---
 
-# Configuracion
+# Configuración
 
-Authagonal se configura mediante `appsettings.json` o variables de entorno. Las variables de entorno usan `__` como separador de seccion (por ejemplo, `Storage__ConnectionString`).
+Authagonal se configura mediante `appsettings.json` o variables de entorno. Las variables de entorno usan `__` como separador de sección (por ejemplo, `Storage__ConnectionString`).
 
 ## Ajustes requeridos
 
-El almacenamiento puede configurarse de dos maneras: proporcione **o bien** `Storage:ConnectionString` **o bien** `Storage:TableServiceUri` (la ruta de identidad administrada, preferida en produccion).
+El almacenamiento puede configurarse de dos maneras: proporcione **o bien** `Storage:ConnectionString` **o bien** `Storage:TableServiceUri` (la ruta de identidad administrada, preferida en producción).
 
-| Ajuste | Variable de entorno | Descripcion |
+| Ajuste | Variable de entorno | Descripción |
 |---|---|---|
-| `Storage:ConnectionString` | `Storage__ConnectionString` | Cadena de conexion de Azure Table Storage con una clave de cuenta. Adecuada para desarrollo / Azurite. |
-| `Storage:TableServiceUri` | `Storage__TableServiceUri` | Endpoint de Table Storage con identidad administrada, por ejemplo `https://{account}.table.core.windows.net/`. Alternativa a `Storage:ConnectionString` y **preferida en produccion**: se autentica mediante `DefaultAzureCredential`, por lo que ninguna clave de acceso queda nunca en un secreto. El host debe otorgar a la identidad de la carga de trabajo el rol **Storage Table Data Contributor**. |
-| `Issuer` | `Issuer` | La URL publica base de este servidor (por ejemplo, `https://auth.example.com`) |
+| `Storage:ConnectionString` | `Storage__ConnectionString` | Cadena de conexión de Azure Table Storage con una clave de cuenta. Adecuada para desarrollo / Azurite. |
+| `Storage:TableServiceUri` | `Storage__TableServiceUri` | Endpoint de Table Storage con identidad administrada, por ejemplo `https://{account}.table.core.windows.net/`. Alternativa a `Storage:ConnectionString` y **preferida en producción**: se autentica mediante `DefaultAzureCredential`, por lo que ninguna clave de acceso queda nunca en un secreto. El host debe otorgar a la identidad de la carga de trabajo el rol **Storage Table Data Contributor**. |
+| `Issuer` | `Issuer` | La URL pública base de este servidor (por ejemplo, `https://auth.example.com`) |
 
 ## Almacenamiento
 
-| Ajuste | Variable de entorno | Predeterminado | Descripcion |
+| Ajuste | Variable de entorno | Predeterminado | Descripción |
 |---|---|---|---|
-| `Storage:ConnectionString` | `Storage__ConnectionString` | *(ninguno)* | Cadena de conexion con clave de cuenta (ver Ajustes requeridos). |
-| `Storage:TableServiceUri` | `Storage__TableServiceUri` | *(ninguno)* | URI de Table Storage con identidad administrada (ver Ajustes requeridos). Tiene prioridad sobre `Storage:ConnectionString` cuando ambos estan establecidos. |
-| `Storage:NameIndexesEnabled` | `Storage__NameIndexesEnabled` | `true` | Si se deben mantener las tablas de indice de busqueda por prefijo `UserFirstNames` / `UserLastNames` que respaldan la busqueda de nombres por prefijo del administrador. Establezca `false` en hosts que no exponen la busqueda de nombres del administrador para omitir esas escrituras. **Nota sobre escalabilidad:** estos indices usan una unica particion caliente y limitan el rendimiento a aproximadamente 2.000 operaciones/seg a escala; deshabilitelos si no necesita la busqueda por nombre. |
-| `LoginAppUrl` | `LoginAppUrl` | `/login` | URL base a la que el endpoint `/connect/authorize` redirige para la SPA de inicio de sesion (pantallas de inicio de sesion, step-up y consentimiento). Establezca esto cuando la interfaz de inicio de sesion se sirva desde un origen distinto al del servidor; el valor predeterminado es la ruta relativa `/login` servida por la SPA integrada. |
+| `Storage:ConnectionString` | `Storage__ConnectionString` | *(ninguno)* | Cadena de conexión con clave de cuenta (ver Ajustes requeridos). |
+| `Storage:TableServiceUri` | `Storage__TableServiceUri` | *(ninguno)* | URI de Table Storage con identidad administrada (ver Ajustes requeridos). Tiene prioridad sobre `Storage:ConnectionString` cuando ambos están establecidos. |
+| `Storage:NameIndexesEnabled` | `Storage__NameIndexesEnabled` | `true` | Si se deben mantener las tablas de índice de búsqueda por prefijo `UserFirstNames` / `UserLastNames` que respaldan la búsqueda de nombres por prefijo del administrador. Establezca `false` en hosts que no exponen la búsqueda de nombres del administrador para omitir esas escrituras. **Nota sobre escalabilidad:** estos índices usan una única partición caliente y limitan el rendimiento a aproximadamente 2.000 operaciones/seg a escala; deshabilítelos si no necesita la búsqueda por nombre. |
+| `LoginAppUrl` | `LoginAppUrl` | `/login` | URL base a la que el endpoint `/connect/authorize` redirige para la SPA de inicio de sesión (pantallas de inicio de sesión, step-up y consentimiento). Establezca esto cuando la interfaz de inicio de sesión se sirva desde un origen distinto al del servidor; el valor predeterminado es la ruta relativa `/login` servida por la SPA integrada. |
 
-## Autenticacion
+## Autenticación
 
-| Ajuste | Predeterminado | Descripcion |
+| Ajuste | Predeterminado | Descripción |
 |---|---|---|
-| `Authentication:CookieLifetimeHours` | `48` | Duracion de la sesion por cookie (deslizante) |
-| `Authentication:AlwaysSecureCookie` | `false` | Fuerza incondicionalmente el atributo `Secure` del cookie de sesion. El valor predeterminado (`SameAsRequest`) ya produce un cookie Secure detras de un proxy que termina TLS y reenvia `X-Forwarded-Proto: https`. |
-| `Auth:MaxFailedAttempts` | `5` | Intentos de inicio de sesion fallidos antes del bloqueo de cuenta |
-| `Auth:LockoutDurationMinutes` | `10` | Duracion del bloqueo de cuenta despues del maximo de intentos fallidos |
-| `Auth:MaxRegistrationsPerIp` | `5` | Registros maximos por direccion IP dentro de la ventana |
-| `Auth:RegistrationWindowMinutes` | `60` | Ventana de limitacion de velocidad de registro |
-| `Auth:MaxPasswordResetsPerEmail` | `3` | Maximo de correos de restablecimiento de contrasena por direccion de destino dentro de la ventana (basado en el correo, no en la IP del llamador, para que una direccion no pueda ser bombardeada con correos) |
-| `Auth:PasswordResetWindowMinutes` | `60` | Ventana de limitacion de velocidad de restablecimiento de contrasena |
-| `Auth:AutoConfirmEmailDomains` | *(vacio)* | Dominios de correo (arreglo de cadenas) cuyos registros de autoservicio se confirman automaticamente: omiten el correo de verificacion. Vacio (el valor predeterminado) significa que cada registro debe verificarse. Pensado solo para desarrollo/pruebas; nunca incluya un dominio que pueda recibir correo real. |
-| `Auth:EmailVerificationExpiryHours` | `24` | Tiempo de vida del enlace de verificacion de correo |
-| `Auth:PasswordResetExpiryMinutes` | `60` | Tiempo de vida del enlace de restablecimiento de contrasena |
-| `Auth:MfaChallengeExpiryMinutes` | `5` | Tiempo de vida del token de verificacion MFA |
-| `Auth:MfaSetupTokenExpiryMinutes` | `15` | Tiempo de vida del token de configuracion MFA (para inscripcion forzada) |
-| `Auth:Pbkdf2Iterations` | `100000` | Numero de iteraciones PBKDF2 para el hashing de contrasenas |
-| `Auth:RefreshTokenReuseGraceSeconds` | `0` | Ventana de gracia opcional (en segundos) para la reutilizacion concurrente del token de actualizacion. `0` (predeterminado) mantiene la postura estricta: cualquier reutilizacion de un token de actualizacion ya consumido revoca todos los tokens de ese usuario+cliente. Establezca `> 0` para tratar una reutilizacion dentro de la ventana como un reintento idempotente (vuelve a entregar los tokens sucesores), util para clientes moviles con cortes de conectividad. |
-| `Auth:DynamicClientRegistrationEnabled` | `false` | Habilita el endpoint de registro dinamico de clientes `POST /connect/register` (RFC 7591). Deshabilitado por defecto porque el registro abierto puede ser objeto de abuso en despliegues multi-tenant. Ver [Registro dinamico de clientes](client-registration). |
-| `Auth:SigningKeyLifetimeDays` | `90` | Tiempo de vida de la clave de firma RSA antes de la rotacion automatica |
+| `Authentication:CookieLifetimeHours` | `48` | Duración de la sesión por cookie (deslizante) |
+| `Authentication:AlwaysSecureCookie` | `false` | Fuerza incondicionalmente el atributo `Secure` del cookie de sesión. El valor predeterminado (`SameAsRequest`) ya produce un cookie Secure detrás de un proxy que termina TLS y reenvía `X-Forwarded-Proto: https`. |
+| `Auth:MaxFailedAttempts` | `5` | Intentos de inicio de sesión fallidos antes del bloqueo de cuenta |
+| `Auth:LockoutDurationMinutes` | `10` | Duración del bloqueo de cuenta después del máximo de intentos fallidos |
+| `Auth:MaxRegistrationsPerIp` | `5` | Registros máximos por dirección IP dentro de la ventana |
+| `Auth:RegistrationWindowMinutes` | `60` | Ventana de limitación de velocidad de registro |
+| `Auth:MaxPasswordResetsPerEmail` | `3` | Máximo de correos de restablecimiento de contraseña por dirección de destino dentro de la ventana (basado en el correo, no en la IP del llamador, para que una dirección no pueda ser bombardeada con correos) |
+| `Auth:PasswordResetWindowMinutes` | `60` | Ventana de limitación de velocidad de restablecimiento de contraseña |
+| `Auth:AutoConfirmEmailDomains` | *(vacío)* | Dominios de correo (arreglo de cadenas) cuyos registros de autoservicio se confirman automáticamente: omiten el correo de verificación. Vacío (el valor predeterminado) significa que cada registro debe verificarse. Pensado solo para desarrollo/pruebas; nunca incluya un dominio que pueda recibir correo real. |
+| `Auth:EmailVerificationExpiryHours` | `24` | Tiempo de vida del enlace de verificación de correo |
+| `Auth:PasswordResetExpiryMinutes` | `60` | Tiempo de vida del enlace de restablecimiento de contraseña |
+| `Auth:MfaChallengeExpiryMinutes` | `5` | Tiempo de vida del token de verificación MFA |
+| `Auth:MfaSetupTokenExpiryMinutes` | `15` | Tiempo de vida del token de configuración MFA (para inscripción forzada) |
+| `Auth:Pbkdf2Iterations` | `100000` | Número de iteraciones PBKDF2 para el hashing de contraseñas |
+| `Auth:RefreshTokenReuseGraceSeconds` | `0` | Ventana de gracia opcional (en segundos) para la reutilización concurrente del token de actualización. `0` (predeterminado) mantiene la postura estricta: cualquier reutilización de un token de actualización ya consumido revoca todos los tokens de ese usuario+cliente. Establezca `> 0` para tratar una reutilización dentro de la ventana como un reintento idempotente (vuelve a entregar los tokens sucesores), útil para clientes móviles con cortes de conectividad. |
+| `Auth:DynamicClientRegistrationEnabled` | `false` | Habilita el endpoint de registro dinámico de clientes `POST /connect/register` (RFC 7591). Deshabilitado por defecto porque el registro abierto puede ser objeto de abuso en despliegues multi-tenant. Ver [Registro dinámico de clientes](client-registration). |
+| `Auth:SigningKeyLifetimeDays` | `90` | Tiempo de vida de la clave de firma RSA antes de la rotación automática |
 | `Auth:SigningKeyCacheRefreshMinutes` | `60` | Frecuencia de recarga de claves de firma desde el almacenamiento |
-| `Auth:KeyRotationEnabled` | `false` | Habilita la rotacion automatica de claves de firma |
-| `Auth:KeyRotationCheckIntervalMinutes` | `360` | Frecuencia con la que se comprueba si la clave activa necesita rotacion |
-| `Auth:KeyRotationLeadTimeDays` | `14` | Rotar cuando la clave activa expire dentro de esta cantidad de dias |
+| `Auth:KeyRotationEnabled` | `false` | Habilita la rotación automática de claves de firma |
+| `Auth:KeyRotationCheckIntervalMinutes` | `360` | Frecuencia con la que se comprueba si la clave activa necesita rotación |
+| `Auth:KeyRotationLeadTimeDays` | `14` | Rotar cuando la clave activa expire dentro de esta cantidad de días |
 | `Auth:SecurityStampRevalidationMinutes` | `30` | Intervalo entre verificaciones del sello de seguridad del cookie |
 
 ## Data Protection
 
-Las claves de Data Protection de ASP.NET Core (que cifran el cookie de sesion) deben compartirse entre instancias: ver [Escalabilidad](scaling#cookie-encryption-data-protection). Opciones de persistencia, en orden de precedencia:
+Las claves de Data Protection de ASP.NET Core (que cifran el cookie de sesión) deben compartirse entre instancias: ver [Escalabilidad](scaling#cookie-encryption-data-protection). Opciones de persistencia, en orden de precedencia:
 
-| Ajuste | Predeterminado | Descripcion |
+| Ajuste | Predeterminado | Descripción |
 |---|---|---|
-| `DataProtection:BlobUri` | *(ninguno)* | URI de blob de Azure explicito para el conjunto de claves (por ejemplo, `https://{account}.blob.core.windows.net/dataprotection/keys.xml`). Se autentica mediante `DefaultAzureCredential`: la ruta preferida en produccion junto con `Storage:TableServiceUri`. |
-| *(alternativa)* | — | Cuando `DataProtection:BlobUri` no esta establecido y `Storage:ConnectionString` apunta a una cuenta de almacenamiento real (no Azurite), las claves se persisten automaticamente en un contenedor `dataprotection` de esa cuenta. Con Azurite, las claves recurren al almacen predeterminado basado en archivos. |
+| `DataProtection:BlobUri` | *(ninguno)* | URI de blob de Azure explícito para el conjunto de claves (por ejemplo, `https://{account}.blob.core.windows.net/dataprotection/keys.xml`). Se autentica mediante `DefaultAzureCredential`: la ruta preferida en producción junto con `Storage:TableServiceUri`. |
+| *(alternativa)* | — | Cuando `DataProtection:BlobUri` no está establecido y `Storage:ConnectionString` apunta a una cuenta de almacenamiento real (no Azurite), las claves se persisten automáticamente en un contenedor `dataprotection` de esa cuenta. Con Azurite, las claves recurren al almacén predeterminado basado en archivos. |
 
-En el backend de AWS, pase un cliente S3 + bucket a `AddAuthagonalAwsStorage` para persistir el conjunto de claves en S3: ver [Instalacion → backend de AWS](installation#aws-backend).
+En el backend de AWS, pase un cliente S3 + bucket a `AddAuthagonalAwsStorage` para persistir el conjunto de claves en S3: ver [Instalación → backend de AWS](installation#aws-backend).
 
 ## Cache y tiempos de espera
 
-| Ajuste | Predeterminado | Descripcion |
+| Ajuste | Predeterminado | Descripción |
 |---|---|---|
-| `Cache:CorsCacheMinutes` | `60` | Tiempo de cache de los origenes CORS permitidos |
-| `Cache:OidcDiscoveryCacheMinutes` | `60` | Duracion de cache del documento de descubrimiento OIDC |
-| `Cache:SamlMetadataCacheMinutes` | `60` | Duracion de cache de los metadatos SAML del IdP |
-| `Cache:OidcStateLifetimeMinutes` | `10` | Tiempo de vida del parametro state de autorizacion OIDC |
-| `Cache:SamlReplayLifetimeMinutes` | `10` | Tiempo de vida del ID AuthnRequest SAML (prevencion de replay) |
-| `Cache:HealthCheckTimeoutSeconds` | `5` | Tiempo de espera de la verificacion de salud de Table Storage |
+| `Cache:CorsCacheMinutes` | `60` | Tiempo de cache de los orígenes CORS permitidos |
+| `Cache:OidcDiscoveryCacheMinutes` | `60` | Duración de cache del documento de descubrimiento OIDC |
+| `Cache:SamlMetadataCacheMinutes` | `60` | Duración de cache de los metadatos SAML del IdP |
+| `Cache:OidcStateLifetimeMinutes` | `10` | Tiempo de vida del parámetro state de autorización OIDC |
+| `Cache:SamlReplayLifetimeMinutes` | `10` | Tiempo de vida del ID AuthnRequest SAML (prevención de replay) |
+| `Cache:HealthCheckTimeoutSeconds` | `5` | Tiempo de espera de la verificación de salud de Table Storage |
 
 ## Servicios en segundo plano
 
-| Ajuste | Predeterminado | Descripcion |
+| Ajuste | Predeterminado | Descripción |
 |---|---|---|
 | `BackgroundServices:TokenCleanupDelayMinutes` | `5` | Retraso inicial antes de la primera limpieza de tokens expirados |
 | `BackgroundServices:TokenCleanupIntervalMinutes` | `60` | Intervalo de limpieza de tokens expirados |
-| `BackgroundServices:GrantReconciliationDelayMinutes` | `10` | Retraso inicial antes de la primera reconciliacion de autorizaciones |
-| `BackgroundServices:GrantReconciliationIntervalMinutes` | `30` | Intervalo de reconciliacion de autorizaciones |
+| `BackgroundServices:GrantReconciliationDelayMinutes` | `10` | Retraso inicial antes de la primera reconciliación de autorizaciones |
+| `BackgroundServices:GrantReconciliationIntervalMinutes` | `30` | Intervalo de reconciliación de autorizaciones |
 
 ## Clientes
 
@@ -120,25 +120,25 @@ Los clientes se definen en el arreglo `Clients` y se inyectan al inicio. Cada cl
 }
 ```
 
-### Tipos de concesion
+### Tipos de concesión
 
-| Tipo de concesion | Caso de uso |
+| Tipo de concesión | Caso de uso |
 |---|---|
-| `authorization_code` | Inicio de sesion interactivo del usuario (aplicaciones web, SPA, movil) |
-| `client_credentials` | Comunicacion servicio a servicio |
-| `refresh_token` | Renovacion de token (requiere `AllowOfflineAccess: true`) |
-| `urn:ietf:params:oauth:grant-type:device_code` | Concesion de autorizacion de dispositivo (RFC 8628) para dispositivos con entrada limitada |
+| `authorization_code` | Inicio de sesión interactivo del usuario (aplicaciones web, SPA, móvil) |
+| `client_credentials` | Comunicación servicio a servicio |
+| `refresh_token` | Renovación de token (requiere `AllowOfflineAccess: true`) |
+| `urn:ietf:params:oauth:grant-type:device_code` | Concesión de autorización de dispositivo (RFC 8628) para dispositivos con entrada limitada |
 
-### Uso del token de actualizacion
+### Uso del token de actualización
 
 | Valor | Comportamiento |
 |---|---|
-| `OneTime` (predeterminado) | Cada actualizacion emite un nuevo token de actualizacion e invalida el anterior. De forma predeterminada (`Auth:RefreshTokenReuseGraceSeconds = 0`) cualquier reutilizacion de un token ya consumido revoca de inmediato todos los tokens de ese usuario+cliente; **no** hay ventana de gracia activada por defecto. Establezca `Auth:RefreshTokenReuseGraceSeconds` en un valor positivo para optar por una ventana de tolerancia a reintentos. |
-| `ReUse` | El mismo token de actualizacion se reutiliza hasta su expiracion. |
+| `OneTime` (predeterminado) | Cada actualización emite un nuevo token de actualización e invalida el anterior. De forma predeterminada (`Auth:RefreshTokenReuseGraceSeconds = 0`) cualquier reutilización de un token ya consumido revoca de inmediato todos los tokens de ese usuario+cliente; **no** hay ventana de gracia activada por defecto. Establezca `Auth:RefreshTokenReuseGraceSeconds` en un valor positivo para optar por una ventana de tolerancia a reintentos. |
+| `ReUse` | El mismo token de actualización se reutiliza hasta su expiración. |
 
 ### Aplicaciones de aprovisionamiento
 
-El arreglo `ProvisioningApps` referencia los identificadores de aplicaciones definidos en la seccion de configuracion `ProvisioningApps`. Cuando un usuario se autoriza a traves de este cliente, se aprovisiona en esas aplicaciones mediante TCC. Ver [Aprovisionamiento](provisioning) para mas detalles.
+El arreglo `ProvisioningApps` referencia los identificadores de aplicaciones definidos en la sección de configuración `ProvisioningApps`. Cuando un usuario se autoriza a través de este cliente, se aprovisiona en esas aplicaciones mediante TCC. Ver [Aprovisionamiento](provisioning) para más detalles.
 
 ## Aplicaciones de aprovisionamiento
 
@@ -159,17 +159,17 @@ Defina las aplicaciones posteriores en las que los usuarios deben ser aprovision
 }
 ```
 
-Ver [Aprovisionamiento](provisioning) para la especificacion completa del protocolo TCC.
+Ver [Aprovisionamiento](provisioning) para la especificación completa del protocolo TCC.
 
-## Politica de MFA
+## Política de MFA
 
-La autenticacion multifactor se aplica por cliente mediante la propiedad `MfaPolicy`:
+La autenticación multifactor se aplica por cliente mediante la propiedad `MfaPolicy`:
 
 | Valor | Comportamiento |
 |---|---|
-| `Disabled` (predeterminado) | Sin desafio MFA, incluso si el usuario tiene MFA inscrito |
-| `Enabled` | Desafia a los usuarios que tienen MFA inscrito; no fuerza la inscripcion |
-| `Required` | Desafia a los usuarios inscritos; fuerza la inscripcion para los usuarios sin MFA |
+| `Disabled` (predeterminado) | Sin desafío MFA, incluso si el usuario tiene MFA inscrito |
+| `Enabled` | Desafía a los usuarios que tienen MFA inscrito; no fuerza la inscripción |
+| `Required` | Desafía a los usuarios inscritos; fuerza la inscripción para los usuarios sin MFA |
 
 ```json
 {
@@ -182,20 +182,20 @@ La autenticacion multifactor se aplica por cliente mediante la propiedad `MfaPol
 }
 ```
 
-Cuando `MfaPolicy` es `Required` y el usuario no ha inscrito MFA, el inicio de sesion devuelve `{ mfaSetupRequired: true, setupToken: "..." }`. El token de configuracion autentica al usuario en los endpoints de configuracion de MFA (mediante el encabezado `X-MFA-Setup-Token`) para que pueda inscribirse antes de obtener una sesion por cookie.
+Cuando `MfaPolicy` es `Required` y el usuario no ha inscrito MFA, el inicio de sesión devuelve `{ mfaSetupRequired: true, setupToken: "..." }`. El token de configuración autentica al usuario en los endpoints de configuración de MFA (mediante el encabezado `X-MFA-Setup-Token`) para que pueda inscribirse antes de obtener una sesión por cookie.
 
-Los inicios de sesion federados (SAML/OIDC) tambien respetan la politica de MFA: un usuario con MFA inscrito se enruta a traves del desafio MFA despues de que el IdP externo lo autentica, y `Required` fuerza la inscripcion para los usuarios federados sin MFA.
+Los inicios de sesión federados (SAML/OIDC) también respetan la política de MFA: un usuario con MFA inscrito se enruta a través del desafío MFA después de que el IdP externo lo autentica, y `Required` fuerza la inscripción para los usuarios federados sin MFA.
 
-### Anulacion mediante IAuthHook
+### Anulación mediante IAuthHook
 
-El metodo `IAuthHook.ResolveMfaPolicyAsync` puede anular la politica del cliente por usuario:
+El método `IAuthHook.ResolveMfaPolicyAsync` puede anular la política del cliente por usuario:
 
 ```csharp
 public Task<MfaPolicy> ResolveMfaPolicyAsync(
     string userId, string email, MfaPolicy clientPolicy,
     string clientId, CancellationToken ct)
 {
-    // Forzar MFA para usuarios administradores independientemente de la configuracion del cliente
+    // Force MFA for admin users regardless of client setting
     if (email.EndsWith("@admin.example.com"))
         return Task.FromResult(MfaPolicy.Required);
 
@@ -203,9 +203,9 @@ public Task<MfaPolicy> ResolveMfaPolicyAsync(
 }
 ```
 
-## Politica de contrasenas
+## Política de contraseñas
 
-Personalice los requisitos de robustez de contrasenas:
+Personalice los requisitos de robustez de contraseñas:
 
 ```json
 {
@@ -220,20 +220,20 @@ Personalice los requisitos de robustez de contrasenas:
 }
 ```
 
-| Propiedad | Predeterminado | Descripcion |
+| Propiedad | Predeterminado | Descripción |
 |---|---|---|
-| `MinLength` | `8` | Longitud minima de la contrasena |
-| `MinUniqueChars` | `2` | Numero minimo de caracteres distintos |
-| `RequireUppercase` | `true` | Requerir al menos una letra mayuscula |
-| `RequireLowercase` | `true` | Requerir al menos una letra minuscula |
-| `RequireDigit` | `true` | Requerir al menos un digito |
-| `RequireSpecialChar` | `true` | Requerir al menos un caracter no alfanumerico |
+| `MinLength` | `8` | Longitud mínima de la contraseña |
+| `MinUniqueChars` | `2` | Número mínimo de caracteres distintos |
+| `RequireUppercase` | `true` | Requerir al menos una letra mayúscula |
+| `RequireLowercase` | `true` | Requerir al menos una letra minúscula |
+| `RequireDigit` | `true` | Requerir al menos un dígito |
+| `RequireSpecialChar` | `true` | Requerir al menos un carácter no alfanumérico |
 
-La politica se aplica durante el restablecimiento de contrasena y el registro de usuarios por el administrador. La interfaz de inicio de sesion obtiene la politica activa desde `GET /api/auth/password-policy` para mostrar los requisitos dinamicamente.
+La política se aplica durante el restablecimiento de contraseña y el registro de usuarios por el administrador. La interfaz de inicio de sesión obtiene la política activa desde `GET /api/auth/password-policy` para mostrar los requisitos dinámicamente.
 
 ## Proveedores SAML
 
-Defina los proveedores de identidad SAML en la configuracion. Estos se inyectan al inicio:
+Defina los proveedores de identidad SAML en la configuración. Estos se inyectan al inicio:
 
 ```json
 {
@@ -249,17 +249,17 @@ Defina los proveedores de identidad SAML en la configuracion. Estos se inyectan 
 }
 ```
 
-| Propiedad | Requerido | Descripcion |
+| Propiedad | Requerido | Descripción |
 |---|---|---|
-| `ConnectionId` | Si | Identificador estable (usado en URLs como `/saml/{connectionId}/login`) |
+| `ConnectionId` | Sí | Identificador estable (usado en URLs como `/saml/{connectionId}/login`) |
 | `ConnectionName` | No | Nombre para mostrar (predeterminado: ConnectionId) |
-| `EntityId` | Si | Identificador de entidad del SP **de este servidor**: el identificador que usted registra en el IdP, no el identificador de entidad propio del IdP |
-| `MetadataLocation` | Si | URL al XML de metadatos SAML del IdP |
-| `AllowedDomains` | No | Dominios de correo electronico enrutados a este proveedor via SSO |
+| `EntityId` | Sí | Identificador de entidad del SP **de este servidor**: el identificador que usted registra en el IdP, no el identificador de entidad propio del IdP |
+| `MetadataLocation` | Sí | URL al XML de metadatos SAML del IdP |
+| `AllowedDomains` | No | Dominios de correo electrónico enrutados a este proveedor vía SSO |
 
 ## Proveedores OIDC
 
-Defina los proveedores de identidad OIDC en la configuracion. Estos se inyectan al inicio:
+Defina los proveedores de identidad OIDC en la configuración. Estos se inyectan al inicio:
 
 ```json
 {
@@ -277,38 +277,38 @@ Defina los proveedores de identidad OIDC en la configuracion. Estos se inyectan 
 }
 ```
 
-| Propiedad | Requerido | Descripcion |
+| Propiedad | Requerido | Descripción |
 |---|---|---|
-| `ConnectionId` | Si | Identificador estable (usado en URLs como `/oidc/{connectionId}/login`) |
+| `ConnectionId` | Sí | Identificador estable (usado en URLs como `/oidc/{connectionId}/login`) |
 | `ConnectionName` | No | Nombre para mostrar (predeterminado: ConnectionId) |
-| `MetadataLocation` | Si | URL al documento de descubrimiento OpenID Connect del IdP |
-| `ClientId` | Si | ID de cliente OAuth2 registrado con el IdP |
-| `ClientSecret` | Si | Secreto de cliente OAuth2 (protegido via `ISecretProvider` al inicio) |
-| `RedirectUrl` | Si | URI de redireccion OAuth2 registrada con el IdP |
-| `AllowedDomains` | No | Dominios de correo electronico enrutados a este proveedor via SSO |
+| `MetadataLocation` | Sí | URL al documento de descubrimiento OpenID Connect del IdP |
+| `ClientId` | Sí | ID de cliente OAuth2 registrado con el IdP |
+| `ClientSecret` | Sí | Secreto de cliente OAuth2 (protegido vía `ISecretProvider` al inicio) |
+| `RedirectUrl` | Sí | URI de redirección OAuth2 registrada con el IdP |
+| `AllowedDomains` | No | Dominios de correo electrónico enrutados a este proveedor vía SSO |
 
-> **Nota:** Los proveedores tambien pueden gestionarse en tiempo de ejecucion mediante la [API de administracion](admin-api). Los proveedores configurados se actualizan (upsert) en cada inicio, por lo que los cambios de configuracion surten efecto al reiniciar.
+> **Nota:** Los proveedores también pueden gestionarse en tiempo de ejecución mediante la [API de administración](admin-api). Los proveedores configurados se actualizan (upsert) en cada inicio, por lo que los cambios de configuración surten efecto al reiniciar.
 
 ## Proveedor de secretos
 
 Los secretos de clientes OIDC upstream y las semillas TOTP / MFA pueden almacenarse en Azure Key Vault en lugar de en texto plano:
 
-| Ajuste | Descripcion |
+| Ajuste | Descripción |
 |---|---|
 | `SecretProvider:VaultUri` | URI del Key Vault (por ejemplo, `https://my-vault.vault.azure.net/`). Si no se establece, se usa el proveedor de **texto plano** y los secretos se almacenan tal cual en Table Storage. |
 
-Cuando esta configurado, los valores de secretos que parecen referencias de Key Vault se resuelven en tiempo de ejecucion. Usa `DefaultAzureCredential` para la autenticacion.
+Cuando está configurado, los valores de secretos que parecen referencias de Key Vault se resuelven en tiempo de ejecución. Usa `DefaultAzureCredential` para la autenticación.
 
-> ⚠️ **Produccion: establezca `SecretProvider:VaultUri`.** El proveedor de secretos predeterminado es **texto plano**. Cuando `SecretProvider:VaultUri` no esta establecido, los secretos de clientes OIDC upstream y las semillas TOTP / MFA se escriben en Azure Table Storage en texto claro, y por lo tanto aparecen en texto claro en cualquier [copia de seguridad](backup-restore). Para cualquier despliegue de produccion, configure `SecretProvider:VaultUri` para que estos secretos se almacenen en Key Vault.
+> ⚠️ **Producción: establezca `SecretProvider:VaultUri`.** El proveedor de secretos predeterminado es **texto plano**. Cuando `SecretProvider:VaultUri` no está establecido, los secretos de clientes OIDC upstream y las semillas TOTP / MFA se escriben en Azure Table Storage en texto claro, y por lo tanto aparecen en texto claro en cualquier [copia de seguridad](backup-restore). Para cualquier despliegue de producción, configure `SecretProvider:VaultUri` para que estos secretos se almacenen en Key Vault.
 
-## API de administracion
+## API de administración
 
-| Ajuste | Predeterminado | Descripcion |
+| Ajuste | Predeterminado | Descripción |
 |---|---|---|
-| `AdminApi:Enabled` | `true` | **Habilitada por defecto.** Establezca en `false` para deshabilitar todos los endpoints de administracion (no se registraran). |
-| `AdminApi:Scope` | `authagonal-admin` | Scope JWT requerido para acceder a los endpoints de administracion. Cambielo para que coincida con el nombre de su scope existente (por ejemplo, `projects-identity-admin` para migraciones de IdentityServer). |
+| `AdminApi:Enabled` | `true` | **Habilitada por defecto.** Establezca en `false` para deshabilitar todos los endpoints de administración (no se registrarán). |
+| `AdminApi:Scope` | `authagonal-admin` | Scope JWT requerido para acceder a los endpoints de administración. Cámbielo para que coincida con el nombre de su scope existente (por ejemplo, `projects-identity-admin` para migraciones de IdentityServer). |
 
-> ⚠️ **La API de administracion esta habilitada por defecto y es altamente privilegiada.** El scope de administracion otorga gestion completa y suplantacion de usuarios: cualquiera que posea un token con `AdminApi:Scope` puede emitir tokens para cualquier usuario, gestionar clientes y leer/escribir toda la configuracion. Restrinja por red los endpoints de administracion (las rutas de administracion `/api/v1/*`) y controle estrictamente a quien se le puede emitir el scope de administracion. Como medida de defensa en profundidad, el scope esta *reservado*: nunca puede otorgarse a un cliente OAuth (ver [API de administracion](admin-api)) ni puede emitirse a traves del endpoint de suplantacion. Establezca `AdminApi:Enabled = false` por completo si la API de administracion no se usa.
+> ⚠️ **La API de administración está habilitada por defecto y es altamente privilegiada.** El scope de administración otorga gestión completa y suplantación de usuarios: cualquiera que posea un token con `AdminApi:Scope` puede emitir tokens para cualquier usuario, gestionar clientes y leer/escribir toda la configuración. Restrinja por red los endpoints de administración (las rutas de administración `/api/v1/*`) y controle estrictamente a quién se le puede emitir el scope de administración. Como medida de defensa en profundidad, el scope está *reservado*: nunca puede otorgarse a un cliente OAuth (ver [API de administración](admin-api)) ni puede emitirse a través del endpoint de suplantación. Establezca `AdminApi:Enabled = false` por completo si la API de administración no se usa.
 
 ## Consentimiento
 
@@ -316,14 +316,14 @@ El consentimiento por cliente puede habilitarse con la propiedad `RequireConsent
 
 | Valor | Comportamiento |
 |---|---|
-| `false` (predeterminado) | La autorizacion procede de inmediato despues de la autenticacion |
-| `true` | Se muestra al usuario una pantalla de consentimiento con los scopes solicitados. El consentimiento se persiste durante 5 anos y solo se vuelve a solicitar cuando se solicitan nuevos scopes. |
+| `false` (predeterminado) | La autorización procede de inmediato después de la autenticación |
+| `true` | Se muestra al usuario una pantalla de consentimiento con los scopes solicitados. El consentimiento se persiste durante 5 años y solo se vuelve a solicitar cuando se solicitan nuevos scopes. |
 
 Los usuarios pueden ver y revocar sus otorgamientos de consentimiento en `GET /consent/grants` y `DELETE /consent/grants/{clientId}`.
 
-## Cierre de sesion por canal trasero (Back-Channel Logout)
+## Cierre de sesión por canal trasero (Back-Channel Logout)
 
-Registre un `BackChannelLogoutUri` en un cliente para recibir notificaciones de OIDC Back-Channel Logout 1.0. Cuando un usuario cierra sesion, Authagonal envia un token de cierre de sesion firmado (JWT) a la URI registrada de cada cliente.
+Registre un `BackChannelLogoutUri` en un cliente para recibir notificaciones de OIDC Back-Channel Logout 1.0. Cuando un usuario cierra sesión, Authagonal envía un token de cierre de sesión firmado (JWT) a la URI registrada de cada cliente.
 
 ```json
 {
@@ -336,56 +336,56 @@ Registre un `BackChannelLogoutUri` en un cliente para recibir notificaciones de 
 }
 ```
 
-## Correo electronico
+## Correo electrónico
 
-El remitente de correo integrado usa [Resend](https://resend.com) y **se activa automaticamente** cuando `Email:ResendApiKey` esta configurado: no se necesita registrar ningun servicio. Para usar un proveedor distinto, registre su propia implementacion de `IEmailService` antes de llamar a `AddAuthagonal()` (tiene prioridad independientemente de las claves `Email:*`).
+El remitente de correo integrado usa [Resend](https://resend.com) y **se activa automáticamente** cuando `Email:ResendApiKey` está configurado: no se necesita registrar ningún servicio. Para usar un proveedor distinto, registre su propia implementación de `IEmailService` antes de llamar a `AddAuthagonal()` (tiene prioridad independientemente de las claves `Email:*`).
 
-| Ajuste | Descripcion |
+| Ajuste | Descripción |
 |---|---|
 | `Email:ResendApiKey` | Clave API de Resend. Cuando se establece, se usa el remitente Resend integrado. |
-| `Email:SenderEmail` | Direccion de correo del remitente |
+| `Email:SenderEmail` | Dirección de correo del remitente |
 | `Email:SenderName` | Nombre para mostrar del remitente (predeterminado: `"Authagonal"`) |
 
-> ⚠️ **Sin ningun remitente de correo, el autorregistro no funciona.** Cuando `Email:ResendApiKey` no esta establecido y no hay ningun `IEmailService` personalizado registrado, un servicio no-op descarta silenciosamente todo el correo: los correos de verificacion y de restablecimiento de contrasena nunca llegan, y como el inicio de sesion requiere un correo confirmado por defecto, los usuarios autorregistrados nunca pueden iniciar sesion. `UseAuthagonal` registra una advertencia al inicio en este estado. Valvula de escape para desarrollo/pruebas: `Auth:AutoConfirmEmailDomains` confirma automaticamente los registros de los dominios indicados.
+> ⚠️ **Sin ningún remitente de correo, el autorregistro no funciona.** Cuando `Email:ResendApiKey` no está establecido y no hay ningún `IEmailService` personalizado registrado, un servicio no-op descarta silenciosamente todo el correo: los correos de verificación y de restablecimiento de contraseña nunca llegan, y como el inicio de sesión requiere un correo confirmado por defecto, los usuarios autorregistrados nunca pueden iniciar sesión. `UseAuthagonal` registra una advertencia al inicio en este estado. Válvula de escape para desarrollo/pruebas: `Auth:AutoConfirmEmailDomains` confirma automáticamente los registros de los dominios indicados.
 
-Los correos a direcciones `@example.com` se omiten silenciosamente (util para pruebas).
+Los correos a direcciones `@example.com` se omiten silenciosamente (útil para pruebas).
 
 ## Cluster
 
-La capa de agrupacion proporciona **eleccion de lider** (para que los trabajos con lider dedicado, como la rotacion de claves de firma, se ejecuten en exactamente un nodo) y un **bus de eventos entre nodos**, detras de backends conectables. El valor predeterminado es en proceso: un unico nodo es siempre su propio lider, el ajuste adecuado para un solo nodo y para el desarrollo local, sin configuracion alguna.
+La capa de agrupación proporciona **elección de líder** (para que los trabajos con líder dedicado, como la rotación de claves de firma, se ejecuten en exactamente un nodo) y un **bus de eventos entre nodos**, detrás de backends conectables. El valor predeterminado es en proceso: un único nodo es siempre su propio líder, el ajuste adecuado para un solo nodo y para el desarrollo local, sin configuración alguna.
 
-| Ajuste | Variable de entorno | Predeterminado | Descripcion |
+| Ajuste | Variable de entorno | Predeterminado | Descripción |
 |---|---|---|---|
-| `Cluster:Enabled` | `Cluster__Enabled` | `true` | Interruptor principal. Cuando es `false`, el nodo se ejecuta de forma independiente (siempre lider, bus de eventos en proceso). |
-| `Cluster:Secret` | `Cluster__Secret` | *(ninguno)* | Secreto compartido requerido en el endpoint de uso interno `/_internal/backchannel-logout`. Cuando se establece, los llamadores deben presentarlo en el encabezado `X-Cluster-Secret` (comparado en tiempo constante). Cuando **no** se establece, el endpoint solo es accesible desde IPs de origen de loopback / privadas (RFC 1918 / link-local / ULA); una solicitud externa que lleve una IP publica se rechaza. |
-| `Cluster:LeaseTtlSeconds` | `Cluster__LeaseTtlSeconds` | `30` | Duracion de la concesion de liderazgo. Se renueva aproximadamente cada mitad de este intervalo. |
+| `Cluster:Enabled` | `Cluster__Enabled` | `true` | Interruptor principal. Cuando es `false`, el nodo se ejecuta de forma independiente (siempre líder, bus de eventos en proceso). |
+| `Cluster:Secret` | `Cluster__Secret` | *(ninguno)* | Secreto compartido requerido en el endpoint de uso interno `/_internal/backchannel-logout`. Cuando se establece, los llamadores deben presentarlo en el encabezado `X-Cluster-Secret` (comparado en tiempo constante). Cuando **no** se establece, el endpoint solo es accesible desde IPs de origen de loopback / privadas (RFC 1918 / link-local / ULA); una solicitud externa que lleve una IP pública se rechaza. |
+| `Cluster:LeaseTtlSeconds` | `Cluster__LeaseTtlSeconds` | `30` | Duración de la concesión de liderazgo. Se renueva aproximadamente cada mitad de este intervalo. |
 | `Cluster:PollIntervalSeconds` | `Cluster__PollIntervalSeconds` | `3` | Frecuencia con la que el backend del bus de eventos sondea los mensajes publicados por otros nodos. |
 
-Los **despliegues multinodo** intercambian un backend real mediante la devolucion de llamada `configureClustering` en `AddAuthagonal` / `AddAuthagonalCore`:
+Los **despliegues multinodo** intercambian un backend real mediante la devolución de llamada `configureClustering` en `AddAuthagonal` / `AddAuthagonalCore`:
 
 ```csharp
-// Azure: liderazgo mediante una concesion de blob, bus de eventos mediante un registro en tabla (Authagonal.AzureProvider)
+// Azure: leadership via a blob lease, event bus via a table log (Authagonal.AzureProvider)
 builder.Services.AddAuthagonal(builder.Configuration,
     cluster => cluster.UseAzureStorage(blobServiceClient, tableServiceClient));
 
-// Equivalente en AWS (Authagonal.AwsProvider)
+// AWS equivalent (Authagonal.AwsProvider)
 builder.Services.AddAuthagonal(builder.Configuration,
     cluster => cluster.UseAwsDynamo(dynamoDb));
 ```
 
-`UseAzureStorageBus` / `UseAwsDynamoBus` registran solo el bus de eventos, manteniendo la concesion en proceso, para nodos que deben recibir eventos del cluster pero nunca deben competir por el liderazgo.
+`UseAzureStorageBus` / `UseAwsDynamoBus` registran solo el bus de eventos, manteniendo la concesión en proceso, para nodos que deben recibir eventos del cluster pero nunca deben competir por el liderazgo.
 
-Ver [Escalabilidad](scaling) para conocer como se comportan el liderazgo y el bus de eventos entre instancias.
+Ver [Escalabilidad](scaling) para conocer cómo se comportan el liderazgo y el bus de eventos entre instancias.
 
 ## Encabezados reenviados (proxy de confianza)
 
-Authagonal basa la limitacion de velocidad y el bloqueo de cuenta en la IP del cliente, y solo emite HSTS en solicitudes HTTPS. Detras de un proxy inverso / ingress, la IP real del cliente y el esquema llegan en los encabezados `X-Forwarded-For` / `X-Forwarded-Proto`. Estos ajustes controlan **que saltos de proxy son de confianza** para establecer esos valores, de modo que un llamador no pueda falsificar `X-Forwarded-For` para suplantar la IP del cliente.
+Authagonal basa la limitación de velocidad y el bloqueo de cuenta en la IP del cliente, y solo emite HSTS en solicitudes HTTPS. Detrás de un proxy inverso / ingress, la IP real del cliente y el esquema llegan en los encabezados `X-Forwarded-For` / `X-Forwarded-Proto`. Estos ajustes controlan **qué saltos de proxy son de confianza** para establecer esos valores, de modo que un llamador no pueda falsificar `X-Forwarded-For` para suplantar la IP del cliente.
 
-| Ajuste | Variable de entorno | Predeterminado | Descripcion |
+| Ajuste | Variable de entorno | Predeterminado | Descripción |
 |---|---|---|---|
-| `ForwardedHeaders:ForwardLimit` | `ForwardedHeaders__ForwardLimit` | `1` | Numero de saltos de proxy a respetar desde la derecha de la cadena `X-Forwarded-For`. El valor predeterminado de `1` confia solo en el unico salto que anade su ingress e ignora cualquier cosa mas a la izquierda en la cadena. |
-| `ForwardedHeaders:KnownNetworks` | `ForwardedHeaders__KnownNetworks__0` (arreglo) | *(vacio)* | Rangos CIDR (arreglo de cadenas, por ejemplo `"10.0.0.0/8"`) autorizados a establecer los encabezados reenviados. **Garantia mas solida:** establezca esto en el CIDR de su ingress / pod para que solo esa red pueda establecer la IP del cliente. |
-| `ForwardedHeaders:KnownProxies` | `ForwardedHeaders__KnownProxies__0` (arreglo) | *(vacio)* | Direcciones IP de proxy individuales (arreglo de cadenas) autorizadas a establecer los encabezados reenviados. Use junto con o en lugar de `KnownNetworks`. |
+| `ForwardedHeaders:ForwardLimit` | `ForwardedHeaders__ForwardLimit` | `1` | Número de saltos de proxy a respetar desde la derecha de la cadena `X-Forwarded-For`. El valor predeterminado de `1` confía solo en el único salto que añade su ingress e ignora cualquier cosa más a la izquierda en la cadena. |
+| `ForwardedHeaders:KnownNetworks` | `ForwardedHeaders__KnownNetworks__0` (arreglo) | *(vacío)* | Rangos CIDR (arreglo de cadenas, por ejemplo `"10.0.0.0/8"`) autorizados a establecer los encabezados reenviados. **Garantía más sólida:** establezca esto en el CIDR de su ingress / pod para que solo esa red pueda establecer la IP del cliente. |
+| `ForwardedHeaders:KnownProxies` | `ForwardedHeaders__KnownProxies__0` (arreglo) | *(vacío)* | Direcciones IP de proxy individuales (arreglo de cadenas) autorizadas a establecer los encabezados reenviados. Use junto con o en lugar de `KnownNetworks`. |
 
 ```json
 {
@@ -397,30 +397,30 @@ Authagonal basa la limitacion de velocidad y el bloqueo de cuenta en la IP del c
 }
 ```
 
-> ⚠️ **Se requiere un proxy que termine TLS.** Authagonal debe ejecutarse detras de un proxy inverso que termine TLS. El cookie de sesion usa `SecurePolicy = SameAsRequest` y HSTS (`Strict-Transport-Security`) solo se emite en solicitudes HTTPS, por lo que el proxy debe reenviar `X-Forwarded-Proto: https` para que los cookies se marquen como `Secure` y se envie HSTS. Configure `ForwardedHeaders:KnownNetworks` / `ForwardedHeaders:KnownProxies` con su proxy de confianza para que el esquema y la IP del cliente no puedan ser suplantados.
+> ⚠️ **Se requiere un proxy que termine TLS.** Authagonal debe ejecutarse detrás de un proxy inverso que termine TLS. El cookie de sesión usa `SecurePolicy = SameAsRequest` y HSTS (`Strict-Transport-Security`) solo se emite en solicitudes HTTPS, por lo que el proxy debe reenviar `X-Forwarded-Proto: https` para que los cookies se marquen como `Secure` y se envíe HSTS. Configure `ForwardedHeaders:KnownNetworks` / `ForwardedHeaders:KnownProxies` con su proxy de confianza para que el esquema y la IP del cliente no puedan ser suplantados.
 
-## Limitacion de velocidad
+## Limitación de velocidad
 
-Los limites de velocidad integrados protegen los endpoints propensos a abuso:
+Los límites de velocidad integrados protegen los endpoints propensos a abuso:
 
-| Endpoint | Limite | Ventana | Basado en |
+| Endpoint | Límite | Ventana | Basado en |
 |---|---|---|---|
 | `POST /api/auth/register` | 5 (`Auth:MaxRegistrationsPerIp`) | 1 hora (`Auth:RegistrationWindowMinutes`) | IP del cliente |
 | `POST /api/auth/forgot-password` | 3 (`Auth:MaxPasswordResetsPerEmail`) | 1 hora (`Auth:PasswordResetWindowMinutes`) | Correo de destino |
-| `POST /connect/register` (cuando esta habilitado) | 10 | 1 hora | IP del cliente |
+| `POST /connect/register` (cuando está habilitado) | 10 | 1 hora | IP del cliente |
 | Endpoints SCIM | 200 | 1 minuto | Cliente SCIM |
 
-Los limites se aplican **en proceso por nodo** (detras del punto de extension `IRateLimiter`), por lo que con N instancias el techo efectivo es N× el valor configurado. Tratelos como una red de seguridad y aplique el limite global autoritativo en el borde (WAF / ingress / CDN). Ver [Escalabilidad](scaling#rate-limiting).
+Los límites se aplican **en proceso por nodo** (detrás del punto de extensión `IRateLimiter`), por lo que con N instancias el techo efectivo es N× el valor configurado. Trátelos como una red de seguridad y aplique el límite global autoritativo en el borde (WAF / ingress / CDN). Ver [Escalabilidad](scaling#rate-limiting).
 
 ## CORS
 
-CORS se configura dinamicamente. Los origenes de todos los `AllowedCorsOrigins` de los clientes registrados se permiten automaticamente, con un cache de 60 minutos.
+CORS se configura dinámicamente. Los orígenes de todos los `AllowedCorsOrigins` de los clientes registrados se permiten automáticamente, con un cache de 60 minutos.
 
 ## HashiCorp Vault Transit
 
-Authagonal puede firmar JWTs usando el motor de secretos Transit de HashiCorp Vault. Las claves privadas nunca salen de Vault: solo la operacion de firma se delega de forma remota. Las claves publicas se almacenan en cache localmente para la verificacion.
+Authagonal puede firmar JWTs usando el motor de secretos Transit de HashiCorp Vault. Las claves privadas nunca salen de Vault: solo la operación de firma se delega de forma remota. Las claves públicas se almacenan en cache localmente para la verificación.
 
-Esto se configura programaticamente al alojarlo como biblioteca. Ver [Extensibilidad](extensibility) para mas detalles.
+Esto se configura programáticamente al alojarlo como biblioteca. Ver [Extensibilidad](extensibility) para más detalles.
 
 ## Ejemplo completo
 

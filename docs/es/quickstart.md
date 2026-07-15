@@ -1,10 +1,10 @@
 ---
 layout: default
-title: Inicio rapido
+title: Inicio rápido
 locale: es
 ---
 
-# Inicio rapido
+# Inicio rápido
 
 Ponga Authagonal en funcionamiento localmente en 5 minutos.
 
@@ -16,7 +16,7 @@ docker compose up
 
 Esto inicia Authagonal en `http://localhost:8080` con Azurite para el almacenamiento.
 
-## 2. Verificar que esta funcionando
+## 2. Verificar que está funcionando
 
 ```bash
 # Health check
@@ -31,7 +31,7 @@ curl http://localhost:8080/login
 
 ## 3. Registrar un cliente
 
-Agregue un cliente a su `appsettings.json` (o paselo mediante variables de entorno):
+Agregue un cliente a su `appsettings.json` (o páselo mediante variables de entorno):
 
 ```json
 {
@@ -51,9 +51,9 @@ Agregue un cliente a su `appsettings.json` (o paselo mediante variables de entor
 }
 ```
 
-Los clientes se inyectan al inicio -- seguro en cada despliegue.
+Los clientes se inyectan al inicio, seguro en cada despliegue.
 
-## 4. Iniciar un inicio de sesion
+## 4. Iniciar un inicio de sesión
 
 Redirija a sus usuarios a:
 
@@ -68,11 +68,11 @@ http://localhost:8080/connect/authorize
   &code_challenge_method=S256
 ```
 
-El usuario ve la pagina de inicio de sesion, se autentica y es redirigido con un codigo de autorizacion.
+El usuario ve la página de inicio de sesión, se autentica y es redirigido con un código de autorización.
 
-> **Primer usuario:** registre uno en `http://localhost:8080/login/register`, o cree uno mediante la [API de administracion](admin-api). El autorregistro envia un correo de verificacion y, sin un remitente de correo configurado (el valor predeterminado local), ese correo se descarta, asi que para pruebas locales establezca `Auth__AutoConfirmEmailDomains__0=example.dev` (cualquier dominio con el que se registre) para omitir la verificacion, o configure `Email:ResendApiKey` + `Email:SenderEmail`. Consulte [Configuracion → Email](configuration#email).
+> **Primer usuario:** registre uno en `http://localhost:8080/login/register`, o cree uno mediante la [API de administración](admin-api). El autorregistro envía un correo de verificación y, sin un remitente de correo configurado (el valor predeterminado local), ese correo se descarta, así que para pruebas locales establezca `Auth__AutoConfirmEmailDomains__0=example.dev` (cualquier dominio con el que se registre) para omitir la verificación, o configure `Email:ResendApiKey` + `Email:SenderEmail`. Consulte [Configuración → Email](configuration#email).
 
-## 5. Intercambiar el codigo
+## 5. Intercambiar el código
 
 ```bash
 curl -X POST http://localhost:8080/connect/token \
@@ -98,10 +98,10 @@ Respuesta:
 
 El directorio `demos/sample-app/` contiene una SPA React completa + API que implementa el flujo OIDC completo descrito anteriormente. Consulte el [README de demos](https://github.com/authagonal/authagonal/tree/master/demos) para las instrucciones.
 
-## Proximos pasos
+## Próximos pasos
 
-- [Configuracion](configuration) -- referencia completa de todos los ajustes
-- [Extensibilidad](extensibility) -- alojar como biblioteca, agregar hooks personalizados
-- [Personalizacion visual](branding) -- personalizar la interfaz de inicio de sesion
-- [SAML](saml) -- agregar proveedores SSO SAML
-- [Aprovisionamiento](provisioning) -- aprovisionar usuarios en aplicaciones posteriores
+- [Configuración](configuration): referencia completa de todos los ajustes
+- [Extensibilidad](extensibility): alojar como biblioteca, agregar hooks personalizados
+- [Personalización visual](branding): personalizar la interfaz de inicio de sesión
+- [SAML](saml): agregar proveedores SSO SAML
+- [Aprovisionamiento](provisioning): aprovisionar usuarios en aplicaciones posteriores

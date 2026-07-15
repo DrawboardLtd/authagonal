@@ -1,29 +1,27 @@
 ---
 layout: default
-title: Front-Channel Logout
+title: Cierre de sesión por canal frontal
 locale: es
 ---
 
-> ⚠️ This page has not yet been translated; the English version is shown below.
+# Cierre de sesión por canal frontal
 
-# Front-Channel Logout
+Authagonal implementa **OpenID Connect Front-Channel Logout 1.0**, un mecanismo de cierre de sesión impulsado por el navegador que complementa el [cierre de sesión por canal trasero](index#features). Mientras que el cierre de sesión por canal trasero es un POST de servidor a servidor, el cierre de sesión por canal frontal renderiza la URL de cierre de sesión de cada parte confiante en un iframe oculto, de modo que la sesión de navegador de cada aplicación (cookies, almacenamiento local) se limpia desde dentro del navegador del usuario.
 
-Authagonal implements **OpenID Connect Front-Channel Logout 1.0**, a browser-driven logout mechanism that complements [back-channel logout](index#features). Where back-channel logout is a server-to-server POST, front-channel logout renders the logout URL of each relying party in a hidden iframe so that each app's browser session (cookies, local storage) is cleaned up from inside the user's browser.
+## Cuándo usar cada uno
 
-## When to Use Which
-
-| Concern | Back-Channel | Front-Channel |
+| Aspecto | Canal trasero | Canal frontal |
 |---|---|---|
-| Server-side sessions | ✅ | ❌ |
-| Browser cookies / local storage | ❌ | ✅ |
-| Works when the user's browser is offline | ✅ | ❌ |
-| Survives network errors (retry) | ✅ | ❌ (single best-effort attempt) |
+| Sesiones del lado del servidor | ✅ | ❌ |
+| Cookies del navegador / almacenamiento local | ❌ | ✅ |
+| Funciona cuando el navegador del usuario está sin conexión | ✅ | ❌ |
+| Sobrevive a errores de red (reintento) | ✅ | ❌ (un único intento de mejor esfuerzo) |
 
-Most apps benefit from configuring **both**. Back-channel guarantees the server is told; front-channel clears the browser.
+La mayoría de las aplicaciones se benefician de configurar **ambos**. El canal trasero garantiza que se notifique al servidor; el canal frontal limpia el navegador.
 
-## Client Configuration
+## Configuración del cliente
 
-Add a front-channel logout URI to the `OAuthClient` record:
+Añada una URI de cierre de sesión por canal frontal al registro `OAuthClient`:
 
 ```json
 {
@@ -33,35 +31,35 @@ Add a front-channel logout URI to the `OAuthClient` record:
 }
 ```
 
-| Field | Description |
+| Campo | Descripción |
 |---|---|
-| `FrontChannelLogoutUri` | The client's browser-visible logout endpoint |
-| `FrontChannelLogoutSessionRequired` | If `true` (default), the URL is called with `iss` and `sid` query parameters so the client can correlate the logout with the specific session |
+| `FrontChannelLogoutUri` | El endpoint de cierre de sesión del cliente visible para el navegador |
+| `FrontChannelLogoutSessionRequired` | Si es `true` (predeterminado), la URL se llama con los parámetros de consulta `iss` y `sid` para que el cliente pueda correlacionar el cierre de sesión con la sesión específica |
 
-## How It Works
+## Cómo funciona
 
-When the browser visits `/connect/endsession`:
+Cuando el navegador visita `/connect/endsession`:
 
-1. The server finds all clients the user currently has grants with.
-2. For each client with a `FrontChannelLogoutUri`, the server builds a URL — appending `iss=<issuer>` (and `sid=<session_id>`, when the session has one) if `FrontChannelLogoutSessionRequired` is `true`.
-3. The server signs the user out of the authorization-server cookie, triggers back-channel logout notifications in the background, and returns an HTML page containing a hidden `<iframe>` for each client logout URL:
+1. El servidor encuentra todos los clientes con los que el usuario tiene concesiones actualmente.
+2. Para cada cliente con una `FrontChannelLogoutUri`, el servidor construye una URL, añadiendo `iss=<issuer>` (y `sid=<session_id>`, cuando la sesión tiene uno) si `FrontChannelLogoutSessionRequired` es `true`.
+3. El servidor cierra la sesión del usuario en el cookie del servidor de autorización, desencadena en segundo plano las notificaciones de cierre de sesión por canal trasero y devuelve una página HTML que contiene un `<iframe>` oculto por cada URL de cierre de sesión de cliente:
    ```html
    <iframe src="https://myapp.example.com/oidc/frontchannel?iss=https%3A%2F%2Fauth.example.com&sid=abc123" style="display:none"></iframe>
    ```
-4. After a 2-second grace period, the browser is redirected to `post_logout_redirect_uri` — honored only when the request also carries an `id_token_hint` identifying the client and the URI is in that client's registered `PostLogoutRedirectUris` (a `state` parameter, if supplied, is appended to the redirect). Otherwise a "signed out" confirmation is shown.
+4. Tras un periodo de gracia de 2 segundos, el navegador se redirige a `post_logout_redirect_uri`, que se respeta solo cuando la solicitud también lleva un `id_token_hint` que identifica al cliente y la URI está en las `PostLogoutRedirectUris` registradas de ese cliente (un parámetro `state`, si se proporciona, se añade a la redirección). De lo contrario, se muestra una confirmación de "sesión cerrada".
 
-## Client-Side Logout Handler
+## Controlador de cierre de sesión del lado del cliente
 
-Each relying party should implement the URL referenced by `FrontChannelLogoutUri`. A minimal handler:
+Cada parte confiante debe implementar la URL a la que hace referencia `FrontChannelLogoutUri`. Un controlador mínimo:
 
 ```http
 GET /oidc/frontchannel?iss=https://auth.example.com&sid=abc123
 ```
 
-1. Verify `iss` matches the expected authorization server.
-2. If `sid` is provided, confirm it matches the session cookie's session ID.
-3. Clear the local session (cookies, server-side session, SPA storage).
-4. Respond with `200 OK` and an empty body (or a tiny page) — the response is never visible to the user.
+1. Verifique que `iss` coincida con el servidor de autorización esperado.
+2. Si se proporciona `sid`, confirme que coincide con el ID de sesión del cookie de sesión.
+3. Borre la sesión local (cookies, sesión del lado del servidor, almacenamiento de la SPA).
+4. Responda con `200 OK` y un cuerpo vacío (o una página diminuta); la respuesta nunca es visible para el usuario.
 
 ```csharp
 app.MapGet("/oidc/frontchannel", (HttpContext ctx) =>
@@ -74,9 +72,9 @@ app.MapGet("/oidc/frontchannel", (HttpContext ctx) =>
 });
 ```
 
-## Discovery Document
+## Documento de descubrimiento
 
-Front-channel logout is advertised in `/.well-known/openid-configuration`:
+El cierre de sesión por canal frontal se anuncia en `/.well-known/openid-configuration`:
 
 ```json
 {
@@ -85,9 +83,9 @@ Front-channel logout is advertised in `/.well-known/openid-configuration`:
 }
 ```
 
-## Dynamic Client Registration
+## Registro dinámico de clientes
 
-Clients registered via [Dynamic Client Registration](client-registration) may include:
+Los clientes registrados mediante el [registro dinámico de clientes](client-registration) pueden incluir:
 
 ```json
 {
@@ -96,13 +94,13 @@ Clients registered via [Dynamic Client Registration](client-registration) may in
 }
 ```
 
-## Limitations
+## Limitaciones
 
-- **Best effort** — iframes are loaded once. If a network error or browser extension blocks them, there is no retry. Pair with back-channel logout for reliability.
-- **Third-party cookies** — some browsers block cookies in cross-site iframes by default. If your RP relies on first-party cookies, confirm the logout handler does not depend on cookies being sent.
-- **Timeout** — the page waits ~2 seconds before redirecting/confirming. Heavy RP logout handlers may not complete in time.
+- **Mejor esfuerzo**: los iframes se cargan una sola vez. Si un error de red o una extensión del navegador los bloquea, no hay reintento. Combínelo con el cierre de sesión por canal trasero para mayor fiabilidad.
+- **Cookies de terceros**: algunos navegadores bloquean las cookies en iframes entre sitios de forma predeterminada. Si su RP depende de cookies de origen propio, confirme que el controlador de cierre de sesión no dependa del envío de cookies.
+- **Tiempo de espera**: la página espera ~2 segundos antes de redirigir o confirmar. Los controladores de cierre de sesión de RP pesados podrían no completarse a tiempo.
 
-## Related
+## Relacionado
 
-- [Dynamic Client Registration](client-registration) — front-channel parameters in the registration request
-- [OAuth Scopes](scopes) — scope-aware consent complements the logout flow
+- [Registro dinámico de clientes](client-registration): parámetros de canal frontal en la solicitud de registro
+- [Scopes de OAuth](scopes): el consentimiento con reconocimiento de scopes complementa el flujo de cierre de sesión
