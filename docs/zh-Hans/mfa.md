@@ -122,13 +122,13 @@ public Task<MfaPolicy> ResolveMfaPolicyAsync(
 
 ### TOTP 设置
 
-1. 调用 `POST /api/auth/mfa/totp/setup` — 返回 QR 码（`data:image/png;base64,...`）、`manualKey`（Base32 格式，用于手动输入）和设置令牌
+1. 调用 `POST /api/auth/mfa/totp/setup`：返回 QR 码（`data:image/png;base64,...`）、`manualKey`（Base32 格式，用于手动输入）和设置令牌
 2. 用户使用验证器应用扫描 QR 码
 3. 用户输入 6 位验证码确认：`POST /api/auth/mfa/totp/confirm`
 
 ### WebAuthn / 通行密钥设置
 
-1. 调用 `POST /api/auth/mfa/webauthn/setup` — 返回 `setupToken` 和 `PublicKeyCredentialCreationOptions`
+1. 调用 `POST /api/auth/mfa/webauthn/setup`：返回 `setupToken` 和 `PublicKeyCredentialCreationOptions`
 2. 客户端使用选项调用 `navigator.credentials.create()`
 3. 将认证响应发送至 `POST /api/auth/mfa/webauthn/confirm`
 
@@ -160,8 +160,8 @@ public Task<MfaPolicy> ResolveMfaPolicyAsync(
 
 ### 用户自助服务
 
-- `GET /api/auth/mfa/status` — 查看已注册的方式（同时报告是否有任何客户端提供 MFA）
-- `DELETE /api/auth/mfa/credentials/{id}` — 删除特定凭据
+- `GET /api/auth/mfa/status`：查看已注册的方式（同时报告是否有任何客户端提供 MFA）
+- `DELETE /api/auth/mfa/credentials/{id}`：删除特定凭据
 
 删除凭据需要真实的已认证会话；设置令牌只授权添加第一个因素，在此处会得到 `session_required`，因此泄露的设置令牌无法降级用户的 MFA。
 
@@ -171,9 +171,9 @@ public Task<MfaPolicy> ResolveMfaPolicyAsync(
 
 管理员可以通过[管理员 API](admin-api) 管理任何用户的 MFA：
 
-- `GET /api/v1/profile/{userId}/mfa` — 查看用户的 MFA 状态
-- `DELETE /api/v1/profile/{userId}/mfa` — 重置所有 MFA（适用于被锁定的用户）
-- `DELETE /api/v1/profile/{userId}/mfa/{id}` — 删除特定凭据
+- `GET /api/v1/profile/{userId}/mfa`：查看用户的 MFA 状态
+- `DELETE /api/v1/profile/{userId}/mfa`：重置所有 MFA（适用于被锁定的用户）
+- `DELETE /api/v1/profile/{userId}/mfa/{id}`：删除特定凭据
 
 ### 审计钩子
 
@@ -194,9 +194,9 @@ public Task OnMfaVerifiedAsync(
 
 如果您正在构建自定义登录界面，请处理来自 `POST /api/auth/login` 的以下响应：
 
-1. **正常登录** — `{ userId, email, name }` 并设置 Cookie。重定向至 `returnUrl`。
-2. **需要 MFA** — `{ mfaRequired: true, challengeId, methods, webAuthn? }`。显示 MFA 验证表单。
-3. **需要 MFA 注册** — `{ mfaSetupRequired: true, setupToken }`。显示 MFA 注册流程。
+1. **正常登录**：`{ userId, email, name }` 并设置 Cookie。重定向至 `returnUrl`。
+2. **需要 MFA**：`{ mfaRequired: true, challengeId, methods, webAuthn? }`。显示 MFA 验证表单。
+3. **需要 MFA 注册**：`{ mfaSetupRequired: true, setupToken }`。显示 MFA 注册流程。
 
 处理 `POST /api/auth/mfa/verify` 的错误时：`invalid_code` 和 `assertion_failed` 可以用同一个 `challengeId` 重试（不超过尝试预算）；`too_many_attempts` 和 `invalid_challenge` 是终止性的，应将用户送回登录表单。
 

@@ -1,31 +1,29 @@
 ---
 layout: default
-title: OAuth Scopes
+title: OAuth 作用域
 locale: zh-Hans
 ---
 
-> ⚠️ This page has not yet been translated; the English version is shown below.
+# OAuth 作用域
 
-# OAuth Scopes
+Authagonal 同时支持**内置**的 OAuth/OIDC 作用域和在运行时管理的**自定义**作用域。自定义作用域会被持久化、通过发现文档公布，并与内置作用域一起显示在同意界面上。
 
-Authagonal supports both **built-in** OAuth/OIDC scopes and **custom** scopes managed at runtime. Custom scopes are persisted, advertised via the discovery document, and surfaced on the consent screen alongside built-ins.
+## 内置作用域
 
-## Built-in Scopes
+这些作用域始终可用，无需注册：
 
-These scopes are always available and do not need to be registered:
-
-| Scope | Purpose |
+| 作用域 | 用途 |
 |---|---|
-| `openid` | Required to initiate an OIDC flow. Issues an ID token. |
-| `profile` | Standard profile claims (name, family_name, given_name, etc.) |
-| `email` | Email address and `email_verified` claims |
-| `offline_access` | Issues a refresh token alongside the access token |
+| `openid` | 发起 OIDC 流程所必需。签发一个 ID 令牌。 |
+| `profile` | 标准的个人资料声明（name、family_name、given_name 等） |
+| `email` | 电子邮件地址和 `email_verified` 声明 |
+| `offline_access` | 在访问令牌之外再签发一个刷新令牌 |
 
-## Custom Scopes
+## 自定义作用域
 
-Custom scopes are managed through the admin API at `/api/v1/scopes`. They require a JWT access token with the `authagonal-admin` scope (configurable via `AdminApi:Scope`).
+自定义作用域通过管理 API 在 `/api/v1/scopes` 处管理。它们需要一个带有 `authagonal-admin` 作用域的 JWT 访问令牌（可通过 `AdminApi:Scope` 配置）。
 
-### Scope Model
+### 作用域模型
 
 ```csharp
 public sealed class Scope
@@ -42,35 +40,35 @@ public sealed class Scope
 }
 ```
 
-| Field | Description |
+| 字段 | 描述 |
 |---|---|
-| `Name` | The scope identifier sent in token requests (e.g., `billing.read`) |
-| `DisplayName` | Human-readable name shown on the consent screen |
-| `Description` | Longer description shown on the consent screen |
-| `Emphasize` | If `true`, the consent screen highlights this scope as sensitive |
-| `Required` | If `true`, the user cannot deselect this scope when consenting |
-| `ShowInDiscoveryDocument` | If `true`, the scope appears in `/.well-known/openid-configuration` under `scopes_supported` |
-| `UserClaims` | Claims added to the access token when this scope is granted |
+| `Name` | 在令牌请求中发送的作用域标识符（例如 `billing.read`） |
+| `DisplayName` | 显示在同意界面上的人类可读名称 |
+| `Description` | 显示在同意界面上的较长描述 |
+| `Emphasize` | 若为 `true`，同意界面会将此作用域突出显示为敏感 |
+| `Required` | 若为 `true`，用户在同意时无法取消勾选此作用域 |
+| `ShowInDiscoveryDocument` | 若为 `true`，此作用域会出现在 `/.well-known/openid-configuration` 的 `scopes_supported` 下 |
+| `UserClaims` | 授予此作用域时添加到访问令牌的声明 |
 
-## Admin Endpoints
+## 管理端点
 
-### List Scopes
+### 列出作用域
 
 ```
 GET /api/v1/scopes
 ```
 
-Returns `{ "scopes": [ ... ] }`.
+返回 `{ "scopes": [ ... ] }`。
 
-### Get Scope
+### 获取作用域
 
 ```
 GET /api/v1/scopes/{name}
 ```
 
-Returns the scope or `404` if not found.
+返回该作用域，若未找到则返回 `404`。
 
-### Create Scope
+### 创建作用域
 
 ```
 POST /api/v1/scopes
@@ -87,9 +85,9 @@ Content-Type: application/json
 }
 ```
 
-Returns `201 Created` with the scope. Returns `409` if a scope with the same name already exists.
+返回 `201 Created` 及该作用域。如果已存在同名作用域，则返回 `409`。
 
-### Update Scope
+### 更新作用域
 
 ```
 PUT /api/v1/scopes/{name}
@@ -102,19 +100,19 @@ Content-Type: application/json
 }
 ```
 
-Only supplied fields are updated; omitted fields retain their current values.
+只有提供的字段会被更新；省略的字段保留其当前值。
 
-### Delete Scope
+### 删除作用域
 
 ```
 DELETE /api/v1/scopes/{name}
 ```
 
-Returns `204 No Content` (`404` if the scope doesn't exist). Tokens already issued that include this scope remain valid until they expire — revoke them explicitly via `/connect/revocation` if needed.
+返回 `204 No Content`（若作用域不存在则返回 `404`）。已签发且包含此作用域的令牌在过期前仍然有效——如有需要，请通过 `/connect/revocation` 显式撤销它们。
 
-## Discovery Document
+## 发现文档
 
-Scopes with `ShowInDiscoveryDocument = true` appear under `scopes_supported` in `/.well-known/openid-configuration`. Built-in scopes are always advertised.
+`ShowInDiscoveryDocument = true` 的作用域会出现在 `/.well-known/openid-configuration` 的 `scopes_supported` 下。内置作用域始终会被公布。
 
 ```json
 {
@@ -122,12 +120,12 @@ Scopes with `ShowInDiscoveryDocument = true` appear under `scopes_supported` in 
 }
 ```
 
-## Consent Screen
+## 同意界面
 
-When a client requests a scope that is not in its consent-skip list, the consent page lists each requested scope by `DisplayName` (falling back to `Name`) with the `Description` underneath. Scopes with `Emphasize = true` receive a distinct visual treatment. `Required` scopes cannot be deselected.
+当客户端请求一个不在其“跳过同意”列表中的作用域时，同意页面会按 `DisplayName`（回退到 `Name`）列出每个所请求的作用域，并在其下方附上 `Description`。`Emphasize = true` 的作用域会获得独特的视觉呈现。`Required` 作用域无法被取消勾选。
 
-See [OAuth Consent Screen](index#features) for the user-facing flow.
+面向用户的流程请参阅 [OAuth 同意界面](index#features)。
 
-## Dynamic Client Registration
+## 动态客户端注册
 
-Clients registered via [Dynamic Client Registration](client-registration) may only request scopes that are either built-in or previously created via the admin API. Unknown scopes are rejected with `invalid_scope`.
+通过[动态客户端注册](client-registration)注册的客户端只能请求内置的、或此前通过管理 API 创建的作用域。未知的作用域会以 `invalid_scope` 被拒绝。

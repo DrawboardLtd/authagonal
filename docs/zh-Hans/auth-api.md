@@ -306,22 +306,22 @@ GET /api/auth/mfa/status
 
 ```
 POST /api/auth/mfa/totp/setup
--> { "setupToken": "...", "qrCodeDataUri": "data:image/png;base64,...", "manualKey": "BASE32..." }
+→ { "setupToken": "...", "qrCodeDataUri": "data:image/png;base64,...", "manualKey": "BASE32..." }
 
 POST /api/auth/mfa/totp/confirm
 { "setupToken": "...", "code": "123456" }
--> { "success": true }
+→ { "success": true }
 ```
 
 ### WebAuthn / 通行密钥设置
 
 ```
 POST /api/auth/mfa/webauthn/setup
--> { "setupToken": "...", "options": { /* PublicKeyCredentialCreationOptions */ } }
+→ { "setupToken": "...", "options": { /* PublicKeyCredentialCreationOptions */ } }
 
 POST /api/auth/mfa/webauthn/confirm
 { "setupToken": "...", "attestationResponse": "..." }
--> { "success": true, "credentialId": "..." }
+→ { "success": true, "credentialId": "..." }
 ```
 
 注册通行密钥需要**先有一个已确认的 TOTP 凭据**（`400 totp_required_first`）-- 通行密钥是在可移植的基础要素之上叠加的按设备便利手段，因此账户永远不会变成仅有通行密钥而被锁定在单一设备上。邮箱域被 SSO 路由的用户无法注册本地通行密钥（`400 sso_managed`）-- 那会绕过租户的 IdP。已注册到其他用户的凭据 ID 会以 `409 credential_already_registered` 被拒绝。
@@ -330,7 +330,7 @@ POST /api/auth/mfa/webauthn/confirm
 
 ```
 POST /api/auth/mfa/recovery/generate
--> { "codes": ["ABCD-1234", "EFGH-5678", ...] }
+→ { "codes": ["ABCD-1234", "EFGH-5678", ...] }
 ```
 
 生成 10 个一次性恢复码。需要至少注册一个主要方法（TOTP 或 WebAuthn）。重新生成将替换所有现有恢复码。
@@ -339,7 +339,7 @@ POST /api/auth/mfa/recovery/generate
 
 ```
 DELETE /api/auth/mfa/credentials/{credentialId}
--> { "success": true }
+→ { "success": true }
 ```
 
 删除特定的 MFA 凭据。如果最后一个主要方法被删除，则该用户的 MFA 将被禁用。需要真实的 Cookie 会话 -- 设置令牌会以 `403 session_required` 被拒绝（设置令牌只用于添加第一个要素，绝不能用于降级 MFA）。

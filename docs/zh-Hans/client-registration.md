@@ -1,18 +1,16 @@
 ---
 layout: default
-title: Dynamic Client Registration
+title: 动态客户端注册
 locale: zh-Hans
 ---
 
-> ⚠️ This page has not yet been translated; the English version is shown below.
+# 动态客户端注册
 
-# Dynamic Client Registration
+Authagonal 实现了 **OAuth 2.0 动态客户端注册**（[RFC 7591](https://datatracker.ietf.org/doc/html/rfc7591)），允许客户端应用在运行时自行注册，无需管理员参与。
 
-Authagonal implements **OAuth 2.0 Dynamic Client Registration** ([RFC 7591](https://datatracker.ietf.org/doc/html/rfc7591)), allowing client applications to register themselves at runtime without administrator involvement.
+## 启用端点
 
-## Enabling the Endpoint
-
-Dynamic registration is **disabled by default**. Opt in via configuration:
+动态注册**默认禁用**。通过配置选择启用：
 
 ```json
 {
@@ -22,9 +20,9 @@ Dynamic registration is **disabled by default**. Opt in via configuration:
 }
 ```
 
-Or set `Auth__DynamicClientRegistrationEnabled=true` as an environment variable.
+或将 `Auth__DynamicClientRegistrationEnabled=true` 设为环境变量。
 
-When enabled, the discovery document advertises the endpoint:
+启用后，发现文档会公布该端点：
 
 ```
 GET /.well-known/openid-configuration
@@ -35,7 +33,7 @@ GET /.well-known/openid-configuration
 }
 ```
 
-## Registering a Client
+## 注册客户端
 
 ```
 POST /connect/register
@@ -56,7 +54,7 @@ Content-Type: application/json
 }
 ```
 
-### Response
+### 响应
 
 ```
 HTTP/1.1 201 Created
@@ -77,48 +75,48 @@ Content-Type: application/json
 }
 ```
 
-The `client_secret` is returned **once** and cannot be retrieved later. Store it securely.
+`client_secret` **只返回一次**，之后无法再取回。请妥善存储。
 
-## Request Parameters
+## 请求参数
 
-| Parameter | Required | Notes |
+| 参数 | 必需 | 说明 |
 |---|---|---|
-| `client_name` | no | Defaults to the generated `client_id` if omitted |
-| `redirect_uris` | conditional | Required when `grant_types` contains `authorization_code`. Must be absolute URIs; `javascript:`/`data:`/`vbscript:`/`file:` schemes are rejected (native custom schemes for mobile deep links are fine). |
-| `post_logout_redirect_uris` | no | Valid redirect targets after logout |
-| `grant_types` | no | Defaults to `["authorization_code"]`. **Only `authorization_code` and `refresh_token` are registrable** — `client_credentials`, `implicit`, device and any other grant type are rejected with `invalid_client_metadata`, so open registration can never mint a machine-to-machine client. `refresh_token` is added automatically if `offline_access` is requested. |
-| `token_endpoint_auth_method` | no | `client_secret_basic` (default), `client_secret_post`, or `none` for public clients |
-| `scope` | no | Space-separated scopes — must all be built-in or previously registered (see [Scopes](scopes)). The administrative scope (`AdminApi:Scope`, default `authagonal-admin`) can never be registered. |
-| `audiences` | no | JWT `aud` values added to access tokens |
-| `allowed_cors_origins` | no | Origins permitted to call the token endpoint from a browser |
-| `backchannel_logout_uri` | no | Enables [Back-Channel Logout](index#features) |
-| `frontchannel_logout_uri` | no | Enables [Front-Channel Logout](front-channel-logout) |
-| `frontchannel_logout_session_required` | no | Defaults to `true`; when `true`, the logout URL carries `iss` and `sid` parameters |
+| `client_name` | 否 | 省略时默认为生成的 `client_id` |
+| `redirect_uris` | 有条件 | 当 `grant_types` 包含 `authorization_code` 时必填。必须是绝对 URI；`javascript:`/`data:`/`vbscript:`/`file:` 方案会被拒绝（用于移动端深度链接的原生自定义方案则可以）。 |
+| `post_logout_redirect_uris` | 否 | 注销后的有效重定向目标 |
+| `grant_types` | 否 | 默认为 `["authorization_code"]`。**只有 `authorization_code` 和 `refresh_token` 可注册**——`client_credentials`、`implicit`、设备码及任何其他授权类型都会以 `invalid_client_metadata` 被拒绝，因此开放注册永远无法铸造出机器对机器的客户端。若请求了 `offline_access`，则会自动添加 `refresh_token`。 |
+| `token_endpoint_auth_method` | 否 | `client_secret_basic`（默认）、`client_secret_post`，或用于公共客户端的 `none` |
+| `scope` | 否 | 空格分隔的作用域——必须全部为内置或此前已注册的（参见[作用域](scopes)）。管理作用域（`AdminApi:Scope`，默认 `authagonal-admin`）永远不能被注册。 |
+| `audiences` | 否 | 添加到访问令牌的 JWT `aud` 值 |
+| `allowed_cors_origins` | 否 | 允许从浏览器调用令牌端点的来源 |
+| `backchannel_logout_uri` | 否 | 启用[后通道注销](index#features) |
+| `frontchannel_logout_uri` | 否 | 启用[前通道注销](front-channel-logout) |
+| `frontchannel_logout_session_required` | 否 | 默认为 `true`；为 `true` 时，注销 URL 会携带 `iss` 和 `sid` 参数 |
 
-## Defaults & Invariants
+## 默认值与不变量
 
-- **PKCE required** — `RequirePkce` is always `true` for dynamically registered clients.
-- **Public clients** — `token_endpoint_auth_method: "none"` produces a client without a secret. PKCE is still required.
-- **Offline access** — requesting scope `offline_access` implicitly adds `refresh_token` to `grant_types`.
+- **要求 PKCE**——对于动态注册的客户端，`RequirePkce` 始终为 `true`。
+- **公共客户端**——`token_endpoint_auth_method: "none"` 会生成一个没有密钥的客户端。仍然要求 PKCE。
+- **离线访问**——请求作用域 `offline_access` 会隐式地向 `grant_types` 添加 `refresh_token`。
 
-## Error Responses
+## 错误响应
 
-| HTTP | `error` | Cause |
+| HTTP | `error` | 原因 |
 |---|---|---|
-| `400` | `invalid_redirect_uri` | One of `redirect_uris` is not a valid absolute URI, or uses a script/data/file pseudo-scheme |
-| `400` | `invalid_client_metadata` | A non-registrable grant type was requested, or `redirect_uris` is missing for a grant type that requires it |
-| `400` | `invalid_scope` | A requested scope is neither built-in nor registered |
-| `403` | `invalid_scope` | The administrative scope was requested — it can never be granted through registration |
-| `403` | `not_supported` | Dynamic client registration is not enabled |
-| `429` | `rate_limited` | Too many registrations from this IP (10 per hour) |
+| `400` | `invalid_redirect_uri` | `redirect_uris` 中有一个不是有效的绝对 URI，或使用了 script/data/file 伪方案 |
+| `400` | `invalid_client_metadata` | 请求了不可注册的授权类型，或对某个需要 `redirect_uris` 的授权类型缺失了它 |
+| `400` | `invalid_scope` | 请求的某个作用域既非内置也未注册 |
+| `403` | `invalid_scope` | 请求了管理作用域——它永远不能通过注册被授予 |
+| `403` | `not_supported` | 未启用动态客户端注册 |
+| `429` | `rate_limited` | 来自此 IP 的注册过多（每小时 10 次） |
 
-## Security Considerations
+## 安全考量
 
-The registration endpoint is **unauthenticated**, but constrained by design:
+注册端点是**无需认证的**，但在设计上受到约束：
 
-- **Rate limited** — 10 registrations per IP per rolling hour (`429 rate_limited`), so the client store can't be flooded.
-- **Grant types restricted** — only `authorization_code` + `refresh_token`; a registered client always requires a user-mediated flow and can never act as a machine-to-machine client.
-- **Admin scope reserved** — the `authagonal-admin` scope (or whatever `AdminApi:Scope` is set to) is refused, so registration can never produce a client that reaches the [admin API](admin-api).
-- **PKCE always required** on registered clients.
+- **速率限制**——每个 IP 每滚动小时 10 次注册（`429 rate_limited`），因此客户端存储无法被灌满。
+- **授权类型受限**——只有 `authorization_code` + `refresh_token`；已注册的客户端始终需要一个由用户介入的流程，永远不能充当机器对机器的客户端。
+- **管理作用域为保留项**——`authagonal-admin` 作用域（或 `AdminApi:Scope` 所设的任何值）会被拒绝，因此注册永远无法产生一个能触及[管理 API](admin-api) 的客户端。
+- 已注册客户端**始终要求 PKCE**。
 
-For stronger gating (initial access tokens, mTLS, software statements), front the endpoint with your own middleware or an `IAuthHook`. Consider disabling dynamic registration entirely and managing clients via the admin API in environments where self-service registration is not a requirement.
+若需更强的门控（初始访问令牌、mTLS、软件声明），请在该端点前面加上您自己的中间件或 `IAuthHook`。在不要求自助注册的环境中，请考虑彻底禁用动态注册，改为通过管理 API 管理客户端。

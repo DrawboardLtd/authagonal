@@ -1,33 +1,31 @@
 ---
 layout: default
-title: Pushed Authorization Requests
+title: 推送式授权请求
 locale: zh-Hans
 ---
 
-> ⚠️ This page has not yet been translated; the English version is shown below.
+# 推送式授权请求（PAR）
 
-# Pushed Authorization Requests (PAR)
+[RFC 9126](https://www.rfc-editor.org/rfc/rfc9126) 允许客户端使用标准的客户端认证，将其 authorize 请求参数直接 POST 给服务器，并收到一个短生命周期的不透明 `request_uri` 交给浏览器。浏览器随后访问 `/connect/authorize?request_uri=...&client_id=...`，而不必在 URL 上携带每一个参数。
 
-[RFC 9126](https://www.rfc-editor.org/rfc/rfc9126) lets a client POST its authorize-request parameters directly to the server with standard client authentication and receive a short-lived opaque `request_uri` to hand to the browser. The browser then visits `/connect/authorize?request_uri=...&client_id=...` instead of carrying every parameter on the URL.
+为什么使用它：
 
-Why use it:
+- authorize 参数绝不会出现在浏览器历史、服务器日志或 `Referer` 头中。
+- 服务器在推送时对客户端进行认证，因此参数在任何重定向发生之前就已完成完整性校验。
+- 长参数集（大型 `claims` 请求、多资源流程）不会撑破 URL 长度限制。
 
-- Authorize parameters never appear in browser history, server logs, or `Referer` headers.
-- The server authenticates the client at push time, so the parameters are integrity-checked before any redirect happens.
-- Long parameter sets (large `claims` requests, multi-resource flows) don't blow URL length limits.
-
-## Endpoint
+## 端点
 
 ```
 POST /connect/par
 Content-Type: application/x-www-form-urlencoded
 ```
 
-Authentication is the same as `/connect/token`: HTTP Basic with `client_id`/`client_secret`, or form-encoded credentials. Confidential clients must authenticate; public clients post without a secret. Client-authentication failures return `401` (per RFC 9126 — unlike the token endpoint, where only `invalid_client` is a 401).
+认证方式与 `/connect/token` 相同：使用 `client_id`/`client_secret` 的 HTTP Basic，或表单编码的凭据。机密客户端必须认证；公共客户端不带密钥提交。客户端认证失败返回 `401`（依据 RFC 9126——与令牌端点不同，在令牌端点只有 `invalid_client` 才是 401）。
 
-The form body carries the same parameters that would normally go on `/connect/authorize` (`response_type`, `redirect_uri`, `scope`, `state`, `code_challenge`, `code_challenge_method`, `nonce`, `resource`, etc.). `request_uri` itself is rejected — chaining a PAR is forbidden by §2.1 of the spec. If the body carries a `client_id`, it must match the authenticated client.
+表单请求体携带的参数与通常会放到 `/connect/authorize` 上的相同（`response_type`、`redirect_uri`、`scope`、`state`、`code_challenge`、`code_challenge_method`、`nonce`、`resource` 等）。`request_uri` 本身会被拒绝——规范 §2.1 禁止串联 PAR。如果请求体携带了 `client_id`，它必须与已认证的客户端匹配。
 
-### Response
+### 响应
 
 ```
 HTTP/1.1 201 Created
@@ -39,19 +37,19 @@ HTTP/1.1 201 Created
 }
 ```
 
-The `request_uri` is single-use. It's removed from the store once the matching `/connect/authorize` request consumes it (or when the 90-second window expires, whichever is sooner).
+`request_uri` 是一次性的。一旦匹配的 `/connect/authorize` 请求消费了它（或 90 秒窗口过期，以较早者为准），它就会从存储中移除。
 
-### Authorization step
+### 授权步骤
 
 ```
 GET /connect/authorize?client_id=my-rp&request_uri=urn:ietf:params:oauth:request_uri:abc123...
 ```
 
-When `request_uri` is present, all other parameters are pulled from the pushed payload — anything else on the URL is ignored. The `client_id` on this request must match the client that pushed the payload.
+当 `request_uri` 存在时，所有其他参数都从推送的载荷中拉取——URL 上的其他任何内容都会被忽略。此请求上的 `client_id` 必须与推送该载荷的客户端匹配。
 
-## Requiring PAR per client
+## 按客户端要求 PAR
 
-Set `RequirePushedAuthorizationRequests = true` on a client to refuse plain `/connect/authorize` requests from it. Any non-PAR authorize attempt returns `invalid_request` with the description "This client requires requests to be pushed via /connect/par".
+在客户端上设置 `RequirePushedAuthorizationRequests = true`，以拒绝来自它的普通 `/connect/authorize` 请求。任何非 PAR 的 authorize 尝试都会返回 `invalid_request`，描述为 "This client requires requests to be pushed via /connect/par"。
 
 ```csharp
 new OAuthClient
@@ -62,15 +60,15 @@ new OAuthClient
 }
 ```
 
-This is the recommended posture for clients that handle sensitive scopes — combined with PKCE, it removes the URL bar as an attack surface.
+对于处理敏感作用域的客户端，这是推荐的姿态——与 PKCE 结合，它把 URL 地址栏从攻击面上移除。
 
-## Lifetime and storage
+## 生命周期与存储
 
-The `request_uri` lifetime is server-set at 90 seconds, matching the typical reference-IdP value. Pushed payloads are stored via the same `IGrantStore` as auth codes and refresh tokens, so they inherit the host's persistence and replication strategy automatically.
+`request_uri` 的生命周期由服务器设定为 90 秒，与典型的参考 IdP 值一致。推送的载荷通过与授权码和刷新令牌相同的 `IGrantStore` 存储，因此它们会自动继承宿主的持久化和复制策略。
 
-## Discovery
+## 发现
 
-The PAR endpoint advertises itself in `.well-known/openid-configuration` as:
+PAR 端点在 `.well-known/openid-configuration` 中如下公布自身：
 
 ```json
 {

@@ -30,7 +30,7 @@ dotnet add package Authagonal.AzureProvider
 </ItemGroup>
 ```
 
-`Authagonal.AzureProvider` 提供 Azure Table Storage 存储，`AddAuthagonal` 会从 `Storage:*` 配置将其接入。若要改为托管在 AWS 上，请引用 `Authagonal.AwsProvider`，并在 `AddAuthagonal` 之前调用 `AddAuthagonalAwsStorage(...)` — 参见 [安装 → AWS 后端](installation#aws-backend)。
+`Authagonal.AzureProvider` 提供 Azure Table Storage 存储，`AddAuthagonal` 会从 `Storage:*` 配置将其接入。若要改为托管在 AWS 上，请引用 `Authagonal.AwsProvider`，并在 `AddAuthagonal` 之前调用 `AddAuthagonalAwsStorage(...)`，参见 [安装 → AWS 后端](installation#aws-backend)。
 
 ### 配置 Program.cs
 
@@ -91,7 +91,7 @@ app.Run();
 
 ### 扩展点
 
-在调用 `AddAuthagonal()` **之前**注册您的实现 — Authagonal 使用 `TryAdd`，因此您的注册优先。
+在调用 `AddAuthagonal()` **之前**注册您的实现，Authagonal 使用 `TryAdd`，因此您的注册优先。
 
 | 接口 | 用途 | 默认值 |
 |---|---|---|
@@ -154,7 +154,7 @@ public class AuditAuthHook(ILogger<AuditAuthHook> logger) : IAuthHook
 }
 ```
 
-该接口还有更多可选成员，它们带有空操作的默认实现（`OnMfaVerifyFailedAsync`、`OnEmailConfirmedAsync`、`OnMfaEnrolledAsync`、`OnMfaCredentialRemovedAsync`、`OnRecoveryCodesRegeneratedAsync`、`OnPasswordChangedAsync`）— 仅在您需要这些事件时才覆盖它们。
+该接口还有更多可选成员，它们带有空操作的默认实现（`OnMfaVerifyFailedAsync`、`OnEmailConfirmedAsync`、`OnMfaEnrolledAsync`、`OnMfaCredentialRemovedAsync`、`OnRecoveryCodesRegeneratedAsync`、`OnPasswordChangedAsync`），仅在您需要这些事件时才覆盖它们。
 
 #### 示例：邮件服务
 
@@ -179,7 +179,7 @@ public class ConsoleEmailService(ILogger<ConsoleEmailService> logger) : IEmailSe
 }
 ```
 
-> **邮件是最常见的集成陷阱。** 如果您未注册 `IEmailService` 且未设置 `Email:ResendApiKey`，验证邮件和密码重置邮件会被静默丢弃 — 而且由于确认邮箱的登录门控默认开启，自助注册的用户将永远无法登录（`UseAuthagonal` 会在启动时发出警告）。当配置了 `Email:ResendApiKey` + `Email:SenderEmail` 时，内置的 Resend 发送器会自动激活；在开发 / 测试环境中，`Auth:AutoConfirmEmailDomains` 会为列出的域名跳过验证。参见 [配置 → 邮件](configuration#email)。
+> **邮件是最常见的集成陷阱。** 如果您未注册 `IEmailService` 且未设置 `Email:ResendApiKey`，验证邮件和密码重置邮件会被静默丢弃，而且由于确认邮箱的登录门控默认开启，自助注册的用户将永远无法登录（`UseAuthagonal` 会在启动时发出警告）。当配置了 `Email:ResendApiKey` + `Email:SenderEmail` 时，内置的 Resend 发送器会自动激活；在开发 / 测试环境中，`Auth:AutoConfirmEmailDomains` 会为列出的域名跳过验证。参见 [配置 → 邮件](configuration#email)。
 
 ### 添加自定义端点
 
@@ -236,6 +236,9 @@ import {
   MfaChallengePage,
   MfaSetupPage,
   RegisterPage,
+  ConsentPage,
+  GrantsPage,
+  DevicePage,
   App,              // Standalone SPA with full routing
 } from '@authagonal/login';
 
@@ -299,7 +302,9 @@ loadBranding().then((config) => {
 
 ```tsx
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
-import { ForgotPasswordPage, ResetPasswordPage } from '@authagonal/login';
+import {
+  ForgotPasswordPage, ResetPasswordPage, ConsentPage, DevicePage, GrantsPage,
+} from '@authagonal/login';
 import MyLoginPage from './MyLoginPage';
 import MyLayout from './MyLayout';
 
@@ -311,6 +316,9 @@ export default function App() {
           <Route path="/login" element={<MyLoginPage />} />
           <Route path="/forgot-password" element={<ForgotPasswordPage />} />
           <Route path="/reset-password" element={<ResetPasswordPage />} />
+          <Route path="/consent" element={<ConsentPage />} />
+          <Route path="/device" element={<DevicePage />} />
+          <Route path="/grants" element={<GrantsPage />} />
           <Route path="*" element={<Navigate to="/login" replace />} />
         </Routes>
       </MyLayout>
@@ -408,7 +416,7 @@ export default function MyLayout({ children }: { children: React.ReactNode }) {
 }
 ```
 
-完整的架构 — 包括本地化的欢迎文本、语言选择器列表，以及按模式的深色/浅色颜色和徽标背景覆盖 — 在 [品牌定制](branding) 页面上。
+完整的架构，包括本地化的欢迎文本、语言选择器列表，以及按模式的深色/浅色颜色和徽标背景覆盖，在 [品牌定制](branding) 页面上。
 
 ### Vite 配置
 

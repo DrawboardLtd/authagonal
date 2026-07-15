@@ -1,36 +1,34 @@
 ---
 layout: default
-title: Table Storage Backup Whitepaper
+title: Table Storage 备份白皮书
 locale: zh-Hans
 ---
 
-> ⚠️ This page has not yet been translated; the English version is shown below.
+# 备份 Azure Table Storage：一种实用方法
 
-# Backing Up Azure Table Storage: A Practical Approach
-
-**How Authagonal implements full and incremental backup for a schemaless NoSQL store**
+**Authagonal 如何为无模式（schemaless）NoSQL 存储实现全量与增量备份**
 
 ---
 
-## The Problem
+## 问题
 
-Azure Table Storage is a cost-effective, massively scalable key-value store -- but it offers no native backup facility. There are no snapshots, no point-in-time restore, no export button. If a bad deployment corrupts data, or an operator accidentally deletes a table, recovery depends entirely on whatever you built yourself.
+Azure Table Storage 是一种经济高效、可大规模扩展的键值存储——但它不提供任何原生的备份设施。没有快照，没有时间点恢复，没有导出按钮。如果一次糟糕的部署损坏了数据，或者运维人员误删了一张表，恢复就完全取决于你自己所构建的一切。
 
-For an identity platform like Authagonal -- where the tables hold users, credentials, OAuth grants, signing keys, SSO configurations, and SCIM provisioning state -- the stakes are high. Losing this data doesn't just break an application; it locks people out.
+对于像 Authagonal 这样的身份平台——其表中保存着用户、凭据、OAuth 授权、签名密钥、SSO 配置以及 SCIM 预配状态——风险极高。丢失这些数据不仅会让应用瘫痪；它会把人们锁在门外。
 
-This paper describes the backup strategy Authagonal uses: how it exports data, how incremental backups work despite Table Storage's limited query model, how deletes are tracked, and how the pieces compose into a production-ready backup pipeline.
+本文描述 Authagonal 所采用的备份策略：它如何导出数据、增量备份如何在 Table Storage 受限的查询模型之下工作、删除如何被追踪，以及这些部件如何组合成一条可投入生产的备份流水线。
 
-## Design Goals
+## 设计目标
 
-1. **Full and incremental backups.** A daily full backup is fine for small deployments, but at scale, hourly incrementals keep the backup window short and storage costs low.
-2. **Faithful round-trip.** Every entity property -- strings, integers, booleans, DateTimeOffsets, GUIDs, binary -- must survive a backup/restore cycle without type coercion or data loss.
-3. **Multi-tenant support.** Authagonal uses table name prefixes to isolate tenants (e.g. `acmecorpUsers`, `acmecorpClients`). Backup and restore must be prefix-aware so a single storage account can host many tenants with independent backup schedules.
-4. **Pluggable storage.** Backups should work to a local filesystem during development and to blob storage (or any other target) in production, without changing the core logic.
-5. **Human-readable output.** When something goes wrong, an operator should be able to open a backup file in a text editor and see what's in it.
+1. **全量与增量备份。** 对小型部署而言，每日一次全量备份就够了；但在规模化时，每小时的增量备份能让备份窗口保持短小、存储成本保持低廉。
+2. **忠实的往返。** 每个实体属性——字符串、整数、布尔值、DateTimeOffset、GUID、二进制——都必须在一次备份/恢复循环中存活下来，不发生类型强制转换或数据丢失。
+3. **多租户支持。** Authagonal 使用表名前缀来隔离租户（例如 `acmecorpUsers`、`acmecorpClients`）。备份和恢复必须感知前缀，这样单个存储账户就能承载许多具有各自独立备份计划的租户。
+4. **可插拔的存储。** 备份应当在开发时能写入本地文件系统、在生产时能写入 blob 存储（或任何其他目标），而无需更改核心逻辑。
+5. **人类可读的输出。** 当出问题时，运维人员应当能够在文本编辑器中打开一个备份文件，看到里面的内容。
 
-## Architecture
+## 架构
 
-The backup system is structured as a .NET library (`Authagonal.Backup`) with thin CLI wrappers for backup and restore operations. The library is separated from the main Authagonal server so it can be used as a standalone tool, in a Docker container, or embedded in a scheduled job.
+备份系统被构建为一个 .NET 库（`Authagonal.Backup`），并为备份和恢复操作配以精简的 CLI 包装器。该库与主 Authagonal 服务器相分离，因此可以作为独立工具使用、在 Docker 容器中使用，或嵌入到定时作业中。
 
 ```
 Authagonal.Backup (library)
@@ -46,32 +44,32 @@ tools/Authagonal.Backup     -- CLI entry point for backup
 tools/Authagonal.Restore    -- CLI entry point for restore
 ```
 
-### Storage Abstraction
+### 存储抽象
 
-The core services never touch the filesystem directly. They operate against two interfaces:
+核心服务从不直接接触文件系统。它们针对两个接口进行操作：
 
-**IBackupTarget** provides four operations: open a writable stream for a backup file, write a manifest, get the last watermark (for incremental scheduling), and set a new watermark.
+**IBackupTarget** 提供四种操作：为备份文件打开一个可写流、写入清单（manifest）、获取上一个水位线（watermark，用于增量调度），以及设置新的水位线。
 
-**IBackupSource** provides the read side: read a manifest, open a readable stream, list backup IDs chronologically, list files within a backup, and delete a backup.
+**IBackupSource** 提供读取侧：读取清单、打开一个可读流、按时间顺序列出备份 ID、列出某个备份内的文件，以及删除一个备份。
 
-The filesystem implementations are straightforward -- timestamped directories with JSONL files inside -- but the abstraction means swapping to Azure Blob Storage or S3 requires implementing just these two interfaces.
+文件系统实现很直白——带时间戳的目录，里面装着 JSONL 文件——但这层抽象意味着切换到 Azure Blob Storage 或 S3 只需实现这两个接口。
 
-## Full Backup
+## 全量备份
 
-A full backup iterates over every Authagonal table, queries all entities, and writes them to JSONL files (one JSON object per line, one file per table).
+一次全量备份会遍历每一张 Authagonal 表，查询所有实体，并将它们写入 JSONL 文件（每行一个 JSON 对象，每张表一个文件）。
 
-The backup process:
+备份过程：
 
-1. Generate a backup ID from the current UTC timestamp (e.g. `20260329-120000`).
-2. For each of the 20 default Authagonal tables, query the Azure Table Storage SDK's `QueryAsync<TableEntity>` with a page size of 1,000.
-3. Serialize each entity to a flat JSON dictionary preserving all properties, including system properties (`PartitionKey`, `RowKey`, `Timestamp`, `ETag`).
-4. Write each serialized entity as a single line to `{TableName}.jsonl` (or `{TableName}.jsonl.gz` if compression is enabled).
-5. Record per-table entity counts and durations in a manifest (`_manifest.json`).
-6. Update the `.lastbackup` watermark file with the backup start time.
+1. 从当前 UTC 时间戳生成一个备份 ID（例如 `20260329-120000`）。
+2. 对 20 张默认的 Authagonal 表中的每一张，以 1,000 的页大小调用 Azure Table Storage SDK 的 `QueryAsync<TableEntity>` 进行查询。
+3. 将每个实体序列化为一个扁平的 JSON 字典，保留所有属性，包括系统属性（`PartitionKey`、`RowKey`、`Timestamp`、`ETag`）。
+4. 将每个序列化后的实体作为单独一行写入 `{TableName}.jsonl`（如果启用了压缩，则写入 `{TableName}.jsonl.gz`）。
+5. 在清单（`_manifest.json`）中记录每张表的实体数量和耗时。
+6. 用备份开始时间更新 `.lastbackup` 水位线文件。
 
-Tables that don't exist in the storage account are silently skipped (HTTP 404 is caught and ignored). Transient tables like `SamlReplayCache` and `OidcStateStore` are excluded by default since their contents are ephemeral.
+存储账户中不存在的表会被静默跳过（HTTP 404 会被捕获并忽略）。像 `SamlReplayCache` 和 `OidcStateStore` 这样的临时表默认被排除，因为它们的内容是短暂的。
 
-### Output Format
+### 输出格式
 
 ```
 backups/
@@ -84,186 +82,186 @@ backups/
     _manifest.json
 ```
 
-A single line in `Users.jsonl` looks like:
+`Users.jsonl` 中的单独一行看起来像这样：
 
 ```json
 {"PartitionKey":"u_abc123","RowKey":"profile","Timestamp":"2026-03-28T09:14:22+00:00","ETag":"W/\"...\"","Email":"alice@example.com","DisplayName":"Alice","CreatedAt":"2025-11-01T00:00:00+00:00"}
 ```
 
-JSONL was chosen over CSV or a binary format because it preserves the schemaless, heterogeneous nature of Table Storage entities (different entities in the same table can have different properties), is streamable (no need to buffer the entire table in memory), and is directly inspectable with standard tools like `jq` or any text editor.
+选择 JSONL 而非 CSV 或某种二进制格式，是因为它保留了 Table Storage 实体无模式、异构的本质（同一张表中的不同实体可以有不同的属性）、可流式处理（无需将整张表缓冲到内存中），并且可以用 `jq` 之类的标准工具或任何文本编辑器直接查看。
 
-### Compression
+### 压缩
 
-When the `--gzip` flag is set, each JSONL file is wrapped in a GZip stream at `CompressionLevel.Optimal` before writing. The file extension changes to `.jsonl.gz`. The restore tool auto-detects GZip by inspecting the magic bytes (`0x1f 0x8b`) at the start of each file, so no flag is needed during restore.
+当设置了 `--gzip` 标志时，每个 JSONL 文件在写入前都会以 `CompressionLevel.Optimal` 包裹在一个 GZip 流中。文件扩展名变为 `.jsonl.gz`。恢复工具通过检查每个文件开头的魔数字节（`0x1f 0x8b`）来自动检测 GZip，因此恢复时无需任何标志。
 
-## Incremental Backup
+## 增量备份
 
-### The Timestamp Trick
+### Timestamp 技巧
 
-Azure Table Storage automatically maintains a `Timestamp` property on every entity, updated on every insert or replace. This is a server-managed property -- applications cannot set it. The backup system exploits this by filtering queries to `Timestamp gt datetime'{watermark}'`, where the watermark is the start time of the last successful backup.
+Azure Table Storage 会在每个实体上自动维护一个 `Timestamp` 属性，并在每次插入或替换时更新。这是一个由服务器管理的属性——应用程序无法设置它。备份系统利用这一点，将查询过滤为 `Timestamp gt datetime'{watermark}'`，其中水位线是上一次成功备份的开始时间。
 
-This means an incremental backup only downloads entities that were created or modified since the previous run. For a system with 500,000 entities where 200 changed in the last hour, the incremental backup transfers 200 rows instead of 500,000.
+这意味着增量备份只会下载自上一次运行以来创建或修改的实体。对于一个拥有 500,000 个实体、其中在过去一小时内有 200 个发生了变更的系统，增量备份传输的是 200 行，而非 500,000 行。
 
-The watermark is stored in a `.lastbackup` file in the backup root directory. If the file doesn't exist (first run, or after manual cleanup), the backup falls back to a full export. Incremental backup IDs include an `-incr` suffix (e.g. `20260329-180000-incr`) and the manifest records `"mode": "incremental"` with the watermark value that was used for filtering.
+水位线存储在备份根目录中的一个 `.lastbackup` 文件里。如果该文件不存在（首次运行，或手动清理之后），备份会回退到全量导出。增量备份 ID 带有 `-incr` 后缀（例如 `20260329-180000-incr`），清单会记录 `"mode": "incremental"` 以及用于过滤的水位线值。
 
-### Cost of the Timestamp Filter
+### Timestamp 过滤的代价
 
-It's worth being honest about a limitation: `Timestamp` is not indexed. Azure Table Storage only indexes `PartitionKey` and `RowKey`. A filter on `Timestamp gt datetime'...'` results in a full table scan -- Azure reads every entity server-side and evaluates the predicate before returning matches. The filtering reduces data transfer (only changed entities cross the wire), but not server-side read cost.
+有一个局限值得坦诚：`Timestamp` 没有被索引。Azure Table Storage 只索引 `PartitionKey` 和 `RowKey`。对 `Timestamp gt datetime'...'` 的过滤会导致一次全表扫描——Azure 在服务器端读取每一个实体并在返回匹配项之前对谓词求值。这种过滤减少了数据传输量（只有变更的实体会经过网络），但并不减少服务器端的读取成本。
 
-More importantly, the current approach scans **all 20 tables** individually, even if only one table had changes. That's 20 full table scans per incremental backup, regardless of how few entities actually changed.
+更重要的是，当前的做法会逐一扫描**全部 20 张表**，即便只有一张表发生了变更。这意味着每次增量备份都要进行 20 次全表扫描，无论实际变更的实体有多少。
 
-At Authagonal's typical identity-data volumes (tens of thousands of entities, not millions), this is perfectly acceptable -- scans are fast, reads are cheap ($0.00036 per 10,000 transactions), and the operation is read-only with no impact on live traffic. The section on [scaling beyond timestamp scans](#scaling-beyond-timestamp-scans) discusses how this could evolve.
+在 Authagonal 典型的身份数据量下（数万个实体，而非数百万），这完全可以接受——扫描很快，读取很便宜（每 10,000 次事务 $0.00036），而且该操作是只读的，对线上流量没有影响。关于[超越时间戳扫描的扩展](#scaling-beyond-timestamp-scans)一节讨论了这一点可以如何演进。
 
-### The Delete Problem
+### 删除问题
 
-The `Timestamp` filter elegantly captures inserts and updates, but it cannot capture deletes. A deleted entity simply vanishes -- there is no `Timestamp` to filter on, no tombstone left behind by Table Storage itself.
+`Timestamp` 过滤优雅地捕获了插入和更新，但它无法捕获删除。一个被删除的实体就这样消失了——没有可供过滤的 `Timestamp`，Table Storage 自身也不会留下任何墓碑（tombstone）。
 
-Authagonal solves this with application-level tombstone tracking.
+Authagonal 通过应用层的墓碑追踪来解决这个问题。
 
-## Tombstone Tracking
+## 墓碑追踪
 
-Every data store in Authagonal (users, clients, grants, signing keys, SSO domains, SAML/OIDC providers, MFA credentials, SCIM resources, roles) accepts an optional `ITombstoneWriter` dependency. When a store deletes an entity, it writes a tombstone record to a dedicated `Tombstones` table:
+Authagonal 中的每个数据存储（用户、客户端、授权、签名密钥、SSO 域、SAML/OIDC 提供者、MFA 凭据、SCIM 资源、角色）都接受一个可选的 `ITombstoneWriter` 依赖。当某个存储删除一个实体时，它会向专用的 `Tombstones` 表写入一条墓碑记录：
 
-| Column | Value |
+| 列 | 值 |
 |---|---|
-| `PartitionKey` | Logical table name (e.g. `"Users"`) |
+| `PartitionKey` | 逻辑表名（例如 `"Users"`） |
 | `RowKey` | `"{originalPartitionKey}\|{originalRowKey}"` |
-| `DeletedAt` | UTC timestamp of the deletion |
+| `DeletedAt` | 删除的 UTC 时间戳 |
 
-This is a lightweight, append-mostly side-channel. The tombstone write is a simple upsert, batched up to Azure's 100-entity transaction limit for bulk operations.
+这是一个轻量、以追加为主的旁路通道。墓碑写入是一次简单的 upsert，对于批量操作会批处理到 Azure 的 100 个实体事务上限。
 
-During an incremental backup, after exporting modified entities from each table, the backup service queries the `Tombstones` table for records with `Timestamp > watermark`. These are written to a separate `_tombstones.jsonl` file in the backup directory, with a normalized format:
+在增量备份期间，从每张表导出已修改的实体之后，备份服务会查询 `Tombstones` 表中 `Timestamp > watermark` 的记录。这些记录会以规范化的格式写入备份目录中一个单独的 `_tombstones.jsonl` 文件：
 
 ```json
 {"Table":"Users","PartitionKey":"u_abc123","RowKey":"profile","DeletedAt":"2026-03-29T14:30:00+00:00"}
 ```
 
-This means an incremental backup captures a complete picture of what changed: entities added/modified (from the per-table JSONL files) and entities deleted (from the tombstones file).
+这意味着增量备份捕获了变更内容的完整图景：新增/修改的实体（来自各表的 JSONL 文件）以及被删除的实体（来自墓碑文件）。
 
-## Merge and Rollup
+## 合并与汇总
 
-Over time, a backup directory accumulates one full backup and many incrementals. To restore to the current state, all of them would need to be applied in order. The **MergeService** consolidates them into a single full backup.
+随着时间推移，一个备份目录会积累一次全量备份和许多增量备份。要恢复到当前状态，需要按顺序应用它们全部。**MergeService** 会把它们合并成单个全量备份。
 
-The merge algorithm:
+合并算法：
 
-1. Load the full backup's entity set for one table at a time (to bound memory usage).
-2. Layer each incremental on top in chronological order -- newer values overwrite older ones, keyed by `(PartitionKey, RowKey)`.
-3. Apply tombstones: for every `(Table, PartitionKey, RowKey)` tuple in the tombstone files, remove the entity from the merged set.
-4. Write the resulting entity set as a new full backup.
+1. 一次加载一张表的全量备份实体集（以约束内存用量）。
+2. 按时间顺序将每个增量叠加在其上——以 `(PartitionKey, RowKey)` 为键，较新的值覆盖较旧的值。
+3. 应用墓碑：对墓碑文件中的每一个 `(Table, PartitionKey, RowKey)` 元组，从合并后的集合中移除该实体。
+4. 将得到的实体集写为一个新的全量备份。
 
-The **RollupService** wraps this with cleanup: after a successful merge, it deletes the old full backup and all the incrementals that were folded in. This keeps storage usage from growing without bound.
+**RollupService** 在此之外包裹了清理：一次成功的合并之后，它会删除旧的全量备份以及所有被折叠进去的增量备份。这可以防止存储用量无上限地增长。
 
-A typical production schedule might look like:
+一个典型的生产计划可能如下所示：
 
-- **Hourly:** Incremental backup
-- **Daily (2 AM):** Full backup
-- **Weekly:** Rollup (merge the previous week's daily + hourly incrementals, delete originals)
+- **每小时：** 增量备份
+- **每日（凌晨 2 点）：** 全量备份
+- **每周：** 汇总（合并上一周的每日 + 每小时增量备份，删除原件）
 
-## Restore
+## 恢复
 
-The restore tool reads a backup directory and writes entities back into Azure Table Storage. It supports three modes:
+恢复工具读取一个备份目录，并将实体写回 Azure Table Storage。它支持三种模式：
 
-**Upsert** (default): Each entity is inserted or replaced. Existing entities with the same key are overwritten. This is the safest mode for disaster recovery.
+**Upsert**（默认）：每个实体被插入或替换。具有相同键的现有实体会被覆盖。这是灾难恢复最安全的模式。
 
-**Merge**: Each entity is inserted or merged. Properties present in the backup overwrite the corresponding properties in the existing entity, but properties that exist in the live table but not in the backup are preserved. Useful for partial restores.
+**Merge**：每个实体被插入或合并。备份中存在的属性会覆盖现有实体中相应的属性，但存在于线上表却不在备份中的属性会被保留。适用于部分恢复。
 
-**Clean**: All existing entities in each target table are deleted before restoring. This produces an exact replica of the backup state, at the cost of a (potentially slow) full table scan to delete existing data.
+**Clean**：在恢复之前，每张目标表中的所有现有实体都会被删除。这会产出备份状态的精确副本，代价是一次（可能很慢的）全表扫描以删除现有数据。
 
-### Type Fidelity
+### 类型保真
 
-A key challenge in round-tripping Table Storage data through JSON is preserving property types. Table Storage natively supports strings, integers (Int32/Int64), doubles, booleans, DateTimeOffset, Guid, and binary. JSON has no native representation for most of these.
+让 Table Storage 数据经由 JSON 往返的一个关键挑战是保留属性类型。Table Storage 原生支持字符串、整数（Int32/Int64）、双精度浮点数、布尔值、DateTimeOffset、Guid 和二进制。JSON 对其中大多数并没有原生表示。
 
-The restore service uses heuristics to recover types from their JSON string representation:
+恢复服务使用启发式方法从其 JSON 字符串表示中恢复类型：
 
-- **DateTimeOffset**: Strings that are 19-35 characters long, start with a digit, and parse as ISO 8601 are restored as `DateTimeOffset`.
-- **Guid**: Strings that are exactly 36 characters and parse as a GUID are restored as `Guid`.
-- **Numbers**: JSON numbers are tried as `Int32`, then `Int64`, then `double`, in that order.
-- **Booleans and nulls**: Map directly.
+- **DateTimeOffset**：长度为 19-35 个字符、以数字开头且能按 ISO 8601 解析的字符串，会被恢复为 `DateTimeOffset`。
+- **Guid**：恰好 36 个字符且能解析为 GUID 的字符串，会被恢复为 `Guid`。
+- **数字**：JSON 数字会按 `Int32`、然后 `Int64`、然后 `double` 的顺序依次尝试。
+- **布尔值和 null**：直接映射。
 
-This heuristic approach covers Authagonal's actual data patterns without requiring a schema registry or type annotations in the backup format.
+这种启发式方法覆盖了 Authagonal 实际的数据模式，无需模式注册表，也无需在备份格式中加入类型注解。
 
-### Error Handling
+### 错误处理
 
-Restore operations are fault-tolerant at the entity level. If an individual entity fails to write (e.g. due to a transient Azure error), the error count is incremented but the restore continues. The final result reports per-table success and error counts, and the process exits with code `2` for partial success -- distinct from `0` (full success) and `1` (fatal error).
+恢复操作在实体级别是容错的。如果某个单独的实体写入失败（例如由于一次瞬时的 Azure 错误），错误计数会递增，但恢复仍会继续。最终结果会报告每张表的成功数和错误数，并且进程在部分成功时以退出码 `2` 结束——区别于 `0`（完全成功）和 `1`（致命错误）。
 
-## Multi-Tenancy
+## 多租户
 
-Authagonal supports multi-tenant deployments where each tenant's tables are prefixed (e.g. `acmecorpUsers`, `contosoclients`). Both backup and restore accept a `--prefix` flag that is prepended to logical table names when communicating with Azure Table Storage.
+Authagonal 支持多租户部署，其中每个租户的表都带有前缀（例如 `acmecorpUsers`、`contosoclients`）。备份和恢复都接受一个 `--prefix` 标志，在与 Azure Table Storage 通信时它会被前置到逻辑表名之前。
 
-This means:
-- Backup with `--prefix acmecorp` reads from `acmecorpUsers`, `acmecorpClients`, etc., but writes files named `Users.jsonl`, `Clients.jsonl` (logical names).
-- Restore with `--prefix contoso` reads `Users.jsonl` and writes to `contosoUsers`.
+这意味着：
+- 使用 `--prefix acmecorp` 的备份从 `acmecorpUsers`、`acmecorpClients` 等读取，但写出的文件名为 `Users.jsonl`、`Clients.jsonl`（逻辑名）。
+- 使用 `--prefix contoso` 的恢复读取 `Users.jsonl` 并写入 `contosoUsers`。
 
-This makes it straightforward to clone a tenant's data, migrate between environments, or restore one tenant without affecting others.
+这使得克隆某个租户的数据、在环境之间迁移，或在不影响其他租户的情况下恢复单个租户变得直截了当。
 
-## Manifest
+## 清单
 
-Every backup includes a `_manifest.json` file recording:
+每个备份都包含一个记录以下内容的 `_manifest.json` 文件：
 
-- **BackupId**: Timestamped identifier (e.g. `20260329-120000` or `20260329-180000-incr`)
-- **Mode**: `"full"` or `"incremental"`
-- **BackupTimestamp**: When the backup started (UTC)
-- **Watermark**: For incrementals, the cutoff timestamp used for filtering
-- **Compressed**: Whether files are GZip-compressed
-- **Tables**: A dictionary of table names to entity counts and durations
-- **TombstoneCount**: Number of tombstone records (incremental only)
-- **TotalEntities**: Aggregate entity count across all tables
-- **DurationSeconds**: Wall-clock time for the backup run
-- **FileHashes**: SHA-256 hashes of each backup file for integrity verification
+- **BackupId**：带时间戳的标识符（例如 `20260329-120000` 或 `20260329-180000-incr`）
+- **Mode**：`"full"` 或 `"incremental"`
+- **BackupTimestamp**：备份开始的时间（UTC）
+- **Watermark**：对增量备份而言，用于过滤的截止时间戳
+- **Compressed**：文件是否经过 GZip 压缩
+- **Tables**：表名到实体数量与耗时的字典
+- **TombstoneCount**：墓碑记录的数量（仅增量）
+- **TotalEntities**：所有表的实体总数
+- **DurationSeconds**：备份运行的挂钟时间
+- **FileHashes**：每个备份文件的 SHA-256 哈希，用于完整性校验
 
-The manifest serves both as an operational dashboard (how big was the backup? how long did it take? which tables are largest?) and as a safety net (hash verification during restore detects corrupted or tampered files).
+清单既充当运维仪表盘（备份有多大？花了多长时间？哪些表最大？），又充当安全网（恢复期间的哈希校验能检测出损坏或被篡改的文件）。
 
-## Operational Characteristics
+## 运维特性
 
-**Backup speed** is bounded by Azure Table Storage query throughput, which is typically 5,000-10,000 entities per second per table. A full backup of 100,000 entities across 20 tables completes in under a minute. Incremental backups of a few hundred changed entities finish in seconds.
+**备份速度**受制于 Azure Table Storage 的查询吞吐量，通常为每张表每秒 5,000-10,000 个实体。一次跨 20 张表、包含 100,000 个实体的全量备份可在一分钟内完成。仅几百个变更实体的增量备份则在数秒内完成。
 
-**Memory usage** is minimal. The backup service streams entities directly to disk -- it never loads an entire table into memory. The merge service processes one table at a time, loading only that table's entity set. For very large tables (millions of entities), the merge memory footprint is proportional to the largest single table.
+**内存用量**极小。备份服务将实体直接流式写入磁盘——它从不将整张表加载到内存中。合并服务一次处理一张表，只加载该表的实体集。对于非常大的表（数百万个实体），合并的内存占用与最大的单张表成正比。
 
-**Retry policy** is configured with exponential backoff: 5 retries, starting at 500ms, capped at 30 seconds. This covers the transient throttling that Table Storage applies under heavy load.
+**重试策略**配置为指数退避：5 次重试，从 500ms 起，上限为 30 秒。这可以应对 Table Storage 在重负载下施加的瞬时限流。
 
-**Dry run** mode (`--dry-run`) enumerates entities without writing any files, useful for validating connectivity and estimating backup size before committing to a full run.
+**试运行**模式（`--dry-run`）枚举实体但不写入任何文件，可用于在投入一次完整运行之前验证连通性并估算备份大小。
 
-## Scaling Beyond Timestamp Scans
+## 超越时间戳扫描的扩展
 
-The `Timestamp`-based approach is pragmatic at moderate scale, but its cost is proportional to total data size, not to the number of changes. As tables grow, 20 full table scans per incremental backup become increasingly wasteful. The natural evolution is a **unified change log table**.
+基于 `Timestamp` 的做法在中等规模下很务实，但它的成本与数据总量成正比，而非与变更数量成正比。随着表的增长，每次增量备份 20 次全表扫描变得越来越浪费。自然的演进方向是一张**统一的变更日志表**。
 
-The insight is that the tombstone mechanism already proves this pattern out for deletes. The `Tombstones` table is a single, compact, cross-table index: every delete across all 20 data tables is recorded in one place, queryable by timestamp. Extending this to cover all mutations -- inserts, updates, and deletes -- would eliminate the need to scan the data tables entirely.
+洞见在于：墓碑机制已经为删除验证了这一模式。`Tombstones` 表是一个单一、紧凑、跨表的索引：全部 20 张数据表中的每一次删除都被记录在同一个地方，可按时间戳查询。将其扩展到覆盖所有变更——插入、更新和删除——就能彻底消除扫描数据表的必要。
 
-### Change Log Design
+### 变更日志设计
 
-A change log table with time-bucketed partition keys would look like:
+一张采用按时间分桶的分区键的变更日志表看起来会是这样：
 
-| PartitionKey | RowKey | Properties |
+| PartitionKey | RowKey | 属性 |
 |---|---|---|
 | `2026-03-29T18` | `Users\|u_abc123\|profile` | `Op = "upsert"` |
 | `2026-03-29T18` | `Clients\|c_456\|config` | `Op = "upsert"` |
 | `2026-03-29T18` | `Users\|u_xyz789\|profile` | `Op = "delete"` |
 
-The partition key is an hour bucket, so finding all changes since the last backup becomes a set of **partition key point queries** -- the fastest operation Table Storage supports. The backup service would:
+分区键是一个小时桶，因此找出自上次备份以来的所有变更就变成了一组**分区键点查询**——这是 Table Storage 所支持的最快操作。备份服务将会：
 
-1. Query the change log for all hour-bucket partitions since the watermark. This is an indexed operation, not a scan.
-2. For each `upsert` entry, fetch the current entity from the data table by its exact `PartitionKey`/`RowKey` -- also an indexed point read.
-3. For each `delete` entry, record the tombstone directly from the change log. No need for a separate tombstones table.
+1. 查询变更日志中自水位线以来的所有小时桶分区。这是一次带索引的操作，而非一次扫描。
+2. 对每一个 `upsert` 条目，按其精确的 `PartitionKey`/`RowKey` 从数据表中取回当前实体——同样是一次带索引的点读取。
+3. 对每一个 `delete` 条目，直接从变更日志中记录墓碑。无需单独的墓碑表。
 
-This makes backup cost proportional to the number of changes, not the total data size. One query against a compact index table replaces 20 full table scans. It also unifies the tombstone mechanism -- the change log captures creates, updates, and deletes uniformly, so the separate `Tombstones` table becomes redundant.
+这使得备份成本与变更数量成正比，而非与数据总量成正比。对一张紧凑索引表的一次查询取代了 20 次全表扫描。它还统一了墓碑机制——变更日志以统一的方式捕获创建、更新和删除，因此单独的 `Tombstones` 表变得多余。
 
-### Why Not Yet
+### 为何尚未采用
 
-The tradeoff is write-path overhead. Every mutation in every store would need an additional write to the change log table. The plumbing is mostly there -- the `ITombstoneWriter` is already injected into every store and called on every delete. Widening it to an `IChangeTracker` that fires on upserts too is a straightforward refactor.
+这个取舍在于写入路径的开销。每个存储中的每一次变更都需要额外向变更日志表写入一次。管道大体已经就绪——`ITombstoneWriter` 已经被注入到每个存储中，并在每次删除时被调用。将其拓宽为一个在 upsert 时也会触发的 `IChangeTracker` 是一次直截了当的重构。
 
-But "straightforward" isn't "free." It adds latency to every user-facing operation (one extra Table Storage write), increases storage transactions, and introduces a new consistency concern (what if the data write succeeds but the change log write fails?). At current volumes, the 20 timestamp-filtered scans complete in seconds and cost fractions of a cent. The change log would be the right move if tables grew to millions of entities, but for now, the simpler approach wins.
+但“直截了当”并不等于“免费”。它会给每一个面向用户的操作增加延迟（一次额外的 Table Storage 写入）、增加存储事务，并引入一个新的一致性问题（如果数据写入成功但变更日志写入失败了怎么办？）。在当前的数据量下，20 次时间戳过滤的扫描在数秒内完成，成本仅为几分之一美分。如果表增长到数百万个实体，变更日志会是正确的举措；但就目前而言，更简单的做法胜出。
 
-## Summary
+## 小结
 
-The approach is deliberately simple. Rather than building a complex change-data-capture pipeline or relying on Azure-specific features that may not exist for Table Storage, Authagonal uses the one piece of metadata that Azure *does* guarantee -- the server-managed `Timestamp` -- combined with application-level tombstone tracking for deletes.
+这套做法刻意保持简单。Authagonal 没有构建复杂的变更数据捕获（CDC）流水线，也没有依赖 Table Storage 可能并不具备的 Azure 专有特性，而是使用了 Azure *确实*保证的那一项元数据——由服务器管理的 `Timestamp`——再结合针对删除的应用层墓碑追踪。
 
-The result is a backup system that:
+其结果是一个具备如下特性的备份系统：
 
-- Produces human-readable, portable JSONL files
-- Supports full and incremental modes with automatic watermark management
-- Correctly captures creates, updates, *and* deletes
-- Handles multi-tenant table prefixing transparently
-- Composes cleanly (merge, rollup, selective restore)
-- Runs as a standalone tool with no dependency on the Authagonal server
+- 产出人类可读、可移植的 JSONL 文件
+- 支持全量与增量模式，并自动管理水位线
+- 正确捕获创建、更新*以及*删除
+- 透明地处理多租户表前缀
+- 组合清晰（合并、汇总、选择性恢复）
+- 作为独立工具运行，不依赖于 Authagonal 服务器
 
-The storage abstraction means the same logic can target local disk, Azure Blob Storage, S3, or any other destination. The format is simple enough that even without the restore tool, an operator could reconstruct data with `jq` and the Azure CLI.
+存储抽象意味着同一套逻辑可以面向本地磁盘、Azure Blob Storage、S3 或任何其他目的地。这套格式足够简单，以至于即便没有恢复工具，运维人员也能用 `jq` 和 Azure CLI 重建数据。

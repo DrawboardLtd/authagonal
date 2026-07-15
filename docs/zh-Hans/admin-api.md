@@ -65,6 +65,14 @@ GET /api/v1/profile/{userId}
 
 返回用户详情，包括外部登录关联。
 
+### 用户是否存在
+
+```
+GET /api/v1/profile/{userId}/exists
+```
+
+如果用户存在返回 `204`，否则返回 `404`（一个廉价的存在性探测——无响应体）。
+
 ### 注册用户
 
 ```
@@ -79,7 +87,9 @@ Content-Type: application/json
 }
 ```
 
-创建用户并发送验证邮件。如果邮箱已被占用，返回 `409`。
+创建用户并发送验证邮件。如果邮箱已被占用，返回 `409 user_exists`。
+
+可选的仅管理员字段：`userId`（调用方提供的 id——冲突时返回 `409 user_id_in_use`）、`emailConfirmed`（创建时即已验证的用户，跳过验证邮件）、`companyName`、`organizationId`、`phone`、`locale`，以及 `customAttributes`（持久化到用户上并转发给预配目标的字符串映射）。
 
 ### 更新用户
 
@@ -95,7 +105,7 @@ Content-Type: application/json
 }
 ```
 
-所有字段都是可选的 -- 只有提供的字段会被更新。更改 `organizationId` 会触发：
+`userId` 为必填项；其他每个字段都是可选的——只有提供的字段会被更新。更改 `organizationId` 会触发：
 - SecurityStamp 轮换（在 30 分钟内使所有 Cookie 会话失效）
 - 撤销所有刷新令牌
 
@@ -171,9 +181,11 @@ DELETE /api/v1/profile/{userId}/mfa/{credentialId}
 ```
 POST   /api/v1/saml/connections                    # 创建
 GET    /api/v1/saml/connections/{connectionId}     # 获取单个
-PUT    /api/v1/saml/connections/{connectionId}     # 更新
+PUT    /api/v1/saml/connections/{connectionId}     # 更新（部分——仅更改所提供的字段）
 DELETE /api/v1/saml/connections/{connectionId}     # 删除
 ```
+
+创建时需要 `connectionName`、`entityId`，以及 `metadataLocation`（元数据 URL）或 `metadataXml`（粘贴的 IdP 元数据，用于没有元数据 URL 的 IdP——保存时会经解析校验并压缩）**二者恰选其一**。可选项：`nameIdFormat`（省略则使用 emailAddress 默认值，`"none"` 表示省略 NameIDPolicy——推荐用于 ADFS，或填入某个 NameID 格式 URN）、`signAuthnRequests`、`iconUrl`、`allowedDomains`、`disableJitProvisioning`。每个连接都会获得一个服务器生成的 SP 密钥对；它绝不会被 API 返回。详情请参阅 [SAML](saml)。
 
 ### OIDC 提供者
 
@@ -182,6 +194,8 @@ POST   /api/v1/oidc/connections                    # 创建
 GET    /api/v1/oidc/connections/{connectionId}     # 获取单个
 DELETE /api/v1/oidc/connections/{connectionId}     # 删除
 ```
+
+创建时需要 `connectionName`、`metadataLocation`、`clientId`、`clientSecret`、`redirectUrl`。可选项：`iconUrl`、`allowedDomains`、`passthroughParams`。客户端密钥在静态存储时受保护，且绝不返回。详情请参阅 [OIDC 联合](oidc-federation)。
 
 ### SSO 域
 
@@ -341,9 +355,11 @@ Content-Type: application/json
 
 {
   "userId": "user-id",
-  "roleId": "role-id"
+  "roleName": "admin"
 }
 ```
+
+按**角色名称**分配，而非角色 id。返回用户更新后的角色列表。
 
 ### 取消用户角色分配
 
@@ -353,7 +369,7 @@ Content-Type: application/json
 
 {
   "userId": "user-id",
-  "roleId": "role-id"
+  "roleName": "admin"
 }
 ```
 
@@ -372,11 +388,13 @@ POST /api/v1/scim/tokens
 Content-Type: application/json
 
 {
-  "clientId": "client-id"
+  "clientId": "client-id",
+  "description": "Entra provisioning",
+  "expiresInDays": 365
 }
 ```
 
-返回原始令牌一次。请安全存储 -- 之后无法再次获取。
+`description` 和 `expiresInDays` 为可选项（省略 `expiresInDays` 表示不过期的令牌）。返回原始令牌一次。请安全存储——之后无法再次获取。
 
 ### 列出令牌
 
