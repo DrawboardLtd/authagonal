@@ -218,7 +218,13 @@ public static class AuthagonalExtensions
         services.AddScoped<WebAuthnService>();
 
         // Extensibility points — TryAdd so custom registrations take precedence
-        services.TryAddSingleton<IEmailService, NullEmailService>();
+        // Email: the built-in Resend sender activates when Email:ResendApiKey is configured.
+        // Without any IEmailService, mail is discarded — and because RequireConfirmedEmailForLogin
+        // defaults to true, self-registered users could never log in (UseAuthagonal warns at startup).
+        if (!string.IsNullOrWhiteSpace(configuration["Email:ResendApiKey"]))
+            services.TryAddSingleton<IEmailService, EmailService>();
+        else
+            services.TryAddSingleton<IEmailService, NullEmailService>();
         services.TryAddSingleton<IAuditLogger, NullAuditLogger>();
         services.TryAddSingleton<IClientScopeGuard, AllowAllClientScopeGuard>();
         services.TryAddSingleton<IProvisioningAppQuota, UnlimitedProvisioningAppQuota>();
@@ -428,6 +434,15 @@ public static class AuthagonalExtensions
     /// </summary>
     public static WebApplication UseAuthagonal(this WebApplication app)
     {
+        // The most common integrator trap: no email sender + the confirmed-email login gate
+        // (default true) means self-registered users can never sign in. Warn loudly once.
+        if (app.Services.GetService<IEmailService>() is NullEmailService)
+            app.Logger.LogWarning(
+                "No email sender is configured: verification and password-reset emails will be DISCARDED, " +
+                "and self-registered users cannot log in while the confirmed-email login gate is on (the default). " +
+                "Set Email:ResendApiKey + Email:SenderEmail, register your own IEmailService before AddAuthagonal, " +
+                "or set Auth:AutoConfirmEmailDomains for your domain.");
+
         // Forwarded-header trust is config-driven so X-Forwarded-For can't be spoofed to forge the
         // client IP that rate-limiting / lockout keys on. Defaults: ForwardLimit=1 (honour only the
         // single hop the ingress appends; ignore anything further left in the chain). For the
