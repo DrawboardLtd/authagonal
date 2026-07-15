@@ -6,9 +6,9 @@ locale: fr
 
 # Installation
 
-## Docker (recommande)
+## Docker (recommandé)
 
-Telechargez et executez l'image preconstruite :
+Téléchargez et exécutez l'image préconstruite :
 
 ```bash
 docker run -p 8080:8080 \
@@ -19,7 +19,7 @@ docker run -p 8080:8080 \
 
 ## Docker Compose
 
-Pour le developpement local avec Azurite (emulateur Azure Storage) :
+Pour le développement local avec Azurite (émulateur Azure Storage) :
 
 ```yaml
 services:
@@ -47,7 +47,7 @@ docker compose up
 
 ## Compilation depuis les sources
 
-### Prerequis
+### Prérequis
 
 - .NET 10 SDK
 - Node.js 24+
@@ -63,30 +63,30 @@ cd login-app
 npm ci
 npm run build
 
-# Executer le serveur
+# Exécuter le serveur
 dotnet run --project src/Authagonal.Server
 ```
 
 ### Compilation Docker
 
 ```bash
-# Image du serveur (multi-etapes : compile la SPA + .NET dans une seule image)
+# Image du serveur (multi-étapes : compile la SPA + .NET dans une seule image)
 docker build -t authagonal .
 
 # Outil de migration
 docker build -f Dockerfile.migration -t authagonal-migration .
 ```
 
-## En tant que bibliotheque (NuGet)
+## En tant que bibliothèque (NuGet)
 
-Referencez les packages Authagonal dans votre propre projet ASP.NET Core :
+Référencez les packages Authagonal dans votre propre projet ASP.NET Core :
 
 ```xml
 <PackageReference Include="Authagonal.Server" Version="x.y.z" />
 <PackageReference Include="Authagonal.AzureProvider" Version="x.y.z" />
 ```
 
-Le package du fournisseur de stockage est interchangeable : `Authagonal.AzureProvider` pour Azure Table Storage (le cablage par defaut de `AddAuthagonal()`), ou `Authagonal.AwsProvider` pour DynamoDB / S3 / Secrets Manager, voir [backend AWS](#aws-backend) ci-dessous.
+Le package du fournisseur de stockage est interchangeable : `Authagonal.AzureProvider` pour Azure Table Storage (le câblage par défaut de `AddAuthagonal()`), ou `Authagonal.AwsProvider` pour DynamoDB / S3 / Secrets Manager, voir [backend AWS](#aws-backend) ci-dessous.
 
 Puis composez-le dans votre `Program.cs` :
 
@@ -102,15 +102,15 @@ app.MapFallbackToFile("index.html");
 app.Run();
 ```
 
-Consultez [Extensibilite](extensibility) pour tous les points de substitution et [demos/custom-server/](https://github.com/authagonal/authagonal/tree/master/demos/custom-server) pour un exemple complet.
+Consultez [Extensibilité](extensibility) pour tous les points de substitution et [demos/custom-server/](https://github.com/authagonal/authagonal/tree/master/demos/custom-server) pour un exemple complet.
 
 ### Email
 
-L'expediteur [Resend](https://resend.com) integre s'active automatiquement lorsque `Email:ResendApiKey` et `Email:SenderEmail` sont configures, sans enregistrement de service. Sans aucun `IEmailService`, les emails de verification et de reinitialisation de mot de passe sont **ignores silencieusement**, et comme la connexion exige un email confirme par defaut, les utilisateurs auto-inscrits ne peuvent jamais se connecter (`UseAuthagonal` journalise un avertissement au demarrage). Definissez les cles `Email:*`, enregistrez votre propre `IEmailService` avant `AddAuthagonal()`, ou listez vos domaines dans `Auth:AutoConfirmEmailDomains` pour ignorer la verification (dev/test uniquement). Voir [Configuration → Email](configuration#email).
+L'expéditeur [Resend](https://resend.com) intégré s'active automatiquement lorsque `Email:ResendApiKey` et `Email:SenderEmail` sont configurés, sans enregistrement de service. Sans aucun `IEmailService`, les emails de vérification et de réinitialisation de mot de passe sont **ignorés silencieusement**, et comme la connexion exige un email confirmé par défaut, les utilisateurs auto-inscrits ne peuvent jamais se connecter (`UseAuthagonal` journalise un avertissement au démarrage). Définissez les clés `Email:*`, enregistrez votre propre `IEmailService` avant `AddAuthagonal()`, ou listez vos domaines dans `Auth:AutoConfirmEmailDomains` pour ignorer la vérification (dev/test uniquement). Voir [Configuration → Email](configuration#email).
 
 ## Backend AWS
 
-Pour executer sur AWS plutot que sur Azure, referencez `Authagonal.AwsProvider` et enregistrez le bundle AWS **avant** `AddAuthagonal()` : ce sont ces enregistrements qui font que `AddAuthagonal()` ignore son cablage Azure Table Storage :
+Pour exécuter sur AWS plutôt que sur Azure, référencez `Authagonal.AwsProvider` et enregistrez le bundle AWS **avant** `AddAuthagonal()` : ce sont ces enregistrements qui font que `AddAuthagonal()` ignore son câblage Azure Table Storage :
 
 ```csharp
 using Authagonal.AwsProvider;
@@ -123,29 +123,29 @@ builder.Services.AddAuthagonalAwsStorage(
 builder.Services.AddAuthagonal(builder.Configuration);
 ```
 
-Les tables DynamoDB refletent la disposition Azure une pour une et sont garanties au demarrage (idempotent : sans effet lorsqu'elles sont deja provisionnees par Terraform). Les identifiants sont resolus via la chaine AWS standard (env / role d'instance EC2 / IRSA), il n'y a donc pas de distinction chaine-de-connexion contre identite-geree : aucune configuration `Storage:*` n'est necessaire.
+Les tables DynamoDB reflètent la disposition Azure une pour une et sont garanties au démarrage (idempotent : sans effet lorsqu'elles sont déjà provisionnées par Terraform). Les identifiants sont résolus via la chaîne AWS standard (env / rôle d'instance EC2 / IRSA), il n'y a donc pas de distinction chaîne-de-connexion contre identité-gérée : aucune configuration `Storage:*` n'est nécessaire.
 
-> ⚠️ **Cles S3 DataProtection.** Sans client S3 + bucket, le trousseau de cles ASP.NET Core Data Protection est conserve en memoire, ce qui convient pour un noeud unique en dev, mais les cookies et les jetons antiforgery cessent de fonctionner apres un redemarrage et entre les noeuds en production. Passez toujours le client S3 et le bucket pour un deploiement AWS de production.
+> ⚠️ **Clés S3 DataProtection.** Sans client S3 + bucket, le trousseau de clés ASP.NET Core Data Protection est conservé en mémoire, ce qui convient pour un nœud unique en dev, mais les cookies et les jetons antiforgery cessent de fonctionner après un redémarrage et entre les nœuds en production. Passez toujours le client S3 et le bucket pour un déploiement AWS de production.
 
 ## SPA de connexion (npm)
 
-L'interface de connexion est publiee en tant que package npm pour la personnalisation :
+L'interface de connexion est publiée en tant que package npm pour la personnalisation :
 
 ```bash
 npm install @authagonal/login
 ```
 
-Le package fournit du JS et du CSS compiles -- importez les composants et les styles directement dans votre propre application React. Consultez [Serveur personnalise](custom-server) pour un guide complet.
+Le package fournit du JS et du CSS compilés : importez les composants et les styles directement dans votre propre application React. Consultez [Serveur personnalisé](custom-server) pour un guide complet.
 
-## Liste de controle de securite pour la production
+## Liste de contrôle de sécurité pour la production
 
-Avant d'exposer Authagonal a du trafic reel, verifiez les points suivants. Chaque point est detaille sur la page [Configuration](configuration).
+Avant d'exposer Authagonal à du trafic réel, vérifiez les points suivants. Chaque point est détaillé sur la page [Configuration](configuration).
 
-- **Executez derriere un proxy terminant le TLS.** Authagonal doit etre place derriere un reverse proxy / ingress qui termine le TLS. Le cookie de session utilise `SecurePolicy = SameAsRequest` et HSTS n'est emis que sur HTTPS, le proxy doit donc transferer `X-Forwarded-Proto: https`. Definissez `ForwardedHeaders:KnownNetworks` (ou `KnownProxies`) sur le CIDR de votre ingress / de vos pods afin que l'IP du client et le schema ne puissent pas etre usurpes ; `ForwardedHeaders:ForwardLimit` vaut `1` par defaut (ne faire confiance qu'au dernier saut).
-- **Definissez `SecretProvider:VaultUri`.** Le fournisseur de secrets par defaut est **en texte brut** — sans Key Vault, les secrets des clients OIDC en amont et les graines TOTP / MFA sont stockes en clair dans Table Storage (et dans les sauvegardes). Configurez Key Vault pour tout deploiement en production.
-- **Verrouillez l'API d'administration.** `AdminApi:Enabled` vaut **true** par defaut. Le scope d'administration (`AdminApi:Scope`, par defaut `authagonal-admin`) accorde la gestion complete et l'usurpation d'identite des utilisateurs. Restreignez l'acces reseau aux routes d'administration `/api/v1/*` et controlez strictement a qui le scope d'administration est emis, ou definissez `AdminApi:Enabled = false` s'il n'est pas utilise.
-- **Protegez les points d'acces internes.** Definissez `Cluster:Secret` pour que le point d'acces interne `/_internal/backchannel-logout` exige l'en-tete `X-Cluster-Secret` (compare en temps constant). Lorsqu'il n'est pas defini, il n'accepte que les IP source de boucle locale / privees (RFC 1918 / lien-local / ULA) : assurez-vous que la confiance des en-tetes transferes est configuree pour qu'un appelant externe ne puisse pas paraitre interne.
-- **Chiffrez les sauvegardes.** Avec le fournisseur de secrets en texte brut, les sauvegardes contiennent des secrets. La table `SigningKeys` est exclue des sauvegardes par defaut ; si vous l'activez via `Backup:IncludeSigningKeys`, la cible de sauvegarde doit etre chiffree au repos. Voir [Sauvegarde et restauration](backup-restore).
+- **Exécutez derrière un proxy terminant le TLS.** Authagonal doit être placé derrière un reverse proxy / ingress qui termine le TLS. Le cookie de session utilise `SecurePolicy = SameAsRequest` et HSTS n'est émis que sur HTTPS, le proxy doit donc transférer `X-Forwarded-Proto: https`. Définissez `ForwardedHeaders:KnownNetworks` (ou `KnownProxies`) sur le CIDR de votre ingress / de vos pods afin que l'IP du client et le schéma ne puissent pas être usurpés ; `ForwardedHeaders:ForwardLimit` vaut `1` par défaut (ne faire confiance qu'au dernier saut).
+- **Définissez `SecretProvider:VaultUri`.** Le fournisseur de secrets par défaut est **en texte brut** : sans Key Vault, les secrets des clients OIDC en amont et les graines TOTP / MFA sont stockés en clair dans Table Storage (et dans les sauvegardes). Configurez Key Vault pour tout déploiement en production.
+- **Verrouillez l'API d'administration.** `AdminApi:Enabled` vaut **true** par défaut. Le scope d'administration (`AdminApi:Scope`, par défaut `authagonal-admin`) accorde la gestion complète et l'usurpation d'identité des utilisateurs. Restreignez l'accès réseau aux routes d'administration `/api/v1/*` et contrôlez strictement à qui le scope d'administration est émis, ou définissez `AdminApi:Enabled = false` s'il n'est pas utilisé.
+- **Protégez les points d'accès internes.** Définissez `Cluster:Secret` pour que le point d'accès interne `/_internal/backchannel-logout` exige l'en-tête `X-Cluster-Secret` (comparé en temps constant). Lorsqu'il n'est pas défini, il n'accepte que les IP source de boucle locale / privées (RFC 1918 / lien-local / ULA) : assurez-vous que la confiance des en-têtes transférés est configurée pour qu'un appelant externe ne puisse pas paraître interne.
+- **Chiffrez les sauvegardes.** Avec le fournisseur de secrets en texte brut, les sauvegardes contiennent des secrets. La table `SigningKeys` est exclue des sauvegardes par défaut ; si vous l'activez via `Backup:IncludeSigningKeys`, la cible de sauvegarde doit être chiffrée au repos. Voir [Sauvegarde et restauration](backup-restore).
 
 ## Outil de migration
 
@@ -159,4 +159,4 @@ docker run authagonal-migration -- \
   [--MigrateRefreshTokens true]
 ```
 
-Consultez [Migration](migration) pour plus de details.
+Consultez [Migration](migration) pour plus de détails.

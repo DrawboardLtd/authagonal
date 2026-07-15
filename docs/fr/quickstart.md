@@ -1,22 +1,22 @@
 ---
 layout: default
-title: Demarrage rapide
+title: Démarrage rapide
 locale: fr
 ---
 
-# Demarrage rapide
+# Démarrage rapide
 
 Lancez Authagonal localement en 5 minutes.
 
-## 1. Demarrer le serveur
+## 1. Démarrer le serveur
 
 ```bash
 docker compose up
 ```
 
-Cela demarre Authagonal sur `http://localhost:8080` avec Azurite pour le stockage.
+Cela démarre Authagonal sur `http://localhost:8080` avec Azurite pour le stockage.
 
-## 2. Verifier le fonctionnement
+## 2. Vérifier le fonctionnement
 
 ```bash
 # Health check
@@ -51,7 +51,7 @@ Ajoutez un client dans votre `appsettings.json` (ou passez-le via des variables 
 }
 ```
 
-Les clients sont injectes au demarrage -- sans risque a chaque deploiement.
+Les clients sont injectés au démarrage, sans risque à chaque déploiement.
 
 ## 4. Initier une connexion
 
@@ -68,11 +68,11 @@ http://localhost:8080/connect/authorize
   &code_challenge_method=S256
 ```
 
-L'utilisateur voit la page de connexion, s'authentifie et est redirige avec un code d'autorisation.
+L'utilisateur voit la page de connexion, s'authentifie et est redirigé avec un code d'autorisation.
 
-> **Premier utilisateur :** enregistrez-en un sur `http://localhost:8080/login/register`, ou creez-en un via l'[API d'administration](admin-api). L'auto-enregistrement envoie un e-mail de verification, et sans expediteur d'e-mail configure (le comportement local par defaut) ce message est ignore. Pour les tests locaux, definissez donc `Auth__AutoConfirmEmailDomains__0=example.dev` (n'importe quel domaine avec lequel vous vous enregistrez) pour ignorer la verification, ou configurez `Email:ResendApiKey` + `Email:SenderEmail`. Voir [Configuration → Email](configuration#email).
+> **Premier utilisateur :** enregistrez-en un sur `http://localhost:8080/login/register`, ou créez-en un via l'[API d'administration](admin-api). L'auto-enregistrement envoie un e-mail de vérification, et sans expéditeur d'e-mail configuré (le comportement local par défaut) ce message est ignoré. Pour les tests locaux, définissez donc `Auth__AutoConfirmEmailDomains__0=example.dev` (n'importe quel domaine avec lequel vous vous enregistrez) pour ignorer la vérification, ou configurez `Email:ResendApiKey` + `Email:SenderEmail`. Voir [Configuration → Email](configuration#email).
 
-## 5. Echanger le code
+## 5. Échanger le code
 
 ```bash
 curl -X POST http://localhost:8080/connect/token \
@@ -83,7 +83,7 @@ curl -X POST http://localhost:8080/connect/token \
   -d code_verifier=THE_VERIFIER
 ```
 
-Reponse :
+Réponse :
 
 ```json
 {
@@ -94,14 +94,14 @@ Reponse :
 }
 ```
 
-## Demo fonctionnelle
+## Démo fonctionnelle
 
-Le repertoire `demos/sample-app/` contient une SPA React complete + API qui implemente le flux OIDC complet ci-dessus. Consultez le [README des demos](https://github.com/authagonal/authagonal/tree/master/demos) pour les instructions.
+Le répertoire `demos/sample-app/` contient une SPA React complète + API qui implémente le flux OIDC complet ci-dessus. Consultez le [README des démos](https://github.com/authagonal/authagonal/tree/master/demos) pour les instructions.
 
-## Prochaines etapes
+## Prochaines étapes
 
-- [Configuration](configuration) -- reference complete de tous les parametres
-- [Extensibilite](extensibility) -- heberger en tant que bibliotheque, ajouter des hooks personnalises
-- [Personnalisation visuelle](branding) -- personnaliser l'interface de connexion
-- [SAML](saml) -- ajouter des fournisseurs SSO SAML
-- [Provisionnement](provisioning) -- provisionner les utilisateurs dans les applications en aval
+- [Configuration](configuration) : référence complète de tous les paramètres
+- [Extensibilité](extensibility) : héberger en tant que bibliothèque, ajouter des hooks personnalisés
+- [Personnalisation visuelle](branding) : personnaliser l'interface de connexion
+- [SAML](saml) : ajouter des fournisseurs SSO SAML
+- [Provisionnement](provisioning) : provisionner les utilisateurs dans les applications en aval

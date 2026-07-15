@@ -1,30 +1,30 @@
 ---
 layout: default
-title: Mise a l'echelle
+title: Mise à l'échelle
 locale: fr
 ---
 
-# Mise a l'echelle
+# Mise à l'échelle
 
-Authagonal est concu pour etre mis a l'echelle verticalement et horizontalement sans configuration speciale.
+Authagonal est conçu pour être mis à l'échelle à la fois verticalement et horizontalement, sans configuration particulière.
 
-## Sans etat par conception
+## Sans état par conception
 
-Tous les etats persistants sont stockes dans Azure Table Storage. Il n'y a pas d'etat en cours de processus necessitant des sessions persistantes ou une coordination entre les instances :
+Tout l'état persistant est stocké dans le magasin de tables sous-jacent, Azure Table Storage, ou DynamoDB sur le backend AWS. Il n'y a aucun état en cours de processus qui nécessite des sessions persistantes ou une coordination entre les instances :
 
-- **Cles de signature** — chargees depuis Table Storage, actualisees toutes les heures
-- **Codes d'autorisation et jetons de rafraichissement** — stockes dans Table Storage avec application a usage unique
-- **Prevention de la relecture SAML** — les identifiants de requete sont suivis dans Table Storage avec suppression atomique
-- **OIDC state et verificateurs PKCE** — stockes dans Table Storage
-- **Configuration des clients et des fournisseurs** — recuperee par requete depuis Table Storage
+- **Clés de signature** : chargées depuis Table Storage, actualisées toutes les heures
+- **Codes d'autorisation et refresh tokens** : stockés dans Table Storage avec application de l'usage unique
+- **Prévention du rejeu SAML** : les identifiants de requête sont suivis dans Table Storage avec suppression atomique
+- **OIDC state et vérificateurs PKCE** : stockés dans Table Storage
+- **Configuration des clients et des fournisseurs** : récupérée à chaque requête depuis Table Storage
 
 ## Chiffrement des cookies (Data Protection)
 
-Les cles Data Protection d'ASP.NET Core sont automatiquement persistees dans Azure Blob Storage lors de l'utilisation d'une veritable chaine de connexion Azure Storage. Cela signifie que les cookies signes par une instance peuvent etre dechiffres par n'importe quelle autre instance — aucune session persistante requise.
+Les clés Data Protection d'ASP.NET Core sont automatiquement persistées dans Azure Blob Storage lorsqu'une véritable chaîne de connexion Azure Storage est utilisée. Cela signifie que les cookies signés par une instance peuvent être déchiffrés par n'importe quelle autre instance : aucune session persistante n'est requise.
 
-Pour le developpement local avec Azurite, les cles Data Protection reviennent au stockage par defaut base sur les fichiers.
+Pour le développement local avec Azurite, les clés Data Protection se rabattent sur le magasin par défaut basé sur les fichiers.
 
-Vous pouvez egalement specifier une URI blob explicite via la configuration :
+Vous pouvez également pointer vers une URI blob explicite via la configuration (la voie par identité managée, préférée en production) :
 
 ```json
 {
@@ -34,86 +34,74 @@ Vous pouvez egalement specifier une URI blob explicite via la configuration :
 }
 ```
 
+Sur le backend AWS, passez un client S3 et un bucket à `AddAuthagonalAwsStorage` pour persister le trousseau de clés dans S3 : sans cela, le trousseau reste en mémoire et les cookies sont invalidés au redémarrage et d'un nœud à l'autre. Voir [Installation → AWS backend](installation#aws-backend).
+
 ## Caches par instance
 
-Un petit nombre de valeurs frequemment lues et changeant lentement sont mises en cache en memoire par instance pour reduire les allers-retours vers Table Storage :
+Un petit nombre de valeurs très lues et changeant lentement sont mises en cache en mémoire, par instance, pour réduire les allers-retours vers Table Storage :
 
-| Donnees | Duree du cache | Impact de l'obsolescence |
+| Données | Durée du cache | Impact de l'obsolescence |
 |---|---|---|
-| Documents de decouverte OIDC | 60 minutes (configurable) | Prise de conscience retardee de la rotation des cles IdP |
-| Metadonnees SAML IdP | 60 minutes (configurable) | Idem |
-| Origines CORS autorisees | 60 minutes (configurable) | Les nouvelles origines mettent jusqu'a une heure a se propager |
+| Documents de découverte OIDC | 60 minutes (configurable) | Prise de conscience retardée de la rotation des clés de l'IdP |
+| Métadonnées SAML de l'IdP | 60 minutes (configurable) | Idem |
+| Origines CORS autorisées | 60 minutes (configurable) | Les nouvelles origines mettent jusqu'à une heure à se propager |
 
-Ces caches sont acceptables pour une utilisation en production. Toutes les durees sont configurables via la section de configuration `Cache` — voir [Configuration](configuration). Si vous avez besoin d'une propagation immediate, redemarrez les instances concernees.
+Ces caches conviennent à une utilisation en production. Toutes les durées sont configurables via la section de configuration `Cache` : voir [Configuration](configuration). Si vous avez besoin d'une propagation immédiate, redémarrez les instances concernées.
 
-## Limitation du debit
+## Limitation du débit
 
-Les points de terminaison d'inscription sont proteges par un limiteur de debit distribue integre (5 inscriptions par IP par heure). Lors de l'execution de plusieurs instances, les compteurs de limitation du debit sont automatiquement partages entre toutes les instances via un protocole gossip — aucune coordination externe requise.
+Les points d'accès exposés aux abus (inscription par IP, réinitialisation de mot de passe par email cible, SCIM par client, enregistrement dynamique de client par IP ; voir [Configuration → Rate Limiting](configuration#rate-limiting)) sont protégés par un limiteur de débit intégré.
 
-### Fonctionnement
+Les limites sont appliquées **en cours de processus, par nœud**, derrière le point d'extension `IRateLimiter` ; ainsi, avec N instances, le plafond effectif vaut N fois la valeur configurée. C'est délibéré : le limiteur est un filet de sécurité contre l'abus incontrôlé d'un nœud unique, et la limite globale de référence a sa place à la périphérie (WAF / ingress / CDN), qui voit tout le trafic avant sa répartition de charge.
 
-Chaque instance maintient ses propres compteurs en memoire en utilisant un CRDT G-Counter. Les instances se decouvrent mutuellement via UDP multicast et echangent leur etat par HTTP toutes les quelques secondes. Le compteur consolide de toutes les instances est utilise pour prendre les decisions de limitation du debit.
+## Clustering
 
-Cela signifie que les limites de debit sont appliquees globalement : si un client atteint 3 instances differentes, les 3 savent que le total est de 3, et non 1 chacune.
+Plusieurs instances se coordonnent via une **élection de leader** et un **bus d'événements inter-nœuds**, tous deux derrière des backends interchangeables :
 
-### Identite des noeuds
+- **Élection de leader** : une élection basée sur un bail (`Cluster:LeaseTtlSeconds`, 30s par défaut, renouvelé à environ la moitié de cet intervalle). Exactement un nœud détient le bail ; le leadership est transféré automatiquement lorsque le leader tombe en panne. Les travaux réservés au leader (actuellement la rotation des clés de signature, lorsqu'elle est activée) ne s'exécutent que sur le leader afin d'éviter la génération simultanée de clés.
+- **Bus d'événements** : notifications inter-nœuds (par exemple l'invalidation de cache dans les hôtes multi-tenants), interrogé toutes les `Cluster:PollIntervalSeconds` (3s par défaut).
 
-Chaque instance genere un identifiant de noeud hexadecimal aleatoire au demarrage (par exemple, `a3f1b2`). Cet identifiant identifie l'instance dans les messages gossip et l'etat de limitation du debit. Il n'est pas persiste -- un nouvel identifiant est genere a chaque redemarrage.
+Chaque instance génère au démarrage un identifiant de nœud aléatoire de 12 caractères hexadécimaux pour s'identifier ; il n'est pas persisté.
 
-Un `ClusterLeaderService` s'execute sur chaque instance, elisant un leader unique parmi les pairs decouverts (l'identifiant de noeud le plus bas l'emporte). Le leadership est transfere automatiquement lorsque le leader tombe en panne. Le leader sert a la coordination a l'echelle du cluster — actuellement, la rotation des cles de signature (lorsqu'elle est activee) ne s'execute que sur le leader pour eviter la generation simultanee de cles.
+### Backends
 
-### Configuration du cluster
+La **valeur par défaut est en cours de processus** : un nœud unique est toujours son propre leader, et les événements restent purement locaux, ce qui convient à une instance unique sans aucune configuration. Les déploiements multi-nœuds y substituent un backend réel via le callback `configureClustering` sur `AddAuthagonal` :
 
-Le clustering est **active par defaut** sans aucune configuration. Les instances sur le meme reseau se decouvrent automatiquement via UDP multicast (`239.42.42.42:19847`).
+```csharp
+// Azure : leadership via un bail de blob, bus d'événements via un journal de table (Authagonal.AzureProvider)
+builder.Services.AddAuthagonal(builder.Configuration,
+    cluster => cluster.UseAzureStorage(blobServiceClient, tableServiceClient));
 
-Pour les environnements ou le multicast n'est pas disponible (certains VPC cloud), configurez une URL interne avec equilibrage de charge comme solution de repli :
-
-```json
-{
-  "Cluster": {
-    "InternalUrl": "http://authagonal-auth.svc.cluster.local:8080",
-    "Secret": "shared-secret-here"
-  }
-}
+// AWS : leadership + bus d'événements via DynamoDB (Authagonal.AwsProvider)
+builder.Services.AddAuthagonal(builder.Configuration,
+    cluster => cluster.UseAwsDynamo(dynamoDb));
 ```
 
-Pour desactiver entierement le clustering (limitation du debit locale uniquement) :
+`UseAzureStorageBus` / `UseAwsDynamoBus` n'enregistrent que le bus d'événements, en conservant le bail en cours de processus (toujours leader) : utilisez-les sur les nœuds qui doivent recevoir les événements du cluster mais ne doivent jamais entrer en concurrence pour le leadership.
 
-```json
-{
-  "Cluster": {
-    "Enabled": false
-  }
-}
-```
+> **Note :** avec la valeur par défaut en cours de processus sur plusieurs nœuds, *chaque* nœud se croit leader. C'est sans conséquence pour la plupart des charges de travail, mais activez un backend de bail réel avant d'activer `Auth:KeyRotationEnabled` sur plusieurs instances.
 
-Consultez la page [Configuration](configuration) pour tous les parametres du cluster.
+Consultez la page [Configuration](configuration#cluster) pour tous les paramètres du cluster.
 
-### Degradation gracieuse
+### Déploiements multi-tenant
 
-- **Aucun pair trouve** — fonctionne comme un limiteur de debit local uniquement (chaque instance applique sa propre limite)
-- **Pair injoignable** — le dernier etat connu de ce pair est toujours utilise ; les pairs obsoletes sont supprimes apres 30 secondes
-- **Multicast indisponible** — la decouverte echoue silencieusement ; le gossip se replie sur `InternalUrl` si configure
-
-### Deploiements multi-tenant
-
-En mode multi-tenant (`AddAuthagonalCore()`), les services d'arriere-plan comme `GrantReconciliationService` et `SigningKeyRotationService` ne sont pas enregistres -- l'hote les gere par tenant. Seul `TokenCleanupService` s'execute inconditionnellement.
+En mode multi-tenant (`AddAuthagonalCore()`), aucun service d'arrière-plan n'est enregistré : `TokenCleanupService`, `GrantReconciliationService`, `SigningKeyRotationService` et les services d'injection de configuration font tous partie de la composition mono-tenant `AddAuthagonal()`. L'hôte les gère par tenant.
 
 ## Partition chaude de l'index de noms
 
-La recherche par prefixe de nom dans l'administration s'appuie sur les tables d'index `UserFirstNames` / `UserLastNames`, qui utilisent une **partition chaude unique**. A grande echelle, cela plafonne le debit d'ecriture de l'index a environ 2 000 ops/sec, ce qui peut devenir un goulot d'etranglement lors de la creation/mise a jour d'utilisateurs sous forte charge. Si vous n'exposez pas la recherche de noms dans l'administration, definissez `Storage:NameIndexesEnabled = false` pour ignorer entierement ces ecritures. Voir [Configuration](configuration).
+La recherche par préfixe de nom dans l'administration s'appuie sur les tables d'index `UserFirstNames` / `UserLastNames`, qui utilisent une **partition chaude unique**. À grande échelle, cela plafonne le débit d'écriture de l'index à environ 2 000 ops/sec, ce qui peut devenir un goulot d'étranglement lors de la création/mise à jour d'utilisateurs sous forte charge. Si vous n'exposez pas la recherche de noms dans l'administration, définissez `Storage:NameIndexesEnabled = false` pour ignorer entièrement ces écritures. Voir [Configuration](configuration).
 
-## Proxy de confiance et points d'acces internes
+## Proxy de confiance et points d'accès internes
 
-Lors de l'execution de plusieurs instances derriere un equilibreur de charge :
+Lorsque vous exécutez plusieurs instances derrière un équilibreur de charge :
 
-- **En-tetes transferes** — la limitation de debit et le verrouillage se basent sur l'IP du client, resolue depuis `X-Forwarded-For`. Definissez `ForwardedHeaders:KnownNetworks` sur le CIDR de votre ingress / de vos pods afin que l'IP du client ne puisse pas etre usurpee entre les instances. `ForwardedHeaders:ForwardLimit` vaut `1` par defaut. Voir [Configuration](configuration#forwarded-headers-trusted-proxy).
-- **Points d'acces internes** — `/_internal/cluster/gossip` et `/_internal/backchannel-logout` sont proteges par l'IP source (boucle locale / privee uniquement) sauf si `Cluster:Secret` est defini. Lorsque le gossip est achemine via un equilibreur de charge (`Cluster:InternalUrl`), l'equilibreur reecrit l'IP source ; definissez donc `Cluster:Secret` et l'appelant du gossip le presentera dans l'en-tete `X-Cluster-Secret`.
+- **En-têtes transférés** : la limitation de débit et le verrouillage se basent sur l'IP du client, résolue depuis `X-Forwarded-For`. Définissez `ForwardedHeaders:KnownNetworks` sur le CIDR de votre ingress / de vos pods afin que l'IP du client ne puisse pas être usurpée entre les instances. `ForwardedHeaders:ForwardLimit` vaut `1` par défaut. Voir [Configuration](configuration#forwarded-headers-trusted-proxy).
+- **Points d'accès internes** : `/_internal/backchannel-logout` est protégé par l'IP source (boucle locale / privée uniquement) sauf si `Cluster:Secret` est défini, auquel cas les appelants doivent présenter le secret dans l'en-tête `X-Cluster-Secret` (comparé en temps constant). Définissez le secret dès que le trafic interne transite par un élément qui réécrit l'IP source.
 
-## Recommandations de mise a l'echelle
+## Recommandations de mise à l'échelle
 
-**Mise a l'echelle verticale** — augmentez le CPU et la memoire sur une seule instance. Utile pour gerer plus de requetes simultanees par instance.
+**Mise à l'échelle verticale** : augmentez le CPU et la mémoire d'une seule instance. Utile pour gérer davantage de requêtes simultanées par instance.
 
-**Mise a l'echelle horizontale** — executez plusieurs instances derriere un equilibreur de charge. Aucune session persistante ni cache partage requis. Chaque instance est entierement independante.
+**Mise à l'échelle horizontale** : exécutez plusieurs instances derrière un équilibreur de charge. Aucune session persistante ni cache partagé requis. Chaque instance est entièrement indépendante.
 
-**Mise a l'echelle a zero** — Authagonal prend en charge les deploiements avec mise a l'echelle a zero (par exemple, Azure Container Apps avec `minReplicas: 0`). La premiere requete apres une periode d'inactivite aura un demarrage a froid de quelques secondes pendant que le runtime .NET s'initialise et que les cles de signature sont chargees depuis le stockage.
+**Mise à l'échelle à zéro** : Authagonal prend en charge les déploiements avec mise à l'échelle à zéro (par exemple Azure Container Apps avec `minReplicas: 0`). La première requête après une période d'inactivité subira un démarrage à froid de quelques secondes, le temps que le runtime .NET s'initialise et que les clés de signature soient chargées depuis le stockage.

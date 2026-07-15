@@ -4,28 +4,26 @@ title: OAuth Scopes
 locale: fr
 ---
 
-> ⚠️ This page has not yet been translated; the English version is shown below.
+# Scopes OAuth
 
-# OAuth Scopes
+Authagonal prend en charge à la fois les scopes OAuth/OIDC **intégrés** et les scopes **personnalisés** gérés à l'exécution. Les scopes personnalisés sont persistés, annoncés via le document de découverte et présentés sur l'écran de consentement aux côtés des scopes intégrés.
 
-Authagonal supports both **built-in** OAuth/OIDC scopes and **custom** scopes managed at runtime. Custom scopes are persisted, advertised via the discovery document, and surfaced on the consent screen alongside built-ins.
+## Scopes intégrés
 
-## Built-in Scopes
+Ces scopes sont toujours disponibles et n'ont pas besoin d'être enregistrés :
 
-These scopes are always available and do not need to be registered:
-
-| Scope | Purpose |
+| Scope | Rôle |
 |---|---|
-| `openid` | Required to initiate an OIDC flow. Issues an ID token. |
-| `profile` | Standard profile claims (name, family_name, given_name, etc.) |
-| `email` | Email address and `email_verified` claims |
-| `offline_access` | Issues a refresh token alongside the access token |
+| `openid` | Requis pour initier un flux OIDC. Émet un ID token. |
+| `profile` | Claims de profil standard (name, family_name, given_name, etc.) |
+| `email` | Adresse e-mail et claim `email_verified` |
+| `offline_access` | Émet un refresh token en plus de l'access token |
 
-## Custom Scopes
+## Scopes personnalisés
 
-Custom scopes are managed through the admin API at `/api/v1/scopes`. They require a JWT access token with the `authagonal-admin` scope (configurable via `AdminApi:Scope`).
+Les scopes personnalisés sont gérés via l'API d'administration à `/api/v1/scopes`. Ils requièrent un access token JWT avec le scope `authagonal-admin` (configurable via `AdminApi:Scope`).
 
-### Scope Model
+### Modèle Scope
 
 ```csharp
 public sealed class Scope
@@ -42,35 +40,35 @@ public sealed class Scope
 }
 ```
 
-| Field | Description |
+| Champ | Description |
 |---|---|
-| `Name` | The scope identifier sent in token requests (e.g., `billing.read`) |
-| `DisplayName` | Human-readable name shown on the consent screen |
-| `Description` | Longer description shown on the consent screen |
-| `Emphasize` | If `true`, the consent screen highlights this scope as sensitive |
-| `Required` | If `true`, the user cannot deselect this scope when consenting |
-| `ShowInDiscoveryDocument` | If `true`, the scope appears in `/.well-known/openid-configuration` under `scopes_supported` |
-| `UserClaims` | Claims added to the access token when this scope is granted |
+| `Name` | L'identifiant du scope envoyé dans les requêtes de token (p. ex. `billing.read`) |
+| `DisplayName` | Nom lisible affiché sur l'écran de consentement |
+| `Description` | Description plus longue affichée sur l'écran de consentement |
+| `Emphasize` | Si `true`, l'écran de consentement met ce scope en évidence comme sensible |
+| `Required` | Si `true`, l'utilisateur ne peut pas désélectionner ce scope lors du consentement |
+| `ShowInDiscoveryDocument` | Si `true`, le scope apparaît dans `/.well-known/openid-configuration` sous `scopes_supported` |
+| `UserClaims` | Claims ajoutés à l'access token lorsque ce scope est accordé |
 
-## Admin Endpoints
+## Endpoints d'administration
 
-### List Scopes
+### Lister les scopes
 
 ```
 GET /api/v1/scopes
 ```
 
-Returns `{ "scopes": [ ... ] }`.
+Renvoie `{ "scopes": [ ... ] }`.
 
-### Get Scope
+### Obtenir un scope
 
 ```
 GET /api/v1/scopes/{name}
 ```
 
-Returns the scope or `404` if not found.
+Renvoie le scope ou `404` s'il est introuvable.
 
-### Create Scope
+### Créer un scope
 
 ```
 POST /api/v1/scopes
@@ -87,9 +85,9 @@ Content-Type: application/json
 }
 ```
 
-Returns `201 Created` with the scope. Returns `409` if a scope with the same name already exists.
+Renvoie `201 Created` avec le scope. Renvoie `409` si un scope portant le même nom existe déjà.
 
-### Update Scope
+### Mettre à jour un scope
 
 ```
 PUT /api/v1/scopes/{name}
@@ -102,19 +100,19 @@ Content-Type: application/json
 }
 ```
 
-Only supplied fields are updated; omitted fields retain their current values.
+Seuls les champs fournis sont mis à jour ; les champs omis conservent leurs valeurs actuelles.
 
-### Delete Scope
+### Supprimer un scope
 
 ```
 DELETE /api/v1/scopes/{name}
 ```
 
-Returns `204 No Content` (`404` if the scope doesn't exist). Tokens already issued that include this scope remain valid until they expire — revoke them explicitly via `/connect/revocation` if needed.
+Renvoie `204 No Content` (`404` si le scope n'existe pas). Les tokens déjà émis qui incluent ce scope restent valides jusqu'à leur expiration ; révoquez-les explicitement via `/connect/revocation` si nécessaire.
 
-## Discovery Document
+## Document de découverte
 
-Scopes with `ShowInDiscoveryDocument = true` appear under `scopes_supported` in `/.well-known/openid-configuration`. Built-in scopes are always advertised.
+Les scopes ayant `ShowInDiscoveryDocument = true` apparaissent sous `scopes_supported` dans `/.well-known/openid-configuration`. Les scopes intégrés sont toujours annoncés.
 
 ```json
 {
@@ -122,12 +120,12 @@ Scopes with `ShowInDiscoveryDocument = true` appear under `scopes_supported` in 
 }
 ```
 
-## Consent Screen
+## Écran de consentement
 
-When a client requests a scope that is not in its consent-skip list, the consent page lists each requested scope by `DisplayName` (falling back to `Name`) with the `Description` underneath. Scopes with `Emphasize = true` receive a distinct visual treatment. `Required` scopes cannot be deselected.
+Lorsqu'un client demande un scope qui ne figure pas dans sa liste d'exemption de consentement, la page de consentement liste chaque scope demandé par son `DisplayName` (avec repli sur `Name`), avec la `Description` en dessous. Les scopes ayant `Emphasize = true` reçoivent un traitement visuel distinct. Les scopes `Required` ne peuvent pas être désélectionnés.
 
-See [OAuth Consent Screen](index#features) for the user-facing flow.
+Voir [Écran de consentement OAuth](index#features) pour le flux visible par l'utilisateur.
 
 ## Dynamic Client Registration
 
-Clients registered via [Dynamic Client Registration](client-registration) may only request scopes that are either built-in or previously created via the admin API. Unknown scopes are rejected with `invalid_scope`.
+Les clients enregistrés via l'[enregistrement dynamique de client](client-registration) ne peuvent demander que des scopes soit intégrés, soit créés au préalable via l'API d'administration. Les scopes inconnus sont rejetés avec `invalid_scope`.

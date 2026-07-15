@@ -4,17 +4,15 @@ title: Pushed Authorization Requests
 locale: fr
 ---
 
-> ⚠️ This page has not yet been translated; the English version is shown below.
-
 # Pushed Authorization Requests (PAR)
 
-[RFC 9126](https://www.rfc-editor.org/rfc/rfc9126) lets a client POST its authorize-request parameters directly to the server with standard client authentication and receive a short-lived opaque `request_uri` to hand to the browser. The browser then visits `/connect/authorize?request_uri=...&client_id=...` instead of carrying every parameter on the URL.
+[RFC 9126](https://www.rfc-editor.org/rfc/rfc9126) permet à un client de POSTer les paramètres de sa requête d'autorisation directement au serveur avec l'authentification client standard et de recevoir un `request_uri` opaque de courte durée à transmettre au navigateur. Le navigateur visite ensuite `/connect/authorize?request_uri=...&client_id=...` au lieu de porter chaque paramètre dans l'URL.
 
-Why use it:
+Pourquoi l'utiliser :
 
-- Authorize parameters never appear in browser history, server logs, or `Referer` headers.
-- The server authenticates the client at push time, so the parameters are integrity-checked before any redirect happens.
-- Long parameter sets (large `claims` requests, multi-resource flows) don't blow URL length limits.
+- Les paramètres d'autorisation n'apparaissent jamais dans l'historique du navigateur, les journaux du serveur ou les en-têtes `Referer`.
+- Le serveur authentifie le client au moment de l'envoi (push), donc les paramètres sont contrôlés en intégrité avant toute redirection.
+- Les jeux de paramètres longs (grandes requêtes `claims`, flux multi-ressources) ne dépassent pas les limites de longueur d'URL.
 
 ## Endpoint
 
@@ -23,11 +21,11 @@ POST /connect/par
 Content-Type: application/x-www-form-urlencoded
 ```
 
-Authentication is the same as `/connect/token`: HTTP Basic with `client_id`/`client_secret`, or form-encoded credentials. Confidential clients must authenticate; public clients post without a secret. Client-authentication failures return `401` (per RFC 9126 — unlike the token endpoint, where only `invalid_client` is a 401).
+L'authentification est la même que pour `/connect/token` : HTTP Basic avec `client_id`/`client_secret`, ou identifiants encodés dans le formulaire. Les clients confidentiels doivent s'authentifier ; les clients publics envoient sans secret. Les échecs d'authentification client renvoient `401` (conformément à la RFC 9126, contrairement au endpoint de token où seul `invalid_client` est un 401).
 
-The form body carries the same parameters that would normally go on `/connect/authorize` (`response_type`, `redirect_uri`, `scope`, `state`, `code_challenge`, `code_challenge_method`, `nonce`, `resource`, etc.). `request_uri` itself is rejected — chaining a PAR is forbidden by §2.1 of the spec. If the body carries a `client_id`, it must match the authenticated client.
+Le corps du formulaire porte les mêmes paramètres qui iraient normalement sur `/connect/authorize` (`response_type`, `redirect_uri`, `scope`, `state`, `code_challenge`, `code_challenge_method`, `nonce`, `resource`, etc.). `request_uri` lui-même est rejeté : chaîner un PAR est interdit par le §2.1 de la spécification. Si le corps porte un `client_id`, il doit correspondre au client authentifié.
 
-### Response
+### Réponse
 
 ```
 HTTP/1.1 201 Created
@@ -39,19 +37,19 @@ HTTP/1.1 201 Created
 }
 ```
 
-The `request_uri` is single-use. It's removed from the store once the matching `/connect/authorize` request consumes it (or when the 90-second window expires, whichever is sooner).
+Le `request_uri` est à usage unique. Il est retiré du magasin une fois que la requête `/connect/authorize` correspondante le consomme (ou lorsque la fenêtre de 90 secondes expire, selon ce qui survient en premier).
 
-### Authorization step
+### Étape d'autorisation
 
 ```
 GET /connect/authorize?client_id=my-rp&request_uri=urn:ietf:params:oauth:request_uri:abc123...
 ```
 
-When `request_uri` is present, all other parameters are pulled from the pushed payload — anything else on the URL is ignored. The `client_id` on this request must match the client that pushed the payload.
+Lorsque `request_uri` est présent, tous les autres paramètres sont extraits de la charge utile envoyée ; tout le reste dans l'URL est ignoré. Le `client_id` de cette requête doit correspondre au client qui a envoyé la charge utile.
 
-## Requiring PAR per client
+## Exiger PAR par client
 
-Set `RequirePushedAuthorizationRequests = true` on a client to refuse plain `/connect/authorize` requests from it. Any non-PAR authorize attempt returns `invalid_request` with the description "This client requires requests to be pushed via /connect/par".
+Définissez `RequirePushedAuthorizationRequests = true` sur un client pour refuser les requêtes `/connect/authorize` simples en provenance de celui-ci. Toute tentative d'autorisation non-PAR renvoie `invalid_request` avec la description "This client requires requests to be pushed via /connect/par".
 
 ```csharp
 new OAuthClient
@@ -62,15 +60,15 @@ new OAuthClient
 }
 ```
 
-This is the recommended posture for clients that handle sensitive scopes — combined with PKCE, it removes the URL bar as an attack surface.
+C'est la posture recommandée pour les clients qui manipulent des scopes sensibles : combinée à PKCE, elle supprime la barre d'URL en tant que surface d'attaque.
 
-## Lifetime and storage
+## Durée de vie et stockage
 
-The `request_uri` lifetime is server-set at 90 seconds, matching the typical reference-IdP value. Pushed payloads are stored via the same `IGrantStore` as auth codes and refresh tokens, so they inherit the host's persistence and replication strategy automatically.
+La durée de vie du `request_uri` est fixée par le serveur à 90 secondes, ce qui correspond à la valeur typique d'un IdP de référence. Les charges utiles envoyées sont stockées via le même `IGrantStore` que les codes d'autorisation et les refresh tokens, elles héritent donc automatiquement de la stratégie de persistance et de réplication de l'hôte.
 
-## Discovery
+## Découverte
 
-The PAR endpoint advertises itself in `.well-known/openid-configuration` as:
+Le endpoint PAR s'annonce dans `.well-known/openid-configuration` sous la forme :
 
 ```json
 {

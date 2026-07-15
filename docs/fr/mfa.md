@@ -122,13 +122,13 @@ Les utilisateurs s'inscrivent à la MFA via les points de terminaison de configu
 
 ### Configuration TOTP
 
-1. Appeler `POST /api/auth/mfa/totp/setup` — retourne un code QR (`data:image/png;base64,...`), une `manualKey` (Base32 pour la saisie manuelle) et un jeton de configuration
+1. Appeler `POST /api/auth/mfa/totp/setup` : retourne un code QR (`data:image/png;base64,...`), une `manualKey` (Base32 pour la saisie manuelle) et un jeton de configuration
 2. L'utilisateur scanne le code QR avec son application d'authentification
 3. L'utilisateur saisit le code à 6 chiffres pour confirmer : `POST /api/auth/mfa/totp/confirm`
 
 ### Configuration WebAuthn / Clé d'accès
 
-1. Appeler `POST /api/auth/mfa/webauthn/setup` — retourne un `setupToken` et `PublicKeyCredentialCreationOptions`
+1. Appeler `POST /api/auth/mfa/webauthn/setup` : retourne un `setupToken` et `PublicKeyCredentialCreationOptions`
 2. Le client appelle `navigator.credentials.create()` avec les options
 3. Envoyer la réponse d'attestation à `POST /api/auth/mfa/webauthn/confirm`
 
@@ -140,14 +140,30 @@ Les utilisateurs peuvent enregistrer plusieurs clés d'accès (une par appareil)
 
 Appeler `POST /api/auth/mfa/recovery/generate` pour générer 10 codes à usage unique. Au moins une méthode principale (TOTP ou WebAuthn) doit être inscrite au préalable.
 
-La régénération des codes remplace tous les codes de récupération existants. Chaque code ne peut être utilisé qu'une seule fois.
+La régénération des codes remplace tous les codes de récupération existants. Chaque code ne peut être utilisé qu'une seule fois : un code utilisé est marqué comme consommé et n'est plus accepté.
+
+Les codes ne sont jamais stockés en texte brut : chaque code est haché, et le haché est en plus chiffré au repos avec le fournisseur de secrets du tenant, de sorte qu'un vidage du stockage produit du texte chiffré plutôt qu'un haché attaquable par force brute hors ligne.
+
+## Connexion sans mot de passe par clé d'accès {#passwordless-passkey-login}
+
+Les clés d'accès ne sont pas seulement un second facteur : un utilisateur ayant inscrit une clé d'accès peut se connecter sans mot de passe.
+
+1. `POST /api/auth/mfa/passwordless/begin` retourne un `challengeId` et des `options` d'assertion pour les credentials découvrables, afin que l'authentificateur propose n'importe quelle clé d'accès résidente pour le site
+2. Le client appelle `navigator.credentials.get()` avec les options
+3. `POST /api/auth/mfa/passwordless/complete` avec `{ challengeId, assertion }` : le serveur résout l'utilisateur à partir de la clé d'accès elle-même et le connecte
+
+La page de connexion hébergée branche cela sur le champ e-mail via la médiation conditionnelle (saisie automatique de clé d'accès) : lorsque le navigateur la prend en charge, une clé d'accès disponible est proposée comme suggestion de saisie automatique sans aucune interface supplémentaire.
+
+Une clé d'accès est une authentification forte résistante au hameçonnage, donc la session résultante porte le marqueur MFA et n'est pas resoumise au défi. Si le domaine d'email de l'utilisateur est acheminé vers un IdP externe via SSO forcé, la connexion sans mot de passe est refusée avec une réponse 409 `sso_required` qui inclut l'URL de redirection SSO, de sorte qu'une clé d'accès locale ne peut pas contourner l'IdP.
 
 ## Gestion de la MFA
 
 ### Libre-service utilisateur
 
-- `GET /api/auth/mfa/status` — afficher les méthodes inscrites
-- `DELETE /api/auth/mfa/credentials/{id}` — supprimer un identifiant spécifique
+- `GET /api/auth/mfa/status` : afficher les méthodes inscrites (indique aussi si la MFA est proposée par un client quelconque)
+- `DELETE /api/auth/mfa/credentials/{id}` : supprimer un identifiant spécifique
+
+La suppression d'un identifiant nécessite une véritable session authentifiée ; un jeton de configuration n'autorise que l'ajout d'un premier facteur et obtient ici `session_required`, de sorte qu'un jeton de configuration divulgué ne peut pas rétrograder la MFA d'un utilisateur.
 
 Si la dernière méthode principale est supprimée, la MFA est désactivée pour l'utilisateur.
 
@@ -155,9 +171,9 @@ Si la dernière méthode principale est supprimée, la MFA est désactivée pour
 
 Les administrateurs peuvent gérer la MFA pour n'importe quel utilisateur via l'[API d'administration](admin-api) :
 
-- `GET /api/v1/profile/{userId}/mfa` — afficher le statut MFA d'un utilisateur
-- `DELETE /api/v1/profile/{userId}/mfa` — réinitialiser toute la MFA (pour les utilisateurs verrouillés)
-- `DELETE /api/v1/profile/{userId}/mfa/{id}` — supprimer un identifiant spécifique
+- `GET /api/v1/profile/{userId}/mfa` : afficher le statut MFA d'un utilisateur
+- `DELETE /api/v1/profile/{userId}/mfa` : réinitialiser toute la MFA (pour les utilisateurs verrouillés)
+- `DELETE /api/v1/profile/{userId}/mfa/{id}` : supprimer un identifiant spécifique
 
 ### Hook d'audit
 
@@ -172,12 +188,16 @@ public Task OnMfaVerifiedAsync(
 }
 ```
 
+L'ensemble du cycle de vie MFA est raccordable : `OnMfaVerifyFailedAsync` (une tentative de vérification échouée), `OnMfaEnrolledAsync` (une méthode confirmée), `OnMfaCredentialRemovedAsync` (un identifiant supprimé, avec un indicateur signalant si cela a désactivé la MFA), et `OnRecoveryCodesRegeneratedAsync`.
+
 ## Interface de connexion personnalisée
 
 Si vous créez une interface de connexion personnalisée, gérez ces réponses de `POST /api/auth/login` :
 
-1. **Connexion normale** — `{ userId, email, name }` avec cookie défini. Redirection vers `returnUrl`.
-2. **MFA requise** — `{ mfaRequired: true, challengeId, methods, webAuthn? }`. Afficher le formulaire de défi MFA.
-3. **Configuration MFA requise** — `{ mfaSetupRequired: true, setupToken }`. Afficher le flux d'inscription MFA.
+1. **Connexion normale** : `{ userId, email, name }` avec cookie défini. Redirection vers `returnUrl`.
+2. **MFA requise** : `{ mfaRequired: true, challengeId, methods, webAuthn? }`. Afficher le formulaire de défi MFA.
+3. **Configuration MFA requise** : `{ mfaSetupRequired: true, setupToken }`. Afficher le flux d'inscription MFA.
+
+Lors de la gestion des erreurs de `POST /api/auth/mfa/verify` : `invalid_code` et `assertion_failed` sont réessayables avec le même `challengeId` (dans la limite du budget de tentatives) ; `too_many_attempts` et `invalid_challenge` sont terminaux, renvoyez donc l'utilisateur vers le formulaire de connexion.
 
 Consultez l'[API Auth](auth-api) pour la référence complète des points de terminaison.

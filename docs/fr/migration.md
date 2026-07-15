@@ -6,9 +6,9 @@ locale: fr
 
 # Migration depuis Duende IdentityServer
 
-Authagonal inclut un outil de migration pour passer de Duende IdentityServer + SQL Server a Azure Table Storage.
+Authagonal inclut un outil de migration pour passer de Duende IdentityServer + SQL Server à Azure Table Storage.
 
-## Executer la migration
+## Exécuter la migration
 
 ```bash
 docker run authagonal-migration \
@@ -18,7 +18,7 @@ docker run authagonal-migration \
   [--MigrateRefreshTokens true]
 ```
 
-(Pas de separateur `--` apres le nom de l'image : tout ce qui suit est transmis directement a l'outil, et un `--` isole casse l'analyse des options.)
+(Pas de séparateur `--` après le nom de l'image : tout ce qui suit est transmis directement à l'outil, et un `--` isolé casse l'analyse des options.)
 
 Ou depuis les sources :
 
@@ -29,61 +29,61 @@ dotnet run --project tools/Authagonal.Migration -- \
   [--DryRun true] [--MigrateRefreshTokens true]
 ```
 
-## Ce qui est migre
+## Ce qui est migré
 
 | Source (SQL Server) | Cible (Table Storage) | Notes |
 |---|---|---|
-| `AspNetUsers` + `AspNetUserClaims` | Users + UserEmails + index de noms | Requete JOIN unique. Claims : given_name, family_name, company, org_id (types surchargeables, voir ci-dessous). Les hashes de mots de passe sont conserves tels quels ; les hashes ASP.NET Identity V3 et BCrypt sont verifies sans modification et migres vers le format PBKDF2 natif d'Authagonal lors de la prochaine connexion reussie. |
+| `AspNetUsers` + `AspNetUserClaims` | Users + UserEmails + index de noms | Requête JOIN unique. Claims : given_name, family_name, company, org_id (types surchargeables, voir ci-dessous). Les hashes de mots de passe sont conservés tels quels ; les hashes ASP.NET Identity V3 et BCrypt sont vérifiés sans modification et migrent vers le format PBKDF2 natif d'Authagonal lors de la prochaine connexion réussie. |
 | `AspNetUserLogins` | UserLogins (index direct + inverse) | `409 Conflict` = ignorer (idempotent) |
-| Duende `SamlProviderConfigurations` | SamlProviders + SsoDomains | Le CSV `AllowedDomains` est divise en enregistrements de domaines SSO individuels |
-| Duende `OidcProviderConfigurations` | OidcProviders + SsoDomains | Meme division des domaines |
-| Duende `Clients` + tables enfants | Clients | ClientSecrets, GrantTypes, RedirectUris, PostLogoutRedirectUris, Scopes, CorsOrigins sont tous fusionnes dans une seule entite |
-| Duende `PersistedGrants` (jetons de rafraichissement) | Grants + GrantsBySubject + GrantsByExpiry | Opt-in via `--MigrateRefreshTokens true`. Uniquement les jetons non expires. Si ignore, les utilisateurs se reconnectent simplement. |
+| Duende `SamlProviderConfigurations` | SamlProviders + SsoDomains | Le CSV `AllowedDomains` est divisé en enregistrements de domaines SSO individuels |
+| Duende `OidcProviderConfigurations` | OidcProviders + SsoDomains | Même division des domaines |
+| Duende `Clients` + tables enfants | Clients | ClientSecrets, GrantTypes, RedirectUris, PostLogoutRedirectUris, Scopes, CorsOrigins sont tous fusionnés dans une seule entité |
+| Duende `PersistedGrants` (jetons de rafraîchissement) | Grants + GrantsBySubject + GrantsByExpiry | Opt-in via `--MigrateRefreshTokens true`. Uniquement les jetons non expirés. Si ignoré, les utilisateurs se reconnectent simplement. |
 
 ## Options
 
-| Option | Defaut | Description |
+| Option | Défaut | Description |
 |---|---|---|
-| `--DryRun` | `false` | Journaliser ce qui serait migre sans ecrire dans le stockage |
-| `--MigrateRefreshTokens` | `false` | Inclure les jetons de rafraichissement actifs. Si faux, les utilisateurs se re-authentifient apres le basculement. |
-| `--Source:ClaimMap:{claim}` | le nom du claim OIDC lui-meme | Remplace le ClaimType `AspNetUserClaims` lu pour un claim mappe, par exemple `--Source:ClaimMap:given_name=FirstName`. Utilise pour `given_name`, `family_name`, `company`, `org_id`. |
+| `--DryRun` | `false` | Journaliser ce qui serait migré sans écrire dans le stockage |
+| `--MigrateRefreshTokens` | `false` | Inclure les jetons de rafraîchissement actifs. Si faux, les utilisateurs se ré-authentifient après le basculement. |
+| `--Source:ClaimMap:{claim}` | le nom du claim OIDC lui-même | Remplace le ClaimType `AspNetUserClaims` lu pour un claim mappé, par exemple `--Source:ClaimMap:given_name=FirstName`. Utilisé pour `given_name`, `family_name`, `company`, `org_id`. |
 
 ## Idempotence
 
-La migration est idempotente et peut etre executee plusieurs fois en toute securite. Les enregistrements existants sont mis a jour ou ignores, jamais dupliques. Cela vous permet de :
+La migration est idempotente et peut être exécutée plusieurs fois en toute sécurité. Les enregistrements existants sont mis à jour ou ignorés, jamais dupliqués. Cela vous permet de :
 
-1. Executer la migration des jours avant le basculement
-2. Executer une migration delta finale proche du basculement
-3. Re-executer en cas de probleme
+1. Exécuter la migration des jours avant le basculement
+2. Exécuter une migration delta finale proche du basculement
+3. Ré-exécuter en cas de problème
 
-## Ce qui N'EST PAS migre
+## Ce qui N'EST PAS migré
 
-Ces fonctionnalites Authagonal n'ont pas d'equivalent Duende et sont vides apres la migration :
+Ces fonctionnalités Authagonal n'ont pas d'équivalent Duende et démarrent vides après la migration :
 
-- **Roles** : roles RBAC et assignations role-utilisateur
-- **Identifiants MFA** : inscriptions TOTP, WebAuthn et codes de recuperation
+- **Rôles** : rôles RBAC et affectations rôle-utilisateur
+- **Identifiants MFA** : inscriptions TOTP, WebAuthn et codes de récupération
 - **Jetons et groupes SCIM** : configuration du provisionnement SCIM
-- **Provisions utilisateur** : etat de provisionnement des applications en aval TCC
+- **Provisions utilisateur** : état de provisionnement des applications en aval TCC
 
-Les utilisateurs devront se reinscrire a la MFA si la `MfaPolicy` de votre client est `Enabled` ou `Required`.
+Les utilisateurs devront se réinscrire à la MFA si la `MfaPolicy` de votre client est `Enabled` ou `Required`.
 
-## Migration de la cle de signature
+## Migration de la clé de signature
 
-Pas encore automatisee. Pour garder les jetons existants valides lors du basculement :
+Pas encore automatisée. Pour conserver la validité des jetons existants lors du basculement :
 
-1. Exportez la cle de signature RSA depuis Duende (typiquement dans appsettings en Base64 PKCS8)
+1. Exportez la clé de signature RSA depuis Duende (typiquement dans appsettings en Base64 PKCS8)
 2. Importez-la dans la table `SigningKeys`
 3. Faites-le proche du moment du basculement
 
-## Strategie de basculement
+## Stratégie de basculement
 
-1. Executez la migration des utilisateurs + fournisseurs + clients (peut etre fait des jours a l'avance)
+1. Exécutez la migration des utilisateurs + fournisseurs + clients (peut être fait des jours à l'avance)
 2. Injectez les configurations clients dans Authagonal
-3. Importez la cle de signature (proche du basculement)
-4. Optionnel : migrez les jetons de rafraichissement actifs
-5. Deployez Authagonal en pre-production, testez
+3. Importez la clé de signature (proche du basculement)
+4. Optionnel : migrez les jetons de rafraîchissement actifs
+5. Déployez Authagonal en pré-production, testez
 6. Mode maintenance sur l'IdentityServer existant
 7. Migration delta finale
-8. Bascule DNS (definissez le TTL a 60s au prealable)
+8. Bascule DNS (définissez le TTL à 60s au préalable)
 9. Surveillez pendant 30 minutes
-10. En cas de probleme : rebasculez le DNS (la cle de signature partagee signifie que les jetons fonctionnent sur les deux systemes)
+10. En cas de problème : rebasculez le DNS (la clé de signature partagée signifie que les jetons fonctionnent sur les deux systèmes)

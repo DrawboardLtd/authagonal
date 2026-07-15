@@ -1,16 +1,16 @@
 ---
 layout: default
-title: Serveur personnalise
+title: Serveur personnalisé
 locale: fr
 ---
 
-# Demarrage rapide -- Serveur personnalise
+# Démarrage rapide du serveur personnalisé
 
-Ce guide explique comment heberger Authagonal en tant que bibliotheque dans votre propre projet ASP.NET Core, puis personnaliser l'interface de connexion avec vos propres composants React.
+Ce guide explique comment héberger Authagonal en tant que bibliothèque dans votre propre projet ASP.NET Core, puis personnaliser l'interface de connexion avec vos propres composants React.
 
 ## Partie 1 : Configuration du serveur
 
-### Creer le projet
+### Créer le projet
 
 ```bash
 dotnet new web -n MyAuthServer
@@ -30,7 +30,7 @@ Votre fichier `.csproj` doit contenir :
 </ItemGroup>
 ```
 
-`Authagonal.AzureProvider` fournit les magasins Azure Table Storage que `AddAuthagonal` cable a partir de la configuration `Storage:*`. Pour heberger plutot sur AWS, referencez `Authagonal.AwsProvider` et appelez `AddAuthagonalAwsStorage(...)` avant `AddAuthagonal`, voir [Installation → backend AWS](installation#aws-backend).
+`Authagonal.AzureProvider` fournit les magasins Azure Table Storage que `AddAuthagonal` câble à partir de la configuration `Storage:*`. Pour héberger plutôt sur AWS, référencez `Authagonal.AwsProvider` et appelez `AddAuthagonalAwsStorage(...)` avant `AddAuthagonal`, voir [Installation → backend AWS](installation#aws-backend).
 
 ### Configurer Program.cs
 
@@ -83,22 +83,22 @@ app.Run();
 }
 ```
 
-| Cle | Description |
+| Clé | Description |
 |---|---|
-| `Issuer` | L'URL publique de votre serveur d'authentification. Utilisee dans les tokens et la decouverte OIDC. |
-| `Storage:ConnectionString` | Chaine de connexion Azure Table Storage. |
-| `Clients` | Tableau de clients OAuth injectes au demarrage. |
+| `Issuer` | L'URL publique de votre serveur d'authentification. Utilisée dans les tokens et la découverte OIDC. |
+| `Storage:ConnectionString` | Chaîne de connexion Azure Table Storage. |
+| `Clients` | Tableau de clients OAuth injectés au démarrage. |
 
 ### Points d'extension
 
-Enregistrez vos implementations **avant** d'appeler `AddAuthagonal()` -- Authagonal utilise `TryAdd`, donc vos enregistrements ont la priorite.
+Enregistrez vos implémentations **avant** d'appeler `AddAuthagonal()` : Authagonal utilise `TryAdd`, donc vos enregistrements ont la priorité.
 
-| Interface | Fonction | Defaut |
+| Interface | Fonction | Défaut |
 |---|---|---|
-| `IEmailService` | Envoi d'e-mails de verification et de reinitialisation de mot de passe | Expediteur Resend integre lorsque `Email:ResendApiKey` est defini ; sinon no-op (ignore silencieusement) |
-| `IAuthHook` | Intercepter ou auditer les evenements de connexion, d'inscription et de token | Aucune operation |
+| `IEmailService` | Envoi d'e-mails de vérification et de réinitialisation de mot de passe | Expéditeur Resend intégré lorsque `Email:ResendApiKey` est défini ; sinon no-op (ignore silencieusement) |
+| `IAuthHook` | Intercepter ou auditer les événements de connexion, d'inscription et de token | Aucune opération |
 | `IProvisioningOrchestrator` | Provisionner les utilisateurs dans les applications en aval lors de l'autorisation | Provisionnement TCC |
-| `ISecretProvider` | Resoudre les secrets client | Texte brut (ou Key Vault avec `SecretProvider:VaultUri`) |
+| `ISecretProvider` | Résoudre les secrets client | Texte brut (ou Key Vault avec `SecretProvider:VaultUri`) |
 
 #### Exemple : hook d'audit
 
@@ -154,7 +154,7 @@ public class AuditAuthHook(ILogger<AuditAuthHook> logger) : IAuthHook
 }
 ```
 
-L'interface possede d'autres membres optionnels avec des implementations par defaut no-op (`OnMfaVerifyFailedAsync`, `OnEmailConfirmedAsync`, `OnMfaEnrolledAsync`, `OnMfaCredentialRemovedAsync`, `OnRecoveryCodesRegeneratedAsync`, `OnPasswordChangedAsync`), a surcharger uniquement si vous avez besoin de ces evenements.
+L'interface possède d'autres membres optionnels avec des implémentations par défaut no-op (`OnMfaVerifyFailedAsync`, `OnEmailConfirmedAsync`, `OnMfaEnrolledAsync`, `OnMfaCredentialRemovedAsync`, `OnRecoveryCodesRegeneratedAsync`, `OnPasswordChangedAsync`), à surcharger uniquement si vous avez besoin de ces événements.
 
 #### Exemple : service d'e-mail
 
@@ -179,19 +179,19 @@ public class ConsoleEmailService(ILogger<ConsoleEmailService> logger) : IEmailSe
 }
 ```
 
-> **L'e-mail est le piege d'integration le plus courant.** Si vous n'enregistrez aucun `IEmailService` et ne definissez pas `Email:ResendApiKey`, les e-mails de verification et de reinitialisation de mot de passe sont ignores silencieusement, et comme le controle de connexion sur email confirme est active par defaut, les utilisateurs auto-inscrits ne peuvent jamais se connecter (`UseAuthagonal` avertit au demarrage). L'expediteur Resend integre s'active automatiquement lorsque `Email:ResendApiKey` + `Email:SenderEmail` sont configures ; pour le dev/test, `Auth:AutoConfirmEmailDomains` ignore la verification pour les domaines listes. Voir [Configuration → Email](configuration#email).
+> **L'e-mail est le piège d'intégration le plus courant.** Si vous n'enregistrez aucun `IEmailService` et ne définissez pas `Email:ResendApiKey`, les e-mails de vérification et de réinitialisation de mot de passe sont ignorés silencieusement, et comme le contrôle de connexion sur email confirmé est activé par défaut, les utilisateurs auto-inscrits ne peuvent jamais se connecter (`UseAuthagonal` avertit au démarrage). L'expéditeur Resend intégré s'active automatiquement lorsque `Email:ResendApiKey` + `Email:SenderEmail` sont configurés ; pour le dev/test, `Auth:AutoConfirmEmailDomains` ignore la vérification pour les domaines listés. Voir [Configuration → Email](configuration#email).
 
-### Ajouter des endpoints personnalises
+### Ajouter des endpoints personnalisés
 
-Vous pouvez ajouter vos propres endpoints a cote de ceux d'Authagonal :
+Vous pouvez ajouter vos propres endpoints à côté de ceux d'Authagonal :
 
 ```csharp
 app.MapGet("/custom/health", () => Results.Ok(new { status = "healthy" }));
 ```
 
-### Desactiver l'API d'administration
+### Désactiver l'API d'administration
 
-Pour les deployments publics, desactivez les endpoints d'administration :
+Pour les déploiements publics, désactivez les endpoints d'administration :
 
 ```json
 {
@@ -201,19 +201,19 @@ Pour les deployments publics, desactivez les endpoints d'administration :
 }
 ```
 
-### Executer
+### Exécuter
 
 ```bash
 dotnet run
 ```
 
-Le serveur demarre sur l'URL configuree, en servant le document de decouverte OIDC a `/.well-known/openid-configuration`, l'interface de connexion a `/login`, et toutes les APIs d'authentification et d'administration.
+Le serveur démarre sur l'URL configurée, en servant le document de découverte OIDC à `/.well-known/openid-configuration`, l'interface de connexion à `/login`, et toutes les APIs d'authentification et d'administration.
 
 ---
 
-## Partie 2 : Interface de connexion personnalisee
+## Partie 2 : Interface de connexion personnalisée
 
-La SPA de connexion par defaut fonctionne directement, mais vous pouvez la remplacer par votre propre application React qui importe des composants et des clients API depuis le package npm `@authagonal/login`.
+La SPA de connexion par défaut fonctionne directement, mais vous pouvez la remplacer par votre propre application React qui importe des composants et des clients API depuis le package npm `@authagonal/login`.
 
 ### Mettre en place le frontend
 
@@ -236,6 +236,9 @@ import {
   MfaChallengePage,
   MfaSetupPage,
   RegisterPage,
+  ConsentPage,
+  GrantsPage,
+  DevicePage,
   App,              // Standalone SPA with full routing
 } from '@authagonal/login';
 
@@ -273,7 +276,7 @@ import type {
 } from '@authagonal/login';
 ```
 
-### Point d'entree (main.tsx)
+### Point d'entrée (main.tsx)
 
 Chargez la configuration de marque depuis le serveur et enveloppez votre application dans le contexte de marque :
 
@@ -295,11 +298,13 @@ loadBranding().then((config) => {
 
 ### Routage (App.tsx)
 
-Combinez des pages personnalisees avec les pages du package de base :
+Combinez des pages personnalisées avec les pages du package de base :
 
 ```tsx
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
-import { ForgotPasswordPage, ResetPasswordPage } from '@authagonal/login';
+import {
+  ForgotPasswordPage, ResetPasswordPage, ConsentPage, DevicePage, GrantsPage,
+} from '@authagonal/login';
 import MyLoginPage from './MyLoginPage';
 import MyLayout from './MyLayout';
 
@@ -311,6 +316,9 @@ export default function App() {
           <Route path="/login" element={<MyLoginPage />} />
           <Route path="/forgot-password" element={<ForgotPasswordPage />} />
           <Route path="/reset-password" element={<ResetPasswordPage />} />
+          <Route path="/consent" element={<ConsentPage />} />
+          <Route path="/device" element={<DevicePage />} />
+          <Route path="/grants" element={<GrantsPage />} />
           <Route path="*" element={<Navigate to="/login" replace />} />
         </Routes>
       </MyLayout>
@@ -319,7 +327,7 @@ export default function App() {
 }
 ```
 
-### Page de connexion personnalisee
+### Page de connexion personnalisée
 
 Construisez votre propre formulaire de connexion en utilisant les clients API du package npm :
 
@@ -371,7 +379,7 @@ export default function MyLoginPage() {
 }
 ```
 
-### Layout personnalise
+### Layout personnalisé
 
 Enveloppez le `AuthLayout` de base pour ajouter votre propre marque :
 
@@ -408,11 +416,11 @@ Configurez l'apparence de l'interface de connexion sans reconstruire :
 }
 ```
 
-Le schema complet, incluant le texte de bienvenue localise, la liste du selecteur de langue et les surcharges de couleur clair/sombre et d'arriere-plan de logo par mode, se trouve sur la page [Marque](branding).
+Le schéma complet, incluant le texte de bienvenue localisé, la liste du sélecteur de langue et les surcharges de couleur clair/sombre et d'arrière-plan de logo par mode, se trouve sur la page [Marque](branding).
 
 ### Configuration Vite
 
-Redirigez les appels API vers le backend pendant le developpement :
+Redirigez les appels API vers le backend pendant le développement :
 
 ```typescript
 import { defineConfig } from 'vite';
@@ -436,7 +444,7 @@ export default defineConfig({
 
 ### Construire et servir
 
-Ajoutez une cible de build a votre `.csproj` pour construire automatiquement la SPA et la copier dans `wwwroot` :
+Ajoutez une cible de build à votre `.csproj` pour construire automatiquement la SPA et la copier dans `wwwroot` :
 
 ```xml
 <Target Name="BuildLoginApp" BeforeTargets="Build" Condition="!Exists('wwwroot/index.html')">
@@ -449,4 +457,4 @@ Ajoutez une cible de build a votre `.csproj` pour construire automatiquement la 
 </Target>
 ```
 
-Maintenant `dotnet build` construit a la fois le serveur .NET et la SPA React, et `dotnet run` sert le tout depuis un seul processus.
+Maintenant `dotnet build` construit à la fois le serveur .NET et la SPA React, et `dotnet run` sert le tout depuis un seul processus.

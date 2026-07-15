@@ -6,46 +6,46 @@ locale: fr
 
 # Localisation
 
-L'interface de connexion est livree avec onze locales par defaut : anglais, chinois simplifie (`zh-Hans`), allemand (`de`), francais (`fr`), espagnol (`es`), vietnamien (`vi`), portugais (`pt`), arabe (`ar`), afrikaans (`af`), hindi (`hi`) et une locale fantaisie klingon (`tlh`). Les reponses de l'API serveur sont localisees dans les sept premieres. La localisation couvre les reponses de l'API serveur, l'interface de connexion et ce site de documentation.
+L'interface de connexion est livrée avec onze locales par défaut : anglais, chinois simplifié (`zh-Hans`), allemand (`de`), français (`fr`), espagnol (`es`), vietnamien (`vi`), portugais (`pt`), arabe (`ar`), afrikaans (`af`), hindi (`hi`) et une locale fantaisie klingon (`tlh`). Les réponses de l'API serveur sont localisées dans les sept premières. La localisation couvre les réponses de l'API serveur, l'interface de connexion et ce site de documentation.
 
 ## Langues prises en charge
 
 | Code | Langue | Interface de connexion | API serveur |
 |---|---|---|---|
-| `en` | Anglais (par defaut) | ✓ | ✓ |
-| `zh-Hans` | Chinois simplifie | ✓ | ✓ |
+| `en` | Anglais (par défaut) | ✓ | ✓ |
+| `zh-Hans` | Chinois simplifié | ✓ | ✓ |
 | `de` | Allemand | ✓ | ✓ |
-| `fr` | Francais | ✓ | ✓ |
+| `fr` | Français | ✓ | ✓ |
 | `es` | Espagnol | ✓ | ✓ |
 | `vi` | Vietnamien | ✓ | ✓ |
 | `pt` | Portugais | ✓ | ✓ |
-| `ar` | Arabe (droite a gauche) | ✓ | — |
+| `ar` | Arabe (droite à gauche) | ✓ | — |
 | `af` | Afrikaans | ✓ | — |
 | `hi` | Hindi | ✓ | — |
 | `tlh` | Klingon (fantaisie) | ✓ | — |
 
-## Serveur (reponses API)
+## Serveur (réponses API)
 
-Le serveur utilise la localisation integree d'ASP.NET Core avec `IStringLocalizer<T>` et des fichiers de ressources `.resx`. La langue est selectionnee a partir de l'en-tete HTTP `Accept-Language`.
+Le serveur utilise la localisation intégrée d'ASP.NET Core avec `IStringLocalizer<T>` et des fichiers de ressources `.resx`. La langue est sélectionnée à partir de l'en-tête HTTP `Accept-Language`.
 
-### Ce qui est localise
+### Ce qui est localisé
 
 - Messages d'erreur de validation du mot de passe
 - Labels de la politique de mot de passe (`GET /api/auth/password-policy`)
-- Messages du flux de reinitialisation du mot de passe (erreurs de jeton, expiration, succes)
-- Descriptions d'erreurs generiques du middleware de gestion des exceptions
-- Messages de gestion des utilisateurs administrateurs (confirmation par e-mail, verification, etc.)
+- Messages du flux de réinitialisation du mot de passe (erreurs de jeton, expiration, succès)
+- Descriptions d'erreurs génériques du middleware de gestion des exceptions
+- Messages de gestion des utilisateurs administrateurs (confirmation par e-mail, vérification, etc.)
 - Message de confirmation de fin de session
 
-### Ce qui N'EST PAS localise
+### Ce qui N'EST PAS localisé
 
-- Codes `error` lisibles par machine (`"email_required"`, `"invalid_credentials"`, etc.) — ce sont des contrats d'API et restent constants
-- Codes d'erreur OAuth/OIDC et descriptions d'erreurs destinees aux developpeurs sur les points de terminaison de jeton, d'autorisation et de revocation
+- Codes `error` lisibles par machine (`"email_required"`, `"invalid_credentials"`, etc.), ce sont des contrats d'API et restent constants
+- Codes d'erreur OAuth/OIDC et descriptions d'erreurs destinées aux développeurs sur les points de terminaison de jeton, d'autorisation et de révocation
 - Messages de journaux internes et messages d'exceptions
 
 ### Tester la localisation du serveur
 
-Envoyez un en-tete `Accept-Language` a n'importe quel point de terminaison localise :
+Envoyez un en-tête `Accept-Language` à n'importe quel point de terminaison localisé :
 
 ```bash
 # English (default)
@@ -60,7 +60,7 @@ curl -H "Accept-Language: de" https://auth.example.com/api/auth/password-policy
 
 ### Fichiers de ressources
 
-Toutes les chaines de traduction du serveur se trouvent dans les fichiers `.resx` sous `src/Authagonal.Server/Resources/` :
+Toutes les chaînes de traduction du serveur se trouvent dans les fichiers `.resx` sous `src/Authagonal.Server/Resources/` :
 
 ```
 Resources/
@@ -76,24 +76,24 @@ Resources/
 
 ## Interface de connexion
 
-La SPA de connexion utilise [react-i18next](https://react.i18next.com/) pour la localisation cote client. La langue est detectee automatiquement a partir du parametre `navigator.language` du navigateur.
+La SPA de connexion utilise [react-i18next](https://react.i18next.com/) pour la localisation côté client. La langue est détectée automatiquement à partir du paramètre `navigator.language` du navigateur.
 
-Les locales enregistrees vivent dans un registre `LANGUAGES` unique dans `login-app/src/i18n/index.ts`, qui pilote a la fois l'enregistrement des ressources i18next et chaque selecteur de langue, de sorte que les deux ne peuvent pas diverger. Les locales marquees `novelty` (actuellement `tlh`) restent pleinement fonctionnelles (`?lng=tlh` fonctionne) mais sont exclues du selecteur par defaut ; elles n'apparaissent dans un menu deroulant que lorsque le `BrandingConfig.languages` d'un tenant les liste explicitement. Les tenants peuvent aussi restreindre le selecteur de la meme facon : un tableau `languages` dans `branding.json` remplace entierement la liste par defaut (voir [Marque](branding)).
+Les locales enregistrées vivent dans un registre `LANGUAGES` unique dans `login-app/src/i18n/index.ts`, qui pilote à la fois l'enregistrement des ressources i18next et chaque sélecteur de langue, de sorte que les deux ne peuvent pas diverger. Les locales marquées `novelty` (actuellement `tlh`) restent pleinement fonctionnelles (`?lng=tlh` fonctionne) mais sont exclues du sélecteur par défaut ; elles n'apparaissent dans un menu déroulant que lorsque le `BrandingConfig.languages` d'un tenant les liste explicitement. Les tenants peuvent aussi restreindre le sélecteur de la même façon : un tableau `languages` dans `branding.json` remplace entièrement la liste par défaut (voir [Marque](branding)).
 
-La langue active est refletee sur `<html lang>` et `<html dir>`, de sorte que les langues de droite a gauche (`ar`) retournent automatiquement la carte d'authentification, y compris lorsque la langue est changee sur place via le selecteur.
+La langue active est reflétée sur `<html lang>` et `<html dir>`, de sorte que les langues de droite à gauche (`ar`) retournent automatiquement la carte d'authentification, y compris lorsque la langue est changée sur place via le sélecteur.
 
-### Detection de la langue
+### Détection de la langue
 
-L'ordre de detection est :
+L'ordre de détection est :
 
-1. **localStorage** — preference persistee d'une visite precedente
-2. **Parametre de requete** — `?lng=de` remplace la detection du navigateur
-3. **Langue du navigateur** — `navigator.language` (automatique)
-4. **Repli** — Anglais (`en`)
+1. **localStorage** : préférence persistée d'une visite précédente
+2. **Paramètre de requête** : `?lng=de` remplace la détection du navigateur
+3. **Langue du navigateur** : `navigator.language` (automatique)
+4. **Repli** : Anglais (`en`)
 
 ### Fichiers de traduction
 
-Les fichiers JSON de traduction sont integres a l'application dans `login-app/src/i18n/` :
+Les fichiers JSON de traduction sont intégrés à l'application dans `login-app/src/i18n/` :
 
 ```
 i18n/
@@ -113,11 +113,11 @@ i18n/
 
 ### Labels de la politique de mot de passe
 
-La page de reinitialisation de mot de passe traduit sa liste d'exigences de mot de passe cote client en fonction de la cle `rule` renvoyee par `GET /api/auth/password-policy` (avec repli sur le champ `label` fourni par le serveur pour les regles non reconnues). Cela garantit que les exigences suivent la langue selectionnee dans l'interface, meme si l'en-tete `Accept-Language` du navigateur differe. La page d'inscription affiche les valeurs `label` fournies par le serveur, qui sont localisees a partir de `Accept-Language`.
+La page de réinitialisation de mot de passe traduit sa liste d'exigences de mot de passe côté client en fonction de la clé `rule` renvoyée par `GET /api/auth/password-policy` (avec repli sur le champ `label` fourni par le serveur pour les règles non reconnues). Cela garantit que les exigences suivent la langue sélectionnée dans l'interface, même si l'en-tête `Accept-Language` du navigateur diffère. La page d'inscription affiche les valeurs `label` fournies par le serveur, qui sont localisées à partir de `Accept-Language`.
 
 ### Consommateurs du paquet npm
 
-Si vous utilisez l'application de connexion via `@authagonal/login`, l'instance i18n est exportee :
+Si vous utilisez l'application de connexion via `@authagonal/login`, l'instance i18n est exportée :
 
 ```typescript
 import { i18n } from '@authagonal/login';
@@ -128,7 +128,7 @@ i18n.changeLanguage('de');
 
 ## Documentation
 
-Le site de documentation utilise une approche basee sur les repertoires. Les pages en anglais se trouvent a la racine et les traductions dans des sous-repertoires de langue (`/zh-Hans/`, `/de/`, `/fr/`, `/es/`, `/vi/`, `/pt/`). Un menu deroulant de changement de langue dans la barre laterale permet de basculer entre les langues.
+Le site de documentation utilise une approche basée sur les répertoires. Les pages en anglais se trouvent à la racine et les traductions dans des sous-répertoires de langue (`/zh-Hans/`, `/de/`, `/fr/`, `/es/`, `/vi/`, `/pt/`). Un menu déroulant de changement de langue dans la barre latérale permet de basculer entre les langues.
 
 ## Ajouter une nouvelle langue
 
@@ -136,7 +136,7 @@ Pour ajouter la prise en charge d'une nouvelle langue (par ex. japonais `ja`) :
 
 ### 1. Serveur
 
-Creez un nouveau fichier `.resx` en copiant celui en anglais et en traduisant les valeurs :
+Créez un nouveau fichier `.resx` en copiant celui en anglais et en traduisant les valeurs :
 
 ```
 src/Authagonal.Server/Resources/SharedMessages.ja.resx
@@ -150,13 +150,13 @@ var supportedCultures = new[] { "en", "zh-Hans", "de", "fr", "es", "vi", "pt", "
 
 ### 2. Interface de connexion
 
-Creez un nouveau fichier JSON de traduction en copiant `en.json` et en traduisant les valeurs :
+Créez un nouveau fichier JSON de traduction en copiant `en.json` et en traduisant les valeurs :
 
 ```
 login-app/src/i18n/ja.json
 ```
 
-Enregistrez-le dans le tableau `LANGUAGES` de `login-app/src/i18n/index.ts`. Cette seule entree enregistre la ressource i18next et ajoute la langue a chaque selecteur :
+Enregistrez-le dans le tableau `LANGUAGES` de `login-app/src/i18n/index.ts`. Cette seule entrée enregistre la ressource i18next et ajoute la langue à chaque sélecteur :
 
 ```typescript
 import ja from './ja.json';
@@ -167,7 +167,7 @@ import ja from './ja.json';
 
 ### 3. Documentation
 
-Creez un nouveau repertoire avec des fichiers markdown traduits :
+Créez un nouveau répertoire avec des fichiers markdown traduits :
 
 ```
 docs/ja/
@@ -177,7 +177,7 @@ docs/ja/
   ...
 ```
 
-Ajoutez une valeur par defaut de langue dans `docs/_config.yml` :
+Ajoutez une valeur par défaut de langue dans `docs/_config.yml` :
 
 ```yaml
 defaults:
@@ -187,15 +187,15 @@ defaults:
       locale: "ja"
 ```
 
-Ajoutez l'option de langue au selecteur dans `docs/_layouts/default.html`.
+Ajoutez l'option de langue au sélecteur dans `docs/_layouts/default.html`.
 
-## Ajouter de nouvelles chaines
+## Ajouter de nouvelles chaînes
 
 ### Serveur
 
-1. Ajoutez la cle et la valeur en anglais a `SharedMessages.resx`
+1. Ajoutez la clé et la valeur en anglais à `SharedMessages.resx`
 2. Ajoutez les valeurs traduites au fichier `.resx` de chaque langue
-3. Utilisez `IStringLocalizer<SharedMessages>` pour acceder a la chaine :
+3. Utilisez `IStringLocalizer<SharedMessages>` pour accéder à la chaîne :
 
 ```csharp
 // Inject via parameter
@@ -210,7 +210,7 @@ string.Format(localizer["MyNewKey"].Value, param1)
 
 ### Interface de connexion
 
-1. Ajoutez la cle et la valeur en anglais a `en.json`
+1. Ajoutez la clé et la valeur en anglais à `en.json`
 2. Ajoutez les valeurs traduites au fichier JSON de chaque langue
 3. Utilisez la fonction `t()` dans les composants :
 
