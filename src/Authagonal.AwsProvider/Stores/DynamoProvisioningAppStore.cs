@@ -7,30 +7,42 @@ using Authagonal.Core.Stores;
 
 namespace Authagonal.AwsProvider.Stores;
 
-/// <summary>DynamoDB <see cref="IProvisioningAppStore"/>. All apps share one partition ("app"), sk = appId.</summary>
-public sealed class DynamoProvisioningAppStore(DynamoTable table, EnvPartitioner partitioner, IChangeWriter? tombstones = null) : IProvisioningAppStore
+/// <summary>
+/// DynamoDB <see cref="IProvisioningAppStore"/>. All apps share one partition ("app"), sk = appId.
+/// The serialized config document (which carries the app's API key) is encrypted at rest via the
+/// optional <see cref="IFieldCipher"/> — passthrough by default, legacy plaintext rows resolve
+/// unchanged (the same seam contract as the user store's document crypto).
+/// </summary>
+public sealed class DynamoProvisioningAppStore(
+    DynamoTable table,
+    EnvPartitioner partitioner,
+    IChangeWriter? tombstones = null,
+    IFieldCipher? fieldCipher = null) : IProvisioningAppStore
 {
     private const string Partition = "app";
+
+    private readonly IFieldCipher _cipher = fieldCipher ?? NullFieldCipher.Instance;
 
     public async Task<ProvisioningAppConfig?> GetAsync(string appId, CancellationToken ct = default)
     {
         var item = await table.GetAsync(partitioner.PK(Partition), appId, ct).ConfigureAwait(false);
-        return item is null ? null : Read(item);
+        return item is null ? null : await ReadAsync(item, ct).ConfigureAwait(false);
     }
 
     public async Task<IReadOnlyList<ProvisioningAppConfig>> GetAllAsync(CancellationToken ct = default)
     {
         var apps = new List<ProvisioningAppConfig>();
         await foreach (var item in table.QueryAsync(partitioner.PK(Partition), ct: ct).ConfigureAwait(false))
-            apps.Add(Read(item));
+            apps.Add(await ReadAsync(item, ct).ConfigureAwait(false));
         return apps;
     }
 
-    public Task UpsertAsync(ProvisioningAppConfig app, CancellationToken ct = default)
+    public async Task UpsertAsync(ProvisioningAppConfig app, CancellationToken ct = default)
     {
         var item = Dyn.Item(partitioner.PK(Partition), app.AppId);
-        item.PutS("data", JsonSerializer.Serialize(app, AwsJsonContext.Default.ProvisioningAppConfig));
-        return table.PutAsync(item, ct);
+        var json = JsonSerializer.Serialize(app, AwsJsonContext.Default.ProvisioningAppConfig);
+        item.PutS("data", await _cipher.ProtectAsync(json, ct).ConfigureAwait(false));
+        await table.PutAsync(item, ct).ConfigureAwait(false);
     }
 
     public async Task DeleteAsync(string appId, CancellationToken ct = default)
@@ -40,6 +52,9 @@ public sealed class DynamoProvisioningAppStore(DynamoTable table, EnvPartitioner
         if (old is not null && tombstones is not null) await tombstones.WriteAsync("ProvisioningApps", pk, appId, ct).ConfigureAwait(false);
     }
 
-    private static ProvisioningAppConfig Read(Dictionary<string, AttributeValue> item)
-        => JsonSerializer.Deserialize(item.GetStr("data"), AwsJsonContext.Default.ProvisioningAppConfig)!;
+    private async Task<ProvisioningAppConfig> ReadAsync(Dictionary<string, AttributeValue> item, CancellationToken ct)
+    {
+        var json = await _cipher.ResolveAsync(item.GetStr("data"), ct).ConfigureAwait(false);
+        return JsonSerializer.Deserialize(json, AwsJsonContext.Default.ProvisioningAppConfig)!;
+    }
 }

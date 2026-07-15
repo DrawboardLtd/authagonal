@@ -32,6 +32,8 @@ public static class ServiceCollectionExtensions
     private const string UserExternalIdsTable = "UserExternalIds";
     private const string UserFirstNamesTable = "UserFirstNames";
     private const string UserLastNamesTable = "UserLastNames";
+    private const string UserEmailDomainsTable = "UserEmailDomains";
+    private const string UserEmailLocalPrefixesTable = "UserEmailLocalPrefixes";
     private const string RolesTable = "Roles";
     private const string ScopesTable = "Scopes";
     private const string RevokedTokensTable = "RevokedTokens";
@@ -75,6 +77,7 @@ public static class ServiceCollectionExtensions
         {
             ClientsTable, GrantsTable, GrantsBySubjectTable, GrantsByExpiryTable, SigningKeysTable, TombstonesTable,
             UsersTable, UserEmailsTable, UserLoginsTable, UserExternalIdsTable,
+            UserEmailDomainsTable, UserEmailLocalPrefixesTable,
             RolesTable, ScopesTable, RevokedTokensTable, ProvisioningAppsTable, UserProvisionsTable,
             OidcProvidersTable, SamlProvidersTable, SsoDomainsTable,
             ScimTokensTable, ScimGroupsTable, ScimGroupExternalIdsTable, ScimGroupRoleMappingsTable,
@@ -91,14 +94,18 @@ public static class ServiceCollectionExtensions
 
         services.TryAddSingleton<IClientStore>(new DynamoClientStore(new DynamoTable(db, ClientsTable), live, tombstones));
         services.TryAddSingleton<ISigningKeyStore>(new DynamoSigningKeyStore(new DynamoTable(db, SigningKeysTable), live, tombstones));
+        // The crypto seams (IFieldCipher / IIndexTokenizer) resolve lazily from the container so a
+        // host that registers them BEFORE AddDynamoStorage gets PII encryption + blind-index keys —
+        // the Null passthroughs apply otherwise (plaintext, the historical layout).
         services.TryAddSingleton<IGrantStore>(sp => new DynamoGrantStore(
             new DynamoTable(db, GrantsTable),
             new DynamoTable(db, GrantsBySubjectTable),
             new DynamoTable(db, GrantsByExpiryTable),
             live,
             sp.GetRequiredService<ILoggerFactory>().CreateLogger<DynamoGrantStore>(),
-            tombstones));
-        services.TryAddSingleton<IUserStore>(new DynamoUserStore(
+            tombstones,
+            sp.GetService<IFieldCipher>()));
+        services.TryAddSingleton<IUserStore>(sp => new DynamoUserStore(
             new DynamoTable(db, UsersTable),
             new DynamoTable(db, UserEmailsTable),
             new DynamoTable(db, UserLoginsTable),
@@ -106,11 +113,16 @@ public static class ServiceCollectionExtensions
             nameIndexesEnabled ? new DynamoTable(db, UserFirstNamesTable) : null,
             nameIndexesEnabled ? new DynamoTable(db, UserLastNamesTable) : null,
             live,
-            tombstones));
+            tombstones,
+            new DynamoTable(db, UserEmailDomainsTable),
+            new DynamoTable(db, UserEmailLocalPrefixesTable),
+            sp.GetService<IFieldCipher>(),
+            sp.GetService<IIndexTokenizer>()));
         services.TryAddSingleton<IRoleStore>(new DynamoRoleStore(new DynamoTable(db, RolesTable), live, tombstones));
         services.TryAddSingleton<IScopeStore>(new DynamoScopeStore(new DynamoTable(db, ScopesTable), live, tombstones));
         services.TryAddSingleton<IRevokedTokenStore>(new DynamoRevokedTokenStore(new DynamoTable(db, RevokedTokensTable), live));
-        services.TryAddSingleton<IProvisioningAppStore>(new DynamoProvisioningAppStore(new DynamoTable(db, ProvisioningAppsTable), live, tombstones));
+        services.TryAddSingleton<IProvisioningAppStore>(sp => new DynamoProvisioningAppStore(
+            new DynamoTable(db, ProvisioningAppsTable), live, tombstones, sp.GetService<IFieldCipher>()));
         services.TryAddSingleton<IUserProvisionStore>(new DynamoUserProvisionStore(new DynamoTable(db, UserProvisionsTable), live, tombstones));
         services.TryAddSingleton<IOidcProviderStore>(new DynamoOidcProviderStore(new DynamoTable(db, OidcProvidersTable), live, tombstones));
         services.TryAddSingleton<ISamlProviderStore>(new DynamoSamlProviderStore(new DynamoTable(db, SamlProvidersTable), live, tombstones));
@@ -141,6 +153,33 @@ public static class ServiceCollectionExtensions
     {
         services.TryAddSingleton(client);
         services.Replace(ServiceDescriptor.Singleton<ISecretProvider, SecretsManagerSecretProvider>());
+        return services;
+    }
+
+    /// <summary>
+    /// One-call AWS composition: DynamoDB stores + (optionally) Secrets Manager secrets +
+    /// (optionally) S3-persisted DataProtection keys. Call BEFORE <c>AddAuthagonal</c> — the
+    /// registrations here are what make <c>AddAuthagonal</c> skip its Azure Table wiring.
+    /// <code>
+    /// builder.Services.AddAuthagonalAwsStorage(dynamo, secretsManager, s3, "my-auth-keys-bucket");
+    /// builder.Services.AddAuthagonal(builder.Configuration);
+    /// </code>
+    /// Without an S3 client/bucket the DataProtection key ring is in-memory — fine for a single
+    /// node in dev, but cookies/antiforgery break on restart and across nodes in production.
+    /// </summary>
+    public static IServiceCollection AddAuthagonalAwsStorage(
+        this IServiceCollection services,
+        IAmazonDynamoDB dynamoDb,
+        IAmazonSecretsManager? secretsManager = null,
+        Amazon.S3.IAmazonS3? s3 = null,
+        string? dataProtectionBucket = null,
+        bool nameIndexesEnabled = true)
+    {
+        services.AddDynamoStorage(dynamoDb, nameIndexesEnabled);
+        if (secretsManager is not null)
+            services.AddSecretsManager(secretsManager);
+        if (s3 is not null && !string.IsNullOrWhiteSpace(dataProtectionBucket))
+            services.PersistDataProtectionKeysToS3(s3, dataProtectionBucket);
         return services;
     }
 }

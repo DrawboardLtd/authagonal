@@ -131,6 +131,63 @@ public sealed class DynamoTable(IAmazonDynamoDB db, string name)
         while (startKey is not null);
     }
 
+    /// <summary>
+    /// Full-table scan returning only the projected attributes — for whole-population sweeps
+    /// (id enumeration, login-state streaming) that must not read the document payload.
+    /// <paramref name="names"/> aliases reserved attribute names used in the projection/filter
+    /// (e.g. <c>#d → data</c>).
+    /// </summary>
+    public async IAsyncEnumerable<Dictionary<string, AttributeValue>> ScanProjectedAsync(
+        string projection,
+        string? filterExpression = null,
+        IReadOnlyDictionary<string, AttributeValue>? values = null,
+        IReadOnlyDictionary<string, string>? names = null,
+        [EnumeratorCancellation] CancellationToken ct = default)
+    {
+        Dictionary<string, AttributeValue>? startKey = null;
+        do
+        {
+            var resp = await db.ScanAsync(new ScanRequest
+            {
+                TableName = name,
+                ProjectionExpression = projection,
+                FilterExpression = filterExpression,
+                ExpressionAttributeValues = values is null ? null : new Dictionary<string, AttributeValue>(values),
+                ExpressionAttributeNames = names is null ? null : new Dictionary<string, string>(names),
+                ExclusiveStartKey = startKey,
+            }, ct).ConfigureAwait(false);
+
+            foreach (var item in resp.Items ?? []) yield return item;
+            startKey = resp.LastEvaluatedKey is { Count: > 0 } ? resp.LastEvaluatedKey : null;
+        }
+        while (startKey is not null);
+    }
+
+    /// <summary>
+    /// One scan page with an explicit resume key — the native-continuation primitive behind
+    /// cursor paging (<c>IUserStore.ListPageAsync</c>). <paramref name="limit"/> caps items
+    /// EXAMINED (pre-filter), per DynamoDB semantics; the caller loops pages as needed.
+    /// </summary>
+    public async Task<(IReadOnlyList<Dictionary<string, AttributeValue>> Items, Dictionary<string, AttributeValue>? LastKey)> ScanPageAsync(
+        string? filterExpression,
+        IReadOnlyDictionary<string, AttributeValue>? values,
+        Dictionary<string, AttributeValue>? exclusiveStartKey,
+        int limit,
+        CancellationToken ct = default)
+    {
+        var resp = await db.ScanAsync(new ScanRequest
+        {
+            TableName = name,
+            FilterExpression = filterExpression,
+            ExpressionAttributeValues = values is null ? null : new Dictionary<string, AttributeValue>(values),
+            ExclusiveStartKey = exclusiveStartKey,
+            Limit = limit,
+        }, ct).ConfigureAwait(false);
+
+        var lastKey = resp.LastEvaluatedKey is { Count: > 0 } ? resp.LastEvaluatedKey : null;
+        return (resp.Items ?? [], lastKey);
+    }
+
     private static Dictionary<string, AttributeValue> KeyOf(string pk, string sk) => new()
     {
         [Dyn.Pk] = new AttributeValue { S = pk },
