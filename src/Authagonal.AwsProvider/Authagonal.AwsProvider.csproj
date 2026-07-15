@@ -8,9 +8,12 @@
     <PackageReference Include="AWSSDK.DynamoDBv2" Version="4.*" />
     <PackageReference Include="AWSSDK.S3" Version="4.*" />
     <PackageReference Include="AWSSDK.SecretsManager" Version="4.*" />
-    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.9" />
-    <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" Version="10.0.9" />
-    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.9" />
+    <!-- Float on the 10.x major (Core already requires >= 10.0.x on both TFMs) so these never
+         downgrade below what DataProtection's own patch releases transitively require — a fixed
+         10.0.x pin trips NU1605 the moment DataProtection bumps its abstractions floor. -->
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.*" />
+    <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" Version="10.*" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.*" />
     <!-- For the S3 DataProtection key-ring repository (IXmlRepository / KeyManagementOptions). Per-TFM
          so the major tracks the runtime. -->
     <PackageReference Include="Microsoft.AspNetCore.DataProtection" Version="9.*" Condition="'$(TargetFramework)' == 'net9.0'" />
