@@ -15,6 +15,7 @@
     <PackageReference Include="Microsoft.Extensions.Localization" Version="10.0.5" />
     <PackageReference Include="xunit.runner.visualstudio" Version="3.1.4" />
     <PackageReference Include="Testcontainers.Azurite" Version="4.*" />
+    <PackageReference Include="Testcontainers.DynamoDb" Version="4.*" />
     <!-- Unify with the product projects' Azure.Storage.Blobs 12.* (Testcontainers.Azurite drags in an
          older 12.29.0, which otherwise conflicts with AzureProvider's compiled version). -->
     <PackageReference Include="Azure.Storage.Blobs" Version="12.*" />
@@ -29,6 +30,7 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\Authagonal.Core\Authagonal.Core.csproj" />
     <ProjectReference Include="..\..\src\Authagonal.AzureProvider\Authagonal.AzureProvider.csproj" />
+    <ProjectReference Include="..\..\src\Authagonal.AwsProvider\Authagonal.AwsProvider.csproj" />
     <ProjectReference Include="..\..\src\Authagonal.Backup\Authagonal.Backup.csproj" />
     <ProjectReference Include="..\..\src\Authagonal.Server\Authagonal.Server.csproj" />
   </ItemGroup>
