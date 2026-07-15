@@ -64,6 +64,7 @@
   "mfaVerifying": "Verifying...",
   "mfaInvalidCode": "Invalid code. Please try again.",
   "mfaChallengeExpired": "Verification session expired. Please log in again.",
+  "mfaTooManyAttempts": "Too many incorrect attempts. Please sign in again.",
   "mfaSetupTitle": "Multi-factor authentication",
   "mfaStatusEnabled": "MFA is enabled on your account.",
   "mfaStatusDisabled": "MFA is not yet set up.",

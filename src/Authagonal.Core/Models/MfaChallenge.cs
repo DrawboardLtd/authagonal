@@ -13,4 +13,10 @@ public sealed class MfaChallenge
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset ExpiresAt { get; set; }
     public bool IsConsumed { get; set; }
+
+    /// <summary>Failed verify attempts against this challenge. The verify endpoint validates the code
+    /// BEFORE consuming, so a wrong code no longer burns the challenge — it increments this instead,
+    /// and the challenge is consumed (forcing a fresh login) only once a bounded budget is exhausted.
+    /// Bounds TOTP brute-force while allowing an honest retry after a mistyped digit.</summary>
+    public int Attempts { get; set; }
 }

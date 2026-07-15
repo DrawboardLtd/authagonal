@@ -1,5 +1,5 @@
 import { useState, useCallback } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useSearchParams, Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { mfaVerify, ApiRequestError } from '../api';
 import { Button } from '@/components/ui/button';
@@ -44,6 +44,13 @@ export default function MfaChallengePage() {
   const methodsParam = searchParams.get('methods') || '';
   const availableMethods = methodsParam ? methodsParam.split(',') : [];
 
+  // Escape hatch: the page state is driven entirely by the URL, so a stale/expired challengeId would
+  // otherwise trap the user on this form (every submit re-POSTs the dead challenge). Always offer a
+  // way back to the login form, preserving the OIDC returnUrl so the flow resumes.
+  const loginLink = returnUrl
+    ? `/login?returnUrl=${encodeURIComponent(returnUrl)}`
+    : '/login';
+
   const hasWebAuthn = availableMethods.includes('webauthn');
   // Default to a device-independent factor (TOTP) when the user has one, so a login on a device that
   // doesn't have the passkey is never pushed toward it — passkey stays a one-tap choice, not the forced
@@ -74,6 +81,9 @@ export default function MfaChallengePage() {
           break;
         case 'invalid_challenge':
           setError(t('mfaChallengeExpired'));
+          break;
+        case 'too_many_attempts':
+          setError(t('mfaTooManyAttempts'));
           break;
         default:
           setError(err.message || t('errorUnexpected'));
@@ -244,6 +254,12 @@ export default function MfaChallengePage() {
           </Button>
         </form>
       )}
+
+      <div className="mt-6 text-center">
+        <Link to={loginLink} className="text-sm font-medium text-primary hover:underline no-underline">
+          {t('backToSignIn')}
+        </Link>
+      </div>
     </div>
   );
 }

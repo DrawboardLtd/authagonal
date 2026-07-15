@@ -183,6 +183,83 @@ public class MfaEndpointTests : IAsyncDisposable
     }
 
     [Fact]
+    public async Task MfaVerify_WrongTotpThenCorrect_Succeeds()
+    {
+        // Regression: a wrong code must NOT burn the one-time challenge. The honest retry with the
+        // correct code on the SAME challenge must succeed (previously the first attempt consumed the
+        // challenge, so the retry got invalid_challenge / "Verification session expired").
+        await _factory.SeedTestDataAsync();
+        var user = await _factory.SeedTestUserAsync();
+        user.MfaEnabled = true;
+        await _factory.UserStore.UpdateAsync(user);
+
+        var testClient = await _factory.ClientStore.GetAsync(AuthagonalTestFactory.TestClientId);
+        testClient!.MfaPolicy = MfaPolicy.Enabled;
+        await _factory.ClientStore.UpsertAsync(testClient);
+
+        var secret = await EnrollTotpForUser(user.Id);
+        var client = _factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+
+        var loginResponse = await client.PostAsJsonAsync(
+            $"/api/auth/login?returnUrl=/connect/authorize?client_id={AuthagonalTestFactory.TestClientId}",
+            new { email = "test@example.com", password = "Test1234!" });
+        var challengeId = (await loginResponse.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("challengeId").GetString();
+
+        var totpService = _factory.Services.GetRequiredService<TotpService>();
+        var validCode = totpService.GenerateCode(secret);
+        var wrongCode = validCode == "000000" ? "111111" : "000000";
+
+        // Wrong code: rejected, but the challenge survives.
+        var wrong = await client.PostAsJsonAsync("/api/auth/mfa/verify", new { challengeId, method = "totp", code = wrongCode });
+        Assert.Equal(System.Net.HttpStatusCode.Unauthorized, wrong.StatusCode);
+
+        // Correct code on the SAME challenge: succeeds.
+        var right = await client.PostAsJsonAsync("/api/auth/mfa/verify", new { challengeId, method = "totp", code = validCode });
+        right.EnsureSuccessStatusCode();
+        Assert.Equal(user.Id, (await right.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("userId").GetString());
+    }
+
+    [Fact]
+    public async Task MfaVerify_TooManyWrongAttempts_BurnsChallenge()
+    {
+        // The attempt budget bounds TOTP brute-force: the 5th wrong guess consumes the challenge, and
+        // even the correct code can't rescue it afterward (forcing a fresh login).
+        await _factory.SeedTestDataAsync();
+        var user = await _factory.SeedTestUserAsync();
+        user.MfaEnabled = true;
+        await _factory.UserStore.UpdateAsync(user);
+
+        var testClient = await _factory.ClientStore.GetAsync(AuthagonalTestFactory.TestClientId);
+        testClient!.MfaPolicy = MfaPolicy.Enabled;
+        await _factory.ClientStore.UpsertAsync(testClient);
+
+        var secret = await EnrollTotpForUser(user.Id);
+        var client = _factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+
+        var loginResponse = await client.PostAsJsonAsync(
+            $"/api/auth/login?returnUrl=/connect/authorize?client_id={AuthagonalTestFactory.TestClientId}",
+            new { email = "test@example.com", password = "Test1234!" });
+        var challengeId = (await loginResponse.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("challengeId").GetString();
+
+        var totpService = _factory.Services.GetRequiredService<TotpService>();
+        var validCode = totpService.GenerateCode(secret);
+        var wrongCode = validCode == "000000" ? "111111" : "000000";
+
+        // 5 wrong attempts: the 5th burns the challenge.
+        for (int i = 1; i <= 5; i++)
+        {
+            var resp = await client.PostAsJsonAsync("/api/auth/mfa/verify", new { challengeId, method = "totp", code = wrongCode });
+            Assert.Equal(System.Net.HttpStatusCode.Unauthorized, resp.StatusCode);
+            var err = (await resp.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("error").GetString();
+            Assert.Equal(i < 5 ? "invalid_code" : "too_many_attempts", err);
+        }
+
+        // Burned — the correct code no longer works.
+        var afterBurn = await client.PostAsJsonAsync("/api/auth/mfa/verify", new { challengeId, method = "totp", code = validCode });
+        Assert.Equal(System.Net.HttpStatusCode.BadRequest, afterBurn.StatusCode);
+    }
+
+    [Fact]
     public async Task MfaVerify_RecoveryCode_WorksOnce_ThenFails()
     {
         await _factory.SeedTestDataAsync();

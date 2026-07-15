@@ -44,8 +44,11 @@ public static class MfaEndpoints
         if (string.IsNullOrWhiteSpace(request.Method))
             return JsonResults.Error("method_required");
 
-        // Consume challenge (atomic — prevents replay)
-        var challenge = await mfaStore.ConsumeChallengeAsync(request.ChallengeId, ct);
+        // Load the challenge WITHOUT consuming: validate the code first, consume only on success — a
+        // wrong code must NOT burn the one-time challenge, or the honest retry finds nothing ("Verification
+        // session expired"). The store returns null for missing/expired/already-consumed, so this is still
+        // replay-safe; a bounded attempt counter (below) preserves brute-force protection.
+        var challenge = await mfaStore.GetChallengeAsync(request.ChallengeId, ct);
         if (challenge is null)
             return JsonResults.Error("invalid_challenge");
 
@@ -54,6 +57,24 @@ public static class MfaEndpoints
             return JsonResults.Error("user_not_found");
 
         var credentials = await mfaStore.GetCredentialsAsync(challenge.UserId, ct);
+
+        // How many wrong guesses a single challenge tolerates before it's burned (→ fresh login).
+        const int maxAttempts = 5;
+        // A failed verify: fire the hook, count the attempt, and consume the challenge only once the
+        // budget is spent. Below the budget, re-store the incremented challenge so the same challenge can
+        // be retried (e.g. after a mistyped TOTP digit). Bounds TOTP brute-force to maxAttempts/1e6.
+        async Task<IResult> FailAttemptAsync(string method, string errorCode)
+        {
+            await authHooks.RunOnMfaVerifyFailedAsync(user.Id, user.Email, method, ct);
+            challenge.Attempts++;
+            if (challenge.Attempts >= maxAttempts)
+            {
+                await mfaStore.ConsumeChallengeAsync(challenge.ChallengeId, ct);
+                return JsonResults.Error("too_many_attempts", 401);
+            }
+            await mfaStore.StoreChallengeAsync(challenge, ct);
+            return JsonResults.Error(errorCode, 401);
+        }
 
         switch (request.Method.ToLowerInvariant())
         {
@@ -73,10 +94,7 @@ public static class MfaEndpoints
                 // Reject a code whose time-step was already used (replay within the validity window).
                 var matchedStep = totpService.GetMatchingStep(secret, request.Code, totpCred.LastTotpStep ?? long.MinValue);
                 if (matchedStep is null)
-                {
-                    await authHooks.RunOnMfaVerifyFailedAsync(user.Id, user.Email, "totp", ct);
-                    return JsonResults.Error("invalid_code", 401);
-                }
+                    return await FailAttemptAsync("totp", "invalid_code");
 
                 totpCred.LastTotpStep = matchedStep;
                 totpCred.LastUsedAt = DateTimeOffset.UtcNow;
@@ -110,10 +128,7 @@ public static class MfaEndpoints
                 }
 
                 if (matchedCred is null)
-                {
-                    await authHooks.RunOnMfaVerifyFailedAsync(user.Id, user.Email, "recovery", ct);
-                    return JsonResults.Error("invalid_code", 401);
-                }
+                    return await FailAttemptAsync("recovery", "invalid_code");
 
                 matchedCred.IsConsumed = true;
                 matchedCred.LastUsedAt = DateTimeOffset.UtcNow;
@@ -182,14 +197,12 @@ public static class MfaEndpoints
                 {
                     // Fido2NetLib throws on a failed/forged assertion or a sign-count regression
                     // (cloned authenticator). Surface it as a clean 401, not an unhandled 500.
-                    await authHooks.RunOnMfaVerifyFailedAsync(user.Id, user.Email, "webauthn", ct);
-                    return JsonResults.Error("assertion_failed", 401);
+                    return await FailAttemptAsync("webauthn", "assertion_failed");
                 }
 
                 if (!success)
                 {
-                    await authHooks.RunOnMfaVerifyFailedAsync(user.Id, user.Email, "webauthn", ct);
-                    return JsonResults.Error("assertion_failed", 401);
+                    return await FailAttemptAsync("webauthn", "assertion_failed");
                 }
 
                 matchedWebAuthnCred.SignCount = newSignCount;
@@ -203,6 +216,9 @@ public static class MfaEndpoints
             default:
                 return JsonResults.Error("unsupported_method");
         }
+
+        // Verified — consume the challenge now (atomic delete, anti-replay) before issuing the session.
+        await mfaStore.ConsumeChallengeAsync(challenge.ChallengeId, ct);
 
         // Run the onUserAuthenticated hook BEFORE establishing the session, so an enforced hook that
         // rejects the login prevents the cookie from being issued (not a 500 after it's already set).

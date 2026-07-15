@@ -20,6 +20,7 @@ public sealed class MfaChallengeEntity : ITableEntity
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset ExpiresAt { get; set; }
     public bool IsConsumed { get; set; }
+    public int Attempts { get; set; }
 
     public static MfaChallengeEntity FromModel(MfaChallenge challenge) => new()
     {
@@ -32,6 +33,7 @@ public sealed class MfaChallengeEntity : ITableEntity
         CreatedAt = challenge.CreatedAt,
         ExpiresAt = challenge.ExpiresAt,
         IsConsumed = challenge.IsConsumed,
+        Attempts = challenge.Attempts,
     };
 
     public MfaChallenge ToModel() => new()
@@ -44,5 +46,6 @@ public sealed class MfaChallengeEntity : ITableEntity
         CreatedAt = CreatedAt,
         ExpiresAt = ExpiresAt,
         IsConsumed = IsConsumed,
+        Attempts = Attempts,
     };
 }
