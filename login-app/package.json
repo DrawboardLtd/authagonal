@@ -1,6 +1,6 @@
 {
   "name": "@authagonal/login",
-  "version": "0.7.9",
+  "version": "0.7.10",
   "description": "Default login UI for Authagonal — runtime-configurable via branding.json",
   "type": "module",
   "license": "MIT",
