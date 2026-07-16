@@ -23,6 +23,8 @@ public sealed class OidcProviderEntity : ITableEntity
     public string? IconUrl { get; set; }
     public bool DisableJitProvisioning { get; set; }
     public bool UseUpstreamSubjectAsUserId { get; set; }
+    // Negative form (like DisableJitProvisioning): existing rows lacking the column read false → shown.
+    public bool HiddenFromLogin { get; set; }
     public string? SessionExpClaim { get; set; }
     public string? PassthroughParamsJson { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
@@ -41,6 +43,7 @@ public sealed class OidcProviderEntity : ITableEntity
         IconUrl = config.IconUrl,
         DisableJitProvisioning = config.DisableJitProvisioning,
         UseUpstreamSubjectAsUserId = config.UseUpstreamSubjectAsUserId,
+        HiddenFromLogin = config.HiddenFromLogin,
         SessionExpClaim = config.SessionExpClaim,
         PassthroughParamsJson = config.PassthroughParams.Count > 0
             ? JsonSerializer.Serialize(config.PassthroughParams, AzureJsonContext.Default.ListString)
@@ -61,6 +64,7 @@ public sealed class OidcProviderEntity : ITableEntity
         IconUrl = IconUrl,
         DisableJitProvisioning = DisableJitProvisioning,
         UseUpstreamSubjectAsUserId = UseUpstreamSubjectAsUserId,
+        HiddenFromLogin = HiddenFromLogin,
         SessionExpClaim = SessionExpClaim,
         PassthroughParams = string.IsNullOrEmpty(PassthroughParamsJson)
             ? []

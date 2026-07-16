@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+## [0.7.11], 2026-07-16
+
+### Added
+
+- **`ShowOnLogin`** on OIDC federation connections (default `true`): when `false`, the connection is
+  reached only via an explicit `idp_hint` and is **not** rendered as a "Continue with {name}" button on
+  the login page. For a bounded, machine-triggered connection such as a share-link / guest-OIDC provider
+  a login button makes no sense. Threaded through config seed + the Azure Table store; persisted in the
+  negative (`HiddenFromLogin`) so existing stored connections default to shown. The `/api/auth/providers`
+  payload now filters on it alongside the existing domain-routed check.
+
 ## [0.7.10], 2026-07-16
 
 ### Added

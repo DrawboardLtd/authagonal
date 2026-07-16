@@ -875,9 +875,10 @@ public static class AuthEndpoints
         string? turnstileSiteKey,
         CancellationToken ct)
     {
-        // Render a "Continue with {name}" button only for connections that are NOT domain-routed.
-        // A connection with AllowedDomains is reached email-first via /sso-check instead, so showing
-        // a button for it would be redundant. Covers both OIDC and SAML uniformly.
+        // Render a "Continue with {name}" button only for connections that are NOT domain-routed and
+        // not marked hidden (ShowOnLogin). A connection with AllowedDomains is reached email-first via
+        // /sso-check; a ShowOnLogin=false connection is reached only via an explicit idp_hint (e.g. the
+        // bullclip guest-link provider). Covers both OIDC and SAML uniformly.
         // The two reads hit independent tables — run them concurrently; this payload sits on the
         // login page's first-paint path.
         var oidcTask = oidcStore.GetAllAsync(ct);
@@ -885,7 +886,7 @@ public static class AuthEndpoints
         var oidc = await oidcTask;
         var saml = await samlTask;
         var result = oidc
-            .Where(p => p.AllowedDomains.Count == 0)
+            .Where(p => p.AllowedDomains.Count == 0 && p.ShowOnLogin)
             .Select(p => new SsoProviderInfo
             {
                 ConnectionId = p.ConnectionId,

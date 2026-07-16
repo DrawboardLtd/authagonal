@@ -97,6 +97,7 @@ public sealed class ProviderSeedService(
                 AllowedDomains = seed.AllowedDomains ?? [],
                 JitProvisioningEnabled = seed.JitProvisioningEnabled,
                 UseUpstreamSubjectAsUserId = seed.UseUpstreamSubjectAsUserId,
+                ShowOnLogin = seed.ShowOnLogin,
                 PassthroughParams = seed.PassthroughParams ?? [],
                 SessionExpClaim = seed.SessionExpClaim,
                 CreatedAt = DateTimeOffset.UtcNow
@@ -139,6 +140,7 @@ public sealed class ProviderSeedService(
         public List<string>? AllowedDomains { get; set; }
         public bool JitProvisioningEnabled { get; set; }
         public bool UseUpstreamSubjectAsUserId { get; set; }
+        public bool ShowOnLogin { get; set; } = true;
         public List<string>? PassthroughParams { get; set; }
         public string? SessionExpClaim { get; set; }
     }

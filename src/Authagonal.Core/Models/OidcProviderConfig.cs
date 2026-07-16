@@ -52,6 +52,21 @@ public sealed record OidcProviderConfig
     /// </summary>
     public List<string> PassthroughParams { get; set; } = [];
 
+    /// <summary>
+    /// Whether this connection is advertised as a "Continue with {name}" button on the login page.
+    /// Defaults to true. Set false for a connection reached only via an explicit <c>idp_hint</c>
+    /// (e.g. bullclip's guest-link OIDC provider): federation still works, it just isn't offered as
+    /// a button — a bounded share-link credential is not something a user picks from the login form.
+    /// </summary>
+    public bool ShowOnLogin { get; set; } = true;
+
+    /// <summary>
+    /// Inverted alias for <see cref="ShowOnLogin"/>, persisted in the negative form so an existing
+    /// stored connection with no column reads back as shown (the safe default). Prefer the positive
+    /// property in new code/config.
+    /// </summary>
+    public bool HiddenFromLogin { get => !ShowOnLogin; set => ShowOnLogin = !value; }
+
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset? UpdatedAt { get; set; }
 }
