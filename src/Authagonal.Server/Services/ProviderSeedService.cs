@@ -95,6 +95,10 @@ public sealed class ProviderSeedService(
                 RedirectUrl = seed.RedirectUrl ?? throw new InvalidOperationException(
                     $"OIDC provider '{seed.ConnectionId}' is missing required RedirectUrl"),
                 AllowedDomains = seed.AllowedDomains ?? [],
+                JitProvisioningEnabled = seed.JitProvisioningEnabled,
+                UseUpstreamSubjectAsUserId = seed.UseUpstreamSubjectAsUserId,
+                PassthroughParams = seed.PassthroughParams ?? [],
+                SessionExpClaim = seed.SessionExpClaim,
                 CreatedAt = DateTimeOffset.UtcNow
             };
 
@@ -133,5 +137,9 @@ public sealed class ProviderSeedService(
         public string? ClientSecret { get; set; }
         public string? RedirectUrl { get; set; }
         public List<string>? AllowedDomains { get; set; }
+        public bool JitProvisioningEnabled { get; set; }
+        public bool UseUpstreamSubjectAsUserId { get; set; }
+        public List<string>? PassthroughParams { get; set; }
+        public string? SessionExpClaim { get; set; }
     }
 }

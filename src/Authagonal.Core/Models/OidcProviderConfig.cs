@@ -11,7 +11,29 @@ public sealed record OidcProviderConfig
     public string ClientSecret { get; set; } = "";
     public string RedirectUrl { get; set; } = "";
     public List<string> AllowedDomains { get; set; } = [];
-    public bool DisableJitProvisioning { get; set; }
+
+    /// <summary>
+    /// Whether an unknown federated user is created on first login (just-in-time). Defaults to OFF:
+    /// a connection must explicitly opt in, otherwise an unknown assertion is rejected. Safer posture,
+    /// and honest in config (<c>"JitProvisioningEnabled": true</c> turns it on).
+    /// </summary>
+    public bool JitProvisioningEnabled { get; set; }
+
+    /// <summary>
+    /// Inverted alias for <see cref="JitProvisioningEnabled"/>, retained for back-compat with existing
+    /// config keys, admin DTOs and stored rows/blobs (which persist the negative form). Prefer the
+    /// positive property in new code.
+    /// </summary>
+    public bool DisableJitProvisioning { get => !JitProvisioningEnabled; set => JitProvisioningEnabled = !value; }
+
+    /// <summary>
+    /// When true, a JIT-provisioned federated user's local id is the upstream subject (id_token
+    /// <c>sub</c>) rather than a fresh GUID. For a TRUSTED first-party connection (e.g. bullclip's
+    /// guest-link OIDC provider) this keeps the local <c>sub</c> equal to the downstream RP's own user
+    /// id, so identifiers like a share link's ClaimedByUserId stay consistent. Do NOT enable for
+    /// arbitrary external IdPs — it lets the upstream choose the local user id.
+    /// </summary>
+    public bool UseUpstreamSubjectAsUserId { get; set; }
 
     /// <summary>
     /// Optional id_token claim name whose value (Unix seconds) sets the maximum lifetime of

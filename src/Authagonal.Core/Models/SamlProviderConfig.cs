@@ -35,7 +35,17 @@ public sealed class SamlProviderConfig
     /// </summary>
     public bool? SignAuthnRequests { get; set; }
     public List<string> AllowedDomains { get; set; } = [];
-    public bool DisableJitProvisioning { get; set; }
+
+    /// <summary>
+    /// Whether an unknown federated user is created on first login (just-in-time). Defaults to OFF:
+    /// a connection must explicitly opt in, otherwise an unknown assertion is rejected.
+    /// </summary>
+    public bool JitProvisioningEnabled { get; set; }
+
+    /// <summary>Inverted alias for <see cref="JitProvisioningEnabled"/>, retained for back-compat with
+    /// existing config keys, admin DTOs and stored rows (which persist the negative form).</summary>
+    public bool DisableJitProvisioning { get => !JitProvisioningEnabled; set => JitProvisioningEnabled = !value; }
+
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset? UpdatedAt { get; set; }
 }

@@ -308,7 +308,7 @@ public static class SamlEndpoints
 
         if (user is null)
         {
-            if (config.DisableJitProvisioning)
+            if (!config.JitProvisioningEnabled)
             {
                 logger.LogInformation("JIT provisioning disabled for SAML connection {ConnectionId}, rejecting unknown user {Email}", connectionId, email);
                 return RedirectWithError(relayState, "access_denied", "User not found. Contact your administrator to be provisioned.");

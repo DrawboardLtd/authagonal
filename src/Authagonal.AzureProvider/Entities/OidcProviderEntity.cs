@@ -22,6 +22,7 @@ public sealed class OidcProviderEntity : ITableEntity
     public required string AllowedDomainsJson { get; set; }
     public string? IconUrl { get; set; }
     public bool DisableJitProvisioning { get; set; }
+    public bool UseUpstreamSubjectAsUserId { get; set; }
     public string? SessionExpClaim { get; set; }
     public string? PassthroughParamsJson { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
@@ -39,6 +40,7 @@ public sealed class OidcProviderEntity : ITableEntity
         AllowedDomainsJson = JsonSerializer.Serialize(config.AllowedDomains, AzureJsonContext.Default.ListString),
         IconUrl = config.IconUrl,
         DisableJitProvisioning = config.DisableJitProvisioning,
+        UseUpstreamSubjectAsUserId = config.UseUpstreamSubjectAsUserId,
         SessionExpClaim = config.SessionExpClaim,
         PassthroughParamsJson = config.PassthroughParams.Count > 0
             ? JsonSerializer.Serialize(config.PassthroughParams, AzureJsonContext.Default.ListString)
@@ -58,6 +60,7 @@ public sealed class OidcProviderEntity : ITableEntity
         AllowedDomains = JsonSerializer.Deserialize(AllowedDomainsJson, AzureJsonContext.Default.ListString) ?? [],
         IconUrl = IconUrl,
         DisableJitProvisioning = DisableJitProvisioning,
+        UseUpstreamSubjectAsUserId = UseUpstreamSubjectAsUserId,
         SessionExpClaim = SessionExpClaim,
         PassthroughParams = string.IsNullOrEmpty(PassthroughParamsJson)
             ? []

@@ -2,6 +2,26 @@
 
 ## [Unreleased]
 
+## [0.7.10], 2026-07-16
+
+### Added
+
+- **`UseUpstreamSubjectAsUserId`** on OIDC federation connections: when set, a JIT-provisioned federated
+  user's local id is the upstream `sub` rather than a fresh GUID, so a trusted first-party connection
+  (e.g. a share-link / guest-OIDC provider) keeps the local `sub` equal to the downstream RP's own user
+  id. Threaded through config seed + Azure/Dynamo stores. Do NOT enable for arbitrary external IdPs.
+- OIDC provider config seed now honours `JitProvisioningEnabled`, `UseUpstreamSubjectAsUserId`,
+  `PassthroughParams` and `SessionExpClaim` (previously dropped by `ProviderSeedService`).
+
+### Changed
+
+- **JIT provisioning is now OFF by default.** Renamed the per-connection `DisableJitProvisioning`
+  (negative sense) to `JitProvisioningEnabled` (positive) on `OidcProviderConfig` / `SamlProviderConfig`,
+  keeping `DisableJitProvisioning` as an inverting alias for back-compat. The stored column/blob is
+  unchanged, so existing STORED connections keep their behaviour (an old `DisableJitProvisioning=false`
+  reads back as JIT-on) — only the C# default flips, which affects config-seeded connections. A
+  connection must now explicitly opt in to auto-provisioning of unknown federated users.
+
 ## [0.7.9], 2026-07-16
 
 ### Added

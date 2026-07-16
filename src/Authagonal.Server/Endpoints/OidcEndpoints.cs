@@ -359,7 +359,7 @@ public static class OidcEndpoints
 
         if (user is null)
         {
-            if (config.DisableJitProvisioning)
+            if (!config.JitProvisioningEnabled)
             {
                 logger.LogInformation("JIT provisioning disabled for OIDC connection {ConnectionId}, rejecting unknown user {Email}", stateData.ConnectionId, email);
                 return RedirectWithError(returnUrl, "access_denied", "User not found. Contact your administrator to be provisioned.");
@@ -367,7 +367,9 @@ public static class OidcEndpoints
 
             user = new AuthUser
             {
-                Id = Guid.NewGuid().ToString("N"),
+                // Trusted first-party connections (e.g. bullclip's guest-link provider) adopt the
+                // upstream subject as the local user id so the downstream RP's own user id survives.
+                Id = config.UseUpstreamSubjectAsUserId ? providerKey : Guid.NewGuid().ToString("N"),
                 Email = email,
                 NormalizedEmail = email.ToUpperInvariant(),
                 EmailConfirmed = emailVerified,
