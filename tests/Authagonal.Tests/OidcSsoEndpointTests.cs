@@ -51,7 +51,8 @@ public sealed class OidcSsoEndpointTests : IAsyncLifetime
                 clientId = "test-oidc-client",
                 clientSecret = "test-oidc-secret",
                 redirectUrl = $"{AuthagonalTestFactory.TestIssuer}/oidc/callback",
-                allowedDomains = allowedDomains ?? Array.Empty<string>()
+                allowedDomains = allowedDomains ?? Array.Empty<string>(),
+                jitProvisioningEnabled = true
             }));
         response.EnsureSuccessStatusCode();
         var json = await response.Content.ReadFromJsonAsync<JsonElement>();

@@ -127,9 +127,12 @@ public sealed class SamlSpKeySloEndpointTests(AzuriteFixture azurite) : IAsyncLi
 
     private async Task<string> CreateConnectionAsync(object body)
     {
+        // These tests exercise sign-in/provisioning; JIT now defaults off, so opt in unless the body says otherwise.
+        var node = System.Text.Json.Nodes.JsonNode.Parse(JsonSerializer.Serialize(body))!.AsObject();
+        if (node["jitProvisioningEnabled"] is null) node["jitProvisioningEnabled"] = true;
         var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/saml/connections")
         {
-            Content = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json")
+            Content = new StringContent(node.ToJsonString(), Encoding.UTF8, "application/json")
         };
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _adminToken);
         var response = await _client.SendAsync(request);

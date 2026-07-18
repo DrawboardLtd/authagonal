@@ -75,7 +75,7 @@ public static class SsoEndpoints
             NameIdFormat = request.NameIdFormat,
             SignAuthnRequests = request.SignAuthnRequests,
             AllowedDomains = request.AllowedDomains ?? [],
-            DisableJitProvisioning = request.DisableJitProvisioning,
+            JitProvisioningEnabled = request.JitProvisioningEnabled,
             CreatedAt = now
         };
 
@@ -137,9 +137,9 @@ public static class SsoEndpoints
             if (await ValidateDomainsAsync(config.AllowedDomains, connectionId, ssoDomainStore, ct) is { } domainError)
                 return domainError;
         }
-        if (request.DisableJitProvisioning.HasValue)
+        if (request.JitProvisioningEnabled.HasValue)
         {
-            config.DisableJitProvisioning = request.DisableJitProvisioning.Value;
+            config.JitProvisioningEnabled = request.JitProvisioningEnabled.Value;
         }
         // F49/F51 partial updates. Supplying a metadata URL clears pasted XML and vice versa (the
         // two are mutually exclusive sources); NameIdFormat "" resets to the default.
@@ -247,6 +247,7 @@ public static class SsoEndpoints
             RedirectUrl = request.RedirectUrl,
             AllowedDomains = request.AllowedDomains ?? [],
             PassthroughParams = request.PassthroughParams ?? [],
+            JitProvisioningEnabled = request.JitProvisioningEnabled,
             CreatedAt = now
         };
 
@@ -397,10 +398,10 @@ public static class SsoEndpoints
         public List<string>? AllowedDomains { get; set; }
 
         /// <summary>
-        /// When true, unknown users authenticating via this SAML connection are
-        /// rejected instead of being auto-created. Default false (JIT enabled).
+        /// Opt this connection into JIT provisioning (auto-create unknown users on first login).
+        /// Default false — an unknown assertion is rejected until explicitly enabled.
         /// </summary>
-        public bool DisableJitProvisioning { get; set; }
+        public bool JitProvisioningEnabled { get; set; }
     }
 
     /// <summary>
@@ -410,7 +411,7 @@ public static class SsoEndpoints
     public sealed class UpdateSamlRequest
     {
         public List<string>? AllowedDomains { get; set; }
-        public bool? DisableJitProvisioning { get; set; }
+        public bool? JitProvisioningEnabled { get; set; }
         /// <summary>New metadata URL; setting it clears any pasted MetadataXml.</summary>
         public string? MetadataLocation { get; set; }
         /// <summary>New pasted metadata XML; setting it clears MetadataLocation.</summary>
@@ -432,5 +433,8 @@ public static class SsoEndpoints
         public string RedirectUrl { get; set; } = "";
         public List<string>? AllowedDomains { get; set; }
         public List<string>? PassthroughParams { get; set; }
+        /// <summary>Opt this connection into JIT provisioning (auto-create unknown federated users on
+        /// first login). Default false — an unknown assertion is rejected until explicitly enabled.</summary>
+        public bool JitProvisioningEnabled { get; set; }
     }
 }

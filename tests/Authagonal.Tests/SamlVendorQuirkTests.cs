@@ -246,7 +246,10 @@ public sealed class SamlVendorQuirkEndpointTests(AzuriteFixture azurite) : IAsyn
 
     private async Task<string> CreateConnectionAsync(object body)
     {
-        var response = await _client.SendAsync(AdminRequest(HttpMethod.Post, "/api/v1/saml/connections", body));
+        // These tests exercise sign-in/provisioning; JIT now defaults off, so opt in unless the body says otherwise.
+        var node = System.Text.Json.Nodes.JsonNode.Parse(JsonSerializer.Serialize(body))!.AsObject();
+        if (node["jitProvisioningEnabled"] is null) node["jitProvisioningEnabled"] = true;
+        var response = await _client.SendAsync(AdminRequest(HttpMethod.Post, "/api/v1/saml/connections", node));
         var text = await response.Content.ReadAsStringAsync();
         Assert.True(response.IsSuccessStatusCode, $"create failed: {response.StatusCode} {text}");
         return JsonDocument.Parse(text).RootElement.GetProperty("connectionId").GetString()!;
