@@ -435,13 +435,24 @@ public static class AuthagonalExtensions
     public static WebApplication UseAuthagonal(this WebApplication app)
     {
         // The most common integrator trap: no email sender + the confirmed-email login gate
-        // (default true) means self-registered users can never sign in. Warn loudly once.
-        if (app.Services.GetService<IEmailService>() is NullEmailService)
-            app.Logger.LogWarning(
-                "No email sender is configured: verification and password-reset emails will be DISCARDED, " +
-                "and self-registered users cannot log in while the confirmed-email login gate is on (the default). " +
-                "Set Email:ResendApiKey + Email:SenderEmail, register your own IEmailService before AddAuthagonal, " +
-                "or set Auth:AutoConfirmEmailDomains for your domain.");
+        // (default true) means self-registered users can never sign in. Warn loudly once. Resolve inside
+        // a scope and swallow any failure: a tenant-scoped IEmailService (e.g. one whose dependencies are
+        // resolved from a per-request tenant context) cannot be constructed at startup outside a request,
+        // and this diagnostic must never crash the host.
+        try
+        {
+            using var scope = app.Services.CreateScope();
+            if (scope.ServiceProvider.GetService<IEmailService>() is NullEmailService)
+                app.Logger.LogWarning(
+                    "No email sender is configured: verification and password-reset emails will be DISCARDED, " +
+                    "and self-registered users cannot log in while the confirmed-email login gate is on (the default). " +
+                    "Set Email:ResendApiKey + Email:SenderEmail, register your own IEmailService before AddAuthagonal, " +
+                    "or set Auth:AutoConfirmEmailDomains for your domain.");
+        }
+        catch
+        {
+            // IEmailService is tenant-scoped and not resolvable at startup — skip the diagnostic.
+        }
 
         // Forwarded-header trust is config-driven so X-Forwarded-For can't be spoofed to forge the
         // client IP that rate-limiting / lockout keys on. Defaults: ForwardLimit=1 (honour only the
