@@ -73,6 +73,41 @@ export async function routeBff(ctx: HttpCtx, d: BffDeps): Promise<boolean> {
   return false;
 }
 
+/** True if the path is the BFF token-injecting proxy route (`{basePath}/api/**`). */
+export function isProxyPath(path: string, o: ResolvedBffOptions): boolean {
+  const apiBase = `${o.basePath}/api`;
+  return path === apiBase || path.startsWith(`${apiBase}/`);
+}
+
+/** A resolved proxy target + bearer token, or an HTTP error status. */
+export type ProxyDecision = { targetUrl: string; accessToken: string } | { error: number };
+
+/** Authorize + resolve a proxy request: anti-forgery header, session, single-flight refresh, upstream
+ * match. The adapter performs the actual streaming forward with the returned target + token. */
+export async function authorizeProxy(ctx: HttpCtx, d: BffDeps): Promise<ProxyDecision> {
+  if (!hasAntiForgery(ctx, d.o)) return { error: 401 };
+  const sessionId = ctx.getCookie(d.o.cookieName);
+  if (!sessionId) return { error: 401 };
+  const session = await d.store.get(sessionId);
+  if (!session) return { error: 401 };
+  const fresh = await d.refresher.ensureFresh(session);
+  if (!fresh) return { error: 401 };
+
+  const apiBase = `${d.o.basePath}/api`;
+  const apiPath = ctx.path.length > apiBase.length ? ctx.path.slice(apiBase.length) : '';
+  const upstream = d.o.upstreams.find((u) => apiPath.startsWith(u.prefix));
+  if (!upstream) return { error: 404 };
+  const qs = ctx.query.toString();
+  const targetUrl = upstream.targetBaseUrl.replace(/\/+$/, '') + apiPath + (qs ? `?${qs}` : '');
+  return { targetUrl, accessToken: fresh.accessToken };
+}
+
+/** Headers the proxy never forwards (hop-by-hop + ones we set/strip: cookie, authorization, host). */
+export const PROXY_STRIP = new Set([
+  'connection', 'keep-alive', 'proxy-authenticate', 'proxy-authorization', 'te', 'trailer',
+  'transfer-encoding', 'upgrade', 'host', 'cookie', 'authorization',
+]);
+
 async function handleLogin(ctx: HttpCtx, d: BffDeps): Promise<void> {
   const state = randomToken();
   const nonce = randomToken();

@@ -1,5 +1,5 @@
 import type { AuthagonalBffOptions } from './options.js';
-import { type HttpCtx, buildDeps, routeBff, serializeCookie, parseCookies } from './core.js';
+import { type HttpCtx, buildDeps, routeBff, serializeCookie, parseCookies, isProxyPath, authorizeProxy, PROXY_STRIP } from './core.js';
 
 /**
  * Next.js App Router handlers for the Authagonal BFF. Mount at `app/bff/[...bff]/route.ts`:
@@ -18,11 +18,36 @@ export function createBffRoute(options: AuthagonalBffOptions): {
   const deps = buildDeps(options);
   const handler = async (req: Request): Promise<Response> => {
     const { ctx, finalize } = nextCtx(req);
+    if (isProxyPath(ctx.path, deps.o)) {
+      const decision = await authorizeProxy(ctx, deps);
+      if ('error' in decision) return new Response('', { status: decision.error });
+      return forwardProxy(req, decision.targetUrl, decision.accessToken);
+    }
     const handled = await routeBff(ctx, deps);
     if (!handled) ctx.text('not_found', 404);
     return finalize();
   };
   return { GET: handler, POST: handler };
+}
+
+async function forwardProxy(req: Request, targetUrl: string, accessToken: string): Promise<Response> {
+  const headers = new Headers();
+  req.headers.forEach((value, key) => { if (!PROXY_STRIP.has(key.toLowerCase())) headers.set(key, value); });
+  headers.set('authorization', `Bearer ${accessToken}`);
+  const hasBody = req.method !== 'GET' && req.method !== 'HEAD';
+  const upstream = await fetch(targetUrl, {
+    method: req.method,
+    headers,
+    body: hasBody ? req.body : undefined,
+    duplex: 'half',
+  } as RequestInit & { duplex?: 'half' });
+
+  const respHeaders = new Headers();
+  upstream.headers.forEach((value, key) => {
+    const lk = key.toLowerCase();
+    if (!PROXY_STRIP.has(lk) && lk !== 'content-length') respHeaders.set(key, value);
+  });
+  return new Response(upstream.body, { status: upstream.status, headers: respHeaders });
 }
 
 function nextCtx(req: Request): { ctx: HttpCtx; finalize: () => Response } {

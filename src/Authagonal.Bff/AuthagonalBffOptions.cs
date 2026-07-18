@@ -59,6 +59,10 @@ public sealed class AuthagonalBffOptions
     /// <summary>Maximum lifetime of a BFF session regardless of token refreshes.</summary>
     public TimeSpan SessionLifetime { get; set; } = TimeSpan.FromHours(8);
 
+    /// <summary>Upstream APIs the proxy (<c>{BasePath}/api/**</c>) forwards to with the session's access
+    /// token attached. Empty (the default) disables the proxy endpoint.</summary>
+    public IList<BffUpstream> Upstreams { get; set; } = new List<BffUpstream>();
+
     internal string ScopeString => string.Join(' ', Scope);
 
     internal string CorrelationCookieName => CookieName + ".tmp";
@@ -77,4 +81,15 @@ public sealed class AuthagonalBffOptions
         BasePath = "/" + BasePath.Trim('/');
         CallbackPath = "/" + CallbackPath.Trim('/');
     }
+}
+
+/// <summary>An upstream API the BFF proxy forwards to. The path after <c>{BasePath}/api</c> is matched
+/// against <see cref="Prefix"/> to select the upstream, then appended to <see cref="TargetBaseUrl"/>.</summary>
+public sealed class BffUpstream
+{
+    /// <summary>Path prefix (after <c>{BasePath}/api</c>) this upstream handles, e.g. <c>/orders</c>.</summary>
+    public string Prefix { get; set; } = "/";
+
+    /// <summary>Base URL requests are forwarded to, e.g. <c>https://api.internal.acme.com</c>.</summary>
+    public string TargetBaseUrl { get; set; } = default!;
 }

@@ -1,5 +1,5 @@
 import type { AuthagonalBffOptions } from './options.js';
-import { type CookieOptions, type HttpCtx, buildDeps, routeBff, serializeCookie, parseCookies } from './core.js';
+import { type CookieOptions, type HttpCtx, buildDeps, routeBff, serializeCookie, parseCookies, isProxyPath, authorizeProxy, PROXY_STRIP } from './core.js';
 
 // Duck-typed Express req/res so this package needs no dependency on express or @types/express.
 interface ExpressReq {
@@ -15,7 +15,7 @@ interface ExpressRes {
   statusCode: number;
   setHeader(name: string, value: string | string[]): void;
   getHeader(name: string): string | number | string[] | undefined;
-  end(body?: string): void;
+  end(body?: string | Uint8Array): void;
 }
 type NextFn = (err?: unknown) => void;
 
@@ -30,10 +30,53 @@ export function authagonalBff(options: AuthagonalBffOptions): (req: ExpressReq, 
   const deps = buildDeps(options);
   return (req, res, next) => {
     const ctx = expressCtx(req, res);
-    routeBff(ctx, deps)
-      .then((handled) => { if (!handled) next(); })
-      .catch((err) => next(err));
+    void (async () => {
+      if (isProxyPath(ctx.path, deps.o)) {
+        const decision = await authorizeProxy(ctx, deps);
+        if ('error' in decision) { res.statusCode = decision.error; res.end(); return; }
+        await forwardProxy(req, res, decision.targetUrl, decision.accessToken);
+        return;
+      }
+      const handled = await routeBff(ctx, deps);
+      if (!handled) next();
+    })().catch(next);
   };
+}
+
+// Buffered forward (no node:stream dependency). Fine for typical JSON/text APIs; very large uploads
+// buffer in memory — swap for a streaming forward if that matters.
+async function forwardProxy(req: ExpressReq, res: ExpressRes, targetUrl: string, accessToken: string): Promise<void> {
+  const method = req.method ?? 'GET';
+  const headers: Record<string, string> = {};
+  for (const [k, v] of Object.entries(req.headers)) {
+    if (PROXY_STRIP.has(k.toLowerCase())) continue;
+    headers[k] = Array.isArray(v) ? v.join(', ') : String(v ?? '');
+  }
+  headers.authorization = `Bearer ${accessToken}`;
+
+  let body: Uint8Array | undefined;
+  if (method !== 'GET' && method !== 'HEAD') {
+    const chunks: Uint8Array[] = [];
+    await new Promise<void>((resolve, reject) => {
+      req.on('data', (c) => chunks.push(c as Uint8Array));
+      req.on('end', () => resolve());
+      req.on('error', (e) => reject(e instanceof Error ? e : new Error(String(e))));
+    });
+    if (chunks.length) {
+      const total = chunks.reduce((n, c) => n + c.length, 0);
+      body = new Uint8Array(total);
+      let offset = 0;
+      for (const c of chunks) { body.set(c, offset); offset += c.length; }
+    }
+  }
+
+  const upstream = await fetch(targetUrl, { method, headers, body: body as BodyInit | undefined });
+  res.statusCode = upstream.status;
+  upstream.headers.forEach((value, key) => {
+    const lk = key.toLowerCase();
+    if (!PROXY_STRIP.has(lk) && lk !== 'content-length') res.setHeader(key, value);
+  });
+  res.end(new Uint8Array(await upstream.arrayBuffer()));
 }
 
 function header(req: ExpressReq, name: string): string | undefined {

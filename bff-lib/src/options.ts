@@ -39,6 +39,18 @@ export interface AuthagonalBffOptions {
   cookieSecret?: string;
   /** Custom cookie protector (overrides `cookieSecret`). */
   cookieProtector?: ICookieProtector;
+  /** Upstream APIs the proxy (`{basePath}/api/**`) forwards to with the session's access token attached.
+   * Empty/absent disables the proxy. */
+  upstreams?: BffUpstream[];
+}
+
+/** An upstream API the BFF proxy forwards to. The path after `{basePath}/api` is matched against
+ * {@link prefix} to select the upstream, then appended to {@link targetBaseUrl}. */
+export interface BffUpstream {
+  /** Path prefix (after `{basePath}/api`) this upstream handles, e.g. `/orders`. */
+  prefix: string;
+  /** Base URL requests are forwarded to, e.g. `https://api.internal.acme.com`. */
+  targetBaseUrl: string;
 }
 
 /** Options with defaults applied. */
@@ -75,6 +87,7 @@ export function resolveOptions(o: AuthagonalBffOptions): ResolvedBffOptions {
     postLogoutRedirectUri: o.postLogoutRedirectUri ?? '',
     antiForgeryHeader,
     sessionLifetimeSeconds: o.sessionLifetimeSeconds ?? 8 * 60 * 60,
+    upstreams: o.upstreams ?? [],
     scopeString: scope.join(' '),
     correlationCookieName: cookieName + '.tmp',
     antiForgeryHeaderLower: antiForgeryHeader.toLowerCase(),

@@ -23,6 +23,7 @@ public static class AuthagonalBffExtensions
         services.AddDataProtection();
         services.AddDistributedMemoryCache(); // TryAdd inside: a real IDistributedCache wins if registered
         services.AddHttpClient("AuthagonalBff");
+        services.AddHttpClient("AuthagonalBffProxy");
 
         services.TryAddSingleton<BffOidcConfig>();
         services.TryAddSingleton<ICookieProtector, DataProtectionCookieProtector>();
@@ -46,6 +47,12 @@ public static class AuthagonalBffExtensions
         // Server-to-server callback from the IdP (signed logout_token authenticates it) — no CSRF header,
         // and antiforgery disabled so a host using UseAntiforgery still admits the form POST.
         group.MapPost("/backchannel-logout", BffEndpoints.BackChannelLogoutAsync).DisableAntiforgery();
+
+        // Token-injecting proxy (only if upstreams are configured). It does its own anti-forgery-header
+        // check and forwards arbitrary content, so the framework antiforgery filter is disabled here.
+        if (options.Upstreams.Count > 0)
+            group.MapMethods("/api/{**path}", ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"], BffProxy.ProxyAsync)
+                .DisableAntiforgery();
 
         // The callback lives at its own configurable absolute path (must match the registered redirect URI),
         // which may sit outside the base path.
