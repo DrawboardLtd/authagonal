@@ -86,6 +86,30 @@ jobs:
           echo "::error::Timed out waiting for npm indexing"
           exit 1
 
+  publish-npm-bff:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    defaults:
+      run:
+        working-directory: bff-lib
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+
+      - run: npm ci
+      - run: npm run build
+
+      - name: Set version from tag
+        run: npm version "${GITHUB_REF_NAME#v}" --no-git-tag-version --allow-same-version
+
+      - run: npm publish --access public --provenance
+
   docker:
     needs: [publish-nuget, publish-npm]
     runs-on: ubuntu-latest
