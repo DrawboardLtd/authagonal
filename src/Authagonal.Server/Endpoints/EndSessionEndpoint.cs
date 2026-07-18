@@ -67,14 +67,19 @@ public static class EndSessionEndpoint
 
         await httpContext.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
 
-        // Trigger back-channel logout notifications (fire and forget)
+        // Trigger back-channel logout notifications (fire and forget). Capture the singleton scope
+        // factory BEFORE the Task.Run: httpContext.RequestServices is the REQUEST scope, disposed once
+        // the response returns, so creating a scope from it inside the background task threw
+        // ObjectDisposedException — swallowed by the catch below, so no logout token was ever sent to any
+        // relying party. The scope factory is a singleton and survives the request.
         if (!string.IsNullOrEmpty(subjectId))
         {
+            var scopeFactory = httpContext.RequestServices.GetRequiredService<IServiceScopeFactory>();
             _ = Task.Run(async () =>
             {
                 try
                 {
-                    using var scope = httpContext.RequestServices.CreateScope();
+                    using var scope = scopeFactory.CreateScope();
                     var grantStore = scope.ServiceProvider.GetRequiredService<IGrantStore>();
                     var cs = scope.ServiceProvider.GetRequiredService<IClientStore>();
                     var km = scope.ServiceProvider.GetRequiredService<Authagonal.Core.Services.IKeyManager>();

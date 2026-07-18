@@ -1,0 +1,352 @@
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.WebUtilities;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
+using Microsoft.IdentityModel.JsonWebTokens;
+using Microsoft.IdentityModel.Tokens;
+
+namespace Authagonal.Bff;
+
+internal static class BffEndpoints
+{
+    private const string CorrelationPurpose = "agbff-correlation-v1";
+
+    // id_token claims that are protocol machinery, not user profile — never surfaced to the SPA.
+    private static readonly HashSet<string> ProtocolClaims = new(StringComparer.Ordinal)
+    {
+        "iss", "aud", "exp", "iat", "nbf", "nonce", "at_hash", "c_hash", "s_hash",
+        "azp", "jti", "sid", "auth_time", "acr", "amr", "typ",
+    };
+
+    public static async Task<IResult> LoginAsync(
+        HttpContext ctx,
+        string? returnUrl,
+        IOptions<AuthagonalBffOptions> options,
+        BffOidcConfig oidc,
+        ICookieProtector protector,
+        CancellationToken ct)
+    {
+        var o = options.Value;
+        var config = await oidc.GetAsync(ct);
+
+        var state = Base64Url(RandomNumberGenerator.GetBytes(32));
+        var nonce = Base64Url(RandomNumberGenerator.GetBytes(32));
+        var codeVerifier = Base64Url(RandomNumberGenerator.GetBytes(32));
+        var codeChallenge = Base64Url(SHA256.HashData(Encoding.ASCII.GetBytes(codeVerifier)));
+        var safeReturn = SanitizeReturnUrl(returnUrl, o);
+        var redirectUri = BuildRedirectUri(ctx, o);
+
+        var correlation = new CorrelationState(state, codeVerifier, nonce, safeReturn);
+        var payload = protector.Protect(
+            JsonSerializer.Serialize(correlation, BffJsonContext.Default.CorrelationState), CorrelationPurpose);
+        ctx.Response.Cookies.Append(o.CorrelationCookieName, payload, TransientCookieOptions(ctx, o));
+
+        var authorizeUrl = QueryHelpers.AddQueryString(config.AuthorizationEndpoint, new Dictionary<string, string?>
+        {
+            ["response_type"] = "code",
+            ["client_id"] = o.ClientId,
+            ["redirect_uri"] = redirectUri,
+            ["scope"] = o.ScopeString,
+            ["state"] = state,
+            ["nonce"] = nonce,
+            ["code_challenge"] = codeChallenge,
+            ["code_challenge_method"] = "S256",
+        });
+        return Results.Redirect(authorizeUrl);
+    }
+
+    public static async Task<IResult> CallbackAsync(
+        HttpContext ctx,
+        string? code,
+        string? state,
+        string? error,
+        IOptions<AuthagonalBffOptions> options,
+        BffOidcConfig oidc,
+        ITokenClient tokens,
+        IBffSessionStore store,
+        ICookieProtector protector,
+        ILoggerFactory loggerFactory,
+        CancellationToken ct)
+    {
+        var o = options.Value;
+        var log = loggerFactory.CreateLogger("Authagonal.Bff");
+
+        // Correlation cookie binds this callback to the browser that started the login (login-CSRF guard).
+        if (!ctx.Request.Cookies.TryGetValue(o.CorrelationCookieName, out var protectedCorr)
+            || !protector.TryUnprotect(protectedCorr, CorrelationPurpose, out var corrJson))
+            return Fail("invalid_correlation");
+
+        ctx.Response.Cookies.Delete(o.CorrelationCookieName, TransientCookieOptions(ctx, o));
+
+        var correlation = JsonSerializer.Deserialize(corrJson, BffJsonContext.Default.CorrelationState);
+        if (correlation is null || string.IsNullOrEmpty(state) || !FixedTimeEquals(state, correlation.State))
+            return Fail("state_mismatch");
+
+        if (!string.IsNullOrEmpty(error))
+            return Fail(error);
+        if (string.IsNullOrEmpty(code))
+            return Fail("missing_code");
+
+        var redirectUri = BuildRedirectUri(ctx, o);
+
+        TokenResult tokenResult;
+        try
+        {
+            tokenResult = await tokens.ExchangeCodeAsync(code, redirectUri, correlation.CodeVerifier, ct);
+        }
+        catch (BffTokenException ex)
+        {
+            log.LogWarning(ex, "BFF code exchange failed.");
+            return Fail("code_exchange_failed");
+        }
+
+        if (tokenResult.IdToken is null)
+            return Fail("missing_id_token");
+
+        var config = await oidc.GetAsync(ct);
+        var handler = new JsonWebTokenHandler();
+        var validation = await handler.ValidateTokenAsync(tokenResult.IdToken, new TokenValidationParameters
+        {
+            ValidIssuer = config.Issuer,
+            ValidAudience = o.ClientId,
+            IssuerSigningKeys = config.SigningKeys,
+            ValidateLifetime = true,
+        });
+        if (!validation.IsValid)
+        {
+            log.LogWarning(validation.Exception, "BFF id_token validation failed.");
+            return Fail("invalid_id_token");
+        }
+
+        var jwt = (JsonWebToken)validation.SecurityToken;
+        if (!jwt.TryGetPayloadValue<string>("nonce", out var tokenNonce) || !FixedTimeEquals(tokenNonce, correlation.Nonce))
+            return Fail("nonce_mismatch");
+
+        var session = new BffSession
+        {
+            SessionId = Base64Url(RandomNumberGenerator.GetBytes(32)),
+            Sid = jwt.TryGetPayloadValue<string>("sid", out var sid) ? sid : null,
+            Subject = jwt.Subject,
+            IdToken = tokenResult.IdToken,
+            AccessToken = tokenResult.AccessToken,
+            RefreshToken = tokenResult.RefreshToken,
+            AccessTokenExpiresAt = DateTimeOffset.UtcNow.AddSeconds(tokenResult.ExpiresIn),
+            ExpiresAt = DateTimeOffset.UtcNow.Add(o.SessionLifetime),
+            Claims = ExtractClaims(jwt),
+        };
+        await store.SetAsync(session, ct);
+        ctx.Response.Cookies.Append(o.CookieName, session.SessionId, SessionCookieOptions(ctx, o));
+
+        return Results.Redirect(correlation.ReturnUrl);
+    }
+
+    public static async Task<IResult> UserAsync(
+        HttpContext ctx,
+        IOptions<AuthagonalBffOptions> options,
+        IBffSessionStore store,
+        BffRefreshCoordinator refresher,
+        CancellationToken ct)
+    {
+        var o = options.Value;
+        if (!HasAntiForgeryHeader(ctx, o))
+            return Results.StatusCode(StatusCodes.Status401Unauthorized);
+
+        if (!ctx.Request.Cookies.TryGetValue(o.CookieName, out var sessionId) || string.IsNullOrEmpty(sessionId))
+            return Anonymous();
+
+        var session = await store.GetAsync(sessionId, ct);
+        if (session is null || session.ExpiresAt <= DateTimeOffset.UtcNow)
+        {
+            ctx.Response.Cookies.Delete(o.CookieName, SessionCookieOptions(ctx, o));
+            return Anonymous();
+        }
+
+        var fresh = await refresher.EnsureFreshAsync(session, ct);
+        if (fresh is null)
+        {
+            ctx.Response.Cookies.Delete(o.CookieName, SessionCookieOptions(ctx, o));
+            return Anonymous();
+        }
+
+        return Results.Json(new UserResponse
+        {
+            IsAuthenticated = true,
+            SessionExpiresAt = fresh.ExpiresAt,
+            Claims = fresh.Claims,
+        }, BffJsonContext.Default.UserResponse);
+
+        static IResult Anonymous() => Results.Json(new UserResponse { IsAuthenticated = false }, BffJsonContext.Default.UserResponse);
+    }
+
+    public static async Task<IResult> LogoutAsync(
+        HttpContext ctx,
+        IOptions<AuthagonalBffOptions> options,
+        IBffSessionStore store,
+        ITokenClient tokens,
+        BffOidcConfig oidc,
+        ILoggerFactory loggerFactory,
+        CancellationToken ct)
+    {
+        var o = options.Value;
+        // POST is a scripted call and must present the anti-forgery header; GET is a top-level navigation
+        // (following a link), which can't carry a custom header.
+        if (HttpMethods.IsPost(ctx.Request.Method) && !HasAntiForgeryHeader(ctx, o))
+            return Results.StatusCode(StatusCodes.Status401Unauthorized);
+
+        string? idTokenHint = null;
+        if (ctx.Request.Cookies.TryGetValue(o.CookieName, out var sessionId) && !string.IsNullOrEmpty(sessionId))
+        {
+            var session = await store.GetAsync(sessionId, ct);
+            if (session is not null)
+            {
+                idTokenHint = session.IdToken;
+                if (session.RefreshToken is not null)
+                {
+                    try { await tokens.RevokeAsync(session.RefreshToken, ct); }
+                    catch (Exception ex) { loggerFactory.CreateLogger("Authagonal.Bff").LogWarning(ex, "BFF refresh-token revocation failed on logout."); }
+                }
+                await store.RemoveAsync(sessionId, ct);
+            }
+            ctx.Response.Cookies.Delete(o.CookieName, SessionCookieOptions(ctx, o));
+        }
+
+        var config = await oidc.GetAsync(ct);
+        if (!string.IsNullOrEmpty(config.EndSessionEndpoint))
+        {
+            var query = new Dictionary<string, string?> { ["client_id"] = o.ClientId };
+            if (idTokenHint is not null)
+                query["id_token_hint"] = idTokenHint;
+            if (o.PostLogoutRedirectUri is not null)
+                query["post_logout_redirect_uri"] = o.PostLogoutRedirectUri;
+            return Results.Redirect(QueryHelpers.AddQueryString(config.EndSessionEndpoint, query));
+        }
+
+        return o.PostLogoutRedirectUri is not null ? Results.Redirect(o.PostLogoutRedirectUri) : Results.Ok();
+    }
+
+    // OIDC Back-Channel Logout 1.0 consumer. The IdP POSTs a signed logout_token (form-encoded,
+    // server-to-server — no cookie, no browser); we validate it and kill the matching session(s).
+    public static async Task<IResult> BackChannelLogoutAsync(
+        HttpContext ctx,
+        IOptions<AuthagonalBffOptions> options,
+        BffOidcConfig oidc,
+        IBffSessionStore store,
+        ILoggerFactory loggerFactory,
+        CancellationToken ct)
+    {
+        var o = options.Value;
+        var log = loggerFactory.CreateLogger("Authagonal.Bff");
+        ctx.Response.Headers.CacheControl = "no-store";
+
+        var form = await ctx.Request.ReadFormAsync(ct);
+        var logoutToken = form["logout_token"].ToString();
+        if (string.IsNullOrEmpty(logoutToken))
+            return Fail("missing_logout_token");
+
+        var config = await oidc.GetAsync(ct);
+        var validation = await new JsonWebTokenHandler().ValidateTokenAsync(logoutToken, new TokenValidationParameters
+        {
+            ValidIssuer = config.Issuer,
+            ValidAudience = o.ClientId,
+            IssuerSigningKeys = config.SigningKeys,
+            ValidateLifetime = false,      // a logout token carries no exp
+            RequireExpirationTime = false,
+        });
+        if (!validation.IsValid)
+        {
+            log.LogWarning(validation.Exception, "BFF back-channel logout token validation failed.");
+            return Fail("invalid_logout_token");
+        }
+
+        var jwt = (JsonWebToken)validation.SecurityToken;
+        // A logout token MUST NOT carry a nonce and MUST carry the backchannel-logout event.
+        if (jwt.TryGetPayloadValue<string>("nonce", out _))
+            return Fail("nonce_not_allowed");
+        if (!HasBackChannelLogoutEvent(jwt))
+            return Fail("missing_logout_event");
+
+        var hasSid = jwt.TryGetPayloadValue<string>("sid", out var sid);
+        var hasSub = jwt.TryGetPayloadValue<string>("sub", out var sub);
+        if (!hasSid && !hasSub)
+            return Fail("missing_sub_or_sid");
+
+        // Prefer sid (a single session) if the IdP scoped it that way; otherwise kill every session for
+        // the subject (the form Authagonal emits).
+        var removed = hasSid ? await store.RemoveBySidAsync(sid!, ct) : await store.RemoveBySubjectAsync(sub!, ct);
+        log.LogInformation("BFF back-channel logout removed {Count} session(s) by {Kind}.", removed, hasSid ? "sid" : "sub");
+        return Results.Ok();
+    }
+
+    // ---- helpers ----
+
+    private const string BackChannelLogoutEventName = "http://schemas.openid.net/event/backchannel-logout";
+
+    private static bool HasBackChannelLogoutEvent(JsonWebToken jwt)
+        => jwt.TryGetPayloadValue<JsonElement>("events", out var events)
+           && events.ValueKind == JsonValueKind.Object
+           && events.TryGetProperty(BackChannelLogoutEventName, out _);
+
+    private static IResult Fail(string code) => Results.Text(code, "text/plain", null, StatusCodes.Status400BadRequest);
+
+    private static bool HasAntiForgeryHeader(HttpContext ctx, AuthagonalBffOptions o)
+        => ctx.Request.Headers.ContainsKey(o.AntiForgeryHeader);
+
+    private static string BuildRedirectUri(HttpContext ctx, AuthagonalBffOptions o)
+        => $"{ctx.Request.Scheme}://{ctx.Request.Host}{o.CallbackPath}";
+
+    private static string SanitizeReturnUrl(string? returnUrl, AuthagonalBffOptions o)
+    {
+        if (string.IsNullOrEmpty(returnUrl))
+            return "/";
+        if (returnUrl.StartsWith('/') && !returnUrl.StartsWith("//", StringComparison.Ordinal))
+            return returnUrl; // local relative path
+        if (Uri.TryCreate(returnUrl, UriKind.Absolute, out var abs))
+        {
+            var origin = $"{abs.Scheme}://{abs.Authority}";
+            if (o.ReturnUrlAllowlist.Contains(origin, StringComparer.OrdinalIgnoreCase))
+                return returnUrl;
+        }
+        return "/";
+    }
+
+    private static Dictionary<string, string> ExtractClaims(JsonWebToken jwt)
+    {
+        var claims = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var claim in jwt.Claims)
+            if (!ProtocolClaims.Contains(claim.Type) && !claims.ContainsKey(claim.Type))
+                claims[claim.Type] = claim.Value;
+        return claims;
+    }
+
+    private static string Base64Url(byte[] bytes) => WebEncoders.Base64UrlEncode(bytes);
+
+    private static bool FixedTimeEquals(string a, string b)
+        => CryptographicOperations.FixedTimeEquals(Encoding.UTF8.GetBytes(a), Encoding.UTF8.GetBytes(b));
+
+    private static CookieOptions SessionCookieOptions(HttpContext ctx, AuthagonalBffOptions o) => new()
+    {
+        HttpOnly = true,
+        Secure = IsSecure(ctx, o.CookieName),
+        SameSite = SameSiteMode.Lax,
+        Path = "/",
+        IsEssential = true,
+    };
+
+    private static CookieOptions TransientCookieOptions(HttpContext ctx, AuthagonalBffOptions o) => new()
+    {
+        HttpOnly = true,
+        Secure = IsSecure(ctx, o.CorrelationCookieName),
+        SameSite = SameSiteMode.Lax,
+        Path = "/",
+        IsEssential = true,
+        Expires = DateTimeOffset.UtcNow.AddMinutes(15),
+    };
+
+    private static bool IsSecure(HttpContext ctx, string cookieName)
+        => ctx.Request.IsHttps
+           || cookieName.StartsWith("__Host-", StringComparison.Ordinal)
+           || cookieName.StartsWith("__Secure-", StringComparison.Ordinal);
+}

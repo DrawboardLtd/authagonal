@@ -3,6 +3,7 @@
     <Project Path="src/Authagonal.Core/Authagonal.Core.csproj" />
     <Project Path="src/Authagonal.Protocol/Authagonal.Protocol.csproj" />
     <Project Path="src/Authagonal.Server/Authagonal.Server.csproj" />
+    <Project Path="src/Authagonal.Bff/Authagonal.Bff.csproj" />
     <Project Path="src/Authagonal.AzureProvider/Authagonal.AzureProvider.csproj" />
     <Project Path="src/Authagonal.AwsProvider/Authagonal.AwsProvider.csproj" />
     <Project Path="src/Authagonal.Backup/Authagonal.Backup.csproj" />

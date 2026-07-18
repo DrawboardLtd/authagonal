@@ -1,0 +1,35 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFrameworks>net9.0;net10.0</TargetFrameworks>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsTrimmable>true</IsTrimmable>
+    <IsPackable>true</IsPackable>
+    <PackageId>Authagonal.Bff</PackageId>
+    <Description>Backend-for-Frontend (BFF) for SPAs using Authagonal. A confidential OIDC client that runs the authorization-code + PKCE flow server-side, holds access/refresh tokens in a server-side session, and hands the browser only an httpOnly session cookie — no tokens in browser storage. Drop-in ASP.NET Core middleware: AddAuthagonalBff() + MapAuthagonalBff().</Description>
+    <Authors>Drawboard</Authors>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageProjectUrl>https://github.com/authagonal/authagonal</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/authagonal/authagonal</RepositoryUrl>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.IdentityModel.JsonWebTokens" Version="8.17.0" />
+    <PackageReference Include="Microsoft.IdentityModel.Protocols.OpenIdConnect" Version="8.17.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Authagonal.Tests" />
+  </ItemGroup>
+
+</Project>
