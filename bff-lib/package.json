@@ -1,6 +1,6 @@
 {
   "name": "@authagonal/bff",
-  "version": "0.0.0",
+  "version": "0.9.0",
   "description": "Backend-for-Frontend for SPAs using Authagonal. Runs the OIDC auth-code + PKCE flow server-side, holds tokens in a server-side session, and exposes the browser only an httpOnly cookie. Express + Next.js adapters.",
   "type": "module",
   "license": "MIT",
@@ -13,13 +13,33 @@
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
-    ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" },
-    "./express": { "types": "./dist/express.d.ts", "import": "./dist/express.js" },
-    "./next": { "types": "./dist/next.d.ts", "import": "./dist/next.js" },
-    "./client": { "types": "./dist/client.d.ts", "import": "./dist/client.js" },
-    "./react": { "types": "./dist/react.d.ts", "import": "./dist/react.js" }
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./express": {
+      "types": "./dist/express.d.ts",
+      "import": "./dist/express.js"
+    },
+    "./next": {
+      "types": "./dist/next.d.ts",
+      "import": "./dist/next.js"
+    },
+    "./client": {
+      "types": "./dist/client.d.ts",
+      "import": "./dist/client.js"
+    },
+    "./react": {
+      "types": "./dist/react.d.ts",
+      "import": "./dist/react.js"
+    }
   },
-  "files": ["dist", "src", "tsconfig.json", "README.md"],
+  "files": [
+    "dist",
+    "src",
+    "tsconfig.json",
+    "README.md"
+  ],
   "scripts": {
     "build": "tsc",
     "typecheck": "tsc --noEmit"
@@ -31,7 +51,9 @@
     "react": ">=17"
   },
   "peerDependenciesMeta": {
-    "react": { "optional": true }
+    "react": {
+      "optional": true
+    }
   },
   "devDependencies": {
     "@types/react": "^18",
