@@ -1,8 +1,8 @@
 import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { getProfile, updateProfile, mfaStatus, getApps, exportMyData, requestErasure, ApiRequestError } from '../api';
-import type { AppLinkResponse } from '../types';
+import { getProfile, updateProfile, mfaStatus, getApps, exportMyData, requestErasure, listSessions, revokeSession, revokeOtherSessions, ApiRequestError } from '../api';
+import type { AppLinkResponse, ActiveSession } from '../types';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -46,6 +46,8 @@ export default function AccountPage() {
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState('');
   const [deleteQueued, setDeleteQueued] = useState(false);
+  const [sessions, setSessions] = useState<ActiveSession[]>([]);
+  const [sessionsBusy, setSessionsBusy] = useState(false);
 
   async function handleExport() {
     setExporting(true);
@@ -112,6 +114,30 @@ export default function AccountPage() {
   useEffect(() => {
     mfaStatus().then((s) => setMfaOffered(s.offered !== false)).catch(() => {});
   }, []);
+
+  // Server-side sessions: only surfaced when the tenant tracks them (an empty list = feature off, so the
+  // whole section stays hidden). Newest activity first, current device flagged.
+  useEffect(() => {
+    listSessions().then((r) => setSessions(r.sessions)).catch(() => {});
+  }, []);
+
+  async function handleRevokeSession(id: string) {
+    setSessionsBusy(true);
+    try {
+      await revokeSession(id);
+      setSessions((prev) => prev.filter((s) => s.sessionId !== id));
+    } catch { /* transient failure: leave the list as-is */ }
+    finally { setSessionsBusy(false); }
+  }
+
+  async function handleRevokeOthers() {
+    setSessionsBusy(true);
+    try {
+      await revokeOtherSessions();
+      setSessions((prev) => prev.filter((s) => s.current));
+    } catch { /* transient failure: leave the list as-is */ }
+    finally { setSessionsBusy(false); }
+  }
 
   // "Back to app" targets: clients the operator gave a home URI. Absent/failed → no button,
   // the account page stays the destination (the pre-existing behavior).
@@ -249,6 +275,45 @@ export default function AccountPage() {
           <Link to="/mfa-setup">
             <Button type="button" variant="secondary" className="w-full">{t('account.setupMfa', 'Set up two-factor authentication')}</Button>
           </Link>
+        </div>
+        )}
+
+        {/* Active sessions — server-side SSO sessions, self-service revocation. Hidden when the tenant
+            doesn't track sessions (empty list). */}
+        {sessions.length > 0 && (
+        <div className="mt-6 border-t border-gray-200 dark:border-gray-800 pt-4">
+          <div className="flex items-center justify-between mb-1">
+            <h2 className="text-sm font-medium text-gray-900 dark:text-white">{t('account.sessionsTitle', 'Active sessions')}</h2>
+            {sessions.some((s) => !s.current) && (
+              <button type="button" onClick={handleRevokeOthers} disabled={sessionsBusy}
+                className="text-xs text-red-600 hover:text-red-700 dark:text-red-400 underline underline-offset-2 disabled:opacity-50">
+                {t('account.sessionsLogoutOthers', 'Log out other devices')}
+              </button>
+            )}
+          </div>
+          <p className="text-sm text-gray-500 dark:text-gray-400 mb-3">{t('account.sessionsSubtitle', 'Devices where you are currently signed in.')}</p>
+          <ul className="divide-y divide-gray-100 dark:divide-gray-800 rounded-md border border-gray-200 dark:border-gray-800">
+            {sessions.map((s) => (
+              <li key={s.sessionId} className="flex items-center gap-3 py-2 px-3">
+                <div className="flex-1 min-w-0">
+                  <div className="text-sm text-gray-900 dark:text-white truncate">
+                    {s.ip || t('account.sessionsUnknownIp', 'Unknown location')}
+                    {s.current && <span className="ms-2 text-xs text-green-700 dark:text-green-400">{t('account.sessionsThisDevice', 'This device')}</span>}
+                  </div>
+                  <div className="text-xs text-gray-500 dark:text-gray-400 truncate">
+                    {t('account.sessionsLastSeen', { defaultValue: 'Last active {{date}}', date: new Date(s.lastSeenAt).toLocaleString() })}
+                    {s.userAgent ? ` · ${s.userAgent}` : ''}
+                  </div>
+                </div>
+                {!s.current && (
+                  <button type="button" onClick={() => handleRevokeSession(s.sessionId)} disabled={sessionsBusy}
+                    className="text-xs text-red-600 hover:text-red-700 dark:text-red-400 underline underline-offset-2 disabled:opacity-50 shrink-0">
+                    {t('account.sessionsRevoke', 'Log out')}
+                  </button>
+                )}
+              </li>
+            ))}
+          </ul>
         </div>
         )}
 

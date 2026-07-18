@@ -269,6 +269,19 @@ public static class AuthagonalExtensions
         // ---------------------------------------------------------------------------
         var cookieLifetimeHours = configuration.GetValue("Authentication:CookieLifetimeHours", 48);
 
+        // Server-side session storage (opt-in seam). If the host registers an ITicketStore, the cookie
+        // auth ticket is persisted server-side and the cookie carries only a session key — giving instant
+        // per-session revocation and the ability to enumerate a user's active sessions. Registered as a
+        // PostConfigure so it runs after AddCookie's own Configure and can resolve the (optional) store
+        // from DI. With no store the self-contained cookie below is used, unchanged (the security-stamp
+        // revalidation in OnValidatePrincipal still applies in both modes).
+        services.AddOptions<CookieAuthenticationOptions>(CookieAuthenticationDefaults.AuthenticationScheme)
+            .PostConfigure<IServiceProvider>((options, sp) =>
+            {
+                if (sp.GetService<ITicketStore>() is { } ticketStore)
+                    options.SessionStore = ticketStore;
+            });
+
         services.AddAuthentication(options =>
         {
             options.DefaultScheme = CookieAuthenticationDefaults.AuthenticationScheme;

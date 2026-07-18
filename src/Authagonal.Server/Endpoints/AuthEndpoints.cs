@@ -36,6 +36,9 @@ public static class AuthEndpoints
         group.MapGet("/apps", GetAppsAsync).RequireAuthorization();
         group.MapGet("/profile", GetProfileAsync).RequireAuthorization();
         group.MapPatch("/profile", UpdateProfileAsync).RequireAuthorization().DisableAntiforgery();
+        group.MapGet("/sessions", GetSessionsAsync).RequireAuthorization();
+        group.MapDelete("/sessions/{sessionId}", RevokeSessionAsync).RequireAuthorization().DisableAntiforgery();
+        group.MapPost("/sessions/revoke-others", RevokeOtherSessionsAsync).RequireAuthorization().DisableAntiforgery();
         group.MapGet("/sso-check", SsoCheckAsync).AllowAnonymous();
         group.MapGet("/providers", GetProvidersAsync).AllowAnonymous();
         group.MapGet("/password-policy", GetPasswordPolicy).AllowAnonymous();
@@ -813,6 +816,50 @@ public static class AuthEndpoints
 
         return TypedResults.Json(ProfileOf(user), AuthagonalJsonContext.Default.ProfileResponse);
     }
+
+    private static async Task<IResult> GetSessionsAsync(HttpContext httpContext, IUserSessionRegistry? registry, CancellationToken ct)
+    {
+        var userId = httpContext.User.FindFirstValue(ClaimTypes.NameIdentifier) ?? httpContext.User.FindFirstValue("sub");
+        if (userId is null) return JsonResults.Error("user_not_found", 404);
+        if (registry is null) return TypedResults.Json(new ActiveSessionsResponse(), AuthagonalJsonContext.Default.ActiveSessionsResponse);
+        var sessions = await registry.ListAsync(userId, CurrentSessionId(httpContext), ct);
+        var view = new ActiveSessionsResponse { Sessions = sessions.Select(SessionViewOf).ToList() };
+        return TypedResults.Json(view, AuthagonalJsonContext.Default.ActiveSessionsResponse);
+    }
+
+    private static async Task<IResult> RevokeSessionAsync(string sessionId, HttpContext httpContext, IUserSessionRegistry? registry, CancellationToken ct)
+    {
+        var userId = httpContext.User.FindFirstValue(ClaimTypes.NameIdentifier) ?? httpContext.User.FindFirstValue("sub");
+        if (userId is null) return JsonResults.Error("user_not_found", 404);
+        if (registry is null) return JsonResults.Error("not_supported", 404);
+        var ok = await registry.RevokeAsync(userId, sessionId, ct);
+        return ok
+            ? TypedResults.Json(new RevokeSessionsResponse { Revoked = 1 }, AuthagonalJsonContext.Default.RevokeSessionsResponse)
+            : JsonResults.Error("session_not_found", 404);
+    }
+
+    private static async Task<IResult> RevokeOtherSessionsAsync(HttpContext httpContext, IUserSessionRegistry? registry, CancellationToken ct)
+    {
+        var userId = httpContext.User.FindFirstValue(ClaimTypes.NameIdentifier) ?? httpContext.User.FindFirstValue("sub");
+        if (userId is null) return JsonResults.Error("user_not_found", 404);
+        if (registry is null) return TypedResults.Json(new RevokeSessionsResponse(), AuthagonalJsonContext.Default.RevokeSessionsResponse);
+        var revoked = await registry.RevokeOthersAsync(userId, CurrentSessionId(httpContext), ct);
+        return TypedResults.Json(new RevokeSessionsResponse { Revoked = revoked }, AuthagonalJsonContext.Default.RevokeSessionsResponse);
+    }
+
+    private static string? CurrentSessionId(HttpContext httpContext) =>
+        httpContext.Items.TryGetValue(IUserSessionRegistry.CurrentSessionItem, out var v) ? v as string : null;
+
+    private static ActiveSessionView SessionViewOf(SessionDescriptor s) => new()
+    {
+        SessionId = s.SessionId,
+        Current = s.Current,
+        CreatedAt = s.CreatedAt,
+        LastSeenAt = s.LastSeenAt,
+        ExpiresAt = s.ExpiresAt,
+        Ip = s.Ip,
+        UserAgent = s.UserAgent,
+    };
 
     private static ProfileResponse ProfileOf(AuthUser user) => new()
     {

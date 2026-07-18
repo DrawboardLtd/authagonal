@@ -1,4 +1,4 @@
-import type { ApiError, SessionResponse, AppLinkResponse, SsoCheckResponse, ProvidersResponse, PasswordPolicyResponse, MfaLoginResponse, MfaVerifyResponse, MfaStatusResponse, MfaTotpSetupResponse, MfaRecoveryGenerateResponse, MfaWebAuthnSetupResponse, MfaWebAuthnConfirmResponse, RegisterResponse, ProfileResponse, ProfileUpdateRequest } from './types';
+import type { ApiError, SessionResponse, AppLinkResponse, SsoCheckResponse, ProvidersResponse, PasswordPolicyResponse, MfaLoginResponse, MfaVerifyResponse, MfaStatusResponse, MfaTotpSetupResponse, MfaRecoveryGenerateResponse, MfaWebAuthnSetupResponse, MfaWebAuthnConfirmResponse, RegisterResponse, ProfileResponse, ProfileUpdateRequest, ActiveSessionsResponse, RevokeSessionsResponse } from './types';
 
 import type { AssertionOptionsJson } from './webauthn';
 import { getBoot } from './branding';
@@ -95,6 +95,21 @@ export function updateProfile(patch: ProfileUpdateRequest): Promise<ProfileRespo
     method: 'PATCH',
     body: JSON.stringify(patch),
   });
+}
+
+/** The signed-in user's own active server-side sessions (empty when the tenant doesn't track them). */
+export function listSessions(): Promise<ActiveSessionsResponse> {
+  return api<ActiveSessionsResponse>('/api/auth/sessions');
+}
+
+/** Revoke one of the signed-in user's sessions (not the current one is enforced by the UI). */
+export function revokeSession(sessionId: string): Promise<RevokeSessionsResponse> {
+  return api<RevokeSessionsResponse>(`/api/auth/sessions/${encodeURIComponent(sessionId)}`, { method: 'DELETE' });
+}
+
+/** Sign out all of the user's other devices, keeping the current session. */
+export function revokeOtherSessions(): Promise<RevokeSessionsResponse> {
+  return api<RevokeSessionsResponse>('/api/auth/sessions/revoke-others', { method: 'POST' });
 }
 
 /** Download all personal data held on the signed-in user (GDPR Art. 15/20) as a JSON blob. Served by the

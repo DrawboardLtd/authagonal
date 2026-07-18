@@ -141,6 +141,28 @@ export interface ProfileResponse {
   locale?: string;
 }
 
+/** One of the signed-in user's active server-side sessions. */
+export interface ActiveSession {
+  sessionId: string;
+  /** True for the caller's current session (the one making the request). */
+  current: boolean;
+  createdAt: string;
+  lastSeenAt: string;
+  expiresAt: string | null;
+  ip: string;
+  userAgent: string;
+}
+
+/** GET /api/auth/sessions — empty when the tenant doesn't track server-side sessions. */
+export interface ActiveSessionsResponse {
+  sessions: ActiveSession[];
+}
+
+/** Result of a session revocation (single or bulk). */
+export interface RevokeSessionsResponse {
+  revoked: number;
+}
+
 /** Self-service profile update (PATCH /api/auth/profile). Omitted fields are left unchanged. */
 export interface ProfileUpdateRequest {
   firstName?: string;

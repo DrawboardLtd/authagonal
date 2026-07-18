@@ -322,6 +322,30 @@ public sealed class ProfileResponse
     [JsonPropertyName("locale")] public string? Locale { get; set; }
 }
 
+/// <summary>One of the caller's own active server-side sessions.</summary>
+public sealed class ActiveSessionView
+{
+    [JsonPropertyName("sessionId")] public string SessionId { get; set; } = "";
+    [JsonPropertyName("current")] public bool Current { get; set; }
+    [JsonPropertyName("createdAt")] public DateTimeOffset CreatedAt { get; set; }
+    [JsonPropertyName("lastSeenAt")] public DateTimeOffset LastSeenAt { get; set; }
+    [JsonPropertyName("expiresAt")] public DateTimeOffset? ExpiresAt { get; set; }
+    [JsonPropertyName("ip")] public string Ip { get; set; } = "";
+    [JsonPropertyName("userAgent")] public string UserAgent { get; set; } = "";
+}
+
+/// <summary>The caller's active server-side sessions (empty when session tracking isn't enabled).</summary>
+public sealed class ActiveSessionsResponse
+{
+    [JsonPropertyName("sessions")] public IReadOnlyList<ActiveSessionView> Sessions { get; set; } = [];
+}
+
+/// <summary>Result of a bulk session revocation.</summary>
+public sealed class RevokeSessionsResponse
+{
+    [JsonPropertyName("revoked")] public int Revoked { get; set; }
+}
+
 // --- Admin: Roles ---
 
 public sealed class RoleListResponse
