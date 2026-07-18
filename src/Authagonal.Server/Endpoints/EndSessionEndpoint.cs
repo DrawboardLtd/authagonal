@@ -23,6 +23,7 @@ public static class EndSessionEndpoint
         IGrantStore grantStore,
         Authagonal.Core.Services.IKeyManager keyManager,
         Authagonal.Core.Services.ITenantContext tenantContext,
+        IHttpClientFactory httpClientFactory,
         IStringLocalizer<SharedMessages> localizer,
         CancellationToken ct)
     {
@@ -67,51 +68,51 @@ public static class EndSessionEndpoint
 
         await httpContext.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
 
-        // Trigger back-channel logout notifications (fire and forget). Capture the singleton scope
-        // factory BEFORE the Task.Run: httpContext.RequestServices is the REQUEST scope, disposed once
-        // the response returns, so creating a scope from it inside the background task threw
-        // ObjectDisposedException — swallowed by the catch below, so no logout token was ever sent to any
-        // relying party. The scope factory is a singleton and survives the request.
+        // Back-channel logout. Resolve everything that needs the request's tenant scope NOW — grants,
+        // clients, and the SIGNED logout tokens — because these stores are per-tenant and bind to the
+        // request's tenant context; a background scope has no tenant, so its store resolution throws
+        // (which is why the previous fire-and-forget-with-a-fresh-scope silently emitted nothing). Only
+        // the HTTP POSTs run in the background — they need just the singleton IHttpClientFactory and the
+        // already-built tokens, no tenant scope.
         if (!string.IsNullOrEmpty(subjectId))
         {
-            var scopeFactory = httpContext.RequestServices.GetRequiredService<IServiceScopeFactory>();
-            _ = Task.Run(async () =>
+            var logger = httpContext.RequestServices.GetRequiredService<ILoggerFactory>().CreateLogger("BackChannelLogout");
+            List<(string Uri, string Token)> notifications = [];
+            try
             {
-                try
+                var grants = await grantStore.GetBySubjectAsync(subjectId);
+                foreach (var clientIdGrant in grants.Select(g => g.ClientId).Distinct())
                 {
-                    using var scope = scopeFactory.CreateScope();
-                    var grantStore = scope.ServiceProvider.GetRequiredService<IGrantStore>();
-                    var cs = scope.ServiceProvider.GetRequiredService<IClientStore>();
-                    var km = scope.ServiceProvider.GetRequiredService<Authagonal.Core.Services.IKeyManager>();
-                    var tc = scope.ServiceProvider.GetRequiredService<Authagonal.Core.Services.ITenantContext>();
-                    var hcf = scope.ServiceProvider.GetRequiredService<IHttpClientFactory>();
-                    var logger = scope.ServiceProvider.GetRequiredService<ILoggerFactory>().CreateLogger("BackChannelLogout");
+                    var c = await clientStore.GetAsync(clientIdGrant, ct);
+                    if (c?.BackChannelLogoutUri is null) continue;
+                    var tokenSid = c.BackChannelLogoutSessionRequired ? sessionId : null;
+                    notifications.Add((c.BackChannelLogoutUri,
+                        CreateBackChannelLogoutToken(tenantContext.Issuer, clientIdGrant, subjectId, tokenSid, keyManager)));
+                }
+                await grantStore.RemoveAllBySubjectAsync(subjectId);
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning(ex, "Back-channel logout preparation failed for subject {SubjectId}", subjectId);
+            }
 
-                    var grants = await grantStore.GetBySubjectAsync(subjectId);
-                    foreach (var clientIdGrant in grants.Select(g => g.ClientId).Distinct())
+            if (notifications.Count > 0)
+                _ = Task.Run(async () =>
+                {
+                    foreach (var (uri, token) in notifications)
                     {
-                        var c = await cs.GetAsync(clientIdGrant);
-                        if (c?.BackChannelLogoutUri is null) continue;
-
                         try
                         {
-                            var tokenSid = c.BackChannelLogoutSessionRequired ? sessionId : null;
-                            var logoutToken = CreateBackChannelLogoutToken(tc.Issuer, clientIdGrant, subjectId, tokenSid, km);
-                            var client = hcf.CreateClient("BackChannelLogout");
+                            var client = httpClientFactory.CreateClient("BackChannelLogout");
                             client.Timeout = TimeSpan.FromSeconds(10);
-                            await client.PostAsync(c.BackChannelLogoutUri,
-                                new FormUrlEncodedContent(new Dictionary<string, string> { ["logout_token"] = logoutToken }));
+                            await client.PostAsync(uri, new FormUrlEncodedContent(new Dictionary<string, string> { ["logout_token"] = token }));
                         }
                         catch (Exception ex)
                         {
-                            logger.LogWarning(ex, "Back-channel logout failed for client {ClientId}", clientIdGrant);
+                            logger.LogWarning(ex, "Back-channel logout POST failed for {Uri}", uri);
                         }
                     }
-
-                    await grantStore.RemoveAllBySubjectAsync(subjectId);
-                }
-                catch { /* best effort */ }
-            });
+                });
         }
 
         // Resolve the final redirect target (if any) by validating post_logout_redirect_uri against the client from id_token_hint.
