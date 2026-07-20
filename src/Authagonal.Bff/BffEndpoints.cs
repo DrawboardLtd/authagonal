@@ -53,7 +53,7 @@ internal static class BffEndpoints
             JsonSerializer.Serialize(correlation, BffJsonContext.Default.CorrelationState), CorrelationPurpose);
         ctx.Response.Cookies.Append(o.CorrelationCookieName, payload, TransientCookieOptions(ctx, o));
 
-        var authorizeUrl = QueryHelpers.AddQueryString(config.AuthorizationEndpoint, new Dictionary<string, string?>
+        var authorizeParams = new Dictionary<string, string?>
         {
             ["response_type"] = "code",
             ["client_id"] = tenant.ClientId,
@@ -63,7 +63,16 @@ internal static class BffEndpoints
             ["nonce"] = nonce,
             ["code_challenge"] = codeChallenge,
             ["code_challenge_method"] = "S256",
-        });
+        };
+        // Forward consumer-allowlisted params (e.g. idp_hint + a share-link token) so IdP-federation flows the
+        // OIDC client itself doesn't model can be driven through the BFF. Standard params above always win.
+        foreach (var name in o.LoginPassthroughParams)
+        {
+            var value = ctx.Request.Query[name].ToString();
+            if (!string.IsNullOrEmpty(value) && !authorizeParams.ContainsKey(name))
+                authorizeParams[name] = value;
+        }
+        var authorizeUrl = QueryHelpers.AddQueryString(config.AuthorizationEndpoint, authorizeParams);
         return Results.Redirect(authorizeUrl);
     }
 

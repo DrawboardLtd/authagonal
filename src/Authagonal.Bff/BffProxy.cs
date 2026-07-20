@@ -46,7 +46,12 @@ internal static class BffProxy
         if (upstream is null)
             return Results.StatusCode(StatusCodes.Status404NotFound);
 
-        var targetUrl = upstream.TargetBaseUrl.TrimEnd('/') + apiPath + ctx.Request.QueryString;
+        // A synthetic routing prefix (StripPrefix) is removed before forwarding so several backends sharing a
+        // path namespace can be fanned out from one BFF; a real prefix is left in the forwarded path.
+        var forwardedPath = upstream.StripPrefix && apiPath.StartsWith(upstream.Prefix, StringComparison.Ordinal)
+            ? apiPath[upstream.Prefix.Length..]
+            : apiPath;
+        var targetUrl = upstream.TargetBaseUrl.TrimEnd('/') + forwardedPath + ctx.Request.QueryString;
         var client = httpClientFactory.CreateClient("AuthagonalBffProxy");
 
         using var upstreamReq = new HttpRequestMessage(new HttpMethod(ctx.Request.Method), targetUrl);

@@ -63,6 +63,13 @@ public sealed class AuthagonalBffOptions
     /// Relative paths are always allowed; everything else is coerced to <c>/</c>.</summary>
     public IList<string> ReturnUrlAllowlist { get; set; } = new List<string>();
 
+    /// <summary>Query-parameter names copied verbatim from <c>{BasePath}/login</c> through to the upstream
+    /// <c>/authorize</c> request, when present on the login request. Lets a consumer drive IdP-federation
+    /// params the OIDC client itself doesn't model — e.g. <c>idp_hint</c> to select a federated upstream
+    /// connection at the auth host, plus a share-link token that connection forwards downstream. Empty by
+    /// default (only the standard OIDC params are sent).</summary>
+    public IList<string> LoginPassthroughParams { get; set; } = new List<string>();
+
     /// <summary>Where Authagonal sends the browser after a completed logout.</summary>
     public string? PostLogoutRedirectUri { get; set; }
 
@@ -111,4 +118,10 @@ public sealed class BffUpstream
 
     /// <summary>Base URL requests are forwarded to, e.g. <c>https://api.internal.acme.com</c>.</summary>
     public string TargetBaseUrl { get; set; } = default!;
+
+    /// <summary>When true, the matched <see cref="Prefix"/> is stripped from the path before it is appended
+    /// to <see cref="TargetBaseUrl"/>. Use a synthetic routing prefix to fan one BFF out to several backends
+    /// that share a path namespace: e.g. <c>/id</c> stripping ⇒ <c>/bff/api/id/api/admin/x</c> forwards to
+    /// <c>{TargetBaseUrl}/api/admin/x</c>. Default false (the prefix is a real path segment on the target).</summary>
+    public bool StripPrefix { get; set; }
 }
