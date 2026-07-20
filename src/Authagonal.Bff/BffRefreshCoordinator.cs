@@ -9,6 +9,7 @@ namespace Authagonal.Bff;
 internal sealed class BffRefreshCoordinator(
     ITokenClient tokens,
     IBffSessionStore store,
+    IBffTenantResolver tenants,
     IOptions<AuthagonalBffOptions> options,
     ILogger<BffRefreshCoordinator> logger)
 {
@@ -39,9 +40,19 @@ internal sealed class BffRefreshCoordinator(
             if (current.RefreshToken is null)
                 return current.AccessTokenExpiresAt > DateTimeOffset.UtcNow ? current : null;
 
+            var tenant = await tenants.ResolveAsync(current.TenantKey, ct);
+            if (tenant is null)
+            {
+                // The tenant is no longer resolvable (deprovisioned / config changed); the session can't be
+                // kept valid without its client credentials — treat as logged out.
+                logger.LogWarning("BFF refresh: tenant '{TenantKey}' no longer resolvable for session {SessionId}.", current.TenantKey, current.SessionId);
+                await store.RemoveAsync(current.SessionId, ct);
+                return null;
+            }
+
             try
             {
-                var result = await tokens.RefreshAsync(current.RefreshToken, ct);
+                var result = await tokens.RefreshAsync(tenant, current.RefreshToken, ct);
                 current.AccessToken = result.AccessToken;
                 current.RefreshToken = result.RefreshToken ?? current.RefreshToken;
                 if (result.IdToken is not null)

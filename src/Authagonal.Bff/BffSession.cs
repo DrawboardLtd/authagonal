@@ -7,6 +7,10 @@ public sealed class BffSession
     /// <summary>Opaque, unguessable session id. Equals the value stored in the session cookie.</summary>
     public string SessionId { get; set; } = default!;
 
+    /// <summary>The tenant this session belongs to (see <see cref="IBffTenantResolver"/>). Null in single-tenant
+    /// mode. Re-resolved to the tenant's client config on every refresh / logout.</summary>
+    public string? TenantKey { get; set; }
+
     /// <summary>The OIDC session id (<c>sid</c>) from the id_token, used to match back-channel logout
     /// tokens to this session. Null if the provider didn't issue one.</summary>
     public string? Sid { get; set; }

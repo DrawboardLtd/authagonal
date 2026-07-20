@@ -36,19 +36,18 @@ export interface TokenResult {
 
 export class BffTokenError extends Error {}
 
-/** Talks to the Authagonal tenant's OIDC endpoints: discovery + JWKS (cached, rotation-aware via jose),
- * token exchange, refresh, revocation, and id_token / logout_token verification. */
+/** Talks to one tenant's OIDC endpoints: discovery + JWKS (cached, rotation-aware via jose), token exchange,
+ * refresh, revocation, and id_token / logout_token verification. Bound to an authority only — the confidential
+ * client credentials (and the expected audience) are passed per call, so a single-authority instance serves
+ * whichever client a multi-tenant BFF resolves for it. Mirrors the .NET `BffOidcConfig` + `AuthagonalTokenClient`
+ * split. Cache one per authority via {@link oidcClientCache}. */
 export class OidcClient {
   private metadata?: OidcMetadata;
   private jwks?: JWTVerifyGetKey;
   private fetchedAt = 0;
   private static readonly TTL_MS = 60 * 60 * 1000;
 
-  constructor(
-    private readonly authority: string,
-    private readonly clientId: string,
-    private readonly clientSecret: string,
-  ) {}
+  constructor(private readonly authority: string) {}
 
   private async meta(): Promise<OidcMetadata> {
     if (this.metadata && Date.now() - this.fetchedAt < OidcClient.TTL_MS) return this.metadata;
@@ -64,29 +63,29 @@ export class OidcClient {
   async authorizationEndpoint(): Promise<string> { return (await this.meta()).authorization_endpoint; }
   async endSessionEndpoint(): Promise<string | undefined> { return (await this.meta()).end_session_endpoint; }
 
-  async exchangeCode(code: string, redirectUri: string, codeVerifier: string): Promise<TokenResult> {
+  async exchangeCode(clientId: string, clientSecret: string, code: string, redirectUri: string, codeVerifier: string): Promise<TokenResult> {
     const m = await this.meta();
     return this.postToken(m.token_endpoint, {
       grant_type: 'authorization_code', code, redirect_uri: redirectUri, code_verifier: codeVerifier,
-      client_id: this.clientId, client_secret: this.clientSecret,
+      client_id: clientId, client_secret: clientSecret,
     });
   }
 
-  async refresh(refreshToken: string): Promise<TokenResult> {
+  async refresh(clientId: string, clientSecret: string, refreshToken: string): Promise<TokenResult> {
     const m = await this.meta();
     return this.postToken(m.token_endpoint, {
       grant_type: 'refresh_token', refresh_token: refreshToken,
-      client_id: this.clientId, client_secret: this.clientSecret,
+      client_id: clientId, client_secret: clientSecret,
     });
   }
 
-  async revoke(refreshToken: string): Promise<void> {
+  async revoke(clientId: string, clientSecret: string, refreshToken: string): Promise<void> {
     const m = await this.meta();
     if (!m.revocation_endpoint) return;
     await fetch(m.revocation_endpoint, {
       method: 'POST',
       headers: { 'content-type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({ token: refreshToken, token_type_hint: 'refresh_token', client_id: this.clientId, client_secret: this.clientSecret }),
+      body: new URLSearchParams({ token: refreshToken, token_type_hint: 'refresh_token', client_id: clientId, client_secret: clientSecret }),
     }).catch(() => { /* best-effort */ });
   }
 
@@ -103,17 +102,29 @@ export class OidcClient {
     return { accessToken: json.access_token, refreshToken: json.refresh_token, idToken: json.id_token, expiresIn: json.expires_in ?? 3600 };
   }
 
-  async verifyIdToken(idToken: string): Promise<JWTPayload> {
+  async verifyIdToken(idToken: string, clientId: string): Promise<JWTPayload> {
     const m = await this.meta();
-    const { payload } = await jwtVerify(idToken, this.jwks!, { issuer: m.issuer, audience: this.clientId });
+    const { payload } = await jwtVerify(idToken, this.jwks!, { issuer: m.issuer, audience: clientId });
     return payload;
   }
 
   /** Verify an OIDC back-channel logout token. Logout tokens carry no `exp`; jwtVerify only enforces `exp`
    * when present, so this validates signature + issuer + audience. Caller checks `events` / no-`nonce`. */
-  async verifyLogoutToken(logoutToken: string): Promise<JWTPayload> {
+  async verifyLogoutToken(logoutToken: string, clientId: string): Promise<JWTPayload> {
     const m = await this.meta();
-    const { payload } = await jwtVerify(logoutToken, this.jwks!, { issuer: m.issuer, audience: this.clientId });
+    const { payload } = await jwtVerify(logoutToken, this.jwks!, { issuer: m.issuer, audience: clientId });
     return payload;
   }
+}
+
+/** Returns a memoized {@link OidcClient} per authority, so a multi-tenant BFF discovers each tenant's auth host
+ * once and reuses its cached metadata + JWKS. Mirrors the .NET `BffOidcConfig` per-authority dictionary. */
+export function oidcClientCache(): (authority: string) => OidcClient {
+  const byAuthority = new Map<string, OidcClient>();
+  return (authority: string) => {
+    const key = authority.replace(/\/+$/, '');
+    let c = byAuthority.get(key);
+    if (!c) byAuthority.set(key, (c = new OidcClient(key)));
+    return c;
+  };
 }

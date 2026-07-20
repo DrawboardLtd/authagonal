@@ -1,10 +1,11 @@
-import type { JWTPayload } from 'jose';
+import { decodeJwt, type JWTPayload } from 'jose';
 import type { AuthagonalBffOptions, ResolvedBffOptions } from './options.js';
 import { resolveOptions } from './options.js';
 import { type BffSession, type IBffSessionStore, MemorySessionStore } from './session.js';
 import { type ICookieProtector, JoseCookieProtector } from './cookies.js';
-import { OidcClient, BffTokenError, randomToken, codeChallenge } from './oidc.js';
+import { OidcClient, BffTokenError, oidcClientCache, randomToken, codeChallenge } from './oidc.js';
 import { RefreshCoordinator } from './refresh.js';
+import { type BffTenantConfig, type IBffTenantResolver, StaticBffTenantResolver } from './tenant.js';
 
 /** Attributes for a Set-Cookie. */
 export interface CookieOptions {
@@ -38,7 +39,9 @@ export interface BffDeps {
   o: ResolvedBffOptions;
   store: IBffSessionStore;
   protector: ICookieProtector;
-  oidc: OidcClient;
+  tenants: IBffTenantResolver;
+  /** Memoized OIDC client per authority (one auth host per tenant in multi-tenant mode). */
+  oidcFor: (authority: string) => OidcClient;
   refresher: RefreshCoordinator;
   log: (msg: string, err?: unknown) => void;
 }
@@ -47,11 +50,12 @@ export function buildDeps(options: AuthagonalBffOptions): BffDeps {
   const o = resolveOptions(options);
   const store = options.sessionStore ?? new MemorySessionStore();
   const protector = options.cookieProtector ?? new JoseCookieProtector(options.cookieSecret!);
-  const oidc = new OidcClient(o.authority, o.clientId, o.clientSecret);
-  const refresher = new RefreshCoordinator(oidc, store, o);
+  const tenants = options.tenantResolver ?? new StaticBffTenantResolver(o);
+  const oidcFor = oidcClientCache();
+  const refresher = new RefreshCoordinator(tenants, oidcFor, store, o);
   const log = (msg: string, err?: unknown) =>
     err ? console.warn(`[authagonal-bff] ${msg}`, err) : console.info(`[authagonal-bff] ${msg}`);
-  return { o, store, protector, oidc, refresher, log };
+  return { o, store, protector, tenants, oidcFor, refresher, log };
 }
 
 const CORRELATION_PURPOSE = 'agbff-correlation-v1';
@@ -109,6 +113,11 @@ export const PROXY_STRIP = new Set([
 ]);
 
 async function handleLogin(ctx: HttpCtx, d: BffDeps): Promise<void> {
+  // Which tenant is this login for? Single-tenant: null; multi-tenant: the configured query param (?slug=acme).
+  const tenantKey = d.o.isMultiTenant ? ctx.query.get(d.o.tenantQueryParam) : null;
+  const tenant = await d.tenants.resolve(tenantKey);
+  if (!tenant) { ctx.text('unknown_tenant', 400); return; }
+
   const state = randomToken();
   const nonce = randomToken();
   const verifier = randomToken();
@@ -116,12 +125,12 @@ async function handleLogin(ctx: HttpCtx, d: BffDeps): Promise<void> {
   const returnUrl = sanitizeReturnUrl(ctx.query.get('returnUrl'), d.o);
   const redirectUri = ctx.origin + d.o.callbackPath;
 
-  const correlation = JSON.stringify({ state, verifier, nonce, returnUrl });
+  const correlation = JSON.stringify({ state, verifier, nonce, returnUrl, tenantKey: tenant.tenantKey });
   ctx.setCookie(d.o.correlationCookieName, await d.protector.protect(correlation, CORRELATION_PURPOSE), transientCookieOpts(ctx, d.o));
 
-  const url = new URL(await d.oidc.authorizationEndpoint());
+  const url = new URL(await d.oidcFor(tenant.authority).authorizationEndpoint());
   const q = new URLSearchParams({
-    response_type: 'code', client_id: d.o.clientId, redirect_uri: redirectUri, scope: d.o.scopeString,
+    response_type: 'code', client_id: tenant.clientId, redirect_uri: redirectUri, scope: tenant.scope.join(' '),
     state, nonce, code_challenge: challenge, code_challenge_method: 'S256',
   });
   url.search = q.toString();
@@ -135,7 +144,7 @@ async function handleCallback(ctx: HttpCtx, d: BffDeps): Promise<void> {
   ctx.deleteCookie(d.o.correlationCookieName, transientCookieOpts(ctx, d.o));
   if (!corrJson) { ctx.text('invalid_correlation', 400); return; }
 
-  const corr = JSON.parse(corrJson) as { state: string; verifier: string; nonce: string; returnUrl: string };
+  const corr = JSON.parse(corrJson) as { state: string; verifier: string; nonce: string; returnUrl: string; tenantKey?: string };
   const state = ctx.query.get('state');
   if (!state || !timingSafeEqual(state, corr.state)) { ctx.text('state_mismatch', 400); return; }
   const error = ctx.query.get('error');
@@ -143,10 +152,15 @@ async function handleCallback(ctx: HttpCtx, d: BffDeps): Promise<void> {
   const code = ctx.query.get('code');
   if (!code) { ctx.text('missing_code', 400); return; }
 
+  // The correlation cookie pins which tenant this login was for — re-resolve so the exchange + id_token
+  // validation use the same confidential client + issuer.
+  const tenant = await d.tenants.resolve(corr.tenantKey);
+  if (!tenant) { ctx.text('unknown_tenant', 400); return; }
+
   const redirectUri = ctx.origin + d.o.callbackPath;
   let tokens;
   try {
-    tokens = await d.oidc.exchangeCode(code, redirectUri, corr.verifier);
+    tokens = await d.oidcFor(tenant.authority).exchangeCode(tenant.clientId, tenant.clientSecret, code, redirectUri, corr.verifier);
   } catch (e) {
     d.log('code exchange failed', e);
     ctx.text('code_exchange_failed', 400);
@@ -156,7 +170,7 @@ async function handleCallback(ctx: HttpCtx, d: BffDeps): Promise<void> {
 
   let payload: JWTPayload;
   try {
-    payload = await d.oidc.verifyIdToken(tokens.idToken);
+    payload = await d.oidcFor(tenant.authority).verifyIdToken(tokens.idToken, tenant.clientId);
   } catch (e) {
     d.log('id_token validation failed', e);
     ctx.text('invalid_id_token', 400);
@@ -167,6 +181,7 @@ async function handleCallback(ctx: HttpCtx, d: BffDeps): Promise<void> {
   const now = Date.now();
   const session: BffSession = {
     sessionId: randomToken(),
+    tenantKey: tenant.tenantKey,
     sid: typeof payload.sid === 'string' ? payload.sid : undefined,
     subject: typeof payload.sub === 'string' ? payload.sub : '',
     idToken: tokens.idToken,
@@ -199,25 +214,32 @@ async function handleLogout(ctx: HttpCtx, d: BffDeps): Promise<void> {
   if (ctx.method === 'POST' && !hasAntiForgery(ctx, d.o)) { ctx.text('', 401); return; }
 
   let idTokenHint: string | undefined;
+  let tenant: BffTenantConfig | null = null;
   const sessionId = ctx.getCookie(d.o.cookieName);
   if (sessionId) {
     const session = await d.store.get(sessionId);
     if (session) {
       idTokenHint = session.idToken;
-      if (session.refreshToken) await d.oidc.revoke(session.refreshToken);
+      // Re-resolve the session's tenant so revoke + end_session hit the right auth host + client.
+      tenant = await d.tenants.resolve(session.tenantKey);
+      if (tenant && session.refreshToken) await d.oidcFor(tenant.authority).revoke(tenant.clientId, tenant.clientSecret, session.refreshToken);
       await d.store.remove(sessionId);
     }
     ctx.deleteCookie(d.o.cookieName, sessionCookieOpts(ctx, d.o));
   }
 
-  const endSession = await d.oidc.endSessionEndpoint();
-  if (endSession) {
-    const url = new URL(endSession);
-    url.searchParams.set('client_id', d.o.clientId);
-    if (idTokenHint) url.searchParams.set('id_token_hint', idTokenHint);
-    if (d.o.postLogoutRedirectUri) url.searchParams.set('post_logout_redirect_uri', d.o.postLogoutRedirectUri);
-    ctx.redirect(url.toString());
-    return;
+  // The RP-initiated end_session redirect needs a tenant. Without a session (or an unresolvable tenant) there's
+  // nothing to sign out at the IdP; just return to the post-logout URL.
+  if (tenant) {
+    const endSession = await d.oidcFor(tenant.authority).endSessionEndpoint();
+    if (endSession) {
+      const url = new URL(endSession);
+      url.searchParams.set('client_id', tenant.clientId);
+      if (idTokenHint) url.searchParams.set('id_token_hint', idTokenHint);
+      if (d.o.postLogoutRedirectUri) url.searchParams.set('post_logout_redirect_uri', d.o.postLogoutRedirectUri);
+      ctx.redirect(url.toString());
+      return;
+    }
   }
   if (d.o.postLogoutRedirectUri) { ctx.redirect(d.o.postLogoutRedirectUri); return; }
   ctx.text('', 200);
@@ -229,9 +251,19 @@ async function handleBackchannel(ctx: HttpCtx, d: BffDeps): Promise<void> {
   const logoutToken = form.get('logout_token');
   if (!logoutToken) { ctx.text('missing_logout_token', 400); return; }
 
+  // No session cookie on a back-channel call — the token's issuer is all we have to pick the tenant. Read the
+  // (unvalidated) iss only to *select* it; the signature is verified below against that tenant's JWKS + client
+  // id, so a forged iss can't get a token accepted.
+  let issuer: string | undefined;
+  try { issuer = decodeJwt(logoutToken).iss; } catch { /* not a well-formed JWT */ }
+  if (!issuer) { ctx.text('invalid_logout_token', 400); return; }
+
+  const tenant = await d.tenants.resolveByIssuer(issuer);
+  if (!tenant) { ctx.text('unknown_issuer', 400); return; }
+
   let payload: JWTPayload;
   try {
-    payload = await d.oidc.verifyLogoutToken(logoutToken);
+    payload = await d.oidcFor(tenant.authority).verifyLogoutToken(logoutToken, tenant.clientId);
   } catch (e) {
     d.log('back-channel logout token validation failed', e);
     ctx.text('invalid_logout_token', 400);

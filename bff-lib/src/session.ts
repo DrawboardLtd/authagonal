@@ -3,6 +3,8 @@
 export interface BffSession {
   /** Opaque, unguessable session id. Equals the value stored in the session cookie. */
   sessionId: string;
+  /** The tenant this session belongs to (see IBffTenantResolver). Undefined in single-tenant mode. */
+  tenantKey?: string;
   /** OIDC session id (`sid`) from the id_token, used to match session-scoped back-channel logout. */
   sid?: string;
   /** Authenticated subject (`sub`). */

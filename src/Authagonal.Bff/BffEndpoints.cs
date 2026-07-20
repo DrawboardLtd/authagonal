@@ -26,11 +26,20 @@ internal static class BffEndpoints
         string? returnUrl,
         IOptions<AuthagonalBffOptions> options,
         BffOidcConfig oidc,
+        IBffTenantResolver tenants,
         ICookieProtector protector,
         CancellationToken ct)
     {
         var o = options.Value;
-        var config = await oidc.GetAsync(ct);
+
+        // Which tenant is this login for? In single-tenant mode the key is null; in multi-tenant mode it's the
+        // configured query parameter (e.g. ?slug=acme). The resolver turns it into the tenant's client config.
+        var tenantKey = o.IsMultiTenant ? ctx.Request.Query[o.TenantQueryParam!].ToString() : null;
+        var tenant = await tenants.ResolveAsync(tenantKey, ct);
+        if (tenant is null)
+            return Fail("unknown_tenant");
+
+        var config = await oidc.GetAsync(tenant.Authority, ct);
 
         var state = Base64Url(RandomNumberGenerator.GetBytes(32));
         var nonce = Base64Url(RandomNumberGenerator.GetBytes(32));
@@ -39,7 +48,7 @@ internal static class BffEndpoints
         var safeReturn = SanitizeReturnUrl(returnUrl, o);
         var redirectUri = BuildRedirectUri(ctx, o);
 
-        var correlation = new CorrelationState(state, codeVerifier, nonce, safeReturn);
+        var correlation = new CorrelationState(state, codeVerifier, nonce, safeReturn, tenant.TenantKey);
         var payload = protector.Protect(
             JsonSerializer.Serialize(correlation, BffJsonContext.Default.CorrelationState), CorrelationPurpose);
         ctx.Response.Cookies.Append(o.CorrelationCookieName, payload, TransientCookieOptions(ctx, o));
@@ -47,9 +56,9 @@ internal static class BffEndpoints
         var authorizeUrl = QueryHelpers.AddQueryString(config.AuthorizationEndpoint, new Dictionary<string, string?>
         {
             ["response_type"] = "code",
-            ["client_id"] = o.ClientId,
+            ["client_id"] = tenant.ClientId,
             ["redirect_uri"] = redirectUri,
-            ["scope"] = o.ScopeString,
+            ["scope"] = tenant.ScopeString,
             ["state"] = state,
             ["nonce"] = nonce,
             ["code_challenge"] = codeChallenge,
@@ -66,6 +75,7 @@ internal static class BffEndpoints
         IOptions<AuthagonalBffOptions> options,
         BffOidcConfig oidc,
         ITokenClient tokens,
+        IBffTenantResolver tenants,
         IBffSessionStore store,
         ICookieProtector protector,
         ILoggerFactory loggerFactory,
@@ -90,12 +100,18 @@ internal static class BffEndpoints
         if (string.IsNullOrEmpty(code))
             return Fail("missing_code");
 
+        // The correlation cookie pins which tenant this login was started for — re-resolve its client config so
+        // the code exchange + id_token validation use the same confidential client and issuer.
+        var tenant = await tenants.ResolveAsync(correlation.TenantKey, ct);
+        if (tenant is null)
+            return Fail("unknown_tenant");
+
         var redirectUri = BuildRedirectUri(ctx, o);
 
         TokenResult tokenResult;
         try
         {
-            tokenResult = await tokens.ExchangeCodeAsync(code, redirectUri, correlation.CodeVerifier, ct);
+            tokenResult = await tokens.ExchangeCodeAsync(tenant, code, redirectUri, correlation.CodeVerifier, ct);
         }
         catch (BffTokenException ex)
         {
@@ -106,12 +122,12 @@ internal static class BffEndpoints
         if (tokenResult.IdToken is null)
             return Fail("missing_id_token");
 
-        var config = await oidc.GetAsync(ct);
+        var config = await oidc.GetAsync(tenant.Authority, ct);
         var handler = new JsonWebTokenHandler();
         var validation = await handler.ValidateTokenAsync(tokenResult.IdToken, new TokenValidationParameters
         {
             ValidIssuer = config.Issuer,
-            ValidAudience = o.ClientId,
+            ValidAudience = tenant.ClientId,
             IssuerSigningKeys = config.SigningKeys,
             ValidateLifetime = true,
         });
@@ -128,6 +144,7 @@ internal static class BffEndpoints
         var session = new BffSession
         {
             SessionId = Base64Url(RandomNumberGenerator.GetBytes(32)),
+            TenantKey = tenant.TenantKey,
             Sid = jwt.TryGetPayloadValue<string>("sid", out var sid) ? sid : null,
             Subject = jwt.Subject,
             IdToken = tokenResult.IdToken,
@@ -186,6 +203,7 @@ internal static class BffEndpoints
         IOptions<AuthagonalBffOptions> options,
         IBffSessionStore store,
         ITokenClient tokens,
+        IBffTenantResolver tenants,
         BffOidcConfig oidc,
         ILoggerFactory loggerFactory,
         CancellationToken ct)
@@ -197,15 +215,18 @@ internal static class BffEndpoints
             return Results.StatusCode(StatusCodes.Status401Unauthorized);
 
         string? idTokenHint = null;
+        BffTenantConfig? tenant = null;
         if (ctx.Request.Cookies.TryGetValue(o.CookieName, out var sessionId) && !string.IsNullOrEmpty(sessionId))
         {
             var session = await store.GetAsync(sessionId, ct);
             if (session is not null)
             {
                 idTokenHint = session.IdToken;
-                if (session.RefreshToken is not null)
+                // Re-resolve the session's tenant so revoke + end_session hit the right auth host / client.
+                tenant = await tenants.ResolveAsync(session.TenantKey, ct);
+                if (tenant is not null && session.RefreshToken is not null)
                 {
-                    try { await tokens.RevokeAsync(session.RefreshToken, ct); }
+                    try { await tokens.RevokeAsync(tenant, session.RefreshToken, ct); }
                     catch (Exception ex) { loggerFactory.CreateLogger("Authagonal.Bff").LogWarning(ex, "BFF refresh-token revocation failed on logout."); }
                 }
                 await store.RemoveAsync(sessionId, ct);
@@ -213,15 +234,20 @@ internal static class BffEndpoints
             ctx.Response.Cookies.Delete(o.CookieName, SessionCookieOptions(ctx, o));
         }
 
-        var config = await oidc.GetAsync(ct);
-        if (!string.IsNullOrEmpty(config.EndSessionEndpoint))
+        // The RP-initiated end_session redirect needs a tenant (its auth host + client). Without a session — or
+        // an unresolvable tenant — there's nothing to sign out at the IdP; just return to the post-logout URL.
+        if (tenant is not null)
         {
-            var query = new Dictionary<string, string?> { ["client_id"] = o.ClientId };
-            if (idTokenHint is not null)
-                query["id_token_hint"] = idTokenHint;
-            if (o.PostLogoutRedirectUri is not null)
-                query["post_logout_redirect_uri"] = o.PostLogoutRedirectUri;
-            return Results.Redirect(QueryHelpers.AddQueryString(config.EndSessionEndpoint, query));
+            var config = await oidc.GetAsync(tenant.Authority, ct);
+            if (!string.IsNullOrEmpty(config.EndSessionEndpoint))
+            {
+                var query = new Dictionary<string, string?> { ["client_id"] = tenant.ClientId };
+                if (idTokenHint is not null)
+                    query["id_token_hint"] = idTokenHint;
+                if (o.PostLogoutRedirectUri is not null)
+                    query["post_logout_redirect_uri"] = o.PostLogoutRedirectUri;
+                return Results.Redirect(QueryHelpers.AddQueryString(config.EndSessionEndpoint, query));
+            }
         }
 
         return o.PostLogoutRedirectUri is not null ? Results.Redirect(o.PostLogoutRedirectUri) : Results.Ok();
@@ -233,11 +259,11 @@ internal static class BffEndpoints
         HttpContext ctx,
         IOptions<AuthagonalBffOptions> options,
         BffOidcConfig oidc,
+        IBffTenantResolver tenants,
         IBffSessionStore store,
         ILoggerFactory loggerFactory,
         CancellationToken ct)
     {
-        var o = options.Value;
         var log = loggerFactory.CreateLogger("Authagonal.Bff");
         ctx.Response.Headers.CacheControl = "no-store";
 
@@ -246,11 +272,22 @@ internal static class BffEndpoints
         if (string.IsNullOrEmpty(logoutToken))
             return Fail("missing_logout_token");
 
-        var config = await oidc.GetAsync(ct);
+        // A back-channel logout carries no session cookie — the token's issuer is all we have to pick which
+        // tenant it's for. Read the (still-unvalidated) iss only to *select* the tenant; the signature is then
+        // verified below against that tenant's JWKS + client id, so a forged iss can't get a token accepted.
+        string issuer;
+        try { issuer = new JsonWebToken(logoutToken).Issuer; }
+        catch (Exception ex) { log.LogWarning(ex, "BFF back-channel logout token was not a well-formed JWT."); return Fail("invalid_logout_token"); }
+
+        var tenant = await tenants.ResolveByIssuerAsync(issuer, ct);
+        if (tenant is null)
+            return Fail("unknown_issuer");
+
+        var config = await oidc.GetAsync(tenant.Authority, ct);
         var validation = await new JsonWebTokenHandler().ValidateTokenAsync(logoutToken, new TokenValidationParameters
         {
             ValidIssuer = config.Issuer,
-            ValidAudience = o.ClientId,
+            ValidAudience = tenant.ClientId,
             IssuerSigningKeys = config.SigningKeys,
             ValidateLifetime = false,      // a logout token carries no exp
             RequireExpirationTime = false,

@@ -29,6 +29,10 @@ public static class AuthagonalBffExtensions
         services.TryAddSingleton<ICookieProtector, DataProtectionCookieProtector>();
         services.TryAddSingleton<IBffSessionStore, DistributedCacheBffSessionStore>();
         services.TryAddSingleton<ITokenClient, AuthagonalTokenClient>();
+        // Single-tenant by default. A host serving many tenants registers its own IBffTenantResolver
+        // (AddSingleton) before or after this call — TryAdd keeps the custom one — and sets
+        // AuthagonalBffOptions.TenantQueryParam so /bff/login reads the tenant key.
+        services.TryAddSingleton<IBffTenantResolver, StaticBffTenantResolver>();
         services.TryAddSingleton<BffRefreshCoordinator>();
 
         return services;

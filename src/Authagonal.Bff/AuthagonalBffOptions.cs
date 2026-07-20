@@ -16,14 +16,28 @@ public enum BffSessionMode
 public sealed class AuthagonalBffOptions
 {
     /// <summary>The tenant auth host, e.g. <c>https://acme-admin.authagonal.io</c>. OIDC metadata is
-    /// discovered from <c>{Authority}/.well-known/openid-configuration</c>.</summary>
+    /// discovered from <c>{Authority}/.well-known/openid-configuration</c>. Required in single-tenant mode;
+    /// ignored (a custom <see cref="IBffTenantResolver"/> supplies it per tenant) when
+    /// <see cref="TenantQueryParam"/> is set.</summary>
     public string Authority { get; set; } = default!;
 
-    /// <summary>The confidential client id registered in Authagonal for this BFF.</summary>
+    /// <summary>The confidential client id registered in Authagonal for this BFF. Required in single-tenant
+    /// mode; supplied per tenant by the resolver in multi-tenant mode.</summary>
     public string ClientId { get; set; } = default!;
 
-    /// <summary>The client secret. The BFF is a confidential client; this must be set.</summary>
+    /// <summary>The client secret. The BFF is a confidential client; this must be set in single-tenant mode
+    /// (supplied per tenant by the resolver in multi-tenant mode).</summary>
     public string ClientSecret { get; set; } = default!;
+
+    /// <summary>Multi-tenant switch. When set, one BFF serves many tenants: <c>/bff/login</c> reads the tenant
+    /// key from this query parameter (e.g. <c>"slug"</c> ⇒ <c>/bff/login?slug=acme</c>), a registered
+    /// <see cref="IBffTenantResolver"/> resolves the per-tenant <see cref="BffTenantConfig"/>, and the key is
+    /// persisted on the session so later requests re-resolve it. When null (the default) the BFF is
+    /// single-tenant and <see cref="Authority"/>/<see cref="ClientId"/>/<see cref="ClientSecret"/> are used.</summary>
+    public string? TenantQueryParam { get; set; }
+
+    /// <summary>True when the BFF is configured to serve many tenants (<see cref="TenantQueryParam"/> is set).</summary>
+    public bool IsMultiTenant => !string.IsNullOrWhiteSpace(TenantQueryParam);
 
     /// <summary>Requested scopes. Include <c>offline_access</c> to enable server-side refresh.</summary>
     public IList<string> Scope { get; set; } = new List<string> { "openid", "profile", "offline_access" };
@@ -69,12 +83,17 @@ public sealed class AuthagonalBffOptions
 
     internal void Validate()
     {
-        if (string.IsNullOrWhiteSpace(Authority))
-            throw new InvalidOperationException("AuthagonalBffOptions.Authority is required.");
-        if (string.IsNullOrWhiteSpace(ClientId))
-            throw new InvalidOperationException("AuthagonalBffOptions.ClientId is required.");
-        if (string.IsNullOrWhiteSpace(ClientSecret))
-            throw new InvalidOperationException("AuthagonalBffOptions.ClientSecret is required (the BFF is a confidential client).");
+        // In multi-tenant mode a registered IBffTenantResolver supplies Authority/ClientId/ClientSecret per
+        // tenant, so the static single-tenant fields are not required (and are ignored if set).
+        if (!IsMultiTenant)
+        {
+            if (string.IsNullOrWhiteSpace(Authority))
+                throw new InvalidOperationException("AuthagonalBffOptions.Authority is required (or set TenantQueryParam for multi-tenant mode).");
+            if (string.IsNullOrWhiteSpace(ClientId))
+                throw new InvalidOperationException("AuthagonalBffOptions.ClientId is required.");
+            if (string.IsNullOrWhiteSpace(ClientSecret))
+                throw new InvalidOperationException("AuthagonalBffOptions.ClientSecret is required (the BFF is a confidential client).");
+        }
         if (SessionMode == BffSessionMode.Stateless)
             throw new InvalidOperationException("BffSessionMode.Stateless is not implemented yet; use BffSessionMode.Store.");
 

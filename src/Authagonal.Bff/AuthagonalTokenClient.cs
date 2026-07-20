@@ -1,48 +1,45 @@
 using System.Text.Json;
-using Microsoft.Extensions.Options;
 
 namespace Authagonal.Bff;
 
 /// <summary>Default <see cref="ITokenClient"/>. Uses <c>client_secret_post</c> client authentication and
-/// parses responses with <c>JsonDocument</c> (trim-safe).</summary>
+/// parses responses with <c>JsonDocument</c> (trim-safe). All endpoints are discovered per the tenant's
+/// authority, and the tenant's confidential client credentials authenticate the call.</summary>
 internal sealed class AuthagonalTokenClient(
     IHttpClientFactory httpClientFactory,
-    BffOidcConfig oidc,
-    IOptions<AuthagonalBffOptions> options) : ITokenClient
+    BffOidcConfig oidc) : ITokenClient
 {
-    private readonly AuthagonalBffOptions _o = options.Value;
-
-    public async Task<TokenResult> ExchangeCodeAsync(string code, string redirectUri, string codeVerifier, CancellationToken ct = default)
+    public async Task<TokenResult> ExchangeCodeAsync(BffTenantConfig tenant, string code, string redirectUri, string codeVerifier, CancellationToken ct = default)
     {
-        var config = await oidc.GetAsync(ct);
+        var config = await oidc.GetAsync(tenant.Authority, ct);
         var form = new Dictionary<string, string>
         {
             ["grant_type"] = "authorization_code",
             ["code"] = code,
             ["redirect_uri"] = redirectUri,
             ["code_verifier"] = codeVerifier,
-            ["client_id"] = _o.ClientId,
-            ["client_secret"] = _o.ClientSecret,
+            ["client_id"] = tenant.ClientId,
+            ["client_secret"] = tenant.ClientSecret,
         };
         return await PostTokenAsync(config.TokenEndpoint, form, ct);
     }
 
-    public async Task<TokenResult> RefreshAsync(string refreshToken, CancellationToken ct = default)
+    public async Task<TokenResult> RefreshAsync(BffTenantConfig tenant, string refreshToken, CancellationToken ct = default)
     {
-        var config = await oidc.GetAsync(ct);
+        var config = await oidc.GetAsync(tenant.Authority, ct);
         var form = new Dictionary<string, string>
         {
             ["grant_type"] = "refresh_token",
             ["refresh_token"] = refreshToken,
-            ["client_id"] = _o.ClientId,
-            ["client_secret"] = _o.ClientSecret,
+            ["client_id"] = tenant.ClientId,
+            ["client_secret"] = tenant.ClientSecret,
         };
         return await PostTokenAsync(config.TokenEndpoint, form, ct);
     }
 
-    public async Task RevokeAsync(string refreshToken, CancellationToken ct = default)
+    public async Task RevokeAsync(BffTenantConfig tenant, string refreshToken, CancellationToken ct = default)
     {
-        var config = await oidc.GetAsync(ct);
+        var config = await oidc.GetAsync(tenant.Authority, ct);
         if (!config.AdditionalData.TryGetValue("revocation_endpoint", out var raw) || raw?.ToString() is not { } revocationEndpoint)
             return; // provider advertises no revocation endpoint
 
@@ -50,8 +47,8 @@ internal sealed class AuthagonalTokenClient(
         {
             ["token"] = refreshToken,
             ["token_type_hint"] = "refresh_token",
-            ["client_id"] = _o.ClientId,
-            ["client_secret"] = _o.ClientSecret,
+            ["client_id"] = tenant.ClientId,
+            ["client_secret"] = tenant.ClientSecret,
         };
         var client = httpClientFactory.CreateClient("AuthagonalBff");
         using var _ = await client.PostAsync(revocationEndpoint, new FormUrlEncodedContent(form), ct);

@@ -3,8 +3,9 @@ using System.Text.Json.Serialization;
 namespace Authagonal.Bff;
 
 /// <summary>Short-lived pre-authentication state, carried in the protected correlation cookie across the
-/// login → callback navigation.</summary>
-internal sealed record CorrelationState(string State, string CodeVerifier, string Nonce, string ReturnUrl);
+/// login → callback navigation. <see cref="TenantKey"/> pins the tenant the login was started for, so the
+/// callback exchanges the code against the same client (null in single-tenant mode).</summary>
+internal sealed record CorrelationState(string State, string CodeVerifier, string Nonce, string ReturnUrl, string? TenantKey);
 
 /// <summary>The <c>/bff/user</c> response shape.</summary>
 internal sealed class UserResponse

@@ -1,28 +1,25 @@
-using Microsoft.Extensions.Options;
+using System.Collections.Concurrent;
 using Microsoft.IdentityModel.Protocols;
 using Microsoft.IdentityModel.Protocols.OpenIdConnect;
 
 namespace Authagonal.Bff;
 
-/// <summary>Discovers and caches the Authagonal tenant's OIDC metadata (endpoints + signing keys),
-/// refreshing on the usual schedule and on signing-key rotation. Singleton per BFF.</summary>
+/// <summary>Discovers and caches each tenant's OIDC metadata (endpoints + signing keys), keyed by authority,
+/// refreshing on the usual schedule and on signing-key rotation. One <see cref="ConfigurationManager{T}"/> per
+/// authority — so a single multi-tenant BFF discovers each tenant's auth host independently. Singleton.</summary>
 public sealed class BffOidcConfig
 {
-    private readonly ConfigurationManager<OpenIdConnectConfiguration> _manager;
+    private readonly ConcurrentDictionary<string, ConfigurationManager<OpenIdConnectConfiguration>> _managers = new(StringComparer.OrdinalIgnoreCase);
 
-    public BffOidcConfig(IOptions<AuthagonalBffOptions> options)
-    {
-        var authority = options.Value.Authority.TrimEnd('/');
-        var metadataAddress = $"{authority}/.well-known/openid-configuration";
-        var requireHttps = authority.StartsWith("https://", StringComparison.OrdinalIgnoreCase);
-
-        _manager = new ConfigurationManager<OpenIdConnectConfiguration>(
-            metadataAddress,
-            new OpenIdConnectConfigurationRetriever(),
-            new HttpDocumentRetriever { RequireHttps = requireHttps });
-    }
-
-    /// <summary>The current OIDC configuration (cached; refreshed automatically).</summary>
-    public Task<OpenIdConnectConfiguration> GetAsync(CancellationToken ct = default)
-        => _manager.GetConfigurationAsync(ct);
+    /// <summary>The current OIDC configuration for the given authority (cached; refreshed automatically).</summary>
+    public Task<OpenIdConnectConfiguration> GetAsync(string authority, CancellationToken ct = default)
+        => _managers.GetOrAdd(authority.TrimEnd('/'), static a =>
+        {
+            var metadataAddress = $"{a}/.well-known/openid-configuration";
+            var requireHttps = a.StartsWith("https://", StringComparison.OrdinalIgnoreCase);
+            return new ConfigurationManager<OpenIdConnectConfiguration>(
+                metadataAddress,
+                new OpenIdConnectConfigurationRetriever(),
+                new HttpDocumentRetriever { RequireHttps = requireHttps });
+        }).GetConfigurationAsync(ct);
 }

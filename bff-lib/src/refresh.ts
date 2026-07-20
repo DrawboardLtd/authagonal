@@ -2,14 +2,17 @@ import type { BffSession, IBffSessionStore } from './session.js';
 import type { OidcClient } from './oidc.js';
 import { BffTokenError } from './oidc.js';
 import type { ResolvedBffOptions } from './options.js';
+import type { IBffTenantResolver } from './tenant.js';
 
 /** Keeps a session's access token fresh, refreshing single-flight per session so concurrent requests never
- * each spend the (rotating) refresh token. */
+ * each spend the (rotating) refresh token. Re-resolves the session's tenant so each refresh hits the right
+ * auth host + confidential client. */
 export class RefreshCoordinator {
   private readonly inflight = new Map<string, Promise<BffSession | null>>();
 
   constructor(
-    private readonly oidc: OidcClient,
+    private readonly tenants: IBffTenantResolver,
+    private readonly oidcFor: (authority: string) => OidcClient,
     private readonly store: IBffSessionStore,
     private readonly o: ResolvedBffOptions,
   ) {}
@@ -35,8 +38,15 @@ export class RefreshCoordinator {
     if (!this.needsRefresh(current)) return current;
     if (!current.refreshToken) return current.accessTokenExpiresAt > Date.now() ? current : null;
 
+    const tenant = await this.tenants.resolve(current.tenantKey);
+    if (!tenant) {
+      // Tenant no longer resolvable (deprovisioned / config changed); can't refresh without its client creds.
+      await this.store.remove(sessionId);
+      return null;
+    }
+
     try {
-      const r = await this.oidc.refresh(current.refreshToken);
+      const r = await this.oidcFor(tenant.authority).refresh(tenant.clientId, tenant.clientSecret, current.refreshToken);
       current.accessToken = r.accessToken;
       if (r.refreshToken) current.refreshToken = r.refreshToken;
       if (r.idToken) current.idToken = r.idToken;
