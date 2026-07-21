@@ -405,8 +405,14 @@ internal static class BffEndpoints
     {
         var claims = new Dictionary<string, string>(StringComparer.Ordinal);
         foreach (var claim in jwt.Claims)
-            if (!ProtocolClaims.Contains(claim.Type) && !claims.ContainsKey(claim.Type))
-                claims[claim.Type] = claim.Value;
+        {
+            if (ProtocolClaims.Contains(claim.Type)) continue;
+            // Array claims (roles, groups) arrive as repeated claim types — space-join so the SPA
+            // sees the full set (previously only the first value survived).
+            claims[claim.Type] = claims.TryGetValue(claim.Type, out var existing)
+                ? $"{existing} {claim.Value}"
+                : claim.Value;
+        }
         return claims;
     }
 

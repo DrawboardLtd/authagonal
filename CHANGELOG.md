@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+## [0.10.5], 2026-07-21
+
+### Fixed
+
+- **Bff: array claims survive `/bff/user`** — repeated id_token claim types (`roles`, `groups`)
+  are now space-joined into the session claim map; previously only the first value survived, so a
+  multi-role user lost everything after their first role.
+
 ## [0.10.4], 2026-07-21
 
 ### Changed
