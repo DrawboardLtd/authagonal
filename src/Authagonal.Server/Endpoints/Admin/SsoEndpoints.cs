@@ -76,6 +76,7 @@ public static class SsoEndpoints
             SignAuthnRequests = request.SignAuthnRequests,
             AllowedDomains = request.AllowedDomains ?? [],
             JitProvisioningEnabled = request.JitProvisioningEnabled,
+            ChallengeMfaAfterLogin = request.ChallengeMfaAfterLogin ?? true,
             CreatedAt = now
         };
 
@@ -140,6 +141,10 @@ public static class SsoEndpoints
         if (request.JitProvisioningEnabled.HasValue)
         {
             config.JitProvisioningEnabled = request.JitProvisioningEnabled.Value;
+        }
+        if (request.ChallengeMfaAfterLogin.HasValue)
+        {
+            config.ChallengeMfaAfterLogin = request.ChallengeMfaAfterLogin.Value;
         }
         // F49/F51 partial updates. Supplying a metadata URL clears pasted XML and vice versa (the
         // two are mutually exclusive sources); NameIdFormat "" resets to the default.
@@ -248,6 +253,7 @@ public static class SsoEndpoints
             AllowedDomains = request.AllowedDomains ?? [],
             PassthroughParams = request.PassthroughParams ?? [],
             JitProvisioningEnabled = request.JitProvisioningEnabled,
+            ChallengeMfaAfterLogin = request.ChallengeMfaAfterLogin ?? true,
             CreatedAt = now
         };
 
@@ -402,6 +408,10 @@ public static class SsoEndpoints
         /// Default false — an unknown assertion is rejected until explicitly enabled.
         /// </summary>
         public bool JitProvisioningEnabled { get; set; }
+
+        /// <summary>Still route users through the local MFA challenge after federated login (F42).
+        /// Default true; false = the tenant trusts the IdP's own MFA as the second factor.</summary>
+        public bool? ChallengeMfaAfterLogin { get; set; }
     }
 
     /// <summary>
@@ -412,6 +422,9 @@ public static class SsoEndpoints
     {
         public List<string>? AllowedDomains { get; set; }
         public bool? JitProvisioningEnabled { get; set; }
+        /// <summary>Still route users through the local MFA challenge after federated login (F42);
+        /// null = leave unchanged. False = the tenant trusts the IdP's own MFA.</summary>
+        public bool? ChallengeMfaAfterLogin { get; set; }
         /// <summary>New metadata URL; setting it clears any pasted MetadataXml.</summary>
         public string? MetadataLocation { get; set; }
         /// <summary>New pasted metadata XML; setting it clears MetadataLocation.</summary>
@@ -436,5 +449,9 @@ public static class SsoEndpoints
         /// <summary>Opt this connection into JIT provisioning (auto-create unknown federated users on
         /// first login). Default false — an unknown assertion is rejected until explicitly enabled.</summary>
         public bool JitProvisioningEnabled { get; set; }
+
+        /// <summary>Still route users through the local MFA challenge after federated login (F42).
+        /// Default true; false = the tenant trusts the IdP's own MFA as the second factor.</summary>
+        public bool? ChallengeMfaAfterLogin { get; set; }
     }
 }

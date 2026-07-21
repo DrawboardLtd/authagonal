@@ -443,11 +443,16 @@ public static class OidcEndpoints
         // are enrolled, or the client mandates it), route through the local MFA challenge/setup instead of
         // signing a fully-authenticated session — otherwise a bare federated login silently satisfies a
         // tenant's MFA requirement. When MFA is neither enrolled nor required, federation stands alone.
+        // Per-connection override: the tenant may trust the IdP's own MFA as the second factor,
+        // in which case the local challenge is skipped and federation signs in mfa-authenticated.
         var loginAppBase = configuration["LoginAppUrl"] ?? "/login";
-        var mfaRedirect = await FederatedMfaFlow.MaybeChallengeAsync(
-            user, returnUrl, loginAppBase, clientStore, mfaStore, webAuthnService, authHooks, authOptions.Value, logger, ct);
-        if (mfaRedirect is not null)
-            return mfaRedirect;
+        if (config.ChallengeMfaAfterLogin)
+        {
+            var mfaRedirect = await FederatedMfaFlow.MaybeChallengeAsync(
+                user, returnUrl, loginAppBase, clientStore, mfaStore, webAuthnService, authHooks, authOptions.Value, logger, ct);
+            if (mfaRedirect is not null)
+                return mfaRedirect;
+        }
 
         // Sign in with cookie auth
         var displayName = $"{user.FirstName} {user.LastName}".Trim();

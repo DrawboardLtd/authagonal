@@ -67,6 +67,18 @@ public sealed record OidcProviderConfig
     /// </summary>
     public bool HiddenFromLogin { get => !ShowOnLogin; set => ShowOnLogin = !value; }
 
+    /// <summary>
+    /// Whether a user is still routed through the LOCAL MFA challenge after this connection
+    /// authenticates them (F42). Default true: a federated assertion proves only the first factor.
+    /// Set false when the tenant trusts the upstream IdP to enforce its own MFA — the local
+    /// challenge is skipped and the session is signed in as mfa-authenticated on federation alone.
+    /// </summary>
+    public bool ChallengeMfaAfterLogin { get; set; } = true;
+
+    /// <summary>Inverted persistence alias for <see cref="ChallengeMfaAfterLogin"/> — stored rows
+    /// written before this field existed read false → challenge stays ON (the safe default).</summary>
+    public bool SkipMfaAfterFederatedLogin { get => !ChallengeMfaAfterLogin; set => ChallengeMfaAfterLogin = !value; }
+
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset? UpdatedAt { get; set; }
 }

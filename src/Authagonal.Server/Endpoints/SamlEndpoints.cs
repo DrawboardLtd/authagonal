@@ -390,11 +390,16 @@ public static class SamlEndpoints
         // F42: federation proves the FIRST factor only. If the user's effective policy requires MFA, route
         // through the local MFA challenge/setup rather than signing a fully-authenticated session — else a
         // bare SAML login silently satisfies a tenant's MFA requirement. relayState carries them onward.
+        // Per-connection override: the tenant may trust the IdP's own MFA as the second factor,
+        // in which case the local challenge is skipped and federation signs in mfa-authenticated.
         var loginAppBase = configuration["LoginAppUrl"] ?? "/login";
-        var mfaRedirect = await FederatedMfaFlow.MaybeChallengeAsync(
-            user, relayState, loginAppBase, clientStore, mfaStore, webAuthnService, authHooks, authOptions.Value, logger, ct);
-        if (mfaRedirect is not null)
-            return mfaRedirect;
+        if (config.ChallengeMfaAfterLogin)
+        {
+            var mfaRedirect = await FederatedMfaFlow.MaybeChallengeAsync(
+                user, relayState, loginAppBase, clientStore, mfaStore, webAuthnService, authHooks, authOptions.Value, logger, ct);
+            if (mfaRedirect is not null)
+                return mfaRedirect;
+        }
 
         // Sign in with cookie auth
         var displayName = $"{user.FirstName} {user.LastName}".Trim();

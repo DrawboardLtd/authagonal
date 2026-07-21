@@ -33,6 +33,9 @@ public sealed class SamlProviderEntity : ITableEntity
     /// coerces null → false to preserve the prior behaviour (JIT enabled).
     /// </summary>
     public bool? DisableJitProvisioning { get; set; }
+    /// <summary>Negative form of <see cref="SamlProviderConfig.ChallengeMfaAfterLogin"/>: rows lacking
+    /// the column read null → false → the local MFA challenge stays on (the safe default).</summary>
+    public bool? SkipMfaAfterFederatedLogin { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset? UpdatedAt { get; set; }
 
@@ -50,6 +53,7 @@ public sealed class SamlProviderEntity : ITableEntity
         AllowedDomainsJson = JsonSerializer.Serialize(config.AllowedDomains, AzureJsonContext.Default.ListString),
         IconUrl = config.IconUrl,
         DisableJitProvisioning = config.DisableJitProvisioning,
+        SkipMfaAfterFederatedLogin = config.SkipMfaAfterFederatedLogin,
         CreatedAt = config.CreatedAt,
         UpdatedAt = config.UpdatedAt,
     };
@@ -67,6 +71,7 @@ public sealed class SamlProviderEntity : ITableEntity
         AllowedDomains = JsonSerializer.Deserialize(AllowedDomainsJson, AzureJsonContext.Default.ListString) ?? [],
         IconUrl = IconUrl,
         DisableJitProvisioning = DisableJitProvisioning ?? false,
+        SkipMfaAfterFederatedLogin = SkipMfaAfterFederatedLogin ?? false,
         CreatedAt = CreatedAt,
         UpdatedAt = UpdatedAt,
     };

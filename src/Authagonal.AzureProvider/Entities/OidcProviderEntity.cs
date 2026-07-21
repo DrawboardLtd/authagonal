@@ -25,6 +25,8 @@ public sealed class OidcProviderEntity : ITableEntity
     public bool UseUpstreamSubjectAsUserId { get; set; }
     // Negative form (like DisableJitProvisioning): existing rows lacking the column read false → shown.
     public bool HiddenFromLogin { get; set; }
+    // Negative form: rows lacking the column read false → the local MFA challenge stays on.
+    public bool SkipMfaAfterFederatedLogin { get; set; }
     public string? SessionExpClaim { get; set; }
     public string? PassthroughParamsJson { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
@@ -44,6 +46,7 @@ public sealed class OidcProviderEntity : ITableEntity
         DisableJitProvisioning = config.DisableJitProvisioning,
         UseUpstreamSubjectAsUserId = config.UseUpstreamSubjectAsUserId,
         HiddenFromLogin = config.HiddenFromLogin,
+        SkipMfaAfterFederatedLogin = config.SkipMfaAfterFederatedLogin,
         SessionExpClaim = config.SessionExpClaim,
         PassthroughParamsJson = config.PassthroughParams.Count > 0
             ? JsonSerializer.Serialize(config.PassthroughParams, AzureJsonContext.Default.ListString)
@@ -65,6 +68,7 @@ public sealed class OidcProviderEntity : ITableEntity
         DisableJitProvisioning = DisableJitProvisioning,
         UseUpstreamSubjectAsUserId = UseUpstreamSubjectAsUserId,
         HiddenFromLogin = HiddenFromLogin,
+        SkipMfaAfterFederatedLogin = SkipMfaAfterFederatedLogin,
         SessionExpClaim = SessionExpClaim,
         PassthroughParams = string.IsNullOrEmpty(PassthroughParamsJson)
             ? []

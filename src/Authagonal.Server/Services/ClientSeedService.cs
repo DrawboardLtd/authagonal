@@ -62,7 +62,8 @@ public sealed class ClientSeedService(
                 AbsoluteRefreshTokenLifetimeSeconds = seed.AbsoluteRefreshTokenLifetimeSeconds ?? 2592000,
                 SlidingRefreshTokenLifetimeSeconds = seed.SlidingRefreshTokenLifetimeSeconds ?? 1296000,
                 RefreshTokenUsage = seed.RefreshTokenUsage ?? RefreshTokenUsage.OneTime,
-                MfaPolicy = seed.MfaPolicy ?? MfaPolicy.Disabled
+                MfaPolicy = seed.MfaPolicy ?? MfaPolicy.Disabled,
+                BackChannelLogoutUri = seed.BackchannelLogoutUri
             };
 
             await clientStore.UpsertAsync(client, ct);
@@ -113,5 +114,8 @@ public sealed class ClientSeedService(
         public int? SlidingRefreshTokenLifetimeSeconds { get; set; }
         public RefreshTokenUsage? RefreshTokenUsage { get; set; }
         public MfaPolicy? MfaPolicy { get; set; }
+        /// <summary>Where OIDC back-channel logout tokens for this client are POSTed
+        /// (e.g. a BFF's <c>/bff/backchannel-logout</c>).</summary>
+        public string? BackchannelLogoutUri { get; set; }
     }
 }

@@ -121,6 +121,7 @@ public static class AuthagonalExtensions
         services.AddHostedService<SigningKeyRotationService>();
         services.AddHostedService<ClientSeedService>();
         services.AddHostedService<ProviderSeedService>();
+        services.AddHostedService<ScopeSeedService>();
 
         // SAML replay cache + OIDC state store live behind the ISamlReplayCache / IOidcStateStore seams.
         // The Azure backend exposes keyed TableClients; when present, wire the Table-backed impls. An AWS

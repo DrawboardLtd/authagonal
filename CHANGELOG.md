@@ -2,6 +2,23 @@
 
 ## [Unreleased]
 
+## [0.10.3], 2026-07-21
+
+### Added
+
+- **Per-connection MFA challenge control** (`ChallengeMfaAfterLogin`, SAML + OIDC connections,
+  default `true`): whether users are still routed through the LOCAL MFA challenge after this
+  connection authenticates them (F42). `false` = the tenant trusts the upstream IdP's own MFA as
+  the second factor — federation signs the session in `mfa_authenticated` without a local
+  challenge. Threaded through config seed, admin create/update DTOs and the Azure/Dynamo stores
+  (persisted in the negative, so pre-existing rows keep challenging).
+- **`Scopes[]` config seeding** (`ScopeSeedService`): register custom scopes (name, display name,
+  `UserClaims`, discovery visibility) from configuration at startup, mirroring `Clients[]` — they
+  appear in `scopes_supported` and are ready for per-scope claim release.
+- **`BackchannelLogoutUri` on `Clients[]` seed entries**: config-seeded clients can now register a
+  back-channel logout endpoint (previously only dynamic registration could), e.g. a BFF's
+  `/bff/backchannel-logout`.
+
 ## [0.10.2], 2026-07-21
 
 ### Added
