@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+## [0.10.6], 2026-07-21
+
+### Added
+
+- **Bff: `AllowAnonymousProxyRequests`** (default off): the token-injecting proxy forwards
+  session-less (or dead-session) requests to the upstream WITHOUT an Authorization header instead of
+  rejecting them with 401 — classic SPA semantics where the API's own auth decides, so
+  `[AllowAnonymous]` endpoints (share-link fetch/peek) work signed-out while protected endpoints
+  still return their own 401. The anti-forgery header remains required.
+
 ## [0.10.5], 2026-07-21
 
 ### Fixed

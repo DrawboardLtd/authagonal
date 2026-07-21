@@ -28,14 +28,18 @@ internal static class BffProxy
         var o = options.Value;
         if (!ctx.Request.Headers.ContainsKey(o.AntiForgeryHeader))
             return Results.StatusCode(StatusCodes.Status401Unauthorized);
-        if (!ctx.Request.Cookies.TryGetValue(o.CookieName, out var sessionId) || string.IsNullOrEmpty(sessionId))
-            return Results.StatusCode(StatusCodes.Status401Unauthorized);
 
-        var session = await store.GetAsync(sessionId, ct);
-        if (session is null || session.ExpiresAt <= DateTimeOffset.UtcNow)
-            return Results.StatusCode(StatusCodes.Status401Unauthorized);
-        var fresh = await refresher.EnsureFreshAsync(session, ct);
-        if (fresh is null)
+        // Resolve the session when present. With AllowAnonymousProxyRequests, a missing or dead session
+        // downgrades the call to anonymous (no Authorization attached) instead of a hard 401 — the
+        // upstream's own auth decides, matching how the SPA called the API before the BFF.
+        BffSession? fresh = null;
+        if (ctx.Request.Cookies.TryGetValue(o.CookieName, out var sessionId) && !string.IsNullOrEmpty(sessionId))
+        {
+            var session = await store.GetAsync(sessionId, ct);
+            if (session is not null && session.ExpiresAt > DateTimeOffset.UtcNow)
+                fresh = await refresher.EnsureFreshAsync(session, ct);
+        }
+        if (fresh is null && !o.AllowAnonymousProxyRequests)
             return Results.StatusCode(StatusCodes.Status401Unauthorized);
 
         // Path after {BasePath}/api, e.g. "/orders/123".
@@ -67,7 +71,8 @@ internal static class BffProxy
                 continue;
             upstreamReq.Headers.TryAddWithoutValidation(h.Key, h.Value.ToArray());
         }
-        upstreamReq.Headers.Authorization = new AuthenticationHeaderValue("Bearer", fresh.AccessToken);
+        if (fresh is not null)
+            upstreamReq.Headers.Authorization = new AuthenticationHeaderValue("Bearer", fresh.AccessToken);
 
         using var upstreamResp = await client.SendAsync(upstreamReq, HttpCompletionOption.ResponseHeadersRead, ct);
         ctx.Response.StatusCode = (int)upstreamResp.StatusCode;

@@ -91,6 +91,16 @@ public sealed class AuthagonalBffOptions
     /// connect, and the ticket is deleted on first use.</summary>
     public TimeSpan WsTicketLifetime { get; set; } = TimeSpan.FromSeconds(30);
 
+    /// <summary>
+    /// When true, a proxy request (<c>{BasePath}/api/**</c>) with no session — or a session that can no
+    /// longer be refreshed — is forwarded to the upstream WITHOUT an <c>Authorization</c> header instead
+    /// of being rejected with 401. This reproduces classic SPA semantics where anonymous calls reach the
+    /// API and IT decides (e.g. [AllowAnonymous] share-link peeks work signed-out, protected endpoints
+    /// return their own 401). The anti-forgery header is still required. Default false: only sessions
+    /// pass the proxy.
+    /// </summary>
+    public bool AllowAnonymousProxyRequests { get; set; }
+
     /// <summary>Upstream APIs the proxy (<c>{BasePath}/api/**</c>) forwards to with the session's access
     /// token attached. Empty (the default) disables the proxy endpoint.</summary>
     public IList<BffUpstream> Upstreams { get; set; } = new List<BffUpstream>();
