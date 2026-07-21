@@ -79,9 +79,10 @@ public enum OidcRejection
 /// <summary>
 /// The resolved identity Authagonal.Protocol mints tokens for. Hosts build this from
 /// their own identity model (AuthUser, share-link claim set, whatever) and return it
-/// from <see cref="IOidcSubjectResolver"/>.
+/// from <see cref="IOidcSubjectResolver"/>. A record so decorating resolvers can overlay
+/// fields with a <c>with</c> expression without hand-copying (and silently dropping) the rest.
 /// </summary>
-public sealed class OidcSubject
+public sealed record OidcSubject
 {
     /// <summary>Stable identifier for the user. Emitted as the <c>sub</c> claim.</summary>
     public required string SubjectId { get; init; }

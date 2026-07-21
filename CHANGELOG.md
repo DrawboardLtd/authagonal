@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+## [0.10.4], 2026-07-21
+
+### Changed
+
+- **`OidcSubject` is now a `record`** (was a sealed class; same shape, adds value equality). Lets a
+  host DECORATE the registered `IOidcSubjectResolver` and overlay fields with a `with` expression —
+  e.g. enriching subjects with live org context from an external system of record on every
+  authorize/refresh — without hand-copying (and silently dropping) the remaining fields.
+
 ## [0.10.3], 2026-07-21
 
 ### Added
