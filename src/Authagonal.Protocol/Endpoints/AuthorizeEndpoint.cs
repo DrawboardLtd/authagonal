@@ -81,12 +81,26 @@ internal static class AuthorizeEndpoint
             // is anonymous, run the configured scheme EXPLICITLY before deciding to challenge.
             var authScheme = protocolOptions.Value.AuthenticationScheme;
             var principal = httpContext.User;
+            AuthenticateResult? explicitAuth = null;
             if (principal.Identity?.IsAuthenticated != true && !string.IsNullOrEmpty(authScheme))
             {
-                var explicitAuth = await httpContext.AuthenticateAsync(authScheme);
+                explicitAuth = await httpContext.AuthenticateAsync(authScheme);
                 if (explicitAuth.Succeeded)
                     principal = explicitAuth.Principal;
             }
+
+            // A hard authentication FAILURE (the scheme ran and rejected — e.g. an expired or revoked
+            // share link) is distinct from NoResult (no credential presented). Retrying or challenging is
+            // pointless once the credential was seen and refused, so return access_denied to the RP: its
+            // error UI (and, for a federated RP, its loop-breaker) handle it, instead of falling through to
+            // Challenge and emitting a raw 401 body the user would stare at mid-redirect. redirect_uri is
+            // already validated above.
+            if (principal.Identity?.IsAuthenticated != true && explicitAuth is { Failure: not null })
+                return AuthorizeRequestSupport.BuildErrorRedirect(
+                    request.RedirectUri, "access_denied",
+                    string.IsNullOrWhiteSpace(explicitAuth.Failure.Message) ? "Authentication failed" : explicitAuth.Failure.Message,
+                    request.State);
+
             if (principal.Identity?.IsAuthenticated != true)
             {
                 var originalUrl = $"{httpContext.Request.Path}{httpContext.Request.QueryString}";

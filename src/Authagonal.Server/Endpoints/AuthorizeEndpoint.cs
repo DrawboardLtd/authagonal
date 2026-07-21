@@ -94,11 +94,18 @@ public static class AuthorizeEndpoint
                     // A failed federation round redirects back here with error params appended.
                     // Re-federating would loop forever ("too many redirects") — return the error to
                     // the relying party instead, per OAuth (redirect_uri is already validated above).
-                    var federationError = source.Get("error");
+                    // Read from the LIVE request query, not `source`: for a PAR request `source` is the
+                    // pushed payload, which never carries the error the federation return appends to the
+                    // authorize URL — reading `source` there would miss it and loop anyway.
+                    var federationError = httpContext.Request.Query["error"].ToString();
                     if (!string.IsNullOrWhiteSpace(federationError))
+                    {
+                        var federationErrorDescription = httpContext.Request.Query["error_description"].ToString();
                         return AuthorizeRequestSupport.BuildErrorRedirect(
                             redirectUri, federationError,
-                            source.Get("error_description") ?? "Federated login failed", state);
+                            string.IsNullOrWhiteSpace(federationErrorDescription) ? "Federated login failed" : federationErrorDescription,
+                            state);
+                    }
 
                     var federationLoginUrl = $"/oidc/{Uri.EscapeDataString(idpHint)}/login" +
                         $"?returnUrl={Uri.EscapeDataString(authorizeRelativeUrl)}";
