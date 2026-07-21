@@ -43,7 +43,9 @@ public sealed class ProviderSeedService(
                 MetadataLocation = seed.MetadataLocation ?? throw new InvalidOperationException(
                     $"SAML provider '{seed.ConnectionId}' is missing required MetadataLocation"),
                 AllowedDomains = seed.AllowedDomains ?? [],
+                JitProvisioningEnabled = seed.JitProvisioningEnabled,
                 ChallengeMfaAfterLogin = seed.ChallengeMfaAfterLogin,
+                ProvisioningAttributeParams = seed.ProvisioningAttributeParams ?? [],
                 CreatedAt = DateTimeOffset.UtcNow
             };
 
@@ -102,6 +104,7 @@ public sealed class ProviderSeedService(
                 ChallengeMfaAfterLogin = seed.ChallengeMfaAfterLogin,
                 AutoLinkExistingByEmail = seed.AutoLinkExistingByEmail,
                 PassthroughParams = seed.PassthroughParams ?? [],
+                ProvisioningAttributeParams = seed.ProvisioningAttributeParams ?? [],
                 SessionExpClaim = seed.SessionExpClaim,
                 CreatedAt = DateTimeOffset.UtcNow
             };
@@ -130,7 +133,9 @@ public sealed class ProviderSeedService(
         public string? EntityId { get; set; }
         public string? MetadataLocation { get; set; }
         public List<string>? AllowedDomains { get; set; }
+        public bool JitProvisioningEnabled { get; set; }
         public bool ChallengeMfaAfterLogin { get; set; } = true;
+        public List<string>? ProvisioningAttributeParams { get; set; }
     }
 
     public sealed class OidcProviderSeed
@@ -148,6 +153,7 @@ public sealed class ProviderSeedService(
         public bool ChallengeMfaAfterLogin { get; set; } = true;
         public bool AutoLinkExistingByEmail { get; set; }
         public List<string>? PassthroughParams { get; set; }
+        public List<string>? ProvisioningAttributeParams { get; set; }
         public string? SessionExpClaim { get; set; }
     }
 }

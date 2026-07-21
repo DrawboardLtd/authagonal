@@ -77,6 +77,7 @@ public static class SsoEndpoints
             AllowedDomains = request.AllowedDomains ?? [],
             JitProvisioningEnabled = request.JitProvisioningEnabled,
             ChallengeMfaAfterLogin = request.ChallengeMfaAfterLogin ?? true,
+            ProvisioningAttributeParams = request.ProvisioningAttributeParams ?? [],
             CreatedAt = now
         };
 
@@ -141,6 +142,10 @@ public static class SsoEndpoints
         if (request.JitProvisioningEnabled.HasValue)
         {
             config.JitProvisioningEnabled = request.JitProvisioningEnabled.Value;
+        }
+        if (request.ProvisioningAttributeParams is not null)
+        {
+            config.ProvisioningAttributeParams = request.ProvisioningAttributeParams;
         }
         if (request.ChallengeMfaAfterLogin.HasValue)
         {
@@ -412,6 +417,11 @@ public static class SsoEndpoints
         /// <summary>Still route users through the local MFA challenge after federated login (F42).
         /// Default true; false = the tenant trusts the IdP's own MFA as the second factor.</summary>
         public bool? ChallengeMfaAfterLogin { get; set; }
+
+        /// <summary>Authorize-request query params captured as provisioning CustomAttributes on a JIT
+        /// user (e.g. an org invite's acceptKind/acceptToken), so an SSO signup completes an invite
+        /// through the same provisioning pipeline as a password signup.</summary>
+        public List<string>? ProvisioningAttributeParams { get; set; }
     }
 
     /// <summary>
@@ -425,6 +435,9 @@ public static class SsoEndpoints
         /// <summary>Still route users through the local MFA challenge after federated login (F42);
         /// null = leave unchanged. False = the tenant trusts the IdP's own MFA.</summary>
         public bool? ChallengeMfaAfterLogin { get; set; }
+        /// <summary>Authorize-request query params captured as provisioning CustomAttributes on a JIT
+        /// user; null = leave unchanged.</summary>
+        public List<string>? ProvisioningAttributeParams { get; set; }
         /// <summary>New metadata URL; setting it clears any pasted MetadataXml.</summary>
         public string? MetadataLocation { get; set; }
         /// <summary>New pasted metadata XML; setting it clears MetadataLocation.</summary>

@@ -314,6 +314,23 @@ public static class SamlEndpoints
                 return RedirectWithError(relayState, "access_denied", "User not found. Contact your administrator to be provisioned.");
             }
 
+            // Whitelisted authorize-request params (e.g. an org invite's acceptKind/acceptToken) that
+            // ride the SP-initiated return URL (relayState = the /authorize URL), captured to carry the
+            // downstream provisioning context onto the JIT user. User-supplied — the downstream
+            // provisioner is the gate on the VALUES (e.g. bullclip asserts the federated email equals the
+            // invite recipient); only whitelisted keys are kept.
+            var provisioningAttributes = CollectProvisioningAttributes(config.ProvisioningAttributeParams, relayState).ToList();
+
+            // Invite-only JIT: a connection that DECLARES ProvisioningAttributeParams provisions a new
+            // user only when that context actually arrived. An uninvited unknown is rejected (current
+            // parity) — so an SSO login with no invite can't silently self-provision (which the
+            // downstream would otherwise turn into a stray account/org).
+            if (config.ProvisioningAttributeParams.Count > 0 && provisioningAttributes.Count == 0)
+            {
+                logger.LogInformation("JIT rejected for SAML connection {ConnectionId}: no provisioning context on the request for unknown user {Email}", connectionId, email);
+                return RedirectWithError(relayState, "access_denied", "This login requires an invitation. Contact your administrator.");
+            }
+
             user = new AuthUser
             {
                 Id = Guid.NewGuid().ToString("N"),
@@ -327,6 +344,9 @@ public static class SamlEndpoints
                 SecurityStamp = Convert.ToBase64String(
                     System.Security.Cryptography.RandomNumberGenerator.GetBytes(32))
             };
+
+            foreach (var kv in provisioningAttributes)
+                user.CustomAttributes[kv.Key] = kv.Value;
 
             await userStore.CreateAsync(user, ct);
 
@@ -707,6 +727,24 @@ public static class SamlEndpoints
         {
             logger.LogWarning(ex, "Could not decode SAML SLO message");
             return null;
+        }
+    }
+
+    // Extract the config-whitelisted query params from the SP-initiated return URL (the original
+    // /authorize URL) so they can be attached to a JIT user as provisioning CustomAttributes. Only
+    // whitelisted keys are captured; the downstream provisioner is the security gate on the values.
+    private static IEnumerable<KeyValuePair<string, string>> CollectProvisioningAttributes(
+        IReadOnlyList<string> whitelist, string? returnUrl)
+    {
+        if (whitelist.Count == 0 || string.IsNullOrWhiteSpace(returnUrl)) yield break;
+        var queryStart = returnUrl.IndexOf('?');
+        if (queryStart < 0) yield break;
+        var query = System.Web.HttpUtility.ParseQueryString(returnUrl[queryStart..]);
+        foreach (var key in whitelist)
+        {
+            var value = query[key];
+            if (!string.IsNullOrEmpty(value))
+                yield return new KeyValuePair<string, string>(key, value);
         }
     }
 

@@ -365,6 +365,25 @@ public static class OidcEndpoints
                 return RedirectWithError(returnUrl, "access_denied", "User not found. Contact your administrator to be provisioned.");
             }
 
+            // Whitelisted authorize-request params (e.g. an org invite's acceptKind/acceptToken) that
+            // ride the return URL, captured to carry the downstream provisioning context onto the JIT
+            // user. User-supplied — the downstream provisioner is the gate on the VALUES (e.g. bullclip
+            // asserts the federated email equals the invite recipient); only whitelisted keys are kept.
+            var provisioningAttributes = config.ProvisioningAttributeParams.Count > 0
+                ? CollectPassthroughs(config.ProvisioningAttributeParams, stateData.ReturnUrl, httpContext.Request.Query).ToList()
+                : [];
+
+            // Invite-only JIT: a connection that DECLARES ProvisioningAttributeParams provisions a new
+            // user only when that context actually arrived. An uninvited unknown is rejected (current
+            // parity) — so an SSO login with no invite can't silently self-provision (which the
+            // downstream would otherwise turn into a stray account/org). Connections that declare no such
+            // params (e.g. the guest-link provider, gated by its own link token) are unaffected.
+            if (config.ProvisioningAttributeParams.Count > 0 && provisioningAttributes.Count == 0)
+            {
+                logger.LogInformation("JIT rejected for OIDC connection {ConnectionId}: no provisioning context on the request for unknown user {Email}", stateData.ConnectionId, email);
+                return RedirectWithError(returnUrl, "access_denied", "This login requires an invitation. Contact your administrator.");
+            }
+
             user = new AuthUser
             {
                 // Trusted first-party connections (e.g. bullclip's guest-link provider) adopt the
@@ -379,6 +398,9 @@ public static class OidcEndpoints
                 LockoutEnabled = true,
                 SecurityStamp = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32))
             };
+
+            foreach (var kv in provisioningAttributes)
+                user.CustomAttributes[kv.Key] = kv.Value;
 
             await userStore.CreateAsync(user, ct);
 

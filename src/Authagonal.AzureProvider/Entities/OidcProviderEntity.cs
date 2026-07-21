@@ -31,6 +31,7 @@ public sealed class OidcProviderEntity : ITableEntity
     public bool AutoLinkExistingByEmail { get; set; }
     public string? SessionExpClaim { get; set; }
     public string? PassthroughParamsJson { get; set; }
+    public string? ProvisioningAttributeParamsJson { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset? UpdatedAt { get; set; }
 
@@ -53,6 +54,9 @@ public sealed class OidcProviderEntity : ITableEntity
         SessionExpClaim = config.SessionExpClaim,
         PassthroughParamsJson = config.PassthroughParams.Count > 0
             ? JsonSerializer.Serialize(config.PassthroughParams, AzureJsonContext.Default.ListString)
+            : null,
+        ProvisioningAttributeParamsJson = config.ProvisioningAttributeParams.Count > 0
+            ? JsonSerializer.Serialize(config.ProvisioningAttributeParams, AzureJsonContext.Default.ListString)
             : null,
         CreatedAt = config.CreatedAt,
         UpdatedAt = config.UpdatedAt,
@@ -77,6 +81,9 @@ public sealed class OidcProviderEntity : ITableEntity
         PassthroughParams = string.IsNullOrEmpty(PassthroughParamsJson)
             ? []
             : JsonSerializer.Deserialize(PassthroughParamsJson, AzureJsonContext.Default.ListString) ?? [],
+        ProvisioningAttributeParams = string.IsNullOrEmpty(ProvisioningAttributeParamsJson)
+            ? []
+            : JsonSerializer.Deserialize(ProvisioningAttributeParamsJson, AzureJsonContext.Default.ListString) ?? [],
         CreatedAt = CreatedAt,
         UpdatedAt = UpdatedAt,
     };

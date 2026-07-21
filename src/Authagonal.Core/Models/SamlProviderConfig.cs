@@ -58,6 +58,16 @@ public sealed class SamlProviderConfig
     /// written before this field existed read false → challenge stays ON (the safe default).</summary>
     public bool SkipMfaAfterFederatedLogin { get => !ChallengeMfaAfterLogin; set => ChallengeMfaAfterLogin = !value; }
 
+    /// <summary>
+    /// Whitelisted query parameters from the original /authorize request (carried on the SP-initiated
+    /// return URL) captured as provisioning CustomAttributes on a JIT-provisioned federated user, so
+    /// downstream provisioning (the TCC callback) sees them. Lets an SSO user complete an org invite
+    /// through the same provisioning pipeline as a password signup (invite context e.g. <c>acceptKind</c>,
+    /// <c>acceptToken</c>). Empty means nothing is captured; the downstream provisioner is the security
+    /// gate (they are user-supplied on the authorize URL).
+    /// </summary>
+    public List<string> ProvisioningAttributeParams { get; set; } = [];
+
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset? UpdatedAt { get; set; }
 }

@@ -88,6 +88,19 @@ public sealed record OidcProviderConfig
     /// </summary>
     public bool AutoLinkExistingByEmail { get; set; }
 
+    /// <summary>
+    /// Whitelisted query parameters from the original /authorize request that are captured as
+    /// provisioning CustomAttributes on a JIT-provisioned federated user, so downstream provisioning
+    /// (the TCC callback) sees them. The mirror image of <see cref="PassthroughParams"/>: those flow
+    /// OUTWARD to the upstream IdP, these flow INWARD to provisioning. Enables an SSO user to complete
+    /// an org invite through the same provisioning pipeline as a password signup — the invite context
+    /// (e.g. <c>acceptKind</c>, <c>acceptToken</c>) rides the authorize URL and lands on the user.
+    /// Empty means nothing is captured. The downstream provisioner is the security gate on these
+    /// (e.g. bullclip asserts the federated email equals the invite recipient), since they are
+    /// user-supplied on the authorize URL.
+    /// </summary>
+    public List<string> ProvisioningAttributeParams { get; set; } = [];
+
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset? UpdatedAt { get; set; }
 }
