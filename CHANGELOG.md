@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+## [0.10.7], 2026-07-21
+
+### Fixed
+
+- **Protocol: authorize now runs the configured `AuthenticationScheme` explicitly.** It previously
+  only inspected the default-scheme-populated `HttpContext.User`, so a host whose registered scheme
+  is not its default (e.g. an API host with a bearer-stack default registering a purpose-built
+  scheme for the embedded provider, like a share-link handler) could never authenticate — every
+  authorize went straight to the scheme's challenge. The resolved principal is also what the
+  subject resolver now receives.
+
 ## [0.10.6], 2026-07-21
 
 ### Added

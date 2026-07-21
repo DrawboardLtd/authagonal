@@ -75,8 +75,19 @@ internal static class AuthorizeEndpoint
 
             // Authenticate — if the caller isn't already, either route them through the
             // hinted upstream IdP (for federation) or challenge the host's registered scheme.
+            // The registered scheme may not be the HOST's default scheme (e.g. an API host whose
+            // default is a bearer stack registering a purpose-built scheme just for this endpoint,
+            // like bullclip's share-link handler) — so when the default-populated HttpContext.User
+            // is anonymous, run the configured scheme EXPLICITLY before deciding to challenge.
             var authScheme = protocolOptions.Value.AuthenticationScheme;
-            if (httpContext.User.Identity?.IsAuthenticated != true)
+            var principal = httpContext.User;
+            if (principal.Identity?.IsAuthenticated != true && !string.IsNullOrEmpty(authScheme))
+            {
+                var explicitAuth = await httpContext.AuthenticateAsync(authScheme);
+                if (explicitAuth.Succeeded)
+                    principal = explicitAuth.Principal;
+            }
+            if (principal.Identity?.IsAuthenticated != true)
             {
                 var originalUrl = $"{httpContext.Request.Path}{httpContext.Request.QueryString}";
 
@@ -101,7 +112,7 @@ internal static class AuthorizeEndpoint
             }
 
             var context = new OidcSubjectResolutionContext(clientId, request.RequestedScopes, request.Resources);
-            var resolved = await subjectResolver.ResolveAsync(httpContext.User, context, ct);
+            var resolved = await subjectResolver.ResolveAsync(principal, context, ct);
 
             if (resolved is OidcSubjectResult.Rejected rejected)
             {
