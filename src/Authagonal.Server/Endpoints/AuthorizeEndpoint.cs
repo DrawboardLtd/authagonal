@@ -79,10 +79,23 @@ public static class AuthorizeEndpoint
 
             var (redirectUri, state, requestedScopes) = (request.RedirectUri!, request.State, request.RequestedScopes);
 
+            // prompt=login (OIDC): the RP demands a fresh authentication even if a session exists. Used
+            // by the guest share-link flow so the host doesn't silently reuse an SSO cookie that outlived
+            // the caller's downstream session and claim the link as the wrong identity. When set, treat
+            // an authenticated principal as unauthenticated and re-run login/federation.
+            var forceReauth = (source.Get("prompt") ?? string.Empty)
+                .Split(' ', StringSplitOptions.RemoveEmptyEntries)
+                .Contains("login");
+
             // Check authentication
-            if (httpContext.User.Identity?.IsAuthenticated != true)
+            if (httpContext.User.Identity?.IsAuthenticated != true || forceReauth)
             {
-                var authorizeRelativeUrl = $"{httpContext.Request.Path}{httpContext.Request.QueryString}";
+                // Strip prompt so the fresh session established by this re-auth isn't force-re-authed
+                // again when login/federation returns to this URL (which would loop forever). prompt=login
+                // is honored exactly once, here.
+                var authorizeRelativeUrl = forceReauth
+                    ? BuildRelativeUrlWithoutPrompt(httpContext.Request)
+                    : $"{httpContext.Request.Path}{httpContext.Request.QueryString}";
 
                 // RP-specified upstream IdP. The hint is an OIDC connection id understood
                 // by the host's federation surface (/oidc/{conn}/login). We don't validate
@@ -224,6 +237,21 @@ public static class AuthorizeEndpoint
         .WithTags("OAuth");
 
         return app;
+    }
+
+    // Rebuild "{path}{query}" with the `prompt` param removed, so a prompt=login re-auth is honored once
+    // and the login/federation return doesn't re-trigger it (which would loop). Reads the live query; for
+    // a PAR request prompt rides the pushed payload and the PAR record is single-use, so no loop there.
+    private static string BuildRelativeUrlWithoutPrompt(Microsoft.AspNetCore.Http.HttpRequest request)
+    {
+        var qs = Microsoft.AspNetCore.Http.QueryString.Empty;
+        foreach (var kv in request.Query)
+        {
+            if (string.Equals(kv.Key, "prompt", StringComparison.OrdinalIgnoreCase)) continue;
+            foreach (var v in kv.Value)
+                qs = qs.Add(kv.Key, v ?? string.Empty);
+        }
+        return $"{request.Path}{qs}";
     }
 
     internal sealed class ConsentData
