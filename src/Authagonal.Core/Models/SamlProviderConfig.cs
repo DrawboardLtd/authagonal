@@ -68,6 +68,16 @@ public sealed class SamlProviderConfig
     /// </summary>
     public List<string> ProvisioningAttributeParams { get; set; } = [];
 
+    /// <summary>
+    /// When true, a JIT-provisioned federated user is created even WITHOUT the provisioning context
+    /// that <see cref="ProvisioningAttributeParams"/> otherwise requires (i.e. an uninvited login from an
+    /// allowed domain is auto-provisioned, not rejected). The connection identity is tagged onto the
+    /// user's provisioning attributes (<c>federated_connection</c>) so the downstream provisioner can
+    /// place the user in the right tenant rather than spinning up a new one. Default false: without an
+    /// invite, an unknown user is rejected. Self-service SSO auto-provisioning opt-in.
+    /// </summary>
+    public bool AllowUninvitedJit { get; set; }
+
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset? UpdatedAt { get; set; }
 }

@@ -78,6 +78,7 @@ public static class SsoEndpoints
             JitProvisioningEnabled = request.JitProvisioningEnabled,
             ChallengeMfaAfterLogin = request.ChallengeMfaAfterLogin ?? true,
             ProvisioningAttributeParams = request.ProvisioningAttributeParams ?? [],
+            AllowUninvitedJit = request.AllowUninvitedJit,
             CreatedAt = now
         };
 
@@ -146,6 +147,10 @@ public static class SsoEndpoints
         if (request.ProvisioningAttributeParams is not null)
         {
             config.ProvisioningAttributeParams = request.ProvisioningAttributeParams;
+        }
+        if (request.AllowUninvitedJit.HasValue)
+        {
+            config.AllowUninvitedJit = request.AllowUninvitedJit.Value;
         }
         if (request.ChallengeMfaAfterLogin.HasValue)
         {
@@ -422,6 +427,10 @@ public static class SsoEndpoints
         /// user (e.g. an org invite's acceptKind/acceptToken), so an SSO signup completes an invite
         /// through the same provisioning pipeline as a password signup.</summary>
         public List<string>? ProvisioningAttributeParams { get; set; }
+
+        /// <summary>Auto-provision an uninvited domain user on SSO login (tagged with the connection so the
+        /// downstream places them in the right tenant), instead of requiring an invite.</summary>
+        public bool AllowUninvitedJit { get; set; }
     }
 
     /// <summary>
@@ -438,6 +447,8 @@ public static class SsoEndpoints
         /// <summary>Authorize-request query params captured as provisioning CustomAttributes on a JIT
         /// user; null = leave unchanged.</summary>
         public List<string>? ProvisioningAttributeParams { get; set; }
+        /// <summary>Auto-provision an uninvited domain user on SSO login; null = leave unchanged.</summary>
+        public bool? AllowUninvitedJit { get; set; }
         /// <summary>New metadata URL; setting it clears any pasted MetadataXml.</summary>
         public string? MetadataLocation { get; set; }
         /// <summary>New pasted metadata XML; setting it clears MetadataLocation.</summary>

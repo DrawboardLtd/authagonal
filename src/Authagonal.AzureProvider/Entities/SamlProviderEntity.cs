@@ -37,6 +37,8 @@ public sealed class SamlProviderEntity : ITableEntity
     /// the column read null → false → the local MFA challenge stays on (the safe default).</summary>
     public bool? SkipMfaAfterFederatedLogin { get; set; }
     public string? ProvisioningAttributeParamsJson { get; set; }
+    // Rows lacking the column read false → uninvited JIT stays off (the safe default).
+    public bool AllowUninvitedJit { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset? UpdatedAt { get; set; }
 
@@ -58,6 +60,7 @@ public sealed class SamlProviderEntity : ITableEntity
         ProvisioningAttributeParamsJson = config.ProvisioningAttributeParams.Count > 0
             ? JsonSerializer.Serialize(config.ProvisioningAttributeParams, AzureJsonContext.Default.ListString)
             : null,
+        AllowUninvitedJit = config.AllowUninvitedJit,
         CreatedAt = config.CreatedAt,
         UpdatedAt = config.UpdatedAt,
     };
@@ -79,6 +82,7 @@ public sealed class SamlProviderEntity : ITableEntity
         ProvisioningAttributeParams = string.IsNullOrEmpty(ProvisioningAttributeParamsJson)
             ? []
             : JsonSerializer.Deserialize(ProvisioningAttributeParamsJson, AzureJsonContext.Default.ListString) ?? [],
+        AllowUninvitedJit = AllowUninvitedJit,
         CreatedAt = CreatedAt,
         UpdatedAt = UpdatedAt,
     };

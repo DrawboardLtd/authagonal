@@ -46,6 +46,7 @@ public sealed class ProviderSeedService(
                 JitProvisioningEnabled = seed.JitProvisioningEnabled,
                 ChallengeMfaAfterLogin = seed.ChallengeMfaAfterLogin,
                 ProvisioningAttributeParams = seed.ProvisioningAttributeParams ?? [],
+                AllowUninvitedJit = seed.AllowUninvitedJit,
                 CreatedAt = DateTimeOffset.UtcNow
             };
 
@@ -137,6 +138,7 @@ public sealed class ProviderSeedService(
         public bool JitProvisioningEnabled { get; set; }
         public bool ChallengeMfaAfterLogin { get; set; } = true;
         public List<string>? ProvisioningAttributeParams { get; set; }
+        public bool AllowUninvitedJit { get; set; }
     }
 
     public sealed class OidcProviderSeed

@@ -324,8 +324,11 @@ public static class SamlEndpoints
             // Invite-only JIT: a connection that DECLARES ProvisioningAttributeParams provisions a new
             // user only when that context actually arrived. An uninvited unknown is rejected (current
             // parity) — so an SSO login with no invite can't silently self-provision (which the
-            // downstream would otherwise turn into a stray account/org).
-            if (config.ProvisioningAttributeParams.Count > 0 && provisioningAttributes.Count == 0)
+            // downstream would otherwise turn into a stray account/org) — UNLESS the connection opts into
+            // AllowUninvitedJit (self-service SSO auto-provisioning), in which case the uninvited user is
+            // provisioned and tagged with the connection so the downstream places them in the right tenant.
+            if (config.ProvisioningAttributeParams.Count > 0 && provisioningAttributes.Count == 0
+                && !config.AllowUninvitedJit)
             {
                 logger.LogInformation("JIT rejected for SAML connection {ConnectionId}: no provisioning context on the request for unknown user {Email}", connectionId, email);
                 return RedirectWithError(relayState, "access_denied", "This login requires an invitation. Contact your administrator.");
@@ -347,6 +350,12 @@ public static class SamlEndpoints
 
             foreach (var kv in provisioningAttributes)
                 user.CustomAttributes[kv.Key] = kv.Value;
+
+            // Uninvited SSO auto-provision: tag the user with the connection they federated through so the
+            // downstream provisioner can place them in that tenant (bullclip names its SAML connections
+            // by org id) rather than creating a new one. Only when there was no invite context.
+            if (config.AllowUninvitedJit && provisioningAttributes.Count == 0)
+                user.CustomAttributes["federated_connection"] = config.ConnectionName;
 
             await userStore.CreateAsync(user, ct);
 
