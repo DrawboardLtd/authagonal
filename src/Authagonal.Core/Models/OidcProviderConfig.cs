@@ -79,6 +79,15 @@ public sealed record OidcProviderConfig
     /// written before this field existed read false → challenge stays ON (the safe default).</summary>
     public bool SkipMfaAfterFederatedLogin { get => !ChallengeMfaAfterLogin; set => ChallengeMfaAfterLogin = !value; }
 
+    /// <summary>
+    /// Link a federated identity to an EXISTING local account matched by email even when the
+    /// connection's AllowedDomains does not vouch for the email's domain. Default false (the
+    /// anti-takeover stance). Enable ONLY for a trusted first-party connection whose email
+    /// assertions are inbox-verified — e.g. a share-link provider, where bullclip pre-creates the
+    /// local account itself and possession of the emailed link is the verification.
+    /// </summary>
+    public bool AutoLinkExistingByEmail { get; set; }
+
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset? UpdatedAt { get; set; }
 }

@@ -2,6 +2,22 @@
 
 ## [Unreleased]
 
+## [0.10.9], 2026-07-21
+
+### Added
+
+- **`AutoLinkExistingByEmail` on OIDC federation connections** (default off): link a federated
+  identity to an existing local account matched by email even without AllowedDomains vouching.
+  For trusted first-party connections whose email assertions are inbox-verified (share-link
+  providers, where the downstream host pre-creates the local account itself).
+
+### Fixed
+
+- **Federation failure redirect loop**: a failed federation round bounced back to `/connect/authorize`
+  with error params appended, which re-federated on the idp_hint forever ("too many redirects").
+  The authorize endpoint now returns the federation error to the relying party's validated
+  redirect_uri per OAuth.
+
 ## [0.10.8], 2026-07-21
 
 ### Fixed

@@ -348,7 +348,7 @@ public static class OidcEndpoints
             var existingByEmail = await userStore.FindByEmailAsync(email, ct);
             if (existingByEmail is not null)
             {
-                if (!domainAllowed)
+                if (!domainAllowed && !config.AutoLinkExistingByEmail)
                 {
                     logger.LogWarning("OIDC login rejected: email {Email} matches an existing account but connection {ConnectionId} is not authorised for its domain", email, stateData.ConnectionId);
                     return RedirectWithError(returnUrl, "access_denied", "This email already belongs to an account. Contact your administrator to link it.");

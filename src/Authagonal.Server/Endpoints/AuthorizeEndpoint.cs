@@ -91,6 +91,15 @@ public static class AuthorizeEndpoint
                 var idpHint = source.Get("idp_hint");
                 if (!string.IsNullOrWhiteSpace(idpHint))
                 {
+                    // A failed federation round redirects back here with error params appended.
+                    // Re-federating would loop forever ("too many redirects") — return the error to
+                    // the relying party instead, per OAuth (redirect_uri is already validated above).
+                    var federationError = source.Get("error");
+                    if (!string.IsNullOrWhiteSpace(federationError))
+                        return AuthorizeRequestSupport.BuildErrorRedirect(
+                            redirectUri, federationError,
+                            source.Get("error_description") ?? "Federated login failed", state);
+
                     var federationLoginUrl = $"/oidc/{Uri.EscapeDataString(idpHint)}/login" +
                         $"?returnUrl={Uri.EscapeDataString(authorizeRelativeUrl)}";
                     return Results.Redirect(federationLoginUrl);

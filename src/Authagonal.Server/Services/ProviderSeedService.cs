@@ -100,6 +100,7 @@ public sealed class ProviderSeedService(
                 UseUpstreamSubjectAsUserId = seed.UseUpstreamSubjectAsUserId,
                 ShowOnLogin = seed.ShowOnLogin,
                 ChallengeMfaAfterLogin = seed.ChallengeMfaAfterLogin,
+                AutoLinkExistingByEmail = seed.AutoLinkExistingByEmail,
                 PassthroughParams = seed.PassthroughParams ?? [],
                 SessionExpClaim = seed.SessionExpClaim,
                 CreatedAt = DateTimeOffset.UtcNow
@@ -145,6 +146,7 @@ public sealed class ProviderSeedService(
         public bool UseUpstreamSubjectAsUserId { get; set; }
         public bool ShowOnLogin { get; set; } = true;
         public bool ChallengeMfaAfterLogin { get; set; } = true;
+        public bool AutoLinkExistingByEmail { get; set; }
         public List<string>? PassthroughParams { get; set; }
         public string? SessionExpClaim { get; set; }
     }

@@ -27,6 +27,8 @@ public sealed class OidcProviderEntity : ITableEntity
     public bool HiddenFromLogin { get; set; }
     // Negative form: rows lacking the column read false → the local MFA challenge stays on.
     public bool SkipMfaAfterFederatedLogin { get; set; }
+    // Rows lacking the column read false → no auto-link (the safe default).
+    public bool AutoLinkExistingByEmail { get; set; }
     public string? SessionExpClaim { get; set; }
     public string? PassthroughParamsJson { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
@@ -47,6 +49,7 @@ public sealed class OidcProviderEntity : ITableEntity
         UseUpstreamSubjectAsUserId = config.UseUpstreamSubjectAsUserId,
         HiddenFromLogin = config.HiddenFromLogin,
         SkipMfaAfterFederatedLogin = config.SkipMfaAfterFederatedLogin,
+        AutoLinkExistingByEmail = config.AutoLinkExistingByEmail,
         SessionExpClaim = config.SessionExpClaim,
         PassthroughParamsJson = config.PassthroughParams.Count > 0
             ? JsonSerializer.Serialize(config.PassthroughParams, AzureJsonContext.Default.ListString)
@@ -69,6 +72,7 @@ public sealed class OidcProviderEntity : ITableEntity
         UseUpstreamSubjectAsUserId = UseUpstreamSubjectAsUserId,
         HiddenFromLogin = HiddenFromLogin,
         SkipMfaAfterFederatedLogin = SkipMfaAfterFederatedLogin,
+        AutoLinkExistingByEmail = AutoLinkExistingByEmail,
         SessionExpClaim = SessionExpClaim,
         PassthroughParams = string.IsNullOrEmpty(PassthroughParamsJson)
             ? []
