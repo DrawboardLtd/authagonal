@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.10.2], 2026-07-21
+
 ### Added
 
 - **Bff: websocket tickets** (`AuthagonalBffOptions.WsTicketsEnabled`, off by default): `GET
