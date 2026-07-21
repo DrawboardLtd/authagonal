@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.WebUtilities;
+using Microsoft.Extensions.Caching.Distributed;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.JsonWebTokens;
@@ -206,6 +207,48 @@ internal static class BffEndpoints
 
         static IResult Anonymous() => Results.Json(new UserResponse { IsAuthenticated = false }, BffJsonContext.Default.UserResponse);
     }
+
+    /// <summary>GET <c>{BasePath}/ws-ticket</c> (opt-in via <see cref="AuthagonalBffOptions.WsTicketsEnabled"/>).
+    /// Mints a short-lived, single-use ticket bound to the session's (refreshed) access token, stored in the
+    /// shared distributed cache under <c>agbff:wst:{ticket}</c>. The API host resolves the key, deletes it,
+    /// and authenticates the websocket with the recovered token — the browser never holds the token and must
+    /// never persist the ticket (fetch it, connect with it, drop it).</summary>
+    public static async Task<IResult> WsTicketAsync(
+        HttpContext ctx,
+        IOptions<AuthagonalBffOptions> options,
+        IBffSessionStore store,
+        BffRefreshCoordinator refresher,
+        IDistributedCache cache,
+        CancellationToken ct)
+    {
+        var o = options.Value;
+        if (!HasAntiForgeryHeader(ctx, o))
+            return Results.StatusCode(StatusCodes.Status401Unauthorized);
+        if (!ctx.Request.Cookies.TryGetValue(o.CookieName, out var sessionId) || string.IsNullOrEmpty(sessionId))
+            return Results.StatusCode(StatusCodes.Status401Unauthorized);
+
+        var session = await store.GetAsync(sessionId, ct);
+        if (session is null || session.ExpiresAt <= DateTimeOffset.UtcNow)
+            return Results.StatusCode(StatusCodes.Status401Unauthorized);
+        var fresh = await refresher.EnsureFreshAsync(session, ct);
+        if (fresh is null)
+            return Results.StatusCode(StatusCodes.Status401Unauthorized);
+
+        // 256-bit random, hex — URL-safe with no padding/casing pitfalls.
+        var ticket = Convert.ToHexString(RandomNumberGenerator.GetBytes(32)).ToLowerInvariant();
+        await cache.SetStringAsync(WsTicketKey(ticket), fresh.AccessToken,
+            new DistributedCacheEntryOptions { AbsoluteExpirationRelativeToNow = o.WsTicketLifetime }, ct);
+
+        ctx.Response.Headers.CacheControl = "no-store";
+        return Results.Json(new WsTicketResponse
+        {
+            Ticket = ticket,
+            ExpiresInSeconds = (int)o.WsTicketLifetime.TotalSeconds,
+        }, BffJsonContext.Default.WsTicketResponse);
+    }
+
+    /// <summary>Cache key a websocket ticket is stored under — the contract the resolving API host reads.</summary>
+    internal static string WsTicketKey(string ticket) => $"agbff:wst:{ticket}";
 
     public static async Task<IResult> LogoutAsync(
         HttpContext ctx,

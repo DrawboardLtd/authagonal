@@ -15,6 +15,14 @@ internal sealed class UserResponse
     public Dictionary<string, string>? Claims { get; set; }
 }
 
+/// <summary>The <c>/bff/ws-ticket</c> response shape. The ticket is single-use and must never be written
+/// to client storage — fetch, connect, drop.</summary>
+internal sealed class WsTicketResponse
+{
+    public string Ticket { get; set; } = default!;
+    public int ExpiresInSeconds { get; set; }
+}
+
 // Source-generated (trim-safe) JSON for everything the BFF serializes itself.
 [JsonSourceGenerationOptions(
     PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase,
@@ -22,6 +30,7 @@ internal sealed class UserResponse
 [JsonSerializable(typeof(BffSession))]
 [JsonSerializable(typeof(CorrelationState))]
 [JsonSerializable(typeof(UserResponse))]
+[JsonSerializable(typeof(WsTicketResponse))]
 [JsonSerializable(typeof(List<string>))]
 [JsonSerializable(typeof(Dictionary<string, string>))]
 internal sealed partial class BffJsonContext : JsonSerializerContext;

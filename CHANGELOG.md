@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+### Added
+
+- **Bff: websocket tickets** (`AuthagonalBffOptions.WsTicketsEnabled`, off by default): `GET
+  {BasePath}/ws-ticket` mints a short-lived (default 30s), single-use ticket bound to the session's
+  refreshed access token, stored in the shared distributed cache under `agbff:wst:{ticket}`. A browser
+  websocket handshake can't carry a bearer or custom headers, so the SPA fetches a ticket (anti-forgery
+  header required), puts it on the connect URL, and the API host exchanges + deletes the cache key to
+  authenticate the socket. Requires a shared cache (Redis) — the in-memory default can't serve another
+  process. The ticket must never be written to client storage: fetch, connect, drop.
+
 ## [0.7.11], 2026-07-16
 
 ### Added

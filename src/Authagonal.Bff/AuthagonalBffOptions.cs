@@ -80,6 +80,17 @@ public sealed class AuthagonalBffOptions
     /// <summary>Maximum lifetime of a BFF session regardless of token refreshes.</summary>
     public TimeSpan SessionLifetime { get; set; } = TimeSpan.FromHours(8);
 
+    /// <summary>Enables <c>GET {BasePath}/ws-ticket</c>: mints a short-lived, single-use ticket the SPA can
+    /// put on a websocket connect URL (a websocket handshake cannot carry custom headers or a bearer). The
+    /// API host exchanges the ticket for the session's access token via the SHARED distributed cache — the
+    /// in-memory cache default can never serve another process, so this requires Redis (or equivalent) to
+    /// work across hosts. Off by default.</summary>
+    public bool WsTicketsEnabled { get; set; }
+
+    /// <summary>Websocket ticket lifetime. Kept short: the SPA mints a ticket immediately before each
+    /// connect, and the ticket is deleted on first use.</summary>
+    public TimeSpan WsTicketLifetime { get; set; } = TimeSpan.FromSeconds(30);
+
     /// <summary>Upstream APIs the proxy (<c>{BasePath}/api/**</c>) forwards to with the session's access
     /// token attached. Empty (the default) disables the proxy endpoint.</summary>
     public IList<BffUpstream> Upstreams { get; set; } = new List<BffUpstream>();

@@ -52,6 +52,11 @@ public static class AuthagonalBffExtensions
         // and antiforgery disabled so a host using UseAntiforgery still admits the form POST.
         group.MapPost("/backchannel-logout", BffEndpoints.BackChannelLogoutAsync).DisableAntiforgery();
 
+        // Websocket ticket minting (opt-in): a scripted GET guarded by the anti-forgery header. Needs a
+        // SHARED distributed cache (Redis) — see AuthagonalBffOptions.WsTicketsEnabled.
+        if (options.WsTicketsEnabled)
+            group.MapGet("/ws-ticket", BffEndpoints.WsTicketAsync);
+
         // Token-injecting proxy (only if upstreams are configured). It does its own anti-forgery-header
         // check and forwards arbitrary content, so the framework antiforgery filter is disabled here.
         if (options.Upstreams.Count > 0)
