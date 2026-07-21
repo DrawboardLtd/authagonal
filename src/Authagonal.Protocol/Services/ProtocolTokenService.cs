@@ -197,6 +197,20 @@ public sealed class ProtocolTokenService(
             MergeCustomClaims(claims, subject.FederationClaims, allowedCustomClaims, overwriteExisting: true);
         }
 
+        // Ungated additional claims ride the id_token too (not just the access token): for an
+        // embedded provider federating into a full host, the id_token is the transport the
+        // downstream host reads claims from (federated:* capture) — an access-token-only claim
+        // like a share-link token would otherwise vanish at the federation boundary.
+        if (subject.AdditionalClaims is not null)
+        {
+            foreach (var (key, value) in subject.AdditionalClaims)
+            {
+                if (string.IsNullOrEmpty(key)) continue;
+                if (ReservedClaimNames.Contains(key)) continue;
+                claims[key] = value;
+            }
+        }
+
         var expires = now.AddSeconds(client.IdentityTokenLifetimeSeconds);
         if (subject.SessionMaxExpiresAt is { } sessionCap && sessionCap < expires)
             expires = sessionCap;

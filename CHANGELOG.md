@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+## [0.10.8], 2026-07-21
+
+### Fixed
+
+- **Protocol: `AdditionalClaims` now ride the id_token as well as the access token.** For an
+  embedded provider federating into a full Authagonal host, the id_token is what the downstream
+  host reads claims from (`federated:*` capture) — access-token-only claims like a share-link
+  token vanished at the federation boundary.
+
 ## [0.10.7], 2026-07-21
 
 ### Fixed
