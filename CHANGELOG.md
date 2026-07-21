@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+## [0.10.10], 2026-07-21
+
+### Added
+
+- **BFF `/logout` accepts an allowlisted `returnUrl`** (same allowlist as `/login`). It is carried
+  through the RP-initiated `end_session` round trip via `state` — so it survives the auth host
+  clearing its SSO cookie — and echoed back onto a new registered `{BasePath}/logout-callback`
+  endpoint, which re-validates and redirects. Enables "abandon the current session, then land back
+  here" flows (e.g. a signed-in user opening a guest share link that must be claimed as a different
+  identity). The callback URL must be registered as a `post_logout_redirect_uri` for the BFF client.
+
 ## [0.10.9], 2026-07-21
 
 ### Added

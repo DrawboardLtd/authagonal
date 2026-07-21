@@ -252,6 +252,7 @@ internal static class BffEndpoints
 
     public static async Task<IResult> LogoutAsync(
         HttpContext ctx,
+        string? returnUrl,
         IOptions<AuthagonalBffOptions> options,
         IBffSessionStore store,
         ITokenClient tokens,
@@ -265,6 +266,12 @@ internal static class BffEndpoints
         // (following a link), which can't carry a custom header.
         if (HttpMethods.IsPost(ctx.Request.Method) && !HasAntiForgeryHeader(ctx, o))
             return Results.StatusCode(StatusCodes.Status401Unauthorized);
+
+        // Optional caller-supplied post-logout landing (same allowlist as /login's returnUrl). Carried
+        // through the RP-initiated end_session round trip via `state` so it survives the auth host clearing
+        // its SSO cookie — the auth host echoes `state` back onto our registered /logout-callback, which
+        // re-validates and redirects. Null when not requested → the fixed PostLogoutRedirectUri as before.
+        var safeReturn = string.IsNullOrEmpty(returnUrl) ? null : SanitizeReturnUrl(returnUrl, o);
 
         string? idTokenHint = null;
         BffTenantConfig? tenant = null;
@@ -296,13 +303,39 @@ internal static class BffEndpoints
                 var query = new Dictionary<string, string?> { ["client_id"] = tenant.ClientId };
                 if (idTokenHint is not null)
                     query["id_token_hint"] = idTokenHint;
-                if (o.PostLogoutRedirectUri is not null)
+                if (safeReturn is not null)
+                {
+                    // Land back on our own registered callback (exact-match validated by the auth host) and
+                    // carry the real destination in `state`; the callback redirects there after SSO is cleared.
+                    query["post_logout_redirect_uri"] = BuildLogoutCallbackUri(ctx, o);
+                    query["state"] = safeReturn;
+                }
+                else if (o.PostLogoutRedirectUri is not null)
+                {
                     query["post_logout_redirect_uri"] = o.PostLogoutRedirectUri;
+                }
                 return Results.Redirect(QueryHelpers.AddQueryString(config.EndSessionEndpoint, query));
             }
         }
 
+        // No end_session round trip (no session / no tenant / no endpoint). The BFF cookie is already gone and
+        // there is no upstream SSO to clear, so honour the requested return directly.
+        if (safeReturn is not null)
+            return Results.Redirect(safeReturn);
         return o.PostLogoutRedirectUri is not null ? Results.Redirect(o.PostLogoutRedirectUri) : Results.Ok();
+    }
+
+    /// <summary>
+    /// GET <c>{BasePath}/logout-callback</c>. The auth host's end_session redirects here after clearing its
+    /// SSO cookie, echoing the desired landing back in <c>state</c> (see <see cref="LogoutAsync"/>). We
+    /// re-validate against the same allowlist and redirect — this must be registered as a
+    /// <c>post_logout_redirect_uri</c> for the BFF's OIDC client.
+    /// </summary>
+    public static IResult LogoutCallbackAsync(HttpContext ctx, string? state, IOptions<AuthagonalBffOptions> options)
+    {
+        var o = options.Value;
+        var safeReturn = SanitizeReturnUrl(state, o);
+        return Results.Redirect(safeReturn);
     }
 
     // OIDC Back-Channel Logout 1.0 consumer. The IdP POSTs a signed logout_token (form-encoded,
@@ -385,6 +418,9 @@ internal static class BffEndpoints
 
     private static string BuildRedirectUri(HttpContext ctx, AuthagonalBffOptions o)
         => $"{ctx.Request.Scheme}://{ctx.Request.Host}{o.CallbackPath}";
+
+    private static string BuildLogoutCallbackUri(HttpContext ctx, AuthagonalBffOptions o)
+        => $"{ctx.Request.Scheme}://{ctx.Request.Host}{o.BasePath}/logout-callback";
 
     private static string SanitizeReturnUrl(string? returnUrl, AuthagonalBffOptions o)
     {
