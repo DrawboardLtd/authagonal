@@ -89,6 +89,14 @@ public static class OidcEndpoints
         var upstreamScope = ExtractScopeFromReturnUrl(effectiveReturnUrl)
             ?? "openid profile email";
 
+        // Upstream-federated refresh: force offline_access on the hop so the upstream issues a refresh
+        // token we can redeem to revalidate the session on each local refresh (Option A). Idempotent.
+        if (config.RevalidateOnRefresh &&
+            !upstreamScope.Split(' ', StringSplitOptions.RemoveEmptyEntries).Contains("offline_access"))
+        {
+            upstreamScope += " offline_access";
+        }
+
         var authorizationUrl = $"{discovery.AuthorizationEndpoint}" +
             $"?client_id={Uri.EscapeDataString(config.ClientId)}" +
             $"&redirect_uri={Uri.EscapeDataString(redirectUri)}" +
@@ -206,9 +214,10 @@ public static class OidcEndpoints
 
         string idToken;
         string? accessToken;
+        string? upstreamRefreshToken;
         try
         {
-            (idToken, accessToken) = await ExchangeCodeForTokensAsync(
+            (idToken, accessToken, upstreamRefreshToken) = await ExchangeCodeForTokensAsync(
                 httpClientFactory, discovery.TokenEndpoint, code, redirectUri,
                 config.ClientId, clientSecret, stateData.CodeVerifier, ct);
         }
@@ -511,6 +520,18 @@ public static class OidcEndpoints
             }
         }
 
+        // Upstream-federated refresh (Option A): carry the upstream refresh token on the cookie so the
+        // FIRST /connect/authorize can lift it onto the subject and persist it into the refresh grant
+        // (same callback→authorize carrier the session_max_exp / federated:* claims use — no refresh
+        // grant exists yet at this callback). NEVER emitted into a token: the resolver copies it to a
+        // non-emitted OidcSubject field, and it's redeemed server-to-server on refresh. The cookie is
+        // encrypted + httpOnly. Only when the connection opts in AND the upstream actually issued one.
+        if (config.RevalidateOnRefresh && !string.IsNullOrEmpty(upstreamRefreshToken))
+        {
+            claims.Add(new Claim("upstream_refresh_token", upstreamRefreshToken));
+            claims.Add(new Claim("upstream_connection_id", stateData.ConnectionId));
+        }
+
         // Federation claim flow-through: every non-protocol upstream id_token claim
         // rides through as `federated:<name>` on the cookie, so when this user later
         // hits /connect/authorize the resolver can promote them into OidcSubject.CustomAttributes
@@ -541,7 +562,7 @@ public static class OidcEndpoints
         return Results.Redirect(returnUrl);
     }
 
-    private static async Task<(string IdToken, string? AccessToken)> ExchangeCodeForTokensAsync(
+    private static async Task<(string IdToken, string? AccessToken, string? RefreshToken)> ExchangeCodeForTokensAsync(
         IHttpClientFactory httpClientFactory,
         string tokenEndpoint,
         string code,
@@ -588,7 +609,11 @@ public static class OidcEndpoints
         if (root.TryGetProperty("access_token", out var accessTokenElement))
             accessToken = accessTokenElement.GetString();
 
-        return (idToken, accessToken);
+        string? refreshToken = null;
+        if (root.TryGetProperty("refresh_token", out var refreshTokenElement))
+            refreshToken = refreshTokenElement.GetString();
+
+        return (idToken, accessToken, refreshToken);
     }
 
     private static async Task<Dictionary<string, object?>> FetchUserinfoAsync(

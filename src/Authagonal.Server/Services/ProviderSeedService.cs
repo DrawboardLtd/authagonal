@@ -105,6 +105,7 @@ public sealed class ProviderSeedService(
                 AutoLinkExistingByEmail = seed.AutoLinkExistingByEmail,
                 PassthroughParams = seed.PassthroughParams ?? [],
                 ProvisioningAttributeParams = seed.ProvisioningAttributeParams ?? [],
+                RevalidateOnRefresh = seed.RevalidateOnRefresh,
                 SessionExpClaim = seed.SessionExpClaim,
                 CreatedAt = DateTimeOffset.UtcNow
             };
@@ -154,6 +155,7 @@ public sealed class ProviderSeedService(
         public bool AutoLinkExistingByEmail { get; set; }
         public List<string>? PassthroughParams { get; set; }
         public List<string>? ProvisioningAttributeParams { get; set; }
+        public bool RevalidateOnRefresh { get; set; }
         public string? SessionExpClaim { get; set; }
     }
 }

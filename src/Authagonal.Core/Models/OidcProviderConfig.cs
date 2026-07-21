@@ -101,6 +101,17 @@ public sealed record OidcProviderConfig
     /// </summary>
     public List<string> ProvisioningAttributeParams { get; set; } = [];
 
+    /// <summary>
+    /// Revalidate the local session against this upstream IdP on every local refresh. Requests
+    /// <c>offline_access</c> on the federation hop, stores the upstream refresh token in the local
+    /// refresh grant, and redeems it server-to-server each time the local session refreshes — if the
+    /// upstream rejects (<c>invalid_grant</c>), the local refresh is rejected too, so upstream
+    /// revocation/expiry propagates within one access-token lifetime. Enable ONLY for a trusted
+    /// first-party connection whose upstream owns a revocable credential (e.g. bullclip's guest share
+    /// links). Default false. Requires the upstream to actually issue a refresh token on the hop.
+    /// </summary>
+    public bool RevalidateOnRefresh { get; set; }
+
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset? UpdatedAt { get; set; }
 }

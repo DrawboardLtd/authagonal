@@ -153,4 +153,17 @@ public sealed record OidcSubject
     /// original login.
     /// </summary>
     public string? SessionId { get; init; }
+
+    /// <summary>
+    /// Opaque refresh token issued by an upstream IdP during federation, for a connection that
+    /// revalidates the local session on refresh. NEVER emitted into any issued token — it is redeemed
+    /// server-to-server against the upstream on each local refresh (so upstream revocation/expiry
+    /// propagates), then rotated. Persisted in the refresh grant alongside the subject and carried across
+    /// rotations. Null for connections that don't revalidate on refresh.
+    /// </summary>
+    public string? UpstreamRefreshToken { get; init; }
+
+    /// <summary>Connection id whose token endpoint <see cref="UpstreamRefreshToken"/> is redeemed
+    /// against. Set together with <see cref="UpstreamRefreshToken"/>.</summary>
+    public string? UpstreamConnectionId { get; init; }
 }

@@ -32,6 +32,8 @@ public sealed class OidcProviderEntity : ITableEntity
     public string? SessionExpClaim { get; set; }
     public string? PassthroughParamsJson { get; set; }
     public string? ProvisioningAttributeParamsJson { get; set; }
+    // Rows lacking the column read false → no upstream-refresh revalidation (the safe default).
+    public bool RevalidateOnRefresh { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset? UpdatedAt { get; set; }
 
@@ -58,6 +60,7 @@ public sealed class OidcProviderEntity : ITableEntity
         ProvisioningAttributeParamsJson = config.ProvisioningAttributeParams.Count > 0
             ? JsonSerializer.Serialize(config.ProvisioningAttributeParams, AzureJsonContext.Default.ListString)
             : null,
+        RevalidateOnRefresh = config.RevalidateOnRefresh,
         CreatedAt = config.CreatedAt,
         UpdatedAt = config.UpdatedAt,
     };
@@ -84,6 +87,7 @@ public sealed class OidcProviderEntity : ITableEntity
         ProvisioningAttributeParams = string.IsNullOrEmpty(ProvisioningAttributeParamsJson)
             ? []
             : JsonSerializer.Deserialize(ProvisioningAttributeParamsJson, AzureJsonContext.Default.ListString) ?? [],
+        RevalidateOnRefresh = RevalidateOnRefresh,
         CreatedAt = CreatedAt,
         UpdatedAt = UpdatedAt,
     };

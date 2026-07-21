@@ -1,7 +1,13 @@
+using System.Collections.Generic;
+using System.Net.Http;
 using System.Security.Claims;
+using System.Text.Json;
 using Authagonal.Core.Models;
+using Authagonal.Core.Services;
 using Authagonal.Core.Stores;
 using Authagonal.Protocol;
+using Authagonal.Server.Services.Oidc;
+using Microsoft.Extensions.Logging;
 
 namespace Authagonal.Server.Services;
 
@@ -17,7 +23,12 @@ public sealed class UserStoreOidcSubjectResolver(
     IUserStore userStore,
     IScimGroupStore scimGroupStore,
     IScimGroupRoleMappingStore groupRoleMappingStore,
-    IClientStore clientStore) : IOidcSubjectResolver
+    IClientStore clientStore,
+    IOidcProviderStore oidcProviderStore,
+    OidcDiscoveryClient discoveryClient,
+    ISecretProvider secretProvider,
+    IHttpClientFactory httpClientFactory,
+    ILogger<UserStoreOidcSubjectResolver> logger) : IOidcSubjectResolver
 {
     public async Task<OidcSubjectResult> ResolveAsync(
         ClaimsPrincipal authenticatedPrincipal,
@@ -55,7 +66,15 @@ public sealed class UserStoreOidcSubjectResolver(
         // from per-user CustomAttributes (which we re-read fresh on refresh).
         var federationClaims = ExtractFederationClaims(authenticatedPrincipal);
 
-        var subject = await BuildSubjectAsync(user, client, sessionMaxExpiresAt, sessionId, federationClaims, ct);
+        // Upstream-federated refresh (Option A): the upstream refresh token rode the cookie from the
+        // federation callback (no refresh grant existed there yet). Lift it onto the subject so the first
+        // refresh grant persists it; from then on it lives and rotates in the grant store. Non-emitted.
+        var upstreamRefreshToken = authenticatedPrincipal.FindFirstValue("upstream_refresh_token");
+        var upstreamConnectionId = authenticatedPrincipal.FindFirstValue("upstream_connection_id");
+
+        var subject = await BuildSubjectAsync(
+            user, client, sessionMaxExpiresAt, sessionId, federationClaims,
+            upstreamRefreshToken, upstreamConnectionId, ct);
         return OidcSubjectResult.Allow(subject);
     }
 
@@ -86,6 +105,24 @@ public sealed class UserStoreOidcSubjectResolver(
 
         var client = await clientStore.GetAsync(context.ClientId, ct);
 
+        // Upstream-federated refresh (Option A): the point of this path. Redeem the stored upstream
+        // refresh token against its IdP. If the upstream refuses (invalid_grant — the federated
+        // credential, e.g. a share link, was revoked or expired), reject the local refresh too so the
+        // session dies; on success, carry the rotated token forward into the successor grant. A transient
+        // failure leaves the session alive (the SessionMaxExpiresAt cap still bounds it).
+        var upstreamRefreshToken = priorSubject.UpstreamRefreshToken;
+        if (!string.IsNullOrEmpty(upstreamRefreshToken) && !string.IsNullOrEmpty(priorSubject.UpstreamConnectionId))
+        {
+            var (outcome, rotated) = await RedeemUpstreamRefreshAsync(
+                priorSubject.UpstreamConnectionId, upstreamRefreshToken, ct);
+            if (outcome == UpstreamRefreshOutcome.Revoked)
+                return OidcSubjectResult.Reject(
+                    OidcRejection.AccessDenied,
+                    "Upstream session ended (the federated credential was revoked or has expired).");
+            if (outcome == UpstreamRefreshOutcome.Valid)
+                upstreamRefreshToken = rotated;
+        }
+
         // Preserve the federation cap, session id, and federation claims across rotations
         // — the resolver can't re-read any of them from the cookie at refresh time, and
         // they must survive rotations so the cap can't be lifted, back-channel logouts can
@@ -95,8 +132,100 @@ public sealed class UserStoreOidcSubjectResolver(
             priorSubject.SessionMaxExpiresAt,
             priorSubject.SessionId,
             priorSubject.FederationClaims,
+            upstreamRefreshToken,
+            priorSubject.UpstreamConnectionId,
             ct);
         return OidcSubjectResult.Allow(subject);
+    }
+
+    private enum UpstreamRefreshOutcome { Valid, Revoked, Transient }
+
+    /// <summary>
+    /// Redeems the upstream refresh token at its connection's token endpoint. <see cref="UpstreamRefreshOutcome.Valid"/>
+    /// (with the rotated token, or the same token if the upstream didn't rotate) on success;
+    /// <see cref="UpstreamRefreshOutcome.Revoked"/> on a 4xx (invalid_grant — credential gone); and
+    /// <see cref="UpstreamRefreshOutcome.Transient"/> on any transport/5xx/config error, which keeps the
+    /// session alive (bounded by SessionMaxExpiresAt) rather than killing it over a blip.
+    /// </summary>
+    private async Task<(UpstreamRefreshOutcome Outcome, string? RotatedToken)> RedeemUpstreamRefreshAsync(
+        string connectionId, string refreshToken, CancellationToken ct)
+    {
+        OidcProviderConfig? config;
+        try
+        {
+            config = await oidcProviderStore.GetAsync(connectionId, ct);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Upstream-refresh: could not load connection {ConnectionId}; treating as transient", connectionId);
+            return (UpstreamRefreshOutcome.Transient, null);
+        }
+        if (config is null)
+        {
+            logger.LogWarning("Upstream-refresh: connection {ConnectionId} no longer exists; treating as transient", connectionId);
+            return (UpstreamRefreshOutcome.Transient, null);
+        }
+
+        string tokenEndpoint;
+        string clientSecret;
+        try
+        {
+            var discovery = await discoveryClient.GetDiscoveryAsync(config.MetadataLocation, ct);
+            tokenEndpoint = discovery.TokenEndpoint;
+            clientSecret = await secretProvider.ResolveAsync(config.ClientSecret, ct);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Upstream-refresh: discovery/secret failed for {ConnectionId}; treating as transient", connectionId);
+            return (UpstreamRefreshOutcome.Transient, null);
+        }
+
+        HttpResponseMessage response;
+        string body;
+        try
+        {
+            var client = httpClientFactory.CreateClient("OidcDiscovery");
+            using var content = new FormUrlEncodedContent(new Dictionary<string, string>
+            {
+                ["grant_type"] = "refresh_token",
+                ["refresh_token"] = refreshToken,
+                ["client_id"] = config.ClientId,
+                ["client_secret"] = clientSecret,
+            });
+            response = await client.PostAsync(tokenEndpoint, content, ct);
+            body = await response.Content.ReadAsStringAsync(ct);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Upstream-refresh: token request failed for {ConnectionId}; treating as transient", connectionId);
+            return (UpstreamRefreshOutcome.Transient, null);
+        }
+
+        if (response.IsSuccessStatusCode)
+        {
+            try
+            {
+                using var doc = JsonDocument.Parse(body);
+                var rotated = doc.RootElement.TryGetProperty("refresh_token", out var rt) ? rt.GetString() : null;
+                // No rotation → keep redeeming the same token next time.
+                return (UpstreamRefreshOutcome.Valid, string.IsNullOrEmpty(rotated) ? refreshToken : rotated);
+            }
+            catch
+            {
+                return (UpstreamRefreshOutcome.Valid, refreshToken);
+            }
+        }
+
+        // 4xx (invalid_grant): the upstream refused — the federated credential is gone. Fail closed so
+        // revocation propagates. 5xx: transient, keep the session (bounded by the session cap).
+        if ((int)response.StatusCode is >= 400 and < 500)
+        {
+            logger.LogInformation("Upstream-refresh: connection {ConnectionId} refused the refresh ({Status}); ending the local session", connectionId, (int)response.StatusCode);
+            return (UpstreamRefreshOutcome.Revoked, null);
+        }
+
+        logger.LogWarning("Upstream-refresh: connection {ConnectionId} returned {Status}; treating as transient", connectionId, (int)response.StatusCode);
+        return (UpstreamRefreshOutcome.Transient, null);
     }
 
     /// <summary>
@@ -110,6 +239,8 @@ public sealed class UserStoreOidcSubjectResolver(
         DateTimeOffset? sessionMaxExpiresAt = null,
         string? sessionId = null,
         IReadOnlyDictionary<string, string>? federationClaims = null,
+        string? upstreamRefreshToken = null,
+        string? upstreamConnectionId = null,
         CancellationToken ct = default)
     {
         // SCIM group → role mappings (empty store = no-op). Fetch the user's groups once,
@@ -151,6 +282,8 @@ public sealed class UserStoreOidcSubjectResolver(
             FederationClaims = federationClaims is { Count: > 0 } ? federationClaims : null,
             SessionMaxExpiresAt = sessionMaxExpiresAt,
             SessionId = sessionId,
+            UpstreamRefreshToken = upstreamRefreshToken,
+            UpstreamConnectionId = upstreamConnectionId,
         };
     }
 }
