@@ -3,6 +3,7 @@ import { useSearchParams, Link, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { register, getPasswordPolicy, getProviders, ApiRequestError } from '../api';
 import type { PasswordPolicyRule } from '../types';
+import { localizePasswordRules } from '../lib/passwordRules';
 import { Turnstile } from '../components/Turnstile';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -158,7 +159,7 @@ export default function RegisterPage() {
 
         {policyRules.length > 0 && (
           <ul className="text-[13px] text-gray-500 dark:text-gray-400 mb-4 ps-5 list-disc">
-            {policyRules.map((rule) => (
+            {localizePasswordRules(t, policyRules).map((rule) => (
               <li key={rule.rule}>{rule.label}</li>
             ))}
           </ul>

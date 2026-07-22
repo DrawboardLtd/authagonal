@@ -15,6 +15,7 @@ export { Separator } from './components/ui/separator';
 export { Turnstile } from './components/Turnstile';
 export type { TurnstileProps } from './components/Turnstile';
 export { cn } from './lib/utils';
+export { localizePasswordRules, localizePasswordRuleLabel } from './lib/passwordRules';
 
 // Pages
 export { default as LoginPage } from './pages/LoginPage';

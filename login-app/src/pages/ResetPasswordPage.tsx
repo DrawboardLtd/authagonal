@@ -2,6 +2,8 @@ import { useState, useEffect } from 'react';
 import { useSearchParams, Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { resetPassword, getProviders, ApiRequestError } from '../api';
+import type { PasswordPolicyRule } from '../types';
+import { localizePasswordRules } from '../lib/passwordRules';
 import { Turnstile } from '../components/Turnstile';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -10,12 +12,6 @@ import { Alert } from '@/components/ui/alert';
 import { CardTitle, CardFooter } from '@/components/ui/card';
 import { Check, X } from 'lucide-react';
 
-interface PasswordRule {
-  rule: string;
-  value: number | null;
-  label: string;
-}
-
 interface PasswordRequirement {
   label: string;
   met: boolean;
@@ -23,7 +19,7 @@ interface PasswordRequirement {
 
 const API_URL = import.meta.env.VITE_API_URL || '';
 
-const defaultRules: PasswordRule[] = [
+const defaultRules: PasswordPolicyRule[] = [
   { rule: 'minLength', value: 8, label: 'At least 8 characters' },
   { rule: 'uppercase', value: null, label: 'Uppercase letter' },
   { rule: 'lowercase', value: null, label: 'Lowercase letter' },
@@ -31,7 +27,7 @@ const defaultRules: PasswordRule[] = [
   { rule: 'specialChar', value: null, label: 'Special character' },
 ];
 
-function evaluateRequirements(password: string, rules: PasswordRule[]): PasswordRequirement[] {
+function evaluateRequirements(password: string, rules: PasswordPolicyRule[]): PasswordRequirement[] {
   return rules.map((r) => {
     let met = false;
     switch (r.rule) {
@@ -60,7 +56,7 @@ export default function ResetPasswordPage() {
   // tenant's default application; null keeps the plain sign-in link.
   const [appLink, setAppLink] = useState<{ clientName: string; homeUri: string } | null>(null);
   const [validationError, setValidationError] = useState('');
-  const [rules, setRules] = useState<PasswordRule[]>(defaultRules);
+  const [rules, setRules] = useState<PasswordPolicyRule[]>(defaultRules);
   const [turnstileSiteKey, setTurnstileSiteKey] = useState<string | undefined>(undefined);
   const [turnstileToken, setTurnstileToken] = useState<string | null>(null);
   const [turnstileKey, setTurnstileKey] = useState(0); // bump to re-mount the widget for a fresh challenge
@@ -79,23 +75,7 @@ export default function ResetPasswordPage() {
       .catch(() => {});
   }, []);
 
-  function getRuleLabel(rule: PasswordRule): string {
-    switch (rule.rule) {
-      case 'minLength': return t('ruleMinLength', { count: rule.value ?? 8 });
-      case 'uppercase': return t('ruleUppercase');
-      case 'lowercase': return t('ruleLowercase');
-      case 'digit': return t('ruleDigit');
-      case 'specialChar': return t('ruleSpecialChar');
-      default: return rule.label;
-    }
-  }
-
-  const localizedRules: PasswordRule[] = rules.map(r => ({
-    ...r,
-    label: getRuleLabel(r),
-  }));
-
-  const requirements = evaluateRequirements(newPassword, localizedRules);
+  const requirements = evaluateRequirements(newPassword, localizePasswordRules(t, rules));
   const allRequirementsMet = requirements.every((r) => r.met);
 
   async function handleSubmit(e: React.FormEvent) {
