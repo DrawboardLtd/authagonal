@@ -25,8 +25,27 @@ public static class UserEndpoints
         group.MapPost("/{userId}/send-verification-email", SendVerificationEmail);
         group.MapPost("/{userId}/identities", LinkExternalIdentity);
         group.MapDelete("/{userId}/identities/{provider}/{externalUserId}", UnlinkExternalIdentity);
+        // Bulk MFA-enrollment lookup for admin directory views ("uses MFA" badges). POST because
+        // real directories exceed query-string id limits.
+        group.MapPost("/mfa-status", GetMfaStatus);
 
         return app;
+    }
+
+    private sealed record MfaStatusRequest(List<string> UserIds);
+
+    private static async Task<IResult> GetMfaStatus(
+        MfaStatusRequest request,
+        IMfaStore mfaStore,
+        CancellationToken ct)
+    {
+        var statuses = new Dictionary<string, bool>();
+        foreach (var userId in (request.UserIds ?? []).Where(id => !string.IsNullOrWhiteSpace(id)).Distinct().Take(500))
+        {
+            var credentials = await mfaStore.GetCredentialsAsync(userId, ct);
+            statuses[userId] = credentials.Count > 0;
+        }
+        return Results.Json(new { statuses });
     }
 
     private static async Task<IResult> GetUser(
