@@ -30,7 +30,13 @@ public sealed class TccProvisioningOrchestrator(
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
     };
 
-    public async Task ProvisionAsync(AuthUser user, CancellationToken ct = default)
+    public Task ProvisionAsync(AuthUser user, CancellationToken ct = default)
+        => ProvisionAllAsync(user, forceReprovision: false, ct);
+
+    public Task ReprovisionAsync(AuthUser user, CancellationToken ct = default)
+        => ProvisionAllAsync(user, forceReprovision: true, ct);
+
+    private async Task ProvisionAllAsync(AuthUser user, bool forceReprovision, CancellationToken ct)
     {
         var provisioningApps = await appProvider.GetAppsAsync(ct);
         if (provisioningApps.Count == 0) return;
@@ -43,7 +49,7 @@ public sealed class TccProvisioningOrchestrator(
             a => new AppConfig(a.CallbackUrl, a.ApiKey, a.TryTimeoutSeconds),
             StringComparer.OrdinalIgnoreCase);
 
-        await ProvisionInternalAsync(user, appIds, resolved, ct);
+        await ProvisionInternalAsync(user, appIds, resolved, ct, forceReprovision);
     }
 
     public Task ProvisionAsync(AuthUser user, IReadOnlyList<string> requiredAppIds, CancellationToken ct = default)
@@ -51,15 +57,22 @@ public sealed class TccProvisioningOrchestrator(
 
     private async Task ProvisionInternalAsync(
         AuthUser user, IReadOnlyList<string> requiredAppIds,
-        IReadOnlyDictionary<string, AppConfig>? resolvedApps, CancellationToken ct)
+        IReadOnlyDictionary<string, AppConfig>? resolvedApps, CancellationToken ct,
+        bool forceReprovision = false)
     {
         if (requiredAppIds.Count == 0)
             return;
 
-        // Determine which apps still need provisioning
-        var existing = await GetProvisionStore().GetByUserAsync(user.Id, ct);
-        var existingAppIds = existing.Select(p => p.AppId).ToHashSet(StringComparer.OrdinalIgnoreCase);
-        var appsToProvision = requiredAppIds.Where(id => !existingAppIds.Contains(id)).ToList();
+        // Determine which apps still need provisioning. A forced reprovision re-runs every app even
+        // when already provisioned — the downstream relationship changed (e.g. guest → standard-user
+        // upgrade) and the app must react again.
+        var appsToProvision = requiredAppIds.ToList();
+        if (!forceReprovision)
+        {
+            var existing = await GetProvisionStore().GetByUserAsync(user.Id, ct);
+            var existingAppIds = existing.Select(p => p.AppId).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            appsToProvision = requiredAppIds.Where(id => !existingAppIds.Contains(id)).ToList();
+        }
 
         if (appsToProvision.Count == 0)
             return;

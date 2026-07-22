@@ -20,6 +20,16 @@ public interface IProvisioningOrchestrator
     Task ProvisionAsync(AuthUser user, CancellationToken ct = default);
 
     /// <summary>
+    /// Re-runs the Try/Confirm cycle for every discovered app even if the user is already provisioned
+    /// into it. Use when the user's relationship to the downstream materially CHANGES and the app must
+    /// react again — e.g. a passwordless-account claim (guest → standard-user upgrade), where the
+    /// original provisioning was a lightweight adoption and the claim now carries real signup context
+    /// (organization name, etc.). A plain re-login must NOT use this (that's <see cref="ProvisionAsync(AuthUser, CancellationToken)"/>,
+    /// which skips already-provisioned apps). Throws <see cref="ProvisioningException"/> if any app rejects.
+    /// </summary>
+    Task ReprovisionAsync(AuthUser user, CancellationToken ct = default);
+
+    /// <summary>
     /// Deprovisions a user from all apps they are provisioned into.
     /// Best-effort: logs failures but does not throw.
     /// </summary>

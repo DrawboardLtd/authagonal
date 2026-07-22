@@ -432,9 +432,15 @@ public static class AuthEndpoints
         // Provision to downstream apps (TCC). Try handlers may return an
         // OrganizationId and/or CustomAttributes that the orchestrator merges
         // onto the user — persist that merge so those values land on tokens.
+        // An UPGRADE forces reprovisioning: the account was already provisioned (e.g. a guest adopted
+        // via a share-link federation), so a plain ProvisionAsync would skip it — the downstream would
+        // never see the claim's signup context (org name) and couldn't convert the guest to a real user.
         try
         {
-            await provisioning.ProvisionAsync(user, ct);
+            if (isUpgrade)
+                await provisioning.ReprovisionAsync(user, ct);
+            else
+                await provisioning.ProvisionAsync(user, ct);
         }
         catch (ProvisioningException ex)
         {
