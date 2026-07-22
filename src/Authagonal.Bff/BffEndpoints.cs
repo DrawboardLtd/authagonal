@@ -52,7 +52,12 @@ internal static class BffEndpoints
         var correlation = new CorrelationState(state, codeVerifier, nonce, safeReturn, tenant.TenantKey);
         var payload = protector.Protect(
             JsonSerializer.Serialize(correlation, BffJsonContext.Default.CorrelationState), CorrelationPurpose);
-        ctx.Response.Cookies.Append(o.CorrelationCookieName, payload, TransientCookieOptions(ctx, o));
+        // Per-login cookie (suffixed with the state) so concurrent logins can't clobber each other.
+        // With a single shared cookie, any /bff/login started while another is mid-flight (another
+        // tab's 401→login restart; a user pausing on the IdP's interstitial page) overwrote the
+        // first flow's correlation, and the completing callback died with state_mismatch. State is
+        // self-generated base64url, so it is cookie-name-safe.
+        ctx.Response.Cookies.Append(CorrelationCookieFor(o, state), payload, TransientCookieOptions(ctx, o));
 
         var authorizeParams = new Dictionary<string, string?>
         {
@@ -94,15 +99,29 @@ internal static class BffEndpoints
         var o = options.Value;
         var log = loggerFactory.CreateLogger("Authagonal.Bff");
 
-        // Correlation cookie binds this callback to the browser that started the login (login-CSRF guard).
-        if (!ctx.Request.Cookies.TryGetValue(o.CorrelationCookieName, out var protectedCorr)
-            || !protector.TryUnprotect(protectedCorr, CorrelationPurpose, out var corrJson))
+        // Correlation cookie binds this callback to the browser that started the login (login-CSRF
+        // guard). The cookie is per-login, named by the state this callback claims to complete —
+        // the query value is attacker-influenced, so it must be validated as cookie-name-safe
+        // before being used in a lookup. Falls back to the legacy shared cookie so logins already
+        // in flight across a deploy still complete.
+        if (string.IsNullOrEmpty(state) || !IsCookieNameSafe(state))
+            return Fail("state_mismatch");
+
+        var perLoginCookie = CorrelationCookieFor(o, state);
+        var usedLegacyCookie = false;
+        if (!ctx.Request.Cookies.TryGetValue(perLoginCookie, out var protectedCorr))
+        {
+            usedLegacyCookie = true;
+            if (!ctx.Request.Cookies.TryGetValue(o.CorrelationCookieName, out protectedCorr))
+                return Fail("invalid_correlation");
+        }
+        if (!protector.TryUnprotect(protectedCorr, CorrelationPurpose, out var corrJson))
             return Fail("invalid_correlation");
 
-        ctx.Response.Cookies.Delete(o.CorrelationCookieName, TransientCookieOptions(ctx, o));
+        ctx.Response.Cookies.Delete(usedLegacyCookie ? o.CorrelationCookieName : perLoginCookie, TransientCookieOptions(ctx, o));
 
         var correlation = JsonSerializer.Deserialize(corrJson, BffJsonContext.Default.CorrelationState);
-        if (correlation is null || string.IsNullOrEmpty(state) || !FixedTimeEquals(state, correlation.State))
+        if (correlation is null || !FixedTimeEquals(state, correlation.State))
             return Fail("state_mismatch");
 
         if (!string.IsNullOrEmpty(error))
@@ -480,4 +499,12 @@ internal static class BffEndpoints
         => ctx.Request.IsHttps
            || cookieName.StartsWith("__Host-", StringComparison.Ordinal)
            || cookieName.StartsWith("__Secure-", StringComparison.Ordinal);
+
+    private static string CorrelationCookieFor(AuthagonalBffOptions o, string state)
+        => $"{o.CorrelationCookieName}.{state}";
+
+    // Our states are base64url(32 bytes) = 43 chars; anything else in the callback query is not a
+    // state we issued and must not end up inside a cookie name (header-injection surface).
+    private static bool IsCookieNameSafe(string state)
+        => state.Length <= 64 && state.All(c => char.IsAsciiLetterOrDigit(c) || c is '-' or '_');
 }
