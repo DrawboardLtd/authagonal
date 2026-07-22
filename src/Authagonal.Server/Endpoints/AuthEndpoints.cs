@@ -364,7 +364,15 @@ public static class AuthEndpoints
         var email = emailTrimmed.ToLowerInvariant();
 
         var existing = await userStore.FindByEmailAsync(email, ct);
-        if (existing is not null)
+
+        // Opt-in (AllowPasswordlessAccountClaim, off by default): an existing account WITH NO LOCAL
+        // CREDENTIAL (a federated / JIT account) can claim a password through registration — the
+        // password is set and provisioning runs, letting a downstream app act on it (e.g. bullclip's
+        // guest → standard-user conversion). An account that ALREADY has a password is untouched — a
+        // re-register can never overwrite a real credential. A fresh account and a claim share the
+        // provisioning + verification tail.
+        var isUpgrade = ao.AllowPasswordlessAccountClaim && existing is { PasswordHash: null or "" };
+        if (existing is not null && !isUpgrade)
         {
             // Don't reveal that the email is already taken (account enumeration). Notify the real
             // owner so they can sign in / reset, and return the SAME neutral 201 a brand-new
@@ -379,29 +387,47 @@ public static class AuthEndpoints
             {
                 logger.LogError(ex, "Failed to send account-exists email to {Email}", existing.Email);
             }
-            logger.LogInformation("Registration attempt for an existing email — neutral response returned");
+            logger.LogInformation("Registration attempt for an existing credentialed email — neutral response returned");
             return TypedResults.Json(new RegistrationSuccess { Success = true, UserId = Guid.NewGuid().ToString("D") }, AuthagonalJsonContext.Default.RegistrationSuccess, statusCode: 201);
         }
 
-        var user = new AuthUser
+        AuthUser user;
+        if (isUpgrade)
         {
-            Id = Guid.NewGuid().ToString("D"),
-            Email = email,
-            NormalizedEmail = email.ToUpperInvariant(),
-            PasswordHash = passwordHasher.HashPassword(request.Password),
-            FirstName = request.FirstName?.Trim(),
-            LastName = request.LastName?.Trim(),
-            Locale = NormalizeLocale(request.Locale),
-            EmailConfirmed = IsAutoConfirmedDomain(email, ao.AutoConfirmEmailDomains),
-            LockoutEnabled = true,
-            SecurityStamp = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32)),
-            CreatedAt = DateTimeOffset.UtcNow,
-            CustomAttributes = request.CustomAttributes is { Count: > 0 }
-                ? new Dictionary<string, string>(request.CustomAttributes)
-                : [],
-        };
+            user = existing!;
+            user.PasswordHash = passwordHasher.HashPassword(request.Password);
+            if (!string.IsNullOrWhiteSpace(request.FirstName)) user.FirstName = request.FirstName.Trim();
+            if (!string.IsNullOrWhiteSpace(request.LastName)) user.LastName = request.LastName.Trim();
+            if (request.CustomAttributes is { Count: > 0 })
+                foreach (var kv in request.CustomAttributes)
+                    user.CustomAttributes[kv.Key] = kv.Value;
+            if (IsAutoConfirmedDomain(email, ao.AutoConfirmEmailDomains))
+                user.EmailConfirmed = true;
+            user.UpdatedAt = DateTimeOffset.UtcNow;
+            await userStore.UpdateAsync(user, ct);
+        }
+        else
+        {
+            user = new AuthUser
+            {
+                Id = Guid.NewGuid().ToString("D"),
+                Email = email,
+                NormalizedEmail = email.ToUpperInvariant(),
+                PasswordHash = passwordHasher.HashPassword(request.Password),
+                FirstName = request.FirstName?.Trim(),
+                LastName = request.LastName?.Trim(),
+                Locale = NormalizeLocale(request.Locale),
+                EmailConfirmed = IsAutoConfirmedDomain(email, ao.AutoConfirmEmailDomains),
+                LockoutEnabled = true,
+                SecurityStamp = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32)),
+                CreatedAt = DateTimeOffset.UtcNow,
+                CustomAttributes = request.CustomAttributes is { Count: > 0 }
+                    ? new Dictionary<string, string>(request.CustomAttributes)
+                    : [],
+            };
 
-        await userStore.CreateAsync(user, ct);
+            await userStore.CreateAsync(user, ct);
+        }
 
         // Provision to downstream apps (TCC). Try handlers may return an
         // OrganizationId and/or CustomAttributes that the orchestrator merges
@@ -412,7 +438,18 @@ public static class AuthEndpoints
         }
         catch (ProvisioningException ex)
         {
-            await userStore.DeleteAsync(user.Id, ct);
+            // Roll back: delete a brand-new account, but only REVERT the password on an upgrade —
+            // the pre-existing guest account and its data must survive a rejected upgrade.
+            if (isUpgrade)
+            {
+                user.PasswordHash = null;
+                user.UpdatedAt = DateTimeOffset.UtcNow;
+                await userStore.UpdateAsync(user, ct);
+            }
+            else
+            {
+                await userStore.DeleteAsync(user.Id, ct);
+            }
             logger.LogWarning(ex, "Provisioning rejected registration for {Email}", user.Email);
             return TypedResults.Json(new ErrorInfoResponse { Error = "provisioning_rejected", Message = ex.Message }, AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 422);
         }

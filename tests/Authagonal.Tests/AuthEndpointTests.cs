@@ -436,4 +436,82 @@ public sealed class AuthEndpointTests : IAsyncLifetime
         var after = await _factory.UserStore.FindByEmailAsync("verify-bad@example.com");
         Assert.False(after!.EmailConfirmed);
     }
+
+    [Fact]
+    public async Task Register_PasswordlessAccountClaim_WhenEnabled_SetsCredentialInPlace()
+    {
+        // Opt-in AllowPasswordlessAccountClaim: a federated / JIT account (no local password) claims
+        // a credential through registration in place, rather than the duplicate swallow.
+        await using var factory = new AuthagonalTestFactory { ConfigureAuthOptions = o => o.AllowPasswordlessAccountClaim = true };
+        var client = factory.CreateClient(new() { AllowAutoRedirect = false });
+        await factory.SeedTestDataAsync();
+
+        var federated = new Authagonal.Core.Models.AuthUser
+        {
+            Id = System.Guid.NewGuid().ToString("N"),
+            Email = "federated@example.com",
+            NormalizedEmail = "FEDERATED@EXAMPLE.COM",
+            PasswordHash = null, // no local credential
+            EmailConfirmed = true, // email proven via the upstream/federation
+            LockoutEnabled = true,
+            SecurityStamp = System.Convert.ToBase64String(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32)),
+            CreatedAt = System.DateTimeOffset.UtcNow,
+        };
+        await factory.UserStore.CreateAsync(federated);
+
+        var response = await client.PostAsJsonAsync("/api/auth/register",
+            new { email = "federated@example.com", password = "Claim1234!", firstName = "Grown", lastName = "Up" });
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+
+        var claimed = await factory.UserStore.GetAsync(federated.Id);
+        Assert.NotNull(claimed!.PasswordHash); // same account, now credentialed
+        var login = await client.PostAsJsonAsync("/api/auth/login",
+            new { email = "federated@example.com", password = "Claim1234!" });
+        Assert.Equal(HttpStatusCode.OK, login.StatusCode);
+    }
+
+    [Fact]
+    public async Task Register_PasswordlessAccount_WhenDisabled_StaysNeutral()
+    {
+        // Default (flag OFF): even a passwordless account is treated as a duplicate — no claim.
+        var federated = new Authagonal.Core.Models.AuthUser
+        {
+            Id = System.Guid.NewGuid().ToString("N"),
+            Email = "fed-default@example.com",
+            NormalizedEmail = "FED-DEFAULT@EXAMPLE.COM",
+            PasswordHash = null,
+            EmailConfirmed = true,
+            LockoutEnabled = true,
+            SecurityStamp = System.Convert.ToBase64String(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32)),
+            CreatedAt = System.DateTimeOffset.UtcNow,
+        };
+        await _factory.UserStore.CreateAsync(federated);
+
+        var response = await _client.PostAsJsonAsync("/api/auth/register",
+            new { email = "fed-default@example.com", password = "Claim1234!" });
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode); // neutral
+
+        var stillPasswordless = await _factory.UserStore.GetAsync(federated.Id);
+        Assert.True(string.IsNullOrEmpty(stillPasswordless!.PasswordHash));
+    }
+
+    [Fact]
+    public async Task Register_ExistingPasswordedAccount_StaysNeutralNoTakeover()
+    {
+        // A real credentialed account must NEVER be overwritten by a re-register — the response is the
+        // enumeration-neutral 201 and the original password still works (the new one does not).
+        await _factory.SeedTestUserAsync(email: "real@example.com", password: "Original1!");
+
+        var response = await _client.PostAsJsonAsync("/api/auth/register",
+            new { email = "real@example.com", password = "Attacker9!" });
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode); // neutral
+
+        var withNew = await _client.PostAsJsonAsync("/api/auth/login",
+            new { email = "real@example.com", password = "Attacker9!" });
+        Assert.Equal(HttpStatusCode.Unauthorized, withNew.StatusCode);
+        var withOriginal = await _client.PostAsJsonAsync("/api/auth/login",
+            new { email = "real@example.com", password = "Original1!" });
+        Assert.Equal(HttpStatusCode.OK, withOriginal.StatusCode);
+    }
+
 }

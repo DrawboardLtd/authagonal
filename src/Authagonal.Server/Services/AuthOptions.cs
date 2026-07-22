@@ -14,6 +14,17 @@ public sealed class AuthOptions
     public int MaxRegistrationsPerIp { get; set; } = 5;
     public int RegistrationWindowMinutes { get; set; } = 60;
 
+    /// <summary>
+    /// When true, registering an email that belongs to an existing account WITH NO LOCAL CREDENTIAL
+    /// (a federated / JIT-provisioned account, PasswordHash null) sets the password on that account
+    /// and runs provisioning, rather than returning the enumeration-neutral duplicate response. This
+    /// lets a federated-only account claim a first-party credential through the normal register flow;
+    /// what provisioning does with it is the downstream app's concern. An account that ALREADY has a
+    /// password is never affected — a re-register can never overwrite a real credential. Default OFF:
+    /// a generic deployment treats every existing email as a duplicate.
+    /// </summary>
+    public bool AllowPasswordlessAccountClaim { get; set; }
+
     // --- Password-reset rate limiting (per target email, so one address can't be email-bombed
     //     regardless of source IP) ---
     public int MaxPasswordResetsPerEmail { get; set; } = 3;
