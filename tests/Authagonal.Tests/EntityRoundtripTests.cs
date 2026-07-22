@@ -368,6 +368,53 @@ public class EntityRoundtripTests
     }
 
     [Fact]
+    public void OidcProviderEntity_Roundtrip_PreservesEveryModelProperty()
+    {
+        // Reflective: fills EVERY settable model property with a distinct value and asserts the
+        // entity round-trip preserves each one. A model property added without a matching entity
+        // column/mapping fails here — the hand-picked test below can't catch that (InteractionPath
+        // shipped in 0.10.15 with no Azure entity mapping and silently vanished on upsert).
+        var config = new OidcProviderConfig();
+        AssertEntityRoundtripPreservesEveryProperty(config, c => OidcProviderEntity.FromModel(c).ToModel());
+    }
+
+    [Fact]
+    public void SamlProviderEntity_Roundtrip_PreservesEveryModelProperty()
+    {
+        var config = new SamlProviderConfig();
+        AssertEntityRoundtripPreservesEveryProperty(config, c => SamlProviderEntity.FromModel(c).ToModel());
+    }
+
+    private static void AssertEntityRoundtripPreservesEveryProperty<T>(T model, Func<T, T> roundtrip)
+    {
+        var props = typeof(T).GetProperties().Where(p => p.CanWrite && p.CanRead).ToArray();
+        foreach (var p in props)
+            p.SetValue(model, SampleValueFor(p));
+
+        var result = roundtrip(model);
+
+        foreach (var p in props)
+        {
+            var expected = p.GetValue(model);
+            var actual = p.GetValue(result);
+            if (expected is IEnumerable<string> expectedSeq)
+                Assert.Equal(expectedSeq, Assert.IsAssignableFrom<IEnumerable<string>>(actual));
+            else
+                Assert.True(Equals(expected, actual), $"{typeof(T).Name}.{p.Name}: expected '{expected}', got '{actual}' after entity round-trip");
+        }
+    }
+
+    private static object SampleValueFor(System.Reflection.PropertyInfo p)
+    {
+        var t = Nullable.GetUnderlyingType(p.PropertyType) ?? p.PropertyType;
+        if (t == typeof(string)) return $"v-{p.Name}";
+        if (t == typeof(bool)) return true;
+        if (t == typeof(List<string>)) return new List<string> { $"a-{p.Name}", $"b-{p.Name}" };
+        if (t == typeof(DateTimeOffset)) return new DateTimeOffset(2026, 7, 22, 0, 0, 0, TimeSpan.Zero);
+        throw new NotSupportedException($"Add a sample value for {t.Name} ({p.Name}) so the reflective round-trip stays exhaustive");
+    }
+
+    [Fact]
     public void OidcProviderEntity_Roundtrip_PreservesAllFields()
     {
         var config = new OidcProviderConfig

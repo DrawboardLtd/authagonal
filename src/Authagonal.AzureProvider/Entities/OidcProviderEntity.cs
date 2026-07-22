@@ -30,6 +30,7 @@ public sealed class OidcProviderEntity : ITableEntity
     // Rows lacking the column read false → no auto-link (the safe default).
     public bool AutoLinkExistingByEmail { get; set; }
     public string? SessionExpClaim { get; set; }
+    public string? InteractionPath { get; set; }
     public string? PassthroughParamsJson { get; set; }
     public string? ProvisioningAttributeParamsJson { get; set; }
     // Rows lacking the column read false → no upstream-refresh revalidation (the safe default).
@@ -54,6 +55,7 @@ public sealed class OidcProviderEntity : ITableEntity
         SkipMfaAfterFederatedLogin = config.SkipMfaAfterFederatedLogin,
         AutoLinkExistingByEmail = config.AutoLinkExistingByEmail,
         SessionExpClaim = config.SessionExpClaim,
+        InteractionPath = config.InteractionPath,
         PassthroughParamsJson = config.PassthroughParams.Count > 0
             ? JsonSerializer.Serialize(config.PassthroughParams, AzureJsonContext.Default.ListString)
             : null,
@@ -81,6 +83,7 @@ public sealed class OidcProviderEntity : ITableEntity
         SkipMfaAfterFederatedLogin = SkipMfaAfterFederatedLogin,
         AutoLinkExistingByEmail = AutoLinkExistingByEmail,
         SessionExpClaim = SessionExpClaim,
+        InteractionPath = InteractionPath,
         PassthroughParams = string.IsNullOrEmpty(PassthroughParamsJson)
             ? []
             : JsonSerializer.Deserialize(PassthroughParamsJson, AzureJsonContext.Default.ListString) ?? [],
