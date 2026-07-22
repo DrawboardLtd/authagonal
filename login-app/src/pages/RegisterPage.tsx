@@ -51,13 +51,14 @@ export default function RegisterPage() {
     setLoading(true);
 
     try {
-      await register(email, password, firstName || undefined, lastName || undefined, turnstileToken || undefined, returnUrl || undefined);
+      const result = await register(email, password, firstName || undefined, lastName || undefined, turnstileToken || undefined, returnUrl || undefined);
 
-      // Redirect to login with success message
+      // Redirect to login. Pre-verified accounts (invite redemptions, auto-confirmed domains)
+      // skip the check-your-email notice — they can sign straight in.
       const params = new URLSearchParams();
       if (returnUrl) params.set('returnUrl', returnUrl);
       params.set('login_hint', email);
-      params.set('message', 'registration_success');
+      if (!result.emailVerified) params.set('message', 'registration_success');
       navigate(`/login?${params.toString()}`);
     } catch (err) {
       if (err instanceof ApiRequestError) {

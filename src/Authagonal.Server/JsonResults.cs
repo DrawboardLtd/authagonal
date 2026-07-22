@@ -58,6 +58,10 @@ internal sealed class RegistrationSuccess
     public bool Success { get; set; }
     [JsonPropertyName("userId")]
     public required string UserId { get; set; }
+    /// <summary>True when the account is already confirmed (invite redemption vouched by the
+    /// provisioning app, or an auto-confirm domain) — no verification email was sent.</summary>
+    [JsonPropertyName("emailVerified")]
+    public bool EmailVerified { get; set; }
 }
 
 internal sealed class ResendEmailRequest

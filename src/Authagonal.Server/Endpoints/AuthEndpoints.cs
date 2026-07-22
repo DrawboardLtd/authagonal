@@ -414,6 +414,14 @@ public static class AuthEndpoints
         user.UpdatedAt = DateTimeOffset.UtcNow;
         await userStore.UpdateAsync(user, ct);
 
+        // Already confirmed — provisioning vouched for the address (invite redemption) or the
+        // domain is auto-confirmed. No verification email: the user can sign straight in.
+        if (user.EmailConfirmed)
+        {
+            logger.LogInformation("User registered (email pre-verified): {UserId} ({Email})", user.Id, user.Email);
+            return TypedResults.Json(new RegistrationSuccess { Success = true, UserId = user.Id, EmailVerified = true }, AuthagonalJsonContext.Default.RegistrationSuccess, statusCode: 201);
+        }
+
         // Send verification email. The optional 4th payload segment carries the OAuth client the
         // registration flow originated from (parsed from the login page's authorize returnUrl), so
         // the confirmation landing can offer "continue to {app}". Older 3-segment tokens stay valid.

@@ -125,6 +125,8 @@ export interface MfaWebAuthnConfirmResponse {
 }
 
 export interface RegisterResponse {
+  /** True when no verification email was sent (invite redemption / auto-confirmed domain). */
+  emailVerified?: boolean;
   success: boolean;
   userId: string;
 }

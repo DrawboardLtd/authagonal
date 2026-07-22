@@ -66,6 +66,7 @@ export default function LoginPage() {
   const [turnstileToken, setTurnstileToken] = useState<string | null>(null);
   const [turnstileKey, setTurnstileKey] = useState(0); // bump to re-mount the widget for a fresh challenge
   const [session, setSession] = useState<{ name: string; email: string } | null>(null);
+  const [sessionApp, setSessionApp] = useState<{ clientName: string; homeUri: string } | null>(null);
   const [mfaPrompt, setMfaPrompt] = useState<{ returnUrl: string; userId: string; clientId: string } | null>(null);
 
   const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -104,6 +105,14 @@ export default function LoginPage() {
       .then((s) => {
         if (s.authenticated) {
           setSession({ name: s.name, email: s.email });
+          // The signed-in card must never be a dead end: resolve where "into the app" leads
+          // (the flow's default application) and offer it as the primary action.
+          getApps()
+            .then((apps) => {
+              const app = apps.find((a) => a.isDefault) ?? apps[0];
+              if (app?.homeUri) setSessionApp({ clientName: app.clientName, homeUri: app.homeUri });
+            })
+            .catch(() => {});
         }
       })
       .catch(() => {});
@@ -324,6 +333,11 @@ export default function LoginPage() {
         <CardTitle>{t('signedInAs', { name: session.name || session.email })}</CardTitle>
         <p className="text-center text-gray-500 dark:text-gray-400">{t('signedInMessage')}</p>
         <CardFooter className="flex flex-col gap-2">
+          {sessionApp && (
+            <a href={sessionApp.homeUri} className="block no-underline" data-testid="continue-to-app">
+              <Button className="w-full">{t('continueToApp', { app: sessionApp.clientName })}</Button>
+            </a>
+          )}
           <Link to="/account" className="block">
             <Button className="w-full">{t('manageAccount', 'Manage account')}</Button>
           </Link>

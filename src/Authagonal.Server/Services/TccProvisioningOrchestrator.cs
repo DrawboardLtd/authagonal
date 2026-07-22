@@ -227,6 +227,9 @@ public sealed class TccProvisioningOrchestrator(
                 user.CustomAttributes[kvp.Key] = kvp.Value;
             }
         }
+
+        if (response.EmailVerified == true)
+            user.EmailConfirmed = true;
     }
 
     private async Task ConfirmAsync(AppConfig app, string transactionId, CancellationToken ct)
@@ -372,5 +375,12 @@ public sealed class TccProvisioningOrchestrator(
         // Merged into AuthUser.CustomAttributes; emitted on tokens via scope
         // UserClaims configuration.
         public Dictionary<string, string>? CustomAttributes { get; init; }
+
+        // The downstream app vouches that it VERIFIED the registrant's email address as part of
+        // approving this Try — e.g. an invite redemption where the app enforced that the
+        // authenticated email equals the emailed invite's recipient. The orchestrator marks the
+        // account EmailConfirmed, and registration skips the verification email entirely:
+        // possession of the emailed invite IS the verification.
+        public bool? EmailVerified { get; init; }
     }
 }
