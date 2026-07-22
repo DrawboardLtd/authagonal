@@ -3,7 +3,8 @@ import { useSearchParams, Link, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { register, getPasswordPolicy, getProviders, ApiRequestError } from '../api';
 import type { PasswordPolicyRule } from '../types';
-import { localizePasswordRules } from '../lib/passwordRules';
+import { localizePasswordRules, evaluatePasswordRules } from '../lib/passwordRules';
+import { Check, X } from 'lucide-react';
 import { Turnstile } from '../components/Turnstile';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -157,13 +158,23 @@ export default function RegisterPage() {
           />
         </div>
 
-        {policyRules.length > 0 && (
-          <ul className="text-[13px] text-gray-500 dark:text-gray-400 mb-4 ps-5 list-disc">
-            {localizePasswordRules(t, policyRules).map((rule) => (
-              <li key={rule.rule}>{rule.label}</li>
-            ))}
-          </ul>
-        )}
+        {(() => {
+          if (policyRules.length === 0) return null;
+          // Live checklist (same look as the reset page): each rule flips as the user types, and
+          // the whole list disappears once every rule is satisfied — it's guidance, not furniture.
+          const requirements = evaluatePasswordRules(password, localizePasswordRules(t, policyRules));
+          if (requirements.every((r) => r.met)) return null;
+          return (
+            <ul className="list-none mb-4 p-3 bg-gray-50 dark:bg-gray-800/60 rounded-md">
+              {requirements.map((req) => (
+                <li key={req.rule} className={`text-[13px] py-0.5 flex items-center gap-1.5 ${req.met ? 'text-green-800 dark:text-green-400' : 'text-gray-500 dark:text-gray-400'}`}>
+                  {req.met ? <Check className="h-3.5 w-3.5 shrink-0" /> : <X className="h-3.5 w-3.5 shrink-0" />}
+                  {req.label}
+                </li>
+              ))}
+            </ul>
+          );
+        })()}
 
         {turnstileSiteKey && (
           <div className="mb-4">

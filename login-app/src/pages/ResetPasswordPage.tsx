@@ -3,7 +3,7 @@ import { useSearchParams, Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { resetPassword, getProviders, ApiRequestError } from '../api';
 import type { PasswordPolicyRule } from '../types';
-import { localizePasswordRules } from '../lib/passwordRules';
+import { localizePasswordRules, evaluatePasswordRules } from '../lib/passwordRules';
 import { Turnstile } from '../components/Turnstile';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -11,11 +11,6 @@ import { Label } from '@/components/ui/label';
 import { Alert } from '@/components/ui/alert';
 import { CardTitle, CardFooter } from '@/components/ui/card';
 import { Check, X } from 'lucide-react';
-
-interface PasswordRequirement {
-  label: string;
-  met: boolean;
-}
 
 const API_URL = import.meta.env.VITE_API_URL || '';
 
@@ -26,21 +21,6 @@ const defaultRules: PasswordPolicyRule[] = [
   { rule: 'digit', value: null, label: 'Number' },
   { rule: 'specialChar', value: null, label: 'Special character' },
 ];
-
-function evaluateRequirements(password: string, rules: PasswordPolicyRule[]): PasswordRequirement[] {
-  return rules.map((r) => {
-    let met = false;
-    switch (r.rule) {
-      case 'minLength': met = password.length >= (r.value ?? 8); break;
-      case 'uppercase': met = /[A-Z]/.test(password); break;
-      case 'lowercase': met = /[a-z]/.test(password); break;
-      case 'digit': met = /[0-9]/.test(password); break;
-      case 'specialChar': met = /[^A-Za-z0-9]/.test(password); break;
-      default: met = true;
-    }
-    return { label: r.label, met };
-  });
-}
 
 export default function ResetPasswordPage() {
   const { t } = useTranslation();
@@ -75,7 +55,7 @@ export default function ResetPasswordPage() {
       .catch(() => {});
   }, []);
 
-  const requirements = evaluateRequirements(newPassword, localizePasswordRules(t, rules));
+  const requirements = evaluatePasswordRules(newPassword, localizePasswordRules(t, rules));
   const allRequirementsMet = requirements.every((r) => r.met);
 
   async function handleSubmit(e: React.FormEvent) {

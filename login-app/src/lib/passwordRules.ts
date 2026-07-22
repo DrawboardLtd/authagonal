@@ -17,3 +17,26 @@ export function localizePasswordRuleLabel(t: TFunction, rule: PasswordPolicyRule
 export function localizePasswordRules(t: TFunction, rules: PasswordPolicyRule[]): PasswordPolicyRule[] {
   return rules.map((r) => ({ ...r, label: localizePasswordRuleLabel(t, r) }));
 }
+
+export interface PasswordRequirement {
+  rule: string;
+  label: string;
+  met: boolean;
+}
+
+// Client-side mirror of the server's password policy, for live checklist feedback while typing.
+// Unknown rule ids count as met — the server remains the enforcement gate.
+export function evaluatePasswordRules(password: string, rules: PasswordPolicyRule[]): PasswordRequirement[] {
+  return rules.map((r) => {
+    let met = false;
+    switch (r.rule) {
+      case 'minLength': met = password.length >= (r.value ?? 8); break;
+      case 'uppercase': met = /[A-Z]/.test(password); break;
+      case 'lowercase': met = /[a-z]/.test(password); break;
+      case 'digit': met = /[0-9]/.test(password); break;
+      case 'specialChar': met = /[^A-Za-z0-9]/.test(password); break;
+      default: met = true;
+    }
+    return { rule: r.rule, label: r.label, met };
+  });
+}
