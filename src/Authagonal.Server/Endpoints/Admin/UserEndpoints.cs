@@ -32,6 +32,7 @@ public static class UserEndpoints
         return app;
     }
 
+
     private sealed record MfaStatusRequest(List<string> UserIds);
 
     private static async Task<IResult> GetMfaStatus(

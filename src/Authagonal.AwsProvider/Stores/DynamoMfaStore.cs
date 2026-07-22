@@ -42,6 +42,8 @@ public sealed class DynamoMfaStore(
     {
         var pk = partitioner.PK(userId);
         var old = await credentials.DeleteIfExistsReturningAsync(pk, credentialId, ct).ConfigureAwait(false);
+        // Clear the WebAuthn credential-id index row so no stale lookup survives the delete.
+        if (old is not null) await DeleteWebAuthnIndexForAsync(ReadCredential(old), ct).ConfigureAwait(false);
         if (old is not null && tombstones is not null) await tombstones.WriteAsync("MfaCredentials", pk, credentialId, ct).ConfigureAwait(false);
     }
 
@@ -52,6 +54,7 @@ public sealed class DynamoMfaStore(
         await foreach (var item in credentials.QueryAsync(pk, ct: ct).ConfigureAwait(false))
         {
             var sk = item.GetStr(Dyn.Sk);
+            await DeleteWebAuthnIndexForAsync(ReadCredential(item), ct).ConfigureAwait(false);
             await credentials.DeleteAsync(pk, sk, ct).ConfigureAwait(false);
             keys.Add((pk, sk));
         }
@@ -70,6 +73,28 @@ public sealed class DynamoMfaStore(
         item.PutS("userId", userId);
         item.PutS("credentialId", credentialId);
         return webAuthnIndex.PutAsync(item, ct);
+    }
+
+    // Deletes the WebAuthn credential-id index row for a WebAuthn credential (no-op otherwise).
+    // Best-effort — a parse failure never blocks the credential delete.
+    private async Task DeleteWebAuthnIndexForAsync(MfaCredential credential, CancellationToken ct)
+    {
+        if (credential.Type != MfaCredentialType.WebAuthn || string.IsNullOrEmpty(credential.PublicKeyJson))
+            return;
+        try
+        {
+            using var doc = JsonDocument.Parse(credential.PublicKeyJson);
+            string? credIdB64 = null;
+            foreach (var prop in doc.RootElement.EnumerateObject())
+                if (string.Equals(prop.Name, "credentialId", StringComparison.OrdinalIgnoreCase))
+                {
+                    credIdB64 = prop.Value.GetString();
+                    break;
+                }
+            if (string.IsNullOrEmpty(credIdB64)) return;
+            await DeleteWebAuthnCredentialIdMappingAsync(Convert.FromBase64String(credIdB64), ct).ConfigureAwait(false);
+        }
+        catch (Exception) { /* malformed — nothing to clean, never block */ }
     }
 
     public async Task DeleteWebAuthnCredentialIdMappingAsync(byte[] webAuthnCredentialId, CancellationToken ct = default)

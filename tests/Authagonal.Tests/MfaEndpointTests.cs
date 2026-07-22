@@ -387,6 +387,41 @@ public class MfaEndpointTests : IAsyncDisposable
         Assert.False(json.TryGetProperty("mfaRequired", out _));
     }
 
+    [Fact]
+    public async Task AdminResetMfa_ClearsWebAuthnIndex_NoStalePointer()
+    {
+        await _factory.SeedTestDataAsync();
+        var user = await _factory.SeedTestUserAsync();
+
+        // Enroll a WebAuthn credential with its credential-id index row (as the confirm flow does).
+        var credentialId = new byte[] { 1, 2, 3, 4, 5, 6, 7, 8 };
+        var credId = Guid.NewGuid().ToString("N");
+        await _factory.MfaStore.CreateCredentialAsync(new MfaCredential
+        {
+            Id = credId,
+            UserId = user.Id,
+            Type = MfaCredentialType.WebAuthn,
+            Name = "Security key",
+            PublicKeyJson = $"{{\"credentialId\":\"{Convert.ToBase64String(credentialId)}\",\"publicKey\":\"x\",\"credType\":\"public-key\",\"aaguid\":\"\"}}",
+            CreatedAt = DateTimeOffset.UtcNow,
+        });
+        await _factory.MfaStore.StoreWebAuthnCredentialIdMappingAsync(credentialId, user.Id, credId);
+
+        // Precondition: the index resolves.
+        Assert.NotNull(await _factory.MfaStore.FindByWebAuthnCredentialIdAsync(credentialId));
+
+        var adminClient = _factory.CreateClient();
+        var adminToken = await _factory.GetAdminTokenAsync(adminClient);
+        adminClient.DefaultRequestHeaders.Authorization =
+            new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", adminToken);
+        var resetResponse = await adminClient.DeleteAsync($"/api/v1/profile/{user.Id}/mfa");
+        resetResponse.EnsureSuccessStatusCode();
+
+        // The credential is gone AND the index row is gone — no stale pointer, re-registrable.
+        Assert.Empty(await _factory.MfaStore.GetCredentialsAsync(user.Id));
+        Assert.Null(await _factory.MfaStore.FindByWebAuthnCredentialIdAsync(credentialId));
+    }
+
     private async Task<byte[]> EnrollTotpForUser(string userId)
     {
         var totpService = _factory.Services.GetRequiredService<TotpService>();

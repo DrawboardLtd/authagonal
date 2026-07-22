@@ -103,9 +103,15 @@ public static class AuthEndpoints
 
         // Verify the password. For a non-existent user, verify against a fixed dummy hash so the
         // response timing matches a real account (no user-enumeration via the bcrypt/PBKDF2 cost).
-        var verifyResult = user is not null
-            ? passwordHasher.VerifyPassword(request.Password, user.PasswordHash!)
+        // Passwordless accounts (federated/JIT-provisioned — no local credential) verify against
+        // the dummy hash too: uniform invalid_credentials instead of a 500, and no enumeration of
+        // which accounts are federated.
+        var verifyResult = user is { PasswordHash: not null and not "" }
+            ? passwordHasher.VerifyPassword(request.Password, user.PasswordHash)
             : passwordHasher.VerifyPassword(request.Password, DummyPasswordHash(passwordHasher));
+
+        if (user is not null && string.IsNullOrEmpty(user.PasswordHash))
+            verifyResult = PasswordVerifyResult.Failed;
 
         if (user is null || verifyResult == PasswordVerifyResult.Failed)
         {

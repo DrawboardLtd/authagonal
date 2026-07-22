@@ -453,15 +453,37 @@ public sealed class InMemoryMfaStore : IMfaStore
 
     public Task DeleteCredentialAsync(string userId, string credentialId, CancellationToken ct = default)
     {
-        _credentials.TryRemove($"{userId}|{credentialId}", out _);
+        if (_credentials.TryRemove($"{userId}|{credentialId}", out var removed))
+            CleanWebAuthnIndex(removed);
         return Task.CompletedTask;
     }
 
     public Task DeleteAllCredentialsAsync(string userId, CancellationToken ct = default)
     {
         foreach (var key in _credentials.Where(kvp => kvp.Value.UserId == userId).Select(kvp => kvp.Key))
-            _credentials.TryRemove(key, out _);
+            if (_credentials.TryRemove(key, out var removed))
+                CleanWebAuthnIndex(removed);
         return Task.CompletedTask;
+    }
+
+    // Mirrors the production stores: a deleted WebAuthn credential leaves no stale index row.
+    private void CleanWebAuthnIndex(MfaCredential credential)
+    {
+        if (credential.Type != MfaCredentialType.WebAuthn || string.IsNullOrEmpty(credential.PublicKeyJson))
+            return;
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(credential.PublicKeyJson);
+            foreach (var prop in doc.RootElement.EnumerateObject())
+                if (string.Equals(prop.Name, "credentialId", StringComparison.OrdinalIgnoreCase))
+                {
+                    var b64 = prop.Value.GetString();
+                    if (!string.IsNullOrEmpty(b64))
+                        _webAuthnIndex.TryRemove(HashWebAuthnCredentialId(Convert.FromBase64String(b64)), out _);
+                    return;
+                }
+        }
+        catch (Exception) { /* malformed — nothing to clean */ }
     }
 
     public Task<(string UserId, string CredentialId)?> FindByWebAuthnCredentialIdAsync(byte[] webAuthnCredentialId, CancellationToken ct = default)
