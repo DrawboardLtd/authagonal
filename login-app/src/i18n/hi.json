@@ -64,6 +64,7 @@
   "mfaVerifying": "सत्यापित किया जा रहा है...",
   "mfaInvalidCode": "अमान्य कोड। कृपया पुनः प्रयास करें।",
   "mfaChallengeExpired": "सत्यापन सत्र की समय-सीमा समाप्त हो गई। कृपया फिर से लॉग इन करें।",
+  "mfaTooManyAttempts": "बहुत अधिक गलत प्रयास। कृपया फिर से साइन इन करें।",
   "mfaSetupTitle": "बहु-कारक प्रमाणीकरण",
   "mfaStatusEnabled": "आपके खाते पर MFA सक्षम है।",
   "mfaStatusDisabled": "MFA अभी तक सेट नहीं किया गया है।",

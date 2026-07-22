@@ -64,6 +64,7 @@
   "mfaVerifying": "Besig om te verifieer...",
   "mfaInvalidCode": "Ongeldige kode. Probeer asseblief weer.",
   "mfaChallengeExpired": "Verifikasiesessie het verval. Meld asseblief weer aan.",
+  "mfaTooManyAttempts": "Te veel verkeerde pogings. Meld asseblief weer aan.",
   "mfaSetupTitle": "Multifaktor-verifikasie",
   "mfaStatusEnabled": "MFA is op jou rekening geaktiveer.",
   "mfaStatusDisabled": "MFA is nog nie opgestel nie.",
