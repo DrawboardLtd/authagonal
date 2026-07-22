@@ -108,6 +108,7 @@ public sealed class ProviderSeedService(
                 ProvisioningAttributeParams = seed.ProvisioningAttributeParams ?? [],
                 RevalidateOnRefresh = seed.RevalidateOnRefresh,
                 SessionExpClaim = seed.SessionExpClaim,
+                InteractionPath = seed.InteractionPath,
                 CreatedAt = DateTimeOffset.UtcNow
             };
 
@@ -159,5 +160,6 @@ public sealed class ProviderSeedService(
         public List<string>? ProvisioningAttributeParams { get; set; }
         public bool RevalidateOnRefresh { get; set; }
         public string? SessionExpClaim { get; set; }
+        public string? InteractionPath { get; set; }
     }
 }

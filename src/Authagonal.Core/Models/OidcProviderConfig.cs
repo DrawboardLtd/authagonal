@@ -102,6 +102,18 @@ public sealed record OidcProviderConfig
     public List<string> ProvisioningAttributeParams { get; set; } = [];
 
     /// <summary>
+    /// Optional login-app path (e.g. <c>/guest</c>) shown BEFORE federating an unauthenticated
+    /// <c>idp_hint</c> request through this connection. The authorize endpoint redirects to
+    /// <c>{LoginAppUrl}{InteractionPath}?returnUrl={authorize url}&amp;connection={id}</c> instead of
+    /// straight to <c>/oidc/{id}/login</c>; the page collects whatever the flow needs (a guest's
+    /// name, terms consent), appends it to the returnUrl's query — where <see cref="PassthroughParams"/>
+    /// and <see cref="ProvisioningAttributeParams"/> read from — and continues to the federation
+    /// login URL itself. The host stays agnostic to what the page collects; a page that decides no
+    /// interaction is needed can continue immediately. Null/empty = federate directly (default).
+    /// </summary>
+    public string? InteractionPath { get; set; }
+
+    /// <summary>
     /// Revalidate the local session against this upstream IdP on every local refresh. Requests
     /// <c>offline_access</c> on the federation hop, stores the upstream refresh token in the local
     /// refresh grant, and redeems it server-to-server each time the local session refreshes — if the

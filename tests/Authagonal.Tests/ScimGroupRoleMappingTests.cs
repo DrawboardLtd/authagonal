@@ -14,7 +14,7 @@ public sealed class ScimGroupRoleMappingTests
     private static UserStoreOidcSubjectResolver NewResolver(
         InMemoryScimGroupStore groups,
         InMemoryScimGroupRoleMappingStore mappings) =>
-        new(new InMemoryUserStore(), groups, mappings, new InMemoryClientStore());
+        ResolverTestSupport.NewResolver(new InMemoryUserStore(), groups, mappings, new InMemoryClientStore());
 
     private static AuthUser User(string id, params string[] roles) => new()
     {

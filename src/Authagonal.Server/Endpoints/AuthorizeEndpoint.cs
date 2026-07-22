@@ -21,6 +21,7 @@ public static class AuthorizeEndpoint
             IProvisioningOrchestrator provisioningOrchestrator,
             IConfiguration configuration,
             IGrantStore grantStore,
+            IOidcProviderStore oidcProviderStore,
             UserStoreOidcSubjectResolver subjectResolver,
             ProtocolAuthorizationCodeService authCodeService,
             ProtocolPushedAuthorizationService parService,
@@ -118,6 +119,21 @@ public static class AuthorizeEndpoint
                             redirectUri, federationError,
                             string.IsNullOrWhiteSpace(federationErrorDescription) ? "Federated login failed" : federationErrorDescription,
                             state);
+                    }
+
+                    // Connection interstitial: a connection can declare a login-app path to render
+                    // BEFORE federating (e.g. a guest share-link's name/terms form). The page appends
+                    // what it collects to the returnUrl query — the passthrough/provisioning source —
+                    // and continues to /oidc/{conn}/login itself. Only for unauthenticated entries:
+                    // a live host session never reaches this branch, so returning users skip it.
+                    var hintedConnection = await oidcProviderStore.GetAsync(idpHint, ct);
+                    if (!string.IsNullOrWhiteSpace(hintedConnection?.InteractionPath))
+                    {
+                        var interactionAppUrl = configuration["LoginAppUrl"] ?? "/login";
+                        var interactionUrl = $"{interactionAppUrl.TrimEnd('/')}{hintedConnection.InteractionPath}" +
+                            $"?returnUrl={Uri.EscapeDataString(authorizeRelativeUrl)}" +
+                            $"&connection={Uri.EscapeDataString(idpHint)}";
+                        return Results.Redirect(interactionUrl);
                     }
 
                     var federationLoginUrl = $"/oidc/{Uri.EscapeDataString(idpHint)}/login" +

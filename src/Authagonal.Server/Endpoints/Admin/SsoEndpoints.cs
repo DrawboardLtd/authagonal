@@ -264,6 +264,7 @@ public static class SsoEndpoints
             PassthroughParams = request.PassthroughParams ?? [],
             JitProvisioningEnabled = request.JitProvisioningEnabled,
             ChallengeMfaAfterLogin = request.ChallengeMfaAfterLogin ?? true,
+            InteractionPath = request.InteractionPath,
             CreatedAt = now
         };
 
@@ -477,5 +478,9 @@ public static class SsoEndpoints
         /// <summary>Still route users through the local MFA challenge after federated login (F42).
         /// Default true; false = the tenant trusts the IdP's own MFA as the second factor.</summary>
         public bool? ChallengeMfaAfterLogin { get; set; }
+
+        /// <summary>Optional login-app path rendered before federating an unauthenticated idp_hint
+        /// request through this connection (see OidcProviderConfig.InteractionPath).</summary>
+        public string? InteractionPath { get; set; }
     }
 }

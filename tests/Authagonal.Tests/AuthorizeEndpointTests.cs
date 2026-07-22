@@ -254,6 +254,57 @@ public sealed class AuthorizeEndpointTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Authorize_UnauthIdpHint_WithInteractionPath_RedirectsToLoginAppPath()
+    {
+        // A connection can declare an interstitial page (e.g. a guest name/terms form) that
+        // renders BEFORE federation. The authorize endpoint must send the unauth request to the
+        // login app path with the authorize URL as returnUrl, not straight to /oidc/{id}/login.
+        await _factory.OidcProviderStore.UpsertAsync(new Authagonal.Core.Models.OidcProviderConfig
+        {
+            ConnectionId = "interstitial-conn",
+            ConnectionName = "Interstitial",
+            MetadataLocation = "https://upstream.test/.well-known/openid-configuration",
+            ClientId = "up-client",
+            ClientSecret = "s",
+            RedirectUrl = "https://host.test/oidc/callback",
+            InteractionPath = "/guest",
+        });
+
+        using var freshClient = _factory.CreateClient(new() { AllowAutoRedirect = false });
+        var url = BuildAuthorizeUrl() + "&idp_hint=interstitial-conn";
+        var response = await freshClient.GetAsync(url);
+
+        Assert.Equal(HttpStatusCode.Redirect, response.StatusCode);
+        var location = response.Headers.Location!.ToString();
+        Assert.StartsWith("/login/guest", location);
+        Assert.Contains("returnUrl=", location);
+        Assert.Contains(Uri.EscapeDataString("/connect/authorize"), location);
+        Assert.Contains("connection=interstitial-conn", location);
+    }
+
+    [Fact]
+    public async Task Authorize_UnauthIdpHint_KnownConnectionWithoutInteractionPath_FederatesDirectly()
+    {
+        // A registered connection with no InteractionPath keeps the direct-federation behavior.
+        await _factory.OidcProviderStore.UpsertAsync(new Authagonal.Core.Models.OidcProviderConfig
+        {
+            ConnectionId = "plain-conn",
+            ConnectionName = "Plain",
+            MetadataLocation = "https://upstream.test/.well-known/openid-configuration",
+            ClientId = "up-client",
+            ClientSecret = "s",
+            RedirectUrl = "https://host.test/oidc/callback",
+        });
+
+        using var freshClient = _factory.CreateClient(new() { AllowAutoRedirect = false });
+        var url = BuildAuthorizeUrl() + "&idp_hint=plain-conn";
+        var response = await freshClient.GetAsync(url);
+
+        Assert.Equal(HttpStatusCode.Redirect, response.StatusCode);
+        Assert.StartsWith("/oidc/plain-conn/login", response.Headers.Location!.ToString());
+    }
+
+    [Fact]
     public async Task Authorize_UnauthNoIdpHint_ChallengesAuthScheme()
     {
         using var freshClient = _factory.CreateClient(new() { AllowAutoRedirect = false });
