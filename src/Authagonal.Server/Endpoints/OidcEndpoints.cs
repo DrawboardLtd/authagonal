@@ -35,6 +35,7 @@ public static class OidcEndpoints
         HttpContext httpContext,
         string connectionId,
         string? returnUrl,
+        string? loginHint,
         IOidcProviderStore oidcStore,
         OidcDiscoveryClient discoveryClient,
         Authagonal.Core.Services.IOidcStateStore stateStore,
@@ -106,6 +107,11 @@ public static class OidcEndpoints
             $"&nonce={Uri.EscapeDataString(nonce)}" +
             $"&code_challenge={Uri.EscapeDataString(codeChallenge)}" +
             $"&code_challenge_method=S256";
+
+        // Straight-to-IdP prefill: the authorize endpoint appends &loginHint= for an SSO-domain email.
+        // Forward it as the standard OIDC login_hint so the upstream can prefill its username field.
+        if (!string.IsNullOrWhiteSpace(loginHint))
+            authorizationUrl += $"&login_hint={Uri.EscapeDataString(loginHint)}";
 
         // Whitelisted passthroughs from the downstream /authorize request to upstream.
         // Source order: returnUrl query first (canonical, since returnUrl IS the

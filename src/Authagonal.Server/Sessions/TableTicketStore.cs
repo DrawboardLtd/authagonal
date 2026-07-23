@@ -67,9 +67,17 @@ internal sealed class TableTicketStore(
         try { userId = (await sessions.GetEntityAsync<SessionEntity>(SessionPk, key)).Value.UserId; }
         catch (RequestFailedException ex) when (ex.Status == 404) { /* already gone */ }
 
-        await sessions.DeleteEntityAsync(SessionPk, key, ETag.All);
+        // Both deletes swallow 404: a double logout / revoke race (or an already-swept expired row) must
+        // not surface as a 500 on the cookie-auth hot path, and must not abort a bulk RevokeOthersAsync.
+        await DeleteIfExistsAsync(sessions, SessionPk, key);
         if (!string.IsNullOrEmpty(userId))
-            await sessionsByUser.DeleteEntityAsync(UserPk(userId), key, ETag.All);
+            await DeleteIfExistsAsync(sessionsByUser, UserPk(userId), key);
+    }
+
+    private static async Task DeleteIfExistsAsync(TableClient table, string pk, string rowKey)
+    {
+        try { await table.DeleteEntityAsync(pk, rowKey, ETag.All); }
+        catch (RequestFailedException ex) when (ex.Status == 404) { /* already gone */ }
     }
 
     private async Task WriteAsync(string key, AuthenticationTicket ticket, bool isNew)
@@ -106,6 +114,30 @@ internal sealed class TableTicketStore(
         // Merge on renew preserves CreatedAt (set only on the first store); Replace on the first store
         // establishes the row.
         await sessionsByUser.UpsertEntityAsync(indexEntity, isNew ? TableUpdateMode.Replace : TableUpdateMode.Merge);
+
+        // A new session (login) is the trigger to reap this user's expired ones — cheap, no background
+        // job, and off the per-request renew path.
+        if (isNew) await SweepExpiredForUserAsync(userId);
+    }
+
+    // Lazily reap a user's expired sessions when they establish a new one — Azure Table has no native
+    // TTL, so abandoned sessions would otherwise accumulate forever in both tables. Best-effort: a sweep
+    // failure never blocks the login that triggered it.
+    private async Task SweepExpiredForUserAsync(string userId)
+    {
+        try
+        {
+            var pk = UserPk(userId);
+            var now = DateTimeOffset.UtcNow;
+            var expired = new List<string>();
+            await foreach (var e in sessionsByUser.QueryAsync<SessionIndexEntity>(x => x.PartitionKey == pk))
+                if (e.ExpiresUtc is { } exp && exp < now) expired.Add(e.RowKey);
+            foreach (var sid in expired) await RemoveAsync(sid);
+        }
+        catch (RequestFailedException)
+        {
+            // Opportunistic — the next login retries.
+        }
     }
 
     // --- IUserSessionRegistry: self-service listing / revocation for the current user ---
@@ -116,6 +148,9 @@ internal sealed class TableTicketStore(
         var results = new List<SessionDescriptor>();
         await foreach (var e in sessionsByUser.QueryAsync<SessionIndexEntity>(x => x.PartitionKey == pk, cancellationToken: ct))
         {
+            // Don't surface an expired session as active — Azure Table has no TTL, so a stale index row
+            // can outlive its session until the lazy sweep (SweepExpiredForUserAsync) reaps it.
+            if (e.ExpiresUtc is { } exp && exp < DateTimeOffset.UtcNow) continue;
             results.Add(new SessionDescriptor(
                 e.RowKey,
                 currentSessionId is not null && e.RowKey == currentSessionId,
