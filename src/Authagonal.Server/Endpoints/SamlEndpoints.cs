@@ -456,6 +456,8 @@ public static class SamlEndpoints
         if (!string.IsNullOrEmpty(parseResult.SessionIndex))
             claims.Add(new Claim("saml_session_index", parseResult.SessionIndex));
 
+        claims.Add(new Claim(CookieSignInHelper.AuthTimeClaim, DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString()));
+
         var identity = new ClaimsIdentity(claims, CookieAuthenticationDefaults.AuthenticationScheme);
         var principal = new ClaimsPrincipal(identity);
 

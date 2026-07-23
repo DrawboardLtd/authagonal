@@ -12,6 +12,11 @@ public static class CookieSignInHelper
     /// MFA-enrolled users.</summary>
     public const string MfaAuthenticatedClaim = "mfa_authenticated";
 
+    /// <summary>Cookie claim (Unix seconds) recording when this session was established by an actual
+    /// authentication. Set on every real sign-in and never bumped by sliding-cookie renewal, so
+    /// /connect/authorize can honor prompt=login by requiring a session newer than the request.</summary>
+    public const string AuthTimeClaim = "auth_time";
+
     public static async Task SignInAsync(HttpContext httpContext, AuthUser user, bool mfaAuthenticated = false)
     {
         var name = $"{user.FirstName} {user.LastName}".Trim();
@@ -22,7 +27,8 @@ public static class CookieSignInHelper
             new(ClaimTypes.Email, user.Email),
             new(ClaimTypes.Name, string.IsNullOrWhiteSpace(name) ? user.Email : name),
             new("security_stamp", user.SecurityStamp ?? ""),
-            new("sid", Guid.NewGuid().ToString("N"))
+            new("sid", Guid.NewGuid().ToString("N")),
+            new(AuthTimeClaim, DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString())
         };
 
         if (mfaAuthenticated)

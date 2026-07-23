@@ -547,6 +547,8 @@ public static class OidcEndpoints
             claims.Add(new Claim($"federated:{claimName}", stringValue));
         }
 
+        claims.Add(new Claim(CookieSignInHelper.AuthTimeClaim, DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString()));
+
         var identity = new ClaimsIdentity(claims, CookieAuthenticationDefaults.AuthenticationScheme);
         var principal = new ClaimsPrincipal(identity);
 

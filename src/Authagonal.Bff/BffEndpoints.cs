@@ -445,8 +445,11 @@ internal static class BffEndpoints
     {
         if (string.IsNullOrEmpty(returnUrl))
             return "/";
-        if (returnUrl.StartsWith('/') && !returnUrl.StartsWith("//", StringComparison.Ordinal))
-            return returnUrl; // local relative path
+        // Local relative path. Mirror ASP.NET Url.IsLocalUrl: must start '/', and the second
+        // char must be neither '/' (protocol-relative "//evil.com") nor '\' — browsers normalize
+        // '\'→'/' in a Location header, so "/\evil.com" would redirect off-site as "//evil.com".
+        if (returnUrl.StartsWith('/') && (returnUrl.Length == 1 || (returnUrl[1] != '/' && returnUrl[1] != '\\')))
+            return returnUrl;
         if (Uri.TryCreate(returnUrl, UriKind.Absolute, out var abs))
         {
             var origin = $"{abs.Scheme}://{abs.Authority}";

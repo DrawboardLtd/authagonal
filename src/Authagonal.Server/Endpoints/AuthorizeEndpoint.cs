@@ -60,12 +60,14 @@ public static class AuthorizeEndpoint
             }
 
             IReadableRequestParameters source;
+            DateTimeOffset? parCreatedAt = null;
             if (!string.IsNullOrWhiteSpace(requestUri))
             {
                 var record = await parService.LoadAsync(requestUri, clientId, ct);
                 if (record is null)
                     return AuthorizeRequestSupport.BuildErrorRedirect(null, "invalid_request", "request_uri is unknown, expired, or already consumed", initialState);
                 source = new ParRequestParameters(record.Parameters);
+                parCreatedAt = record.CreatedAt;
             }
             else
             {
@@ -85,17 +87,38 @@ public static class AuthorizeEndpoint
             // by the guest share-link flow so the host doesn't silently reuse an SSO cookie that outlived
             // the caller's downstream session and claim the link as the wrong identity. When set, treat
             // an authenticated principal as unauthenticated and re-run login/federation.
+            var isAuthenticated = httpContext.User.Identity?.IsAuthenticated == true;
+
             var forceReauth = (source.Get("prompt") ?? string.Empty)
                 .Split(' ', StringSplitOptions.RemoveEmptyEntries)
                 .Contains("login");
 
-            // Check authentication
-            if (httpContext.User.Identity?.IsAuthenticated != true || forceReauth)
+            // prompt=login is satisfied only by a session established AFTER this request began. For a PAR
+            // request the prompt rides the pushed payload (not the live query), so it can't be stripped on
+            // the login round-trip; instead we require auth_time >= the record's CreatedAt. A pre-existing
+            // or replayed cookie (auth_time < CreatedAt) fails and is forced to re-authenticate; a genuine
+            // login during the round-trip passes, so the return trip issues a code instead of looping. The
+            // reference (CreatedAt) is server-side, so a client can't forge its way past the demand.
+            if (forceReauth && isAuthenticated && parCreatedAt is { } parCreated)
             {
-                // Strip prompt so the fresh session established by this re-auth isn't force-re-authed
-                // again when login/federation returns to this URL (which would loop forever). prompt=login
-                // is honored exactly once, here.
-                var authorizeRelativeUrl = forceReauth
+                var authTimeClaim = httpContext.User.FindFirst(CookieSignInHelper.AuthTimeClaim)?.Value;
+                if (long.TryParse(authTimeClaim, out var authTime) && authTime >= parCreated.ToUnixTimeSeconds())
+                    forceReauth = false;
+            }
+
+            // Check authentication
+            if (!isAuthenticated || forceReauth)
+            {
+                // prompt=login: drop any existing session before sending the user to log in, so a stale SSO
+                // cookie can't be silently reused as the re-authenticated identity.
+                if (forceReauth && isAuthenticated)
+                    await httpContext.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
+
+                // Non-PAR: strip prompt from the returnUrl so the fresh session isn't force-re-authed again
+                // when login/federation returns here (which would loop). A PAR request keeps its URL as-is —
+                // its prompt lives in the pushed payload, and the auth_time >= CreatedAt check above is what
+                // breaks its loop on return.
+                var authorizeRelativeUrl = forceReauth && string.IsNullOrWhiteSpace(requestUri)
                     ? BuildRelativeUrlWithoutPrompt(httpContext.Request)
                     : $"{httpContext.Request.Path}{httpContext.Request.QueryString}";
 
@@ -282,8 +305,10 @@ public static class AuthorizeEndpoint
     }
 
     // Rebuild "{path}{query}" with the `prompt` param removed, so a prompt=login re-auth is honored once
-    // and the login/federation return doesn't re-trigger it (which would loop). Reads the live query; for
-    // a PAR request prompt rides the pushed payload and the PAR record is single-use, so no loop there.
+    // and the login/federation return doesn't re-trigger it (which would loop). Reads the live query, so
+    // this only helps the non-PAR flow — a PAR request carries prompt inside the pushed payload (which the
+    // PAR record deliberately keeps across the login round-trip), so its loop is broken instead by the
+    // auth_time >= record.CreatedAt check at /authorize, not by stripping.
     private static string BuildRelativeUrlWithoutPrompt(Microsoft.AspNetCore.Http.HttpRequest request)
     {
         var qs = Microsoft.AspNetCore.Http.QueryString.Empty;
