@@ -8,16 +8,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Alert } from '@/components/ui/alert';
 import { CardTitle, CardDescription, CardFooter } from '@/components/ui/card';
-
-function isSafeReturnUrl(url: string): boolean {
-  if (!url) return false;
-  try {
-    const parsed = new URL(url, window.location.origin);
-    return parsed.origin === window.location.origin && url.startsWith('/');
-  } catch {
-    return false;
-  }
-}
+import { resolveRedirect, isSameOriginPath } from '@/lib/returnUrl';
 
 // Helper: Base64URL decode to Uint8Array
 function base64UrlToBuffer(base64url: string): ArrayBuffer {
@@ -79,14 +70,11 @@ export default function MfaSetupPage() {
   }
 
   // When using a setup token, redirect after MFA is successfully set up
-  function handleSetupComplete() {
+  async function handleSetupComplete() {
     if (mfaSetupToken) {
-      // Server signed the cookie — redirect to the original destination
-      if (returnUrl && isSafeReturnUrl(returnUrl)) {
-        window.location.href = returnUrl;
-      } else {
-        window.location.href = '/';
-      }
+      // Server signed the cookie — redirect to the original destination (same-origin OR a registered
+      // app's absolute URL).
+      window.location.href = await resolveRedirect(returnUrl, () => '/');
     }
   }
 
@@ -363,9 +351,8 @@ export default function MfaSetupPage() {
           <button
             type="button"
             className="bg-transparent border-none cursor-pointer text-[13px] text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200"
-            onClick={() => {
-              const dest = returnUrl && isSafeReturnUrl(returnUrl) ? returnUrl : '/';
-              window.location.href = dest;
+            onClick={async () => {
+              window.location.href = await resolveRedirect(returnUrl, () => '/');
             }}
           >
             {t('mfaSkipSetup')}
@@ -374,7 +361,7 @@ export default function MfaSetupPage() {
       )}
 
       {/* Back to app link — shown when navigating from an external app */}
-      {backUrl && isSafeReturnUrl(backUrl) && (
+      {backUrl && isSameOriginPath(backUrl) && (
         <div className="mt-6 text-center pt-4 border-t border-gray-200 dark:border-gray-800">
           <a href={backUrl} className="text-sm text-primary no-underline hover:underline">
             &larr; {t('mfaBackToApp')}

@@ -13,20 +13,9 @@ import { Alert } from '@/components/ui/alert';
 import { Separator } from '@/components/ui/separator';
 import { LogIn } from 'lucide-react';
 import { CardTitle, CardFooter } from '@/components/ui/card';
-import { resolveRedirect } from '@/lib/returnUrl';
+import { resolveRedirect, isSameOriginPath } from '@/lib/returnUrl';
 
 const API_URL = import.meta.env.VITE_API_URL || '';
-
-function isSafeReturnUrl(url: string): boolean {
-  if (!url) return false;
-  // Only allow relative paths (starting with /) that don't escape to another host
-  try {
-    const parsed = new URL(url, window.location.origin);
-    return parsed.origin === window.location.origin && url.startsWith('/');
-  } catch {
-    return false;
-  }
-}
 
 export default function LoginPage() {
   const { t } = useTranslation();
@@ -106,7 +95,7 @@ export default function LoginPage() {
 
   // Check for existing session (e.g. after OIDC callback with no returnUrl)
   useEffect(() => {
-    if (returnUrl && isSafeReturnUrl(returnUrl)) return; // OAuth flow — don't check session
+    if (returnUrl && isSameOriginPath(returnUrl)) return; // OAuth flow — don't check session
     getSession()
       .then((s) => {
         if (s.authenticated) {
@@ -161,7 +150,7 @@ export default function LoginPage() {
 
   function handleProviderLogin(provider: ExternalProvider) {
     const url = new URL(`${API_URL}${provider.loginUrl}`, window.location.origin);
-    if (returnUrl && isSafeReturnUrl(returnUrl)) {
+    if (returnUrl && isSameOriginPath(returnUrl)) {
       url.searchParams.set('returnUrl', returnUrl);
     }
     window.location.href = url.toString();
@@ -170,7 +159,7 @@ export default function LoginPage() {
   function handleSsoRedirect() {
     if (ssoInfo) {
       const ssoUrl = new URL(`${API_URL}${ssoInfo.redirectUrl}`, window.location.origin);
-      if (returnUrl && isSafeReturnUrl(returnUrl)) {
+      if (returnUrl && isSameOriginPath(returnUrl)) {
         ssoUrl.searchParams.set('returnUrl', returnUrl);
       }
       if (email) {
@@ -264,8 +253,11 @@ export default function LoginPage() {
           case 'sso_required':
             if (err.redirectUrl) {
               const ssoUrl = new URL(`${API_URL}${err.redirectUrl}`, window.location.origin);
-              if (returnUrl && isSafeReturnUrl(returnUrl)) {
-                ssoUrl.searchParams.set('returnUrl', returnUrl);
+              // Forward returnUrl only if it resolves to a safe target — same-origin OR a registered
+              // app's origin — so an absolute registered-app returnUrl survives the SSO round trip.
+              const safeReturn = await resolveRedirect(returnUrl, () => '');
+              if (safeReturn) {
+                ssoUrl.searchParams.set('returnUrl', safeReturn);
               }
               window.location.href = ssoUrl.toString();
               return;
@@ -297,19 +289,17 @@ export default function LoginPage() {
     }
   }
 
-  const forgotPasswordLink = returnUrl && isSafeReturnUrl(returnUrl)
+  const forgotPasswordLink = returnUrl && isSameOriginPath(returnUrl)
     ? `/forgot-password?returnUrl=${encodeURIComponent(returnUrl)}`
     : '/forgot-password';
 
   const showPasswordField = ssoChecked && !ssoInfo;
 
   if (mfaPrompt) {
-    const skipMfa = () => {
+    const skipMfa = async () => {
       localStorage.setItem(`mfa-prompt-dismissed:${mfaPrompt.userId}:${mfaPrompt.clientId}`, '1');
-      const dest = mfaPrompt.returnUrl && isSafeReturnUrl(mfaPrompt.returnUrl)
-        ? mfaPrompt.returnUrl
-        : '/';
-      window.location.href = dest;
+      // Registered-app absolute returnUrls are honoured here too, not just same-origin paths.
+      window.location.href = await resolveRedirect(mfaPrompt.returnUrl ?? '', () => '/');
     };
 
     return (

@@ -17,6 +17,7 @@ export type { TurnstileProps } from './components/Turnstile';
 export { cn } from './lib/utils';
 export { localizePasswordRules, localizePasswordRuleLabel, evaluatePasswordRules } from './lib/passwordRules';
 export type { PasswordRequirement } from './lib/passwordRules';
+export { resolveRedirect, isSameOriginPath } from './lib/returnUrl';
 
 // Pages
 export { default as LoginPage } from './pages/LoginPage';
