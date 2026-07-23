@@ -216,16 +216,48 @@ public sealed class UserStoreOidcSubjectResolver(
             }
         }
 
-        // 4xx (invalid_grant): the upstream refused — the federated credential is gone. Fail closed so
-        // revocation propagates. 5xx: transient, keep the session (bounded by the session cap).
+        // Only error=invalid_grant means the refresh token itself is gone/revoked — fail closed so
+        // revocation propagates. Any OTHER 4xx is an operator/config fault, NOT proof the user's
+        // session ended: invalid_client (a rotated or misconfigured client secret), invalid_request,
+        // unauthorized_client, a 429, etc. Treating those as revocation would mass-terminate EVERY
+        // federated session on this connection at once. Keep the session (bounded by the absolute
+        // session cap) and surface the fault in logs. 5xx is transient too. An unparseable/absent
+        // error body is treated as transient (fail open) rather than revoking on ambiguity.
         if ((int)response.StatusCode is >= 400 and < 500)
         {
-            logger.LogInformation("Upstream-refresh: connection {ConnectionId} refused the refresh ({Status}); ending the local session", connectionId, (int)response.StatusCode);
-            return (UpstreamRefreshOutcome.Revoked, null);
+            var error = TryReadOAuthError(body);
+            if (string.Equals(error, "invalid_grant", StringComparison.Ordinal))
+            {
+                logger.LogInformation("Upstream-refresh: connection {ConnectionId} returned invalid_grant; ending the local session", connectionId);
+                return (UpstreamRefreshOutcome.Revoked, null);
+            }
+
+            logger.LogWarning("Upstream-refresh: connection {ConnectionId} returned {Status} (error={Error}); treating as transient, session kept", connectionId, (int)response.StatusCode, error ?? "none");
+            return (UpstreamRefreshOutcome.Transient, null);
         }
 
         logger.LogWarning("Upstream-refresh: connection {ConnectionId} returned {Status}; treating as transient", connectionId, (int)response.StatusCode);
         return (UpstreamRefreshOutcome.Transient, null);
+    }
+
+    // Extract the RFC 6749 `error` code from an OAuth token-endpoint error response. Returns null if
+    // the body is empty or not the expected JSON object, in which case the caller treats it as transient.
+    private static string? TryReadOAuthError(string body)
+    {
+        if (string.IsNullOrWhiteSpace(body))
+            return null;
+        try
+        {
+            using var doc = JsonDocument.Parse(body);
+            return doc.RootElement.ValueKind == JsonValueKind.Object
+                && doc.RootElement.TryGetProperty("error", out var e)
+                    ? e.GetString()
+                    : null;
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
     }
 
     /// <summary>

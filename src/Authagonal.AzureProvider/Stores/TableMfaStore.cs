@@ -143,6 +143,8 @@ public sealed class TableMfaStore(
     {
         if (credential.Type != MfaCredentialType.WebAuthn || string.IsNullOrEmpty(credential.PublicKeyJson))
             return;
+
+        byte[] credentialId;
         try
         {
             using var doc = JsonDocument.Parse(credential.PublicKeyJson);
@@ -157,12 +159,18 @@ public sealed class TableMfaStore(
             }
             if (string.IsNullOrEmpty(credIdB64))
                 return;
-            await DeleteWebAuthnCredentialIdMappingAsync(Convert.FromBase64String(credIdB64), ct);
+            credentialId = Convert.FromBase64String(credIdB64);
         }
-        catch (Exception)
+        catch (Exception ex) when (ex is JsonException or FormatException)
         {
             // Malformed JSON / bad base64 — nothing to clean, and never block the delete.
+            return;
         }
+
+        // The storage delete is OUTSIDE the try on purpose: a transient storage failure (or
+        // cancellation) MUST propagate, not be swallowed — swallowing it leaves the exact stale index
+        // row this method exists to remove.
+        await DeleteWebAuthnCredentialIdMappingAsync(credentialId, ct);
     }
 
     public async Task DeleteWebAuthnCredentialIdMappingAsync(byte[] webAuthnCredentialId, CancellationToken ct = default)

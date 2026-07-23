@@ -81,6 +81,8 @@ public sealed class DynamoMfaStore(
     {
         if (credential.Type != MfaCredentialType.WebAuthn || string.IsNullOrEmpty(credential.PublicKeyJson))
             return;
+
+        byte[] credentialId;
         try
         {
             using var doc = JsonDocument.Parse(credential.PublicKeyJson);
@@ -92,9 +94,13 @@ public sealed class DynamoMfaStore(
                     break;
                 }
             if (string.IsNullOrEmpty(credIdB64)) return;
-            await DeleteWebAuthnCredentialIdMappingAsync(Convert.FromBase64String(credIdB64), ct).ConfigureAwait(false);
+            credentialId = Convert.FromBase64String(credIdB64);
         }
-        catch (Exception) { /* malformed — nothing to clean, never block */ }
+        catch (Exception ex) when (ex is JsonException or FormatException) { /* malformed — nothing to clean, never block */ return; }
+
+        // Storage delete OUTSIDE the try: a transient DynamoDB failure or cancellation MUST propagate,
+        // not be swallowed — swallowing it leaves the stale index row this method exists to remove.
+        await DeleteWebAuthnCredentialIdMappingAsync(credentialId, ct).ConfigureAwait(false);
     }
 
     public async Task DeleteWebAuthnCredentialIdMappingAsync(byte[] webAuthnCredentialId, CancellationToken ct = default)

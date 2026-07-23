@@ -27,7 +27,12 @@ public interface IProvisioningOrchestrator
     /// (organization name, etc.). A plain re-login must NOT use this (that's <see cref="ProvisionAsync(AuthUser, CancellationToken)"/>,
     /// which skips already-provisioned apps). Throws <see cref="ProvisioningException"/> if any app rejects.
     /// </summary>
-    Task ReprovisionAsync(AuthUser user, CancellationToken ct = default);
+    /// <remarks>
+    /// Defaults to a no-op so adding this method doesn't source-break external implementors — a consumer
+    /// that predates it keeps compiling and simply won't reprovision on upgrade until it overrides this.
+    /// The shipped <c>TccProvisioningOrchestrator</c> overrides it.
+    /// </remarks>
+    Task ReprovisionAsync(AuthUser user, CancellationToken ct = default) => Task.CompletedTask;
 
     /// <summary>
     /// Deprovisions a user from all apps they are provisioned into.
