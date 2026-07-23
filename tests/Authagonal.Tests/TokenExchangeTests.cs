@@ -6,6 +6,7 @@ using System.Text.Json;
 using System.Web;
 using Authagonal.Core.Constants;
 using Authagonal.Core.Models;
+using Authagonal.Protocol;
 using Authagonal.Tests.Infrastructure;
 using Microsoft.IdentityModel.JsonWebTokens;
 
@@ -184,6 +185,100 @@ public sealed class TokenExchangeTests : IAsyncLifetime
     }
 
     // -----------------------------------------------------------------------
+
+    [Fact]
+    public async Task Exchange_UnregisteredAudience_IsRejectedAsInvalidTarget()
+    {
+        var primary = await GetPrimaryAccessTokenAsync();
+
+        var form = BaseExchangeForm(primary);
+        form["audience"] = "https://api.example.com/projects/123"; // not in client.Audiences
+
+        var response = await _client.PostAsync("/connect/token", new FormUrlEncodedContent(form));
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("invalid_target", body.GetProperty("error").GetString());
+    }
+
+    [Fact]
+    public async Task Exchange_Transformer_ReceivesExtraParameters_AndInjectsBindingClaims()
+    {
+        _factory.ExchangeTransformer.OnTransform = (subject, _, _, extras) =>
+            OidcSubjectResult.Allow(subject with
+            {
+                AdditionalClaims = new Dictionary<string, string>
+                {
+                    ["project:id"] = extras["project_id"],
+                    ["project:role"] = "owner",
+                },
+            });
+
+        var primary = await GetPrimaryAccessTokenAsync();
+        var form = BaseExchangeForm(primary);
+        form["project_id"] = "proj-123";
+        var response = await _client.PostAsync("/connect/token", new FormUrlEncodedContent(form));
+
+        response.EnsureSuccessStatusCode();
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+        var claims = ReadClaims(body.GetProperty("access_token").GetString()!);
+
+        Assert.Equal("proj-123", claims["project:id"]);
+        Assert.Equal("owner", claims["project:role"]);
+
+        var call = Assert.Single(_factory.ExchangeTransformer.Calls);
+        Assert.Equal(AuthagonalTestFactory.TestClientId, call.ClientId);
+        Assert.Equal("proj-123", call.ExtraParameters["project_id"]);
+        // Protocol fields must never leak into the extension params.
+        Assert.DoesNotContain("subject_token", call.ExtraParameters.Keys);
+        Assert.DoesNotContain("grant_type", call.ExtraParameters.Keys);
+    }
+
+    [Fact]
+    public async Task Exchange_Transformer_Reject_SurfacesAsInvalidTarget()
+    {
+        _factory.ExchangeTransformer.OnTransform = (_, _, _, _) =>
+            OidcSubjectResult.Reject(OidcRejection.AccessDenied, "no access to that project");
+
+        var primary = await GetPrimaryAccessTokenAsync();
+        var response = await ExchangeAsync(primary, scope: null);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("invalid_target", body.GetProperty("error").GetString());
+    }
+
+    [Fact]
+    public async Task Exchange_Transformer_MayShortenLifetime()
+    {
+        _factory.ExchangeTransformer.OnTransform = (subject, _, _, _) =>
+            OidcSubjectResult.Allow(subject with { SessionMaxExpiresAt = DateTimeOffset.UtcNow.AddSeconds(20) });
+
+        var primary = await GetPrimaryAccessTokenAsync();
+        var response = await ExchangeAsync(primary, scope: null);
+
+        response.EnsureSuccessStatusCode();
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.InRange(body.GetProperty("expires_in").GetInt32(), 1, 21);
+    }
+
+    [Fact]
+    public async Task Exchange_Transformer_CannotLengthenPastSubjectToken()
+    {
+        _factory.ExchangeTransformer.OnTransform = (subject, _, _, _) =>
+            OidcSubjectResult.Allow(subject with { SessionMaxExpiresAt = DateTimeOffset.UtcNow.AddDays(365) });
+
+        var primary = await GetPrimaryAccessTokenAsync();
+        var subjectExp = long.Parse(ReadClaims(primary)["exp"]);
+
+        var response = await ExchangeAsync(primary, scope: null);
+        response.EnsureSuccessStatusCode();
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+        var exchangedExp = long.Parse(ReadClaims(body.GetProperty("access_token").GetString()!)["exp"]);
+
+        Assert.True(exchangedExp <= subjectExp,
+            $"exchanged exp {exchangedExp} must not exceed subject exp {subjectExp}");
+    }
 
     private async Task<string> GetPrimaryAccessTokenAsync()
     {

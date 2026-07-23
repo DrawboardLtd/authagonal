@@ -241,6 +241,7 @@ internal static class BffEndpoints
         IBffSessionStore store,
         BffRefreshCoordinator refresher,
         IDistributedCache cache,
+        BffExchangedTokens exchangedTokens,
         CancellationToken ct)
     {
         var o = options.Value;
@@ -256,9 +257,26 @@ internal static class BffEndpoints
         if (fresh is null)
             return Results.StatusCode(StatusCodes.Status401Unauthorized);
 
+        // Context binding: allowlisted query params ride an RFC 8693 exchange, and the ticket is
+        // bound to the resulting downscoped token instead of the primary access token. A denied
+        // exchange (the tenant's transformer rejected the binding — e.g. no access to that
+        // project) fails the mint: 403, no ticket.
+        var ticketToken = fresh.AccessToken;
+        var exchangeParams = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var param in o.TicketExchangeParams)
+            if (ctx.Request.Query.TryGetValue(param, out var values) && values.FirstOrDefault() is { Length: > 0 } value)
+                exchangeParams[param] = value;
+        if (exchangeParams.Count > 0)
+        {
+            var exchanged = await exchangedTokens.GetOrExchangeAsync(fresh, fresh.AccessToken, exchangeParams, ct);
+            if (exchanged is null)
+                return Results.StatusCode(StatusCodes.Status403Forbidden);
+            ticketToken = exchanged;
+        }
+
         // 256-bit random, hex — URL-safe with no padding/casing pitfalls.
         var ticket = Convert.ToHexString(RandomNumberGenerator.GetBytes(32)).ToLowerInvariant();
-        await cache.SetStringAsync(WsTicketKey(ticket), fresh.AccessToken,
+        await cache.SetStringAsync(WsTicketKey(ticket), ticketToken,
             new DistributedCacheEntryOptions { AbsoluteExpirationRelativeToNow = o.WsTicketLifetime }, ct);
 
         ctx.Response.Headers.CacheControl = "no-store";

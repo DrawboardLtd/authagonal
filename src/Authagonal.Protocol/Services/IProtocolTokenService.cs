@@ -57,7 +57,9 @@ public interface IProtocolTokenService
     /// intersection is granted minus <c>offline_access</c> (no refresh token is ever issued from
     /// an exchange — re-exchange from the primary token instead). The exchanged token's lifetime
     /// never exceeds the subject token's remaining lifetime, and the subject's custom claims are
-    /// re-gated by the NEW scope set's UserClaims whitelists.
+    /// re-gated by the NEW scope set's UserClaims whitelists. Non-standard form parameters are
+    /// forwarded to the registered <see cref="ITokenExchangeSubjectTransformer"/>, the host seam
+    /// for validating and minting context-bound claims (e.g. project/workspace tokens).
     /// </summary>
     Task<TokenResponse> HandleTokenExchangeAsync(
         string clientId,
@@ -67,6 +69,7 @@ public interface IProtocolTokenService
         IEnumerable<string>? scopes = null,
         IEnumerable<string>? resources = null,
         IEnumerable<string>? audiences = null,
+        IReadOnlyDictionary<string, string>? extraParameters = null,
         CancellationToken ct = default);
 
     /// <summary>

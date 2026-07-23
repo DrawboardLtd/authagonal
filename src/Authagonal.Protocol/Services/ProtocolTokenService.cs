@@ -19,6 +19,7 @@ public sealed class ProtocolTokenService(
     IKeyManager keyManager,
     ITenantContext tenantContext,
     IOidcSubjectResolver subjectResolver,
+    ITokenExchangeSubjectTransformer exchangeTransformer,
     IOptions<AuthagonalProtocolOptions> protocolOptions,
     ILogger<ProtocolTokenService> logger) : IProtocolTokenService
 {
@@ -596,6 +597,7 @@ public sealed class ProtocolTokenService(
         IEnumerable<string>? scopes = null,
         IEnumerable<string>? resources = null,
         IEnumerable<string>? audiences = null,
+        IReadOnlyDictionary<string, string>? extraParameters = null,
         CancellationToken ct = default)
     {
         if (subjectTokenType is not (TokenTypeIdentifiers.AccessToken or TokenTypeIdentifiers.Jwt))
@@ -720,12 +722,33 @@ public sealed class ProtocolTokenService(
             SessionMaxExpiresAt = subjectExpiry,
         };
 
+        // Host seam for context-bound exchanges (e.g. project/workspace tokens): the transformer
+        // validates any extra request parameters against the host's own authority and forces the
+        // resulting binding claims onto the subject. Rejection surfaces as invalid_target.
+        var transformed = await exchangeTransformer.TransformAsync(
+            subject, client, grantedScopes, extraParameters ?? EmptyExtraParameters, ct);
+        switch (transformed)
+        {
+            case OidcSubjectResult.Rejected rejected:
+                throw new InvalidOperationException(
+                    $"Exchange rejected: {rejected.Description ?? rejected.Reason.ToString()}");
+            case OidcSubjectResult.Allowed allowed:
+                subject = allowed.Subject;
+                break;
+        }
+
+        // The transformer may shorten the lifetime but never lengthen it past the subject token.
+        var effectiveExpiry = subject.SessionMaxExpiresAt is { } transformedCap && transformedCap < subjectExpiry
+            ? transformedCap
+            : subjectExpiry;
+        subject = subject with { SessionMaxExpiresAt = effectiveExpiry };
+
         var accessToken = await CreateAccessTokenAsync(
             subject, client, grantedScopes, targetAudiences.Count > 0 ? targetAudiences : null, ct);
 
         var expiresIn = (int)Math.Max(0, Math.Min(
             client.AccessTokenLifetimeSeconds,
-            (subjectExpiry - DateTimeOffset.UtcNow).TotalSeconds));
+            (effectiveExpiry - DateTimeOffset.UtcNow).TotalSeconds));
 
         logger.LogInformation(
             "Token exchange issued downscoped token. Client: {ClientId}, Subject: {SubjectId}, Scopes: {Scopes}",
@@ -739,6 +762,9 @@ public sealed class ProtocolTokenService(
             Scope = string.Join(' ', grantedScopes),
         };
     }
+
+    private static readonly IReadOnlyDictionary<string, string> EmptyExtraParameters =
+        new Dictionary<string, string>(StringComparer.Ordinal);
 
     private static IReadOnlyList<string>? ExtractStringList(
         IDictionary<string, object> claims, string name)

@@ -50,6 +50,41 @@ public class BffSecurityTests
     public void PrefixMatches_respects_segment_boundary(string path, string prefix, bool expected)
         => Assert.Equal(expected, BffProxy.PrefixMatches(path, prefix));
 
+    // Exchange routes: segment-prefix match with exactly one {param} capture; first match wins;
+    // no capture (missing segment / literal mismatch / no placeholder) → no exchange.
+    [Theory]
+    [InlineData("/projects/123/annotations", "/projects/{project_id}", true, "project_id", "123")]
+    [InlineData("/projects/123", "/projects/{project_id}", true, "project_id", "123")]
+    [InlineData("/projects", "/projects/{project_id}", false, null, null)]
+    [InlineData("/workspaces/ws-9/x", "/workspaces/{workspace_id}", true, "workspace_id", "ws-9")]
+    [InlineData("/other/123", "/projects/{project_id}", false, null, null)]
+    [InlineData("/PROJECTS/123", "/projects/{project_id}", true, "project_id", "123")] // path casing tolerant
+    public void TryMatchExchangeRoute_captures_binding_segment(
+        string apiPath, string pattern, bool expected, string? expectedName, string? expectedValue)
+    {
+        var routes = new[] { new BffExchangeRoute { PathPattern = pattern } };
+        var matched = BffProxy.TryMatchExchangeRoute(routes, apiPath, out var name, out var value);
+        Assert.Equal(expected, matched);
+        if (expected)
+        {
+            Assert.Equal(expectedName, name);
+            Assert.Equal(expectedValue, value);
+        }
+    }
+
+    [Fact]
+    public void TryMatchExchangeRoute_first_matching_route_wins()
+    {
+        var routes = new[]
+        {
+            new BffExchangeRoute { PathPattern = "/projects/{project_id}" },
+            new BffExchangeRoute { PathPattern = "/{anything}" },
+        };
+        Assert.True(BffProxy.TryMatchExchangeRoute(routes, "/projects/p1/files", out var name, out var value));
+        Assert.Equal("project_id", name);
+        Assert.Equal("p1", value);
+    }
+
     // M11: a ws-ticket redeems exactly once, then is gone.
     [Fact]
     public async Task TryRedeemWsTicket_is_single_use()

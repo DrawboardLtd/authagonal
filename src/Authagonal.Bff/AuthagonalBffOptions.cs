@@ -105,6 +105,24 @@ public sealed class AuthagonalBffOptions
     /// token attached. Empty (the default) disables the proxy endpoint.</summary>
     public IList<BffUpstream> Upstreams { get; set; } = new List<BffUpstream>();
 
+    /// <summary>
+    /// Query parameters <c>{BasePath}/ws-ticket</c> may forward into an RFC 8693 token exchange
+    /// (e.g. <c>["project_id","workspace_id"]</c>). When a ticket request carries any of them, the
+    /// ticket is bound to the EXCHANGED context token instead of the session's primary access
+    /// token; a denied exchange fails the mint with 403. Empty (default) = tickets always carry
+    /// the primary token. Requires the tenant client to hold the token-exchange grant.
+    /// </summary>
+    public IList<string> TicketExchangeParams { get; set; } = new List<string>();
+
+    /// <summary>
+    /// Proxy routes whose upstream calls ride a context-bound exchanged token instead of the
+    /// session's primary access token. The first pattern matching the proxied path (after
+    /// <c>{BasePath}/api</c>) wins; the captured segment is sent as the named exchange parameter
+    /// and the downscoped result is cached per (session, binding) for its lifetime. A denied
+    /// exchange → 403. Empty (default) = the proxy always attaches the primary token.
+    /// </summary>
+    public IList<BffExchangeRoute> ExchangeRoutes { get; set; } = new List<BffExchangeRoute>();
+
     internal string ScopeString => string.Join(' ', Scope);
 
     internal string CorrelationCookieName => CookieName + ".tmp";
@@ -145,4 +163,14 @@ public sealed class BffUpstream
     /// that share a path namespace: e.g. <c>/id</c> stripping ⇒ <c>/bff/api/id/api/admin/x</c> forwards to
     /// <c>{TargetBaseUrl}/api/admin/x</c>. Default false (the prefix is a real path segment on the target).</summary>
     public bool StripPrefix { get; set; }
+}
+
+/// <summary>A proxy route bound to an RFC 8693 exchange. <see cref="PathPattern"/> is a segment
+/// pattern matched as a prefix against the proxied path (after <c>{BasePath}/api</c>), with exactly
+/// one <c>{param}</c> placeholder whose captured segment becomes the exchange parameter — e.g.
+/// <c>/projects/{project_id}</c> matches <c>/projects/123/annotations</c> and sends
+/// <c>project_id=123</c> on the exchange.</summary>
+public sealed class BffExchangeRoute
+{
+    public string PathPattern { get; set; } = default!;
 }

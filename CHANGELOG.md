@@ -2,6 +2,28 @@
 
 ## [Unreleased]
 
+## [0.13.0], 2026-07-23
+
+### Added
+
+- **`ITokenExchangeSubjectTransformer`** — host seam on the RFC 8693 exchange path for
+  context-bound tokens (e.g. project/workspace tokens). Invoked after the subject is rebuilt from
+  the validated subject token and scopes are narrowed, before the mint: the host validates any
+  non-standard request parameters (now forwarded down from the token endpoint) against its own
+  authority, forces binding claims via `AdditionalClaims`, and may SHORTEN the token lifetime
+  (never lengthen — the service re-clamps to the subject token's expiry). Rejection surfaces as
+  `invalid_target`. No-op default; register your own ahead of `AddAuthagonal`.
+- **BFF context-token machinery**: `ITokenClient.ExchangeTokenAsync` (RFC 8693 with extension
+  params); `AuthagonalBffOptions.TicketExchangeParams` — allowlisted `/ws-ticket` query params
+  that bind the ticket to an EXCHANGED downscoped token instead of the session's primary access
+  token (denied exchange → 403, no ticket); `AuthagonalBffOptions.ExchangeRoutes` — proxy routes
+  (`/projects/{project_id}` style, one placeholder, prefix-matched) whose upstream calls ride a
+  context-bound exchanged token, cached per (session, binding) for the token's lifetime.
+
+### Fixed
+
+- Token-exchange `resource`/`audience` rejection paths now have test coverage (`invalid_target`).
+
 ## [0.12.0], 2026-07-23
 
 ### Added

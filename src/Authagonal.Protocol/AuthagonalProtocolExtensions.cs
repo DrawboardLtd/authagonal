@@ -65,6 +65,10 @@ public static class AuthagonalProtocolExtensions
         // their own ahead of this call.
         services.TryAddSingleton<IClientSecretVerifier, BCryptClientSecretVerifier>();
 
+        // Token-exchange host seam — no-op unless the host registers its own transformer ahead
+        // of this call (context-bound tokens: validate extra params, force binding claims).
+        services.TryAddSingleton<ITokenExchangeSubjectTransformer, NullTokenExchangeSubjectTransformer>();
+
         // Seeds clients/scopes from AuthagonalProtocolOptions on startup.
         services.AddHostedService<ProtocolSeedService>();
 

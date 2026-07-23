@@ -17,6 +17,17 @@ public interface ITokenClient
 
     /// <summary>Best-effort revoke a refresh token at the given tenant's revocation endpoint.</summary>
     Task RevokeAsync(BffTenantConfig tenant, string refreshToken, CancellationToken ct = default);
+
+    /// <summary>RFC 8693 token exchange: present the session's access token as <c>subject_token</c>
+    /// and receive a downscoped access token. <paramref name="extraParameters"/> are host extension
+    /// params (e.g. <c>project_id</c>) validated server-side by the tenant's exchange transformer.
+    /// The result never carries a refresh token and never outlives the subject token.</summary>
+    Task<TokenResult> ExchangeTokenAsync(
+        BffTenantConfig tenant,
+        string subjectToken,
+        IReadOnlyDictionary<string, string>? extraParameters = null,
+        string? scope = null,
+        CancellationToken ct = default);
 }
 
 /// <summary>Thrown when a token/refresh exchange fails.</summary>

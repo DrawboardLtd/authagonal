@@ -66,6 +66,15 @@ internal static class TokenGrantHandlers
         }
     }
 
+    // RFC 8693 / OAuth protocol fields on a token-exchange request; anything else is a host
+    // extension parameter forwarded to ITokenExchangeSubjectTransformer.
+    private static readonly HashSet<string> TokenExchangeProtocolParameters = new(StringComparer.Ordinal)
+    {
+        "grant_type", "client_id", "client_secret", "client_assertion", "client_assertion_type",
+        "subject_token", "subject_token_type", "actor_token", "actor_token_type",
+        "requested_token_type", "scope", "resource", "audience",
+    };
+
     public static async Task<IResult> HandleTokenExchange(
         IFormCollection form, IProtocolTokenService tokenService, string clientId, CancellationToken ct)
     {
@@ -88,6 +97,12 @@ internal static class TokenGrantHandlers
         var resources = form["resource"].Where(r => !string.IsNullOrWhiteSpace(r)).Cast<string>().ToArray();
         var audiences = form["audience"].Where(a => !string.IsNullOrWhiteSpace(a)).Cast<string>().ToArray();
 
+        // RFC 8693 permits additional request parameters; everything non-protocol is forwarded to
+        // the host's ITokenExchangeSubjectTransformer (context bindings like project_id).
+        var extraParameters = form
+            .Where(kv => !TokenExchangeProtocolParameters.Contains(kv.Key))
+            .ToDictionary(kv => kv.Key, kv => kv.Value.FirstOrDefault() ?? string.Empty, StringComparer.Ordinal);
+
         try
         {
             var response = await tokenService.HandleTokenExchangeAsync(
@@ -95,6 +110,7 @@ internal static class TokenGrantHandlers
                 scopes.Length > 0 ? scopes : null,
                 resources.Length > 0 ? resources : null,
                 audiences.Length > 0 ? audiences : null,
+                extraParameters.Count > 0 ? extraParameters : null,
                 ct);
             return Results.Ok(response);
         }
@@ -102,7 +118,9 @@ internal static class TokenGrantHandlers
         {
             return TokenError("invalid_scope", ex.Message);
         }
-        catch (InvalidOperationException ex) when (ex.Message.StartsWith("Resource '", StringComparison.Ordinal))
+        catch (InvalidOperationException ex) when (
+            ex.Message.StartsWith("Resource '", StringComparison.Ordinal) ||
+            ex.Message.StartsWith("Exchange rejected", StringComparison.Ordinal))
         {
             return TokenError("invalid_target", ex.Message);
         }

@@ -55,6 +55,30 @@ internal sealed class AuthagonalTokenClient(
         // Best-effort: revocation failure must not block logout.
     }
 
+    public async Task<TokenResult> ExchangeTokenAsync(
+        BffTenantConfig tenant,
+        string subjectToken,
+        IReadOnlyDictionary<string, string>? extraParameters = null,
+        string? scope = null,
+        CancellationToken ct = default)
+    {
+        var config = await oidc.GetAsync(tenant.Authority, ct);
+        var form = new Dictionary<string, string>
+        {
+            ["grant_type"] = "urn:ietf:params:oauth:grant-type:token-exchange",
+            ["subject_token"] = subjectToken,
+            ["subject_token_type"] = "urn:ietf:params:oauth:token-type:access_token",
+            ["client_id"] = tenant.ClientId,
+            ["client_secret"] = tenant.ClientSecret,
+        };
+        if (!string.IsNullOrWhiteSpace(scope))
+            form["scope"] = scope;
+        foreach (var (key, value) in extraParameters ?? new Dictionary<string, string>())
+            form.TryAdd(key, value); // protocol fields win; extension params can't shadow them
+
+        return await PostTokenAsync(config.TokenEndpoint, form, ct);
+    }
+
     private async Task<TokenResult> PostTokenAsync(string tokenEndpoint, Dictionary<string, string> form, CancellationToken ct)
     {
         var client = httpClientFactory.CreateClient("AuthagonalBff");

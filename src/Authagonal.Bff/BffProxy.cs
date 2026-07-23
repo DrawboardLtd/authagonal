@@ -23,12 +23,55 @@ internal static class BffProxy
         path.StartsWith(prefix, StringComparison.Ordinal)
         && (path.Length == prefix.Length || prefix.EndsWith('/') || path[prefix.Length] == '/');
 
+    // First exchange-route pattern matching the proxied path wins. A pattern is segments matched
+    // as a PREFIX of the path's segments; exactly one "{param}" placeholder captures its segment.
+    // Internal for unit testing.
+    internal static bool TryMatchExchangeRoute(
+        IEnumerable<BffExchangeRoute> routes, string apiPath, out string paramName, out string paramValue)
+    {
+        var pathSegments = apiPath.Trim('/').Split('/', StringSplitOptions.RemoveEmptyEntries);
+        foreach (var route in routes)
+        {
+            if (string.IsNullOrWhiteSpace(route.PathPattern)) continue;
+            var patternSegments = route.PathPattern.Trim('/').Split('/', StringSplitOptions.RemoveEmptyEntries);
+            if (patternSegments.Length == 0 || pathSegments.Length < patternSegments.Length) continue;
+
+            string? name = null, value = null;
+            var matched = true;
+            for (var i = 0; i < patternSegments.Length && matched; i++)
+            {
+                var p = patternSegments[i];
+                if (p.Length > 2 && p[0] == '{' && p[^1] == '}')
+                {
+                    name = p[1..^1];
+                    value = pathSegments[i];
+                }
+                else
+                {
+                    matched = string.Equals(p, pathSegments[i], StringComparison.OrdinalIgnoreCase);
+                }
+            }
+
+            if (matched && name is not null && !string.IsNullOrEmpty(value))
+            {
+                paramName = name;
+                paramValue = value;
+                return true;
+            }
+        }
+
+        paramName = string.Empty;
+        paramValue = string.Empty;
+        return false;
+    }
+
     public static async Task<IResult> ProxyAsync(
         HttpContext ctx,
         IOptions<AuthagonalBffOptions> options,
         IBffSessionStore store,
         BffRefreshCoordinator refresher,
         IHttpClientFactory httpClientFactory,
+        BffExchangedTokens exchangedTokens,
         CancellationToken ct)
     {
         var o = options.Value;
@@ -78,7 +121,24 @@ internal static class BffProxy
             upstreamReq.Headers.TryAddWithoutValidation(h.Key, h.Value.ToArray());
         }
         if (fresh is not null)
-            upstreamReq.Headers.Authorization = new AuthenticationHeaderValue("Bearer", fresh.AccessToken);
+        {
+            // Context-bound routes ride a downscoped exchanged token (cached per session+binding)
+            // instead of the primary access token; a denied exchange is a 403, mirroring what the
+            // upstream would decide but without spending the request.
+            var bearer = fresh.AccessToken;
+            if (o.ExchangeRoutes.Count > 0
+                && TryMatchExchangeRoute(o.ExchangeRoutes, apiPath, out var paramName, out var paramValue))
+            {
+                var exchanged = await exchangedTokens.GetOrExchangeAsync(
+                    fresh, fresh.AccessToken,
+                    new Dictionary<string, string>(StringComparer.Ordinal) { [paramName] = paramValue }, ct);
+                if (exchanged is null)
+                    return Results.StatusCode(StatusCodes.Status403Forbidden);
+                bearer = exchanged;
+            }
+
+            upstreamReq.Headers.Authorization = new AuthenticationHeaderValue("Bearer", bearer);
+        }
 
         using var upstreamResp = await client.SendAsync(upstreamReq, HttpCompletionOption.ResponseHeadersRead, ct);
         ctx.Response.StatusCode = (int)upstreamResp.StatusCode;

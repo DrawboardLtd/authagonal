@@ -34,6 +34,7 @@ public static class AuthagonalBffExtensions
         // AuthagonalBffOptions.TenantQueryParam so /bff/login reads the tenant key.
         services.TryAddSingleton<IBffTenantResolver, StaticBffTenantResolver>();
         services.TryAddSingleton<BffRefreshCoordinator>();
+        services.TryAddSingleton<BffExchangedTokens>();
 
         return services;
     }

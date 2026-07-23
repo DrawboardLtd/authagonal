@@ -103,3 +103,26 @@ public sealed class TestProvisioningOrchestrator : IProvisioningOrchestrator
     public Task DeprovisionAllAsync(string userId, CancellationToken ct = default)
         => Task.CompletedTask;
 }
+
+/// <summary>Mutable token-exchange transformer double: tests set <see cref="OnTransform"/> to
+/// inject binding claims / reject / reshape lifetimes; null (default) passes every exchange
+/// through unchanged, mirroring <c>NullTokenExchangeSubjectTransformer</c>. Records every call.</summary>
+public sealed class TestTokenExchangeSubjectTransformer : Authagonal.Protocol.ITokenExchangeSubjectTransformer
+{
+    public List<(string SubjectId, string ClientId, IReadOnlyList<string> Scopes, IReadOnlyDictionary<string, string> ExtraParameters)> Calls { get; } = [];
+
+    public Func<Authagonal.Protocol.OidcSubject, OAuthClient, IReadOnlyList<string>, IReadOnlyDictionary<string, string>, Authagonal.Protocol.OidcSubjectResult>? OnTransform { get; set; }
+
+    public Task<Authagonal.Protocol.OidcSubjectResult> TransformAsync(
+        Authagonal.Protocol.OidcSubject subject,
+        OAuthClient client,
+        IReadOnlyList<string> grantedScopes,
+        IReadOnlyDictionary<string, string> extraParameters,
+        CancellationToken ct = default)
+    {
+        Calls.Add((subject.SubjectId, client.ClientId, grantedScopes, extraParameters));
+        var result = OnTransform?.Invoke(subject, client, grantedScopes, extraParameters)
+            ?? Authagonal.Protocol.OidcSubjectResult.Allow(subject);
+        return Task.FromResult(result);
+    }
+}
