@@ -33,6 +33,7 @@
     <ProjectReference Include="..\..\src\Authagonal.AwsProvider\Authagonal.AwsProvider.csproj" />
     <ProjectReference Include="..\..\src\Authagonal.Backup\Authagonal.Backup.csproj" />
     <ProjectReference Include="..\..\src\Authagonal.Server\Authagonal.Server.csproj" />
+    <ProjectReference Include="..\..\src\Authagonal.Bff\Authagonal.Bff.csproj" />
   </ItemGroup>
 
 </Project>

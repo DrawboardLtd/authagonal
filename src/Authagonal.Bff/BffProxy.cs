@@ -17,6 +17,12 @@ internal static class BffProxy
         "Transfer-Encoding", "Upgrade", "Host", "Cookie", "Authorization",
     };
 
+    // Match a prefix only on a segment boundary, so "/id" doesn't capture "/identity/..." (which
+    // StripPrefix would then mangle into a slash-less "entity/..."). Internal for unit testing.
+    internal static bool PrefixMatches(string path, string prefix) =>
+        path.StartsWith(prefix, StringComparison.Ordinal)
+        && (path.Length == prefix.Length || prefix.EndsWith('/') || path[prefix.Length] == '/');
+
     public static async Task<IResult> ProxyAsync(
         HttpContext ctx,
         IOptions<AuthagonalBffOptions> options,
@@ -46,12 +52,6 @@ internal static class BffProxy
         var apiBase = o.BasePath + "/api";
         var fullPath = ctx.Request.Path.Value ?? string.Empty;
         var apiPath = fullPath.Length > apiBase.Length ? fullPath[apiBase.Length..] : string.Empty;
-        // Match a prefix only on a segment boundary, so "/id" doesn't capture "/identity/..." (which
-        // StripPrefix would then mangle into a slash-less "entity/...").
-        static bool PrefixMatches(string path, string prefix) =>
-            path.StartsWith(prefix, StringComparison.Ordinal)
-            && (path.Length == prefix.Length || prefix.EndsWith('/') || path[prefix.Length] == '/');
-
         var upstream = o.Upstreams.FirstOrDefault(u => PrefixMatches(apiPath, u.Prefix));
         if (upstream is null)
             return Results.StatusCode(StatusCodes.Status404NotFound);

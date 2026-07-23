@@ -469,7 +469,7 @@ internal static class BffEndpoints
     private static string BuildLogoutCallbackUri(HttpContext ctx, AuthagonalBffOptions o)
         => $"{ctx.Request.Scheme}://{ctx.Request.Host}{o.BasePath}/logout-callback";
 
-    private static string SanitizeReturnUrl(string? returnUrl, AuthagonalBffOptions o)
+    internal static string SanitizeReturnUrl(string? returnUrl, AuthagonalBffOptions o)
     {
         if (string.IsNullOrEmpty(returnUrl))
             return "/";

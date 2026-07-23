@@ -490,6 +490,64 @@ public sealed class AuthEndpointTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Register_PasswordlessAccountClaim_StagesProfileAndWhitelistsAttributes()
+    {
+        // N1: a claim's profile/attributes must NOT touch the victim account until the fresh verification
+        // click, and custom-attribute keys are whitelisted — so merely knowing a federated email can't
+        // rename the account or inject attributes that would ride the real owner's tokens.
+        await using var factory = new AuthagonalTestFactory
+        {
+            ConfigureAuthOptions = o =>
+            {
+                o.AllowPasswordlessAccountClaim = true;
+                o.ClaimAllowedAttributeKeys = ["org_name"]; // "evil_key" is NOT allowed
+            }
+        };
+        var client = factory.CreateClient(new() { AllowAutoRedirect = false });
+        await factory.SeedTestDataAsync();
+
+        var federated = new Authagonal.Core.Models.AuthUser
+        {
+            Id = System.Guid.NewGuid().ToString("N"),
+            Email = "claim-attrs@example.com",
+            NormalizedEmail = "CLAIM-ATTRS@EXAMPLE.COM",
+            PasswordHash = null,
+            FirstName = "Original",
+            EmailConfirmed = true,
+            LockoutEnabled = true,
+            SecurityStamp = System.Convert.ToBase64String(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32)),
+            CreatedAt = System.DateTimeOffset.UtcNow,
+        };
+        await factory.UserStore.CreateAsync(federated);
+
+        var response = await client.PostAsJsonAsync("/api/auth/register", new
+        {
+            email = "claim-attrs@example.com",
+            password = "Claim1234!",
+            firstName = "Attacker",
+            customAttributes = new Dictionary<string, string> { ["org_name"] = "Acme", ["evil_key"] = "x" },
+        });
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+
+        // Before the click: profile/attributes are STAGED, not applied — the victim account is untouched.
+        var staged = await factory.UserStore.GetAsync(federated.Id);
+        Assert.Equal("Original", staged!.FirstName);
+        Assert.False(staged.CustomAttributes.ContainsKey("org_name"));
+        Assert.False(staged.CustomAttributes.ContainsKey("evil_key"));
+
+        // The click applies the staged claim — the whitelisted key lands, the non-whitelisted key is gone.
+        var mail = factory.EmailService.SentEmails.Last(e => e.Email == "claim-attrs@example.com" && e.Type == "verification");
+        var token = System.Web.HttpUtility.ParseQueryString(new System.Uri(mail.CallbackUrl).Query)["token"];
+        var confirm = await client.GetAsync($"/api/auth/confirm-email?token={System.Uri.EscapeDataString(token!)}");
+        Assert.Equal(HttpStatusCode.Redirect, confirm.StatusCode);
+
+        var after = await factory.UserStore.GetAsync(federated.Id);
+        Assert.Equal("Attacker", after!.FirstName);
+        Assert.Equal("Acme", after.CustomAttributes.GetValueOrDefault("org_name"));
+        Assert.False(after.CustomAttributes.ContainsKey("evil_key"));
+    }
+
+    [Fact]
     public async Task Register_PasswordlessAccount_WhenDisabled_StaysNeutral()
     {
         // Default (flag OFF): even a passwordless account is treated as a duplicate — no claim.
