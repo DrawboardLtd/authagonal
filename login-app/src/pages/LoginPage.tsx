@@ -39,10 +39,12 @@ export default function LoginPage() {
   // page (resolved via the now-authenticated /apps call; falls back to the tenant default, then /).
   const continueClient = searchParams.get('continue_client') || '';
   async function continueDestination(): Promise<string> {
-    if (!continueClient) return '/';
+    // No continue_client (e.g. the verify-email landing carries none) still deserves a real
+    // destination: the tenant's default application. '/' strands the user on the auth host.
     try {
       const apps = await getApps();
-      const match = apps.find((a) => a.clientId === continueClient) ?? apps.find((a) => a.isDefault);
+      const match = (continueClient ? apps.find((a) => a.clientId === continueClient) : undefined)
+        ?? apps.find((a) => a.isDefault);
       return match?.homeUri || '/';
     } catch {
       return '/';
