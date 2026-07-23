@@ -107,6 +107,8 @@ public sealed class ProviderSeedService(
                 PassthroughParams = seed.PassthroughParams ?? [],
                 ProvisioningAttributeParams = seed.ProvisioningAttributeParams ?? [],
                 RevalidateOnRefresh = seed.RevalidateOnRefresh,
+                AllowUninvitedJit = seed.AllowUninvitedJit,
+                IsExternalConnection = seed.IsExternalConnection,
                 SessionExpClaim = seed.SessionExpClaim,
                 InteractionPath = seed.InteractionPath,
                 CreatedAt = DateTimeOffset.UtcNow
@@ -159,6 +161,8 @@ public sealed class ProviderSeedService(
         public List<string>? PassthroughParams { get; set; }
         public List<string>? ProvisioningAttributeParams { get; set; }
         public bool RevalidateOnRefresh { get; set; }
+        public bool AllowUninvitedJit { get; set; }
+        public bool IsExternalConnection { get; set; }
         public string? SessionExpClaim { get; set; }
         public string? InteractionPath { get; set; }
     }
