@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+## [0.11.0], 2026-07-23
+
+Hardening + correctness release from the v0.10.0→HEAD review. New public surface (see Added) makes
+this a minor bump.
+
 ### Security
 
 - **BFF open redirect via backslash closed.** `SanitizeReturnUrl` accepted `/\evil.com` — browsers
@@ -10,11 +15,62 @@
   closing the `/login`, `/logout`, and `/logout-callback` return-URL sinks.
 - **`prompt=login` is now enforced and no longer loops under PAR.** A pushed-authorization request
   carrying `prompt=login` looped until the `request_uri` expired without ever issuing a code, and an
-  existing session could otherwise satisfy the prompt without re-authenticating. Sessions now record
+  existing session could otherwise satisfy the prompt without re-authenticating. Sessions record
   `auth_time`, and `/connect/authorize` honors `prompt=login` only when the session is newer than the
   request (`auth_time >= request CreatedAt` for PAR), signing out any stale session first.
-- **`auth_time` is now minted on every sign-in** (password, OIDC, SAML). It was advertised in
-  discovery and the token passthrough allowlists but never set, so id_tokens never carried it.
+- **Passwordless-account claims can no longer mutate the victim account before verification.** A
+  claim's profile/custom-attributes are STAGED and applied only when the fresh verification email is
+  clicked; custom-attribute keys are whitelisted via `AuthOptions.ClaimAllowedAttributeKeys` (empty =
+  allow all). Previously, knowing a federated account's email was enough to rename it and inject
+  attributes that ride the real owner's tokens.
+- **Upstream-federated refresh no longer mass-terminates sessions on a config fault.** Only an
+  `invalid_grant` from the upstream revokes the local session; a rotated/misconfigured client secret
+  (`invalid_client`) or other 4xx is treated as transient and the session survives.
+- **Connection trust tier.** An OIDC connection can be marked external (`IsExternalConnection`); the
+  first-party-only flags (`UseUpstreamSubjectAsUserId`, `AutoLinkExistingByEmail`) are then neutralised
+  even if set, so a misconfiguration can't hand an external IdP an account-takeover lever. Defaults to
+  first-party — existing connections are unchanged.
+- **`auth_time` is now minted on every sign-in** (password, OIDC, SAML). It was advertised in discovery
+  and the token passthrough allowlists but never set, so id_tokens never carried it.
+
+### Added
+
+- **`IUpstreamRefreshTokenStore`** — a durable per-`(user, connection, session)` store for the upstream
+  federated refresh token, so every RP grant in a session reads and rotates one shared token instead of
+  pinning a login-time cookie copy that dies after the upstream one-time-rotates it. Azure Table +
+  DynamoDB implementations, token encrypted at rest. Only active when `RevalidateOnRefresh` is on.
+- **`AllowUninvitedJit` on OIDC connections** (default off), matching the existing SAML flag —
+  self-service auto-provisioning of an uninvited allowed-domain user, tagged with `federated_connection`.
+- **`AuthOptions.ClaimAllowedAttributeKeys`** — whitelist for the custom-attribute keys a passwordless
+  claim may carry onto the account.
+- **BFF ws-ticket redemption:** `WsTicketKey` is now public and `TryRedeemWsTicketAsync` ships the
+  single-use get-then-delete (documenting the residual replay window).
+- **`login_hint` is forwarded to OIDC upstreams** on the straight-to-IdP prefill path (previously only
+  SAML honored it).
+
+### Fixed
+
+- **MFA credential deletion propagates storage faults** instead of swallowing them; the WebAuthn
+  credential-id parse is extracted to a shared `MfaCredential.TryGetWebAuthnCredentialId`.
+- **TableTicketStore lifecycle:** 404-swallow on removes (no more 500 on a double logout/revoke race),
+  expired sessions hidden from listings, and a lazy sweep of a user's expired sessions on new-session store.
+- **Registered-app absolute returnUrls** are honored on the login-app skipMfa / sso_required / MFA-setup
+  paths (they were silently dropped to `/`).
+- **`ReprovisionAsync` gets a default interface implementation** so adding it no longer source-breaks
+  external `IProvisioningOrchestrator` implementors.
+- **`accountCreated` / `emailVerified` translated** into all locales (were English-only via fallback).
+- BFF proxy prefix match respects segment boundaries; admin bulk MFA-status runs bounded-parallel and
+  reports truncation; admin OIDC `InteractionPath` requires a leading `/`; plus comment/casing/doc nits.
+
+### Changed
+
+- **Removed the Klingon (`tlh`) novelty locale.**
+- **Consumer product names removed** from XML doc comments and the NuGet `<Authors>` package metadata.
+- **Federation JIT gate extracted** to a shared `FederationJitPolicy` used by both the OIDC and SAML
+  callbacks, so the two protocols can't drift.
+- **Release tooling:** CHANGELOG backfilled (0.10.11–0.10.29); `tag.sh` now gates on `dotnet build`/
+  `dotnet test` + the login-app typecheck before tagging, and accepts an explicit version; line endings
+  normalised to LF.
 
 ## [0.10.29], 2026-07-23
 
