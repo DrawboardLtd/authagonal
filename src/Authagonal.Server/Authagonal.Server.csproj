@@ -36,7 +36,7 @@
     <IsPackable>true</IsPackable>
     <PackageId>Authagonal.Server</PackageId>
     <Description>Drop-in authentication server for ASP.NET Core. OAuth 2.0, OIDC, SAML SSO, and admin APIs.</Description>
-    <Authors>Drawboard</Authors>
+    <Authors>Authagonal</Authors>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <PackageProjectUrl>https://github.com/authagonal/authagonal</PackageProjectUrl>
     <RepositoryUrl>https://github.com/authagonal/authagonal</RepositoryUrl>

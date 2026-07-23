@@ -15,7 +15,7 @@ namespace Authagonal.Server;
 /// on the next request) and enumerable per user via a <c>SessionsByUser</c> index. Also implements
 /// <see cref="IUserSessionRegistry"/> so the login SPA's "active sessions" section + the
 /// <c>/api/auth/sessions</c> endpoints light up. The multi-tenant cloud has its own tenant-sharded
-/// equivalent; this is the flavour a self-hosted single-tenant host (bullclip, Drawboard PDF) uses.
+/// equivalent; this is the flavour a self-hosted single-tenant host uses.
 /// </summary>
 internal sealed class TableTicketStore(
     TableClient sessions,

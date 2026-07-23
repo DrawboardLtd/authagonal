@@ -28,8 +28,8 @@ public sealed record OidcProviderConfig
 
     /// <summary>
     /// When true, a JIT-provisioned federated user's local id is the upstream subject (id_token
-    /// <c>sub</c>) rather than a fresh GUID. For a TRUSTED first-party connection (e.g. bullclip's
-    /// guest-link OIDC provider) this keeps the local <c>sub</c> equal to the downstream RP's own user
+    /// <c>sub</c>) rather than a fresh GUID. For a TRUSTED first-party connection (e.g. a share-link
+    /// OIDC provider) this keeps the local <c>sub</c> equal to the downstream RP's own user
     /// id, so identifiers like a share link's ClaimedByUserId stay consistent. Do NOT enable for
     /// arbitrary external IdPs — it lets the upstream choose the local user id.
     /// </summary>
@@ -55,7 +55,7 @@ public sealed record OidcProviderConfig
     /// <summary>
     /// Whether this connection is advertised as a "Continue with {name}" button on the login page.
     /// Defaults to true. Set false for a connection reached only via an explicit <c>idp_hint</c>
-    /// (e.g. bullclip's guest-link OIDC provider): federation still works, it just isn't offered as
+    /// (e.g. a guest share-link OIDC provider): federation still works, it just isn't offered as
     /// a button — a bounded share-link credential is not something a user picks from the login form.
     /// </summary>
     public bool ShowOnLogin { get; set; } = true;
@@ -83,8 +83,8 @@ public sealed record OidcProviderConfig
     /// Link a federated identity to an EXISTING local account matched by email even when the
     /// connection's AllowedDomains does not vouch for the email's domain. Default false (the
     /// anti-takeover stance). Enable ONLY for a trusted first-party connection whose email
-    /// assertions are inbox-verified — e.g. a share-link provider, where bullclip pre-creates the
-    /// local account itself and possession of the emailed link is the verification.
+    /// assertions are inbox-verified — e.g. a share-link provider, where the downstream host
+    /// pre-creates the local account itself and possession of the emailed link is the verification.
     /// </summary>
     public bool AutoLinkExistingByEmail { get; set; }
 
@@ -96,7 +96,7 @@ public sealed record OidcProviderConfig
     /// an org invite through the same provisioning pipeline as a password signup — the invite context
     /// (e.g. <c>acceptKind</c>, <c>acceptToken</c>) rides the authorize URL and lands on the user.
     /// Empty means nothing is captured. The downstream provisioner is the security gate on these
-    /// (e.g. bullclip asserts the federated email equals the invite recipient), since they are
+    /// (e.g. the downstream provisioner asserts the federated email equals the invite recipient), since they are
     /// user-supplied on the authorize URL.
     /// </summary>
     public List<string> ProvisioningAttributeParams { get; set; } = [];
@@ -119,8 +119,8 @@ public sealed record OidcProviderConfig
     /// refresh grant, and redeems it server-to-server each time the local session refreshes — if the
     /// upstream rejects (<c>invalid_grant</c>), the local refresh is rejected too, so upstream
     /// revocation/expiry propagates within one access-token lifetime. Enable ONLY for a trusted
-    /// first-party connection whose upstream owns a revocable credential (e.g. bullclip's guest share
-    /// links). Default false. Requires the upstream to actually issue a refresh token on the hop.
+    /// first-party connection whose upstream owns a revocable credential (e.g. a guest share-link
+    /// provider). Default false. Requires the upstream to actually issue a refresh token on the hop.
     /// </summary>
     public bool RevalidateOnRefresh { get; set; }
 

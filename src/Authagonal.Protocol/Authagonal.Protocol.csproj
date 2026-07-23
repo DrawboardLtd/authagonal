@@ -8,7 +8,7 @@
     <IsPackable>true</IsPackable>
     <PackageId>Authagonal.Protocol</PackageId>
     <Description>Embeddable OIDC / OAuth 2.0 protocol surface extracted from Authagonal.Server. Plug in your own user identity via IOidcSubjectResolver and storage via IClientStore / IGrantStore / IScopeStore / ISigningKeyStore — no user store, no SAML, no admin UI.</Description>
-    <Authors>Drawboard</Authors>
+    <Authors>Authagonal</Authors>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <PackageProjectUrl>https://github.com/authagonal/authagonal</PackageProjectUrl>
     <RepositoryUrl>https://github.com/authagonal/authagonal</RepositoryUrl>

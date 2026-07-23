@@ -8,7 +8,7 @@
     <IsPackable>true</IsPackable>
     <PackageId>Authagonal.Bff</PackageId>
     <Description>Backend-for-Frontend (BFF) for SPAs using Authagonal. A confidential OIDC client that runs the authorization-code + PKCE flow server-side, holds access/refresh tokens in a server-side session, and hands the browser only an httpOnly session cookie — no tokens in browser storage. Drop-in ASP.NET Core middleware: AddAuthagonalBff() + MapAuthagonalBff().</Description>
-    <Authors>Drawboard</Authors>
+    <Authors>Authagonal</Authors>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <PackageProjectUrl>https://github.com/authagonal/authagonal</PackageProjectUrl>
     <RepositoryUrl>https://github.com/authagonal/authagonal</RepositoryUrl>

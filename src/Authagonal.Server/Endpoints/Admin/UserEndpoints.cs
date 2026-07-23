@@ -437,7 +437,7 @@ public static class UserEndpoints
         public string? LastName { get; set; }
 
         /// <summary>
-        /// Admin-only: caller-supplied user id (e.g. a bullclip-initiated creation that keys the user
+        /// Admin-only: caller-supplied user id (e.g. a first-party-initiated creation that keys the user
         /// by its own id). Rejected with 409 if already in use; a fresh id is generated when omitted.
         /// </summary>
         public string? UserId { get; set; }

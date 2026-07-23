@@ -24,7 +24,7 @@ public sealed class AuthagonalProtocolOptions
     /// <summary>
     /// Static OIDC clients to seed on startup. If empty, clients must already be
     /// present in <c>IClientStore</c>. Hosts with a single embedded client
-    /// (e.g. bullclip's one Authagonal Cloud client) typically seed from config.
+    /// (e.g. a single first-party client) typically seed from config.
     /// </summary>
     public List<OidcClientDescriptor> Clients { get; set; } = [];
 

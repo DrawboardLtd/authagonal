@@ -28,7 +28,7 @@
     <IsPackable>true</IsPackable>
     <PackageId>Authagonal.AwsProvider</PackageId>
     <Description>AWS (DynamoDB / S3 / Secrets Manager) implementation for Authagonal stores and clustering.</Description>
-    <Authors>Drawboard</Authors>
+    <Authors>Authagonal</Authors>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <PackageProjectUrl>https://github.com/authagonal/authagonal</PackageProjectUrl>
     <RepositoryUrl>https://github.com/authagonal/authagonal</RepositoryUrl>

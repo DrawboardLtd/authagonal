@@ -9,7 +9,7 @@ namespace Authagonal.Server.Services;
 /// </summary>
 /// <remarks>
 /// Opt-in: Turnstile is enforced only when <see cref="SecretKey"/> is set. Consumers that don't
-/// configure it (the demo server, bullclip guest-OIDC, etc.) keep the unchanged login/register
+/// configure it (the demo server, an embedded guest-OIDC host, etc.) keep the unchanged login/register
 /// flow — no widget rendered, no token required.
 /// </remarks>
 public sealed class TurnstileOptions
