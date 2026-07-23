@@ -134,6 +134,22 @@ public sealed record OidcProviderConfig
     /// </summary>
     public bool RevalidateOnRefresh { get; set; }
 
+    /// <summary>
+    /// Marks this as a THIRD-PARTY / external IdP (e.g. a customer's Entra/Okta) rather than a connection
+    /// the operator controls. Default false (first-party) — existing connections are unaffected. When true,
+    /// the first-party-only flags are NEUTRALISED even if set, so a misconfiguration can't hand an external
+    /// upstream an account-takeover lever (choosing the local user id, or auto-linking by email).
+    /// </summary>
+    public bool IsExternalConnection { get; set; }
+
+    /// <summary><see cref="UseUpstreamSubjectAsUserId"/>, honoured only on a first-party connection (not
+    /// <see cref="IsExternalConnection"/>). Consume this at the call site, not the raw flag.</summary>
+    public bool EffectiveUseUpstreamSubjectAsUserId => UseUpstreamSubjectAsUserId && !IsExternalConnection;
+
+    /// <summary><see cref="AutoLinkExistingByEmail"/>, honoured only on a first-party connection (not
+    /// <see cref="IsExternalConnection"/>). Consume this at the call site, not the raw flag.</summary>
+    public bool EffectiveAutoLinkExistingByEmail => AutoLinkExistingByEmail && !IsExternalConnection;
+
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset? UpdatedAt { get; set; }
 }

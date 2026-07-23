@@ -35,6 +35,8 @@ public sealed class OidcProviderEntity : ITableEntity
     public string? ProvisioningAttributeParamsJson { get; set; }
     // Rows lacking the column read false → no upstream-refresh revalidation (the safe default).
     public bool RevalidateOnRefresh { get; set; }
+    public bool AllowUninvitedJit { get; set; }
+    public bool IsExternalConnection { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset? UpdatedAt { get; set; }
 
@@ -63,6 +65,8 @@ public sealed class OidcProviderEntity : ITableEntity
             ? JsonSerializer.Serialize(config.ProvisioningAttributeParams, AzureJsonContext.Default.ListString)
             : null,
         RevalidateOnRefresh = config.RevalidateOnRefresh,
+        AllowUninvitedJit = config.AllowUninvitedJit,
+        IsExternalConnection = config.IsExternalConnection,
         CreatedAt = config.CreatedAt,
         UpdatedAt = config.UpdatedAt,
     };
@@ -91,6 +95,8 @@ public sealed class OidcProviderEntity : ITableEntity
             ? []
             : JsonSerializer.Deserialize(ProvisioningAttributeParamsJson, AzureJsonContext.Default.ListString) ?? [],
         RevalidateOnRefresh = RevalidateOnRefresh,
+        AllowUninvitedJit = AllowUninvitedJit,
+        IsExternalConnection = IsExternalConnection,
         CreatedAt = CreatedAt,
         UpdatedAt = UpdatedAt,
     };

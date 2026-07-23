@@ -363,7 +363,7 @@ public static class OidcEndpoints
             var existingByEmail = await userStore.FindByEmailAsync(email, ct);
             if (existingByEmail is not null)
             {
-                if (!domainAllowed && !config.AutoLinkExistingByEmail)
+                if (!domainAllowed && !config.EffectiveAutoLinkExistingByEmail)
                 {
                     logger.LogWarning("OIDC login rejected: email {Email} matches an existing account but connection {ConnectionId} is not authorised for its domain", email, stateData.ConnectionId);
                     return RedirectWithError(returnUrl, "access_denied", "This email already belongs to an account. Contact your administrator to link it.");
@@ -397,7 +397,7 @@ public static class OidcEndpoints
             {
                 // Trusted first-party connections (e.g. bullclip's guest-link provider) adopt the
                 // upstream subject as the local user id so the downstream RP's own user id survives.
-                Id = config.UseUpstreamSubjectAsUserId ? providerKey : Guid.NewGuid().ToString("N"),
+                Id = config.EffectiveUseUpstreamSubjectAsUserId ? providerKey : Guid.NewGuid().ToString("N"),
                 Email = email,
                 NormalizedEmail = email.ToUpperInvariant(),
                 EmailConfirmed = emailVerified,
