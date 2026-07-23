@@ -13,6 +13,7 @@ import { Alert } from '@/components/ui/alert';
 import { Separator } from '@/components/ui/separator';
 import { LogIn } from 'lucide-react';
 import { CardTitle, CardFooter } from '@/components/ui/card';
+import { resolveRedirect } from '@/lib/returnUrl';
 
 const API_URL = import.meta.env.VITE_API_URL || '';
 
@@ -54,8 +55,11 @@ export default function LoginPage() {
   const [email, setEmail] = useState(loginHint);
   const [password, setPassword] = useState('');
   const [error, setError] = useState(oidcError);
+  const emailConfirmedParam = searchParams.get('email_confirmed') === '1';
   const [successMessage] = useState(() =>
-    messageParam === 'registration_success' ? t('registrationSuccess') : ''
+    emailConfirmedParam ? t('emailVerified')
+    : messageParam === 'account_created' ? t('accountCreated')
+    : messageParam === 'registration_success' ? t('registrationSuccess') : ''
   );
   const [loading, setLoading] = useState(false);
   const [ssoInfo, setSsoInfo] = useState<{ redirectUrl: string } | null>(null);
@@ -191,7 +195,7 @@ export default function LoginPage() {
         if (!credential || ac.signal.aborted) return;
 
         await passkeyLoginComplete(challengeId, serializeAssertion(credential));
-        window.location.href = returnUrl && isSafeReturnUrl(returnUrl) ? returnUrl : await continueDestination();
+        window.location.href = await resolveRedirect(returnUrl, continueDestination);
       } catch {
         // No passkey, user ignored the autofill, aborted, or SSO-routed — normal password login continues.
       }
@@ -239,12 +243,10 @@ export default function LoginPage() {
         }
       }
 
-      // On success, redirect to returnUrl (validated) using window.location.href
-      if (returnUrl && isSafeReturnUrl(returnUrl)) {
-        window.location.href = returnUrl;
-      } else {
-        window.location.href = await continueDestination();
-      }
+      // On success, redirect to returnUrl — same-origin paths as before; ABSOLUTE URLs only when
+      // their origin matches a registered client's home URI (product apps returning the user to
+      // their own pages, e.g. invite landings). Else the continue destination.
+      window.location.href = await resolveRedirect(returnUrl, continueDestination);
     } catch (err) {
       if (err instanceof ApiRequestError) {
         switch (err.error) {

@@ -2,21 +2,12 @@ import { useState, useCallback } from 'react';
 import { useSearchParams, Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { mfaVerify, ApiRequestError } from '../api';
+import { resolveRedirect } from '@/lib/returnUrl';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Alert } from '@/components/ui/alert';
 import { CardTitle, CardDescription } from '@/components/ui/card';
-
-function isSafeReturnUrl(url: string): boolean {
-  if (!url) return false;
-  try {
-    const parsed = new URL(url, window.location.origin);
-    return parsed.origin === window.location.origin && url.startsWith('/');
-  } catch {
-    return false;
-  }
-}
 
 // Helper: Base64URL decode to Uint8Array
 function base64UrlToBuffer(base64url: string): ArrayBuffer {
@@ -67,11 +58,9 @@ export default function MfaChallengePage() {
   const [loading, setLoading] = useState(false);
 
   const handleSuccess = useCallback(() => {
-    if (returnUrl && isSafeReturnUrl(returnUrl)) {
-      window.location.href = returnUrl;
-    } else {
-      window.location.href = '/';
-    }
+    void resolveRedirect(returnUrl, () => '/').then((target) => {
+      window.location.href = target;
+    });
   }, [returnUrl]);
 
   const handleError = useCallback((err: unknown) => {

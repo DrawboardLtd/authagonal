@@ -147,5 +147,7 @@
   "account.phone": "Phone",
   "account.language": "Preferred language",
   "account.save": "Save changes",
-  "account.saving": "Saving…"
+  "account.saving": "Saving…",
+  "emailVerified": "Email verified — sign in to continue.",
+  "accountCreated": "Account created — sign in to continue."
 }
