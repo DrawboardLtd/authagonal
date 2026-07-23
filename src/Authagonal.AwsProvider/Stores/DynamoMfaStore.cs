@@ -75,32 +75,13 @@ public sealed class DynamoMfaStore(
         return webAuthnIndex.PutAsync(item, ct);
     }
 
-    // Deletes the WebAuthn credential-id index row for a WebAuthn credential (no-op otherwise).
-    // Best-effort — a parse failure never blocks the credential delete.
+    // Delete the WebAuthn credential-id index row for a credential (no-op for TOTP/recovery or missing
+    // data). No try/catch: TryGetWebAuthnCredentialId absorbs malformed JSON/base64 (returns false), and
+    // the storage delete is left to PROPAGATE a transient fault rather than silently leave the stale row.
     private async Task DeleteWebAuthnIndexForAsync(MfaCredential credential, CancellationToken ct)
     {
-        if (credential.Type != MfaCredentialType.WebAuthn || string.IsNullOrEmpty(credential.PublicKeyJson))
-            return;
-
-        byte[] credentialId;
-        try
-        {
-            using var doc = JsonDocument.Parse(credential.PublicKeyJson);
-            string? credIdB64 = null;
-            foreach (var prop in doc.RootElement.EnumerateObject())
-                if (string.Equals(prop.Name, "credentialId", StringComparison.OrdinalIgnoreCase))
-                {
-                    credIdB64 = prop.Value.GetString();
-                    break;
-                }
-            if (string.IsNullOrEmpty(credIdB64)) return;
-            credentialId = Convert.FromBase64String(credIdB64);
-        }
-        catch (Exception ex) when (ex is JsonException or FormatException) { /* malformed — nothing to clean, never block */ return; }
-
-        // Storage delete OUTSIDE the try: a transient DynamoDB failure or cancellation MUST propagate,
-        // not be swallowed — swallowing it leaves the stale index row this method exists to remove.
-        await DeleteWebAuthnCredentialIdMappingAsync(credentialId, ct).ConfigureAwait(false);
+        if (credential.TryGetWebAuthnCredentialId(out var credentialId))
+            await DeleteWebAuthnCredentialIdMappingAsync(credentialId, ct).ConfigureAwait(false);
     }
 
     public async Task DeleteWebAuthnCredentialIdMappingAsync(byte[] webAuthnCredentialId, CancellationToken ct = default)

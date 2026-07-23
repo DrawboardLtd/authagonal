@@ -1,5 +1,4 @@
 using System.Security.Cryptography;
-using System.Text.Json;
 using Azure.Data.Tables;
 using Authagonal.Core.Models;
 using Authagonal.Core.Stores;
@@ -136,41 +135,13 @@ public sealed class TableMfaStore(
         await webAuthnIndexTable.UpsertEntityAsync(entity, TableUpdateMode.Replace, ct);
     }
 
-    // Deletes the WebAuthn credential-id index row for a credential, if it is a WebAuthn factor
-    // whose PublicKeyJson carries a credential id. No-op for TOTP/recovery. Best-effort: a parse
-    // failure or missing row must not block the credential delete.
+    // Delete the WebAuthn credential-id index row for a credential (no-op for TOTP/recovery or missing
+    // data). No try/catch: TryGetWebAuthnCredentialId absorbs malformed JSON/base64 (returns false), and
+    // the storage delete is left to PROPAGATE a transient fault rather than silently leave the stale row.
     private async Task DeleteWebAuthnIndexForAsync(MfaCredential credential, CancellationToken ct)
     {
-        if (credential.Type != MfaCredentialType.WebAuthn || string.IsNullOrEmpty(credential.PublicKeyJson))
-            return;
-
-        byte[] credentialId;
-        try
-        {
-            using var doc = JsonDocument.Parse(credential.PublicKeyJson);
-            string? credIdB64 = null;
-            foreach (var prop in doc.RootElement.EnumerateObject())
-            {
-                if (string.Equals(prop.Name, "credentialId", StringComparison.OrdinalIgnoreCase))
-                {
-                    credIdB64 = prop.Value.GetString();
-                    break;
-                }
-            }
-            if (string.IsNullOrEmpty(credIdB64))
-                return;
-            credentialId = Convert.FromBase64String(credIdB64);
-        }
-        catch (Exception ex) when (ex is JsonException or FormatException)
-        {
-            // Malformed JSON / bad base64 — nothing to clean, and never block the delete.
-            return;
-        }
-
-        // The storage delete is OUTSIDE the try on purpose: a transient storage failure (or
-        // cancellation) MUST propagate, not be swallowed — swallowing it leaves the exact stale index
-        // row this method exists to remove.
-        await DeleteWebAuthnCredentialIdMappingAsync(credentialId, ct);
+        if (credential.TryGetWebAuthnCredentialId(out var credentialId))
+            await DeleteWebAuthnCredentialIdMappingAsync(credentialId, ct);
     }
 
     public async Task DeleteWebAuthnCredentialIdMappingAsync(byte[] webAuthnCredentialId, CancellationToken ct = default)
