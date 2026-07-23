@@ -63,7 +63,7 @@ public sealed class ClientSeedService(
                 SlidingRefreshTokenLifetimeSeconds = seed.SlidingRefreshTokenLifetimeSeconds ?? 1296000,
                 RefreshTokenUsage = seed.RefreshTokenUsage ?? RefreshTokenUsage.OneTime,
                 MfaPolicy = seed.MfaPolicy ?? MfaPolicy.Disabled,
-                BackChannelLogoutUri = seed.BackchannelLogoutUri,
+                BackChannelLogoutUri = seed.BackChannelLogoutUri,
                 // Continue-to-app affordances: without these bound, config-seeded tenants have an
                 // empty /apps and every post-auth continuation collapses to '/' on the auth host.
                 InitiateLoginUri = seed.InitiateLoginUri,
@@ -126,6 +126,6 @@ public sealed class ClientSeedService(
         public bool? IsDefaultApplication { get; set; }
         /// <summary>Where OIDC back-channel logout tokens for this client are POSTed
         /// (e.g. a BFF's <c>/bff/backchannel-logout</c>).</summary>
-        public string? BackchannelLogoutUri { get; set; }
+        public string? BackChannelLogoutUri { get; set; }
     }
 }

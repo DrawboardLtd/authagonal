@@ -109,6 +109,9 @@ internal static class BffEndpoints
 
         var perLoginCookie = CorrelationCookieFor(o, state);
         var usedLegacyCookie = false;
+        // TODO(remove after 0.11.0): the legacy shared-cookie fallback only covers a login that spanned
+        // the per-login-cookie deploy (pre-0.10.18). Once no such login can be in flight, drop this branch
+        // and stop reading/deleting o.CorrelationCookieName.
         if (!ctx.Request.Cookies.TryGetValue(perLoginCookie, out var protectedCorr))
         {
             usedLegacyCookie = true;
@@ -375,7 +378,7 @@ internal static class BffEndpoints
     /// re-validate against the same allowlist and redirect — this must be registered as a
     /// <c>post_logout_redirect_uri</c> for the BFF's OIDC client.
     /// </summary>
-    public static IResult LogoutCallbackAsync(HttpContext ctx, string? state, IOptions<AuthagonalBffOptions> options)
+    public static IResult LogoutCallback(HttpContext ctx, string? state, IOptions<AuthagonalBffOptions> options)
     {
         var o = options.Value;
         var safeReturn = SanitizeReturnUrl(state, o);
@@ -491,7 +494,9 @@ internal static class BffEndpoints
         {
             if (ProtocolClaims.Contains(claim.Type)) continue;
             // Array claims (roles, groups) arrive as repeated claim types — space-join so the SPA
-            // sees the full set (previously only the first value survived).
+            // sees the full set (previously only the first value survived). NOTE: this assumes individual
+            // values contain no spaces (true for roles/groups); a value with an embedded space would be
+            // indistinguishable from two separate values downstream.
             claims[claim.Type] = claims.TryGetValue(claim.Type, out var existing)
                 ? $"{existing} {claim.Value}"
                 : claim.Value;

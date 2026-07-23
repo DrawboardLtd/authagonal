@@ -40,13 +40,23 @@ public static class UserEndpoints
         IMfaStore mfaStore,
         CancellationToken ct)
     {
-        var statuses = new Dictionary<string, bool>();
-        foreach (var userId in (request.UserIds ?? []).Where(id => !string.IsNullOrWhiteSpace(id)).Distinct().Take(500))
-        {
-            var credentials = await mfaStore.GetCredentialsAsync(userId, ct);
-            statuses[userId] = credentials.Count > 0;
-        }
-        return Results.Json(new { statuses });
+        const int MaxIds = 500;
+        var ids = (request.UserIds ?? []).Where(id => !string.IsNullOrWhiteSpace(id)).Distinct().ToList();
+        var truncated = ids.Count > MaxIds;
+        if (truncated)
+            ids = ids.GetRange(0, MaxIds);
+
+        // Bounded-parallel reads: a 500-id directory batch was N sequential store round-trips.
+        var statuses = new System.Collections.Concurrent.ConcurrentDictionary<string, bool>();
+        await Parallel.ForEachAsync(ids, new ParallelOptions { MaxDegreeOfParallelism = 10, CancellationToken = ct },
+            async (userId, token) =>
+            {
+                var credentials = await mfaStore.GetCredentialsAsync(userId, token);
+                statuses[userId] = credentials.Count > 0;
+            });
+
+        // `truncated` tells the caller its request was capped, instead of silently returning 500 of 600.
+        return Results.Json(new { statuses = new Dictionary<string, bool>(statuses), truncated });
     }
 
     private static async Task<IResult> GetUser(

@@ -148,8 +148,9 @@ public static class AuthorizeEndpoint
                     // Connection interstitial: a connection can declare a login-app path to render
                     // BEFORE federating (e.g. a guest share-link's name/terms form). The page appends
                     // what it collects to the returnUrl query — the passthrough/provisioning source —
-                    // and continues to /oidc/{conn}/login itself. Only for unauthenticated entries:
-                    // a live host session never reaches this branch, so returning users skip it.
+                    // and continues to /oidc/{conn}/login itself. Normally only unauthenticated entries
+                    // reach here; an existing session CAN too when prompt=login forces re-auth (forceReauth),
+                    // which is the intended behaviour — a forced re-auth should still see the interstitial.
                     var hintedConnection = await oidcProviderStore.GetAsync(idpHint, ct);
                     if (!string.IsNullOrWhiteSpace(hintedConnection?.InteractionPath))
                     {

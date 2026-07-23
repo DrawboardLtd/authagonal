@@ -50,7 +50,7 @@ public static class AuthagonalBffExtensions
         group.MapMethods("/logout", ["GET", "POST"], BffEndpoints.LogoutAsync);
         // Post-logout landing for the RP-initiated end_session round trip when /logout was given a returnUrl.
         // Must be registered as a post_logout_redirect_uri for the BFF's OIDC client.
-        group.MapGet("/logout-callback", BffEndpoints.LogoutCallbackAsync);
+        group.MapGet("/logout-callback", BffEndpoints.LogoutCallback);
         // Server-to-server callback from the IdP (signed logout_token authenticates it) — no CSRF header,
         // and antiforgery disabled so a host using UseAntiforgery still admits the form POST.
         group.MapPost("/backchannel-logout", BffEndpoints.BackChannelLogoutAsync).DisableAntiforgery();

@@ -244,6 +244,11 @@ public static class SsoEndpoints
         if (string.IsNullOrWhiteSpace(request.RedirectUrl))
             return Results.BadRequest(new { error = "invalid_request", error_description = "RedirectUrl is required" });
 
+        // InteractionPath is later concatenated onto LoginAppUrl to build a redirect; a value missing the
+        // leading '/' (e.g. ".evil.com/x") would alter the host. Require a leading slash.
+        if (!string.IsNullOrEmpty(request.InteractionPath) && !request.InteractionPath.StartsWith('/'))
+            return Results.BadRequest(new { error = "invalid_request", error_description = "InteractionPath must start with '/'" });
+
         var connectionId = Guid.NewGuid().ToString("N");
         var now = DateTimeOffset.UtcNow;
 

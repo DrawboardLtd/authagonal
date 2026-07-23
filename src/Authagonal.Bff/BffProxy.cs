@@ -46,13 +46,19 @@ internal static class BffProxy
         var apiBase = o.BasePath + "/api";
         var fullPath = ctx.Request.Path.Value ?? string.Empty;
         var apiPath = fullPath.Length > apiBase.Length ? fullPath[apiBase.Length..] : string.Empty;
-        var upstream = o.Upstreams.FirstOrDefault(u => apiPath.StartsWith(u.Prefix, StringComparison.Ordinal));
+        // Match a prefix only on a segment boundary, so "/id" doesn't capture "/identity/..." (which
+        // StripPrefix would then mangle into a slash-less "entity/...").
+        static bool PrefixMatches(string path, string prefix) =>
+            path.StartsWith(prefix, StringComparison.Ordinal)
+            && (path.Length == prefix.Length || prefix.EndsWith('/') || path[prefix.Length] == '/');
+
+        var upstream = o.Upstreams.FirstOrDefault(u => PrefixMatches(apiPath, u.Prefix));
         if (upstream is null)
             return Results.StatusCode(StatusCodes.Status404NotFound);
 
         // A synthetic routing prefix (StripPrefix) is removed before forwarding so several backends sharing a
         // path namespace can be fanned out from one BFF; a real prefix is left in the forwarded path.
-        var forwardedPath = upstream.StripPrefix && apiPath.StartsWith(upstream.Prefix, StringComparison.Ordinal)
+        var forwardedPath = upstream.StripPrefix && PrefixMatches(apiPath, upstream.Prefix)
             ? apiPath[upstream.Prefix.Length..]
             : apiPath;
         var targetUrl = upstream.TargetBaseUrl.TrimEnd('/') + forwardedPath + ctx.Request.QueryString;

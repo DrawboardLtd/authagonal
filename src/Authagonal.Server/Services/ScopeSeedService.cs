@@ -7,7 +7,9 @@ namespace Authagonal.Server.Services;
 /// Seeds custom scopes from the <c>Scopes</c> config section at startup, mirroring
 /// <see cref="ClientSeedService"/>. Registering a scope makes it appear in the discovery document's
 /// <c>scopes_supported</c> and lets it release custom user claims (<c>UserClaims</c>) onto tokens.
-/// Config wins: an existing scope with the same name is updated to the seeded values.
+/// Config wins for any field the seed SETS: an existing scope with the same name is updated to the
+/// seeded values. A field omitted from the seed (null) preserves the stored value — config can add or
+/// update a field but cannot CLEAR one (e.g. emptying <c>UserClaims</c> means editing the scope directly).
 /// </summary>
 public sealed class ScopeSeedService(
     IScopeStore scopeStore,
