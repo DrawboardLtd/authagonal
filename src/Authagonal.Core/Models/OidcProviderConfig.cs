@@ -102,6 +102,16 @@ public sealed record OidcProviderConfig
     public List<string> ProvisioningAttributeParams { get; set; } = [];
 
     /// <summary>
+    /// When true, a JIT-provisioned federated user is created even WITHOUT the provisioning context that
+    /// <see cref="ProvisioningAttributeParams"/> otherwise requires (an uninvited login from an allowed
+    /// domain is auto-provisioned, not rejected). The connection is tagged onto the user's provisioning
+    /// attributes (<c>federated_connection</c>) so the downstream provisioner can place the user in the
+    /// right tenant rather than spinning up a new one. Default false: without an invite, an unknown user
+    /// is rejected. Self-service SSO auto-provisioning opt-in. Mirrors the SAML flag of the same name.
+    /// </summary>
+    public bool AllowUninvitedJit { get; set; }
+
+    /// <summary>
     /// Optional login-app path (e.g. <c>/guest</c>) shown BEFORE federating an unauthenticated
     /// <c>idp_hint</c> request through this connection. The authorize endpoint redirects to
     /// <c>{LoginAppUrl}{InteractionPath}?returnUrl={authorize url}&amp;connection={id}</c> instead of

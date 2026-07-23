@@ -389,11 +389,14 @@ public static class OidcEndpoints
                 : [];
 
             // Invite-only JIT: a connection that DECLARES ProvisioningAttributeParams provisions a new
-            // user only when that context actually arrived. An uninvited unknown is rejected (current
-            // parity) — so an SSO login with no invite can't silently self-provision (which the
-            // downstream would otherwise turn into a stray account/org). Connections that declare no such
+            // user only when that context actually arrived. An uninvited unknown is rejected — so an SSO
+            // login with no invite can't silently self-provision (which the downstream would otherwise turn
+            // into a stray account/org) — UNLESS the connection opts into AllowUninvitedJit (self-service
+            // SSO auto-provisioning), in which case the uninvited user is provisioned and tagged with the
+            // connection so the downstream places them in the right tenant. Connections that declare no such
             // params (e.g. the guest-link provider, gated by its own link token) are unaffected.
-            if (config.ProvisioningAttributeParams.Count > 0 && provisioningAttributes.Count == 0)
+            if (config.ProvisioningAttributeParams.Count > 0 && provisioningAttributes.Count == 0
+                && !config.AllowUninvitedJit)
             {
                 logger.LogInformation("JIT rejected for OIDC connection {ConnectionId}: no provisioning context on the request for unknown user {Email}", stateData.ConnectionId, email);
                 return RedirectWithError(returnUrl, "access_denied", "This login requires an invitation. Contact your administrator.");
@@ -416,6 +419,12 @@ public static class OidcEndpoints
 
             foreach (var kv in provisioningAttributes)
                 user.CustomAttributes[kv.Key] = kv.Value;
+
+            // Uninvited SSO auto-provision: tag the user with the connection they federated through so the
+            // downstream provisioner can place them in that tenant rather than creating a new one. Only when
+            // there was no invite context. Mirrors the SAML path.
+            if (config.AllowUninvitedJit && provisioningAttributes.Count == 0)
+                user.CustomAttributes["federated_connection"] = config.ConnectionName;
 
             await userStore.CreateAsync(user, ct);
 
