@@ -1,1 +1,30 @@
-*.sh text eol=lf
+# Normalize line endings on commit and check out LF, so feature commits don't smuggle in
+# CRLF→LF rewrites of whole files (which destroys blame). See the "diffstat illusion" note.
+* text=auto eol=lf
+
+# Explicit for the source/asset types in this repo (belt-and-suspenders over the wildcard).
+*.cs   text eol=lf
+*.ts   text eol=lf
+*.tsx  text eol=lf
+*.js   text eol=lf
+*.jsx  text eol=lf
+*.json text eol=lf
+*.css  text eol=lf
+*.html text eol=lf
+*.md   text eol=lf
+*.yml  text eol=lf
+*.yaml text eol=lf
+*.sh   text eol=lf
+Dockerfile text eol=lf
+
+# Binaries — never touch.
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.ico  binary
+*.woff  binary
+*.woff2 binary
+*.ttf  binary
+*.eot  binary
+*.pdf  binary
