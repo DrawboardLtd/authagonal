@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+## [0.13.1], 2026-07-23
+
+### Fixed
+
+- **`{param:guid}` constraint on BFF `ExchangeRoutes` patterns.** Version-prefixed APIs whose
+  binding segment is positional (`/{apiver}/{project_id:guid}`) need the capture gated on GUID
+  shape — without it a broad pattern captures literal-segment routes ("/v1/user/profile") and
+  wrongly demands an exchange for them (403). Unknown constraints never match. The LAST
+  placeholder names the exchange parameter; earlier ones act as positional wildcards.
+
 ## [0.13.0], 2026-07-23
 
 ### Added

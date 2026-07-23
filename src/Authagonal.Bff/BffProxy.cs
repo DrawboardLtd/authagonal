@@ -24,8 +24,11 @@ internal static class BffProxy
         && (path.Length == prefix.Length || prefix.EndsWith('/') || path[prefix.Length] == '/');
 
     // First exchange-route pattern matching the proxied path wins. A pattern is segments matched
-    // as a PREFIX of the path's segments; exactly one "{param}" placeholder captures its segment.
-    // Internal for unit testing.
+    // as a PREFIX of the path's segments; "{param}" placeholders capture their segment (the LAST
+    // placeholder names the exchange parameter — earlier ones are positional wildcards like
+    // "{apiver}"). A "{param:guid}" placeholder only matches a GUID segment, which is what keeps a
+    // broad pattern like "/{apiver}/{project_id:guid}" from capturing literal-segment routes
+    // ("/v1/user/profile") and wrongly demanding an exchange for them. Internal for unit testing.
     internal static bool TryMatchExchangeRoute(
         IEnumerable<BffExchangeRoute> routes, string apiPath, out string paramName, out string paramValue)
     {
@@ -43,8 +46,23 @@ internal static class BffProxy
                 var p = patternSegments[i];
                 if (p.Length > 2 && p[0] == '{' && p[^1] == '}')
                 {
-                    name = p[1..^1];
-                    value = pathSegments[i];
+                    var placeholder = p[1..^1];
+                    var constraintIdx = placeholder.IndexOf(':');
+                    var constraint = constraintIdx >= 0 ? placeholder[(constraintIdx + 1)..] : null;
+                    if (constraint is not null)
+                        placeholder = placeholder[..constraintIdx];
+
+                    matched = constraint switch
+                    {
+                        null => true,
+                        "guid" => Guid.TryParse(pathSegments[i], out _),
+                        _ => false, // unknown constraint: never match rather than silently over-match
+                    };
+                    if (matched)
+                    {
+                        name = placeholder;
+                        value = pathSegments[i];
+                    }
                 }
                 else
                 {

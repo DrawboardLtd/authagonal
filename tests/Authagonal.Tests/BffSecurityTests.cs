@@ -72,6 +72,32 @@ public class BffSecurityTests
         }
     }
 
+    // {param:guid} constraint: broad version-prefixed patterns must only bind GUID segments, so
+    // literal-segment routes ("/v1/user/profile") never demand an exchange.
+    [Theory]
+    [InlineData("/v2/6f9619ff-8b86-d011-b42d-00c04fc964ff/document", true, "6f9619ff-8b86-d011-b42d-00c04fc964ff")]
+    [InlineData("/v1/user/profile", false, null)]
+    [InlineData("/v2/organizations/audit-log", false, null)]
+    [InlineData("/v3/not-a-guid/document", false, null)]
+    public void TryMatchExchangeRoute_guid_constraint_gates_binding(string apiPath, bool expected, string? expectedValue)
+    {
+        var routes = new[] { new BffExchangeRoute { PathPattern = "/{apiver}/{project_id:guid}" } };
+        var matched = BffProxy.TryMatchExchangeRoute(routes, apiPath, out var name, out var value);
+        Assert.Equal(expected, matched);
+        if (expected)
+        {
+            Assert.Equal("project_id", name);
+            Assert.Equal(expectedValue, value);
+        }
+    }
+
+    [Fact]
+    public void TryMatchExchangeRoute_unknown_constraint_never_matches()
+    {
+        var routes = new[] { new BffExchangeRoute { PathPattern = "/{apiver}/{project_id:int}" } };
+        Assert.False(BffProxy.TryMatchExchangeRoute(routes, "/v1/123/x", out _, out _));
+    }
+
     [Fact]
     public void TryMatchExchangeRoute_first_matching_route_wins()
     {
