@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.12.0], 2026-07-23
+
 ### Added
 
 - **RFC 8693 token exchange** (`grant_type=urn:ietf:params:oauth:grant-type:token-exchange`) on both
@@ -16,6 +18,9 @@
   cannot be exchanged. Response carries `issued_token_type` per the RFC. Intended for minting
   short-lived tokens bounded to a narrow context (e.g. a single project) from a primary session
   token.
+- **`AllowUninvitedJit` and `IsExternalConnection` are settable via `OidcProviders` config**, so
+  config-seeded connections can opt into uninvited JIT provisioning / the external trust tier
+  without the admin API.
 
 ## [0.11.0], 2026-07-23
 
