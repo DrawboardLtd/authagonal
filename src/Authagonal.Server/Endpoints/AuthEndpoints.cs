@@ -392,6 +392,12 @@ public static class AuthEndpoints
         }
 
         AuthUser user;
+        // ---- Side-effect boundary: from here on the registration MUST run to completion. ----
+        // A browser abort (tab closed, navigation, client timeout) must not cancel half-way
+        // through persistence/provisioning: honoring it here left accounts provisioned downstream
+        // but unpersisted (or vice versa). Validation above still honors the caller's token.
+        ct = CancellationToken.None;
+
         if (isUpgrade)
         {
             user = existing!;

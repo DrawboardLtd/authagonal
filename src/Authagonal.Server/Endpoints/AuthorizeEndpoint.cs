@@ -22,6 +22,7 @@ public static class AuthorizeEndpoint
             IConfiguration configuration,
             IGrantStore grantStore,
             IOidcProviderStore oidcProviderStore,
+            ISsoDomainStore ssoDomainStore,
             UserStoreOidcSubjectResolver subjectResolver,
             ProtocolAuthorizationCodeService authCodeService,
             ProtocolPushedAuthorizationService parService,
@@ -141,10 +142,35 @@ public static class AuthorizeEndpoint
                     return Results.Redirect(federationLoginUrl);
                 }
 
+                var loginHint = source.Get("login_hint");
+
+                // A hinted email whose domain is SSO-governed goes STRAIGHT to its IdP — the login
+                // card would only 409 a password attempt for it anyway (sso_required), and product
+                // flows that know the user (invite acceptance) shouldn't detour through an
+                // interactive card. Mirrors /sso-check's resolution; loginHint rides along so the
+                // IdP can prefill. Federation failures surface through the SAML/OIDC endpoints'
+                // own error redirects, same as the card-initiated path.
+                if (!string.IsNullOrWhiteSpace(loginHint) && loginHint.Contains('@'))
+                {
+                    var hintDomain = loginHint.Split('@', 2).LastOrDefault()?.ToLowerInvariant();
+                    if (!string.IsNullOrWhiteSpace(hintDomain))
+                    {
+                        var ssoDomain = await ssoDomainStore.GetAsync(hintDomain, ct);
+                        if (ssoDomain is not null)
+                        {
+                            var federationPath = ssoDomain.ProviderType.Equals("oidc", StringComparison.OrdinalIgnoreCase)
+                                ? $"/oidc/{Uri.EscapeDataString(ssoDomain.ConnectionId)}/login"
+                                : $"/saml/{Uri.EscapeDataString(ssoDomain.ConnectionId)}/login";
+                            return Results.Redirect(
+                                $"{federationPath}?returnUrl={Uri.EscapeDataString(authorizeRelativeUrl)}" +
+                                $"&loginHint={Uri.EscapeDataString(loginHint)}");
+                        }
+                    }
+                }
+
                 var loginAppUrl = configuration["LoginAppUrl"] ?? "/login";
                 var loginUrl = $"{loginAppUrl}?returnUrl={Uri.EscapeDataString(authorizeRelativeUrl)}";
 
-                var loginHint = source.Get("login_hint");
                 if (!string.IsNullOrWhiteSpace(loginHint))
                     loginUrl += $"&login_hint={Uri.EscapeDataString(loginHint)}";
 
