@@ -6,6 +6,16 @@ public sealed class AuthUser
     public required string Email { get; set; }
     public required string NormalizedEmail { get; set; }
     public string? PasswordHash { get; set; }
+
+    /// <summary>
+    /// A password STAGED by a passwordless-account claim (AllowPasswordlessAccountClaim), inert
+    /// until the claim's fresh email confirmation promotes it to PasswordHash. Staging — instead of
+    /// setting PasswordHash gated on EmailConfirmed — keeps the account genuinely passwordless in
+    /// the meantime: still claimable (latest claim wins; the inbox owner arbitrates by clicking),
+    /// federation login untouched, and an attacker's unconfirmed claim can never block the real
+    /// owner's later upgrade.
+    /// </summary>
+    public string? PendingPasswordHash { get; set; }
     public bool EmailConfirmed { get; set; }
     public string? FirstName { get; set; }
     public string? LastName { get; set; }

@@ -438,10 +438,12 @@ public sealed class AuthEndpointTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Register_PasswordlessAccountClaim_WhenEnabled_SetsCredentialInPlace()
+    public async Task Register_PasswordlessAccountClaim_StagesCredentialUntilFreshEmailProof()
     {
-        // Opt-in AllowPasswordlessAccountClaim: a federated / JIT account (no local password) claims
-        // a credential through registration in place, rather than the duplicate swallow.
+        // Opt-in AllowPasswordlessAccountClaim: the account was born from an emailed link, and the
+        // CLAIM must re-prove inbox control rather than inherit that proof — anyone who merely
+        // knows the email could otherwise take the account over. The credential is staged and only
+        // a fresh verification click promotes it.
         await using var factory = new AuthagonalTestFactory { ConfigureAuthOptions = o => o.AllowPasswordlessAccountClaim = true };
         var client = factory.CreateClient(new() { AllowAutoRedirect = false });
         await factory.SeedTestDataAsync();
@@ -452,7 +454,7 @@ public sealed class AuthEndpointTests : IAsyncLifetime
             Email = "federated@example.com",
             NormalizedEmail = "FEDERATED@EXAMPLE.COM",
             PasswordHash = null, // no local credential
-            EmailConfirmed = true, // email proven via the upstream/federation
+            EmailConfirmed = true, // email proven via the upstream/federation — NOT by this claimer
             LockoutEnabled = true,
             SecurityStamp = System.Convert.ToBase64String(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32)),
             CreatedAt = System.DateTimeOffset.UtcNow,
@@ -463,8 +465,25 @@ public sealed class AuthEndpointTests : IAsyncLifetime
             new { email = "federated@example.com", password = "Claim1234!", firstName = "Grown", lastName = "Up" });
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
 
+        // Staged, NOT active: the claimed password must not work before the fresh click, the
+        // account stays passwordless (still claimable — an attacker's claim can't lock it), and a
+        // fresh verification email went out despite the stored EmailConfirmed.
         var claimed = await factory.UserStore.GetAsync(federated.Id);
-        Assert.NotNull(claimed!.PasswordHash); // same account, now credentialed
+        Assert.Null(claimed!.PasswordHash);
+        Assert.NotNull(claimed.PendingPasswordHash);
+        var earlyLogin = await client.PostAsJsonAsync("/api/auth/login",
+            new { email = "federated@example.com", password = "Claim1234!" });
+        Assert.NotEqual(HttpStatusCode.OK, earlyLogin.StatusCode);
+        var mail = factory.EmailService.SentEmails.Last(e => e.Email == "federated@example.com" && e.Type == "verification");
+
+        // The click IS the proof: credential promoted, then login works.
+        var token = System.Web.HttpUtility.ParseQueryString(new System.Uri(mail.CallbackUrl).Query)["token"];
+        var confirm = await client.GetAsync($"/api/auth/confirm-email?token={System.Uri.EscapeDataString(token!)}");
+        Assert.Equal(HttpStatusCode.Redirect, confirm.StatusCode);
+
+        var after = await factory.UserStore.GetAsync(federated.Id);
+        Assert.NotNull(after!.PasswordHash);
+        Assert.Null(after.PendingPasswordHash);
         var login = await client.PostAsJsonAsync("/api/auth/login",
             new { email = "federated@example.com", password = "Claim1234!" });
         Assert.Equal(HttpStatusCode.OK, login.StatusCode);

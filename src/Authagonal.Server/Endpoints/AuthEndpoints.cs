@@ -400,15 +400,18 @@ public static class AuthEndpoints
 
         if (isUpgrade)
         {
+            // Re-prove inbox ownership at CLAIM time: the account was born from an emailed link,
+            // and the claim must not inherit that proof — anyone who merely KNOWS the email could
+            // otherwise take the account over instantly. The credential is STAGED
+            // (PendingPasswordHash) and provisioning DEFERRED; both activate only when the fresh
+            // verification email below is clicked (ConfirmEmailAsync promotes + converts).
             user = existing!;
-            user.PasswordHash = passwordHasher.HashPassword(request.Password);
+            user.PendingPasswordHash = passwordHasher.HashPassword(request.Password);
             if (!string.IsNullOrWhiteSpace(request.FirstName)) user.FirstName = request.FirstName.Trim();
             if (!string.IsNullOrWhiteSpace(request.LastName)) user.LastName = request.LastName.Trim();
             if (request.CustomAttributes is { Count: > 0 })
                 foreach (var kv in request.CustomAttributes)
                     user.CustomAttributes[kv.Key] = kv.Value;
-            if (IsAutoConfirmedDomain(email, ao.AutoConfirmEmailDomains))
-                user.EmailConfirmed = true;
             user.UpdatedAt = DateTimeOffset.UtcNow;
             await userStore.UpdateAsync(user, ct);
         }
@@ -441,29 +444,19 @@ public static class AuthEndpoints
         // An UPGRADE forces reprovisioning: the account was already provisioned (e.g. a guest adopted
         // via a share-link federation), so a plain ProvisionAsync would skip it — the downstream would
         // never see the claim's signup context (org name) and couldn't convert the guest to a real user.
-        try
+        if (!isUpgrade)
         {
-            if (isUpgrade)
-                await provisioning.ReprovisionAsync(user, ct);
-            else
+            try
+            {
                 await provisioning.ProvisionAsync(user, ct);
-        }
-        catch (ProvisioningException ex)
-        {
-            // Roll back: delete a brand-new account, but only REVERT the password on an upgrade —
-            // the pre-existing guest account and its data must survive a rejected upgrade.
-            if (isUpgrade)
-            {
-                user.PasswordHash = null;
-                user.UpdatedAt = DateTimeOffset.UtcNow;
-                await userStore.UpdateAsync(user, ct);
             }
-            else
+            catch (ProvisioningException ex)
             {
+                // Roll back the brand-new account.
                 await userStore.DeleteAsync(user.Id, ct);
+                logger.LogWarning(ex, "Provisioning rejected registration for {Email}", user.Email);
+                return TypedResults.Json(new ErrorInfoResponse { Error = "provisioning_rejected", Message = ex.Message }, AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 422);
             }
-            logger.LogWarning(ex, "Provisioning rejected registration for {Email}", user.Email);
-            return TypedResults.Json(new ErrorInfoResponse { Error = "provisioning_rejected", Message = ex.Message }, AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 422);
         }
 
         user.UpdatedAt = DateTimeOffset.UtcNow;
@@ -471,7 +464,9 @@ public static class AuthEndpoints
 
         // Already confirmed — provisioning vouched for the address (invite redemption) or the
         // domain is auto-confirmed. No verification email: the user can sign straight in.
-        if (user.EmailConfirmed)
+        // NEVER for a claim: its stored confirmation belongs to a different flow's proof — the
+        // claim requires its own click, so it falls through to the verification email.
+        if (user.EmailConfirmed && !isUpgrade)
         {
             logger.LogInformation("User registered (email pre-verified): {UserId} ({Email})", user.Id, user.Email);
             return TypedResults.Json(new RegistrationSuccess { Success = true, UserId = user.Id, EmailVerified = true }, AuthagonalJsonContext.Default.RegistrationSuccess, statusCode: 201);
@@ -508,6 +503,7 @@ public static class AuthEndpoints
         IUserStore userStore,
         IClientStore clientStore,
         IEnumerable<IAuthHook> authHooks,
+        IProvisioningOrchestrator provisioning,
         ILogger<Program> logger,
         CancellationToken ct)
     {
@@ -552,10 +548,38 @@ public static class AuthEndpoints
         if (user.SecurityStamp != securityStamp)
             return JsonResults.Error("invalid_token", "This verification link has already been used or has expired.");
 
+        // Passwordless-account claim completion: this click IS the fresh ownership proof the claim
+        // was waiting for. Run the downstream conversion FIRST (it may reject — e.g. seat policy),
+        // then promote the staged credential. Side effects run to completion regardless of the
+        // caller's abort token (same shielding as registration).
+        if (!string.IsNullOrWhiteSpace(user.PendingPasswordHash))
+        {
+            try
+            {
+                await provisioning.ReprovisionAsync(user, CancellationToken.None);
+            }
+            catch (ProvisioningException ex)
+            {
+                // Claim fails cleanly: drop the staged credential; the account stays passwordless
+                // (federation login intact) and remains claimable.
+                user.PendingPasswordHash = null;
+                user.SecurityStamp = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
+                user.UpdatedAt = DateTimeOffset.UtcNow;
+                await userStore.UpdateAsync(user, CancellationToken.None);
+                logger.LogWarning(ex, "Passwordless-claim conversion rejected for {Email}", user.Email);
+                return HttpMethods.IsGet(httpContext.Request.Method)
+                    ? Results.Redirect($"/login?error=provisioning_rejected&error_description={Uri.EscapeDataString(ex.Message)}")
+                    : JsonResults.Error("provisioning_rejected", ex.Message);
+            }
+            user.PasswordHash = user.PendingPasswordHash;
+            user.PendingPasswordHash = null;
+            logger.LogInformation("Passwordless account claimed by {UserId} ({Email}) — credential promoted after fresh verification", user.Id, user.Email);
+        }
+
         user.EmailConfirmed = true;
         user.SecurityStamp = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
         user.UpdatedAt = DateTimeOffset.UtcNow;
-        await userStore.UpdateAsync(user, ct);
+        await userStore.UpdateAsync(user, CancellationToken.None);
 
         logger.LogInformation("Email confirmed for user {UserId} ({Email})", user.Id, user.Email);
 

@@ -177,6 +177,7 @@ public sealed class DynamoUserStore(
         item.PutDate("lastLogin", user.LastLoginAt);
         item.PutDate("updated", user.UpdatedAt);
         item.PutS("pwd", user.PasswordHash);
+        item.PutS("pwdPending", user.PendingPasswordHash);
         return item;
     }
 
@@ -196,6 +197,7 @@ public sealed class DynamoUserStore(
             user.LastLoginAt = item.GetDateOrNull("lastLogin");
             if (item.GetDateOrNull("updated") is { } updated) user.UpdatedAt = updated;
             user.PasswordHash = item.GetS("pwd");
+            user.PendingPasswordHash = item.GetS("pwdPending");
         }
         return user;
     }
