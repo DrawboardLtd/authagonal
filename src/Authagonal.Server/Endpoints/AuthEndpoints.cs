@@ -475,12 +475,22 @@ public static class AuthEndpoints
 
         // Send verification email. The optional 4th payload segment carries the OAuth client the
         // registration flow originated from (parsed from the login page's authorize returnUrl), so
-        // the confirmation landing can offer "continue to {app}". Older 3-segment tokens stay valid.
-        var flowClientId = ExtractClientIdFromReturnUrl(httpContext.Request.Query["returnUrl"].FirstOrDefault());
+        // the confirmation landing can offer "continue to {app}". The optional 5th segment carries
+        // the flow's returnUrl VERBATIM (escaped), so a registration/claim that began mid-journey
+        // (e.g. an invite-accept continuation) resumes THAT journey after the click instead of
+        // stranding on the account page — the drop that ate org-bound invite acceptances: the
+        // email hop lost the returnUrl, so the post-confirm sign-in (and its MFA "Not now" skip)
+        // had nothing to honor. Integrity rides the security-stamp check like every other segment;
+        // the login page still sanitizes at USE via resolveRedirect (same-origin or registered-app
+        // origins only). Older 3/4-segment tokens stay valid.
+        var flowReturnUrl = httpContext.Request.Query["returnUrl"].FirstOrDefault();
+        var flowClientId = ExtractClientIdFromReturnUrl(flowReturnUrl);
         var expiresAt = DateTimeOffset.UtcNow.AddHours(ao.EmailVerificationExpiryHours).ToUnixTimeSeconds();
-        var payload = flowClientId is null
-            ? $"{user.SecurityStamp}||{user.Email}||{expiresAt}"
-            : $"{user.SecurityStamp}||{user.Email}||{expiresAt}||{flowClientId}";
+        var payload = $"{user.SecurityStamp}||{user.Email}||{expiresAt}";
+        if (flowClientId is not null || !string.IsNullOrWhiteSpace(flowReturnUrl))
+            payload += $"||{flowClientId}";
+        if (!string.IsNullOrWhiteSpace(flowReturnUrl) && flowReturnUrl.Length <= 2048)
+            payload += $"||{Uri.EscapeDataString(flowReturnUrl)}";
         var encodedPayload = Convert.ToBase64String(Encoding.UTF8.GetBytes(payload));
         var issuer = tenantContext.Issuer;
         var callbackUrl = $"{issuer}/api/auth/confirm-email?token={Uri.EscapeDataString(encodedPayload)}";
@@ -598,13 +608,27 @@ public static class AuthEndpoints
         // RegisterAsync, integrity-backed by the security-stamp check above). It rides to the login
         // page so the post-sign-in destination can be that app instead of the account page.
         var flowClientId = parts.Length >= 4 && !string.IsNullOrWhiteSpace(parts[3]) ? parts[3] : null;
+        // Optional 5th segment = the originating flow's returnUrl (mid-journey continuation, e.g.
+        // an invite accept). Re-emitted onto the login page, which sanitizes at use; it takes
+        // precedence over the generic continue-to-app so the user resumes the SPECIFIC journey.
+        string? flowReturnUrl = null;
+        if (parts.Length >= 5 && !string.IsNullOrWhiteSpace(parts[4]))
+        {
+            try { flowReturnUrl = Uri.UnescapeDataString(parts[4]); }
+            catch { flowReturnUrl = null; }
+        }
 
         // A clicked email link (GET) lands the user on the login page, not raw JSON; the programmatic
         // POST path keeps the JSON contract (now with the resolved continue-to-app link, if any).
         if (HttpMethods.IsGet(httpContext.Request.Method))
-            return Results.Redirect(flowClientId is null
-                ? "/login?email_confirmed=1"
-                : $"/login?email_confirmed=1&continue_client={Uri.EscapeDataString(flowClientId)}");
+        {
+            var landing = "/login?email_confirmed=1";
+            if (flowClientId is not null)
+                landing += $"&continue_client={Uri.EscapeDataString(flowClientId)}";
+            if (flowReturnUrl is not null)
+                landing += $"&returnUrl={Uri.EscapeDataString(flowReturnUrl)}";
+            return Results.Redirect(landing);
+        }
         var appLink = await ResolveAppLinkAsync(clientStore, flowClientId, ct);
         return TypedResults.Json(
             new ConfirmEmailResponse { Message = "Email confirmed successfully.", AppLink = appLink },

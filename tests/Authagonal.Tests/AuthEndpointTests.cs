@@ -408,6 +408,42 @@ public sealed class AuthEndpointTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Register_WithReturnUrl_VerificationLink_ThreadsItToTheLoginLanding()
+    {
+        // A registration that began MID-JOURNEY (e.g. an invite-accept continuation) must resume
+        // that journey after the email click: the returnUrl rides the verification token and is
+        // re-emitted on the login landing, where the login page (and its MFA "Not now" skip)
+        // honors it via resolveRedirect. Without this the email hop ate the returnUrl and the
+        // user stranded on the account card with the invite never redeemed.
+        var journey = "https://app.example.com/workspaces/join/abc123?x=1";
+        var register = await _client.PostAsJsonAsync(
+            $"/api/auth/register?returnUrl={Uri.EscapeDataString(journey)}",
+            new { email = "verify-journey@example.com", password = "NewPass1234!" });
+        Assert.Equal(HttpStatusCode.Created, register.StatusCode);
+
+        var sent = _factory.EmailService.SentEmails.Last(e => e.Type == "verification" && e.Email == "verify-journey@example.com");
+        var confirm = await _client.GetAsync(new Uri(sent.CallbackUrl).PathAndQuery);
+
+        Assert.Equal(HttpStatusCode.Redirect, confirm.StatusCode);
+        var landing = confirm.Headers.Location?.ToString() ?? "";
+        Assert.Contains("email_confirmed=1", landing);
+        var landingReturnUrl = System.Web.HttpUtility.ParseQueryString(new Uri(new Uri("https://x"), landing).Query)["returnUrl"];
+        Assert.Equal(journey, landingReturnUrl);
+    }
+
+    [Fact]
+    public async Task Register_WithoutReturnUrl_VerificationLanding_HasNoReturnUrl()
+    {
+        await _client.PostAsJsonAsync("/api/auth/register",
+            new { email = "verify-plain@example.com", password = "NewPass1234!" });
+        var sent = _factory.EmailService.SentEmails.Last(e => e.Type == "verification" && e.Email == "verify-plain@example.com");
+        var confirm = await _client.GetAsync(new Uri(sent.CallbackUrl).PathAndQuery);
+
+        Assert.Equal(HttpStatusCode.Redirect, confirm.StatusCode);
+        Assert.DoesNotContain("returnUrl=", confirm.Headers.Location?.ToString() ?? "");
+    }
+
+    [Fact]
     public async Task ConfirmEmail_PostWithJsonToken_ConfirmsAndReturnsJson()
     {
         // The programmatic (custom-login-UI) path posts the token as JSON and keeps the JSON contract.

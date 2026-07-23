@@ -2,6 +2,19 @@
 
 ## [Unreleased]
 
+## [0.13.2], 2026-07-24
+
+### Fixed
+
+- **Mid-journey registrations/claims resume their journey after the verification click.** The
+  flow's `returnUrl` now rides the verification token (optional 5th segment, security-stamp
+  integrity like the rest) and is re-emitted on the `email_confirmed` login landing — so a
+  registration or passwordless claim that began from an invite-accept continuation returns to
+  the accept link after sign-in (including through the MFA "Not now" skip), instead of losing
+  the returnUrl across the email hop and stranding on the account card with the invite never
+  redeemed. Sanitization unchanged: the login page honors it only via resolveRedirect
+  (same-origin or registered-app origins). Older 3/4-segment tokens stay valid.
+
 ## [0.13.1], 2026-07-23
 
 ### Fixed
