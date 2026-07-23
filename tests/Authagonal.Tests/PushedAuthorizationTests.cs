@@ -121,6 +121,35 @@ public sealed class PushedAuthorizationTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Par_PromptLogin_CompletesAfterFreshLogin_NoLoop()
+    {
+        // H1: a PAR carrying prompt=login must not loop forever. The prompt rides the pushed payload (not
+        // the live query, so it can't be stripped), so after the user logs in — auth_time >= the request's
+        // CreatedAt — the return trip to /authorize must PROCEED instead of bouncing back to /login again.
+        await _factory.SeedTestUserAsync();
+
+        var fields = BasePushedFields();
+        fields["prompt"] = "login";
+        var parResponse = await _client.PostAsync("/connect/par", new FormUrlEncodedContent(fields));
+        var requestUri = (await parResponse.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("request_uri").GetString()!;
+        var url = $"/connect/authorize?client_id={AuthagonalTestFactory.TestClientId}&request_uri={Uri.EscapeDataString(requestUri)}";
+
+        // Unauthenticated → redirect to login (request_uri not consumed).
+        var first = await _client.GetAsync(url);
+        Assert.Equal(HttpStatusCode.Redirect, first.StatusCode);
+        Assert.Contains("/login", first.Headers.Location!.ToString());
+
+        // Log in — sets a fresh auth_time on the cookie.
+        var login = await _client.PostAsJsonAsync("/api/auth/login", new { email = "test@example.com", password = "Test1234!" });
+        Assert.Equal(HttpStatusCode.OK, login.StatusCode);
+
+        // Return trip: prompt=login is now satisfied by the fresh session, so it must NOT bounce to /login.
+        var second = await _client.GetAsync(url);
+        Assert.Equal(HttpStatusCode.Redirect, second.StatusCode);
+        Assert.DoesNotContain("/login", second.Headers.Location!.ToString());
+    }
+
+    [Fact]
     public async Task Discovery_AdvertisesParEndpoint()
     {
         var response = await _client.GetAsync("/.well-known/openid-configuration");

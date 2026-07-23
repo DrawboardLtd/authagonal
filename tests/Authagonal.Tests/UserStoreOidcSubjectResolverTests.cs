@@ -124,6 +124,56 @@ public sealed class UserStoreOidcSubjectResolverTests
         Assert.Equal("tok-original", subject.FederationClaims!["LinkShareToken"]);
     }
 
+    private static InMemoryUserStore UserStoreWith(AuthUser user)
+    {
+        var users = new InMemoryUserStore();
+        users.CreateAsync(user).GetAwaiter().GetResult();
+        return users;
+    }
+
+    [Fact]
+    public async Task Resolve_PrefersStoredUpstreamToken_OverPinnedCookieCopy()
+    {
+        // M3: a new authorize must read the current upstream token from the shared store, NOT the copy
+        // pinned on the login cookie (which the upstream may already have rotated to death).
+        var user = ActiveUser();
+        var store = new InMemoryUpstreamRefreshTokenStore();
+        await store.SetAsync(user.Id, "conn-1", "sid-1", "token-STORE", DateTimeOffset.UtcNow.AddHours(1));
+
+        var resolver = ResolverTestSupport.NewResolver(
+            UserStoreWith(user), new InMemoryScimGroupStore(), new InMemoryScimGroupRoleMappingStore(),
+            new InMemoryClientStore(), upstreamTokenStore: store);
+
+        var principal = Principal(user.Id,
+            ("sid", "sid-1"),
+            ("upstream_refresh_token", "token-COOKIE"),
+            ("upstream_connection_id", "conn-1"));
+
+        var result = await resolver.ResolveAsync(principal, new OidcSubjectResolutionContext("client-1", ["openid"], []));
+        var subject = Assert.IsType<OidcSubjectResult.Allowed>(result).Subject;
+        Assert.Equal("token-STORE", subject.UpstreamRefreshToken);
+        Assert.Equal("conn-1", subject.UpstreamConnectionId);
+    }
+
+    [Fact]
+    public async Task Resolve_FallsBackToCookieToken_WhenStoreHasNothing()
+    {
+        // First authorize, before any refresh has populated the store — the login-cookie copy seeds it.
+        var user = ActiveUser();
+        var resolver = ResolverTestSupport.NewResolver(
+            UserStoreWith(user), new InMemoryScimGroupStore(), new InMemoryScimGroupRoleMappingStore(),
+            new InMemoryClientStore(), upstreamTokenStore: new InMemoryUpstreamRefreshTokenStore());
+
+        var principal = Principal(user.Id,
+            ("sid", "sid-1"),
+            ("upstream_refresh_token", "token-COOKIE"),
+            ("upstream_connection_id", "conn-1"));
+
+        var result = await resolver.ResolveAsync(principal, new OidcSubjectResolutionContext("client-1", ["openid"], []));
+        var subject = Assert.IsType<OidcSubjectResult.Allowed>(result).Subject;
+        Assert.Equal("token-COOKIE", subject.UpstreamRefreshToken);
+    }
+
     [Fact]
     public async Task Resolve_IgnoresEmptyFederatedClaimName()
     {

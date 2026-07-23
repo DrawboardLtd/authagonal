@@ -91,6 +91,16 @@ public sealed class OidcSsoEndpointTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task OidcLogin_WithLoginHint_ForwardsLoginHintToIdp()
+    {
+        // M7: the straight-to-IdP prefill (authorize appends &loginHint=) must reach the upstream as the
+        // standard OIDC login_hint — previously it was silently dropped for OIDC connections.
+        var response = await _client.GetAsync($"/oidc/{_connectionId}/login?loginHint={Uri.EscapeDataString("prefill@oidctest.com")}");
+        Assert.Equal(HttpStatusCode.Redirect, response.StatusCode);
+        Assert.Contains("login_hint=prefill%40oidctest.com", response.Headers.Location!.ToString());
+    }
+
+    [Fact]
     public async Task OidcLogin_InvalidConnection_Returns404()
     {
         var response = await _client.GetAsync("/oidc/nonexistent/login");

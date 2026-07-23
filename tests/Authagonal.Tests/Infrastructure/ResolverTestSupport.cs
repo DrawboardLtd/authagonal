@@ -20,7 +20,8 @@ public static class ResolverTestSupport
         IScimGroupStore groups,
         IScimGroupRoleMappingStore mappings,
         IClientStore clients,
-        IOidcProviderStore? oidcProviders = null) =>
+        IOidcProviderStore? oidcProviders = null,
+        IUpstreamRefreshTokenStore? upstreamTokenStore = null) =>
         new(
             users, groups, mappings, clients,
             oidcProviders ?? new InMemoryOidcProviderStore(),
@@ -30,7 +31,8 @@ public static class ResolverTestSupport
                 Options.Create(new CacheOptions())),
             new PlaintextSecretProvider(),
             new InertHttpClientFactory(),
-            NullLogger<UserStoreOidcSubjectResolver>.Instance);
+            NullLogger<UserStoreOidcSubjectResolver>.Instance,
+            upstreamTokenStore);
 
     private sealed class InertHttpClientFactory : IHttpClientFactory
     {
