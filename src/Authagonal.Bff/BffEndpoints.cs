@@ -266,8 +266,33 @@ internal static class BffEndpoints
         }, BffJsonContext.Default.WsTicketResponse);
     }
 
-    /// <summary>Cache key a websocket ticket is stored under — the contract the resolving API host reads.</summary>
-    internal static string WsTicketKey(string ticket) => $"agbff:wst:{ticket}";
+    /// <summary>Cache key a websocket ticket is stored under — the contract the resolving API host reads.
+    /// Public so a host in a separate assembly can build it without hardcoding the <c>agbff:wst:</c> prefix.</summary>
+    public static string WsTicketKey(string ticket) => $"agbff:wst:{ticket}";
+
+    /// <summary>
+    /// Redeem a websocket ticket minted by <c>{BasePath}/ws-ticket</c>: looks up the access token bound to
+    /// it, DELETES the key so it can't be reused, and returns the token (null if the ticket is unknown,
+    /// expired, or already redeemed). Call this from the API host that terminates the websocket, then
+    /// authenticate the socket with the returned token — the browser only ever carries the opaque ticket.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="IDistributedCache"/> has no atomic get-and-delete, so this does Get-then-Remove: two
+    /// requests reading the same ticket in the tiny window before either removes it could both succeed — a
+    /// residual replay window bounded by that gap and the (30s default) TTL. For strict single-use, back
+    /// the cache with a store that offers an atomic pop (e.g. Redis <c>GETDEL</c>).
+    /// </remarks>
+    public static async Task<string?> TryRedeemWsTicketAsync(IDistributedCache cache, string ticket, CancellationToken ct = default)
+    {
+        if (string.IsNullOrEmpty(ticket))
+            return null;
+        var key = WsTicketKey(ticket);
+        var token = await cache.GetStringAsync(key, ct);
+        if (token is null)
+            return null;
+        await cache.RemoveAsync(key, ct);
+        return token;
+    }
 
     public static async Task<IResult> LogoutAsync(
         HttpContext ctx,
