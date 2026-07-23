@@ -51,6 +51,25 @@ public interface IProtocolTokenService
         CancellationToken ct = default);
 
     /// <summary>
+    /// RFC 8693 token exchange: validates a subject access token this server issued and mints a
+    /// downscoped access token from it. Requested scopes must be a subset of the subject token's
+    /// scopes (∩ the exchanging client's allowed scopes); when none are requested, that
+    /// intersection is granted minus <c>offline_access</c> (no refresh token is ever issued from
+    /// an exchange — re-exchange from the primary token instead). The exchanged token's lifetime
+    /// never exceeds the subject token's remaining lifetime, and the subject's custom claims are
+    /// re-gated by the NEW scope set's UserClaims whitelists.
+    /// </summary>
+    Task<TokenResponse> HandleTokenExchangeAsync(
+        string clientId,
+        string subjectToken,
+        string subjectTokenType,
+        string? requestedTokenType = null,
+        IEnumerable<string>? scopes = null,
+        IEnumerable<string>? resources = null,
+        IEnumerable<string>? audiences = null,
+        CancellationToken ct = default);
+
+    /// <summary>
     /// Mints tokens for a device-code grant. The host is responsible for driving the
     /// device flow (code issuance, polling, user approval) and for building the
     /// <see cref="OidcSubject"/> — this call is the terminal mint step.

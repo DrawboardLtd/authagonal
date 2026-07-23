@@ -66,6 +66,54 @@ internal static class TokenGrantHandlers
         }
     }
 
+    public static async Task<IResult> HandleTokenExchange(
+        IFormCollection form, IProtocolTokenService tokenService, string clientId, CancellationToken ct)
+    {
+        var subjectToken = form["subject_token"].FirstOrDefault();
+        if (string.IsNullOrWhiteSpace(subjectToken))
+            return TokenError("invalid_request", "subject_token is required");
+
+        var subjectTokenType = form["subject_token_type"].FirstOrDefault();
+        if (string.IsNullOrWhiteSpace(subjectTokenType))
+            return TokenError("invalid_request", "subject_token_type is required");
+
+        // RFC 8693 §2.1 makes actor tokens optional for servers; this one does not do delegation
+        // chains (no act claim), so be explicit rather than silently ignoring the parameter.
+        if (!string.IsNullOrWhiteSpace(form["actor_token"].FirstOrDefault()))
+            return TokenError("invalid_request", "actor_token is not supported");
+
+        var requestedTokenType = form["requested_token_type"].FirstOrDefault();
+        var scope = form["scope"].FirstOrDefault() ?? string.Empty;
+        var scopes = scope.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        var resources = form["resource"].Where(r => !string.IsNullOrWhiteSpace(r)).Cast<string>().ToArray();
+        var audiences = form["audience"].Where(a => !string.IsNullOrWhiteSpace(a)).Cast<string>().ToArray();
+
+        try
+        {
+            var response = await tokenService.HandleTokenExchangeAsync(
+                clientId, subjectToken, subjectTokenType, requestedTokenType,
+                scopes.Length > 0 ? scopes : null,
+                resources.Length > 0 ? resources : null,
+                audiences.Length > 0 ? audiences : null,
+                ct);
+            return Results.Ok(response);
+        }
+        catch (InvalidOperationException ex) when (ex.Message.StartsWith("Scope '", StringComparison.Ordinal))
+        {
+            return TokenError("invalid_scope", ex.Message);
+        }
+        catch (InvalidOperationException ex) when (ex.Message.StartsWith("Resource '", StringComparison.Ordinal))
+        {
+            return TokenError("invalid_target", ex.Message);
+        }
+        catch (InvalidOperationException ex) when (
+            ex.Message.Contains("subject_token_type", StringComparison.Ordinal) ||
+            ex.Message.Contains("requested_token_type", StringComparison.Ordinal))
+        {
+            return TokenError("invalid_request", ex.Message);
+        }
+    }
+
     public static IResult TokenError(string error, string description)
     {
         return JsonResults.OAuthError(error, description,

@@ -588,6 +588,171 @@ public sealed class ProtocolTokenService(
         };
     }
 
+    public async Task<TokenResponse> HandleTokenExchangeAsync(
+        string clientId,
+        string subjectToken,
+        string subjectTokenType,
+        string? requestedTokenType = null,
+        IEnumerable<string>? scopes = null,
+        IEnumerable<string>? resources = null,
+        IEnumerable<string>? audiences = null,
+        CancellationToken ct = default)
+    {
+        if (subjectTokenType is not (TokenTypeIdentifiers.AccessToken or TokenTypeIdentifiers.Jwt))
+            throw new InvalidOperationException(
+                $"subject_token_type '{subjectTokenType}' is not supported (only this server's own access tokens can be exchanged)");
+
+        if (requestedTokenType is not null and not (TokenTypeIdentifiers.AccessToken or TokenTypeIdentifiers.Jwt))
+            throw new InvalidOperationException(
+                $"requested_token_type '{requestedTokenType}' is not supported");
+
+        var client = await clientStore.GetAsync(clientId, ct)
+            ?? throw new InvalidOperationException($"Client '{clientId}' not found");
+
+        if (!client.AllowedGrantTypes.Contains(GrantTypes.TokenExchange, StringComparer.OrdinalIgnoreCase))
+            throw new InvalidOperationException($"Client '{clientId}' does not support token-exchange grant type");
+
+        // Validate the subject token exactly like userinfo does: our issuer, our signing keys,
+        // live lifetime — any audience, because the AS accepts its own tokens regardless of the
+        // client they were minted for. The EXCHANGING client's authorization is what the grant
+        // check above and the scope narrowing below enforce.
+        var keys = keyManager.GetSecurityKeys().Select(ProtocolSigningKeyOps.JwkToSecurityKey).ToList();
+        var validation = new TokenValidationParameters
+        {
+            ValidIssuer = Issuer,
+            ValidateIssuer = true,
+            ValidateAudience = true,
+            AudienceValidator = (auds, _, _) => auds?.Any() == true,
+            ValidateLifetime = true,
+            IssuerSigningKeys = keys,
+            ValidateIssuerSigningKey = true,
+            ClockSkew = TimeSpan.FromSeconds(60),
+        };
+
+        var handler = new JsonWebTokenHandler();
+        var validated = await handler.ValidateTokenAsync(subjectToken, validation);
+        if (!validated.IsValid)
+            throw new InvalidOperationException("subject_token is not a valid access token issued by this server");
+
+        var tokenClaims = validated.Claims;
+
+        // Delegation of a user identity only: a client-credentials token has no sub to act for.
+        if (!tokenClaims.TryGetValue("sub", out var subValue) || subValue is not string sub || string.IsNullOrEmpty(sub))
+            throw new InvalidOperationException("subject_token carries no subject (sub) and cannot be exchanged");
+
+        var subjectScopes = tokenClaims.TryGetValue("scope", out var scopeValue) && scopeValue is string scopeStr
+            ? scopeStr.Split(' ', StringSplitOptions.RemoveEmptyEntries).ToHashSet(StringComparer.Ordinal)
+            : [];
+
+        // Downscoping only, never escalation: explicit requests must sit inside BOTH the subject
+        // token's scopes and the exchanging client's allowed scopes. No request → the intersection,
+        // minus offline_access (an exchange never issues a refresh token).
+        var requestedScopes = scopes?.Where(s => !string.IsNullOrWhiteSpace(s)).ToList();
+        List<string> grantedScopes;
+        if (requestedScopes is { Count: > 0 })
+        {
+            foreach (var s in requestedScopes)
+            {
+                if (!subjectScopes.Contains(s))
+                    throw new InvalidOperationException($"Scope '{s}' exceeds the subject token's scopes");
+                if (!client.AllowedScopes.Contains(s))
+                    throw new InvalidOperationException($"Scope '{s}' is not allowed for client '{clientId}'");
+            }
+            grantedScopes = requestedScopes;
+        }
+        else
+        {
+            grantedScopes = subjectScopes
+                .Where(s => client.AllowedScopes.Contains(s) && s != StandardScopes.OfflineAccess)
+                .ToList();
+        }
+
+        // RFC 8707 resource + RFC 8693 audience both narrow aud; both must be pre-registered on
+        // the exchanging client. resource values must additionally be absolute URIs.
+        var targetAudiences = new List<string>();
+        foreach (var r in resources?.Where(r => !string.IsNullOrWhiteSpace(r)) ?? [])
+        {
+            if (!Uri.TryCreate(r, UriKind.Absolute, out var u) || !string.IsNullOrEmpty(u.Fragment))
+                throw new InvalidOperationException($"Resource '{r}' is not a valid absolute URI");
+            if (!client.Audiences.Contains(r, StringComparer.Ordinal))
+                throw new InvalidOperationException($"Resource '{r}' is not registered for this client");
+            targetAudiences.Add(r);
+        }
+        foreach (var a in audiences?.Where(a => !string.IsNullOrWhiteSpace(a)) ?? [])
+        {
+            if (!client.Audiences.Contains(a, StringComparer.Ordinal))
+                throw new InvalidOperationException($"Resource '{a}' is not registered for this client");
+            targetAudiences.Add(a);
+        }
+
+        // Rebuild the subject from the validated token rather than the user store: the exchange
+        // is a projection of an existing session, not a fresh sign-in. roles/groups map back to
+        // their first-class slots; every other non-protocol claim goes through CustomAttributes so
+        // the NEW scope set's UserClaims gating decides what the downscoped token re-releases.
+        var customAttributes = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var (key, value) in tokenClaims)
+        {
+            if (ReservedClaimNames.Contains(key)) continue;
+            var stringValue = value switch
+            {
+                string s => s,
+                bool b => b ? "true" : "false",
+                int or long or double or decimal => Convert.ToString(value, System.Globalization.CultureInfo.InvariantCulture),
+                _ => null, // arrays/objects other than roles/groups don't round-trip
+            };
+            if (stringValue is not null)
+                customAttributes[key] = stringValue;
+        }
+
+        var subjectExpiry = tokenClaims.TryGetValue("exp", out var expValue)
+            ? DateTimeOffset.FromUnixTimeSeconds(Convert.ToInt64(expValue, System.Globalization.CultureInfo.InvariantCulture))
+            : DateTimeOffset.UtcNow;
+
+        var subject = new OidcSubject
+        {
+            SubjectId = sub,
+            Roles = ExtractStringList(tokenClaims, "roles"),
+            Groups = ExtractStringList(tokenClaims, "groups"),
+            CustomAttributes = customAttributes.Count > 0 ? customAttributes : null,
+            // The exchanged token may never outlive the token it was derived from — that cap is
+            // what makes "short-lived downscoped token" true by construction, and it composes
+            // with any upstream session cap already clamped into the subject token's exp.
+            SessionMaxExpiresAt = subjectExpiry,
+        };
+
+        var accessToken = await CreateAccessTokenAsync(
+            subject, client, grantedScopes, targetAudiences.Count > 0 ? targetAudiences : null, ct);
+
+        var expiresIn = (int)Math.Max(0, Math.Min(
+            client.AccessTokenLifetimeSeconds,
+            (subjectExpiry - DateTimeOffset.UtcNow).TotalSeconds));
+
+        logger.LogInformation(
+            "Token exchange issued downscoped token. Client: {ClientId}, Subject: {SubjectId}, Scopes: {Scopes}",
+            clientId, sub, string.Join(' ', grantedScopes));
+
+        return new TokenResponse
+        {
+            AccessToken = accessToken,
+            IssuedTokenType = TokenTypeIdentifiers.AccessToken,
+            ExpiresIn = expiresIn,
+            Scope = string.Join(' ', grantedScopes),
+        };
+    }
+
+    private static IReadOnlyList<string>? ExtractStringList(
+        IDictionary<string, object> claims, string name)
+    {
+        if (!claims.TryGetValue(name, out var value)) return null;
+        var list = value switch
+        {
+            string s => [s],
+            IEnumerable<object> items => items.OfType<string>().ToList(),
+            _ => new List<string>(),
+        };
+        return list.Count > 0 ? list : null;
+    }
+
     public async Task<TokenResponse> HandleDeviceCodeAsync(
         OidcSubject subject,
         OAuthClient client,

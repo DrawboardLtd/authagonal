@@ -2,6 +2,21 @@
 
 ## [Unreleased]
 
+### Added
+
+- **RFC 8693 token exchange** (`grant_type=urn:ietf:params:oauth:grant-type:token-exchange`) on both
+  the Protocol and Server `/connect/token` endpoints, advertised in discovery. A client with the
+  `token-exchange` grant presents one of this server's own access tokens as `subject_token` and
+  receives a downscoped access token: requested scopes must sit inside both the subject token's
+  scopes and the client's allowed scopes (no request → the intersection, minus `offline_access`);
+  the exchanged token's lifetime never exceeds the subject token's remaining lifetime; custom
+  claims are re-gated by the NEW scope set's `UserClaims` whitelists; `resource`/`audience` narrow
+  `aud` to values pre-registered on the exchanging client. No refresh token is ever issued from an
+  exchange, actor tokens are rejected (`invalid_request`), and client-credentials tokens (no `sub`)
+  cannot be exchanged. Response carries `issued_token_type` per the RFC. Intended for minting
+  short-lived tokens bounded to a narrow context (e.g. a single project) from a primary session
+  token.
+
 ## [0.11.0], 2026-07-23
 
 Hardening + correctness release from the v0.10.0→HEAD review. New public surface (see Added) makes

@@ -33,7 +33,7 @@ internal static class TokenEndpoint
             if (!client!.AllowedGrantTypes.Contains(grantType, StringComparer.OrdinalIgnoreCase))
                 return TokenGrantHandlers.TokenError("unauthorized_client", "Grant type not allowed for this client");
 
-            if (grantType is not (GrantTypes.AuthorizationCode or GrantTypes.RefreshToken or GrantTypes.ClientCredentials))
+            if (grantType is not (GrantTypes.AuthorizationCode or GrantTypes.RefreshToken or GrantTypes.ClientCredentials or GrantTypes.TokenExchange))
                 return TokenGrantHandlers.TokenError("unsupported_grant_type", $"Grant type '{grantType}' is not supported");
 
             try
@@ -43,6 +43,7 @@ internal static class TokenEndpoint
                     GrantTypes.AuthorizationCode => await TokenGrantHandlers.HandleAuthorizationCode(form, tokenService, client.ClientId, ct),
                     GrantTypes.RefreshToken => await TokenGrantHandlers.HandleRefreshToken(form, tokenService, client.ClientId, ct),
                     GrantTypes.ClientCredentials => await TokenGrantHandlers.HandleClientCredentials(form, tokenService, client.ClientId, ct),
+                    GrantTypes.TokenExchange => await TokenGrantHandlers.HandleTokenExchange(form, tokenService, client.ClientId, ct),
                     _ => throw new UnreachableException()
                 };
             }

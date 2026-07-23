@@ -32,7 +32,7 @@ internal static class DiscoveryEndpoint
                 PushedAuthorizationRequestEndpoint = $"{issuer}/connect/par",
                 ScopesSupported = scopesSupported,
                 ResponseTypesSupported = ["code"],
-                GrantTypesSupported = ["authorization_code", "refresh_token", "client_credentials"],
+                GrantTypesSupported = ["authorization_code", "refresh_token", "client_credentials", "urn:ietf:params:oauth:grant-type:token-exchange"],
                 SubjectTypesSupported = ["public"],
                 IdTokenSigningAlgValuesSupported = ["ES256"],
                 TokenEndpointAuthMethodsSupported = ["client_secret_basic", "client_secret_post"],
