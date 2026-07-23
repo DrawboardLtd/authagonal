@@ -74,6 +74,8 @@ else
   git commit -m "chore(release): $next"
   echo "Committed release metadata for $next."
 fi
-git tag "$next"
+# Annotated (with a message) so it works under tag.gpgSign / forceSignAnnotated — a bare `git tag`
+# fails there with "no tag message".
+git tag -a "$next" -m "Release $next"
 echo ""
 echo "Tagged $next — run 'git push origin master $next' to publish"
