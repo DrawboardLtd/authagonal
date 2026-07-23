@@ -1,17 +1,27 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Find the highest vMAJOR.MINOR.PATCH tag and bump the patch. (Was pinned to v0.3.x,
-# which silently stopped tracking the line once releases moved to 0.4.x.)
-latest=$(git tag -l 'v*' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1)
-if [ -z "$latest" ]; then
-  next="v0.0.1"
+# An explicit "MAJOR.MINOR.PATCH" (or "vMAJOR.MINOR.PATCH") argument overrides the default patch bump —
+# needed for the minor/major releases the auto-bump can't produce. Otherwise: find the highest
+# vMAJOR.MINOR.PATCH tag and bump the patch. (Was pinned to v0.3.x, which silently stopped tracking the
+# line once releases moved to 0.4.x.)
+if [ -n "${1:-}" ]; then
+  version="${1#v}"
+  if ! printf '%s' "$version" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+    echo "ERROR: version '$1' is not MAJOR.MINOR.PATCH"; exit 1
+  fi
+  next="v$version"
 else
-  ver=${latest#v}
-  major=${ver%%.*}; rest=${ver#*.}; minor=${rest%%.*}; patch=${rest##*.}
-  next="v${major}.${minor}.$((patch + 1))"
+  latest=$(git tag -l 'v*' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1)
+  if [ -z "$latest" ]; then
+    next="v0.0.1"
+  else
+    ver=${latest#v}
+    major=${ver%%.*}; rest=${ver#*.}; minor=${rest%%.*}; patch=${rest##*.}
+    next="v${major}.${minor}.$((patch + 1))"
+  fi
+  version=${next#v}
 fi
-version=${next#v}
 
 echo "Latest tag: ${latest:-none}"
 echo "Next tag:   $next ($version)"
