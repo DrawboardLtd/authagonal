@@ -16,14 +16,24 @@ public sealed class AuthOptions
 
     /// <summary>
     /// When true, registering an email that belongs to an existing account WITH NO LOCAL CREDENTIAL
-    /// (a federated / JIT-provisioned account, PasswordHash null) sets the password on that account
-    /// and runs provisioning, rather than returning the enumeration-neutral duplicate response. This
-    /// lets a federated-only account claim a first-party credential through the normal register flow;
-    /// what provisioning does with it is the downstream app's concern. An account that ALREADY has a
-    /// password is never affected — a re-register can never overwrite a real credential. Default OFF:
-    /// a generic deployment treats every existing email as a duplicate.
+    /// (a federated / JIT-provisioned account, PasswordHash null) STAGES a password on that account
+    /// instead of returning the enumeration-neutral duplicate response. The staged credential and the
+    /// claim's profile/attributes stay inert until the claimant clicks a fresh verification email — only
+    /// then are they promoted and downstream provisioning re-runs — so merely KNOWING a federated
+    /// account's email can't take it over. An account that ALREADY has a password is never affected —
+    /// a re-register can never overwrite a real credential. Default OFF: a generic deployment treats
+    /// every existing email as a duplicate.
     /// </summary>
     public bool AllowPasswordlessAccountClaim { get; set; }
+
+    /// <summary>
+    /// Custom-attribute keys a passwordless claim (<see cref="AllowPasswordlessAccountClaim"/>) may carry
+    /// from the register request onto the claimed account. These reach downstream provisioning and can
+    /// ride the real owner's tokens, so restricting them limits what a claim can inject. Empty (default)
+    /// allows all keys — back-compat; list specific keys to restrict a claim to an expected set. Only
+    /// consulted when a claim actually stages attributes.
+    /// </summary>
+    public List<string> ClaimAllowedAttributeKeys { get; set; } = [];
 
     // --- Password-reset rate limiting (per target email, so one address can't be email-bombed
     //     regardless of source IP) ---

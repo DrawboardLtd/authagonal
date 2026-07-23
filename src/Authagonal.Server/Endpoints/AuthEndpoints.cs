@@ -407,11 +407,12 @@ public static class AuthEndpoints
             // verification email below is clicked (ConfirmEmailAsync promotes + converts).
             user = existing!;
             user.PendingPasswordHash = passwordHasher.HashPassword(request.Password);
-            if (!string.IsNullOrWhiteSpace(request.FirstName)) user.FirstName = request.FirstName.Trim();
-            if (!string.IsNullOrWhiteSpace(request.LastName)) user.LastName = request.LastName.Trim();
-            if (request.CustomAttributes is { Count: > 0 })
-                foreach (var kv in request.CustomAttributes)
-                    user.CustomAttributes[kv.Key] = kv.Value;
+            // STAGE the claim's profile/attributes rather than applying them to the victim account now —
+            // they activate only when the fresh verification email is clicked (ConfirmEmailAsync). This
+            // stops anyone who merely KNOWS the email from mutating the account's name/custom-attributes
+            // (which ride the real owner's tokens) pre-verification. Custom-attribute keys are whitelisted
+            // (ClaimAllowedAttributeKeys; empty = allow all) so a claim can't inject arbitrary attributes.
+            user.PendingClaimJson = BuildPendingClaimJson(request, ao.ClaimAllowedAttributeKeys);
             user.UpdatedAt = DateTimeOffset.UtcNow;
             await userStore.UpdateAsync(user, ct);
         }
@@ -554,18 +555,24 @@ public static class AuthEndpoints
         // caller's abort token (same shielding as registration).
         if (!string.IsNullOrWhiteSpace(user.PendingPasswordHash))
         {
+            // This click IS the fresh ownership proof. Apply the staged profile/attributes (in memory)
+            // so the downstream conversion sees the claim's signup context (org name, etc.), then run it.
+            ApplyPendingClaim(user);
             try
             {
                 await provisioning.ReprovisionAsync(user, CancellationToken.None);
             }
             catch (ProvisioningException ex)
             {
-                // Claim fails cleanly: drop the staged credential; the account stays passwordless
-                // (federation login intact) and remains claimable.
-                user.PendingPasswordHash = null;
-                user.SecurityStamp = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
-                user.UpdatedAt = DateTimeOffset.UtcNow;
-                await userStore.UpdateAsync(user, CancellationToken.None);
+                // Claim fails cleanly: reload a CLEAN copy so none of the staged profile/attributes
+                // applied above persist, then drop the staged credential + claim. The account stays
+                // passwordless (federation login intact) and remains claimable — victim data untouched.
+                var clean = await userStore.FindByEmailAsync(email, CancellationToken.None) ?? user;
+                clean.PendingPasswordHash = null;
+                clean.PendingClaimJson = null;
+                clean.SecurityStamp = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
+                clean.UpdatedAt = DateTimeOffset.UtcNow;
+                await userStore.UpdateAsync(clean, CancellationToken.None);
                 logger.LogWarning(ex, "Passwordless-claim conversion rejected for {Email}", user.Email);
                 return HttpMethods.IsGet(httpContext.Request.Method)
                     ? Results.Redirect($"/login?error=provisioning_rejected&error_description={Uri.EscapeDataString(ex.Message)}")
@@ -573,6 +580,7 @@ public static class AuthEndpoints
             }
             user.PasswordHash = user.PendingPasswordHash;
             user.PendingPasswordHash = null;
+            user.PendingClaimJson = null;
             logger.LogInformation("Passwordless account claimed by {UserId} ({Email}) — credential promoted after fresh verification", user.Id, user.Email);
         }
 
@@ -1093,6 +1101,59 @@ public static class AuthEndpoints
         return autoConfirmDomains.Any(d => string.Equals(d, domain, StringComparison.OrdinalIgnoreCase));
     }
 
+    // Build the staged claim payload (JSON) from a register request, whitelisting custom-attribute keys
+    // (empty allowlist = allow all). Returns null when there is nothing to stage.
+    private static string? BuildPendingClaimJson(RegisterRequest request, List<string> allowedAttributeKeys)
+    {
+        var data = new PendingClaimData
+        {
+            FirstName = string.IsNullOrWhiteSpace(request.FirstName) ? null : request.FirstName.Trim(),
+            LastName = string.IsNullOrWhiteSpace(request.LastName) ? null : request.LastName.Trim(),
+        };
+        if (request.CustomAttributes is { Count: > 0 })
+        {
+            foreach (var kv in request.CustomAttributes)
+                if (allowedAttributeKeys.Count == 0 || allowedAttributeKeys.Contains(kv.Key))
+                    data.CustomAttributes[kv.Key] = kv.Value;
+        }
+        if (data.FirstName is null && data.LastName is null && data.CustomAttributes.Count == 0)
+            return null;
+        return JsonSerializer.Serialize(data, AuthagonalJsonContext.Default.PendingClaimData);
+    }
+
+    // Apply a claim's staged profile/attributes to the user in memory. No-op if nothing is staged or the
+    // blob is malformed — a corrupt stage must never block the claim's confirmation.
+    private static void ApplyPendingClaim(AuthUser user)
+    {
+        if (string.IsNullOrWhiteSpace(user.PendingClaimJson))
+            return;
+        PendingClaimData? data;
+        try
+        {
+            data = JsonSerializer.Deserialize(user.PendingClaimJson, AuthagonalJsonContext.Default.PendingClaimData);
+        }
+        catch (JsonException)
+        {
+            return;
+        }
+        if (data is null)
+            return;
+        if (!string.IsNullOrWhiteSpace(data.FirstName)) user.FirstName = data.FirstName;
+        if (!string.IsNullOrWhiteSpace(data.LastName)) user.LastName = data.LastName;
+        foreach (var kv in data.CustomAttributes)
+            user.CustomAttributes[kv.Key] = kv.Value;
+    }
+
+}
+
+/// <summary>Profile/attributes STAGED by a passwordless-account claim, serialized into
+/// <see cref="AuthUser.PendingClaimJson"/> and applied only when the claim's verification email is
+/// clicked. Custom-attribute keys are whitelisted at stage time (see AuthOptions.ClaimAllowedAttributeKeys).</summary>
+internal sealed class PendingClaimData
+{
+    public string? FirstName { get; set; }
+    public string? LastName { get; set; }
+    public Dictionary<string, string> CustomAttributes { get; set; } = [];
 }
 
 public sealed class LoginRequest

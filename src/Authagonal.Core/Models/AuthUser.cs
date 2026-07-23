@@ -16,6 +16,14 @@ public sealed class AuthUser
     /// owner's later upgrade.
     /// </summary>
     public string? PendingPasswordHash { get; set; }
+
+    /// <summary>
+    /// Profile/attribute changes STAGED by a passwordless-account claim, held as JSON until the claim's
+    /// fresh email confirmation applies them (alongside promoting <see cref="PendingPasswordHash"/>).
+    /// Staging keeps a claim from mutating the victim account's name/custom-attributes — which ride the
+    /// real owner's tokens — before inbox ownership is proven.
+    /// </summary>
+    public string? PendingClaimJson { get; set; }
     public bool EmailConfirmed { get; set; }
     public string? FirstName { get; set; }
     public string? LastName { get; set; }

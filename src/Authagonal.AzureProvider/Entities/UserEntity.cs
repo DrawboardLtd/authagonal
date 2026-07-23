@@ -18,6 +18,7 @@ public sealed class UserEntity : ITableEntity
     public required string NormalizedEmail { get; set; }
     public string? PasswordHash { get; set; }
     public string? PendingPasswordHash { get; set; }
+    public string? PendingClaimJson { get; set; }
     public bool EmailConfirmed { get; set; }
     public string? FirstName { get; set; }
     public string? LastName { get; set; }
@@ -47,6 +48,7 @@ public sealed class UserEntity : ITableEntity
         NormalizedEmail = user.NormalizedEmail,
         PasswordHash = user.PasswordHash,
         PendingPasswordHash = user.PendingPasswordHash,
+        PendingClaimJson = user.PendingClaimJson,
         EmailConfirmed = user.EmailConfirmed,
         FirstName = user.FirstName,
         LastName = user.LastName,
@@ -76,6 +78,7 @@ public sealed class UserEntity : ITableEntity
         NormalizedEmail = NormalizedEmail,
         PasswordHash = PasswordHash,
         PendingPasswordHash = PendingPasswordHash,
+        PendingClaimJson = PendingClaimJson,
         EmailConfirmed = EmailConfirmed,
         FirstName = FirstName,
         LastName = LastName,

@@ -95,6 +95,7 @@ namespace Authagonal.Server;
 // Auth request DTOs
 [JsonSerializable(typeof(LoginRequest))]
 [JsonSerializable(typeof(RegisterRequest))]
+[JsonSerializable(typeof(PendingClaimData))]
 [JsonSerializable(typeof(ConfirmEmailRequest))]
 [JsonSerializable(typeof(ForgotPasswordRequest))]
 [JsonSerializable(typeof(ResetPasswordRequest))]
