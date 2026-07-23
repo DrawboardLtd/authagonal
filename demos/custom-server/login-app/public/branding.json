@@ -12,7 +12,6 @@
     { "code": "fr", "label": "Français" },
     { "code": "es", "label": "Español" },
     { "code": "vi", "label": "Tiếng Việt" },
-    { "code": "pt", "label": "Português" },
-    { "code": "tlh", "label": "tlhIngan" }
+    { "code": "pt", "label": "Português" }
   ]
 }

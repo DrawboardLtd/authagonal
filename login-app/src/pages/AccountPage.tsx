@@ -11,9 +11,8 @@ import { CardTitle } from '@/components/ui/card';
 // The shipped-locale registry — one list drives i18next registration AND every picker, so this
 // select can't drift from the languages we actually ship (see i18n/index.ts). The chosen value is
 // the user's preferred UI/communication language; emails localise to it (falling back to English
-// for any language we don't template, e.g. the tlh easter egg). The OPTIONS honour
-// branding.languages with the novelty-free default as fallback, so easter eggs only appear for
-// tenants that explicitly list them; LANGUAGES stays the validity set for normalization.
+// for any language we don't template). The OPTIONS honour branding.languages with the shipped
+// default as fallback; LANGUAGES stays the validity set for normalization.
 import { LANGUAGES, DEFAULT_LANGUAGES } from '../i18n';
 import { useBranding } from '../branding';
 
@@ -253,9 +252,9 @@ export default function AccountPage() {
             >
               {(() => {
                 const opts = branding.languages ?? DEFAULT_LANGUAGES;
-                // A locale chosen while it was offered (e.g. the tlh easter egg on an opted-in
-                // tenant) must stay renderable — a controlled <select> whose value is missing
-                // from its options displays blank. Append the known entry for the active value.
+                // A locale chosen while it was offered (e.g. one a tenant later dropped from
+                // branding.languages) must stay renderable — a controlled <select> whose value is
+                // missing from its options displays blank. Append the known entry for the active value.
                 const withActive = form.locale && !opts.some((l) => l.code === form.locale)
                   ? [...opts, ...LANGUAGES.filter((l) => l.code === form.locale).map(({ code, label }) => ({ code, label }))]
                   : opts;

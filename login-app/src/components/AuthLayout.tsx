@@ -20,10 +20,9 @@ function isSafeCssColor(color: string): boolean {
     || /^(?:rgb|rgba|hsl|hsla)\([0-9.,%\s/]+\)$/i.test(color);
 }
 
-// The picker's default list is the shipped-locale registry minus novelty locales
-// (i18n/index.ts DEFAULT_LANGUAGES) — a single source of truth, so registering a real locale
-// automatically surfaces it here, while easter eggs (tlh) only appear when a tenant's
-// branding.languages explicitly lists them. Tenants can still narrow or extend via branding.
+// The picker's default list is the shipped-locale registry (i18n/index.ts DEFAULT_LANGUAGES) — a
+// single source of truth, so registering a real locale automatically surfaces it here. Tenants can
+// still narrow or extend the offered set via branding.languages.
 
 function ThemeToggle() {
   const { theme, setTheme } = useDarkMode();

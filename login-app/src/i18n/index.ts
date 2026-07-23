@@ -10,16 +10,15 @@ import es from './es.json';
 import vi from './vi.json';
 import pt from './pt.json';
 import ar from './ar.json';
-import tlh from './tlh.json';
 import af from './af.json';
 import hi from './hi.json';
 
 /// The single source of truth for shipped UI languages: this list drives BOTH i18next resource
 /// registration and every language picker (AuthLayout switcher, AccountPage select). Adding a
 /// locale here is the whole job — a picker can no longer drift from the registered locales
-/// (which is how hi/af/ar went missing from dropdowns while the tlh easter egg survived).
-/// Labels are each language's native name, no flags.
-export const LANGUAGES: { code: string; label: string; resource: object; novelty?: boolean }[] = [
+/// (which is how hi/af/ar once went missing from dropdowns). Labels are each language's native
+/// name, no flags.
+export const LANGUAGES: { code: string; label: string; resource: object }[] = [
   { code: 'en', label: 'English', resource: en },
   { code: 'zh-Hans', label: '中文', resource: zhHans },
   { code: 'de', label: 'Deutsch', resource: de },
@@ -30,20 +29,15 @@ export const LANGUAGES: { code: string; label: string; resource: object; novelty
   { code: 'ar', label: 'العربية', resource: ar },
   { code: 'af', label: 'Afrikaans', resource: af },
   { code: 'hi', label: 'हिन्दी', resource: hi },
-  // Novelty easter eggs stay fully functional (resources registered, ?lng=tlh works) but are
-  // excluded from every DEFAULT picker via DEFAULT_LANGUAGES below — they only appear in a
-  // dropdown when a tenant's branding.languages explicitly lists them.
-  { code: 'tlh', label: 'tlhIngan', resource: tlh, novelty: true },
 ];
 
 /**
- * The picker-safe default list: every shipped locale except novelty ones. Use wherever a language
- * dropdown has no explicit branding.languages to honour — falling back to raw LANGUAGES put
- * Klingon in front of every visitor of a branding-less host (the cloud support SPA) and in every
- * tenant's account locale select.
+ * The picker default list. Use wherever a language dropdown has no explicit branding.languages to
+ * honour. Currently identical to LANGUAGES; kept as a distinct export so a future restricted locale
+ * can be excluded from default pickers without touching call sites.
  */
 export const DEFAULT_LANGUAGES: { code: string; label: string }[] =
-  LANGUAGES.filter((l) => !l.novelty).map(({ code, label }) => ({ code, label }));
+  LANGUAGES.map(({ code, label }) => ({ code, label }));
 
 i18n
   .use(LanguageDetector)
