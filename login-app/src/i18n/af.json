@@ -147,5 +147,7 @@
   "account.phone": "Telefoon",
   "account.language": "Voorkeurtaal",
   "account.save": "Stoor veranderinge",
-  "account.saving": "Besig om te stoor…"
+  "account.saving": "Besig om te stoor…",
+  "emailVerified": "E-pos geverifieer – meld aan om voort te gaan.",
+  "accountCreated": "Rekening geskep – meld aan om voort te gaan."
 }

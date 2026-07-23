@@ -147,5 +147,7 @@
   "account.phone": "फ़ोन",
   "account.language": "पसंदीदा भाषा",
   "account.save": "परिवर्तन सहेजें",
-  "account.saving": "सहेजा जा रहा है…"
+  "account.saving": "सहेजा जा रहा है…",
+  "emailVerified": "ईमेल सत्यापित हो गया है – जारी रखने के लिए साइन-इन करें।",
+  "accountCreated": "अकाउंट बन गया है – जारी रखने के लिए साइन-इन करें।"
 }

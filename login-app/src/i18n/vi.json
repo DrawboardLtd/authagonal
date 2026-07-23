@@ -147,5 +147,7 @@
   "account.phone": "Điện thoại",
   "account.language": "Ngôn ngữ ưa thích",
   "account.save": "Lưu thay đổi",
-  "account.saving": "Đang lưu…"
+  "account.saving": "Đang lưu…",
+  "emailVerified": "Hộp thư điện tử đã được xác thực; hãy đăng nhập để tiếp tục.",
+  "accountCreated": "Tài khoản đã được tạo – hãy đăng nhập để tiếp tục."
 }

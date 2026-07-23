@@ -147,5 +147,7 @@
   "account.phone": "Téléphone",
   "account.language": "Langue préférée",
   "account.save": "Enregistrer les modifications",
-  "account.saving": "Enregistrement…"
+  "account.saving": "Enregistrement…",
+  "emailVerified": "L’adresse e-mail a été vérifiée ; connectez-vous pour continuer.",
+  "accountCreated": "Un compte a été créé ; connectez-vous pour continuer."
 }
