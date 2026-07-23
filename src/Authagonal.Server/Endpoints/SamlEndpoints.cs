@@ -308,30 +308,20 @@ public static class SamlEndpoints
 
         if (user is null)
         {
-            if (!config.JitProvisioningEnabled)
-            {
-                logger.LogInformation("JIT provisioning disabled for SAML connection {ConnectionId}, rejecting unknown user {Email}", connectionId, email);
-                return RedirectWithError(relayState, "access_denied", "User not found. Contact your administrator to be provisioned.");
-            }
-
-            // Whitelisted authorize-request params (e.g. an org invite's acceptKind/acceptToken) that
-            // ride the SP-initiated return URL (relayState = the /authorize URL), captured to carry the
-            // downstream provisioning context onto the JIT user. User-supplied — the downstream
-            // provisioner is the gate on the VALUES (e.g. bullclip asserts the federated email equals the
-            // invite recipient); only whitelisted keys are kept.
+            // Whitelisted authorize-request params captured from the SP-initiated return URL (relayState =
+            // the /authorize URL) to carry the downstream provisioning context onto the JIT user. The
+            // downstream provisioner is the gate on the VALUES; only whitelisted keys are kept.
             var provisioningAttributes = CollectProvisioningAttributes(config.ProvisioningAttributeParams, relayState).ToList();
 
-            // Invite-only JIT: a connection that DECLARES ProvisioningAttributeParams provisions a new
-            // user only when that context actually arrived. An uninvited unknown is rejected (current
-            // parity) — so an SSO login with no invite can't silently self-provision (which the
-            // downstream would otherwise turn into a stray account/org) — UNLESS the connection opts into
-            // AllowUninvitedJit (self-service SSO auto-provisioning), in which case the uninvited user is
-            // provisioned and tagged with the connection so the downstream places them in the right tenant.
-            if (config.ProvisioningAttributeParams.Count > 0 && provisioningAttributes.Count == 0
-                && !config.AllowUninvitedJit)
+            // Shared JIT gate (see FederationJitPolicy — same decision as the OIDC path).
+            switch (FederationJitPolicy.Evaluate(config.JitProvisioningEnabled, config.ProvisioningAttributeParams.Count, provisioningAttributes.Count, config.AllowUninvitedJit))
             {
-                logger.LogInformation("JIT rejected for SAML connection {ConnectionId}: no provisioning context on the request for unknown user {Email}", connectionId, email);
-                return RedirectWithError(relayState, "access_denied", "This login requires an invitation. Contact your administrator.");
+                case FederationJitPolicy.Decision.RejectJitDisabled:
+                    logger.LogInformation("JIT provisioning disabled for SAML connection {ConnectionId}, rejecting unknown user {Email}", connectionId, email);
+                    return RedirectWithError(relayState, "access_denied", "User not found. Contact your administrator to be provisioned.");
+                case FederationJitPolicy.Decision.RejectInviteRequired:
+                    logger.LogInformation("JIT rejected for SAML connection {ConnectionId}: no provisioning context on the request for unknown user {Email}", connectionId, email);
+                    return RedirectWithError(relayState, "access_denied", "This login requires an invitation. Contact your administrator.");
             }
 
             user = new AuthUser

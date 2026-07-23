@@ -374,32 +374,23 @@ public static class OidcEndpoints
 
         if (user is null)
         {
-            if (!config.JitProvisioningEnabled)
-            {
-                logger.LogInformation("JIT provisioning disabled for OIDC connection {ConnectionId}, rejecting unknown user {Email}", stateData.ConnectionId, email);
-                return RedirectWithError(returnUrl, "access_denied", "User not found. Contact your administrator to be provisioned.");
-            }
-
-            // Whitelisted authorize-request params (e.g. an org invite's acceptKind/acceptToken) that
-            // ride the return URL, captured to carry the downstream provisioning context onto the JIT
-            // user. User-supplied — the downstream provisioner is the gate on the VALUES (e.g. bullclip
-            // asserts the federated email equals the invite recipient); only whitelisted keys are kept.
+            // Whitelisted authorize-request params (e.g. an org invite's acceptKind/acceptToken) that ride
+            // the return URL, captured to carry the downstream provisioning context onto the JIT user.
+            // User-supplied — the downstream provisioner is the gate on the VALUES; only whitelisted keys
+            // are kept. Side-effect-free, so it's safe to compute before the gate decision below.
             var provisioningAttributes = config.ProvisioningAttributeParams.Count > 0
                 ? CollectPassthroughs(config.ProvisioningAttributeParams, stateData.ReturnUrl, httpContext.Request.Query).ToList()
                 : [];
 
-            // Invite-only JIT: a connection that DECLARES ProvisioningAttributeParams provisions a new
-            // user only when that context actually arrived. An uninvited unknown is rejected — so an SSO
-            // login with no invite can't silently self-provision (which the downstream would otherwise turn
-            // into a stray account/org) — UNLESS the connection opts into AllowUninvitedJit (self-service
-            // SSO auto-provisioning), in which case the uninvited user is provisioned and tagged with the
-            // connection so the downstream places them in the right tenant. Connections that declare no such
-            // params (e.g. the guest-link provider, gated by its own link token) are unaffected.
-            if (config.ProvisioningAttributeParams.Count > 0 && provisioningAttributes.Count == 0
-                && !config.AllowUninvitedJit)
+            // Shared JIT gate (see FederationJitPolicy — same decision as the SAML path).
+            switch (FederationJitPolicy.Evaluate(config.JitProvisioningEnabled, config.ProvisioningAttributeParams.Count, provisioningAttributes.Count, config.AllowUninvitedJit))
             {
-                logger.LogInformation("JIT rejected for OIDC connection {ConnectionId}: no provisioning context on the request for unknown user {Email}", stateData.ConnectionId, email);
-                return RedirectWithError(returnUrl, "access_denied", "This login requires an invitation. Contact your administrator.");
+                case FederationJitPolicy.Decision.RejectJitDisabled:
+                    logger.LogInformation("JIT provisioning disabled for OIDC connection {ConnectionId}, rejecting unknown user {Email}", stateData.ConnectionId, email);
+                    return RedirectWithError(returnUrl, "access_denied", "User not found. Contact your administrator to be provisioned.");
+                case FederationJitPolicy.Decision.RejectInviteRequired:
+                    logger.LogInformation("JIT rejected for OIDC connection {ConnectionId}: no provisioning context on the request for unknown user {Email}", stateData.ConnectionId, email);
+                    return RedirectWithError(returnUrl, "access_denied", "This login requires an invitation. Contact your administrator.");
             }
 
             user = new AuthUser
