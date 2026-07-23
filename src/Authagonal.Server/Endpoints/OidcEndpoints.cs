@@ -502,6 +502,7 @@ public static class OidcEndpoints
 
         // Sign in with cookie auth
         var displayName = $"{user.FirstName} {user.LastName}".Trim();
+        var sessionId = Guid.NewGuid().ToString("N");
         var claims = new List<Claim>
         {
             new(ClaimTypes.NameIdentifier, user.Id),
@@ -509,7 +510,7 @@ public static class OidcEndpoints
             new(ClaimTypes.Email, user.Email),
             new(ClaimTypes.Name, string.IsNullOrWhiteSpace(displayName) ? user.Email : displayName),
             new("security_stamp", user.SecurityStamp ?? ""),
-            new("sid", Guid.NewGuid().ToString("N")),
+            new("sid", sessionId),
             // Federation satisfies the local MFA requirement — the upstream IdP owns authentication.
             new(CookieSignInHelper.MfaAuthenticatedClaim, "true")
         };
@@ -545,6 +546,15 @@ public static class OidcEndpoints
         {
             claims.Add(new Claim("upstream_refresh_token", upstreamRefreshToken));
             claims.Add(new Claim("upstream_connection_id", stateData.ConnectionId));
+
+            // Seed the durable per-(user, connection, sid) store — the authoritative rotating copy every RP
+            // grant reads and rotates, instead of each grant pinning this login-time cookie copy (which dies
+            // once the upstream one-time-rotates it). No store registered (host without an Azure/AWS provider)
+            // → the cookie copy is the fallback. Bounded by the absolute 7-day session cap.
+            var upstreamTokenStore = httpContext.RequestServices.GetService<IUpstreamRefreshTokenStore>();
+            if (upstreamTokenStore is not null)
+                await upstreamTokenStore.SetAsync(user.Id, stateData.ConnectionId, sessionId, upstreamRefreshToken,
+                    DateTimeOffset.UtcNow.AddDays(7), ct);
         }
 
         // Federation claim flow-through: every non-protocol upstream id_token claim

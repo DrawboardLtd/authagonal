@@ -28,7 +28,8 @@ public sealed class UserStoreOidcSubjectResolver(
     OidcDiscoveryClient discoveryClient,
     ISecretProvider secretProvider,
     IHttpClientFactory httpClientFactory,
-    ILogger<UserStoreOidcSubjectResolver> logger) : IOidcSubjectResolver
+    ILogger<UserStoreOidcSubjectResolver> logger,
+    IUpstreamRefreshTokenStore? upstreamTokenStore = null) : IOidcSubjectResolver
 {
     public async Task<OidcSubjectResult> ResolveAsync(
         ClaimsPrincipal authenticatedPrincipal,
@@ -66,11 +67,19 @@ public sealed class UserStoreOidcSubjectResolver(
         // from per-user CustomAttributes (which we re-read fresh on refresh).
         var federationClaims = ExtractFederationClaims(authenticatedPrincipal);
 
-        // Upstream-federated refresh (Option A): the upstream refresh token rode the cookie from the
-        // federation callback (no refresh grant existed there yet). Lift it onto the subject so the first
-        // refresh grant persists it; from then on it lives and rotates in the grant store. Non-emitted.
+        // Upstream-federated refresh: the token rode the cookie from the federation callback and is also
+        // seeded into IUpstreamRefreshTokenStore keyed by (user, connection, sid). Prefer the STORE — it
+        // holds the latest rotated token shared by every RP grant for this session, so a new authorize
+        // doesn't seed a grant from a cookie copy the upstream already rotated to death. The cookie is the
+        // fallback (first authorize before any refresh, or no store registered). Non-emitted.
         var upstreamRefreshToken = authenticatedPrincipal.FindFirstValue("upstream_refresh_token");
         var upstreamConnectionId = authenticatedPrincipal.FindFirstValue("upstream_connection_id");
+        if (upstreamTokenStore is not null && !string.IsNullOrEmpty(upstreamConnectionId) && !string.IsNullOrEmpty(sessionId))
+        {
+            var stored = await upstreamTokenStore.GetAsync(subjectId, upstreamConnectionId, sessionId, ct);
+            if (!string.IsNullOrEmpty(stored))
+                upstreamRefreshToken = stored;
+        }
 
         var subject = await BuildSubjectAsync(
             user, client, sessionMaxExpiresAt, sessionId, federationClaims,
@@ -110,17 +119,36 @@ public sealed class UserStoreOidcSubjectResolver(
         // credential, e.g. a share link, was revoked or expired), reject the local refresh too so the
         // session dies; on success, carry the rotated token forward into the successor grant. A transient
         // failure leaves the session alive (the SessionMaxExpiresAt cap still bounds it).
+        // Read the latest upstream token from the shared store (rotated by whichever RP refreshed last),
+        // falling back to the copy pinned on this grant. Redeem it; on rotation, write the new token back
+        // to the store so sibling RP grants see it; on revocation, drop it.
         var upstreamRefreshToken = priorSubject.UpstreamRefreshToken;
+        if (upstreamTokenStore is not null && !string.IsNullOrEmpty(priorSubject.UpstreamConnectionId) && !string.IsNullOrEmpty(priorSubject.SessionId))
+        {
+            var stored = await upstreamTokenStore.GetAsync(priorSubject.SubjectId, priorSubject.UpstreamConnectionId, priorSubject.SessionId, ct);
+            if (!string.IsNullOrEmpty(stored))
+                upstreamRefreshToken = stored;
+        }
         if (!string.IsNullOrEmpty(upstreamRefreshToken) && !string.IsNullOrEmpty(priorSubject.UpstreamConnectionId))
         {
             var (outcome, rotated) = await RedeemUpstreamRefreshAsync(
                 priorSubject.UpstreamConnectionId, upstreamRefreshToken, ct);
             if (outcome == UpstreamRefreshOutcome.Revoked)
+            {
+                if (upstreamTokenStore is not null && !string.IsNullOrEmpty(priorSubject.SessionId))
+                    await upstreamTokenStore.RemoveAsync(priorSubject.SubjectId, priorSubject.UpstreamConnectionId, priorSubject.SessionId, ct);
                 return OidcSubjectResult.Reject(
                     OidcRejection.AccessDenied,
                     "Upstream session ended (the federated credential was revoked or has expired).");
+            }
             if (outcome == UpstreamRefreshOutcome.Valid)
+            {
                 upstreamRefreshToken = rotated;
+                if (upstreamTokenStore is not null && !string.IsNullOrEmpty(priorSubject.SessionId) && !string.IsNullOrEmpty(rotated))
+                    await upstreamTokenStore.SetAsync(
+                        priorSubject.SubjectId, priorSubject.UpstreamConnectionId!, priorSubject.SessionId!, rotated!,
+                        priorSubject.SessionMaxExpiresAt ?? DateTimeOffset.UtcNow.AddDays(7), ct);
+            }
         }
 
         // Preserve the federation cap, session id, and federation claims across rotations

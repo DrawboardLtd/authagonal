@@ -18,6 +18,7 @@ public static class ServiceCollectionExtensions
     private const string UserLoginsTableName = "UserLogins";
     private const string ClientsTableName = "Clients";
     private const string GrantsTableName = "Grants";
+    private const string UpstreamRefreshTokensTableName = "UpstreamRefreshTokens";
     private const string GrantsBySubjectTableName = "GrantsBySubject";
     private const string SigningKeysTableName = "SigningKeys";
     private const string SsoDomainsTableName = "SsoDomains";
@@ -107,6 +108,7 @@ public static class ServiceCollectionExtensions
         var scopes = EnsureTable(serviceClient, ScopesTableName);
         var revokedTokens = EnsureTable(serviceClient, RevokedTokensTableName);
         var provisioningApps = EnsureTable(serviceClient, ProvisioningAppsTableName);
+        var upstreamRefreshTokens = EnsureTable(serviceClient, UpstreamRefreshTokensTableName);
 
         // Register store implementations as singletons.
         // TryAdd allows multi-tenant hosts to register scoped stores first.
@@ -129,6 +131,7 @@ public static class ServiceCollectionExtensions
         services.TryAddSingleton<IScopeStore>(new TableScopeStore(scopes, live));
         services.TryAddSingleton<IRevokedTokenStore>(new TableRevokedTokenStore(revokedTokens, live));
         services.TryAddSingleton<IProvisioningAppStore>(new TableProvisioningAppStore(provisioningApps, live));
+        services.TryAddSingleton<IUpstreamRefreshTokenStore>(sp => new TableUpstreamRefreshTokenStore(upstreamRefreshTokens, live, sp.GetService<IFieldCipher>()));
 
         // Register grant table clients as keyed singletons for the reconciliation service.
         services.AddKeyedSingleton("Grants", grants);

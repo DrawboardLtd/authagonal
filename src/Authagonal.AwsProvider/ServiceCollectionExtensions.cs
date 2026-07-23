@@ -22,6 +22,7 @@ public static class ServiceCollectionExtensions
     // Table names mirror the Azure layout one-for-one.
     private const string ClientsTable = "Clients";
     private const string GrantsTable = "Grants";
+    private const string UpstreamRefreshTokensTable = "UpstreamRefreshTokens";
     private const string GrantsBySubjectTable = "GrantsBySubject";
     private const string GrantsByExpiryTable = "GrantsByExpiry";
     private const string SigningKeysTable = "SigningKeys";
@@ -79,7 +80,7 @@ public static class ServiceCollectionExtensions
             UsersTable, UserEmailsTable, UserLoginsTable, UserExternalIdsTable,
             UserEmailDomainsTable, UserEmailLocalPrefixesTable,
             RolesTable, ScopesTable, RevokedTokensTable, ProvisioningAppsTable, UserProvisionsTable,
-            OidcProvidersTable, SamlProvidersTable, SsoDomainsTable,
+            OidcProvidersTable, SamlProvidersTable, SsoDomainsTable, UpstreamRefreshTokensTable,
             ScimTokensTable, ScimGroupsTable, ScimGroupExternalIdsTable, ScimGroupRoleMappingsTable,
             MfaCredentialsTable, MfaChallengesTable, MfaWebAuthnIndexTable,
             SamlReplayCacheTable, OidcStateStoreTable,
@@ -125,6 +126,7 @@ public static class ServiceCollectionExtensions
             new DynamoTable(db, ProvisioningAppsTable), live, tombstones, sp.GetService<IFieldCipher>()));
         services.TryAddSingleton<IUserProvisionStore>(new DynamoUserProvisionStore(new DynamoTable(db, UserProvisionsTable), live, tombstones));
         services.TryAddSingleton<IOidcProviderStore>(new DynamoOidcProviderStore(new DynamoTable(db, OidcProvidersTable), live, tombstones));
+        services.TryAddSingleton<IUpstreamRefreshTokenStore>(sp => new DynamoUpstreamRefreshTokenStore(new DynamoTable(db, UpstreamRefreshTokensTable), live, sp.GetService<IFieldCipher>()));
         services.TryAddSingleton<ISamlProviderStore>(new DynamoSamlProviderStore(new DynamoTable(db, SamlProvidersTable), live, tombstones));
         services.TryAddSingleton<ISsoDomainStore>(new DynamoSsoDomainStore(new DynamoTable(db, SsoDomainsTable), live, tombstones));
         services.TryAddSingleton<IScimTokenStore>(new DynamoScimTokenStore(new DynamoTable(db, ScimTokensTable), live, tombstones));
