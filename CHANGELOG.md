@@ -2,6 +2,164 @@
 
 ## [Unreleased]
 
+### Security
+
+- **BFF open redirect via backslash closed.** `SanitizeReturnUrl` accepted `/\evil.com` — browsers
+  normalize `\`→`/`, turning it into a protocol-relative off-site redirect. It now mirrors ASP.NET
+  `Url.IsLocalUrl` (a `/`-prefixed path is local only if the second char is neither `/` nor `\`),
+  closing the `/login`, `/logout`, and `/logout-callback` return-URL sinks.
+- **`prompt=login` is now enforced and no longer loops under PAR.** A pushed-authorization request
+  carrying `prompt=login` looped until the `request_uri` expired without ever issuing a code, and an
+  existing session could otherwise satisfy the prompt without re-authenticating. Sessions now record
+  `auth_time`, and `/connect/authorize` honors `prompt=login` only when the session is newer than the
+  request (`auth_time >= request CreatedAt` for PAR), signing out any stale session first.
+- **`auth_time` is now minted on every sign-in** (password, OIDC, SAML). It was advertised in
+  discovery and the token passthrough allowlists but never set, so id_tokens never carried it.
+
+## [0.10.29], 2026-07-23
+
+### Security
+
+- **Passwordless-account claims re-prove inbox ownership (breaking).** Registering the email of an
+  existing federated (credential-less) account no longer sets a usable password immediately — the
+  credential is staged and only activated once the account's own email-verification link is clicked.
+  Knowing a federated user's email can no longer be turned into an immediate sign-in as that user.
+
+## [0.10.28], 2026-07-23
+
+### Added
+
+- **Registration abort-shielding.** Registration and downstream provisioning run to completion even
+  if the browser disconnects mid-request, so an account can't be left half-provisioned.
+- **Straight-to-IdP for hinted SSO-domain emails.** An authorize request whose `login_hint` email
+  belongs to an SSO-governed domain redirects directly to that IdP instead of the login card.
+
+### Fixed
+
+- `TestProvisioningOrchestrator` implements `ReprovisionAsync` — a test-double gap (missed in
+  0.10.24) that left the test project non-compiling for 0.10.24–0.10.27.
+
+## [0.10.27], 2026-07-23
+
+### Fixed
+
+- Client seeding binds `InitiateLoginUri`, `ClientUri`, and `IsDefaultApplication`.
+
+## [0.10.26], 2026-07-23
+
+### Fixed
+
+- Login `continueDestination` falls back to the tenant default application when none is specified.
+
+## [0.10.25], 2026-07-23
+
+### Added
+
+- **Registered-app return URLs.** Absolute returnUrls for registered applications are honored
+  (resolved via `resolveRedirect`), plus email-verified / account-created notices on the login app.
+
+## [0.10.24], 2026-07-22
+
+### Added
+
+- **Reprovision on passwordless-account upgrade.** An account claimed via passwordless upgrade is
+  re-provisioned downstream (`ReprovisionAsync`) so the downstream app sees the claim's signup
+  context (e.g. org name), which a plain re-provision would skip.
+
+## [0.10.23], 2026-07-22
+
+### Added
+
+- **`AllowPasswordlessAccountClaim`** (opt-in, default off): registering the email of an existing
+  credential-less (federated/JIT) account claims it by setting a password and provisioning, instead
+  of returning the enumeration-neutral duplicate response. (Superseded by the 0.10.29
+  re-verification gate.)
+
+## [0.10.22], 2026-07-22
+
+### Fixed
+
+- **MFA credential deletion clears its WebAuthn index row** — no stale credential-id → user pointers.
+
+## [0.10.21], 2026-07-22
+
+### Added
+
+- **Bulk MFA-enrollment status endpoint** for admin directory badges.
+
+## [0.10.20], 2026-07-22
+
+### Added
+
+- **Invite-vouched email verification.** A provisioning handler can vouch an email as verified,
+  skipping the verification email; and the signed-in "dead-end" card now offers a continue path.
+
+## [0.10.19], 2026-07-22
+
+### Fixed
+
+- Register-page password checklist updates live and disappears once the policy is satisfied.
+
+## [0.10.18], 2026-07-22
+
+### Fixed
+
+- **Per-login BFF correlation cookie.** Concurrent logins no longer clobber each other's correlation
+  state — the cookie is keyed per login `state`.
+
+## [0.10.17], 2026-07-22
+
+### Fixed
+
+- Persist OIDC connection `InteractionPath` in the Azure table entity (0.10.15 regression).
+
+## [0.10.16], 2026-07-22
+
+### Fixed
+
+- Fill missing `consent` / `grants` / `mfaTooManyAttempts` login-app translations.
+
+## [0.10.15], 2026-07-22
+
+### Added
+
+- **OIDC connection `InteractionPath`.** Render a login-app interstitial (e.g. a share-link
+  name/terms form) before `idp_hint` federation.
+
+## [0.10.14], 2026-07-22
+
+### Fixed
+
+- Localize password-policy rule labels on the register page.
+
+## [0.10.13], 2026-07-22
+
+### Added
+
+- **`AllowUninvitedJit`** (SAML): auto-provision an uninvited domain user on SSO login when the
+  connection opts in.
+
+## [0.10.12], 2026-07-22
+
+### Added
+
+- **`prompt=login` at the authorize endpoint.** Honor the OIDC `prompt=login` request to force
+  re-authentication. (Enforcement and the PAR-loop fix landed later — see [Unreleased].)
+
+## [0.10.11], 2026-07-21
+
+### Added
+
+- **Upstream-federated refresh.** Optionally revalidate a federated session against its upstream IdP
+  on token refresh (`RevalidateOnRefresh`).
+- **Provisioning attributes through federation.** Carry invite/provisioning context (whitelisted
+  params) through federation into JIT provisioning (invite-only).
+
+### Fixed
+
+- Federation loop-breaker reads the live query; a hard auth failure returns `access_denied` to the
+  relying party.
+
 ## [0.10.10], 2026-07-21
 
 ### Added

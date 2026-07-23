@@ -36,17 +36,34 @@ if [ "$unreleased_lines" -eq 0 ] && ! grep -q "\[$version\]" CHANGELOG.md; then
   exit 1
 fi
 
-# Commit and tag
-git add -A
-diff_input=$(printf '%s\n\n%s' "$(git diff --cached --stat)" "$(git diff --cached | head -500)")
-unset CLAUDECODE 2>/dev/null || true
-msg=$(echo "$diff_input" | claude --model claude-haiku-4-5-20251001 -p \
-  'Generate a concise git commit message for these changes. Output only the commit message text with no markdown, code blocks, or explanation. Then output a completely blank line. Then output a hyphen delimited list of the high-level changes. Focus on what behaviour changed or what problem was solved, not on which files, methods, or variables were modified. One point per line.' \
-  2>&1 | grep -v '^```' | sed '/^Co-authored-by:/d')
-[ -z "$msg" ] && msg="Bump version to $version"
-git commit -m "$msg"
-echo "Committed with message:"
-echo "$msg"
+# Tests are a tagging precondition. v0.10.24–v0.10.27 shipped with a non-compiling test project
+# because nothing built the tests at tag time — build the whole solution, run the suite, and
+# typecheck the login app before minting anything. set -e aborts the tag if any step fails.
+echo "Building, testing, and typechecking before tag…"
+dotnet build src/src.sln -c Release --nologo
+dotnet test tests/Authagonal.Tests/Authagonal.Tests.csproj -c Release --nologo
+( cd login-app && npm run build )
+echo ""
+
+# Commit and tag. Stage ONLY the release-metadata files this script owns — feature/code changes
+# must be committed separately first. `git add -A` used to sweep stray working-tree files into the
+# release commit, and the haiku-generated message occasionally captured error output (the garbage
+# messages on v0.1.33/34); a templated message is deterministic.
+other=$(git status --porcelain --untracked-files=no | grep -vE '(CHANGELOG\.md|login-app/package\.json)$' || true)
+if [ -n "$other" ]; then
+  echo "WARNING: uncommitted changes OUTSIDE the release metadata — they will NOT be in $next."
+  echo "Commit your feature work first if it belongs in this release:"
+  echo "$other"
+  echo ""
+fi
+
+if git diff --quiet -- CHANGELOG.md login-app/package.json; then
+  echo "No CHANGELOG.md / login-app/package.json changes to commit — tagging current HEAD as $next."
+else
+  git add CHANGELOG.md login-app/package.json
+  git commit -m "chore(release): $next"
+  echo "Committed release metadata for $next."
+fi
 git tag "$next"
 echo ""
 echo "Tagged $next — run 'git push origin master $next' to publish"
