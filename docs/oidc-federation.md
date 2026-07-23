@@ -131,3 +131,9 @@ Tested with:
 - Apple
 - Azure AD / Entra ID
 - Azure AD B2C
+
+## Related Guides
+
+- [Self-Service SSO](self-service-sso) — JIT provisioning postures (invite-only vs. self-service), the connection trust tier, and pre-federation interstitials.
+- [Federated Sessions](federated-sessions) — propagate upstream revocation to the local session with `RevalidateOnRefresh`.
+- [Upgrading a User](user-upgrade) — let a federated / guest account claim a first-party password.

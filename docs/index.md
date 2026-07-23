@@ -38,6 +38,15 @@ A single, self-contained deployment. The server and login UI ship as one Docker 
 - **Backup & Restore**: incremental backups (change-log-driven with a full-scan backstop), integrity verification, tombstone-based delete tracking
 - **Admin APIs**: user CRUD, SAML/OIDC provider management, SSO domain routing, token impersonation
 
+## Common Integrations
+
+Task-oriented guides for the flows teams build most often:
+
+- **[Upgrading a User](user-upgrade)** — turn a guest / SSO / invite account into a credentialed one via the passwordless account claim, and run your guest → standard-member promotion on confirm.
+- **[Self-Service SSO](self-service-sso)** — JIT provisioning for enterprise connections: invite-only vs. self-service onboarding, keeping external IdPs from becoming foot-guns, and pre-federation interstitials.
+- **[Federated Sessions](federated-sessions)** — revoke the local session when the upstream IdP does (`RevalidateOnRefresh`).
+- **[WebSocket Auth](websocket-auth)** — authenticate browser WebSockets through the BFF without exposing a token.
+
 ## Architecture
 
 ```
