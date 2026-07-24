@@ -32,6 +32,15 @@ public sealed class DuendeMigrationOptions
     /// <summary>Migrate live refresh tokens. Off by default — cutover forces one re-login.</summary>
     public bool MigrateRefreshTokens { get; set; }
 
+    /// <summary>
+    /// Bounded write concurrency for the high-volume passes (users, external logins, MFA, refresh
+    /// tokens). Entities are independent (Table storage has no referential integrity), so writes fan
+    /// out; the bound keeps us under Azure Table's per-account throughput ceiling and off hot shared
+    /// index partitions (e.g. the email-domain index). Dial down for small/throttle-prone accounts;
+    /// 1 restores fully sequential behaviour.
+    /// </summary>
+    public int MaxDegreeOfParallelism { get; set; } = 32;
+
     /// <summary>Give up waiting for cluster leadership after this many minutes; a later restart retries.</summary>
     public int LeaseWaitMinutes { get; set; } = 10;
 

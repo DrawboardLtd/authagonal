@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using Authagonal.Core.Models;
 using Authagonal.Core.Services;
@@ -96,6 +97,21 @@ public sealed class DuendeMigrationEngine(
             _logger.LogError(ex, "Duende migration pass '{Pass}' failed", name);
             report.Errors.Add($"{name}: {ex.Message}");
         }
+    }
+
+    /// <summary>
+    /// Writes an independent set of entities with bounded concurrency. The high-volume passes read
+    /// their rows sequentially (one forward-only SQL reader) then fan the writes out through here —
+    /// entities have no referential integrity, so the only bound is Azure Table throughput.
+    /// </summary>
+    private Task ForEachAsync<T>(IReadOnlyList<T> items, DuendeMigrationOptions options, Func<T, Task> body, CancellationToken ct)
+    {
+        var parallelOptions = new ParallelOptions
+        {
+            MaxDegreeOfParallelism = Math.Max(1, options.MaxDegreeOfParallelism),
+            CancellationToken = ct,
+        };
+        return Parallel.ForEachAsync(items, parallelOptions, async (item, _) => await body(item));
     }
 
     // ---------------------------------------------------------------------------
@@ -531,6 +547,9 @@ public sealed class DuendeMigrationEngine(
             }
         }
 
+        // Read + fold every user sequentially (single forward-only reader) into a work list; validation
+        // and empty-email skips happen here on the reader thread. The writes then fan out below.
+        var toWrite = new List<AuthUser>();
         await using (var cmd = sql.CreateCommand())
         {
             cmd.CommandText = """
@@ -572,32 +591,43 @@ public sealed class DuendeMigrationEngine(
 
                 if (userRoles.TryGetValue(id, out var roles)) user.Roles = roles;
                 if (userClaims.TryGetValue(id, out var claims)) DuendeMappings.ApplyClaims(user, claims, overwrite: true);
-
-                if (options.DryRun)
-                {
-                    report.UsersCreated++;
-                    continue;
-                }
-
-                try
-                {
-                    await stores.Users.CreateAsync(user, ct);
-                    report.UsersCreated++;
-                }
-                catch (Azure.RequestFailedException ex) when (ex.Status == 409)
-                {
-                    if (options.UsersMode == UsersMode.Upsert)
-                    {
-                        await stores.Users.UpdateAsync(user, ct);
-                        report.UsersUpdated++;
-                    }
-                    else
-                    {
-                        report.UsersSkipped++;
-                    }
-                }
+                toWrite.Add(user);
             }
         }
+
+        if (options.DryRun)
+        {
+            report.UsersCreated += toWrite.Count;
+            return;
+        }
+
+        var created = 0;
+        var updated = 0;
+        var skipped = 0;
+        await ForEachAsync(toWrite, options, async user =>
+        {
+            try
+            {
+                await stores.Users.CreateAsync(user, ct);
+                Interlocked.Increment(ref created);
+            }
+            catch (Azure.RequestFailedException ex) when (ex.Status == 409)
+            {
+                if (options.UsersMode == UsersMode.Upsert)
+                {
+                    await stores.Users.UpdateAsync(user, ct);
+                    Interlocked.Increment(ref updated);
+                }
+                else
+                {
+                    Interlocked.Increment(ref skipped);
+                }
+            }
+        }, ct);
+
+        report.UsersCreated += created;
+        report.UsersUpdated += updated;
+        report.UsersSkipped += skipped;
     }
 
     // ---------------------------------------------------------------------------
@@ -609,31 +639,42 @@ public sealed class DuendeMigrationEngine(
         if (!await sql.TableExistsAsync("AspNetUserLogins", ct))
             return;
 
-        await using var cmd = sql.CreateCommand();
-        cmd.CommandText = "SELECT LoginProvider, ProviderKey, ProviderDisplayName, UserId FROM AspNetUserLogins";
-        await using var reader = await cmd.ExecuteReaderAsync(ct);
-        while (await reader.ReadAsync(ct))
+        var logins = new List<ExternalLoginInfo>();
+        await using (var cmd = sql.CreateCommand())
         {
-            var login = new ExternalLoginInfo
+            cmd.CommandText = "SELECT LoginProvider, ProviderKey, ProviderDisplayName, UserId FROM AspNetUserLogins";
+            await using var reader = await cmd.ExecuteReaderAsync(ct);
+            while (await reader.ReadAsync(ct))
             {
-                Provider = reader.GetString(0),
-                ProviderKey = reader.GetString(1),
-                DisplayName = reader.GetStringOrNull(2),
-                UserId = reader.GetString(3),
-            };
+                logins.Add(new ExternalLoginInfo
+                {
+                    Provider = reader.GetString(0),
+                    ProviderKey = reader.GetString(1),
+                    DisplayName = reader.GetStringOrNull(2),
+                    UserId = reader.GetString(3),
+                });
+            }
+        }
 
-            if (options.DryRun) { report.LoginsCreated++; continue; }
+        if (options.DryRun) { report.LoginsCreated += logins.Count; return; }
 
+        var created = 0;
+        var skipped = 0;
+        await ForEachAsync(logins, options, async login =>
+        {
             try
             {
                 await stores.Users.AddLoginAsync(login, ct);
-                report.LoginsCreated++;
+                Interlocked.Increment(ref created);
             }
             catch (Azure.RequestFailedException ex) when (ex.Status == 409)
             {
-                report.LoginsSkipped++;
+                Interlocked.Increment(ref skipped);
             }
-        }
+        }, ct);
+
+        report.LoginsCreated += created;
+        report.LoginsSkipped += skipped;
     }
 
     // ---------------------------------------------------------------------------
@@ -664,13 +705,20 @@ public sealed class DuendeMigrationEngine(
             }
         }
 
-        foreach (var (userId, tokens) in byUser)
+        var usersSkipped = 0;
+        var credentialsCreated = 0;
+        var warnings = new ConcurrentBag<string>();
+
+        await ForEachAsync(byUser.ToList(), options, async entry =>
         {
+            var userId = entry.Key;
+            var tokens = entry.Value;
+
             // Skip if this user already has MFA credentials (idempotent re-run).
             if ((await stores.Mfa.GetCredentialsAsync(userId, ct)).Count > 0)
             {
-                report.MfaUsersSkipped++;
-                continue;
+                Interlocked.Increment(ref usersSkipped);
+                return;
             }
 
             var credentials = new List<MfaCredential>();
@@ -684,7 +732,7 @@ public sealed class DuendeMigrationEngine(
                 }
                 catch (FormatException)
                 {
-                    report.Warnings.Add($"User {userId}: AuthenticatorKey is not valid base32 — TOTP not migrated.");
+                    warnings.Add($"User {userId}: AuthenticatorKey is not valid base32 — TOTP not migrated.");
                     secret = [];
                 }
 
@@ -726,9 +774,13 @@ public sealed class DuendeMigrationEngine(
             foreach (var credential in credentials)
             {
                 if (!options.DryRun) await stores.Mfa.CreateCredentialAsync(credential, ct);
-                report.MfaCredentialsCreated++;
+                Interlocked.Increment(ref credentialsCreated);
             }
-        }
+        }, ct);
+
+        report.MfaUsersSkipped += usersSkipped;
+        report.MfaCredentialsCreated += credentialsCreated;
+        foreach (var warning in warnings) report.Warnings.Add(warning);
     }
 
     // ---------------------------------------------------------------------------
@@ -816,38 +868,49 @@ public sealed class DuendeMigrationEngine(
         if (!await sql.TableExistsAsync("PersistedGrants", ct))
             return;
 
-        await using var cmd = sql.CreateCommand();
-        cmd.CommandText = """
-            SELECT [Key], [Type], SubjectId, ClientId, [Data], CreationTime, Expiration, ConsumedTime
-            FROM PersistedGrants
-            WHERE [Type] = 'refresh_token' AND (Expiration IS NULL OR Expiration > GETUTCDATE())
-            """;
-        await using var reader = await cmd.ExecuteReaderAsync(ct);
-        while (await reader.ReadAsync(ct))
+        var grants = new List<PersistedGrant>();
+        await using (var cmd = sql.CreateCommand())
         {
-            var grant = new PersistedGrant
+            cmd.CommandText = """
+                SELECT [Key], [Type], SubjectId, ClientId, [Data], CreationTime, Expiration, ConsumedTime
+                FROM PersistedGrants
+                WHERE [Type] = 'refresh_token' AND (Expiration IS NULL OR Expiration > GETUTCDATE())
+                """;
+            await using var reader = await cmd.ExecuteReaderAsync(ct);
+            while (await reader.ReadAsync(ct))
             {
-                Key = reader.GetStringOrNull(0) ?? Guid.NewGuid().ToString("N"),
-                Type = reader.GetString(1),
-                SubjectId = reader.GetStringOrNull(2),
-                ClientId = reader.GetString(3),
-                Data = reader.GetString(4),
-                CreatedAt = reader.GetDateTime(5),
-                ExpiresAt = reader.IsDBNull(6) ? DateTimeOffset.UtcNow.AddDays(30) : reader.GetDateTime(6),
-                ConsumedAt = reader.IsDBNull(7) ? null : reader.GetDateTime(7),
-            };
+                grants.Add(new PersistedGrant
+                {
+                    Key = reader.GetStringOrNull(0) ?? Guid.NewGuid().ToString("N"),
+                    Type = reader.GetString(1),
+                    SubjectId = reader.GetStringOrNull(2),
+                    ClientId = reader.GetString(3),
+                    Data = reader.GetString(4),
+                    CreatedAt = reader.GetDateTime(5),
+                    ExpiresAt = reader.IsDBNull(6) ? DateTimeOffset.UtcNow.AddDays(30) : reader.GetDateTime(6),
+                    ConsumedAt = reader.IsDBNull(7) ? null : reader.GetDateTime(7),
+                });
+            }
+        }
 
-            if (options.DryRun) { report.RefreshTokensCreated++; continue; }
+        if (options.DryRun) { report.RefreshTokensCreated += grants.Count; return; }
 
+        var created = 0;
+        var skipped = 0;
+        await ForEachAsync(grants, options, async grant =>
+        {
             try
             {
                 await stores.Grants.StoreAsync(grant, ct);
-                report.RefreshTokensCreated++;
+                Interlocked.Increment(ref created);
             }
             catch (Azure.RequestFailedException ex) when (ex.Status == 409)
             {
-                report.RefreshTokensSkipped++;
+                Interlocked.Increment(ref skipped);
             }
-        }
+        }, ct);
+
+        report.RefreshTokensCreated += created;
+        report.RefreshTokensSkipped += skipped;
     }
 }

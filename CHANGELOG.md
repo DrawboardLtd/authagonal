@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+## [0.13.4], 2026-07-24
+
+### Changed
+
+- **Duende migration writes the high-volume passes (users, external logins, MFA, refresh tokens) with
+  bounded concurrency** instead of one-at-a-time. Table storage has no referential integrity and these
+  entities are independent, so each pass now reads its rows sequentially then fans the writes out via
+  `Parallel.ForEachAsync`, bounded by the new `Migration:MaxDegreeOfParallelism` (default 32) to stay
+  under Azure Table's per-account throughput ceiling and off hot shared index partitions. A latency-
+  bound ~51k-user migration drops from tens of minutes to a few. Counts stay exact (`Interlocked`);
+  set the bound to 1 for the old sequential behaviour.
+
 ## [0.13.3], 2026-07-24
 
 ### Added
