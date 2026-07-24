@@ -1,0 +1,46 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\Authagonal.Core\Authagonal.Core.csproj" />
+    <ProjectReference Include="..\Authagonal.Server\Authagonal.Server.csproj" />
+    <ProjectReference Include="..\Authagonal.AzureProvider\Authagonal.AzureProvider.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The reason this is a SEPARATE package and not folded into Authagonal.Server: SqlClient is a
+         heavy, migration-only dependency that no runtime consumer should inherit. -->
+    <PackageReference Include="Microsoft.Data.SqlClient" Version="7.0.0" />
+    <PackageReference Include="Azure.Data.Tables" Version="12.11.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- BackgroundService, IServiceCollection/IConfiguration extensions, and the minimal-API
+         IEndpointRouteBuilder the status endpoint maps onto. Server is Sdk.Web; this library isn't,
+         so it pulls the ASP.NET shared framework in explicitly. -->
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <TargetFrameworks>net9.0;net10.0</TargetFrameworks>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsPackable>true</IsPackable>
+    <PackageId>Authagonal.Migration</PackageId>
+    <Description>One-time Duende IdentityServer → Authagonal migration engine, hosted runner, and CLI support.</Description>
+    <Authors>Authagonal</Authors>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageProjectUrl>https://github.com/authagonal/authagonal</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/authagonal/authagonal</RepositoryUrl>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Authagonal.Tests" />
+    <InternalsVisibleTo Include="Authagonal.Migration.Cli" />
+  </ItemGroup>
+
+</Project>

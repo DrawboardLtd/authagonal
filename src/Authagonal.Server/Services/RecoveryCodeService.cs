@@ -32,6 +32,13 @@ public sealed class RecoveryCodeService
         return (codes, credentials);
     }
 
+    /// <summary>
+    /// Produces the stored-hash form of a recovery code (normalize → SHA-256 hex), the same pipeline
+    /// <see cref="Generate"/> and <see cref="VerifyCode"/> use. Exposed so migration code can persist
+    /// recovery codes lifted from another system in this store's native format.
+    /// </summary>
+    public string HashForStorage(string code) => HashCode(code);
+
     public bool VerifyCode(string code, string storedHash)
     {
         var normalized = NormalizeCode(code);

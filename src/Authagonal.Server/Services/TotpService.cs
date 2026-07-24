@@ -77,6 +77,42 @@ public sealed class TotpService
         return DateTimeOffset.UtcNow.ToUnixTimeSeconds() / TimeStepSeconds;
     }
 
+    /// <summary>
+    /// Decodes an RFC 4648 base32 string to bytes. Tolerant: ignores padding (<c>=</c>),
+    /// whitespace and hyphens, and is case-insensitive — Duende stored TOTP AuthenticatorKeys as
+    /// base32 that may carry any of these. Throws <see cref="FormatException"/> on an
+    /// out-of-alphabet character.
+    /// </summary>
+    public static byte[] Base32Decode(string input)
+    {
+        const string alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+        if (string.IsNullOrEmpty(input))
+            return [];
+
+        int buffer = 0, bitsLeft = 0;
+        var output = new List<byte>(input.Length * 5 / 8 + 1);
+
+        foreach (var raw in input)
+        {
+            if (raw is '=' or '-' || char.IsWhiteSpace(raw))
+                continue;
+
+            var index = alphabet.IndexOf(char.ToUpperInvariant(raw));
+            if (index < 0)
+                throw new FormatException($"Invalid base32 character '{raw}'.");
+
+            buffer = (buffer << 5) | index;
+            bitsLeft += 5;
+            if (bitsLeft >= 8)
+            {
+                bitsLeft -= 8;
+                output.Add((byte)((buffer >> bitsLeft) & 0xFF));
+            }
+        }
+
+        return [.. output];
+    }
+
     public static string Base32Encode(byte[] data)
     {
         const string alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";

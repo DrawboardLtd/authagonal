@@ -7,12 +7,13 @@
     <Project Path="src/Authagonal.AzureProvider/Authagonal.AzureProvider.csproj" />
     <Project Path="src/Authagonal.AwsProvider/Authagonal.AwsProvider.csproj" />
     <Project Path="src/Authagonal.Backup/Authagonal.Backup.csproj" />
+    <Project Path="src/Authagonal.Migration/Authagonal.Migration.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/Authagonal.Tests/Authagonal.Tests.csproj" />
   </Folder>
   <Folder Name="/tools/">
-    <Project Path="tools/Authagonal.Migration/Authagonal.Migration.csproj" />
+    <Project Path="tools/Authagonal.Migration.Cli/Authagonal.Migration.Cli.csproj" />
     <Project Path="tools/Authagonal.Backup/Authagonal.Backup.csproj" />
     <Project Path="tools/Authagonal.Restore/Authagonal.Restore.csproj" />
   </Folder>

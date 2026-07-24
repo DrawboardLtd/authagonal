@@ -2,6 +2,28 @@
 
 ## [Unreleased]
 
+## [0.13.3], 2026-07-24
+
+### Added
+
+- **`Authagonal.Migration` — one-time Duende IdentityServer → Authagonal migration.** A new packable
+  library carrying the migration engine, a leader-gated hosted runner, and CLI support (SqlClient stays
+  in this package, out of every runtime consumer). `DuendeMigrationEngine` copies users (with claim
+  folding: given_name/family_name/company/org_id onto first-class fields, email claims dropped, the rest
+  to custom attributes), external logins, roles, scopes (ApiScopes + IdentityResources), clients
+  (secrets tagged `SHA256$`/`SHA512$` by digest length, expired skipped), API-resource flattening,
+  SAML/OIDC providers, SSO domains, MFA credentials (AuthenticatorKey + recovery codes), and optional
+  refresh tokens — each pass idempotent and report-and-skip. `AddAuthagonalDuendeMigration(configuration)`
+  wires a `BackgroundService` that runs the engine exactly once per configured `Version` (a
+  `MigrationState` marker enforces run-once), gated on cluster leadership so a RollingUpdate's transient
+  two-pod overlap can't double-run it; `DryRun` produces the full validation report without writing.
+  `GET /admin/migration/status` exposes the marker + last report. Ids are preserved verbatim and host
+  provisioning callbacks never fire for migrated users. The old `tools/Authagonal.Migration` console is
+  renamed `tools/Authagonal.Migration.Cli` and now drives the shared engine.
+- **`PasswordHasher` verifies tagged `SHA256$`/`SHA512$` client-secret digests** (fixed-time compare),
+  so Duende-migrated client secrets authenticate. `TotpService.Base32Decode` (tolerant) and
+  `RecoveryCodeService.HashForStorage` are exposed for the migration's MFA pass.
+
 ## [0.13.2], 2026-07-24
 
 ### Fixed

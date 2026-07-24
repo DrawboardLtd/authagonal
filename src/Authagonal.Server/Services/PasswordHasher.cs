@@ -23,6 +23,12 @@ public sealed class PasswordHasher
     private const byte FormatVersion = 0x01;
     private const string Pbkdf2Prefix = "PBKDF2v1$";
 
+    // Tagged unsalted-digest formats used by Duende-migrated CLIENT SECRETS (not user passwords).
+    // Duende stored client secrets as a bare base64 SHA-256/512 digest of the UTF-8 secret; the
+    // migration tags them so this verifier knows which digest to recompute.
+    private const string Sha256Prefix = "SHA256$";
+    private const string Sha512Prefix = "SHA512$";
+
     private static readonly string[] BcryptPrefixes = ["$2a$", "$2b$", "$2x$", "$2y$"];
 
     // ASP.NET Identity V3 format marker
@@ -80,6 +86,13 @@ public sealed class PasswordHasher
 
         if (hash.StartsWith(Pbkdf2Prefix, StringComparison.Ordinal))
             return VerifyPbkdf2(password, hash);
+
+        // Tagged unsalted digests — Duende-migrated client secrets only (see Sha256Prefix note).
+        if (hash.StartsWith(Sha256Prefix, StringComparison.Ordinal))
+            return VerifyTaggedDigest(password, hash[Sha256Prefix.Length..], sha512: false);
+
+        if (hash.StartsWith(Sha512Prefix, StringComparison.Ordinal))
+            return VerifyTaggedDigest(password, hash[Sha512Prefix.Length..], sha512: true);
 
         // Try ASP.NET Identity format (raw Base64 — no text prefix)
         return VerifyAspNetIdentity(password, hash);
@@ -143,6 +156,34 @@ public sealed class PasswordHasher
             return PasswordVerifyResult.Success;
 
         return PasswordVerifyResult.Failed;
+    }
+
+    /// <summary>
+    /// Verifies a Duende-migrated client secret stored as a tagged unsalted digest
+    /// (<c>SHA256$&lt;base64&gt;</c> / <c>SHA512$&lt;base64&gt;</c>). Duende hashed client secrets as a bare
+    /// SHA-256/512 of the UTF-8 secret; the migration prepends the tag so we know which digest to
+    /// recompute. Returns <see cref="PasswordVerifyResult.SuccessRehashNeeded"/> on match — but note
+    /// client secrets are never rehashed on use (the secret verifier ignores the rehash signal), so
+    /// this legacy format lives until the secret is rotated. Users never carry these tags.
+    /// </summary>
+    private static PasswordVerifyResult VerifyTaggedDigest(string password, string encodedDigest, bool sha512)
+    {
+        byte[] storedDigest;
+        try
+        {
+            storedDigest = Convert.FromBase64String(encodedDigest);
+        }
+        catch (FormatException)
+        {
+            return PasswordVerifyResult.Failed;
+        }
+
+        var passwordBytes = System.Text.Encoding.UTF8.GetBytes(password);
+        var computedDigest = sha512 ? SHA512.HashData(passwordBytes) : SHA256.HashData(passwordBytes);
+
+        return CryptographicOperations.FixedTimeEquals(computedDigest, storedDigest)
+            ? PasswordVerifyResult.SuccessRehashNeeded
+            : PasswordVerifyResult.Failed;
     }
 
     /// <summary>

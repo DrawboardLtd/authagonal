@@ -34,6 +34,7 @@
     <ProjectReference Include="..\..\src\Authagonal.Backup\Authagonal.Backup.csproj" />
     <ProjectReference Include="..\..\src\Authagonal.Server\Authagonal.Server.csproj" />
     <ProjectReference Include="..\..\src\Authagonal.Bff\Authagonal.Bff.csproj" />
+    <ProjectReference Include="..\..\src\Authagonal.Migration\Authagonal.Migration.csproj" />
   </ItemGroup>
 
 </Project>

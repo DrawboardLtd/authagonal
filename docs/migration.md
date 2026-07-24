@@ -5,84 +5,113 @@ title: Migration
 
 # Migration from Duende IdentityServer
 
-Authagonal includes a migration tool for moving from Duende IdentityServer + SQL Server to Azure Table Storage.
+The `Authagonal.Migration` package performs a one-time migration from Duende IdentityServer + SQL
+Server into Authagonal's stores. The same engine is available two ways:
 
-## Running the Migration
+- **Hosted runner** (recommended) — a background service inside your Authagonal host that runs the
+  migration once on deploy, gated on cluster leadership, without blocking startup.
+- **CLI** — `tools/Authagonal.Migration.Cli`, for local/offline runs against a Table Storage target.
+
+SqlClient lives only in this package, so hosts that don't migrate never inherit it.
+
+## Hosted runner
+
+Add it after `AddAuthagonal` (it depends on the stores, the secret provider, and cluster leadership):
+
+```csharp
+builder.Services.AddAuthagonal(builder.Configuration, c => c.UseAzureStorage(blob, table));
+builder.Services.AddAuthagonalDuendeMigration(builder.Configuration);
+```
+
+Configure via the `Migration` section:
+
+```json
+{
+  "Migration": {
+    "Enabled": true,
+    "DryRun": false,
+    "Version": "1",
+    "UsersMode": "CreateOnly",
+    "MigrateClients": true,
+    "MigrateRefreshTokens": false,
+    "LeaseWaitMinutes": 10,
+    "StartupDelaySeconds": 30,
+    "Source": { "ConnectionString": "Server=...;Database=Identity;..." }
+  }
+}
+```
+
+The runner:
+
+1. Waits `StartupDelaySeconds` (seed services finish first; startup is never blocked).
+2. Skips if a `Completed`, non-`DryRun` marker already exists for `Version`.
+3. Waits up to `LeaseWaitMinutes` to become cluster leader (only one pod runs the migration).
+4. Writes a `Started` marker, runs the engine, then a `Completed`/`Failed` marker with the report.
+
+Losing leadership mid-run cancels the engine; the new leader re-runs — safe because every pass is
+idempotent. Check progress at `GET /admin/migration/status` (gated by the `IdentityAdmin` policy).
+
+## CLI
 
 ```bash
 docker run authagonal-migration \
   --Source:ConnectionString "Server=sql.example.com;Database=Identity;User Id=...;Password=...;" \
   --Target:ConnectionString "DefaultEndpointsProtocol=https;AccountName=...;AccountKey=...;TableEndpoint=https://..." \
-  [--DryRun true] \
-  [--MigrateRefreshTokens true]
+  --DryRun true --UsersMode CreateOnly
 ```
 
-(No `--` separator after the image name: everything after it is passed straight to the tool, and a bare `--` breaks the option parsing.)
-
-Or from source:
+(No `--` separator after the image name.) Or from source:
 
 ```bash
-dotnet run --project tools/Authagonal.Migration -- \
+dotnet run --project tools/Authagonal.Migration.Cli -- \
   --Source:ConnectionString "Server=...;Database=...;" \
   --Target:ConnectionString "DefaultEndpointsProtocol=https;..." \
-  [--DryRun true] [--MigrateRefreshTokens true]
+  --DryRun true
 ```
 
-## What Gets Migrated
+## What gets migrated
 
-| Source (SQL Server) | Target (Table Storage) | Notes |
+| Source (SQL Server) | Target | Notes |
 |---|---|---|
-| `AspNetUsers` + `AspNetUserClaims` | Users + UserEmails + name indexes | Single JOIN query. Claims: given_name, family_name, company, org_id (types overridable, see below). Password hashes kept as-is; ASP.NET Identity V3 and BCrypt hashes verify unchanged and upgrade to Authagonal's native PBKDF2 format on the next successful login. |
-| `AspNetUserLogins` | UserLogins (forward + reverse index) | `409 Conflict` = skip (idempotent) |
-| Duende `SamlProviderConfigurations` | SamlProviders + SsoDomains | `AllowedDomains` CSV split into individual SSO domain records |
-| Duende `OidcProviderConfigurations` | OidcProviders + SsoDomains | Same domain splitting |
-| Duende `Clients` + child tables | Clients | ClientSecrets, GrantTypes, RedirectUris, PostLogoutRedirectUris, Scopes, CorsOrigins all merged into a single entity |
-| Duende `PersistedGrants` (refresh tokens) | Grants + GrantsBySubject + GrantsByExpiry | Opt-in via `--MigrateRefreshTokens true`. Only non-expired tokens. If skipped, users simply re-login. |
+| `AspNetUsers` + `AspNetUserClaims` | Users + email/name indexes | Ids preserved verbatim. Claim folding: `given_name`→FirstName, `family_name`→LastName, `company`→CompanyName, `org_id`→OrganizationId (xmlsoap variants too); email claims dropped; everything else → custom attributes. Null password hashes (external-SSO-only users) are fine. BCrypt / ASP.NET Identity V3 hashes verify unchanged and upgrade to native PBKDF2 on next login. |
+| `AspNetUserLogins` | UserLogins | `409 Conflict` = skip (idempotent) |
+| `AspNetRoles` + `AspNetUserRoles` | Roles + user role links | Role id→name map resolves user assignments |
+| `ApiScopes` + `IdentityResources` | Scopes | Existing (seed) names skipped; scope claims copied |
+| Duende `Clients` + child tables | Clients | Secrets tagged `SHA256$`/`SHA512$` by digest length (others dropped with a warning); expired secrets skipped; config-seeded clients win (skipped) |
+| Duende `ApiResources` | (flattened) | Audiences → migration-created clients; resource claims → migration-created scopes |
+| `SamlProviderConfigurations` | SamlProviders + SsoDomains | `AllowedDomains` CSV split into SSO domain records |
+| `OidcProviderConfigurations` | OidcProviders + SsoDomains | Same domain splitting |
+| `AspNetUserTokens` (`AuthenticatorKey`, `RecoveryCodes`) | MfaCredentials | TOTP secret base32→protected (`duende-totp`); recovery codes hashed (`duende-rc-{n}`); user skipped if MFA already present |
+| Duende `PersistedGrants` (refresh tokens) | Grants | Opt-in via `MigrateRefreshTokens`; non-expired only. If skipped, users re-login. |
 
 ## Options
 
 | Option | Default | Description |
 |---|---|---|
-| `--DryRun` | `false` | Log what would be migrated without writing to storage |
-| `--MigrateRefreshTokens` | `false` | Include active refresh tokens. If false, users re-authenticate after cutover. |
-| `--Source:ClaimMap:{claim}` | the OIDC claim name itself | Override the `AspNetUserClaims` ClaimType read for a mapped claim, e.g. `--Source:ClaimMap:given_name=FirstName`. Used for `given_name`, `family_name`, `company`, `org_id`. |
+| `Enabled` | `false` | Master switch for the hosted runner |
+| `DryRun` | `false` | Walk the source and produce the full validation report (id charset/length, duplicate emails, table/column inventory, per-pass counts) without writing |
+| `Version` | `"1"` | Run marker. Bump to re-run a delta sweep. Only a `Completed`, non-`DryRun` marker blocks a re-run |
+| `UsersMode` | `CreateOnly` | `CreateOnly` skips existing users; `Upsert` overwrites. **Never `Upsert` post-cutover** — it clobbers rehashed passwords and new MFA |
+| `MigrateClients` | `true` | Migrate OAuth clients |
+| `MigrateRefreshTokens` | `false` | Include active refresh tokens |
 
-## Idempotency
+## Idempotency & delta sweeps
 
-The migration is idempotent and safe to run multiple times. Existing records are updated or skipped, never duplicated. This allows you to:
+Every pass is idempotent (skip-if-exists, deterministic MFA ids), so the migration is safe to re-run.
+Run it days ahead of cutover, then bump `Version` for a final delta sweep close to cutover to pick up
+users registered since. Existing records are skipped (or updated under `Upsert`), never duplicated.
 
-1. Run the migration days ahead of cutover
-2. Run a final delta migration close to cutover
-3. Re-run if anything goes wrong
+## What is NOT migrated
 
-## What Is NOT Migrated
+- **SCIM tokens and groups**, **user provisions** — no Duende equivalent; start empty.
+- **Signing keys** — not automated. To keep existing tokens valid across cutover, export the RSA
+  signing key from Duende and import it into the `SigningKeys` table close to cutover.
 
-These Authagonal features have no Duende equivalent and start empty after migration:
+## Cutover strategy
 
-- **Roles**: RBAC roles and user-role assignments
-- **MFA credentials**: TOTP, WebAuthn, and recovery code enrollments
-- **SCIM tokens and groups**: SCIM provisioning configuration
-- **User provisions**: TCC downstream app provisioning state
-
-Users will need to re-enroll MFA if your client's `MfaPolicy` is `Enabled` or `Required`.
-
-## Signing Key Migration
-
-Not yet automated. To keep existing tokens valid across the cutover:
-
-1. Export the RSA signing key from Duende (typically in appsettings as Base64 PKCS8)
-2. Import it into the `SigningKeys` table
-3. Do this close to cutover time
-
-## Cutover Strategy
-
-1. Run user + provider + client migration (can be done days ahead)
-2. Seed client configs in Authagonal
-3. Import signing key (close to cutover)
-4. Optional: migrate active refresh tokens
-5. Deploy Authagonal to staging, test
-6. Maintenance mode on existing IdentityServer
-7. Final migration delta
-8. DNS switch (set TTL to 60s beforehand)
-9. Monitor 30 minutes
-10. If issues: switch DNS back (shared signing key means tokens work on both systems)
+1. Deploy dark (`Enabled=false`).
+2. `Enabled=true, DryRun=true` → restart → review the report at `/admin/migration/status`.
+3. `DryRun=false` → restart → verify the marker is `Completed` + spot-check logins.
+4. Bump `Version` for the final delta sweep, then repoint clients/BFFs to Authagonal (one forced
+   re-login expected unless refresh tokens were migrated).
+5. Monitor; rollback = repoint to the untouched Duende deployment.
