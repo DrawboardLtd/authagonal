@@ -16,6 +16,7 @@
     <PackageReference Include="xunit.runner.visualstudio" Version="3.1.4" />
     <PackageReference Include="Testcontainers.Azurite" Version="4.*" />
     <PackageReference Include="Testcontainers.DynamoDb" Version="4.*" />
+    <PackageReference Include="Testcontainers.MsSql" Version="4.*" />
     <!-- Unify with the product projects' Azure.Storage.Blobs 12.* (Testcontainers.Azurite drags in an
          older 12.29.0, which otherwise conflicts with AzureProvider's compiled version). -->
     <PackageReference Include="Azure.Storage.Blobs" Version="12.*" />
