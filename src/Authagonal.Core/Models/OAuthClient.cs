@@ -45,6 +45,16 @@ public sealed record OAuthClient
     public bool RequireConsent { get; set; }
     public List<string> ProvisioningApps { get; set; } = [];
     public MfaPolicy MfaPolicy { get; set; } = MfaPolicy.Disabled;
+
+    /// <summary>Inline JWKS document (RFC 7517) holding the client's public signing keys.
+    /// Setting this (or <see cref="JwksUri"/>) enables <c>private_key_jwt</c> client
+    /// authentication (RFC 7523) — the right credential for agent workloads, where a shared
+    /// secret is the weakest link in the delegation chain.</summary>
+    public string? JwksJson { get; set; }
+
+    /// <summary>URL the client's JWKS is fetched from (cached ~10 minutes). Alternative to
+    /// <see cref="JwksJson"/> for clients that rotate keys; ignored when JwksJson is set.</summary>
+    public string? JwksUri { get; set; }
 }
 
 public enum RefreshTokenUsage

@@ -2,6 +2,55 @@
 
 ## [Unreleased]
 
+## [0.14.0], 2026-07-24
+
+### Added
+
+- **Agentic auth — the building blocks for delegating a user's authority to AI agents** (docs:
+  `docs/agentic-auth.md`; design: `docs/agentic-auth-plan.md`). Every delegated token obeys
+  `effective = admin ceiling ∩ user consent ∩ task request ∩ subject-token authority`, and authority
+  only ever narrows per hop.
+  - **Authority algebra** (`Authagonal.Core.Authority`): `AuthoritySet`/`AuthorityGrant` — a typed,
+    RFC 9396-shaped (`authorization_details`) model with per-action `auto`/`ask`/`deny` policies and
+    shape-typed constraints (allowlists ∩, numeric caps min, boolean gates AND; unknown members are
+    preserved verbatim and fail closed). One `Intersect` implements the invariant everywhere;
+    `AuthorityEvaluator` is the resource-side check. Property-tested never-widen.
+  - **Agent registration** (`AgentProfile` + `IAgentProfileStore`, Table Storage + DynamoDB stores,
+    auto-provisioned `AgentProfiles` table): a profile on a confidential client sets mode
+    (delegated/service/both), the ceiling, sub-delegation depth, a token-lifetime cap, and the
+    high-risk default (applied to `IConnectorCatalog`-flagged actions). Admin CRUD at
+    `/api/v1/agents` incl. an `effective-grant` (ceiling ∩ consent) preview.
+  - **Composite delegation** on the existing RFC 8693 exchange: a profiled client's exchange mints
+    `sub` = user, `act` = agent (nested per hop, `actor_token` now accepted as corroboration), and an
+    `authorization_details` claim carrying the intersection; introspection emits both; lifetime is
+    additionally clamped by the profile. Sub-delegation requires depth budget from every actor already
+    in the chain and attenuates by construction. Clients without a profile are untouched — though
+    `authorization_details` now narrows plain exchanges too.
+  - **Agent consent (the floor)** at `/consent/agents` (`agent_consent` grants): per (user, agent),
+    stored pre-intersected with the ceiling and re-intersected at every mint, so admin narrowing takes
+    effect immediately; revocation stops the next mint. No consent → `consent_required`.
+  - **Just-in-time approvals**: an `ask`-policy action parks the exchange on
+    `authorization_pending` + `approval_id` with device-flow poll semantics (`slow_down`,
+    `access_denied`, `expired_token`; TTL `ApprovalLifetimeSeconds`, default 300). Users resolve at
+    `GET /approvals` / `POST /approvals/{id}`; approvals are atomically single-use and bound to the
+    request shape *and current policy state* (a ceiling edit invalidates instead of minting stale
+    authority).
+  - **Capability tickets** (`ICapabilityTicketService`): the ws-ticket generalized — opaque,
+    short-TTL, atomically single-use handles over the grant store's conditional delete (closes the
+    cache get-then-remove replay window). The BFF ws-ticket keeps its shared-cache contract.
+  - **BFF authority chokepoint**: `BffUpstream.RequiredAuthority` ("type:action" pairs) makes the
+    proxy evaluate the outgoing bearer's `authorization_details` before forwarding (403 on failure;
+    never anonymous). `Authagonal.Bff` now references `Authagonal.Core`.
+  - **Delegation-aware audit**: new default-interface `IAuthHook` members —
+    `OnTokenIssuingAsync` (rich pre-mint gate), `OnDelegationMintedAsync` (full actor chain),
+    `OnApprovalRequested/ResolvedAsync`, `OnAgentConsentChangedAsync`,
+    `OnCapabilityTicketRedeemedAsync`. Existing hooks compile unchanged.
+  - **`private_key_jwt` client authentication** (RFC 7523) for agent workloads:
+    `OAuthClient.JwksJson`/`JwksUri` (nullable columns on both providers), assertion validation with
+    `iss`=`sub`=`client_id`, token-endpoint audience, ≤10-min `exp`, and single-use `jti` replay cache
+    over `IRevokedTokenStore`; advertised in discovery alongside
+    `authorization_details_types_supported` (from the connector catalog).
+
 ## [0.13.4], 2026-07-24
 
 ### Changed

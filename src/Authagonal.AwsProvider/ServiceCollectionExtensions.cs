@@ -39,6 +39,7 @@ public static class ServiceCollectionExtensions
     private const string ScopesTable = "Scopes";
     private const string RevokedTokensTable = "RevokedTokens";
     private const string ProvisioningAppsTable = "ProvisioningApps";
+    private const string AgentProfilesTable = "AgentProfiles";
     private const string UserProvisionsTable = "UserProvisions";
     private const string OidcProvidersTable = "OidcProviders";
     private const string SamlProvidersTable = "SamlProviders";
@@ -79,7 +80,7 @@ public static class ServiceCollectionExtensions
             ClientsTable, GrantsTable, GrantsBySubjectTable, GrantsByExpiryTable, SigningKeysTable, TombstonesTable,
             UsersTable, UserEmailsTable, UserLoginsTable, UserExternalIdsTable,
             UserEmailDomainsTable, UserEmailLocalPrefixesTable,
-            RolesTable, ScopesTable, RevokedTokensTable, ProvisioningAppsTable, UserProvisionsTable,
+            RolesTable, ScopesTable, RevokedTokensTable, ProvisioningAppsTable, AgentProfilesTable, UserProvisionsTable,
             OidcProvidersTable, SamlProvidersTable, SsoDomainsTable, UpstreamRefreshTokensTable,
             ScimTokensTable, ScimGroupsTable, ScimGroupExternalIdsTable, ScimGroupRoleMappingsTable,
             MfaCredentialsTable, MfaChallengesTable, MfaWebAuthnIndexTable,
@@ -124,6 +125,8 @@ public static class ServiceCollectionExtensions
         services.TryAddSingleton<IRevokedTokenStore>(new DynamoRevokedTokenStore(new DynamoTable(db, RevokedTokensTable), live));
         services.TryAddSingleton<IProvisioningAppStore>(sp => new DynamoProvisioningAppStore(
             new DynamoTable(db, ProvisioningAppsTable), live, tombstones, sp.GetService<IFieldCipher>()));
+        services.TryAddSingleton<IAgentProfileStore>(new DynamoAgentProfileStore(
+            new DynamoTable(db, AgentProfilesTable), live, tombstones));
         services.TryAddSingleton<IUserProvisionStore>(new DynamoUserProvisionStore(new DynamoTable(db, UserProvisionsTable), live, tombstones));
         services.TryAddSingleton<IOidcProviderStore>(new DynamoOidcProviderStore(new DynamoTable(db, OidcProvidersTable), live, tombstones));
         services.TryAddSingleton<IUpstreamRefreshTokenStore>(sp => new DynamoUpstreamRefreshTokenStore(new DynamoTable(db, UpstreamRefreshTokensTable), live, sp.GetService<IFieldCipher>()));

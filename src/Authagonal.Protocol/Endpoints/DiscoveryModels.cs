@@ -33,6 +33,7 @@ public sealed class DiscoveryResponse
     [JsonPropertyName("frontchannel_logout_session_supported"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public bool? FrontchannelLogoutSessionSupported { get; set; }
     [JsonPropertyName("require_pushed_authorization_requests"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public bool? RequirePushedAuthorizationRequests { get; set; }
     [JsonPropertyName("claims_supported"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public string[]? ClaimsSupported { get; set; }
+    [JsonPropertyName("authorization_details_types_supported"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public string[]? AuthorizationDetailsTypesSupported { get; set; }
 }
 
 public sealed class JwksDocument
@@ -61,4 +62,14 @@ internal sealed class OAuthErrorResponse
 {
     [JsonPropertyName("error")] public required string Error { get; set; }
     [JsonPropertyName("error_description")] public string? ErrorDescription { get; set; }
+}
+
+/// <summary>The <c>authorization_pending</c> body a delegated exchange returns while parked
+/// on an approval — the error shape plus the handle and poll interval the agent needs.</summary>
+internal sealed class ApprovalPendingResponse
+{
+    [JsonPropertyName("error")] public string Error { get; set; } = "authorization_pending";
+    [JsonPropertyName("error_description")] public string? ErrorDescription { get; set; }
+    [JsonPropertyName("approval_id")] public required string ApprovalId { get; set; }
+    [JsonPropertyName("interval")] public int Interval { get; set; }
 }

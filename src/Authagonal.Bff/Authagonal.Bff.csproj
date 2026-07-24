@@ -29,6 +29,12 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- Authority evaluation for per-route enforcement (RFC 9396 authorization_details).
+         Core is models/interfaces only — no storage or server machinery rides along. -->
+    <ProjectReference Include="..\Authagonal.Core\Authagonal.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
     <InternalsVisibleTo Include="Authagonal.Tests" />
   </ItemGroup>
 

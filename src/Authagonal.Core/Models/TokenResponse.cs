@@ -29,4 +29,10 @@ public sealed class TokenResponse
     [JsonPropertyName("issued_token_type")]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? IssuedTokenType { get; set; }
+
+    /// <summary>RFC 9396 §7 — the authorization details actually granted, echoed on
+    /// responses whose access token carries an <c>authorization_details</c> claim.</summary>
+    [JsonPropertyName("authorization_details")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public System.Text.Json.JsonElement? AuthorizationDetails { get; set; }
 }

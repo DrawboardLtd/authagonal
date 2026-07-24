@@ -46,6 +46,7 @@ Task-oriented guides for the flows teams build most often:
 - **[Self-Service SSO](self-service-sso)** — JIT provisioning for enterprise connections: invite-only vs. self-service onboarding, keeping external IdPs from becoming foot-guns, and pre-federation interstitials.
 - **[Federated Sessions](federated-sessions)** — revoke the local session when the upstream IdP does (`RevalidateOnRefresh`).
 - **[WebSocket Auth](websocket-auth)** — authenticate browser WebSockets through the BFF without exposing a token.
+- **[Agentic Auth](agentic-auth)** — delegate a user's authority to AI agents: registered agents, fine-grained RFC 9396 authority, composite delegation tokens (RFC 8693 `act`), standing consent, just-in-time approvals, capability tickets.
 
 ## Architecture
 

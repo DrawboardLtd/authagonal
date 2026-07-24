@@ -14,6 +14,7 @@ internal static class DiscoveryEndpoint
             ITenantContext tenantContext,
             IScopeStore scopeStore,
             HttpResponse response,
+            HttpContext httpContext,
             CancellationToken ct) =>
         {
             // Edge/CDN-cacheable: per-tenant discovery metadata changes rarely.
@@ -21,6 +22,8 @@ internal static class DiscoveryEndpoint
             var issuer = tenantContext.Issuer;
 
             var scopesSupported = await DiscoveryHelpers.ResolveSupportedScopesAsync(scopeStore, ct);
+            var authorityTypes = await DiscoveryHelpers.ResolveAuthorityTypesAsync(
+                httpContext.RequestServices, ct);
 
             return TypedResults.Json(new DiscoveryResponse
             {
@@ -35,9 +38,10 @@ internal static class DiscoveryEndpoint
                 GrantTypesSupported = ["authorization_code", "refresh_token", "client_credentials", "urn:ietf:params:oauth:grant-type:token-exchange"],
                 SubjectTypesSupported = ["public"],
                 IdTokenSigningAlgValuesSupported = ["ES256"],
-                TokenEndpointAuthMethodsSupported = ["client_secret_basic", "client_secret_post"],
+                TokenEndpointAuthMethodsSupported = ["client_secret_basic", "client_secret_post", "private_key_jwt"],
                 CodeChallengeMethodsSupported = ["S256"],
                 ClaimsSupported = ["sub", "iss", "aud", "exp", "iat", "auth_time", "email", "email_verified", "name", "given_name", "family_name", "phone_number", "roles", "groups", "org_id"],
+                AuthorizationDetailsTypesSupported = authorityTypes,
             }, ProtocolJsonContext.Default.DiscoveryResponse);
         })
         .AllowAnonymous()

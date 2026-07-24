@@ -62,6 +62,7 @@ public sealed class AuthagonalTestFactory : IAsyncDisposable
     public InMemoryRoleStore RoleStore { get; } = new();
     public InMemoryScopeStore ScopeStore { get; } = new();
     public InMemoryRevokedTokenStore RevokedTokenStore { get; } = new();
+    public InMemoryAgentProfileStore AgentProfileStore { get; } = new();
     public TestEmailService EmailService { get; } = new();
     public TestAuthHook AuthHook { get; } = new();
     public TestTokenExchangeSubjectTransformer ExchangeTransformer { get; } = new();
@@ -253,6 +254,7 @@ public sealed class AuthagonalTestFactory : IAsyncDisposable
         services.AddSingleton<IRoleStore>(RoleStore);
         services.AddSingleton<IScopeStore>(ScopeStore);
         services.AddSingleton<IRevokedTokenStore>(RevokedTokenStore);
+        services.AddSingleton<IAgentProfileStore>(AgentProfileStore);
 
         // Tenant context
         services.AddSingleton<Authagonal.Core.Services.ITenantContext>(

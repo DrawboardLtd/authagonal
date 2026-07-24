@@ -1,5 +1,8 @@
 using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
+using Authagonal.Core.Authority;
 using Authagonal.Core.Constants;
 using Authagonal.Core.Models;
 using Authagonal.Core.Services;
@@ -21,13 +24,19 @@ public sealed class ProtocolTokenService(
     IOidcSubjectResolver subjectResolver,
     ITokenExchangeSubjectTransformer exchangeTransformer,
     IOptions<AuthagonalProtocolOptions> protocolOptions,
-    ILogger<ProtocolTokenService> logger) : IProtocolTokenService
+    ILogger<ProtocolTokenService> logger,
+    // Agentic seams — optional so hosts without agent storage (and existing manual
+    // constructions) keep working; absent means "no client is an agent".
+    IAgentProfileStore? agentProfileStore = null,
+    IConnectorCatalog? connectorCatalog = null,
+    IEnumerable<IAuthHook>? authHooks = null) : IProtocolTokenService
 {
     private const int RefreshTokenSizeBytes = 64;
     private TimeSpan RefreshTokenReuseGraceWindow =>
         TimeSpan.FromSeconds(protocolOptions.Value.RefreshTokenReuseGraceSeconds);
 
     private string Issuer => tenantContext.Issuer;
+    private IEnumerable<IAuthHook> Hooks => authHooks ?? [];
 
     // Protocol-level claims that custom attributes / additional claims must never shadow —
     // even if a scope lists them in UserClaims. Overriding these would let configuration
@@ -37,6 +46,7 @@ public sealed class ProtocolTokenService(
         "iss", "sub", "aud", "exp", "nbf", "iat", "jti",
         "scope", "client_id", "nonce", "auth_time", "acr", "amr",
         "roles", "groups", "sid",
+        AuthorityClaims.AuthorizationDetails, AuthorityClaims.Actor,
     };
 
     public async Task<string> CreateAccessTokenAsync(
@@ -44,6 +54,9 @@ public sealed class ProtocolTokenService(
         OAuthClient client,
         IEnumerable<string> scopes,
         IEnumerable<string>? resources = null,
+        string? authorizationDetailsJson = null,
+        string? actorJson = null,
+        DateTimeOffset? notAfter = null,
         CancellationToken ct = default)
     {
         var now = DateTimeOffset.UtcNow;
@@ -96,10 +109,26 @@ public sealed class ProtocolTokenService(
             }
         }
 
+        // Agentic claims are first-class and reserved: authorization_details is a JSON array
+        // and act a JSON object, so neither can ride the string-valued claim bags — and
+        // nothing in those bags can shadow them.
+        if (!string.IsNullOrEmpty(authorizationDetailsJson))
+        {
+            using var doc = JsonDocument.Parse(authorizationDetailsJson);
+            claims[AuthorityClaims.AuthorizationDetails] = doc.RootElement.Clone();
+        }
+        if (!string.IsNullOrEmpty(actorJson))
+        {
+            using var doc = JsonDocument.Parse(actorJson);
+            claims[AuthorityClaims.Actor] = doc.RootElement.Clone();
+        }
+
         // Clamp lifetime by session cap if present.
         var expires = now.AddSeconds(client.AccessTokenLifetimeSeconds);
         if (subject?.SessionMaxExpiresAt is { } sessionCap && sessionCap < expires)
             expires = sessionCap;
+        if (notAfter is { } issuanceCap && issuanceCap < expires)
+            expires = issuanceCap;
 
         var descriptor = new SecurityTokenDescriptor
         {
@@ -326,7 +355,7 @@ public sealed class ProtocolTokenService(
 
         var subject = authCode.Subject;
 
-        var accessToken = await CreateAccessTokenAsync(subject, client, authCode.Scopes, authCode.Resources, ct);
+        var accessToken = await CreateAccessTokenAsync(subject, client, authCode.Scopes, authCode.Resources, ct: ct);
 
         string? idToken = null;
         if (authCode.Scopes.Contains(StandardScopes.OpenId))
@@ -472,7 +501,7 @@ public sealed class ProtocolTokenService(
             return await HandleRefreshTokenAsync(refreshToken, clientId, resources, ct);
         }
 
-        var accessToken = await CreateAccessTokenAsync(freshSubject, client, data.Scopes, tokenResources, ct);
+        var accessToken = await CreateAccessTokenAsync(freshSubject, client, data.Scopes, tokenResources, ct: ct);
 
         string? idToken = null;
         if (data.Scopes.Contains(StandardScopes.OpenId))
@@ -523,7 +552,7 @@ public sealed class ProtocolTokenService(
             tokenResources = data.Resources;
         }
 
-        var accessToken = await CreateAccessTokenAsync(data.Subject, client, data.Scopes, tokenResources, ct);
+        var accessToken = await CreateAccessTokenAsync(data.Subject, client, data.Scopes, tokenResources, ct: ct);
 
         string? idToken = null;
         if (data.Scopes.Contains(StandardScopes.OpenId))
@@ -577,15 +606,38 @@ public sealed class ProtocolTokenService(
             }
         }
 
-        var accessToken = await CreateAccessTokenAsync(null, client, scopeList, resourceList, ct);
+        // Agent service mode: the ceiling applies alone (no user, so no floor), ask degrades
+        // to deny (an approval has no one to ask), and the profile's lifetime cap clamps.
+        var profile = agentProfileStore is null ? null : await agentProfileStore.GetAsync(clientId, ct);
+        string? authorityJson = null;
+        DateTimeOffset? notAfter = null;
+        var expiresIn = client.AccessTokenLifetimeSeconds;
+        if (profile is not null)
+        {
+            if (profile.Mode == AgentMode.Delegated)
+                throw new ProtocolTokenException("unauthorized_client",
+                    $"Client '{clientId}' is registered as a delegated-only agent; client_credentials is not permitted");
+
+            var authority = await ApplyHighRiskDefaultsAsync(profile.Ceiling, profile.HighRiskDefault, ct);
+            authorityJson = AuthorityJson.Serialize(MapAskPolicies(authority, ActionPolicy.Deny));
+            notAfter = DateTimeOffset.UtcNow.AddSeconds(profile.MaxTokenLifetimeSeconds);
+            expiresIn = Math.Min(expiresIn, profile.MaxTokenLifetimeSeconds);
+
+            await Hooks.RunOnTokenIssuingAsync(
+                new TokenIssuanceContext(clientId, null, GrantTypes.ClientCredentials, scopeList, authorityJson), ct);
+        }
+
+        var accessToken = await CreateAccessTokenAsync(
+            null, client, scopeList, resourceList, authorityJson, null, notAfter, ct);
 
         logger.LogInformation("Client credentials token issued for client {ClientId}", clientId);
 
         return new TokenResponse
         {
             AccessToken = accessToken,
-            ExpiresIn = client.AccessTokenLifetimeSeconds,
-            Scope = string.Join(' ', scopeList)
+            ExpiresIn = expiresIn,
+            Scope = string.Join(' ', scopeList),
+            AuthorizationDetails = ToElement(authorityJson),
         };
     }
 
@@ -598,6 +650,10 @@ public sealed class ProtocolTokenService(
         IEnumerable<string>? resources = null,
         IEnumerable<string>? audiences = null,
         IReadOnlyDictionary<string, string>? extraParameters = null,
+        string? actorToken = null,
+        string? actorTokenType = null,
+        string? authorizationDetailsJson = null,
+        string? approvalId = null,
         CancellationToken ct = default)
     {
         if (subjectTokenType is not (TokenTypeIdentifiers.AccessToken or TokenTypeIdentifiers.Jwt))
@@ -641,6 +697,31 @@ public sealed class ProtocolTokenService(
         // Delegation of a user identity only: a client-credentials token has no sub to act for.
         if (!tokenClaims.TryGetValue("sub", out var subValue) || subValue is not string sub || string.IsNullOrEmpty(sub))
             throw new InvalidOperationException("subject_token carries no subject (sub) and cannot be exchanged");
+
+        // An agent profile is what turns this exchange into a composite delegation; without
+        // one the method behaves exactly as it always has (plus optional RAR narrowing below).
+        var agentProfile = agentProfileStore is null ? null : await agentProfileStore.GetAsync(clientId, ct);
+
+        if (actorToken is not null)
+        {
+            if (agentProfile is null)
+                throw new ProtocolTokenException("invalid_request", "actor_token is not supported for this client");
+            if (actorTokenType is not (TokenTypeIdentifiers.AccessToken or TokenTypeIdentifiers.Jwt))
+                throw new ProtocolTokenException("invalid_request",
+                    $"actor_token_type '{actorTokenType}' is not supported");
+
+            // D2: the actor IS the authenticated client. An actor token may corroborate that
+            // identity (RFC 8693 conformance) but can never substitute a different one.
+            var actorValidated = await handler.ValidateTokenAsync(actorToken, validation);
+            if (!actorValidated.IsValid)
+                throw new ProtocolTokenException("invalid_grant",
+                    "actor_token is not a valid access token issued by this server");
+            if (!actorValidated.Claims.TryGetValue("client_id", out var actorClientValue) ||
+                actorClientValue is not string actorClientId ||
+                !string.Equals(actorClientId, clientId, StringComparison.Ordinal))
+                throw new ProtocolTokenException("invalid_grant",
+                    "actor_token was issued to a different client than the one authenticating");
+        }
 
         var subjectScopes = tokenClaims.TryGetValue("scope", out var scopeValue) && scopeValue is string scopeStr
             ? scopeStr.Split(' ', StringSplitOptions.RemoveEmptyEntries).ToHashSet(StringComparer.Ordinal)
@@ -741,18 +822,160 @@ public sealed class ProtocolTokenService(
         var effectiveExpiry = subject.SessionMaxExpiresAt is { } transformedCap && transformedCap < subjectExpiry
             ? transformedCap
             : subjectExpiry;
+
+        // ── Fine-grained authority ────────────────────────────────────────────────────────
+        // Two operands are always available: the subject token's own authorization_details
+        // claim (absent = unrestricted, garbled = empty — a narrow token must never widen)
+        // and the request's authorization_details parameter.
+        var requestedAuthority = AuthoritySet.Unrestricted;
+        if (authorizationDetailsJson is not null &&
+            !AuthorityJson.TryParse(authorizationDetailsJson, out requestedAuthority))
+            throw new ProtocolTokenException("invalid_authorization_details",
+                "authorization_details must be an RFC 9396 array of objects with a string 'type'");
+
+        var subjectAuthority = ReadAuthorityClaim(subjectToken);
+
+        AuthoritySet? effective = null;
+        string? actorJson = null;
+        string? consumedApprovalId = null;
+        IReadOnlyList<string> priorChain = [];
+
+        if (agentProfile is not null)
+        {
+            if (agentProfile.Mode == AgentMode.Service)
+                throw new ProtocolTokenException("unauthorized_client",
+                    $"Client '{clientId}' is registered as a service-mode agent; token exchange is not permitted");
+
+            // The floor: no standing consent, no delegation — the ceiling alone grants nothing.
+            var consentGrant = await grantStore.GetAsync(AgentConsent.Key(sub, clientId), ct);
+            AuthoritySet floor = AuthoritySet.Empty;
+            var hasConsent = consentGrant is not null
+                && consentGrant.Type == AgentConsent.GrantType
+                && consentGrant.ExpiresAt > DateTimeOffset.UtcNow
+                && AgentConsent.TryParse(consentGrant.Data, out floor, out _);
+            if (!hasConsent)
+                throw new ProtocolTokenException("invalid_grant",
+                    "consent_required: the subject has not granted this agent standing consent");
+
+            // Sub-delegation depth: every actor already in the chain must have budget for one
+            // more hop beneath it. An actor without a registered profile has budget 0.
+            priorChain = ReadActorChain(subjectToken);
+            for (var i = 0; i < priorChain.Count; i++)
+            {
+                var actorProfile = await agentProfileStore!.GetAsync(priorChain[i], ct);
+                var budget = actorProfile?.MaxDelegationDepth ?? 0;
+                if (i + 1 > budget)
+                    throw new ProtocolTokenException("invalid_grant",
+                        $"delegation depth exceeded: agent '{priorChain[i]}' permits {budget} hop(s) of sub-delegation");
+            }
+
+            // The invariant, literally: ceiling ∩ consent ∩ request ∩ what the subject token
+            // itself already carried (which is what makes each further hop attenuate).
+            effective = agentProfile.Ceiling
+                .Intersect(floor)
+                .Intersect(requestedAuthority)
+                .Intersect(subjectAuthority);
+            effective = await ApplyHighRiskDefaultsAsync(effective, agentProfile.HighRiskDefault, ct);
+
+            // Explicitly requested authority that the intersection denied is a hard error, not
+            // a silent narrowing — an agent must not believe it holds authority it lacks.
+            if (!requestedAuthority.IsUnrestricted)
+            {
+                var denied = requestedAuthority.Grants
+                    .SelectMany(g => g.Actions.Select(a => (g.Type, Action: a)))
+                    .Where(p => effective.PolicyFor(p.Type, p.Action) == ActionPolicy.Deny)
+                    .Select(p => $"{p.Type}:{p.Action}")
+                    .ToList();
+                if (denied.Count > 0)
+                    throw new ProtocolTokenException("invalid_target",
+                        $"requested authority is not grantable: {string.Join(", ", denied)}");
+            }
+
+            if (effective.Grants.Count == 0)
+                throw new ProtocolTokenException("invalid_target",
+                    "the intersection of ceiling, consent and request grants no authority");
+
+            // Ask-gate: any ask-policy action in the slice parks the exchange on a pending
+            // approval; approval_id resumes it. The hash binds the approval to this exact
+            // request shape — and to the CURRENT policy state, so an admin edit between park
+            // and poll invalidates the approval instead of minting stale authority.
+            var askActions = effective.Grants
+                .SelectMany(g => g.Actions
+                    .Where(a => g.PolicyFor(a) == ActionPolicy.Ask)
+                    .Select(a => $"{g.Type}:{a}"))
+                .ToList();
+            if (askActions.Count > 0)
+            {
+                var requestHash = ComputeRequestHash(
+                    clientId, sub, grantedScopes, targetAudiences, AuthorityJson.Serialize(effective));
+                if (approvalId is not null)
+                {
+                    var approvedSlice = await RedeemApprovalAsync(approvalId, clientId, sub, requestHash, ct);
+                    // Re-guard against the live ceiling/floor, then mark the asked-and-answered
+                    // actions auto so the resource side doesn't gate them a second time.
+                    effective = MapAskPolicies(
+                        approvedSlice.Intersect(agentProfile.Ceiling).Intersect(floor),
+                        ActionPolicy.Auto);
+                    consumedApprovalId = approvalId;
+                }
+                else
+                {
+                    var id = await CreatePendingApprovalAsync(
+                        clientId, sub, effective, askActions, requestHash, ct);
+                    throw new ApprovalPendingException(id, Approval.PollIntervalSeconds);
+                }
+            }
+
+            // Composite identity, never impersonation: sub stays the user; this agent goes on
+            // top of the act chain, prior actors nest inside (RFC 8693 §4.1).
+            actorJson = BuildActorClaim(clientId, subjectToken);
+
+            // Profile lifetime cap composes with the subject-token remainder and session caps.
+            var profileCap = DateTimeOffset.UtcNow.AddSeconds(agentProfile.MaxTokenLifetimeSeconds);
+            if (profileCap < effectiveExpiry)
+                effectiveExpiry = profileCap;
+        }
+        else if (!requestedAuthority.IsUnrestricted || !subjectAuthority.IsUnrestricted)
+        {
+            // No profile — plain exchange, but authority still narrows (never widens): the
+            // exchanged token carries subject ∩ requested when either side is constrained.
+            effective = subjectAuthority.Intersect(requestedAuthority);
+            if (effective.Grants.Count == 0)
+                throw new ProtocolTokenException("invalid_target",
+                    "the requested authorization_details are not within the subject token's authority");
+        }
+
         subject = subject with { SessionMaxExpiresAt = effectiveExpiry };
+        var effectiveJson = effective is null ? null : AuthorityJson.Serialize(effective);
+
+        if (agentProfile is not null)
+        {
+            await Hooks.RunOnTokenIssuingAsync(new TokenIssuanceContext(
+                clientId, sub, GrantTypes.TokenExchange, grantedScopes, authorizationDetailsJson), ct);
+        }
 
         var accessToken = await CreateAccessTokenAsync(
-            subject, client, grantedScopes, targetAudiences.Count > 0 ? targetAudiences : null, ct);
+            subject, client, grantedScopes, targetAudiences.Count > 0 ? targetAudiences : null,
+            effectiveJson, actorJson, null, ct);
 
         var expiresIn = (int)Math.Max(0, Math.Min(
             client.AccessTokenLifetimeSeconds,
             (effectiveExpiry - DateTimeOffset.UtcNow).TotalSeconds));
 
-        logger.LogInformation(
-            "Token exchange issued downscoped token. Client: {ClientId}, Subject: {SubjectId}, Scopes: {Scopes}",
-            clientId, sub, string.Join(' ', grantedScopes));
+        if (agentProfile is not null)
+        {
+            await Hooks.RunOnDelegationMintedAsync(new DelegationAudit(
+                sub, [clientId, .. priorChain], effectiveJson!, effectiveExpiry, consumedApprovalId), ct);
+            logger.LogInformation(
+                "Delegation minted. Agent: {ClientId}, Subject: {SubjectId}, Chain depth: {Depth}, Approval: {ApprovalId}",
+                clientId, sub, priorChain.Count + 1, consumedApprovalId ?? "none");
+        }
+        else
+        {
+            logger.LogInformation(
+                "Token exchange issued downscoped token. Client: {ClientId}, Subject: {SubjectId}, Scopes: {Scopes}",
+                clientId, sub, string.Join(' ', grantedScopes));
+        }
 
         return new TokenResponse
         {
@@ -760,11 +983,222 @@ public sealed class ProtocolTokenService(
             IssuedTokenType = TokenTypeIdentifiers.AccessToken,
             ExpiresIn = expiresIn,
             Scope = string.Join(' ', grantedScopes),
+            AuthorizationDetails = ToElement(effectiveJson),
         };
     }
 
     private static readonly IReadOnlyDictionary<string, string> EmptyExtraParameters =
         new Dictionary<string, string>(StringComparer.Ordinal);
+
+    // ── Agentic delegation helpers ───────────────────────────────────────────────────────
+
+    /// <summary>The subject token's authorization_details claim: absent = unrestricted,
+    /// garbled = empty — a corrupt narrow token must never evaluate wider than minted.</summary>
+    private static AuthoritySet ReadAuthorityClaim(string token)
+    {
+        var jwt = new JsonWebToken(token);
+        if (!jwt.TryGetPayloadValue<JsonElement>(AuthorityClaims.AuthorizationDetails, out var element))
+            return AuthoritySet.Unrestricted;
+        return AuthorityJson.TryParse(element.GetRawText(), out var set) ? set : AuthoritySet.Empty;
+    }
+
+    /// <summary>Walks the RFC 8693 act chain of a token: outermost (most recent actor) first.</summary>
+    private static IReadOnlyList<string> ReadActorChain(string token)
+    {
+        var jwt = new JsonWebToken(token);
+        if (!jwt.TryGetPayloadValue<JsonElement>(AuthorityClaims.Actor, out var act))
+            return [];
+
+        var chain = new List<string>();
+        while (act.ValueKind == JsonValueKind.Object)
+        {
+            if (!act.TryGetProperty("sub", out var actorSub) || actorSub.ValueKind != JsonValueKind.String)
+                break;
+            chain.Add(actorSub.GetString()!);
+            if (!act.TryGetProperty(AuthorityClaims.Actor, out var nested))
+                break;
+            act = nested;
+        }
+        return chain;
+    }
+
+    /// <summary>New act claim: this actor on top, the subject token's chain nested inside.</summary>
+    private static string BuildActorClaim(string actorClientId, string subjectToken)
+    {
+        var node = new JsonObject { ["sub"] = actorClientId };
+        var jwt = new JsonWebToken(subjectToken);
+        if (jwt.TryGetPayloadValue<JsonElement>(AuthorityClaims.Actor, out var prior) &&
+            prior.ValueKind == JsonValueKind.Object)
+        {
+            node[AuthorityClaims.Actor] = JsonNode.Parse(prior.GetRawText());
+        }
+        return node.ToJsonString();
+    }
+
+    /// <summary>
+    /// Applies the profile's high-risk default to catalog-flagged actions that neither the
+    /// ceiling nor the consent pinned explicitly (an explicit per-action entry — even auto —
+    /// is a deliberate admin/user decision and wins).
+    /// </summary>
+    private async Task<AuthoritySet> ApplyHighRiskDefaultsAsync(
+        AuthoritySet set, ActionPolicy highRiskDefault, CancellationToken ct)
+    {
+        if (highRiskDefault == ActionPolicy.Auto || connectorCatalog is null || set.IsUnrestricted)
+            return set;
+
+        List<AuthorityGrant>? rebuilt = null;
+        foreach (var grant in set.Grants)
+        {
+            var descriptor = await connectorCatalog.GetAsync(grant.Type, ct);
+            if (descriptor?.Actions is null) continue;
+
+            Dictionary<string, ActionPolicy>? policies = null;
+            foreach (var action in grant.Actions)
+            {
+                if (grant.ActionPolicies.ContainsKey(action)) continue;
+                if (!descriptor.Actions.Any(a =>
+                        a.HighRisk && string.Equals(a.Name, action, StringComparison.Ordinal)))
+                    continue;
+                policies ??= new Dictionary<string, ActionPolicy>(grant.ActionPolicies, StringComparer.Ordinal);
+                policies[action] = highRiskDefault;
+            }
+            if (policies is null) continue;
+
+            rebuilt ??= [.. set.Grants];
+            rebuilt[rebuilt.IndexOf(grant)] = grant with { ActionPolicies = policies };
+        }
+        return rebuilt is null ? set : AuthoritySet.From(rebuilt);
+    }
+
+    /// <summary>Rewrites every ask policy to <paramref name="askBecomes"/>: deny for service
+    /// mints (no user to ask), auto after a consumed approval (asked and answered).</summary>
+    private static AuthoritySet MapAskPolicies(AuthoritySet set, ActionPolicy askBecomes)
+    {
+        if (set.IsUnrestricted) return set;
+        var rebuilt = set.Grants.Select(grant =>
+        {
+            if (!grant.ActionPolicies.Values.Contains(ActionPolicy.Ask)) return grant;
+            var policies = grant.ActionPolicies.ToDictionary(
+                p => p.Key,
+                p => p.Value == ActionPolicy.Ask ? askBecomes : p.Value,
+                StringComparer.Ordinal);
+            return grant with { ActionPolicies = policies };
+        }).ToList();
+        return AuthoritySet.From(rebuilt);
+    }
+
+    /// <summary>Binds an approval to the exact request shape (and current policy state) it was
+    /// minted for — a retry with different scopes, audiences or authority cannot spend it.</summary>
+    private static string ComputeRequestHash(
+        string clientId, string subjectId, IEnumerable<string> scopes,
+        IEnumerable<string> audiences, string effectiveAuthorityJson)
+    {
+        var canonical = string.Join('\n',
+            clientId,
+            subjectId,
+            string.Join(' ', scopes.Order(StringComparer.Ordinal)),
+            string.Join(' ', audiences.Order(StringComparer.Ordinal)),
+            effectiveAuthorityJson);
+        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(canonical)));
+    }
+
+    private async Task<string> CreatePendingApprovalAsync(
+        string clientId, string subjectId, AuthoritySet slice,
+        IReadOnlyList<string> pendingActions, string requestHash, CancellationToken ct)
+    {
+        var id = Guid.NewGuid().ToString("N");
+        var now = DateTimeOffset.UtcNow;
+        var data = new ApprovalData
+        {
+            Id = id,
+            ClientId = clientId,
+            SubjectId = subjectId,
+            Slice = slice,
+            PendingActions = pendingActions,
+            RequestHash = requestHash,
+            Status = ApprovalStatus.Pending,
+            CreatedAt = now,
+        };
+        await grantStore.StoreAsync(new PersistedGrant
+        {
+            Key = Approval.Key(id),
+            Type = Approval.GrantType,
+            SubjectId = subjectId,
+            ClientId = clientId,
+            Data = Approval.Serialize(data),
+            CreatedAt = now,
+            ExpiresAt = now.AddSeconds(protocolOptions.Value.ApprovalLifetimeSeconds),
+        }, ct);
+
+        await Hooks.RunOnApprovalRequestedAsync(
+            new ApprovalAudit(id, clientId, subjectId, pendingActions, "pending"), ct);
+
+        logger.LogInformation(
+            "Delegation parked on approval {ApprovalId}. Agent: {ClientId}, Subject: {SubjectId}, Actions: {Actions}",
+            id, clientId, subjectId, string.Join(", ", pendingActions));
+        return id;
+    }
+
+    /// <summary>Device-flow vocabulary throughout: pending → authorization_pending (with
+    /// slow_down throttling), denied → access_denied, gone/expired → expired_token. A win
+    /// consumes atomically — two concurrent polls cannot both mint.</summary>
+    private async Task<AuthoritySet> RedeemApprovalAsync(
+        string approvalId, string clientId, string subjectId, string requestHash, CancellationToken ct)
+    {
+        var key = Approval.Key(approvalId);
+        var grant = await grantStore.GetAsync(key, ct);
+        if (grant is null || grant.Type != Approval.GrantType)
+            throw new ProtocolTokenException("expired_token", "approval not found or expired");
+        if (grant.ExpiresAt <= DateTimeOffset.UtcNow)
+            throw new ProtocolTokenException("expired_token", "approval has expired");
+        if (grant.ConsumedAt is not null)
+            throw new ProtocolTokenException("invalid_grant", "approval has already been used");
+
+        var data = Approval.Parse(grant.Data)
+            ?? throw new ProtocolTokenException("expired_token", "approval not found or expired");
+
+        if (!string.Equals(data.ClientId, clientId, StringComparison.Ordinal) ||
+            !string.Equals(data.SubjectId, subjectId, StringComparison.Ordinal))
+            throw new ProtocolTokenException("invalid_grant", "approval was issued to a different request");
+        if (!string.Equals(data.RequestHash, requestHash, StringComparison.Ordinal))
+            throw new ProtocolTokenException("invalid_grant", "approval does not match this request");
+
+        switch (data.Status)
+        {
+            case ApprovalStatus.Denied:
+                throw new ProtocolTokenException("access_denied", "the user denied the request");
+
+            case ApprovalStatus.Pending:
+                var now = DateTimeOffset.UtcNow;
+                if (data.LastPolledAt is { } lastPolled &&
+                    now - lastPolled < TimeSpan.FromSeconds(Approval.PollIntervalSeconds))
+                    throw new ProtocolTokenException("slow_down",
+                        "Polling too frequently. Increase your interval and try again.");
+                // Best-effort poll marker, mirroring the device flow — a lost update just
+                // means one un-throttled poll.
+                data.LastPolledAt = now;
+                grant.Key = key;
+                grant.Data = Approval.Serialize(data);
+                await grantStore.StoreAsync(grant, ct);
+                throw new ApprovalPendingException(approvalId, Approval.PollIntervalSeconds);
+
+            default:
+                // Approved — consume atomically; the loser of a concurrent poll race gets
+                // invalid_grant instead of a second token minted from the same approval.
+                grant.Key = key;
+                grant.ConsumedAt = DateTimeOffset.UtcNow;
+                if (!await grantStore.TryMarkConsumedAsync(grant, ct))
+                    throw new ProtocolTokenException("invalid_grant", "approval has already been used");
+                return data.Slice;
+        }
+    }
+
+    private static JsonElement? ToElement(string? json)
+    {
+        if (string.IsNullOrEmpty(json)) return null;
+        using var doc = JsonDocument.Parse(json);
+        return doc.RootElement.Clone();
+    }
 
     private static IReadOnlyList<string>? ExtractStringList(
         IDictionary<string, object> claims, string name)

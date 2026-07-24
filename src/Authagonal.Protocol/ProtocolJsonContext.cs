@@ -14,6 +14,7 @@ namespace Authagonal.Protocol;
 [JsonSerializable(typeof(JwksDocument))]
 [JsonSerializable(typeof(TokenResponse))]
 [JsonSerializable(typeof(OAuthErrorResponse))]
+[JsonSerializable(typeof(ApprovalPendingResponse))]
 [JsonSerializable(typeof(PushedAuthorizationRequest))]
 [JsonSerializable(typeof(PushedAuthorizationResponse))]
 internal partial class ProtocolJsonContext : JsonSerializerContext

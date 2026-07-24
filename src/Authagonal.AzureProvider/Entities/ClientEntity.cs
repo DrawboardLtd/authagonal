@@ -55,6 +55,9 @@ public sealed class ClientEntity : ITableEntity
     public int RefreshTokenExpiration { get; set; }
     public string ProvisioningAppsJson { get; set; } = "[]";
     public int MfaPolicy { get; set; }
+    // Nullable so pre-existing rows read as "no JWKS" (secret-only client) without a migration.
+    public string? JwksJson { get; set; }
+    public string? JwksUri { get; set; }
 
     public static ClientEntity FromModel(OAuthClient client) => new()
     {
@@ -95,6 +98,8 @@ public sealed class ClientEntity : ITableEntity
         RefreshTokenExpiration = (int)client.RefreshTokenExpiration,
         ProvisioningAppsJson = JsonSerializer.Serialize(client.ProvisioningApps, AzureJsonContext.Default.ListString),
         MfaPolicy = (int)client.MfaPolicy,
+        JwksJson = client.JwksJson,
+        JwksUri = client.JwksUri,
     };
 
     public OAuthClient ToModel() => new()
@@ -135,5 +140,7 @@ public sealed class ClientEntity : ITableEntity
         RefreshTokenExpiration = (RefreshTokenExpiration)RefreshTokenExpiration,
         ProvisioningApps = JsonSerializer.Deserialize(ProvisioningAppsJson, AzureJsonContext.Default.ListString) ?? [],
         MfaPolicy = (MfaPolicy)MfaPolicy,
+        JwksJson = JwksJson,
+        JwksUri = JwksUri,
     };
 }

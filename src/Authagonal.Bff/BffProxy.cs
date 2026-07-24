@@ -1,6 +1,8 @@
 using System.Net.Http.Headers;
+using Authagonal.Core.Authority;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Options;
+using Microsoft.IdentityModel.JsonWebTokens;
 
 namespace Authagonal.Bff;
 
@@ -155,7 +157,17 @@ internal static class BffProxy
                 bearer = exchanged;
             }
 
+            // Authority gate: the outgoing bearer (post-exchange, so the token that will
+            // actually be presented) must permit every declared type:action pair.
+            if (upstream.RequiredAuthority.Count > 0 && !PermitsRequiredAuthority(bearer, upstream.RequiredAuthority))
+                return Results.StatusCode(StatusCodes.Status403Forbidden);
+
             upstreamReq.Headers.Authorization = new AuthenticationHeaderValue("Bearer", bearer);
+        }
+        else if (upstream.RequiredAuthority.Count > 0)
+        {
+            // An authority-gated route is never anonymous, whatever AllowAnonymousProxyRequests says.
+            return Results.StatusCode(StatusCodes.Status403Forbidden);
         }
 
         using var upstreamResp = await client.SendAsync(upstreamReq, HttpCompletionOption.ResponseHeadersRead, ct);
@@ -168,5 +180,37 @@ internal static class BffProxy
 
         await upstreamResp.Content.CopyToAsync(ctx.Response.Body, ct);
         return Results.Empty;
+    }
+
+    /// <summary>Evaluates the bearer's RFC 9396 authorization_details claim against the
+    /// route's "type:action" requirements. No claim = unrestricted (legacy scope-based
+    /// tokens); a garbled claim or a malformed requirement fails closed. Internal for unit
+    /// testing.</summary>
+    internal static bool PermitsRequiredAuthority(string bearer, IEnumerable<string> requiredPairs)
+    {
+        AuthoritySet authority;
+        try
+        {
+            var jwt = new JsonWebToken(bearer);
+            authority = jwt.TryGetPayloadValue<System.Text.Json.JsonElement>("authorization_details", out var element)
+                ? AuthorityEvaluator.FromClaimValue(element.GetRawText())
+                : AuthoritySet.Unrestricted;
+        }
+        catch (ArgumentException)
+        {
+            return false; // not a JWT — nothing to evaluate, fail closed on a gated route
+        }
+
+        foreach (var pair in requiredPairs)
+        {
+            // Last colon splits type from action: connector types may themselves be
+            // namespaced ("mcp:tools.internal:search_docs" → type "mcp:tools.internal").
+            var separator = pair.LastIndexOf(':');
+            if (separator <= 0 || separator == pair.Length - 1)
+                return false;
+            if (!authority.Permits(pair[..separator], pair[(separator + 1)..]))
+                return false;
+        }
+        return true;
     }
 }

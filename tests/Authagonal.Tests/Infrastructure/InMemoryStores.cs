@@ -717,3 +717,26 @@ public sealed class InMemoryRevokedTokenStore : IRevokedTokenStore
         return Task.FromResult(false);
     }
 }
+
+public sealed class InMemoryAgentProfileStore : IAgentProfileStore
+{
+    private readonly ConcurrentDictionary<string, AgentProfile> _profiles = new(StringComparer.Ordinal);
+
+    public Task<AgentProfile?> GetAsync(string clientId, CancellationToken ct = default)
+        => Task.FromResult(_profiles.GetValueOrDefault(clientId));
+
+    public Task<IReadOnlyList<AgentProfile>> GetAllAsync(CancellationToken ct = default)
+        => Task.FromResult<IReadOnlyList<AgentProfile>>(_profiles.Values.OrderBy(p => p.ClientId).ToList());
+
+    public Task UpsertAsync(AgentProfile profile, CancellationToken ct = default)
+    {
+        _profiles[profile.ClientId] = profile;
+        return Task.CompletedTask;
+    }
+
+    public Task DeleteAsync(string clientId, CancellationToken ct = default)
+    {
+        _profiles.TryRemove(clientId, out _);
+        return Task.CompletedTask;
+    }
+}

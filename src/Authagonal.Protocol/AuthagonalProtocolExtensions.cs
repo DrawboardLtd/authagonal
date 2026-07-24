@@ -69,6 +69,11 @@ public static class AuthagonalProtocolExtensions
         // of this call (context-bound tokens: validate extra params, force binding claims).
         services.TryAddSingleton<ITokenExchangeSubjectTransformer, NullTokenExchangeSubjectTransformer>();
 
+        // The agentic seams (IAgentProfileStore, IConnectorCatalog) are deliberately NOT
+        // defaulted here: AddAuthagonal wires protocol services before storage, so a TryAdd
+        // fallback would shadow the provider's real store. ProtocolTokenService takes them as
+        // optional constructor dependencies instead — absent means "no client is an agent".
+
         // Seeds clients/scopes from AuthagonalProtocolOptions on startup.
         services.AddHostedService<ProtocolSeedService>();
 

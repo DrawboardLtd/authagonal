@@ -40,6 +40,7 @@ public static class ServiceCollectionExtensions
     private const string ScopesTableName = "Scopes";
     private const string RevokedTokensTableName = "RevokedTokens";
     private const string ProvisioningAppsTableName = "ProvisioningApps";
+    private const string AgentProfilesTableName = "AgentProfiles";
 
     public static IServiceCollection AddTableStorage(this IServiceCollection services, string connectionString, bool nameIndexesEnabled = true)
     {
@@ -108,6 +109,7 @@ public static class ServiceCollectionExtensions
         var scopes = EnsureTable(serviceClient, ScopesTableName);
         var revokedTokens = EnsureTable(serviceClient, RevokedTokensTableName);
         var provisioningApps = EnsureTable(serviceClient, ProvisioningAppsTableName);
+        var agentProfiles = EnsureTable(serviceClient, AgentProfilesTableName);
         var upstreamRefreshTokens = EnsureTable(serviceClient, UpstreamRefreshTokensTableName);
 
         // Register store implementations as singletons.
@@ -131,6 +133,7 @@ public static class ServiceCollectionExtensions
         services.TryAddSingleton<IScopeStore>(new TableScopeStore(scopes, live));
         services.TryAddSingleton<IRevokedTokenStore>(new TableRevokedTokenStore(revokedTokens, live));
         services.TryAddSingleton<IProvisioningAppStore>(new TableProvisioningAppStore(provisioningApps, live));
+        services.TryAddSingleton<IAgentProfileStore>(new TableAgentProfileStore(agentProfiles, live));
         services.TryAddSingleton<IUpstreamRefreshTokenStore>(sp => new TableUpstreamRefreshTokenStore(upstreamRefreshTokens, live, sp.GetService<IFieldCipher>()));
 
         // Register grant table clients as keyed singletons for the reconciliation service.

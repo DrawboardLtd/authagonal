@@ -54,6 +54,14 @@ public sealed class AuthagonalProtocolOptions
     /// disable the grace window (strictest posture — any reuse revokes the family).
     /// </summary>
     public int RefreshTokenReuseGraceSeconds { get; set; } = 30;
+
+    /// <summary>
+    /// How long a pending just-in-time approval (a delegated exchange parked on an
+    /// ask-policy action) stays redeemable before the polling agent gets
+    /// <c>expired_token</c>. Short by design: an approval authorizes one task-shaped
+    /// request, not a standing grant.
+    /// </summary>
+    public int ApprovalLifetimeSeconds { get; set; } = 300;
 }
 
 public sealed class OidcClientDescriptor

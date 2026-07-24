@@ -1,5 +1,7 @@
+using Authagonal.Core.Authority;
 using Authagonal.Core.Services;
 using Authagonal.Core.Stores;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace Authagonal.Protocol.Endpoints;
 
@@ -26,6 +28,26 @@ internal static class DiscoveryHelpers
         catch
         {
             return builtIn;
+        }
+    }
+
+    /// <summary>
+    /// RFC 9396 §10 advertisement: the connector types the host's catalog exposes. Null (the
+    /// member is omitted) when no catalog is registered or it is empty — resolved via the
+    /// service provider because the catalog is an optional seam, not a required dependency.
+    /// </summary>
+    public static async Task<string[]?> ResolveAuthorityTypesAsync(IServiceProvider services, CancellationToken ct)
+    {
+        var catalog = services.GetService<IConnectorCatalog>();
+        if (catalog is null) return null;
+        try
+        {
+            var connectors = await catalog.GetAllAsync(ct);
+            return connectors.Count > 0 ? connectors.Select(c => c.Type).ToArray() : null;
+        }
+        catch
+        {
+            return null;
         }
     }
 

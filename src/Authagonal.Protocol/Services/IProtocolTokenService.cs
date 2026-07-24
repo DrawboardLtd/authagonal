@@ -9,11 +9,19 @@ namespace Authagonal.Protocol.Services;
 /// </summary>
 public interface IProtocolTokenService
 {
+    /// <param name="authorizationDetailsJson">RFC 9396 authority to stamp onto the token as
+    /// the <c>authorization_details</c> claim (emitted as real JSON, not a string).</param>
+    /// <param name="actorJson">RFC 8693 actor chain to stamp as the <c>act</c> claim.</param>
+    /// <param name="notAfter">Extra expiry clamp on top of the client lifetime and the
+    /// subject's session cap (used for agent MaxTokenLifetimeSeconds).</param>
     Task<string> CreateAccessTokenAsync(
         OidcSubject? subject,
         OAuthClient client,
         IEnumerable<string> scopes,
         IEnumerable<string>? resources = null,
+        string? authorizationDetailsJson = null,
+        string? actorJson = null,
+        DateTimeOffset? notAfter = null,
         CancellationToken ct = default);
 
     Task<string> CreateIdTokenAsync(
@@ -60,6 +68,16 @@ public interface IProtocolTokenService
     /// re-gated by the NEW scope set's UserClaims whitelists. Non-standard form parameters are
     /// forwarded to the registered <see cref="ITokenExchangeSubjectTransformer"/>, the host seam
     /// for validating and minting context-bound claims (e.g. project/workspace tokens).
+    /// <para>
+    /// When the exchanging client has an <c>AgentProfile</c>, the exchange is a composite
+    /// delegation: the mint requires the subject's standing agent consent, computes
+    /// <c>effective = subject authority ∩ ceiling ∩ consent ∩ requested authorization_details</c>,
+    /// stamps the RFC 8693 <c>act</c> chain and the RFC 9396 <c>authorization_details</c> claim,
+    /// and parks on <see cref="ApprovalPendingException"/> when an ask-policy action is in the
+    /// effective slice (<paramref name="approvalId"/> resumes it). Clients without a profile are
+    /// untouched, except that <paramref name="authorizationDetailsJson"/> still narrows: a plain
+    /// exchange may downscope authority, never widen it.
+    /// </para>
     /// </summary>
     Task<TokenResponse> HandleTokenExchangeAsync(
         string clientId,
@@ -70,6 +88,10 @@ public interface IProtocolTokenService
         IEnumerable<string>? resources = null,
         IEnumerable<string>? audiences = null,
         IReadOnlyDictionary<string, string>? extraParameters = null,
+        string? actorToken = null,
+        string? actorTokenType = null,
+        string? authorizationDetailsJson = null,
+        string? approvalId = null,
         CancellationToken ct = default);
 
     /// <summary>

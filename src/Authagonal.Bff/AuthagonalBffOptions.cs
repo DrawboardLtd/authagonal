@@ -163,6 +163,17 @@ public sealed class BffUpstream
     /// that share a path namespace: e.g. <c>/id</c> stripping ⇒ <c>/bff/api/id/api/admin/x</c> forwards to
     /// <c>{TargetBaseUrl}/api/admin/x</c>. Default false (the prefix is a real path segment on the target).</summary>
     public bool StripPrefix { get; set; }
+
+    /// <summary>
+    /// Optional authority gate, as <c>"type:action"</c> pairs (e.g. <c>"email:send"</c>). When
+    /// non-empty, the proxy checks the outgoing bearer's RFC 9396
+    /// <c>authorization_details</c> claim before forwarding: every listed pair must be
+    /// permitted or the call is a 403 — making the BFF the enforcement chokepoint for
+    /// upstreams that don't evaluate the claim themselves. Anonymous (no-session) requests
+    /// never pass a gated route. A token without the claim passes: coarse scope-based tokens
+    /// predate the authority model, and the claim only ever narrows.
+    /// </summary>
+    public IList<string> RequiredAuthority { get; set; } = new List<string>();
 }
 
 /// <summary>A proxy route bound to an RFC 8693 exchange. <see cref="PathPattern"/> is a segment

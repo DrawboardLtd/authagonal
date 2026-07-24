@@ -228,6 +228,10 @@ public static class AuthagonalExtensions
             services.TryAddSingleton<IEmailService, NullEmailService>();
         services.TryAddSingleton<IAuditLogger, NullAuditLogger>();
         services.TryAddSingleton<IClientScopeGuard, AllowAllClientScopeGuard>();
+        // Capability tickets: durable, atomically single-use handles over the grant store —
+        // the generalized ws-ticket primitive for hosts embedding the broker.
+        services.TryAddSingleton<Authagonal.Core.Authority.ICapabilityTicketService,
+            Authagonal.Core.Authority.GrantStoreCapabilityTicketService>();
         services.TryAddSingleton<IProvisioningAppQuota, UnlimitedProvisioningAppQuota>();
         // SCIM group → role mappings (empty default; the cloud registers a per-tenant store).
         services.TryAddSingleton<IScimGroupRoleMappingStore, InMemoryScimGroupRoleMappingStore>();
@@ -564,6 +568,8 @@ public static class AuthagonalExtensions
         app.MapJwksEndpoint();
         app.MapAuthorizeEndpoint();
         app.MapConsentEndpoints();
+        app.MapAgentConsentEndpoints();
+        app.MapApprovalEndpoints();
         app.MapTokenEndpoint();
         app.MapRevocationEndpoint();
         app.MapIntrospectionEndpoint();
@@ -585,6 +591,7 @@ public static class AuthagonalExtensions
             app.MapTokenAdminEndpoints();
             app.MapMfaAdminEndpoints();
             app.MapScimTokenAdminEndpoints();
+            app.MapAgentAdminEndpoints();
         }
 
         app.MapScimUserEndpoints();

@@ -112,6 +112,13 @@ public static class IntrospectionEndpoint
             if (result.Claims.TryGetValue("aud", out var aud) && aud is not null)
                 response["aud"] = aud;
 
+            // Agentic claims — resource servers gate on these: act names the delegation chain
+            // (RFC 8693 §4.1), authorization_details the fine-grained authority (RFC 9396).
+            if (result.Claims.TryGetValue("act", out var act) && act is not null)
+                response["act"] = act;
+            if (result.Claims.TryGetValue("authorization_details", out var authorizationDetails) && authorizationDetails is not null)
+                response["authorization_details"] = authorizationDetails;
+
             response["token_type"] = "Bearer";
 
             return Results.Ok(response);

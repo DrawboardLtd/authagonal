@@ -60,19 +60,24 @@ internal static class TokenGrantHandlers
                 clientId, scopes, resources.Length > 0 ? resources : null, ct);
             return Results.Ok(response);
         }
+        catch (ProtocolTokenException ex)
+        {
+            return TokenError(ex.Error, ex.Description);
+        }
         catch (InvalidOperationException ex) when (ex.Message.StartsWith("Resource '", StringComparison.Ordinal))
         {
             return TokenError("invalid_target", ex.Message);
         }
     }
 
-    // RFC 8693 / OAuth protocol fields on a token-exchange request; anything else is a host
-    // extension parameter forwarded to ITokenExchangeSubjectTransformer.
+    // RFC 8693 / RFC 9396 / OAuth protocol fields on a token-exchange request; anything else
+    // is a host extension parameter forwarded to ITokenExchangeSubjectTransformer.
     private static readonly HashSet<string> TokenExchangeProtocolParameters = new(StringComparer.Ordinal)
     {
         "grant_type", "client_id", "client_secret", "client_assertion", "client_assertion_type",
         "subject_token", "subject_token_type", "actor_token", "actor_token_type",
         "requested_token_type", "scope", "resource", "audience",
+        "authorization_details", "approval_id",
     };
 
     public static async Task<IResult> HandleTokenExchange(
@@ -86,10 +91,16 @@ internal static class TokenGrantHandlers
         if (string.IsNullOrWhiteSpace(subjectTokenType))
             return TokenError("invalid_request", "subject_token_type is required");
 
-        // RFC 8693 §2.1 makes actor tokens optional for servers; this one does not do delegation
-        // chains (no act claim), so be explicit rather than silently ignoring the parameter.
-        if (!string.IsNullOrWhiteSpace(form["actor_token"].FirstOrDefault()))
-            return TokenError("invalid_request", "actor_token is not supported");
+        // RFC 8693 §2.1 — an actor token is accepted only on the composite-delegation path
+        // (clients with an agent profile); the service rejects it for everyone else.
+        var actorToken = form["actor_token"].FirstOrDefault();
+        var actorTokenType = form["actor_token_type"].FirstOrDefault();
+        if (!string.IsNullOrWhiteSpace(actorToken) && string.IsNullOrWhiteSpace(actorTokenType))
+            return TokenError("invalid_request", "actor_token_type is required when actor_token is present");
+
+        // RFC 9396 narrowing + the approval-poll handle (both agentic; harmless when absent).
+        var authorizationDetails = form["authorization_details"].FirstOrDefault();
+        var approvalId = form["approval_id"].FirstOrDefault();
 
         var requestedTokenType = form["requested_token_type"].FirstOrDefault();
         var scope = form["scope"].FirstOrDefault() ?? string.Empty;
@@ -111,8 +122,26 @@ internal static class TokenGrantHandlers
                 resources.Length > 0 ? resources : null,
                 audiences.Length > 0 ? audiences : null,
                 extraParameters.Count > 0 ? extraParameters : null,
-                ct);
+                actorToken: string.IsNullOrWhiteSpace(actorToken) ? null : actorToken,
+                actorTokenType: string.IsNullOrWhiteSpace(actorTokenType) ? null : actorTokenType,
+                authorizationDetailsJson: string.IsNullOrWhiteSpace(authorizationDetails) ? null : authorizationDetails,
+                approvalId: string.IsNullOrWhiteSpace(approvalId) ? null : approvalId,
+                ct: ct);
             return Results.Ok(response);
+        }
+        catch (ApprovalPendingException pending)
+        {
+            // RFC 8628-style park: the body carries the approval handle and poll interval.
+            return TypedResults.Json(new ApprovalPendingResponse
+            {
+                ErrorDescription = pending.Description,
+                ApprovalId = pending.ApprovalId,
+                Interval = pending.IntervalSeconds,
+            }, ProtocolJsonContext.Default.ApprovalPendingResponse, statusCode: 400);
+        }
+        catch (ProtocolTokenException ex)
+        {
+            return TokenError(ex.Error, ex.Description);
         }
         catch (InvalidOperationException ex) when (ex.Message.StartsWith("Scope '", StringComparison.Ordinal))
         {
