@@ -143,6 +143,12 @@ public static class ClientRegistrationEndpoint
             RequirePkce = true,
             AllowOfflineAccess = offlineAccess,
             RequireClientSecret = !isPublicClient,
+            // Consent is NOT optional for a self-registered client. A statically seeded client was
+            // configured by an operator who already decided what it may do; this one registered itself
+            // over an anonymous endpoint and chose its own scope list. Skipping consent would mean a
+            // user signs in and silently grants whatever the client asked for — so the only human
+            // check on a client nobody vetted is the one screen this flag shows.
+            RequireConsent = true,
         };
 
         await clientStore.UpsertAsync(client, ct);
