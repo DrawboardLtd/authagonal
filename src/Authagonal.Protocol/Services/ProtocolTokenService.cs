@@ -806,8 +806,16 @@ public sealed class ProtocolTokenService(
         // Host seam for context-bound exchanges (e.g. project/workspace tokens): the transformer
         // validates any extra request parameters against the host's own authority and forces the
         // resulting binding claims onto the subject. Rejection surfaces as invalid_target.
+        // The subject token's own client_id — the application the user authorized, as opposed to the
+        // client performing this exchange. It is stripped from CustomAttributes as a reserved claim,
+        // so the transformer has no other way to reach it.
+        var subjectClientId = tokenClaims.TryGetValue("client_id", out var subjectClientValue)
+            ? subjectClientValue as string
+            : null;
+
         var transformed = await exchangeTransformer.TransformAsync(
-            subject, client, grantedScopes, extraParameters ?? EmptyExtraParameters, ct);
+            subject, client, grantedScopes, extraParameters ?? EmptyExtraParameters,
+            new TokenExchangeContext(subjectClientId), ct);
         switch (transformed)
         {
             case OidcSubjectResult.Rejected rejected:

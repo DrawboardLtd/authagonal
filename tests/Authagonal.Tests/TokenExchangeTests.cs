@@ -232,6 +232,43 @@ public sealed class TokenExchangeTests : IAsyncLifetime
         // Protocol fields must never leak into the extension params.
         Assert.DoesNotContain("subject_token", call.ExtraParameters.Keys);
         Assert.DoesNotContain("grant_type", call.ExtraParameters.Keys);
+        // Same client on both sides here, since test-client both obtained and exchanged the token.
+        Assert.Equal(AuthagonalTestFactory.TestClientId, call.SubjectClientId);
+    }
+
+    /// <summary>
+    /// The case the two identities exist for: a broker service exchanges a token it was handed. The
+    /// exchanging client is the broker; the subject client is the application the user actually
+    /// authorized. A host attributing an action needs the latter, and cannot derive it from the
+    /// subject — client_id is a reserved claim and is stripped from CustomAttributes.
+    /// </summary>
+    [Fact]
+    public async Task Exchange_Transformer_SeesTheSubjectTokensClient_NotTheExchangingClient()
+    {
+        const string brokerClientId = "broker-client";
+        await _factory.ClientStore.UpsertAsync(new OAuthClient
+        {
+            ClientId = brokerClientId,
+            ClientName = "Broker",
+            RequireClientSecret = false,
+            RequirePkce = false,
+            AllowedGrantTypes = [GrantTypes.TokenExchange],
+            AllowedScopes = [AppScope],
+            AccessTokenLifetimeSeconds = 3600,
+        });
+
+        var primary = await GetPrimaryAccessTokenAsync();  // obtained by test-client
+        var form = BaseExchangeForm(primary);
+        form["client_id"] = brokerClientId;                // exchanged by broker-client
+        form["scope"] = AppScope;
+
+        var response = await _client.PostAsync("/connect/token", new FormUrlEncodedContent(form));
+        response.EnsureSuccessStatusCode();
+
+        var call = Assert.Single(_factory.ExchangeTransformer.Calls);
+        Assert.Equal(brokerClientId, call.ClientId);
+        Assert.Equal(AuthagonalTestFactory.TestClientId, call.SubjectClientId);
+        Assert.NotEqual(call.ClientId, call.SubjectClientId);
     }
 
     [Fact]

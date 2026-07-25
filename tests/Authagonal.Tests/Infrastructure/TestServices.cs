@@ -109,7 +109,9 @@ public sealed class TestProvisioningOrchestrator : IProvisioningOrchestrator
 /// through unchanged, mirroring <c>NullTokenExchangeSubjectTransformer</c>. Records every call.</summary>
 public sealed class TestTokenExchangeSubjectTransformer : Authagonal.Protocol.ITokenExchangeSubjectTransformer
 {
-    public List<(string SubjectId, string ClientId, IReadOnlyList<string> Scopes, IReadOnlyDictionary<string, string> ExtraParameters)> Calls { get; } = [];
+    /// <summary>Every call. <c>SubjectClientId</c> is the client that obtained the subject token,
+    /// which is not the same as <c>ClientId</c> (the client performing the exchange).</summary>
+    public List<(string SubjectId, string ClientId, IReadOnlyList<string> Scopes, IReadOnlyDictionary<string, string> ExtraParameters, string? SubjectClientId)> Calls { get; } = [];
 
     public Func<Authagonal.Protocol.OidcSubject, OAuthClient, IReadOnlyList<string>, IReadOnlyDictionary<string, string>, Authagonal.Protocol.OidcSubjectResult>? OnTransform { get; set; }
 
@@ -118,9 +120,10 @@ public sealed class TestTokenExchangeSubjectTransformer : Authagonal.Protocol.IT
         OAuthClient client,
         IReadOnlyList<string> grantedScopes,
         IReadOnlyDictionary<string, string> extraParameters,
+        Authagonal.Protocol.TokenExchangeContext context,
         CancellationToken ct = default)
     {
-        Calls.Add((subject.SubjectId, client.ClientId, grantedScopes, extraParameters));
+        Calls.Add((subject.SubjectId, client.ClientId, grantedScopes, extraParameters, context.SubjectClientId));
         var result = OnTransform?.Invoke(subject, client, grantedScopes, extraParameters)
             ?? Authagonal.Protocol.OidcSubjectResult.Allow(subject);
         return Task.FromResult(result);
