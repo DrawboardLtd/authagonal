@@ -122,8 +122,6 @@
   "consent.scopePhone": "अपना फ़ोन नंबर देखें",
   "consent.selectHint": "चुनें कि यह ऐप क्या कर सकता है। आप इसे बाद में बदल सकते हैं।",
   "consent.required": "आवश्यक",
-  "consent.scopeRead": "आपके {{resource}} देखें",
-  "consent.scopeWrite": "आपके {{resource}} देखें और बदलें",
   "consent.allow": "अनुमति दें",
   "consent.deny": "अस्वीकार करें",
   "consent.hint": "आप अधिकृत ऐप्स पृष्ठ से अधिकृत ऐप्स का प्रबंधन कर सकते हैं।",

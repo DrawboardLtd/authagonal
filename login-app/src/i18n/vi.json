@@ -122,8 +122,6 @@
   "consent.scopePhone": "Xem số điện thoại của bạn",
   "consent.selectHint": "Chọn những gì ứng dụng này được phép làm. Bạn có thể thay đổi sau.",
   "consent.required": "Bắt buộc",
-  "consent.scopeRead": "Xem {{resource}} của bạn",
-  "consent.scopeWrite": "Xem và thay đổi {{resource}} của bạn",
   "consent.allow": "Cho phép",
   "consent.deny": "Từ chối",
   "consent.hint": "Bạn có thể quản lý các ứng dụng đã được cấp quyền trên trang “Ứng dụng đã cấp quyền”.",

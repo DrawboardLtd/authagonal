@@ -21,6 +21,14 @@ const SCOPE_LABELS: Record<string, string> = {
  */
 const REQUIRED_SCOPES = new Set(['openid']);
 
+interface ConsentScopeInfo {
+  name: string;
+  displayName?: string | null;
+  description?: string | null;
+  emphasize?: boolean;
+  required?: boolean;
+}
+
 interface ConsentInfo {
   clientId: string;
   clientName: string;
@@ -28,6 +36,8 @@ interface ConsentInfo {
   clientUri?: string;
   logoUri?: string;
   scopes: string[];
+  /** Present from server 0.16.1 onward; absent against older hosts. */
+  scopeDetails?: ConsentScopeInfo[];
 }
 
 export default function ConsentPage() {
@@ -43,10 +53,13 @@ export default function ConsentPage() {
   const [error, setError] = useState('');
   const [granted, setGranted] = useState<Set<string>>(new Set());
 
-  const offered = useMemo(
-    () => info?.scopes ?? scope.split(' ').filter(Boolean),
-    [info, scope],
-  );
+  // Prefer what the server says about each scope. Falling back to bare names covers an older host and
+  // the case where /consent/info failed outright.
+  const offered = useMemo<ConsentScopeInfo[]>(() => {
+    if (info?.scopeDetails?.length) return info.scopeDetails;
+    const names = info?.scopes ?? scope.split(' ').filter(Boolean);
+    return names.map((name) => ({ name }));
+  }, [info, scope]);
 
   useEffect(() => {
     fetch(`/consent/info?client_id=${encodeURIComponent(clientId)}&scope=${encodeURIComponent(scope)}`)
@@ -60,34 +73,33 @@ export default function ConsentPage() {
 
   // Everything starts ticked: this screen is an opportunity to grant LESS than the app asked for, not
   // a form the user has to fill in before they can continue.
-  useEffect(() => setGranted(new Set(offered)), [offered]);
+  useEffect(() => setGranted(new Set(offered.map((s) => s.name))), [offered]);
 
   /**
-   * A readable label for scopes with no translation of their own, e.g.
-   * `projects-api.tracked-records.write` → "View and change tracked records". Anything not shaped
-   * `<api>.<resource>.<read|write>` is shown verbatim: a raw scope string is unhelpful, but a guessed
-   * label on a permission prompt would be worse.
+   * What to call a scope. The registered display name wins — it is the only wording anyone actually
+   * chose. Standard OIDC scopes fall back to our own translations, because a product should not have
+   * to register `openid` and `email` to get sensible text for them. Failing both, the raw name is
+   * shown: unhelpful, but honest, and far better than a guess on a permission prompt.
    */
-  function describeScope(s: string): string {
-    const labelKey = SCOPE_LABELS[s];
-    if (labelKey) return t(labelKey);
-
-    const parts = s.split('.');
-    const action = parts[parts.length - 1];
-    if (parts.length < 3 || (action !== 'read' && action !== 'write')) return s;
-
-    const resource = parts.slice(1, -1).join(' ').replace(/-/g, ' ');
-    return t(action === 'write' ? 'consent.scopeWrite' : 'consent.scopeRead', { resource });
+  function describeScope(s: ConsentScopeInfo): string {
+    if (s.displayName) return s.displayName;
+    const labelKey = SCOPE_LABELS[s.name];
+    return labelKey ? t(labelKey) : s.name;
   }
 
-  function toggle(s: string) {
-    if (REQUIRED_SCOPES.has(s)) return;
+  /** A scope is locked if the protocol needs it, or if it was registered as not declinable. */
+  function isRequired(s: ConsentScopeInfo): boolean {
+    return REQUIRED_SCOPES.has(s.name) || s.required === true;
+  }
+
+  function toggle(s: ConsentScopeInfo) {
+    if (isRequired(s)) return;
     setGranted((current) => {
       const next = new Set(current);
-      if (next.has(s)) {
-        next.delete(s);
+      if (next.has(s.name)) {
+        next.delete(s.name);
       } else {
-        next.add(s);
+        next.add(s.name);
       }
       return next;
     });
@@ -164,26 +176,39 @@ export default function ConsentPage() {
 
       <div className="space-y-2 mb-6">
         {offered.map((s) => {
-          const required = REQUIRED_SCOPES.has(s);
+          const required = isRequired(s);
           return (
             <label
-              key={s}
-              className={`flex items-center gap-3 p-3 bg-gray-50 dark:bg-gray-800/60 rounded-lg ${
+              key={s.name}
+              className={`flex items-start gap-3 p-3 bg-gray-50 dark:bg-gray-800/60 rounded-lg ${
                 required ? 'cursor-default' : 'cursor-pointer'
               }`}
             >
               <input
                 type="checkbox"
-                checked={granted.has(s)}
+                checked={granted.has(s.name)}
                 disabled={required || submitting}
                 onChange={() => toggle(s)}
-                className="h-4 w-4 shrink-0 accent-primary"
+                className="h-4 w-4 shrink-0 mt-0.5 accent-primary"
               />
-              <span className="text-sm text-gray-700 dark:text-gray-300 flex-1">
-                {describeScope(s)}
+              <span className="flex-1 min-w-0">
+                <span
+                  className={`block text-sm ${
+                    s.emphasize
+                      ? 'font-medium text-gray-900 dark:text-gray-100'
+                      : 'text-gray-700 dark:text-gray-300'
+                  }`}
+                >
+                  {describeScope(s)}
+                </span>
+                {s.description && (
+                  <span className="block text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+                    {s.description}
+                  </span>
+                )}
               </span>
               {required && (
-                <span className="text-xs text-gray-500 dark:text-gray-400 shrink-0">
+                <span className="text-xs text-gray-500 dark:text-gray-400 shrink-0 mt-0.5">
                   {t('consent.required')}
                 </span>
               )}

@@ -253,7 +253,39 @@ public sealed class ConsentInfoResponse
     [JsonPropertyName("description")] public string? Description { get; set; }
     [JsonPropertyName("clientUri")] public string? ClientUri { get; set; }
     [JsonPropertyName("logoUri")] public string? LogoUri { get; set; }
+
+    /// <summary>The requested scope names, in the order the client asked for them.</summary>
     [JsonPropertyName("scopes")] public string[] Scopes { get; set; } = [];
+
+    /// <summary>
+    /// The same scopes with their registered presentation: display name, description, and whether the
+    /// user may decline them.
+    /// </summary>
+    /// <remarks>
+    /// Parallel to <see cref="Scopes"/> rather than replacing it, so a login app built against an
+    /// earlier version keeps working. Without this the consent screen only ever saw raw scope names and
+    /// had to invent wording — which produced "View your search" for
+    /// <c>projects-api.search.read</c> while the registry held "Search drawings and documents" all
+    /// along. Scope wording belongs to whoever registered the scope; the login app renders it.
+    /// </remarks>
+    [JsonPropertyName("scopeDetails")] public ConsentScopeInfo[] ScopeDetails { get; set; } = [];
+}
+
+/// <summary>How one requested scope should be presented on the consent screen.</summary>
+public sealed class ConsentScopeInfo
+{
+    [JsonPropertyName("name")] public string Name { get; set; } = "";
+
+    /// <summary>The registered display name, or null when the scope is not registered.</summary>
+    [JsonPropertyName("displayName")] public string? DisplayName { get; set; }
+
+    [JsonPropertyName("description")] public string? Description { get; set; }
+
+    /// <summary>Registered as consequential, so the screen may draw attention to it.</summary>
+    [JsonPropertyName("emphasize")] public bool Emphasize { get; set; }
+
+    /// <summary>Registered as not declinable: the screen shows it ticked and locked.</summary>
+    [JsonPropertyName("required")] public bool Required { get; set; }
 }
 
 // --- BackChannel Logout ---

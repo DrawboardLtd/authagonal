@@ -122,8 +122,6 @@
   "consent.scopePhone": "Ver o seu número de telefone",
   "consent.selectHint": "Escolha o que esta aplicação pode fazer. Pode alterar isto mais tarde.",
   "consent.required": "Obrigatório",
-  "consent.scopeRead": "Ver os seus {{resource}}",
-  "consent.scopeWrite": "Ver e alterar os seus {{resource}}",
   "consent.allow": "Permitir",
   "consent.deny": "Recusar",
   "consent.hint": "Pode gerir as aplicações autorizadas na página «Aplicações autorizadas».",

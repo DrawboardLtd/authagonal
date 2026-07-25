@@ -43,6 +43,12 @@ internal sealed class ProtocolSeedService(
             {
                 Name = descriptor.Name,
                 DisplayName = descriptor.DisplayName ?? descriptor.Name,
+                // Carried through to the store, and from there to the consent screen. These were
+                // silently dropped: Scope has held Description/Emphasize/Required all along, but seeding
+                // never populated them, so no amount of configuration could reach the consent UI.
+                Description = descriptor.Description,
+                Emphasize = descriptor.Emphasize,
+                Required = descriptor.Required,
                 ShowInDiscoveryDocument = descriptor.ShowInDiscoveryDocument,
                 UserClaims = descriptor.UserClaims,
             };

@@ -12,6 +12,7 @@ public static class ConsentEndpoint
         app.MapGet("/consent/info", async (
             HttpContext httpContext,
             IClientStore clientStore,
+            IScopeStore scopeStore,
             string client_id,
             string? scope,
             CancellationToken ct) =>
@@ -22,6 +23,23 @@ public static class ConsentEndpoint
 
             var requestedScopes = (scope ?? "openid").Split(' ', StringSplitOptions.RemoveEmptyEntries);
 
+            // Resolved from the registry so the screen shows the wording whoever registered the scope
+            // chose. An unregistered scope yields nulls and the login app falls back — better than this
+            // endpoint inventing a label, which it has no basis to do.
+            var details = new List<ConsentScopeInfo>(requestedScopes.Length);
+            foreach (var name in requestedScopes)
+            {
+                var registered = await scopeStore.GetAsync(name, ct);
+                details.Add(new ConsentScopeInfo
+                {
+                    Name = name,
+                    DisplayName = registered?.DisplayName,
+                    Description = registered?.Description,
+                    Emphasize = registered?.Emphasize ?? false,
+                    Required = registered?.Required ?? false,
+                });
+            }
+
             return (IResult)TypedResults.Json(new ConsentInfoResponse
             {
                 ClientId = client.ClientId,
@@ -30,6 +48,7 @@ public static class ConsentEndpoint
                 ClientUri = client.ClientUri,
                 LogoUri = client.LogoUri,
                 Scopes = requestedScopes,
+                ScopeDetails = details.ToArray(),
             }, AuthagonalJsonContext.Default.ConsentInfoResponse);
         });
 

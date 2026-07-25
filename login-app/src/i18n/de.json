@@ -122,8 +122,6 @@
   "consent.scopePhone": "Ihre Telefonnummer sehen",
   "consent.selectHint": "Wählen Sie, was diese App tun darf. Sie können dies später ändern.",
   "consent.required": "Erforderlich",
-  "consent.scopeRead": "Ihre {{resource}} ansehen",
-  "consent.scopeWrite": "Ihre {{resource}} ansehen und ändern",
   "consent.allow": "Erlauben",
   "consent.deny": "Ablehnen",
   "consent.hint": "Autorisierte Apps können Sie auf der Seite „Autorisierte Apps“ verwalten.",

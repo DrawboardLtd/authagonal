@@ -100,6 +100,26 @@ public sealed class OidcScopeDescriptor
 {
     public required string Name { get; set; }
     public string? DisplayName { get; set; }
+
+    /// <summary>
+    /// A sentence explaining what granting this scope lets the application do, shown under the display
+    /// name on the consent screen.
+    /// </summary>
+    public string? Description { get; set; }
+
+    /// <summary>
+    /// Marks the scope as consequential, so the consent screen can draw attention to it. Use it for the
+    /// scopes that let an application change or remove things, which otherwise sit indistinguishably in
+    /// a list of read permissions.
+    /// </summary>
+    public bool Emphasize { get; set; }
+
+    /// <summary>
+    /// The user may not decline this scope: consent shows it ticked and locked. Reserve it for scopes
+    /// the application genuinely cannot work without — a required scope is a choice taken away.
+    /// </summary>
+    public bool Required { get; set; }
+
     public bool ShowInDiscoveryDocument { get; set; } = true;
 
     /// <summary>

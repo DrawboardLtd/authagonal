@@ -122,8 +122,6 @@
   "consent.scopePhone": "Sien jou telefoonnommer",
   "consent.selectHint": "Kies wat hierdie program mag doen. Jy kan dit later verander.",
   "consent.required": "Vereis",
-  "consent.scopeRead": "Sien jou {{resource}}",
-  "consent.scopeWrite": "Sien en verander jou {{resource}}",
   "consent.allow": "Laat toe",
   "consent.deny": "Weier",
   "consent.hint": "Jy kan gemagtigde toepassings vanaf die Gemagtigde Toepassings-bladsy bestuur.",

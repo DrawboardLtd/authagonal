@@ -122,8 +122,6 @@
   "consent.scopePhone": "查看您的电话号码",
   "consent.selectHint": "选择此应用可以执行的操作。你可以稍后更改。",
   "consent.required": "必需",
-  "consent.scopeRead": "查看你的{{resource}}",
-  "consent.scopeWrite": "查看并更改你的{{resource}}",
   "consent.allow": "允许",
   "consent.deny": "拒绝",
   "consent.hint": "您可以在“已授权应用”页面管理已授权的应用。",
