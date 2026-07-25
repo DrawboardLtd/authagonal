@@ -225,41 +225,68 @@ public static class AuthorizeEndpoint
             if (client.RequireConsent)
             {
                 var consentKey = $"consent:{subjectId}:{clientId}";
-                var existingConsent = await grantStore.GetAsync(consentKey, ct);
-                if (existingConsent is null)
+
+                // Built identically at every exit below, so it is written once.
+                IResult RedirectToConsent()
                 {
-                    // No consent yet — redirect to consent page
                     var consentAppUrl = configuration["LoginAppUrl"] ?? "/login";
                     var authorizeUrl = $"{httpContext.Request.Path}{httpContext.Request.QueryString}";
-                    var consentUrl = $"{consentAppUrl.TrimEnd('/')}/consent?returnUrl={Uri.EscapeDataString(authorizeUrl)}&client_id={Uri.EscapeDataString(clientId)}&scope={Uri.EscapeDataString(string.Join(" ", requestedScopes))}";
-                    return Results.Redirect(consentUrl);
+                    return Results.Redirect(
+                        $"{consentAppUrl.TrimEnd('/')}/consent?returnUrl={Uri.EscapeDataString(authorizeUrl)}&client_id={Uri.EscapeDataString(clientId)}&scope={Uri.EscapeDataString(string.Join(" ", requestedScopes))}");
                 }
 
-                // Consent exists — verify scopes still match
+                var existingConsent = await grantStore.GetAsync(consentKey, ct);
+                if (existingConsent is null)
+                    return RedirectToConsent();
+
+                ConsentData? consentData;
                 try
                 {
-                    var consentData = System.Text.Json.JsonSerializer.Deserialize(existingConsent.Data, AuthagonalJsonContext.Default.ConsentData);
-                    var consentedScopes = new HashSet<string>(consentData?.Scopes ?? []);
-                    if (!requestedScopes.All(s => consentedScopes.Contains(s)))
-                    {
-                        // New scopes requested — re-consent
-                        await grantStore.RemoveAsync(consentKey, ct);
-                        var consentAppUrl = configuration["LoginAppUrl"] ?? "/login";
-                        var authorizeUrl = $"{httpContext.Request.Path}{httpContext.Request.QueryString}";
-                        var consentUrl = $"{consentAppUrl.TrimEnd('/')}/consent?returnUrl={Uri.EscapeDataString(authorizeUrl)}&client_id={Uri.EscapeDataString(clientId)}&scope={Uri.EscapeDataString(string.Join(" ", requestedScopes))}";
-                        return Results.Redirect(consentUrl);
-                    }
+                    consentData = System.Text.Json.JsonSerializer.Deserialize(existingConsent.Data, AuthagonalJsonContext.Default.ConsentData);
                 }
                 catch (Exception ex)
                 {
                     // Consent data malformed — treat as not consented (require re-consent)
                     logger.LogWarning(ex, "Malformed consent data for key {ConsentKey}, requiring re-consent", consentKey);
                     await grantStore.RemoveAsync(consentKey, ct);
-                    var consentAppUrl2 = configuration["LoginAppUrl"] ?? "/login";
-                    var authorizeUrl2 = $"{httpContext.Request.Path}{httpContext.Request.QueryString}";
-                    var consentUrl2 = $"{consentAppUrl2.TrimEnd('/')}/consent?returnUrl={Uri.EscapeDataString(authorizeUrl2)}&client_id={Uri.EscapeDataString(clientId)}&scope={Uri.EscapeDataString(string.Join(" ", requestedScopes))}";
-                    return Results.Redirect(consentUrl2);
+                    return RedirectToConsent();
                 }
+
+                var consentedScopes = new HashSet<string>(consentData?.Scopes ?? [], StringComparer.Ordinal);
+
+                // What the user was SHOWN, which is not what they necessarily granted — the consent
+                // screen lets them deselect. Keeping the two apart is what stops a client that keeps
+                // asking for a scope the user declined from re-prompting on every single authorize.
+                // Grants written before OfferedScopes existed carry none, so fall back to the granted
+                // set — which reproduces the previous "re-prompt on anything not granted" behaviour.
+                var offeredScopes = consentData?.OfferedScopes is { Count: > 0 } offered
+                    ? new HashSet<string>(offered, StringComparer.Ordinal)
+                    : consentedScopes;
+
+                if (!requestedScopes.All(offeredScopes.Contains))
+                {
+                    // A scope the user has never been asked about. Ask.
+                    await grantStore.RemoveAsync(consentKey, ct);
+                    return RedirectToConsent();
+                }
+
+                // Everything requested has already been put to this user, so honour the answer they
+                // gave: narrow the grant to what they approved instead of prompting again. Re-prompting
+                // here would loop forever against a client that always requests its full scope set.
+                // RFC 6749 §3.3 — the token response echoes the granted `scope`, so the client is told
+                // it got less than it asked for.
+                var grantedScopes = requestedScopes.Where(consentedScopes.Contains).ToArray();
+                if (grantedScopes.Length == 0)
+                {
+                    return AuthorizeRequestSupport.BuildErrorRedirect(redirectUri, "access_denied",
+                        "The user approved none of the requested scopes", state);
+                }
+
+                // Both of these are read downstream — requestedScopes by the subject resolver, and
+                // request.RequestedScopes when the authorization code is minted. Narrowing one without
+                // the other would issue a token wider than the resolver was asked about.
+                request.RequestedScopes = grantedScopes;
+                requestedScopes = grantedScopes;
             }
 
             // Provision user into required downstream apps (TCC)
@@ -324,7 +351,16 @@ public static class AuthorizeEndpoint
 
     internal sealed class ConsentData
     {
+        /// <summary>The scopes the user approved. This is the grant.</summary>
         public List<string> Scopes { get; set; } = [];
+
+        /// <summary>
+        /// The scopes the user was shown when they decided — a superset of <see cref="Scopes"/> whenever
+        /// they deselected something. Recorded so a client that keeps requesting a declined scope
+        /// prompts once rather than on every authorize. Null on grants written before per-scope consent.
+        /// </summary>
+        public List<string>? OfferedScopes { get; set; }
+
         public DateTimeOffset ConsentedAt { get; set; }
     }
 }

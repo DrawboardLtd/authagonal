@@ -82,9 +82,21 @@ public static class ConsentEndpoint
             var grantedScopes = (request.Scopes ?? [])
                 .Where(s => client.AllowedScopes.Contains(s, StringComparer.OrdinalIgnoreCase))
                 .ToList();
+
+            // What the user was OFFERED, read out of the authorize URL we are about to return to
+            // rather than taken from the request body. The body's job is to say what was approved; a
+            // wider offered set suppresses future prompts, so it is not the caller's to assert.
+            // Unioned with the granted set so a PAR authorize URL — which carries no `scope` — still
+            // records at least what was approved.
+            var offeredScopes = OfferedScopesFromReturnUrl(request.ReturnUrl)
+                .Where(s => client.AllowedScopes.Contains(s, StringComparer.OrdinalIgnoreCase))
+                .Union(grantedScopes, StringComparer.Ordinal)
+                .ToList();
+
             var consentData = new AuthorizeEndpoint.ConsentData
             {
                 Scopes = grantedScopes,
+                OfferedScopes = offeredScopes,
                 ConsentedAt = DateTimeOffset.UtcNow,
             };
 
@@ -153,6 +165,24 @@ public static class ConsentEndpoint
         });
 
         return app;
+    }
+
+    /// <summary>
+    /// Reads the <c>scope</c> parameter out of the authorize URL the consent screen returns to, which
+    /// is the set the screen displayed.
+    /// </summary>
+    private static IEnumerable<string> OfferedScopesFromReturnUrl(string? returnUrl)
+    {
+        if (string.IsNullOrEmpty(returnUrl))
+            return [];
+
+        // returnUrl is a path+query, so it needs a base to parse against. The host is discarded —
+        // only the query is read.
+        if (!Uri.TryCreate(new Uri("https://placeholder"), returnUrl, out var uri))
+            return [];
+
+        return (System.Web.HttpUtility.ParseQueryString(uri.Query)["scope"] ?? "")
+            .Split(' ', StringSplitOptions.RemoveEmptyEntries);
     }
 
     internal sealed class ConsentRequest

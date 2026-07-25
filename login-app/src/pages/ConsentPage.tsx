@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useSearchParams } from 'react-router-dom';
 import { CardTitle, CardFooter } from '../components/ui/card';
@@ -13,6 +13,13 @@ const SCOPE_LABELS: Record<string, string> = {
   address: 'consent.scopeAddress',
   phone: 'consent.scopePhone',
 };
+
+/**
+ * Scopes the user is not offered a choice about. `openid` is what makes this an OpenID Connect
+ * request at all — without it no id_token is issued and the client has nothing to sign the user in
+ * with, so presenting it as optional would only produce a grant that cannot work.
+ */
+const REQUIRED_SCOPES = new Set(['openid']);
 
 interface ConsentInfo {
   clientId: string;
@@ -34,6 +41,12 @@ export default function ConsentPage() {
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
+  const [granted, setGranted] = useState<Set<string>>(new Set());
+
+  const offered = useMemo(
+    () => info?.scopes ?? scope.split(' ').filter(Boolean),
+    [info, scope],
+  );
 
   useEffect(() => {
     fetch(`/consent/info?client_id=${encodeURIComponent(clientId)}&scope=${encodeURIComponent(scope)}`)
@@ -45,6 +58,41 @@ export default function ConsentPage() {
       .finally(() => setLoading(false));
   }, [clientId, scope, t]);
 
+  // Everything starts ticked: this screen is an opportunity to grant LESS than the app asked for, not
+  // a form the user has to fill in before they can continue.
+  useEffect(() => setGranted(new Set(offered)), [offered]);
+
+  /**
+   * A readable label for scopes with no translation of their own, e.g.
+   * `projects-api.tracked-records.write` → "View and change tracked records". Anything not shaped
+   * `<api>.<resource>.<read|write>` is shown verbatim: a raw scope string is unhelpful, but a guessed
+   * label on a permission prompt would be worse.
+   */
+  function describeScope(s: string): string {
+    const labelKey = SCOPE_LABELS[s];
+    if (labelKey) return t(labelKey);
+
+    const parts = s.split('.');
+    const action = parts[parts.length - 1];
+    if (parts.length < 3 || (action !== 'read' && action !== 'write')) return s;
+
+    const resource = parts.slice(1, -1).join(' ').replace(/-/g, ' ');
+    return t(action === 'write' ? 'consent.scopeWrite' : 'consent.scopeRead', { resource });
+  }
+
+  function toggle(s: string) {
+    if (REQUIRED_SCOPES.has(s)) return;
+    setGranted((current) => {
+      const next = new Set(current);
+      if (next.has(s)) {
+        next.delete(s);
+      } else {
+        next.add(s);
+      }
+      return next;
+    });
+  }
+
   async function handleDecision(decision: 'allow' | 'deny') {
     setSubmitting(true);
     setError('');
@@ -55,7 +103,9 @@ export default function ConsentPage() {
         body: JSON.stringify({
           clientId,
           decision,
-          scopes: info?.scopes ?? scope.split(' '),
+          // Only what the user left ticked. The server records this as the grant and the scopes it was
+          // chosen from separately, so a scope declined here is not re-prompted on every sign-in.
+          scopes: [...granted],
           returnUrl,
         }),
       });
@@ -110,16 +160,34 @@ export default function ConsentPage() {
 
       {error && <Alert variant="error">{error}</Alert>}
 
+      <p className="text-xs text-gray-500 dark:text-gray-400 mb-3">{t('consent.selectHint')}</p>
+
       <div className="space-y-2 mb-6">
-        {(info?.scopes ?? scope.split(' ')).map((s) => {
-          const labelKey = SCOPE_LABELS[s];
+        {offered.map((s) => {
+          const required = REQUIRED_SCOPES.has(s);
           return (
-            <div key={s} className="flex items-center gap-3 p-3 bg-gray-50 dark:bg-gray-800/60 rounded-lg">
-              <div className="w-2 h-2 bg-primary rounded-full shrink-0" />
-              <span className="text-sm text-gray-700 dark:text-gray-300">
-                {labelKey ? t(labelKey) : s}
+            <label
+              key={s}
+              className={`flex items-center gap-3 p-3 bg-gray-50 dark:bg-gray-800/60 rounded-lg ${
+                required ? 'cursor-default' : 'cursor-pointer'
+              }`}
+            >
+              <input
+                type="checkbox"
+                checked={granted.has(s)}
+                disabled={required || submitting}
+                onChange={() => toggle(s)}
+                className="h-4 w-4 shrink-0 accent-primary"
+              />
+              <span className="text-sm text-gray-700 dark:text-gray-300 flex-1">
+                {describeScope(s)}
               </span>
-            </div>
+              {required && (
+                <span className="text-xs text-gray-500 dark:text-gray-400 shrink-0">
+                  {t('consent.required')}
+                </span>
+              )}
+            </label>
           );
         })}
       </div>
