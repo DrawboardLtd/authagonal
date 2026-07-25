@@ -39,6 +39,8 @@ public sealed class ScopeSeedService(
             scope.Description = seed.Description ?? scope.Description;
             scope.UserClaims = seed.UserClaims ?? scope.UserClaims;
             scope.ShowInDiscoveryDocument = seed.ShowInDiscoveryDocument ?? scope.ShowInDiscoveryDocument;
+            scope.Emphasize = seed.Emphasize ?? scope.Emphasize;
+            scope.Required = seed.Required ?? scope.Required;
 
             if (existing is null)
                 await scopeStore.CreateAsync(scope, ct);
@@ -61,5 +63,11 @@ public sealed class ScopeSeedService(
         /// <summary>User claim types this scope releases onto tokens (e.g. org_role, workspace_id).</summary>
         public List<string>? UserClaims { get; set; }
         public bool? ShowInDiscoveryDocument { get; set; }
+
+        /// <summary>Draws attention to the scope on the consent screen — use it for the ones that write.</summary>
+        public bool? Emphasize { get; set; }
+
+        /// <summary>The user may not decline the scope; consent shows it ticked and locked.</summary>
+        public bool? Required { get; set; }
     }
 }
