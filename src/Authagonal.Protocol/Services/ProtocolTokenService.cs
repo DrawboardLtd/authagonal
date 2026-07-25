@@ -601,7 +601,8 @@ public sealed class ProtocolTokenService(
             {
                 if (!Uri.TryCreate(r, UriKind.Absolute, out var u) || !string.IsNullOrEmpty(u.Fragment))
                     throw new InvalidOperationException($"Resource '{r}' is not a valid absolute URI");
-                if (!client.Audiences.Contains(r, StringComparer.Ordinal))
+                // Empty Audiences means unset, not deny-all — see AuthorizeRequestSupport.
+                if (client.Audiences.Count > 0 && !client.Audiences.Contains(r, StringComparer.Ordinal))
                     throw new InvalidOperationException($"Resource '{r}' is not registered for this client");
             }
         }
@@ -757,13 +758,13 @@ public sealed class ProtocolTokenService(
         {
             if (!Uri.TryCreate(r, UriKind.Absolute, out var u) || !string.IsNullOrEmpty(u.Fragment))
                 throw new InvalidOperationException($"Resource '{r}' is not a valid absolute URI");
-            if (!client.Audiences.Contains(r, StringComparer.Ordinal))
+            if (client.Audiences.Count > 0 && !client.Audiences.Contains(r, StringComparer.Ordinal))
                 throw new InvalidOperationException($"Resource '{r}' is not registered for this client");
             targetAudiences.Add(r);
         }
         foreach (var a in audiences?.Where(a => !string.IsNullOrWhiteSpace(a)) ?? [])
         {
-            if (!client.Audiences.Contains(a, StringComparer.Ordinal))
+            if (client.Audiences.Count > 0 && !client.Audiences.Contains(a, StringComparer.Ordinal))
                 throw new InvalidOperationException($"Resource '{a}' is not registered for this client");
             targetAudiences.Add(a);
         }

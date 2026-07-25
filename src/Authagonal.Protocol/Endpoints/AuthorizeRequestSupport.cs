@@ -88,14 +88,23 @@ internal static class AuthorizeRequestSupport
         if (invalidScopes.Length > 0)
             return BuildErrorRedirect(redirectUri, "invalid_scope", $"Scopes not allowed: {string.Join(", ", invalidScopes)}", state);
 
-        // RFC 8707: validate resource indicators against the client's registered audiences.
-        // Each resource must be an absolute URI without a fragment, and must be in client.Audiences.
+        // RFC 8707: each resource must be an absolute URI without a fragment, and — when the client
+        // declares an audience allowlist — must appear in it.
+        //
+        // An EMPTY Audiences list means "unset", not "deny everything". A dynamically registered
+        // client cannot declare audiences (RFC 7591 has no field for them), so treating empty as
+        // deny-all made `resource` unusable for every DCR client — which is every MCP client, since
+        // the MCP authorization spec requires them to name the MCP server as the resource. The
+        // restriction still applies wherever an operator has deliberately configured one.
+        //
+        // Naming a resource is not access to it: the value only narrows `aud`, and the resource
+        // server still validates that `aud` addresses itself before honouring the token.
         foreach (var resource in request.Resources)
         {
             if (!Uri.TryCreate(resource, UriKind.Absolute, out var resourceUri) || !string.IsNullOrEmpty(resourceUri.Fragment))
                 return BuildErrorRedirect(redirectUri, "invalid_target", $"resource '{resource}' is not a valid absolute URI", state);
 
-            if (!client.Audiences.Contains(resource, StringComparer.Ordinal))
+            if (client.Audiences.Count > 0 && !client.Audiences.Contains(resource, StringComparer.Ordinal))
                 return BuildErrorRedirect(redirectUri, "invalid_target", $"resource '{resource}' is not registered for this client", state);
         }
 

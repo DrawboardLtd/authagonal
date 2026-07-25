@@ -83,6 +83,52 @@ public sealed class AuthorizeEndpointTests : IAsyncLifetime
         Assert.Contains("code=", location);
     }
 
+    /// <summary>
+    /// A client that declares NO audiences may name any resource: an empty allowlist means unset, not
+    /// deny-everything.
+    /// </summary>
+    /// <remarks>
+    /// This is what makes RFC 8707 usable by dynamically registered clients, which cannot declare
+    /// audiences because RFC 7591 has no field for them — and therefore by every MCP client, since the
+    /// MCP authorization spec requires them to name the MCP server as the resource. Naming a resource
+    /// is not access to it: the value only narrows `aud`, and the resource server still checks that
+    /// `aud` addresses itself.
+    ///
+    /// The paired restriction is <see cref="Authorize_ResourceNotRegistered_RedirectsWithInvalidTarget"/>,
+    /// which uses the default client (it DOES declare audiences) and must keep rejecting.
+    /// </remarks>
+    [Fact]
+    public async Task Authorize_ClientWithNoDeclaredAudiences_MayRequestAnyResource()
+    {
+        const string clientId = "no-audiences-client";
+        await _factory.ClientStore.UpsertAsync(new Authagonal.Core.Models.OAuthClient
+        {
+            ClientId = clientId,
+            ClientName = "No Audiences",
+            RequireClientSecret = false,
+            RequirePkce = true,
+            AllowedGrantTypes = ["authorization_code"],
+            RedirectUris = ["https://app.test/callback"],
+            AllowedScopes = ["openid", "profile", "email"],
+            AccessTokenLifetimeSeconds = 3600,
+            // Audiences deliberately left empty — the condition under test.
+        });
+
+        var pkce = GeneratePkce();
+        var url = $"/connect/authorize?client_id={clientId}" +
+                  $"&redirect_uri={Uri.EscapeDataString("https://app.test/callback")}" +
+                  "&response_type=code&scope=openid&state=s" +
+                  $"&code_challenge={pkce.Challenge}&code_challenge_method=S256" +
+                  $"&resource={Uri.EscapeDataString("https://mcp.test/server")}";
+
+        var response = await _client.GetAsync(url);
+
+        Assert.Equal(HttpStatusCode.Redirect, response.StatusCode);
+        var location = response.Headers.Location!.ToString();
+        Assert.DoesNotContain("invalid_target", location);
+        Assert.Contains("code=", location);
+    }
+
     [Fact]
     public async Task Authorize_MultipleValidResources_RedirectsWithCode()
     {
