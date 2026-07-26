@@ -285,25 +285,45 @@ export default function ConsentPage() {
                   onChange={() => toggleGroup(items)}
                   className="h-4 w-4 shrink-0 mt-0.5 accent-primary"
                 />
+                {/* The count and the chevron sit INSIDE the button, so the whole row right of the
+                    checkbox is the target. A header that expands on click but only looks clickable over
+                    its title is a worse affordance than no affordance at all. cursor-pointer is explicit
+                    because Tailwind's preflight gives buttons cursor: default. */}
                 <button
                   type="button"
                   onClick={() => toggleGroupOpen(group)}
                   aria-expanded={open}
-                  className="flex-1 min-w-0 text-left"
+                  className="flex-1 min-w-0 flex items-start gap-2 text-left cursor-pointer group/hdr"
                 >
-                  <span className="block text-sm font-medium text-gray-900 dark:text-gray-100">
-                    {group}
+                  <span className="flex-1 min-w-0">
+                    <span className="block text-sm font-medium text-gray-900 dark:text-gray-100">
+                      {group}
+                    </span>
+                    {/* Named even while collapsed. Hiding what is inside behind a chevron would make the
+                        screen shorter by making the decision less informed, which is the wrong trade on a
+                        consent screen. */}
+                    <span className="block text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+                      {items.map(describeScope).join(' · ')}
+                    </span>
                   </span>
-                  {/* Named even while collapsed. Hiding what is inside behind a chevron would make the
-                      screen shorter by making the decision less informed, which is the wrong trade on a
-                      consent screen. */}
-                  <span className="block text-xs text-gray-500 dark:text-gray-400 mt-0.5">
-                    {items.map(describeScope).join(' · ')}
+                  <span className="text-xs text-gray-500 dark:text-gray-400 shrink-0 mt-0.5 tabular-nums">
+                    {on}/{items.length}
                   </span>
+                  <svg
+                    className={`h-4 w-4 shrink-0 mt-0.5 text-gray-400 transition-transform group-hover/hdr:text-gray-600 dark:group-hover/hdr:text-gray-300 ${
+                      open ? 'rotate-180' : ''
+                    }`}
+                    viewBox="0 0 20 20"
+                    fill="currentColor"
+                    aria-hidden="true"
+                  >
+                    <path
+                      fillRule="evenodd"
+                      d="M5.23 7.21a.75.75 0 0 1 1.06.02L10 11.17l3.71-3.94a.75.75 0 1 1 1.08 1.04l-4.25 4.5a.75.75 0 0 1-1.08 0l-4.25-4.5a.75.75 0 0 1 .02-1.06Z"
+                      clipRule="evenodd"
+                    />
+                  </svg>
                 </button>
-                <span className="text-xs text-gray-500 dark:text-gray-400 shrink-0 mt-0.5 tabular-nums">
-                  {on}/{items.length}
-                </span>
               </div>
 
               {open && <div className="px-3 pb-3 pl-10 space-y-2">{items.map(renderScope)}</div>}
