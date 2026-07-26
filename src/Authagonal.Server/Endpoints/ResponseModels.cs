@@ -286,6 +286,9 @@ public sealed class ConsentScopeInfo
 
     /// <summary>Registered as not declinable: the screen shows it ticked and locked.</summary>
     [JsonPropertyName("required")] public bool Required { get; set; }
+
+    /// <summary>The heading to file this scope under, or null to show it on its own.</summary>
+    [JsonPropertyName("group")] public string? Group { get; set; }
 }
 
 // --- BackChannel Logout ---

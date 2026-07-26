@@ -40,6 +40,7 @@ public sealed class ScopeSeedService(
             scope.UserClaims = seed.UserClaims ?? scope.UserClaims;
             scope.ShowInDiscoveryDocument = seed.ShowInDiscoveryDocument ?? scope.ShowInDiscoveryDocument;
             scope.Emphasize = seed.Emphasize ?? scope.Emphasize;
+            scope.Group = seed.Group ?? scope.Group;
             scope.Required = seed.Required ?? scope.Required;
 
             if (existing is null)
@@ -66,6 +67,11 @@ public sealed class ScopeSeedService(
 
         /// <summary>Draws attention to the scope on the consent screen — use it for the ones that write.</summary>
         public bool? Emphasize { get; set; }
+
+        /// <summary>
+        /// A heading to file this scope under on the consent screen. Omitted leaves whatever is stored.
+        /// </summary>
+        public string? Group { get; set; }
 
         /// <summary>The user may not decline the scope; consent shows it ticked and locked.</summary>
         public bool? Required { get; set; }

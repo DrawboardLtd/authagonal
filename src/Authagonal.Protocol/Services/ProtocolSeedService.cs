@@ -48,6 +48,7 @@ internal sealed class ProtocolSeedService(
                 // never populated them, so no amount of configuration could reach the consent UI.
                 Description = descriptor.Description,
                 Emphasize = descriptor.Emphasize,
+                Group = descriptor.Group,
                 Required = descriptor.Required,
                 ShowInDiscoveryDocument = descriptor.ShowInDiscoveryDocument,
                 UserClaims = descriptor.UserClaims,

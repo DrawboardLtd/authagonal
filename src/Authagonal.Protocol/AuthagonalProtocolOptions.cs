@@ -115,6 +115,15 @@ public sealed class OidcScopeDescriptor
     public bool Emphasize { get; set; }
 
     /// <summary>
+    /// A heading to file this scope under on the consent screen. Scopes sharing a group are shown
+    /// together under it; a scope with no group stands on its own.
+    /// </summary>
+    /// <remarks>
+    /// Purely how the screen is arranged — grouping changes nothing about what is requested or granted.
+    /// </remarks>
+    public string? Group { get; set; }
+
+    /// <summary>
     /// The user may not decline this scope: consent shows it ticked and locked. Reserve it for scopes
     /// the application genuinely cannot work without — a required scope is a choice taken away.
     /// </summary>

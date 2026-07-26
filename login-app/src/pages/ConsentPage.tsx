@@ -27,6 +27,8 @@ interface ConsentScopeInfo {
   description?: string | null;
   emphasize?: boolean;
   required?: boolean;
+  /** Present from server 0.16.3 onward. Scopes sharing one are shown together under it. */
+  group?: string | null;
 }
 
 interface ConsentInfo {
@@ -52,6 +54,7 @@ export default function ConsentPage() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
   const [granted, setGranted] = useState<Set<string>>(new Set());
+  const [openGroups, setOpenGroups] = useState<Set<string>>(new Set());
 
   // Prefer what the server says about each scope. Falling back to bare names covers an older host and
   // the case where /consent/info failed outright.
@@ -90,6 +93,91 @@ export default function ConsentPage() {
   /** A scope is locked if the protocol needs it, or if it was registered as not declinable. */
   function isRequired(s: ConsentScopeInfo): boolean {
     return REQUIRED_SCOPES.has(s.name) || s.required === true;
+  }
+
+  /**
+   * The scopes that stand alone, and the ones filed under a heading.
+   *
+   * A client asking for fifteen scopes produces a list nobody reads to the end of. Grouping shortens it
+   * without hiding anything: the heading names what is inside even while collapsed, and the individual
+   * boxes are one click away for anyone who wants to grant part of a group.
+   *
+   * Groups keep the order the server sent them in, so the screen reads the way whoever registered the
+   * scopes intended rather than alphabetically.
+   */
+  const ungrouped = offered.filter((s) => !s.group);
+  const groups = offered.reduce<[string, ConsentScopeInfo[]][]>((acc, s) => {
+    if (!s.group) return acc;
+    const existing = acc.find(([name]) => name === s.group);
+    if (existing) existing[1].push(s);
+    else acc.push([s.group, [s]]);
+    return acc;
+  }, []);
+
+  function toggleGroupOpen(group: string) {
+    setOpenGroups((current) => {
+      const next = new Set(current);
+      if (next.has(group)) next.delete(group);
+      else next.add(group);
+      return next;
+    });
+  }
+
+  /** All on, or all off — whichever the group is not already entirely. Required scopes never move. */
+  function toggleGroup(items: ConsentScopeInfo[]) {
+    const optional = items.filter((i) => !isRequired(i));
+    if (optional.length === 0) return;
+
+    const turningOff = optional.every((i) => granted.has(i.name));
+    setGranted((current) => {
+      const next = new Set(current);
+      for (const i of optional) {
+        if (turningOff) next.delete(i.name);
+        else next.add(i.name);
+      }
+      return next;
+    });
+  }
+
+  function renderScope(s: ConsentScopeInfo) {
+    const required = isRequired(s);
+    return (
+      <label
+        key={s.name}
+        className={`flex items-start gap-3 p-3 bg-gray-50 dark:bg-gray-800/60 rounded-lg ${
+          required ? 'cursor-default' : 'cursor-pointer'
+        }`}
+      >
+        <input
+          type="checkbox"
+          checked={granted.has(s.name)}
+          disabled={required || submitting}
+          onChange={() => toggle(s)}
+          className="h-4 w-4 shrink-0 mt-0.5 accent-primary"
+        />
+        <span className="flex-1 min-w-0">
+          <span
+            className={`block text-sm ${
+              s.emphasize
+                ? 'font-medium text-gray-900 dark:text-gray-100'
+                : 'text-gray-700 dark:text-gray-300'
+            }`}
+          >
+            {describeScope(s)}
+          </span>
+          {s.description && (
+            <span className="block text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+              {s.description}
+            </span>
+          )}
+        </span>
+        {required && (
+          <span className="text-xs text-gray-500 dark:text-gray-400 shrink-0 mt-0.5">
+            {t('consent.required')}
+          </span>
+        )}
+      </label>
+    );
   }
 
   function toggle(s: ConsentScopeInfo) {
@@ -175,44 +263,51 @@ export default function ConsentPage() {
       <p className="text-xs text-gray-500 dark:text-gray-400 mb-3">{t('consent.selectHint')}</p>
 
       <div className="space-y-2 mb-6">
-        {offered.map((s) => {
-          const required = isRequired(s);
+        {ungrouped.map(renderScope)}
+
+        {groups.map(([group, items]) => {
+          const on = items.filter((i) => granted.has(i.name)).length;
+          const open = openGroups.has(group);
+          const lockedGroup = items.every(isRequired);
+
           return (
-            <label
-              key={s.name}
-              className={`flex items-start gap-3 p-3 bg-gray-50 dark:bg-gray-800/60 rounded-lg ${
-                required ? 'cursor-default' : 'cursor-pointer'
-              }`}
-            >
-              <input
-                type="checkbox"
-                checked={granted.has(s.name)}
-                disabled={required || submitting}
-                onChange={() => toggle(s)}
-                className="h-4 w-4 shrink-0 mt-0.5 accent-primary"
-              />
-              <span className="flex-1 min-w-0">
-                <span
-                  className={`block text-sm ${
-                    s.emphasize
-                      ? 'font-medium text-gray-900 dark:text-gray-100'
-                      : 'text-gray-700 dark:text-gray-300'
-                  }`}
+            <div key={group} className="bg-gray-50 dark:bg-gray-800/60 rounded-lg">
+              <div className="flex items-start gap-3 p-3">
+                <input
+                  type="checkbox"
+                  checked={on > 0}
+                  ref={(el) => {
+                    // Some-but-not-all reads as neither ticked nor blank, which is the honest answer
+                    // when a group holds a mix and is the only state a single box can express.
+                    if (el) el.indeterminate = on > 0 && on < items.length;
+                  }}
+                  disabled={lockedGroup || submitting}
+                  onChange={() => toggleGroup(items)}
+                  className="h-4 w-4 shrink-0 mt-0.5 accent-primary"
+                />
+                <button
+                  type="button"
+                  onClick={() => toggleGroupOpen(group)}
+                  aria-expanded={open}
+                  className="flex-1 min-w-0 text-left"
                 >
-                  {describeScope(s)}
-                </span>
-                {s.description && (
-                  <span className="block text-xs text-gray-500 dark:text-gray-400 mt-0.5">
-                    {s.description}
+                  <span className="block text-sm font-medium text-gray-900 dark:text-gray-100">
+                    {group}
                   </span>
-                )}
-              </span>
-              {required && (
-                <span className="text-xs text-gray-500 dark:text-gray-400 shrink-0 mt-0.5">
-                  {t('consent.required')}
+                  {/* Named even while collapsed. Hiding what is inside behind a chevron would make the
+                      screen shorter by making the decision less informed, which is the wrong trade on a
+                      consent screen. */}
+                  <span className="block text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+                    {items.map(describeScope).join(' · ')}
+                  </span>
+                </button>
+                <span className="text-xs text-gray-500 dark:text-gray-400 shrink-0 mt-0.5 tabular-nums">
+                  {on}/{items.length}
                 </span>
-              )}
-            </label>
+              </div>
+
+              {open && <div className="px-3 pb-3 pl-10 space-y-2">{items.map(renderScope)}</div>}
+            </div>
           );
         })}
       </div>

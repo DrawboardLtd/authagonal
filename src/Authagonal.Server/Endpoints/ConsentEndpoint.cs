@@ -37,6 +37,7 @@ public static class ConsentEndpoint
                     Description = registered?.Description,
                     Emphasize = registered?.Emphasize ?? false,
                     Required = registered?.Required ?? false,
+                    Group = registered?.Group,
                 });
             }
 
