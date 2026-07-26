@@ -51,6 +51,7 @@ public static class ScopeEndpoints
             Description = request.Description,
             Emphasize = request.Emphasize ?? false,
             Required = request.Required ?? false,
+            Group = request.Group,
             ShowInDiscoveryDocument = request.ShowInDiscoveryDocument ?? true,
             UserClaims = request.UserClaims ?? [],
             CreatedAt = DateTimeOffset.UtcNow
@@ -73,6 +74,7 @@ public static class ScopeEndpoints
         if (request.Description is not null) scope.Description = request.Description;
         if (request.Emphasize.HasValue) scope.Emphasize = request.Emphasize.Value;
         if (request.Required.HasValue) scope.Required = request.Required.Value;
+        if (request.Group is not null) scope.Group = request.Group;
         if (request.ShowInDiscoveryDocument.HasValue) scope.ShowInDiscoveryDocument = request.ShowInDiscoveryDocument.Value;
         if (request.UserClaims is not null) scope.UserClaims = request.UserClaims;
         scope.UpdatedAt = DateTimeOffset.UtcNow;
@@ -97,6 +99,9 @@ public static class ScopeEndpoints
         public string? Description { get; set; }
         public bool? Emphasize { get; set; }
         public bool? Required { get; set; }
+
+        /// <summary>Consent-screen heading to file this scope under.</summary>
+        public string? Group { get; set; }
         public bool? ShowInDiscoveryDocument { get; set; }
         public List<string>? UserClaims { get; set; }
     }
@@ -107,6 +112,9 @@ public static class ScopeEndpoints
         public string? Description { get; set; }
         public bool? Emphasize { get; set; }
         public bool? Required { get; set; }
+
+        /// <summary>Consent-screen heading to file this scope under.</summary>
+        public string? Group { get; set; }
         public bool? ShowInDiscoveryDocument { get; set; }
         public List<string>? UserClaims { get; set; }
     }
