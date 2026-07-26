@@ -69,6 +69,13 @@ public static class AuthagonalProtocolExtensions
         // of this call (context-bound tokens: validate extra params, force binding claims).
         services.TryAddSingleton<ITokenExchangeSubjectTransformer, NullTokenExchangeSubjectTransformer>();
 
+        // Per-user scope entitlement (Scope.AllowedRoles). Registered here rather than only in
+        // AddAuthagonal so every host embedding the protocol surface gets it — the authorize
+        // endpoint takes it as a service, and an unregistered service on a GET binds as a BODY
+        // parameter instead, which fails as an opaque empty 400 rather than a missing-dependency
+        // error. Ungated scopes pass through untouched, so this changes nothing until a scope is gated.
+        services.TryAddSingleton<Core.Services.IScopeRoleGate, Core.Services.ScopeRoleGate>();
+
         // The agentic seams (IAgentProfileStore, IConnectorCatalog) are deliberately NOT
         // defaulted here: AddAuthagonal wires protocol services before storage, so a TryAdd
         // fallback would shadow the provider's real store. ProtocolTokenService takes them as

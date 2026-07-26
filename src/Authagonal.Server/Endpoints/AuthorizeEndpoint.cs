@@ -7,6 +7,7 @@ using Authagonal.Protocol.Services;
 using Authagonal.Server.Services;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
+using Microsoft.AspNetCore.Mvc;
 
 namespace Authagonal.Server.Endpoints;
 
@@ -24,6 +25,9 @@ public static class AuthorizeEndpoint
             IOidcProviderStore oidcProviderStore,
             ISsoDomainStore ssoDomainStore,
             UserStoreOidcSubjectResolver subjectResolver,
+            // Explicit: an unresolvable service on a GET binds as a body parameter instead, which
+            // surfaces as an opaque empty 400 rather than a missing-dependency error.
+            [FromServices] IScopeRoleGate scopeRoleGate,
             ProtocolAuthorizationCodeService authCodeService,
             ProtocolPushedAuthorizationService parService,
             ILogger<ProtocolAuthorizationCodeService> logger,
@@ -219,6 +223,30 @@ public static class AuthorizeEndpoint
                 var stepUpLoginUrl = configuration["LoginAppUrl"] ?? "/login";
                 var stepUpReturn = $"{httpContext.Request.Path}{httpContext.Request.QueryString}";
                 return Results.Redirect($"{stepUpLoginUrl}?returnUrl={Uri.EscapeDataString(stepUpReturn)}");
+            }
+
+            // Per-user scope entitlement (Scope.AllowedRoles). Runs here because it is the first point
+            // at which the subject is known, and BEFORE consent so the screen never offers a permission
+            // this user cannot be granted. Scopes they do not qualify for are dropped, not refused —
+            // a client whose staff surface is one scope among several must stay usable by everyone else.
+            var entitledScopes = await scopeRoleGate.FilterAsync(requestedScopes, authenticatedUser?.Roles, ct);
+            if (entitledScopes.Count < requestedScopes.Length)
+            {
+                if (entitledScopes.Count == 0)
+                {
+                    logger.LogWarning("Refusing all requested scopes for {SubjectId} on client {ClientId}: none are role-entitled",
+                        subjectId, clientId);
+                    return AuthorizeRequestSupport.BuildErrorRedirect(redirectUri, "access_denied",
+                        "The user is not entitled to any of the requested scopes", state);
+                }
+
+                logger.LogInformation("Dropping role-gated scopes for {SubjectId} on client {ClientId}: {Dropped}",
+                    subjectId, clientId, string.Join(',', requestedScopes.Except(entitledScopes, StringComparer.Ordinal)));
+
+                // Both, for the reason spelled out at the consent narrowing below: one is read by the
+                // subject resolver, the other when the authorization code is minted.
+                requestedScopes = [.. entitledScopes];
+                request.RequestedScopes = requestedScopes;
             }
 
             // Check consent (if required by this client)

@@ -53,6 +53,7 @@ public static class ScopeEndpoints
             Required = request.Required ?? false,
             Group = request.Group,
             ShowInDiscoveryDocument = request.ShowInDiscoveryDocument ?? true,
+            AllowedRoles = request.AllowedRoles ?? [],
             UserClaims = request.UserClaims ?? [],
             CreatedAt = DateTimeOffset.UtcNow
         };
@@ -76,6 +77,9 @@ public static class ScopeEndpoints
         if (request.Required.HasValue) scope.Required = request.Required.Value;
         if (request.Group is not null) scope.Group = request.Group;
         if (request.ShowInDiscoveryDocument.HasValue) scope.ShowInDiscoveryDocument = request.ShowInDiscoveryDocument.Value;
+        // Unlike the seeder, the admin API CAN clear the gate: an explicit empty array here means
+        // "ungate this scope", which is the only way back once a gate has been set.
+        if (request.AllowedRoles is not null) scope.AllowedRoles = request.AllowedRoles;
         if (request.UserClaims is not null) scope.UserClaims = request.UserClaims;
         scope.UpdatedAt = DateTimeOffset.UtcNow;
 
@@ -103,6 +107,9 @@ public static class ScopeEndpoints
         /// <summary>Consent-screen heading to file this scope under.</summary>
         public string? Group { get; set; }
         public bool? ShowInDiscoveryDocument { get; set; }
+
+        /// <summary>Roles a user must hold to be granted this scope. Omit or send [] for ungated.</summary>
+        public List<string>? AllowedRoles { get; set; }
         public List<string>? UserClaims { get; set; }
     }
 
@@ -116,6 +123,9 @@ public static class ScopeEndpoints
         /// <summary>Consent-screen heading to file this scope under.</summary>
         public string? Group { get; set; }
         public bool? ShowInDiscoveryDocument { get; set; }
+
+        /// <summary>Roles a user must hold to be granted this scope. Send [] to remove the gate.</summary>
+        public List<string>? AllowedRoles { get; set; }
         public List<string>? UserClaims { get; set; }
     }
 }

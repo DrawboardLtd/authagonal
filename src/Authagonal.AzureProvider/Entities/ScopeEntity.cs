@@ -30,6 +30,10 @@ public sealed class ScopeEntity : ITableEntity
     /// </remarks>
     public string? Group { get; set; }
     public bool ShowInDiscoveryDocument { get; set; } = true;
+
+    /// <summary>The roles entitled to this scope, or an empty array when it is ungated.</summary>
+    public string AllowedRolesJson { get; set; } = "[]";
+
     public string UserClaimsJson { get; set; } = "[]";
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset? UpdatedAt { get; set; }
@@ -44,6 +48,7 @@ public sealed class ScopeEntity : ITableEntity
         Required = scope.Required,
         Group = scope.Group,
         ShowInDiscoveryDocument = scope.ShowInDiscoveryDocument,
+        AllowedRolesJson = JsonSerializer.Serialize(scope.AllowedRoles, AzureJsonContext.Default.ListString),
         UserClaimsJson = JsonSerializer.Serialize(scope.UserClaims, AzureJsonContext.Default.ListString),
         CreatedAt = scope.CreatedAt,
         UpdatedAt = scope.UpdatedAt,
@@ -58,6 +63,7 @@ public sealed class ScopeEntity : ITableEntity
         Required = Required,
         Group = Group,
         ShowInDiscoveryDocument = ShowInDiscoveryDocument,
+        AllowedRoles = JsonSerializer.Deserialize(AllowedRolesJson, AzureJsonContext.Default.ListString) ?? [],
         UserClaims = JsonSerializer.Deserialize(UserClaimsJson, AzureJsonContext.Default.ListString) ?? [],
         CreatedAt = CreatedAt,
         UpdatedAt = UpdatedAt,

@@ -31,6 +31,10 @@ public sealed class ProtocolTokenService(
     IConnectorCatalog? connectorCatalog = null,
     IEnumerable<IAuthHook>? authHooks = null) : IProtocolTokenService
 {
+    /// <summary>Per-user scope entitlement, re-applied at refresh. Built over the injected scope
+    /// store rather than taken from DI so hosts that construct this service by hand keep working.</summary>
+    private readonly IScopeRoleGate _scopeRoleGate = new ScopeRoleGate(scopeStore);
+
     private const int RefreshTokenSizeBytes = 64;
     private TimeSpan RefreshTokenReuseGraceWindow =>
         TimeSpan.FromSeconds(protocolOptions.Value.RefreshTokenReuseGraceSeconds);
@@ -450,6 +454,24 @@ public sealed class ProtocolTokenService(
                 $"Subject resolver rejected refresh: {r.Reason}{(r.Description is null ? "" : $" ({r.Description})")}"),
             _ => throw new InvalidOperationException("Unknown subject resolver result"),
         };
+
+        // Re-apply per-user scope entitlement against the FRESHLY resolved roles. This is where
+        // revoking a role actually takes effect: the grant still records the scopes approved at
+        // authorize, so without this a refresh chain would keep re-minting a gated scope for as long
+        // as the refresh token lived. Dropping to nothing ends the chain rather than issuing an empty
+        // token the client cannot use.
+        var entitledScopes = await _scopeRoleGate.FilterAsync(data.Scopes, freshSubject.Roles, ct);
+        if (entitledScopes.Count < data.Scopes.Count)
+        {
+            if (entitledScopes.Count == 0)
+                throw new InvalidOperationException(
+                    "The subject is no longer entitled to any of this grant's scopes");
+
+            logger.LogInformation("Dropping role-gated scopes on refresh for {SubjectId} on client {ClientId}: {Dropped}",
+                grant.SubjectId, clientId, string.Join(',', data.Scopes.Except(entitledScopes, StringComparer.Ordinal)));
+
+            data.Scopes = [.. entitledScopes];
+        }
 
         // RFC 8707: refresh-time resources must be a subset of the original grant's resources
         // (or client.Audiences if none recorded).

@@ -31,8 +31,10 @@ public sealed class Scope
     public string? DisplayName { get; set; }
     public string? Description { get; set; }
     public bool Emphasize { get; set; }
+    public string? Group { get; set; }
     public bool Required { get; set; }
     public bool ShowInDiscoveryDocument { get; set; } = true;
+    public List<string> AllowedRoles { get; set; } = [];
     public List<string> UserClaims { get; set; } = [];
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset? UpdatedAt { get; set; }
@@ -45,9 +47,49 @@ public sealed class Scope
 | `DisplayName` | Human-readable name shown on the consent screen |
 | `Description` | Longer description shown on the consent screen |
 | `Emphasize` | If `true`, the consent screen highlights this scope as sensitive |
+| `Group` | Consent-screen heading to file this scope under. Presentation only — it never affects what is granted |
 | `Required` | If `true`, the user cannot deselect this scope when consenting |
 | `ShowInDiscoveryDocument` | If `true`, the scope appears in `/.well-known/openid-configuration` under `scopes_supported` |
+| `AllowedRoles` | Roles a user must hold to be granted this scope. Empty (the default) leaves it ungated — see [Role-gated scopes](#role-gated-scopes) |
 | `UserClaims` | Claims added to the access token when this scope is granted |
+
+### Role-gated scopes
+
+A client's `AllowedScopes` answers *may this application ask for this scope* — a question settled
+before anyone has logged in. `AllowedRoles` answers the other half: *may this person have it*. Both
+gates apply, and neither substitutes for the other.
+
+```json
+{
+  "name": "staff-admin",
+  "displayName": "Staff administration",
+  "allowedRoles": ["staff", "super-admin"]
+}
+```
+
+A user holding none of the listed roles has the scope **dropped from the grant**, not refused: the
+client asked for its full set and is told, via the `scope` echoed in the token response (RFC 6749
+§3.3), that it got less. This is what lets one application serve both staff and everyone else — the
+staff surface is one scope among several, and only the people entitled to it receive it.
+
+A request in which *every* requested scope is dropped fails with `access_denied`, because there is
+nothing left to issue a token for.
+
+The gate applies everywhere a token is minted for a human:
+
+| Flow | Where it runs |
+|---|---|
+| Authorization code | At `/connect/authorize`, once the user is known and **before** consent — so the screen never offers a permission that cannot be granted |
+| Device code | At `/api/auth/device/approve`, the first point in that flow at which the subject is known |
+| Refresh | On every rotation, against freshly resolved roles. This is where revoking a role actually takes effect, since the grant still records what was approved at login |
+| Token exchange | Not separately gated: an exchange may only downscope within the subject token's own scopes, so it can never reach one the subject was not granted |
+
+Client-credentials grants have no subject and are deliberately untouched — a machine client's
+authority is its registration.
+
+Seeding a scope from configuration can add or change `AllowedRoles` but cannot clear it (as with
+`UserClaims`, an omitted field preserves the stored value). To remove a gate, `PUT` the scope with
+an explicit empty array.
 
 ## Admin Endpoints
 

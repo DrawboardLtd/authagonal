@@ -42,6 +42,7 @@ public sealed class ScopeSeedService(
             scope.Emphasize = seed.Emphasize ?? scope.Emphasize;
             scope.Group = seed.Group ?? scope.Group;
             scope.Required = seed.Required ?? scope.Required;
+            scope.AllowedRoles = seed.AllowedRoles ?? scope.AllowedRoles;
 
             if (existing is null)
                 await scopeStore.CreateAsync(scope, ct);
@@ -75,5 +76,12 @@ public sealed class ScopeSeedService(
 
         /// <summary>The user may not decline the scope; consent shows it ticked and locked.</summary>
         public bool? Required { get; set; }
+
+        /// <summary>
+        /// Roles a user must hold to be granted this scope. Omitted leaves whatever is stored;
+        /// an empty list cannot be seeded (as with UserClaims — clearing means editing the scope
+        /// directly), so a gate can be added or changed from config but not removed.
+        /// </summary>
+        public List<string>? AllowedRoles { get; set; }
     }
 }

@@ -115,6 +115,8 @@ public static class DeviceAuthorizationEndpoint
         app.MapPost("/api/auth/device/approve", async (
             HttpContext httpContext,
             IGrantStore grantStore,
+            IUserStore userStore,
+            IScopeRoleGate scopeRoleGate,
             CancellationToken ct) =>
         {
             if (httpContext.User.Identity?.IsAuthenticated != true)
@@ -144,6 +146,19 @@ public static class DeviceAuthorizationEndpoint
                 return JsonResults.Error("missing_identity", 401);
 
             var data = JsonSerializer.Deserialize(deviceGrant.Data, AuthagonalJsonContext.Default.DeviceCodeData)!;
+
+            // Per-user scope entitlement (Scope.AllowedRoles). The device request itself is anonymous —
+            // this approval is the first point the subject is known, which makes it the device flow's
+            // equivalent of the check /connect/authorize does before consent. Without it this endpoint
+            // would be a way around the gate.
+            var approver = await userStore.GetAsync(subjectId, ct);
+            var entitledScopes = await scopeRoleGate.FilterAsync(data.Scopes, approver?.Roles, ct);
+            if (entitledScopes.Count == 0)
+                return TypedResults.Json(
+                    new ErrorInfoResponse { Error = "access_denied", Message = "You are not entitled to any of the requested scopes" },
+                    AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 403);
+            data.Scopes = [.. entitledScopes];
+
             data.IsApproved = true;
             data.SubjectId = subjectId;
 
