@@ -91,11 +91,20 @@ public sealed class TestAuthHook : IAuthHook
 
 public sealed class TestProvisioningOrchestrator : IProvisioningOrchestrator
 {
+    /// <summary>Ids of the users provisioning ran for, so a test can prove it did NOT run.</summary>
+    public List<string> Provisioned { get; } = [];
+
     public Task ProvisionAsync(Core.Models.AuthUser user, CancellationToken ct = default)
-        => Task.CompletedTask;
+    {
+        Provisioned.Add(user.Id);
+        return Task.CompletedTask;
+    }
 
     public Task ProvisionAsync(Core.Models.AuthUser user, IReadOnlyList<string> requiredAppIds, CancellationToken ct = default)
-        => Task.CompletedTask;
+    {
+        Provisioned.Add(user.Id);
+        return Task.CompletedTask;
+    }
 
     public Task ReprovisionAsync(Core.Models.AuthUser user, CancellationToken ct = default)
         => Task.CompletedTask;

@@ -172,14 +172,21 @@ public static class UserEndpoints
 
         await userStore.CreateAsync(user, ct);
 
-        try
+        // SkipProvisioning is for the case where the CALLER is itself the provisioning target. A
+        // first-party app creating an identity for a user it is already mid-way through setting up
+        // does not want its own callback re-entered: it would be asked to provision a user it is in
+        // the middle of provisioning, carrying only whatever attributes survived the round trip.
+        if (!request.SkipProvisioning)
         {
-            await provisioning.ProvisionAsync(user, ct);
-        }
-        catch (ProvisioningException ex)
-        {
-            await userStore.DeleteAsync(user.Id, ct);
-            return TypedResults.Json(new ErrorInfoResponse { Error = "provisioning_rejected", Message = ex.Message }, AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 422);
+            try
+            {
+                await provisioning.ProvisionAsync(user, ct);
+            }
+            catch (ProvisioningException ex)
+            {
+                await userStore.DeleteAsync(user.Id, ct);
+                return TypedResults.Json(new ErrorInfoResponse { Error = "provisioning_rejected", Message = ex.Message }, AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 422);
+            }
         }
 
         await authHooks.RunOnUserCreatedAsync(userId, request.Email, "admin", ct);
@@ -465,6 +472,17 @@ public static class UserEndpoints
         /// (and emitted as scope-gated claims), mirroring the self-registration endpoint.
         /// </summary>
         public Dictionary<string, string>? CustomAttributes { get; set; }
+
+        /// <summary>
+        /// Admin-only: create the user WITHOUT running provisioning.
+        /// </summary>
+        /// <remarks>
+        /// For a first-party app that is itself a provisioning target and is already part-way through
+        /// setting this user up — it is calling here to mint the identity, not to be called back about
+        /// a user it is in the middle of creating. Without this, that app receives its own Try for a
+        /// half-built user carrying only the attributes that survived the round trip.
+        /// </remarks>
+        public bool SkipProvisioning { get; set; }
     }
 
     public sealed class UpdateUserRequest

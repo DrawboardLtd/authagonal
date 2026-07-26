@@ -65,6 +65,48 @@ public sealed class AdminEndpointTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task RegisterUser_RunsProvisioningByDefault()
+    {
+        SetAdminAuth();
+
+        var response = await _client.PostAsJsonAsync("/api/v1/profile/", new
+        {
+            email = "provisioned@example.com",
+            password = "Str0ng!Pass"
+        });
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        var id = (await response.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetString();
+        Assert.Contains(id, _factory.Provisioning.Provisioned);
+    }
+
+    /// <summary>
+    /// The caller is itself the provisioning target and is already part-way through setting this user
+    /// up — provisioning it here would call that app back about a user it is in the middle of
+    /// creating, carrying only the attributes that survived the round trip.
+    /// </summary>
+    [Fact]
+    public async Task RegisterUser_SkipProvisioning_CreatesTheUserWithoutProvisioningIt()
+    {
+        SetAdminAuth();
+
+        var response = await _client.PostAsJsonAsync("/api/v1/profile/", new
+        {
+            email = "self-provisioned@example.com",
+            password = "Str0ng!Pass",
+            skipProvisioning = true
+        });
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        var id = (await response.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetString();
+
+        // The identity exists...
+        Assert.NotNull(await _factory.UserStore.GetAsync(id!));
+        // ...and nothing was asked to provision it.
+        Assert.DoesNotContain(id, _factory.Provisioning.Provisioned);
+    }
+
+    [Fact]
     public async Task RegisterUser_DuplicateEmail_Returns409()
     {
         SetAdminAuth();

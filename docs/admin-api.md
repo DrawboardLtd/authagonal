@@ -90,6 +90,12 @@ Creates a user and sends a verification email. Returns `409 user_exists` if the 
 
 Optional admin-only fields: `userId` (caller-supplied id, `409 user_id_in_use` on collision), `emailConfirmed` (create the user already verified, skipping the verification email), `companyName`, `organizationId`, `phone`, `locale`, and `customAttributes` (a string map persisted on the user and forwarded to provisioning targets).
 
+`skipProvisioning: true` creates the identity without running provisioning. It is for a first-party
+app that is ITSELF a provisioning target and is already part-way through setting this user up: it is
+calling here to mint the identity, not to be called back about a user it is in the middle of
+creating. Without it that app receives its own Try for a half-built user, carrying only the
+attributes that survived the round trip — and, if it recovers, ends up provisioning the user twice.
+
 ### Update User
 
 ```

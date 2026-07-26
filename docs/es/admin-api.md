@@ -91,6 +91,13 @@ Crea un usuario y envía un correo de verificación. Devuelve `409 user_exists` 
 
 Campos opcionales solo para administradores: `userId` (id proporcionado por el llamador; `409 user_id_in_use` en caso de colisión), `emailConfirmed` (crea el usuario ya verificado, omitiendo el correo de verificación), `companyName`, `organizationId`, `phone`, `locale`, y `customAttributes` (un mapa de cadenas persistido en el usuario y reenviado a los destinos de aprovisionamiento).
 
+`skipProvisioning: true` crea la identidad sin ejecutar el aprovisionamiento. Está pensado para una
+aplicación de primera parte que ES ELLA MISMA un destino de aprovisionamiento y que ya está a mitad
+de configurar a este usuario: llama aquí para acuñar la identidad, no para que se le devuelva la
+llamada sobre un usuario que está creando en ese mismo momento. Sin esta opción, esa aplicación
+recibe su propio Try para un usuario a medio construir, con solo los atributos que sobrevivieron al
+viaje de ida y vuelta — y, si se recupera, acaba aprovisionando al usuario dos veces.
+
 ### Actualizar usuario
 
 ```

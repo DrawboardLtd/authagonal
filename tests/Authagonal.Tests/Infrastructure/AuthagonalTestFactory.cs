@@ -66,6 +66,7 @@ public sealed class AuthagonalTestFactory : IAsyncDisposable
     public TestEmailService EmailService { get; } = new();
     public TestAuthHook AuthHook { get; } = new();
     public TestTokenExchangeSubjectTransformer ExchangeTransformer { get; } = new();
+    public TestProvisioningOrchestrator Provisioning { get; } = new();
 
     /// <summary>Set before starting the factory to inject a mock HTTP handler for OIDC/SAML metadata.</summary>
     public HttpMessageHandler? OidcHttpHandler { get; set; }
@@ -267,7 +268,7 @@ public sealed class AuthagonalTestFactory : IAsyncDisposable
         services.AddSingleton<IEmailService>(EmailService);
         services.AddSingleton<IAuthHook>(AuthHook);
         services.AddSingleton<Authagonal.Protocol.ITokenExchangeSubjectTransformer>(ExchangeTransformer);
-        services.AddSingleton<IProvisioningOrchestrator>(new TestProvisioningOrchestrator());
+        services.AddSingleton<IProvisioningOrchestrator>(Provisioning);
         services.AddSingleton<ISecretProvider>(new PlaintextSecretProvider());
 
         // Options (mirrors AddAuthagonal)
