@@ -62,6 +62,12 @@ Keep the seeded client's secret in your deployment's secret store; rotating it i
 GET /api/v1/profile/{userId}
 ```
 
+Returns the profile plus what a support console needs to diagnose a sign-in problem:
+`emailConfirmed`, `isActive`, `lockoutEnd`, `accessFailedCount`, `roles`, the linked
+`externalLogins`, and `hasPassword` — presence only, never the hash. That last one is the difference
+between "they have forgotten their password" and "they have never had one, they sign in with SSO",
+which are opposite pieces of advice.
+
 Returns user details including external login links.
 
 ### User Exists

@@ -326,6 +326,27 @@ public sealed class UserDetailResponse
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public DateTimeOffset? LockoutEnd { get; set; }
 
+    /// <summary>How many failed sign-ins have accrued toward a lockout. A support console showing a
+    /// lockout without this cannot tell "one fat-fingered attempt" from "someone is guessing".</summary>
+    [JsonPropertyName("accessFailedCount")] public int AccessFailedCount { get; set; }
+
+    /// <summary>
+    /// Whether the account has a local password at all, as opposed to being reachable only through an
+    /// external provider.
+    /// </summary>
+    /// <remarks>
+    /// The hash itself is never returned — only whether one exists. It is the difference between "they
+    /// have forgotten their password" and "they have never had one, they sign in with SSO", which are
+    /// opposite pieces of advice to give someone who cannot get in.
+    /// </remarks>
+    [JsonPropertyName("hasPassword")] public bool HasPassword { get; set; }
+
+    /// <summary>Whether the account is enabled. A disabled one cannot obtain a token at all.</summary>
+    [JsonPropertyName("isActive")] public bool IsActive { get; set; }
+
+    /// <summary>Every role the user holds.</summary>
+    [JsonPropertyName("roles")] public List<string> Roles { get; set; } = [];
+
     [JsonPropertyName("createdAt")] public DateTimeOffset CreatedAt { get; set; }
     [JsonPropertyName("updatedAt")] public DateTimeOffset UpdatedAt { get; set; }
     [JsonPropertyName("externalLogins")] public IEnumerable<ExternalLoginDto> ExternalLogins { get; set; } = [];

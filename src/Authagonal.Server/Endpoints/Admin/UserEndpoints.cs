@@ -253,6 +253,11 @@ public static class UserEndpoints
             OrganizationId = user.OrganizationId,
             LockoutEnabled = user.LockoutEnabled,
             LockoutEnd = user.LockoutEnd,
+            AccessFailedCount = user.AccessFailedCount,
+            // Presence only — the hash never leaves the store.
+            HasPassword = !string.IsNullOrEmpty(user.PasswordHash),
+            IsActive = user.IsActive,
+            Roles = user.Roles,
             CreatedAt = user.CreatedAt,
             UpdatedAt = user.UpdatedAt ?? user.CreatedAt,
             ExternalLogins = logins.Select(l => new ExternalLoginDto

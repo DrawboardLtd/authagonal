@@ -440,4 +440,23 @@ public sealed class AdminEndpointTests : IAsyncLifetime
         Assert.Equal(0, stored.AccessFailedCount);
     }
 
+    /// <summary>
+    /// A support console needs to tell "forgotten their password" from "never had one, they use
+    /// SSO" — opposite advice for someone who cannot get in. Presence only; the hash never leaves.
+    /// </summary>
+    [Fact]
+    public async Task GetUser_ReportsWhetherThereIsAPasswordWithoutReturningIt()
+    {
+        SetAdminAuth();
+        var user = await _factory.SeedTestUserAsync(email: "haspw@example.com");
+
+        var response = await _client.GetAsync($"/api/v1/profile/{user.Id}");
+
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.True(json.GetProperty("hasPassword").GetBoolean());
+        Assert.True(json.GetProperty("isActive").GetBoolean());
+        Assert.Equal(0, json.GetProperty("accessFailedCount").GetInt32());
+        Assert.DoesNotContain("passwordHash", json.ToString(), StringComparison.OrdinalIgnoreCase);
+    }
+
 }
