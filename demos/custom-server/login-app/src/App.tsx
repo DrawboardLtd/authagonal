@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router';
 import { ForgotPasswordPage, ResetPasswordPage, MfaChallengePage, MfaSetupPage } from '@authagonal/login';
 import AcmeAuthLayout from './AcmeAuthLayout';
 import AcmeLoginPage from './AcmeLoginPage';

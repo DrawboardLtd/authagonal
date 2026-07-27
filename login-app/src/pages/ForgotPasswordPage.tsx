@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { useSearchParams, Link } from 'react-router-dom';
+import { useSearchParams, Link } from 'react-router';
 import { useTranslation } from 'react-i18next';
 import { forgotPassword, getProviders, ApiRequestError } from '../api';
 import { Turnstile } from '../components/Turnstile';

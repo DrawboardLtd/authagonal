@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { useSearchParams, Link, useNavigate } from 'react-router-dom';
+import { useSearchParams, Link, useNavigate } from 'react-router';
 import { useTranslation } from 'react-i18next';
 import { register, getPasswordPolicy, getProviders, ApiRequestError } from '../api';
 import type { PasswordPolicyRule } from '../types';

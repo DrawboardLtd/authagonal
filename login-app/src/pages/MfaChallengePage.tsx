@@ -1,5 +1,5 @@
 import { useState, useCallback } from 'react';
-import { useSearchParams, Link } from 'react-router-dom';
+import { useSearchParams, Link } from 'react-router';
 import { useTranslation } from 'react-i18next';
 import { mfaVerify, ApiRequestError } from '../api';
 import { resolveRedirect } from '@/lib/returnUrl';

@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { useSearchParams, Link, useNavigate } from 'react-router-dom';
+import { useSearchParams, Link, useNavigate } from 'react-router';
 import { login, logout, ssoCheck, getProviders, getSession, ApiRequestError, useBranding, useTranslation, resolveLocalized, Button, Input, Label, Alert, CardTitle, CardFooter, Separator } from '@authagonal/login';
 import type { ExternalProvider } from '@authagonal/login';
 

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router';
 import { useTranslation, Button, Input, Label, Alert, CardTitle, CardFooter } from '@authagonal/login';
 
 const API_URL = import.meta.env.VITE_API_URL || '';

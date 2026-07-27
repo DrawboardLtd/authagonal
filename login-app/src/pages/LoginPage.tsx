@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { useSearchParams, Link, useNavigate } from 'react-router-dom';
+import { useSearchParams, Link, useNavigate } from 'react-router';
 import { useTranslation } from 'react-i18next';
 import { login, logout, ssoCheck, getProviders, getSession, getApps, passkeyLoginBegin, passkeyLoginComplete, ApiRequestError } from '../api';
 import { toRequestOptions, serializeAssertion } from '../webauthn';

@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Link } from 'react-router-dom';
+import { Link } from 'react-router';
 import { useTranslation } from 'react-i18next';
 import { getProfile, updateProfile, mfaStatus, getApps, exportMyData, requestErasure, listSessions, revokeSession, revokeOtherSessions, ApiRequestError } from '../api';
 import type { AppLinkResponse, ActiveSession } from '../types';

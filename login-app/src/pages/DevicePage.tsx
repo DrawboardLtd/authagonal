@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { useSearchParams, useNavigate } from 'react-router-dom';
+import { useSearchParams, useNavigate } from 'react-router';
 import { getSession } from '../api';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
