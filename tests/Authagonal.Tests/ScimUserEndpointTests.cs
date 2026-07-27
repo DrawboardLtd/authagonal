@@ -156,20 +156,61 @@ public sealed class ScimUserEndpointTests : IAsyncDisposable
             json.GetProperty("Resources")[0].GetProperty("userName").GetString());
     }
 
-    /// A filter we cannot represent must be refused, never dropped. Dropping it returns the caller's
-    /// entire population, and a provisioning agent asking "does this user exist?" reads that as yes —
-    /// then skips the create, or worse, matches the wrong account.
-    [Theory]
-    [InlineData("userName eq \"a@example.com\" and active eq \"true\"")]
-    [InlineData("userName sw \"filter-\"")]
-    public async Task ListUsers_UnsupportedFilter_Returns400InvalidFilter(string filter)
+    /// Compound filters and the operators beyond eq/co are part of the grammar ServiceProviderConfig
+    /// advertises, so they must actually filter — not 400, and not quietly return everything.
+    [Fact]
+    public async Task ListUsers_CompoundFilter_IsHonoured()
     {
         await _factory.SeedTestDataAsync();
         var (_, rawToken) = await _factory.SeedScimClientAsync();
         var client = _factory.CreateClient();
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", rawToken);
 
-        await client.PostAsJsonAsync("/scim/v2/Users", new { userName = "unsupported-filter@example.com" });
+        await client.PostAsJsonAsync("/scim/v2/Users", new { userName = "compound-wanted@example.com", active = true });
+        await client.PostAsJsonAsync("/scim/v2/Users", new { userName = "compound-other@example.com", active = true });
+
+        var filter = Uri.EscapeDataString("userName eq \"compound-wanted@example.com\" and active eq true");
+        var response = await client.GetAsync($"/scim/v2/Users?filter={filter}");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(1, json.GetProperty("totalResults").GetInt32());
+        Assert.Equal("compound-wanted@example.com",
+            json.GetProperty("Resources")[0].GetProperty("userName").GetString());
+    }
+
+    [Fact]
+    public async Task ListUsers_StartsWithFilter_IsHonoured()
+    {
+        await _factory.SeedTestDataAsync();
+        var (_, rawToken) = await _factory.SeedScimClientAsync();
+        var client = _factory.CreateClient();
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", rawToken);
+
+        await client.PostAsJsonAsync("/scim/v2/Users", new { userName = "swtarget-one@example.com" });
+        await client.PostAsJsonAsync("/scim/v2/Users", new { userName = "unrelated-two@example.com" });
+
+        var response = await client.GetAsync($"/scim/v2/Users?filter={Uri.EscapeDataString("userName sw \"swtarget\"")}");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(1, json.GetProperty("totalResults").GetInt32());
+        Assert.Equal("swtarget-one@example.com",
+            json.GetProperty("Resources")[0].GetProperty("userName").GetString());
+    }
+
+    /// Only genuinely malformed input is a 400 now — the grammar is supported, so a rejection means the
+    /// caller wrote something that is not a SCIM filter at all.
+    [Theory]
+    [InlineData("userName eq")]              // no value
+    [InlineData("(userName eq \"a\"")]       // unbalanced
+    [InlineData("userName xx \"a\"")]        // not an operator
+    public async Task ListUsers_MalformedFilter_Returns400InvalidFilter(string filter)
+    {
+        await _factory.SeedTestDataAsync();
+        var (_, rawToken) = await _factory.SeedScimClientAsync();
+        var client = _factory.CreateClient();
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", rawToken);
 
         var response = await client.GetAsync($"/scim/v2/Users?filter={Uri.EscapeDataString(filter)}");
 

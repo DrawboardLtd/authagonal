@@ -90,20 +90,37 @@ public sealed class ScimGroupEndpointTests : IAsyncDisposable
         Assert.Equal(1, json.GetProperty("totalResults").GetInt32());
     }
 
-    /// Same rule as the user listing: an unrepresentable filter is refused, not dropped. Returning every
-    /// group to a caller who asked for one is a wrong answer dressed as a permissive one.
+    /// Groups get the same grammar as users: a compound filter narrows, it does not 400 and it does not
+    /// quietly return every group.
     [Fact]
-    public async Task ListGroups_UnsupportedFilter_Returns400InvalidFilter()
+    public async Task ListGroups_CompoundFilter_IsHonoured()
     {
         await _factory.SeedTestDataAsync();
         var (_, rawToken) = await _factory.SeedScimClientAsync();
         var client = _factory.CreateClient();
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", rawToken);
 
-        await client.PostAsJsonAsync("/scim/v2/Groups", new { displayName = "Unsupported Filter Group" });
+        await client.PostAsJsonAsync("/scim/v2/Groups", new { displayName = "Engineering", externalId = "eng-1" });
+        await client.PostAsJsonAsync("/scim/v2/Groups", new { displayName = "Engineering", externalId = "eng-2" });
 
-        var filter = Uri.EscapeDataString("displayName eq \"a\" and externalId eq \"b\"");
+        var filter = Uri.EscapeDataString("displayName eq \"Engineering\" and externalId eq \"eng-2\"");
         var response = await client.GetAsync($"/scim/v2/Groups?filter={filter}");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(1, json.GetProperty("totalResults").GetInt32());
+        Assert.Equal("eng-2", json.GetProperty("Resources")[0].GetProperty("externalId").GetString());
+    }
+
+    [Fact]
+    public async Task ListGroups_MalformedFilter_Returns400InvalidFilter()
+    {
+        await _factory.SeedTestDataAsync();
+        var (_, rawToken) = await _factory.SeedScimClientAsync();
+        var client = _factory.CreateClient();
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", rawToken);
+
+        var response = await client.GetAsync($"/scim/v2/Groups?filter={Uri.EscapeDataString("displayName eq")}");
 
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
         var json = await response.Content.ReadFromJsonAsync<JsonElement>();

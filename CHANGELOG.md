@@ -2,10 +2,29 @@
 
 ## [Unreleased]
 
+### Added
+
+- **SCIM: the full RFC 7644 §3.4.2.2 filter grammar.** All ten comparison operators (`eq ne co sw ew gt
+  ge lt le`) plus `pr`, `and`/`or`/`not` with parenthesised grouping, value paths
+  (`emails[type eq "work"].value`), sub-attributes (`name.givenName`) and URN-prefixed attribute paths.
+  Previously one `attribute eq|co "value"` term was understood, against three attributes.
+  - **Why it mattered beyond the missing features:** SCIM's ServiceProviderConfig has no way to
+    advertise a *partial* filter capability, so `filter.supported = true` — which this provider has
+    always returned — is a claim to the whole grammar. Anyone evaluating the integration could read the
+    discovery document, try `userName sw "a"`, and find the claim did not hold.
+  - Filters are evaluated against the resource as it is serialized to the client, so sub-attributes and
+    multi-valued attributes work without a bespoke field map and a filter can only ever match on
+    something the caller can see. `userName eq` / `externalId eq` keep their indexed point-lookup fast
+    path; everything else is evaluated over a bounded paged scan, since PII is encrypted at rest and
+    only reachable through blind indexes.
+  - `ScimFilterParser` moves to `Authagonal.Server.Services.Scim` and now returns a parsed expression
+    tree; `ScimFilterEvaluator` evaluates it. **Breaking** for any host that called the old
+    `Services.ScimFilterParser` directly (its `Parse`/`Matches`/`MatchesGroup` are gone).
+
 ### Fixed
 
 - **SCIM: a filter we cannot represent is now refused with `400 invalidFilter` instead of silently
-  answering a different question.** `ScimFilterParser` supports one `attribute eq|co "value"` term, but
+  answering a different question.** `ScimFilterParser` supported one `attribute eq|co "value"` term, but
   its value check only looked at the first and last character, so a compound filter
   (`userName eq "a@x.com" and active eq "true"`) parsed as `userName eq` with the rest of the
   expression embedded in the value. That matched nobody and returned an **empty list** — which a

@@ -3,6 +3,7 @@ using Authagonal.Core.Models;
 using Authagonal.Core.Services;
 using Authagonal.Core.Stores;
 using Authagonal.Server.Services;
+using Authagonal.Server.Services.Scim;
 using Authagonal.Server.Services.Cluster;
 
 namespace Authagonal.Server.Endpoints.Scim;
@@ -33,6 +34,33 @@ public static class ScimUserEndpoints
     private static string GetBaseUrl(Authagonal.Core.Services.ITenantContext tenantContext) =>
         tenantContext.Issuer;
 
+    /// <summary>
+    /// True when the whole filter is <c>userName eq "..."</c> or <c>externalId eq "..."</c> — the shape
+    /// every IdP provisioning agent sends before a create, and the only one that maps to a blind-index
+    /// point lookup. Anything richer is evaluated in memory over a paged scan.
+    /// </summary>
+    private static bool TryIndexedEquality(
+        ScimFilterExpression? expression, out string attribute, out string value)
+    {
+        attribute = "";
+        value = "";
+        if (expression is not ScimFilterExpression.Comparison
+            {
+                Operator: ComparisonOperator.Eq,
+                Path: { ValueFilter: null, Segments.Count: 1 } path,
+                Value.String: { } stringValue,
+            })
+            return false;
+
+        var name = path.Segments[0].ToLowerInvariant();
+        if (name is not ("username" or "externalid"))
+            return false;
+
+        attribute = name;
+        value = stringValue;
+        return true;
+    }
+
     private static async Task<IResult> ListUsersAsync(
         HttpContext httpContext,
         IUserStore userStore,
@@ -51,21 +79,18 @@ public static class ScimUserEndpoints
         var baseUrl = GetBaseUrl(tenantContext);
         var pageSize = Math.Min(count ?? 100, 200);
 
-        // A filter we cannot represent must FAIL, not be dropped: ignoring it returns the client's whole
-        // population, and an agent asking "does this user exist?" reads that as yes (RFC 7644 §3.4.2.2).
-        var filterResult = ScimFilterParser.TryParse(filter, ScimFilterParser.UserFilterAttributes);
-        if (filterResult.Status == ScimFilterParser.ScimFilterStatus.Unsupported)
-            return ScimResults.Error(400, "invalidFilter", ScimFilterParser.SupportedSyntax);
-        var parsed = filterResult.Filter;
+        // A filter is honoured or refused, never quietly dropped: ServiceProviderConfig advertises filter
+        // support, and a caller whose filter is ignored is answered a question they did not ask.
+        if (!ScimFilterParser.TryParse(filter, out var filterExpression, out var filterError))
+            return ScimResults.Error(400, "invalidFilter", filterError!);
 
-        // Equality filters — the path IdP provisioning agents (Entra/Okta) hit before every
-        // create/update — resolve via point lookups (blind indexes), never a tenant scan.
-        if (parsed is { Operator: "eq" } eq
-            && eq.Attribute.ToLowerInvariant() is "username" or "externalid")
+        // Equality on an indexed attribute — the query IdP provisioning agents (Entra/Okta) hit before
+        // every create/update — resolves via a point lookup (blind index), never a tenant scan.
+        if (TryIndexedEquality(filterExpression, out var indexedAttribute, out var indexedValue))
         {
-            var match = eq.Attribute.ToLowerInvariant() == "username"
-                ? await userStore.FindByEmailAsync(eq.Value, ct)
-                : await userStore.FindByExternalIdAsync(clientId, eq.Value, ct);
+            var match = indexedAttribute == "username"
+                ? await userStore.FindByEmailAsync(indexedValue, ct)
+                : await userStore.FindByExternalIdAsync(clientId, indexedValue, ct);
             // Same scoping as the listing: only users this SCIM client provisioned.
             var resources = match is not null
                             && string.Equals(match.ScimProvisionedByClientId, clientId, StringComparison.Ordinal)
@@ -90,23 +115,19 @@ public static class ScimUserEndpoints
 
         var resourcesOut = new List<ScimUserResource>();
         var nextCursor = cursor;
-        // Non-eq filters (co / displayName) apply per page; keep consuming pages (bounded) so a
-        // sparse match can't return an empty first page with a cursor and mislead the client.
+        // Anything that isn't an indexed equality is evaluated in memory, against the resource as the
+        // client would receive it. Keep consuming pages (bounded) so a sparse match can't return an
+        // empty first page with a cursor and mislead the caller.
         for (var pages = 0; pages < 10; pages++)
         {
             var page = await userStore.ListByScimClientPageAsync(clientId, pageSize, nextCursor, ct);
-            IEnumerable<AuthUser> pageUsers = page.Users;
-            if (parsed is not null)
-            {
-                pageUsers = page.Users.Where(u =>
-                {
-                    var displayName = $"{u.FirstName} {u.LastName}".Trim();
-                    return ScimFilterParser.Matches(parsed, u.Email, u.ExternalId, displayName);
-                });
-            }
-            resourcesOut.AddRange(pageUsers.Select(u => ScimUserResource.FromUser(u, baseUrl)));
+            IEnumerable<ScimUserResource> pageResources = page.Users.Select(u => ScimUserResource.FromUser(u, baseUrl));
+            if (filterExpression is not null)
+                pageResources = pageResources.Where(r => ScimFilterEvaluator.Matches(filterExpression, r));
+
+            resourcesOut.AddRange(pageResources);
             nextCursor = page.ContinuationToken;
-            if (parsed is null || resourcesOut.Count >= pageSize || nextCursor is null)
+            if (filterExpression is null || resourcesOut.Count >= pageSize || nextCursor is null)
                 break;
         }
 

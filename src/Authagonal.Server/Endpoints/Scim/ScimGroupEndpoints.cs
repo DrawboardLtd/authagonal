@@ -1,6 +1,7 @@
 using Authagonal.Core.Models;
 using Authagonal.Core.Stores;
 using Authagonal.Server.Services;
+using Authagonal.Server.Services.Scim;
 
 namespace Authagonal.Server.Endpoints.Scim;
 
@@ -53,25 +54,23 @@ public static class ScimGroupEndpoints
         // Scope enumeration to groups owned by the calling SCIM client.
         var (groups, _) = await groupStore.ListAsync(CallerClientId(httpContext), 0, int.MaxValue, ct);
 
-        // Apply filter. An unrepresentable one fails rather than being dropped — silently listing every
-        // group answers a different question than the one asked (RFC 7644 §3.4.2.2).
-        var filterResult = ScimFilterParser.TryParse(filter, ScimFilterParser.GroupFilterAttributes);
-        if (filterResult.Status == ScimFilterParser.ScimFilterStatus.Unsupported)
-            return ScimResults.Error(400, "invalidFilter", ScimFilterParser.SupportedSyntax);
-        var parsed = filterResult.Filter;
-        IEnumerable<ScimGroup> filtered = groups;
-        if (parsed is not null)
-        {
-            filtered = groups.Where(g =>
-                ScimFilterParser.MatchesGroup(parsed, g.DisplayName, g.ExternalId));
-        }
+        // A filter is honoured or refused, never quietly dropped — silently listing every group answers a
+        // different question than the one asked (RFC 7644 §3.4.2.2).
+        if (!ScimFilterParser.TryParse(filter, out var filterExpression, out var filterError))
+            return ScimResults.Error(400, "invalidFilter", filterError!);
 
-        var filteredList = filtered.ToList();
-        var paged = filteredList
+        // Evaluated against the resource as the client would receive it, so members[...] value paths and
+        // meta.* work the same way they do for users.
+        var candidates = groups
             .OrderBy(g => g.CreatedAt)
+            .Select(g => ScimGroupResource.FromGroup(g, baseUrl));
+        if (filterExpression is not null)
+            candidates = candidates.Where(r => ScimFilterEvaluator.Matches(filterExpression, r));
+
+        var filteredList = candidates.ToList();
+        var paged = filteredList
             .Skip(start - 1)
             .Take(pageSize)
-            .Select(g => ScimGroupResource.FromGroup(g, baseUrl))
             .ToList();
 
         var response = new ScimListResponse<ScimGroupResource>

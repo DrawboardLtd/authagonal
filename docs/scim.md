@@ -168,14 +168,23 @@ User endpoints are rate-limited to 200 requests per minute per SCIM client; exce
 - Deprovisioning of downstream apps is triggered by `DELETE` only; a `PATCH` deactivation revokes grants but leaves downstream apps untouched.
 
 ### Filtering
-Supported filter expressions:
-- `userName eq "user@example.com"`
-- `externalId eq "12345"`
-- `displayName co "John"`
+The full RFC 7644 §3.4.2.2 filter grammar is supported.
 
-Only single-attribute filters are supported. Complex boolean expressions (`and`, `or`) are not supported.
+**Operators:** `eq`, `ne`, `co`, `sw`, `ew`, `gt`, `ge`, `lt`, `le`, and `pr` (presence).
+**Logical:** `and`, `or`, `not (...)`, with parenthesised grouping — `and` binds tighter than `or`.
+**Paths:** sub-attributes (`name.givenName`), multi-valued attributes (`emails.value`), value paths (`emails[type eq "work"].value`) and URN-prefixed names (`urn:ietf:params:scim:schemas:core:2.0:User:userName`).
 
-`eq` filters on `userName` and `externalId` (the lookups Entra and Okta issue before every create or update) are resolved via indexed point lookups rather than a listing scan, so they stay fast at any user count. Other filters (`co`, or filters on `displayName`) are applied while paging through the client's users.
+```
+userName eq "user@example.com"
+userName sw "sales-" and active eq true
+emails[type eq "work"].value co "@acme.com"
+not (title pr)
+meta.lastModified gt "2026-01-01T00:00:00Z"
+```
+
+Semantics follow the RFC: string comparison is case-insensitive, a multi-valued attribute matches when any element matches, and an absent attribute makes every comparison false except `ne`. Input that is not a valid SCIM filter is rejected with `400` and `scimType: invalidFilter`, naming the problem.
+
+**Performance.** `userName eq` and `externalId eq` — the lookups Entra and Okta issue before every create or update — are resolved via indexed point lookups rather than a listing scan, so they stay fast at any user count. Every other filter is evaluated while paging through the client's users, bounded: user PII is encrypted at rest and searchable only through blind indexes, so richer predicates cannot be pushed down to storage. Under cursor pagination `totalResults` reflects what was returned, and is exact once `nextCursor` is absent.
 
 ### Pagination
 User listings use **cursor pagination**. Each page of `GET /scim/v2/Users` returns a `nextCursor` property in the list response; pass it back as `?cursor=` to fetch the next page. When `nextCursor` is absent, the listing is complete. Page size is controlled by `count` (default 100, maximum 200).
