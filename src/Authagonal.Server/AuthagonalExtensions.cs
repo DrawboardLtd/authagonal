@@ -122,6 +122,9 @@ public static class AuthagonalExtensions
         services.AddHostedService<ClientSeedService>();
         services.AddHostedService<ProviderSeedService>();
         services.AddHostedService<ScopeSeedService>();
+        // After the scope seeder, so a scope gated on a role (Scope.AllowedRoles) and the role it
+        // names come up in that order on a fresh environment.
+        services.AddHostedService<RoleSeedService>();
 
         // SAML replay cache + OIDC state store live behind the ISamlReplayCache / IOidcStateStore seams.
         // The Azure backend exposes keyed TableClients; when present, wire the Table-backed impls. An AWS

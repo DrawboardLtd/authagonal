@@ -85,6 +85,36 @@ En el backend de AWS, pase un cliente S3 + bucket a `AddAuthagonalAwsStorage` pa
 | `BackgroundServices:GrantReconciliationDelayMinutes` | `10` | Retraso inicial antes de la primera reconciliación de autorizaciones |
 | `BackgroundServices:GrantReconciliationIntervalMinutes` | `30` | Intervalo de reconciliación de autorizaciones |
 
+## Roles
+
+Los roles se definen en el arreglo `Roles` y se inyectan al inicio, junto con los clientes, scopes y
+proveedores. Sembrarlos importa sobre todo cuando un scope está restringido con
+[`AllowedRoles`](scopes#scopes-restringidos-por-rol): un scope restringido a un rol que nadie crea
+queda restringido para todo el mundo, incluido el operador que lo configuró, y falla en silencio —
+sencillamente nunca se concede.
+
+```json
+{
+  "Roles": [
+    {
+      "Name": "staff-admin",
+      "Description": "Consola interna del personal",
+      "Members": [ "ada@example.com", "grace@example.com" ]
+    }
+  ]
+}
+```
+
+| Campo | Descripción |
+|---|---|
+| `Name` | El nombre del rol, tal como se usa en `Scope.AllowedRoles` y en el claim `roles` del token |
+| `Description` | Legible para humanos; se actualiza en arranques posteriores cuando la semilla la indica |
+| `Members` | Correos que se añaden al rol en cada arranque. Una dirección sin usuario todavía se omite con una advertencia y se reintenta en el siguiente arranque — el arranque nunca depende de una cuenta que alguien no ha creado |
+
+La siembra es **aditiva e idempotente**. Nunca elimina un rol ni revoca una pertenencia: la
+configuración no es la fuente de verdad sobre quién tiene qué, así que un rol concedido a través de
+la API de administración sobrevive al siguiente reinicio.
+
 ## Clientes
 
 Los clientes se definen en el arreglo `Clients` y se inyectan al inicio. Cada cliente puede tener:

@@ -84,6 +84,36 @@ On the AWS backend, pass an S3 client + bucket to `AddAuthagonalAwsStorage` to p
 | `BackgroundServices:GrantReconciliationDelayMinutes` | `10` | Initial delay before first grant reconciliation |
 | `BackgroundServices:GrantReconciliationIntervalMinutes` | `30` | Grant reconciliation interval |
 
+## Roles
+
+Roles are defined in the `Roles` array and seeded on startup, alongside clients, scopes and
+providers. Seeding them matters most when a scope is gated with
+[`AllowedRoles`](scopes#role-gated-scopes): a scope gated on a role that nothing creates is gated
+against everybody, including the operator who configured it, and it fails silently — the scope is
+simply never granted.
+
+```json
+{
+  "Roles": [
+    {
+      "Name": "staff-admin",
+      "Description": "Internal staff console",
+      "Members": [ "ada@example.com", "grace@example.com" ]
+    }
+  ]
+}
+```
+
+| Field | Description |
+|---|---|
+| `Name` | The role name, as used in `Scope.AllowedRoles` and on the `roles` token claim |
+| `Description` | Human-readable; updated on later boots when the seed states one |
+| `Members` | Emails placed in the role on every boot. An address with no user yet is skipped with a warning and retried next boot — startup never depends on an account someone has not created |
+
+Seeding is **additive and idempotent**. It never removes a role or revokes a membership: config is
+not the system of record for who holds what, so a role granted through the admin API survives the
+next restart.
+
 ## Clients
 
 Clients are defined in the `Clients` array and seeded on startup. Each client can have:
