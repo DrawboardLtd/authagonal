@@ -316,4 +316,128 @@ public sealed class AdminEndpointTests : IAsyncLifetime
 
         Assert.Equal(HttpStatusCode.NoContent, response.StatusCode);
     }
+    // -----------------------------------------------------------------------
+    // Directory + support routes
+    // -----------------------------------------------------------------------
+
+    [Fact]
+    public async Task SearchUsers_FindsByEmailPrefix()
+    {
+        SetAdminAuth();
+        await _factory.SeedTestUserAsync(email: "findme@example.com");
+
+        var response = await _client.GetAsync("/api/v1/profile/search?q=findme");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Contains(json.GetProperty("users").EnumerateArray(),
+            u => u.GetProperty("email").GetString() == "findme@example.com");
+    }
+
+    /// <summary>
+    /// Exact, unlike search — a caller resolving "this address" to "this account" wants one answer or
+    /// none, not a prefix match that happens to include somebody else.
+    /// </summary>
+    [Fact]
+    public async Task GetUserByEmail_ReturnsTheOneAccount()
+    {
+        SetAdminAuth();
+        var user = await _factory.SeedTestUserAsync(email: "exact@example.com");
+
+        var response = await _client.GetAsync("/api/v1/profile/by-email?email=exact@example.com");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(user.Id, json.GetProperty("id").GetString());
+    }
+
+    [Fact]
+    public async Task GetUserByEmail_UnknownAddress_Returns404()
+    {
+        SetAdminAuth();
+
+        var response = await _client.GetAsync("/api/v1/profile/by-email?email=nobody@example.com");
+
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task UsersExist_ReturnsOnlyTheOnesThatDo()
+    {
+        SetAdminAuth();
+        var user = await _factory.SeedTestUserAsync(email: "real@example.com");
+
+        var response = await _client.PostAsJsonAsync("/api/v1/profile/exists",
+            new { userIds = new[] { user.Id, "does-not-exist" } });
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+        var ids = json.GetProperty("userIds").EnumerateArray().Select(e => e.GetString()).ToList();
+        Assert.Equal([user.Id], ids);
+        Assert.False(json.GetProperty("truncated").GetBoolean());
+    }
+
+    /// <summary>
+    /// Callers have been sending isActive and emailVerified on update all along; the request model
+    /// had neither, so both were silently dropped and a "blocked" user stayed enabled.
+    /// </summary>
+    [Fact]
+    public async Task UpdateUser_HonoursIsActiveAndEmailVerified()
+    {
+        SetAdminAuth();
+        var user = await _factory.SeedTestUserAsync(email: "toggle@example.com", emailConfirmed: false);
+
+        var response = await _client.PutAsJsonAsync("/api/v1/profile",
+            new { userId = user.Id, isActive = false, emailVerified = true });
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var stored = await _factory.UserStore.GetAsync(user.Id);
+        Assert.False(stored!.IsActive);
+        Assert.True(stored.EmailConfirmed);
+    }
+
+    [Fact]
+    public async Task SetPassword_ReplacesTheCredential()
+    {
+        SetAdminAuth();
+        var user = await _factory.SeedTestUserAsync(email: "reset@example.com");
+        var before = (await _factory.UserStore.GetAsync(user.Id))!.PasswordHash;
+
+        var response = await _client.PostAsJsonAsync($"/api/v1/profile/{user.Id}/set-password",
+            new { password = "An0ther!Pass" });
+
+        Assert.Equal(HttpStatusCode.NoContent, response.StatusCode);
+        var after = (await _factory.UserStore.GetAsync(user.Id))!;
+        Assert.NotEqual(before, after.PasswordHash);
+    }
+
+    [Fact]
+    public async Task SetPassword_WeakPassword_IsRefused()
+    {
+        SetAdminAuth();
+        var user = await _factory.SeedTestUserAsync(email: "weak@example.com");
+
+        var response = await _client.PostAsJsonAsync($"/api/v1/profile/{user.Id}/set-password",
+            new { password = "x" });
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task UnlockUser_ClearsTheLockoutAndTheFailureCount()
+    {
+        SetAdminAuth();
+        var user = await _factory.SeedTestUserAsync(email: "locked@example.com");
+        user.LockoutEnd = DateTimeOffset.UtcNow.AddHours(1);
+        user.AccessFailedCount = 5;
+        await _factory.UserStore.UpdateAsync(user);
+
+        var response = await _client.PostAsync($"/api/v1/profile/{user.Id}/unlock", null);
+
+        Assert.Equal(HttpStatusCode.NoContent, response.StatusCode);
+        var stored = await _factory.UserStore.GetAsync(user.Id);
+        Assert.Null(stored!.LockoutEnd);
+        Assert.Equal(0, stored.AccessFailedCount);
+    }
+
 }

@@ -16,8 +16,18 @@ public static class UserEndpoints
             .RequireAuthorization("IdentityAdmin")
             .WithTags("Admin - Users");
 
+        // Directory reads. The store has indexed these all along — email, email-prefix and name
+        // prefix — but nothing exposed them, so an admin console had no way to find a person except
+        // by already knowing their id.
+        group.MapGet("/search", SearchUsers);
+        group.MapGet("/by-email", GetUserByEmail);
+        group.MapGet("/", ListUsers);
+        group.MapPost("/exists", UsersExist);
+
         group.MapGet("/{userId}", GetUser);
         group.MapGet("/{userId}/exists", UserExists);
+        group.MapPost("/{userId}/set-password", SetPassword);
+        group.MapPost("/{userId}/unlock", UnlockUser);
         group.MapPost("/", RegisterUser);
         group.MapPut("/", UpdateUser);
         group.MapDelete("/{userId}", DeleteUser);
@@ -58,6 +68,165 @@ public static class UserEndpoints
         // `truncated` tells the caller its request was capped, instead of silently returning 500 of 600.
         return Results.Json(new { statuses = new Dictionary<string, bool>(statuses), truncated });
     }
+
+    private static async Task<IResult> SearchUsers(
+        string q,
+        int? maxResults,
+        IUserStore userStore,
+        CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(q))
+            return TypedResults.Json(new UserSearchResponse(), AuthagonalJsonContext.Default.UserSearchResponse);
+
+        var users = await userStore.SearchAsync(q.Trim(), maxResults ?? 20, ct);
+        return TypedResults.Json(new UserSearchResponse { Users = users.Select(Summarize).ToList() },
+            AuthagonalJsonContext.Default.UserSearchResponse);
+    }
+
+    /// <summary>
+    /// Exact lookup by email. Distinct from <c>search</c>, which is a prefix match and may return
+    /// several people — a caller resolving "this address" to "this account" wants one answer or none.
+    /// </summary>
+    private static async Task<IResult> GetUserByEmail(
+        string email,
+        IUserStore userStore,
+        IStringLocalizer<SharedMessages> localizer,
+        CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(email))
+            return TypedResults.Json(new ErrorInfoResponse { Error = "invalid_request", ErrorDescription = "email is required" }, AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 400);
+
+        var user = await userStore.FindByEmailAsync(email.Trim(), ct);
+        return user is null
+            ? TypedResults.Json(new ErrorInfoResponse { Error = "user_not_found", ErrorDescription = string.Format(localizer["Admin_UserNotFound"].Value, email) }, AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 404)
+            : TypedResults.Json(Summarize(user), AuthagonalJsonContext.Default.UserSummary);
+    }
+
+    /// <summary>
+    /// Cursor-paged directory listing. Cursors rather than offsets because the underlying store pages
+    /// by continuation token — an offset would re-scan from the start on every page.
+    /// </summary>
+    private static async Task<IResult> ListUsers(
+        string? organizationId,
+        int? count,
+        string? continuationToken,
+        IUserStore userStore,
+        CancellationToken ct)
+    {
+        var page = await userStore.ListPageAsync(organizationId, count ?? 100, continuationToken, ct);
+        return TypedResults.Json(new UserListResponse
+        {
+            Users = page.Users.Select(Summarize).ToList(),
+            ContinuationToken = page.ContinuationToken,
+        }, AuthagonalJsonContext.Default.UserListResponse);
+    }
+
+    /// <summary>
+    /// Of the given ids, which exist. POST because a reconciliation batch exceeds query-string
+    /// limits, and because the caller is asking about a set rather than fetching a resource.
+    /// </summary>
+    private static async Task<IResult> UsersExist(
+        UserIdsRequest request,
+        IUserStore userStore,
+        CancellationToken ct)
+    {
+        const int MaxIds = 500;
+        var ids = (request.UserIds ?? []).Where(id => !string.IsNullOrWhiteSpace(id)).Distinct().ToList();
+        var truncated = ids.Count > MaxIds;
+        if (truncated) ids = ids.GetRange(0, MaxIds);
+
+        var found = new System.Collections.Concurrent.ConcurrentBag<string>();
+        await Parallel.ForEachAsync(ids, new ParallelOptions { MaxDegreeOfParallelism = 10, CancellationToken = ct },
+            async (userId, token) =>
+            {
+                if (await userStore.ExistsAsync(userId, token)) found.Add(userId);
+            });
+
+        // truncated tells the caller its request was capped, rather than silently answering about 500 of 600.
+        return TypedResults.Json(new UserExistsResponse { UserIds = [.. found], Truncated = truncated },
+            AuthagonalJsonContext.Default.UserExistsResponse);
+    }
+
+    /// <summary>
+    /// Set a user's password on their behalf — the support path for someone locked out of an account
+    /// with no working address to send a reset to.
+    /// </summary>
+    /// <remarks>
+    /// Revokes every refresh token and rotates the security stamp. A password change that leaves the
+    /// old sessions running has not changed who can act as that person, which is the entire point of
+    /// changing it.
+    /// </remarks>
+    private static async Task<IResult> SetPassword(
+        string userId,
+        SetPasswordRequest request,
+        IUserStore userStore,
+        IGrantStore grantStore,
+        PasswordHasher passwordHasher,
+        PasswordValidator passwordValidator,
+        PasswordPolicy passwordPolicy,
+        IEnumerable<IAuthHook> authHooks,
+        IStringLocalizer<SharedMessages> localizer,
+        CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(request.Password))
+            return TypedResults.Json(new ErrorInfoResponse { Error = "invalid_request", ErrorDescription = localizer["Admin_PasswordRequired"].Value }, AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 400);
+
+        var (isValid, validationError) = passwordValidator.Validate(request.Password, passwordPolicy);
+        if (!isValid)
+            return TypedResults.Json(new ErrorInfoResponse { Error = "weak_password", ErrorDescription = validationError }, AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 400);
+
+        var user = await userStore.GetAsync(userId, ct);
+        if (user is null)
+            return TypedResults.Json(new ErrorInfoResponse { Error = "user_not_found", ErrorDescription = string.Format(localizer["Admin_UserNotFound"].Value, userId) }, AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 404);
+
+        user.PasswordHash = passwordHasher.HashPassword(request.Password);
+        user.PendingPasswordHash = null;
+        user.SecurityStamp = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
+        user.UpdatedAt = DateTimeOffset.UtcNow;
+        await userStore.UpdateAsync(user, ct);
+        await grantStore.RemoveAllBySubjectAsync(user.Id, ct);
+        await authHooks.RunOnPasswordChangedAsync(user.Id, user.Email, "admin", ct);
+
+        return Results.NoContent();
+    }
+
+    /// <summary>Clear a lockout and its failed-attempt count, letting someone back in now rather than
+    /// when the lockout happens to expire.</summary>
+    private static async Task<IResult> UnlockUser(
+        string userId,
+        IUserStore userStore,
+        IEnumerable<IAuthHook> authHooks,
+        IStringLocalizer<SharedMessages> localizer,
+        CancellationToken ct)
+    {
+        var user = await userStore.GetAsync(userId, ct);
+        if (user is null)
+            return TypedResults.Json(new ErrorInfoResponse { Error = "user_not_found", ErrorDescription = string.Format(localizer["Admin_UserNotFound"].Value, userId) }, AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 404);
+
+        user.LockoutEnd = null;
+        user.AccessFailedCount = 0;
+        user.UpdatedAt = DateTimeOffset.UtcNow;
+        await userStore.UpdateAsync(user, ct);
+        await authHooks.RunOnUserUpdatedAsync(user.Id, user.Email, "admin", ct);
+
+        return Results.NoContent();
+    }
+
+    private static UserSummary Summarize(AuthUser user) => new()
+    {
+        Id = user.Id,
+        Email = user.Email,
+        EmailConfirmed = user.EmailConfirmed,
+        FirstName = user.FirstName,
+        LastName = user.LastName,
+        OrganizationId = user.OrganizationId,
+        IsActive = user.IsActive,
+        LockoutEnd = user.LockoutEnd,
+        MfaEnabled = user.MfaEnabled,
+        Roles = user.Roles,
+        CreatedAt = user.CreatedAt,
+        LastLoginAt = user.LastLoginAt,
+    };
 
     private static async Task<IResult> GetUser(
         string userId,
@@ -245,10 +414,19 @@ public static class UserEndpoints
         if (request.Phone is not null) user.Phone = request.Phone;
         if (request.Locale is not null) user.Locale = request.Locale;
         if (request.OrganizationId is not null) user.OrganizationId = request.OrganizationId;
+
+        var emailConfirmed = request.EmailConfirmed ?? request.EmailVerified;
+        if (emailConfirmed is not null) user.EmailConfirmed = emailConfirmed.Value;
+
+        var deactivated = request.IsActive is false && user.IsActive;
+        if (request.IsActive is not null) user.IsActive = request.IsActive.Value;
+
         user.UpdatedAt = DateTimeOffset.UtcNow;
 
-        // Org change: rotate security stamp (invalidates cookies) and revoke all refresh tokens
-        if (orgChanged)
+        // Org change: rotate security stamp (invalidates cookies) and revoke all refresh tokens.
+        // Deactivation gets the same treatment for a stronger reason: a disabled account that keeps
+        // working until its token expires has not been disabled.
+        if (orgChanged || deactivated)
         {
             user.SecurityStamp = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
             await grantStore.RemoveAllBySubjectAsync(user.Id, ct);
@@ -494,6 +672,36 @@ public static class UserEndpoints
         public string? Phone { get; set; }
         public string? Locale { get; set; }
         public string? OrganizationId { get; set; }
+
+        /// <summary>
+        /// Deactivate or reactivate the account. Null leaves it alone.
+        /// </summary>
+        /// <remarks>
+        /// Deactivating revokes every refresh token and rotates the security stamp, so an existing
+        /// session cannot outlive the decision — a block that only takes effect at next login is not
+        /// a block.
+        /// </remarks>
+        public bool? IsActive { get; set; }
+
+        /// <summary>
+        /// Mark the address confirmed (or not). Null leaves it alone. Admin-only, for the case where
+        /// possession has been established some other way and the verification email is noise.
+        /// </summary>
+        public bool? EmailConfirmed { get; set; }
+
+        /// <summary>Accepted as an alias for <see cref="EmailConfirmed"/> — the field callers have
+        /// been sending all along, which was silently dropped until it was named here.</summary>
+        public bool? EmailVerified { get; set; }
+    }
+
+    public sealed class SetPasswordRequest
+    {
+        public string Password { get; set; } = "";
+    }
+
+    public sealed class UserIdsRequest
+    {
+        public List<string>? UserIds { get; set; }
     }
 
     public sealed class ConfirmEmailRequest

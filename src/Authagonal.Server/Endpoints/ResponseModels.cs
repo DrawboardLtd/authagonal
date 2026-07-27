@@ -381,6 +381,46 @@ public sealed class RevokeSessionsResponse
     [JsonPropertyName("revoked")] public int Revoked { get; set; }
 }
 
+// --- Admin: User directory ---
+
+public sealed class UserSummary
+{
+    [JsonPropertyName("id")] public string Id { get; set; } = "";
+    [JsonPropertyName("email")] public string Email { get; set; } = "";
+    [JsonPropertyName("emailConfirmed")] public bool EmailConfirmed { get; set; }
+    [JsonPropertyName("firstName")] public string? FirstName { get; set; }
+    [JsonPropertyName("lastName")] public string? LastName { get; set; }
+    [JsonPropertyName("organizationId")] public string? OrganizationId { get; set; }
+    [JsonPropertyName("isActive")] public bool IsActive { get; set; }
+    [JsonPropertyName("lockoutEnd")] public DateTimeOffset? LockoutEnd { get; set; }
+    [JsonPropertyName("mfaEnabled")] public bool MfaEnabled { get; set; }
+    [JsonPropertyName("roles")] public List<string> Roles { get; set; } = [];
+    [JsonPropertyName("createdAt")] public DateTimeOffset CreatedAt { get; set; }
+    [JsonPropertyName("lastLoginAt")] public DateTimeOffset? LastLoginAt { get; set; }
+}
+
+public sealed class UserSearchResponse
+{
+    [JsonPropertyName("users")] public List<UserSummary> Users { get; set; } = [];
+}
+
+public sealed class UserListResponse
+{
+    [JsonPropertyName("users")] public List<UserSummary> Users { get; set; } = [];
+
+    /// <summary>Pass back as <c>continuationToken</c> for the next page; null when there are none.</summary>
+    [JsonPropertyName("continuationToken")] public string? ContinuationToken { get; set; }
+}
+
+public sealed class UserExistsResponse
+{
+    /// <summary>The subset of the requested ids that exist.</summary>
+    [JsonPropertyName("userIds")] public List<string> UserIds { get; set; } = [];
+
+    /// <summary>True when the request exceeded the per-call cap and was trimmed.</summary>
+    [JsonPropertyName("truncated")] public bool Truncated { get; set; }
+}
+
 // --- Admin: Roles ---
 
 public sealed class RoleListResponse

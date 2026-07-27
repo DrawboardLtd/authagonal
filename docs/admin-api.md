@@ -110,9 +110,80 @@ Content-Type: application/json
 }
 ```
 
-`userId` is required; every other field is optional, only provided fields are updated. Changing `organizationId` triggers:
+`userId` is required; every other field is optional, only provided fields are updated.
+
+`isActive` deactivates or reactivates the account. `emailConfirmed` (accepted as `emailVerified`
+too) marks the address confirmed without sending a verification mail — for when possession has been
+established some other way.
+
+Changing `organizationId`, or deactivating, triggers:
 - SecurityStamp rotation (invalidates all cookie sessions within 30 minutes)
 - All refresh tokens revoked
+
+A block that only takes effect at next login is not a block, which is why deactivation revokes
+rather than waiting for expiry.
+
+### Search Users
+
+```
+GET /api/v1/profile/search?q=jane&maxResults=20
+```
+
+Prefix search over the email and name indexes. Returns `{ "users": [ ... ] }`.
+
+### Get User by Email
+
+```
+GET /api/v1/profile/by-email?email=jane@example.com
+```
+
+Exact lookup — distinct from search, which is a prefix match and may return several people. A caller
+resolving "this address" to "this account" wants one answer or none. `404` if there is no such user.
+
+### List Users
+
+```
+GET /api/v1/profile?organizationId=&count=100&continuationToken=
+```
+
+Cursor-paged directory listing; pass the returned `continuationToken` back for the next page, and
+stop when it is null. Cursors rather than offsets because the store pages by token — an offset would
+re-scan from the start every page.
+
+### Which Users Exist
+
+```
+POST /api/v1/profile/exists
+Content-Type: application/json
+
+{ "userIds": [ "a", "b", "c" ] }
+```
+
+Returns the subset that exist, plus `truncated: true` when the request exceeded the 500-id cap — so
+a caller is told its batch was trimmed rather than silently answered about 500 of 600. For
+reconciling an id set against another system's.
+
+### Set a Password
+
+```
+POST /api/v1/profile/{userId}/set-password
+Content-Type: application/json
+
+{ "password": "N3w!Password" }
+```
+
+The support path for someone locked out of an account whose address no longer reaches them. Subject
+to the password policy. Revokes every refresh token and rotates the security stamp: a password
+change that leaves the old sessions running has not changed who can act as that person.
+
+### Unlock a User
+
+```
+POST /api/v1/profile/{userId}/unlock
+```
+
+Clears the lockout and its failed-attempt count, letting someone back in now rather than when the
+lockout happens to expire.
 
 ### Delete User
 
