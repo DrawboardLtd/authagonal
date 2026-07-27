@@ -186,6 +186,64 @@ public sealed class SamlSignatureHardeningTests
         Assert.False(result.Success);
     }
 
+    // ── Algorithm confusion ──────────────────────────────────────────────────────────────────────
+    /// An HMAC SignatureMethod is the key-confusion shape: it asks the verifier to treat the IdP's
+    /// public certificate as a shared secret, which the attacker has too. Refused by algorithm, before
+    /// any key is chosen.
+    [Fact]
+    public void HmacSignatureMethod_IsRejected()
+    {
+        using var cert = NewCert();
+        var doc = BuildResponseDocument();
+        var assertion = Assertion(doc);
+
+        // Sign with an HMAC keyed on the certificate's public bytes — what an attacker can reproduce.
+        using var hmac = new HMACSHA256(cert.RawData);
+        var signedXml = new IdSignedXml(doc);
+        var reference = new Reference("#_assertion-1");
+        reference.AddTransform(new XmlDsigEnvelopedSignatureTransform());
+        reference.AddTransform(new XmlDsigExcC14NTransform());
+        reference.DigestMethod = SignedXml.XmlDsigSHA256Url;
+        signedXml.AddReference(reference);
+        signedXml.ComputeSignature(hmac);
+        assertion.AppendChild(doc.ImportNode(signedXml.GetXml(), true));
+
+        var result = Parser.Parse(Encode(doc), Ctx(cert));
+        Assert.False(result.Success);
+    }
+
+    // ── Comment truncation (CVE-2017-11427 / CVE-2017-11428 family) ──────────────────────────────
+    /// Canonicalization strips comments, so inserting one into a signed NameID leaves the signature
+    /// valid. The bug in ruby-saml and python-saml was reading only the FIRST text node afterwards:
+    /// a legitimately signed "user@acme.com.evil.example" then logs in as "user@acme.com".
+    /// InnerText concatenates, so the value read is the value signed — this pins that.
+    [Fact]
+    public void CommentInNameId_DoesNotTruncateTheIdentity()
+    {
+        using var cert = NewCert();
+        var doc = BuildResponseDocument();
+        var nsm = new XmlNamespaceManager(doc.NameTable);
+        nsm.AddNamespace("saml", "urn:oasis:names:tc:SAML:2.0:assertion");
+        var nameId = (XmlElement)doc.SelectSingleNode("//saml:NameID", nsm)!;
+
+        // "user@acme.com" + comment + ".evil.example" — an address the attacker legitimately owns and
+        // can obtain a real signature for.
+        nameId.RemoveAll();
+        nameId.SetAttribute("Format", "urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress");
+        nameId.AppendChild(doc.CreateTextNode("user@acme.com"));
+        nameId.AppendChild(doc.CreateComment("truncate-here"));
+        nameId.AppendChild(doc.CreateTextNode(".evil.example"));
+
+        SignElement(doc, Assertion(doc), "_assertion-1", cert);
+
+        var result = Parser.Parse(Encode(doc), Ctx(cert));
+
+        // The signature covers the comment-stripped, concatenated text, so it validates — the whole
+        // point of the attack. What must not happen is the identity being read as the truncated prefix.
+        Assert.True(result.Success, result.Error);
+        Assert.Equal("user@acme.com.evil.example", result.NameId);
+    }
+
     // ── Duplicate IDs ────────────────────────────────────────────────────────────────────────────
     /// Two elements sharing an ID make "#id" ambiguous: the reference-URI check compares strings, while
     /// CheckSignature resolves the ID across the document. Those can pick different elements, which is

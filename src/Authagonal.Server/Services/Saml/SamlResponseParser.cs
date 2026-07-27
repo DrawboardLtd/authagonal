@@ -340,6 +340,32 @@ public sealed class SamlResponseParser(ILogger<SamlResponseParser> logger)
     };
 
     /// <summary>
+    /// Signature algorithms we will verify. Public-key only, by design: an HMAC SignatureMethod invites
+    /// the key-confusion attack where the verifier is talked into treating the IdP's *public* certificate
+    /// as a shared secret, which the attacker also has. SHA-1 stays for legacy ADFS reach — a documented
+    /// trade, and separate from the algorithm-confusion class this list closes.
+    /// </summary>
+    private static readonly HashSet<string> AllowedSignatureMethods = new(StringComparer.Ordinal)
+    {
+        SignedXml.XmlDsigRSASHA1Url,
+        SignedXml.XmlDsigRSASHA256Url,
+        SignedXml.XmlDsigRSASHA384Url,
+        SignedXml.XmlDsigRSASHA512Url,
+        "http://www.w3.org/2001/04/xmldsig-more#ecdsa-sha256",
+        "http://www.w3.org/2001/04/xmldsig-more#ecdsa-sha384",
+        "http://www.w3.org/2001/04/xmldsig-more#ecdsa-sha512",
+    };
+
+    /// <summary>Digest algorithms we will accept. MD5 and anything unrecognised are refused.</summary>
+    private static readonly HashSet<string> AllowedDigestMethods = new(StringComparer.Ordinal)
+    {
+        SignedXml.XmlDsigSHA1Url,
+        SignedXml.XmlDsigSHA256Url,
+        SignedXml.XmlDsigSHA384Url,
+        SignedXml.XmlDsigSHA512Url,
+    };
+
+    /// <summary>
     /// True when any ID value appears on more than one element. Checks the three attribute spellings
     /// .NET's reference resolver looks at, not just SAML's "ID", so the check covers everything
     /// <c>GetIdElement</c> could latch onto.
@@ -433,6 +459,24 @@ public sealed class SamlResponseParser(ILogger<SamlResponseParser> logger)
                     logger.LogWarning("Signature uses a disallowed transform: {Algorithm}", transform.Algorithm);
                     return false;
                 }
+            }
+
+            // Algorithm confusion: pin the signature and digest algorithms to public-key primitives we
+            // actually intend to accept, rather than verifying whatever the document asks for. An HMAC
+            // SignatureMethod is the case that matters — it invites a verifier into treating the IdP's
+            // public certificate as a shared secret the attacker also holds.
+            if (!AllowedSignatureMethods.Contains(signedXml.SignedInfo.SignatureMethod ?? ""))
+            {
+                logger.LogWarning("Signature uses a disallowed signature method: {Method}",
+                    signedXml.SignedInfo.SignatureMethod);
+                return false;
+            }
+
+            if (!AllowedDigestMethods.Contains(reference.DigestMethod ?? ""))
+            {
+                logger.LogWarning("Signature reference uses a disallowed digest method: {Method}",
+                    reference.DigestMethod);
+                return false;
             }
 
             if (!AllowedCanonicalizationMethods.Contains(signedXml.SignedInfo.CanonicalizationMethod ?? ""))
