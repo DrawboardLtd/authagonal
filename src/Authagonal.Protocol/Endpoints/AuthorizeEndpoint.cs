@@ -1,3 +1,4 @@
+using Authagonal.Core.Services;
 using Authagonal.Core.Stores;
 using Authagonal.Protocol.Services;
 using Microsoft.AspNetCore.Authentication;
@@ -20,6 +21,7 @@ internal static class AuthorizeEndpoint
             IOptions<AuthagonalProtocolOptions> protocolOptions,
             ProtocolAuthorizationCodeService authCodeService,
             ProtocolPushedAuthorizationService parService,
+            ITenantContext tenantContext,
             CancellationToken ct) =>
         {
             var clientId = httpContext.Request.Query["client_id"].FirstOrDefault();
@@ -137,7 +139,7 @@ internal static class AuthorizeEndpoint
             var subject = ((OidcSubjectResult.Allowed)resolved).Subject;
 
             return await AuthorizeRequestSupport.IssueCodeAndRedirectAsync(
-                authCodeService, parService, clientId, subject, request, requestUri, ct);
+                authCodeService, parService, clientId, subject, request, requestUri, tenantContext.Issuer, ct);
         })
         .AllowAnonymous()
         .WithTags("OIDC");

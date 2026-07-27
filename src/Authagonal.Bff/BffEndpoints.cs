@@ -441,6 +441,15 @@ internal static class BffEndpoints
             IssuerSigningKeys = config.SigningKeys,
             ValidateLifetime = false,      // a logout token carries no exp
             RequireExpirationTime = false,
+            // Pin the algorithms rather than verifying whatever the header names. Keys come from the
+            // IdP's published JWKS so one cannot be injected, but this keeps that a property of our
+            // code rather than of a library default.
+            ValidAlgorithms =
+            [
+                SecurityAlgorithms.RsaSha256, SecurityAlgorithms.RsaSha384, SecurityAlgorithms.RsaSha512,
+                SecurityAlgorithms.RsaSsaPssSha256, SecurityAlgorithms.RsaSsaPssSha384, SecurityAlgorithms.RsaSsaPssSha512,
+                SecurityAlgorithms.EcdsaSha256, SecurityAlgorithms.EcdsaSha384, SecurityAlgorithms.EcdsaSha512,
+            ],
         });
         if (!validation.IsValid)
         {
@@ -460,6 +469,20 @@ internal static class BffEndpoints
         if (!hasSid && !hasSub)
             return Fail("missing_sub_or_sid");
 
+        // A logout token has no exp, so without a freshness bound one stays valid forever. Capture a
+        // legitimate token today, replay it after the user signs back in tomorrow, and they are logged
+        // out again — repeatable, and indistinguishable from a flaky session. OIDC Back-Channel Logout
+        // 1.0 §2.4 requires iat; this holds the replay window to minutes.
+        if (!jwt.TryGetPayloadValue<long>("iat", out var issuedAtUnix))
+            return Fail("missing_iat");
+        var issuedAt = DateTimeOffset.FromUnixTimeSeconds(issuedAtUnix);
+        var age = DateTimeOffset.UtcNow - issuedAt;
+        if (age > LogoutTokenMaxAge || age < -LogoutTokenClockSkew)
+        {
+            log.LogWarning("BFF back-channel logout token iat is outside the accepted window ({Age}).", age);
+            return Fail("stale_logout_token");
+        }
+
         // Prefer sid (a single session) if the IdP scoped it that way; otherwise kill every session for
         // the subject (the form Authagonal emits).
         var removed = hasSid ? await store.RemoveBySidAsync(sid!, ct) : await store.RemoveBySubjectAsync(sub!, ct);
@@ -470,6 +493,11 @@ internal static class BffEndpoints
     // ---- helpers ----
 
     private const string BackChannelLogoutEventName = "http://schemas.openid.net/event/backchannel-logout";
+
+    /// <summary>How stale a logout token may be. Generous enough for a slow IdP retry, short enough that
+    /// a captured token cannot be held and replayed against a later session.</summary>
+    private static readonly TimeSpan LogoutTokenMaxAge = TimeSpan.FromMinutes(5);
+    private static readonly TimeSpan LogoutTokenClockSkew = TimeSpan.FromMinutes(2);
 
     private static bool HasBackChannelLogoutEvent(JsonWebToken jwt)
         => jwt.TryGetPayloadValue<JsonElement>("events", out var events)

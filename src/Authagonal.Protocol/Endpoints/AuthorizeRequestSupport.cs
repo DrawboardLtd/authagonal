@@ -146,6 +146,7 @@ internal static class AuthorizeRequestSupport
         OidcSubject subject,
         AuthorizeRequest request,
         string? requestUri,
+        string issuer,
         CancellationToken ct)
     {
         var code = await authCodeService.CreateCodeAsync(
@@ -167,6 +168,11 @@ internal static class AuthorizeRequestSupport
         queryParams["code"] = code;
         if (!string.IsNullOrWhiteSpace(request.State))
             queryParams["state"] = request.State;
+        // RFC 9207: name the issuer in the authorization response. A client talking to several
+        // authorization servers cannot otherwise tell which one a code came back from, which is the
+        // whole mix-up attack — the attacker gets a victim's code redeemed at the wrong server.
+        // Clients that ignore the parameter are unaffected.
+        queryParams["iss"] = issuer;
         uriBuilder.Query = queryParams.ToString();
 
         return Results.Redirect(uriBuilder.ToString());

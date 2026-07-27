@@ -40,6 +40,7 @@ internal static class DiscoveryEndpoint
                 IdTokenSigningAlgValuesSupported = ["ES256"],
                 TokenEndpointAuthMethodsSupported = ["client_secret_basic", "client_secret_post", "private_key_jwt"],
                 CodeChallengeMethodsSupported = ["S256"],
+                AuthorizationResponseIssParameterSupported = true,
                 ClaimsSupported = ["sub", "iss", "aud", "exp", "iat", "auth_time", "email", "email_verified", "name", "given_name", "family_name", "phone_number", "roles", "groups", "org_id"],
                 AuthorizationDetailsTypesSupported = authorityTypes,
             }, ProtocolJsonContext.Default.DiscoveryResponse);

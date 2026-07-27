@@ -27,6 +27,9 @@ public sealed class DiscoveryResponse
     [JsonPropertyName("id_token_signing_alg_values_supported")] public string[] IdTokenSigningAlgValuesSupported { get; set; } = [];
     [JsonPropertyName("token_endpoint_auth_methods_supported")] public string[] TokenEndpointAuthMethodsSupported { get; set; } = [];
     [JsonPropertyName("code_challenge_methods_supported")] public string[] CodeChallengeMethodsSupported { get; set; } = [];
+    /// <summary>RFC 9207 — we name ourselves in the authorization response so a client talking to
+    /// several authorization servers can tell which one answered (the mix-up defence).</summary>
+    [JsonPropertyName("authorization_response_iss_parameter_supported")] public bool AuthorizationResponseIssParameterSupported { get; set; }
     [JsonPropertyName("backchannel_logout_supported"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public bool? BackchannelLogoutSupported { get; set; }
     [JsonPropertyName("backchannel_logout_session_supported"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public bool? BackchannelLogoutSessionSupported { get; set; }
     [JsonPropertyName("frontchannel_logout_supported"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public bool? FrontchannelLogoutSupported { get; set; }

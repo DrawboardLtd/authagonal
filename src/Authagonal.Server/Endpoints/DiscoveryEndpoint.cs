@@ -58,6 +58,7 @@ public static class DiscoveryEndpoint
                 IdTokenSigningAlgValuesSupported = ["ES256"],
                 TokenEndpointAuthMethodsSupported = ["client_secret_basic", "client_secret_post", "private_key_jwt"],
                 CodeChallengeMethodsSupported = ["S256"],
+                AuthorizationResponseIssParameterSupported = true,
                 BackchannelLogoutSupported = true,
                 BackchannelLogoutSessionSupported = false,
                 FrontchannelLogoutSupported = true,

@@ -83,6 +83,30 @@ public sealed class AuthorizeEndpointTests : IAsyncLifetime
         Assert.Contains("code=", location);
     }
 
+    // -----------------------------------------------------------------------
+    // RFC 9207 — the authorization response names its issuer (mix-up defence)
+    // -----------------------------------------------------------------------
+
+    /// <summary>
+    /// A client configured against several authorization servers cannot otherwise tell which one a code
+    /// came back from. That ambiguity IS the mix-up attack: the attacker induces a code issued by one
+    /// server to be redeemed at another. `iss` lets the client check, and discovery advertises it.
+    /// </summary>
+    [Fact]
+    public async Task Authorize_SuccessRedirect_NamesTheIssuer()
+    {
+        var response = await _client.GetAsync(BuildAuthorizeUrl());
+
+        Assert.Equal(HttpStatusCode.Redirect, response.StatusCode);
+        var query = HttpUtility.ParseQueryString(response.Headers.Location!.Query);
+        Assert.NotNull(query["code"]);
+        Assert.False(string.IsNullOrWhiteSpace(query["iss"]), "authorization response must carry iss");
+
+        var discovery = await _client.GetFromJsonAsync<JsonElement>("/.well-known/openid-configuration");
+        Assert.True(discovery.GetProperty("authorization_response_iss_parameter_supported").GetBoolean());
+        Assert.Equal(discovery.GetProperty("issuer").GetString(), query["iss"]);
+    }
+
     /// <summary>
     /// A client that declares NO audiences may name any resource: an empty allowlist means unset, not
     /// deny-everything.

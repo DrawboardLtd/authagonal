@@ -30,6 +30,9 @@ public static class AuthorizeEndpoint
             [FromServices] IScopeRoleGate scopeRoleGate,
             ProtocolAuthorizationCodeService authCodeService,
             ProtocolPushedAuthorizationService parService,
+            // Explicit for the same reason as IScopeRoleGate above: unresolvable services on a GET bind
+            // as a body parameter and fail as an opaque 400.
+            [FromServices] ITenantContext tenantContext,
             ILogger<ProtocolAuthorizationCodeService> logger,
             CancellationToken ct) =>
         {
@@ -352,7 +355,7 @@ public static class AuthorizeEndpoint
             var subject = ((OidcSubjectResult.Allowed)resolution).Subject;
 
             return await AuthorizeRequestSupport.IssueCodeAndRedirectAsync(
-                authCodeService, parService, clientId, subject, request, requestUri, ct);
+                authCodeService, parService, clientId, subject, request, requestUri, tenantContext.Issuer, ct);
         })
         .AllowAnonymous()
         .WithTags("OAuth");
