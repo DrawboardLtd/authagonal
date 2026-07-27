@@ -45,6 +45,44 @@ public sealed class ScimFilterParserTests
         Assert.Null(ScimFilterParser.Parse("justOneWord"));
     }
 
+    // "No filter" and "a filter I cannot read" are opposite answers: the first means list everything,
+    // the second must refuse. The lenient Parse collapses both to null, which is why the endpoints use
+    // TryParse — an unsupported filter that silently lists the whole population is a wrong answer, not
+    // a permissive one.
+    [Fact]
+    public void TryParse_Absent_IsAbsentNotUnsupported()
+    {
+        foreach (var absent in new string?[] { null, "", "   " })
+        {
+            var result = ScimFilterParser.TryParse(absent);
+            Assert.Equal(ScimFilterParser.ScimFilterStatus.Absent, result.Status);
+            Assert.Null(result.Filter);
+        }
+    }
+
+    [Theory]
+    [InlineData("userName gt \"test\"")]                       // operator we don't implement
+    [InlineData("userName sw \"jo\"")]
+    [InlineData("userName pr")]                                // presence, no value
+    [InlineData("userName eq \"a\" and externalId eq \"b\"")]  // compound
+    [InlineData("userName eq \"a\" or userName eq \"b\"")]
+    [InlineData("justOneWord")]                                // malformed
+    public void TryParse_PresentButUnreadable_IsUnsupported(string filter)
+    {
+        var result = ScimFilterParser.TryParse(filter);
+        Assert.Equal(ScimFilterParser.ScimFilterStatus.Unsupported, result.Status);
+        Assert.Null(result.Filter);
+    }
+
+    [Fact]
+    public void TryParse_SupportedTerm_IsParsed()
+    {
+        var result = ScimFilterParser.TryParse("userName eq \"john@example.com\"");
+        Assert.Equal(ScimFilterParser.ScimFilterStatus.Parsed, result.Status);
+        Assert.Equal("userName", result.Filter!.Attribute);
+        Assert.Equal("john@example.com", result.Filter.Value);
+    }
+
     [Fact]
     public void Matches_EqOnUserName_CaseInsensitive()
     {

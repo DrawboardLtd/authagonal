@@ -50,7 +50,13 @@ public static class ScimUserEndpoints
 
         var baseUrl = GetBaseUrl(tenantContext);
         var pageSize = Math.Min(count ?? 100, 200);
-        var parsed = ScimFilterParser.Parse(filter);
+
+        // A filter we cannot represent must FAIL, not be dropped: ignoring it returns the client's whole
+        // population, and an agent asking "does this user exist?" reads that as yes (RFC 7644 §3.4.2.2).
+        var filterResult = ScimFilterParser.TryParse(filter, ScimFilterParser.UserFilterAttributes);
+        if (filterResult.Status == ScimFilterParser.ScimFilterStatus.Unsupported)
+            return ScimResults.Error(400, "invalidFilter", ScimFilterParser.SupportedSyntax);
+        var parsed = filterResult.Filter;
 
         // Equality filters — the path IdP provisioning agents (Entra/Okta) hit before every
         // create/update — resolve via point lookups (blind indexes), never a tenant scan.

@@ -156,6 +156,46 @@ public sealed class ScimUserEndpointTests : IAsyncDisposable
             json.GetProperty("Resources")[0].GetProperty("userName").GetString());
     }
 
+    /// A filter we cannot represent must be refused, never dropped. Dropping it returns the caller's
+    /// entire population, and a provisioning agent asking "does this user exist?" reads that as yes —
+    /// then skips the create, or worse, matches the wrong account.
+    [Theory]
+    [InlineData("userName eq \"a@example.com\" and active eq \"true\"")]
+    [InlineData("userName sw \"filter-\"")]
+    public async Task ListUsers_UnsupportedFilter_Returns400InvalidFilter(string filter)
+    {
+        await _factory.SeedTestDataAsync();
+        var (_, rawToken) = await _factory.SeedScimClientAsync();
+        var client = _factory.CreateClient();
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", rawToken);
+
+        await client.PostAsJsonAsync("/scim/v2/Users", new { userName = "unsupported-filter@example.com" });
+
+        var response = await client.GetAsync($"/scim/v2/Users?filter={Uri.EscapeDataString(filter)}");
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("invalidFilter", json.GetProperty("scimType").GetString());
+    }
+
+    [Fact]
+    public async Task ListUsers_NoFilter_StillLists()
+    {
+        // The counterpart to the test above: absent must stay "list everything", not get swept into the
+        // refusal by an over-eager unsupported check.
+        await _factory.SeedTestDataAsync();
+        var (_, rawToken) = await _factory.SeedScimClientAsync();
+        var client = _factory.CreateClient();
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", rawToken);
+
+        await client.PostAsJsonAsync("/scim/v2/Users", new { userName = "no-filter@example.com" });
+
+        var response = await client.GetAsync("/scim/v2/Users");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.True(json.GetProperty("totalResults").GetInt32() >= 1);
+    }
+
     [Fact]
     public async Task PatchUser_Deactivate_SetsActiveToFalse()
     {

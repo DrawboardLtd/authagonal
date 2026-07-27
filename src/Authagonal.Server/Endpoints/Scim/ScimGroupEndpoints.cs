@@ -53,8 +53,12 @@ public static class ScimGroupEndpoints
         // Scope enumeration to groups owned by the calling SCIM client.
         var (groups, _) = await groupStore.ListAsync(CallerClientId(httpContext), 0, int.MaxValue, ct);
 
-        // Apply filter
-        var parsed = ScimFilterParser.Parse(filter);
+        // Apply filter. An unrepresentable one fails rather than being dropped — silently listing every
+        // group answers a different question than the one asked (RFC 7644 §3.4.2.2).
+        var filterResult = ScimFilterParser.TryParse(filter, ScimFilterParser.GroupFilterAttributes);
+        if (filterResult.Status == ScimFilterParser.ScimFilterStatus.Unsupported)
+            return ScimResults.Error(400, "invalidFilter", ScimFilterParser.SupportedSyntax);
+        var parsed = filterResult.Filter;
         IEnumerable<ScimGroup> filtered = groups;
         if (parsed is not null)
         {

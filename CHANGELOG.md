@@ -2,6 +2,22 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **SCIM: a filter we cannot represent is now refused with `400 invalidFilter` instead of silently
+  answering a different question.** `ScimFilterParser` supports one `attribute eq|co "value"` term, but
+  its value check only looked at the first and last character, so a compound filter
+  (`userName eq "a@x.com" and active eq "true"`) parsed as `userName eq` with the rest of the
+  expression embedded in the value. That matched nobody and returned an **empty list** — which a
+  provisioning agent asking "does this user exist?" reads as "no", and answers by creating a duplicate.
+  A filter naming an attribute we do not index (`active eq "true"`) failed the same way.
+  - The value must now be exactly one quoted string with no unescaped interior quote, and the attribute
+    must be one the matcher can actually evaluate (`ScimFilterParser.UserFilterAttributes` /
+    `GroupFilterAttributes`). Both list endpoints answer `400` with `scimType: invalidFilter` per
+    RFC 7644 §3.4.2.2, naming the supported grammar.
+  - New `TryParse` reports Absent / Unsupported / Parsed, because "no filter" and "a filter I cannot
+    read" are opposite answers. The lenient `Parse` is retained for embedding hosts.
+
 ## [0.18.0], 2026-07-27
 
 ### Changed

@@ -90,6 +90,26 @@ public sealed class ScimGroupEndpointTests : IAsyncDisposable
         Assert.Equal(1, json.GetProperty("totalResults").GetInt32());
     }
 
+    /// Same rule as the user listing: an unrepresentable filter is refused, not dropped. Returning every
+    /// group to a caller who asked for one is a wrong answer dressed as a permissive one.
+    [Fact]
+    public async Task ListGroups_UnsupportedFilter_Returns400InvalidFilter()
+    {
+        await _factory.SeedTestDataAsync();
+        var (_, rawToken) = await _factory.SeedScimClientAsync();
+        var client = _factory.CreateClient();
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", rawToken);
+
+        await client.PostAsJsonAsync("/scim/v2/Groups", new { displayName = "Unsupported Filter Group" });
+
+        var filter = Uri.EscapeDataString("displayName eq \"a\" and externalId eq \"b\"");
+        var response = await client.GetAsync($"/scim/v2/Groups?filter={filter}");
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("invalidFilter", json.GetProperty("scimType").GetString());
+    }
+
     [Fact]
     public async Task PatchGroup_AddMembers()
     {
