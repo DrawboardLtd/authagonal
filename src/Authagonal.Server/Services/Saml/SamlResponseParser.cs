@@ -318,6 +318,53 @@ public sealed class SamlResponseParser(ILogger<SamlResponseParser> logger)
         };
     }
 
+    /// <summary>
+    /// The only transforms a signature reference may declare. Anything else changes what gets digested
+    /// (or, for XSLT, executes during verification), which defeats the reference-URI check.
+    /// </summary>
+    private static readonly HashSet<string> AllowedTransforms = new(StringComparer.Ordinal)
+    {
+        SignedXml.XmlDsigEnvelopedSignatureTransformUrl,
+        SignedXml.XmlDsigC14NTransformUrl,
+        SignedXml.XmlDsigC14NWithCommentsTransformUrl,
+        SignedXml.XmlDsigExcC14NTransformUrl,
+        SignedXml.XmlDsigExcC14NWithCommentsTransformUrl,
+    };
+
+    private static readonly HashSet<string> AllowedCanonicalizationMethods = new(StringComparer.Ordinal)
+    {
+        SignedXml.XmlDsigC14NTransformUrl,
+        SignedXml.XmlDsigC14NWithCommentsTransformUrl,
+        SignedXml.XmlDsigExcC14NTransformUrl,
+        SignedXml.XmlDsigExcC14NWithCommentsTransformUrl,
+    };
+
+    /// <summary>
+    /// True when any ID value appears on more than one element. Checks the three attribute spellings
+    /// .NET's reference resolver looks at, not just SAML's "ID", so the check covers everything
+    /// <c>GetIdElement</c> could latch onto.
+    /// </summary>
+    private static bool HasDuplicateIds(XmlDocument doc, out string duplicateId)
+    {
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        foreach (XmlNode node in doc.SelectNodes("//*")!)
+        {
+            if (node is not XmlElement el || el.Attributes is null) continue;
+            foreach (var name in new[] { "ID", "Id", "id" })
+            {
+                var value = el.Attributes[name]?.Value;
+                if (string.IsNullOrEmpty(value)) continue;
+                if (!seen.Add(value))
+                {
+                    duplicateId = value;
+                    return true;
+                }
+            }
+        }
+        duplicateId = "";
+        return false;
+    }
+
     // Public: the SLO endpoint reuses this to validate POST-binding LogoutRequest signatures.
     [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("Trimming", "IL2026", Justification = "SAML XML signature validation requires reflection")]
     public static bool ValidateElementSignature(
@@ -341,6 +388,17 @@ public sealed class SamlResponseParser(ILogger<SamlResponseParser> logger)
         if (signatureElement is null)
             return false; // No signature on this element — not an error, the other element might be signed
 
+        // SECURITY: a duplicated ID makes "which element does #id mean?" ambiguous. We compare the
+        // Reference URI to THIS element's ID below, but CheckSignature resolves #id itself, across the
+        // whole document, first match wins — so with two elements sharing an ID those two resolutions
+        // can disagree: sign one element, read another. Rejecting duplicates removes the ambiguity
+        // rather than relying on both lookups happening to choose the same node.
+        if (element.OwnerDocument is { } ownerDoc && HasDuplicateIds(ownerDoc, out var duplicateId))
+        {
+            logger.LogWarning("SAML document contains a duplicate ID '{Id}' — refusing to validate", duplicateId);
+            return false;
+        }
+
         var signedXml = new SignedXml(element);
         signedXml.LoadXml(signatureElement);
 
@@ -348,8 +406,41 @@ public sealed class SamlResponseParser(ILogger<SamlResponseParser> logger)
         // This prevents signature wrapping attacks
         if (signedXml.SignedInfo?.References is { Count: > 0 })
         {
+            // Exactly one reference. No IdP emits more, and validating the first while letting the rest
+            // through unchecked is the sort of gap wrapping attacks are built out of.
+            if (signedXml.SignedInfo.References.Count != 1)
+            {
+                logger.LogWarning("Signature carries {Count} references; exactly one is expected",
+                    signedXml.SignedInfo.References.Count);
+                return false;
+            }
+
             var reference = (Reference)signedXml.SignedInfo.References[0]!;
             var referenceUri = reference.Uri;
+
+            // Allowlist the transform chain. Transforms decide WHICH BYTES get digested, so an
+            // unrestricted chain is what would undo the URI check below: an XPath transform can aim the
+            // digest at content other than the element the URI names, and XmlDsigXsltTransform would run
+            // attacker-supplied XSLT inside the verifier.
+            // MEASURED: .NET already refuses the XSLT and XPath chains we could construct, so this is
+            // policy made explicit rather than a hole being closed. It stops the guarantee resting on
+            // runtime behaviour we do not control, and fails closed if a future runtime relaxes.
+            // Enveloped-signature plus canonicalization is everything a real IdP sends.
+            foreach (Transform transform in reference.TransformChain)
+            {
+                if (!AllowedTransforms.Contains(transform.Algorithm ?? ""))
+                {
+                    logger.LogWarning("Signature uses a disallowed transform: {Algorithm}", transform.Algorithm);
+                    return false;
+                }
+            }
+
+            if (!AllowedCanonicalizationMethods.Contains(signedXml.SignedInfo.CanonicalizationMethod ?? ""))
+            {
+                logger.LogWarning("Signature uses a disallowed canonicalization method: {Method}",
+                    signedXml.SignedInfo.CanonicalizationMethod);
+                return false;
+            }
 
             // The URI should be #ID where ID matches the element's ID attribute
             var elementId = element.Attributes?["ID"]?.Value;
