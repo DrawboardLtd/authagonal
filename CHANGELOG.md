@@ -2,6 +2,22 @@
 
 ## [Unreleased]
 
+## [0.18.0], 2026-07-27
+
+### Changed
+
+- **`@authagonal/login` depends on `react-router` v8 instead of `react-router-dom` v7.** BREAKING for
+  consumers: `react-router-dom` leaves the dependency tree entirely (v8 removes the package and ships
+  one), so an application importing from `react-router-dom` must move its own imports to
+  `react-router`. Every symbol this UI uses — `BrowserRouter`, `Routes`, `Route`, `Link`, `Navigate`,
+  `useNavigate`, `useSearchParams` — is on the main `react-router` entry; only `RouterProvider` and
+  `HydratedRouter` moved to `react-router/dom`, and this declarative-mode UI uses neither. The React
+  floor rises to 19.2.8 (v8 requires 19.2.5+); Vite was already 8.
+  - **Why now:** react-router 7.12.0 through 8.2.0 is covered by GHSA-qwww-vcr4-c8h2 (an RSC-mode CSRF
+    bypass), fixed only in 8.3.0. Nothing here runs RSC mode, so the advisory is a version gate rather
+    than an exposure — but while this package depended on `react-router-dom ^7.13.2` it held every
+    consumer inside the range, and no consumer could clear its own `npm audit` from its own side.
+
 ## [0.14.0], 2026-07-24
 
 ### Added
