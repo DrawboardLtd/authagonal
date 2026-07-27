@@ -19,6 +19,18 @@ namespace Authagonal.Server.Endpoints;
 
 public static class OidcEndpoints
 {
+    /// <summary>
+    /// Signing algorithms accepted on an upstream IdP's id_token. Asymmetric only — an HMAC algorithm
+    /// here is the key-confusion shape, where the IdP's public key doubles as a shared secret the
+    /// attacker also has, and the absence of any entry would permit `alg: none`.
+    /// </summary>
+    private static readonly string[] UpstreamIdTokenAlgorithms =
+    [
+        "RS256", "RS384", "RS512",
+        "PS256", "PS384", "PS512",
+        "ES256", "ES384", "ES512",
+    ];
+
     // Browser-binding cookie for the federation state (F48d). Scoped to /oidc so it rides the login→callback
     // navigation only.
     private const string StateCookieName = "oidc_state";
@@ -244,7 +256,14 @@ public static class OidcEndpoints
                 ValidAudience = config.ClientId,
                 IssuerSigningKeys = discovery.SigningKeys,
                 ValidateLifetime = true,
-                ClockSkew = TimeSpan.FromMinutes(5)
+                ClockSkew = TimeSpan.FromMinutes(5),
+                // Pin the signing algorithms to asymmetric ones. The keys already come from the upstream's
+                // discovery document rather than from the token, which is what stops key substitution;
+                // this closes the other half — `alg: none`, and the HS256 confusion where a token is
+                // HMAC'd using the IdP's PUBLIC key as the shared secret. Both are refused by the
+                // handler's defaults today, so this states the requirement rather than repairing a hole,
+                // and keeps it true if those defaults ever move.
+                ValidAlgorithms = UpstreamIdTokenAlgorithms,
             };
 
             validationResult = await tokenHandler.ValidateTokenAsync(idToken, validationParameters);
