@@ -134,4 +134,50 @@ public sealed class AdminRoleEndpointTests : IAsyncLifetime
         var response = await _client.GetAsync("/api/v1/roles");
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
     }
+    // -----------------------------------------------------------------------
+    // GET /api/v1/roles/{roleName}/users — role membership
+    // -----------------------------------------------------------------------
+
+    [Fact]
+    public async Task ListUsersInRole_ReturnsTheMembers()
+    {
+        var member = await _factory.SeedTestUserAsync(email: "member@example.com");
+        await _client.SendAsync(AdminRequest(HttpMethod.Post, "/api/v1/roles", new { name = "staff-admin" }));
+        await _client.SendAsync(AdminRequest(HttpMethod.Post, "/api/v1/roles/assign", new { userId = member.Id, roleName = "staff-admin" }));
+
+        var response = await _client.SendAsync(AdminRequest(HttpMethod.Get, "/api/v1/roles/staff-admin/users"));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("staff-admin", json.GetProperty("roleName").GetString());
+        var members = json.GetProperty("members").EnumerateArray().ToList();
+        Assert.Single(members);
+        Assert.Equal(member.Id, members[0].GetProperty("userId").GetString());
+        Assert.Equal("member@example.com", members[0].GetProperty("email").GetString());
+    }
+
+    /// <summary>
+    /// "Nobody holds this" and "you misspelled the role" are different problems; a console that
+    /// cannot tell them apart shows an empty table for both.
+    /// </summary>
+    [Fact]
+    public async Task ListUsersInRole_UnknownRole_Returns404()
+    {
+        var response = await _client.SendAsync(AdminRequest(HttpMethod.Get, "/api/v1/roles/no-such-role/users"));
+
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task ListUsersInRole_RoleWithNoMembers_ReturnsEmpty()
+    {
+        await _client.SendAsync(AdminRequest(HttpMethod.Post, "/api/v1/roles", new { name = "empty-role" }));
+
+        var response = await _client.SendAsync(AdminRequest(HttpMethod.Get, "/api/v1/roles/empty-role/users"));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Empty(json.GetProperty("members").EnumerateArray());
+    }
+
 }

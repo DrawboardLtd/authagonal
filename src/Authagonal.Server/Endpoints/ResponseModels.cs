@@ -394,6 +394,24 @@ public sealed class UserRolesResponse
     [JsonPropertyName("roles")] public List<string> Roles { get; set; } = [];
 }
 
+public sealed class RoleMembersResponse
+{
+    [JsonPropertyName("roleName")] public string RoleName { get; set; } = "";
+    [JsonPropertyName("members")] public List<RoleMemberResponse> Members { get; set; } = [];
+}
+
+public sealed class RoleMemberResponse
+{
+    [JsonPropertyName("userId")] public string UserId { get; set; } = "";
+    [JsonPropertyName("email")] public string? Email { get; set; }
+    [JsonPropertyName("firstName")] public string? FirstName { get; set; }
+    [JsonPropertyName("lastName")] public string? LastName { get; set; }
+
+    /// <summary>Every role this person holds, not just the one queried — a console listing one role
+    /// almost always wants to show what else its members have.</summary>
+    [JsonPropertyName("roles")] public List<string> Roles { get; set; } = [];
+}
+
 // --- Admin: Scopes ---
 
 public sealed class ScopeListResponse

@@ -384,6 +384,25 @@ Content-Type: application/json
 GET /api/v1/roles/user/{userId}
 ```
 
+### Users in a Role
+
+```
+GET /api/v1/roles/{roleName}/users?maxResults=200
+```
+
+The reverse of the above — who holds this role — answered from a role membership index rather than
+by reading every user. Returns `{ "roleName": "...", "members": [ { "userId", "email", "firstName",
+"lastName", "roles" } ] }`; each member carries their full role set, because a console listing one
+role almost always wants to show what else its members have.
+
+`404 role_not_found` for a role that does not exist, rather than an empty list — "nobody holds this"
+and "you have misspelled the role" are different problems. `501 not_supported` if the configured
+store does not index role membership, for the same reason: an empty membership list would read as
+"nobody administers this".
+
+Accounts written before the index existed are invisible to it until reindexed
+(`IUserStore.ReindexUserAsync`, which upserts a user's memberships without removing any).
+
 ## SCIM Tokens
 
 ### Generate Token

@@ -73,6 +73,7 @@ namespace Authagonal.Server;
 [JsonSerializable(typeof(ProfileResponse))]
 [JsonSerializable(typeof(RoleListResponse))]
 [JsonSerializable(typeof(UserRolesResponse))]
+[JsonSerializable(typeof(RoleMembersResponse))]
 [JsonSerializable(typeof(ScopeListResponse))]
 [JsonSerializable(typeof(Scope))]
 [JsonSerializable(typeof(OAuthClient))]

@@ -32,6 +32,7 @@ public static class ServiceCollectionExtensions
     private const string MfaChallengesTableName = "MfaChallenges";
     private const string MfaWebAuthnIndexTableName = "MfaWebAuthnIndex";
     private const string UserExternalIdsTableName = "UserExternalIds";
+    private const string UserRolesTableName = "UserRoles";
     private const string ScimTokensTableName = "ScimTokens";
     private const string ScimGroupsTableName = "ScimGroups";
     private const string ScimGroupExternalIdsTableName = "ScimGroupExternalIds";
@@ -101,6 +102,7 @@ public static class ServiceCollectionExtensions
         var mfaChallenges = EnsureTable(serviceClient, MfaChallengesTableName);
         var mfaWebAuthnIndex = EnsureTable(serviceClient, MfaWebAuthnIndexTableName);
         var userExternalIds = EnsureTable(serviceClient, UserExternalIdsTableName);
+        var userRoles = EnsureTable(serviceClient, UserRolesTableName);
         var scimTokens = EnsureTable(serviceClient, ScimTokensTableName);
         var scimGroups = EnsureTable(serviceClient, ScimGroupsTableName);
         var scimGroupExternalIds = EnsureTable(serviceClient, ScimGroupExternalIdsTableName);
@@ -116,7 +118,11 @@ public static class ServiceCollectionExtensions
         // TryAdd allows multi-tenant hosts to register scoped stores first.
         // Single-tenant hosts only ever serve the live env, so use the live partitioner.
         var live = EnvPartitioner.Live;
-        services.TryAddSingleton<IUserStore>(new TableUserStore(users, userEmails, userLogins, userExternalIds, userFirstNames, userLastNames, live));
+        // userRoles is always created: unlike the name indexes it is small, bounded by how many
+        // people hold a role, and it is what makes "who administers this" answerable at all.
+        services.TryAddSingleton<IUserStore>(new TableUserStore(
+            users, userEmails, userLogins, userExternalIds, userFirstNames, userLastNames, live,
+            userRolesTable: userRoles));
         services.TryAddSingleton<IClientStore>(new TableClientStore(clients, live));
         services.TryAddSingleton<IGrantStore>(sp =>
             new TableGrantStore(grants, grantsBySubject, grantsByExpiry, live, sp.GetRequiredService<ILoggerFactory>().CreateLogger<TableGrantStore>()));

@@ -24,7 +24,8 @@ public sealed class TableUserStore(
     IFieldCipher? fieldCipher = null,
     IIndexTokenizer? indexTokenizer = null,
     TableClient? userEmailDomainsTable = null,
-    TableClient? userEmailLocalPrefixesTable = null) : IUserStore
+    TableClient? userEmailLocalPrefixesTable = null,
+    TableClient? userRolesTable = null) : IUserStore
 {
     private readonly EnvPartitioner _partitioner = partitioner; // Phase B2 will wrap PartitionKeys with _partitioner.PK
     // Name-index tables are optional. When null (Storage:NameIndexesEnabled=false),
@@ -349,6 +350,54 @@ public sealed class TableUserStore(
         await TryDeleteRowAsync(table, legacyPk, UserFirstNameEntity.MakeRowKey(normalizedName, userId), tombstoneTable, ct);
     }
 
+    /// <summary>
+    /// Bring the role membership index in line with <paramref name="roles"/> for one user.
+    /// </summary>
+    /// <remarks>
+    /// Writes before deleting, like every other index here: a throw between the two must never leave a
+    /// role looking empty when its members still hold it. Callers pass the roles the user had before
+    /// (null on create) so the diff only touches what actually changed — granting one role does not
+    /// rewrite the rows for the five the person already had.
+    /// </remarks>
+    private async Task SyncRoleIndexAsync(
+        IReadOnlyList<string>? previousRoles, IReadOnlyList<string>? roles, string userId, CancellationToken ct)
+    {
+        if (userRolesTable is null) return;
+
+        var wanted = new HashSet<string>(roles ?? [], StringComparer.OrdinalIgnoreCase);
+        var had = new HashSet<string>(previousRoles ?? [], StringComparer.OrdinalIgnoreCase);
+
+        foreach (var role in roles ?? [])
+        {
+            if (had.Contains(role)) continue;
+            await WriteRoleIndexAsync(role, userId, ct);
+        }
+
+        foreach (var role in previousRoles ?? [])
+        {
+            if (wanted.Contains(role)) continue;
+            await DeleteRoleIndexAsync(role, userId, ct);
+        }
+    }
+
+    private async Task WriteRoleIndexAsync(string role, string userId, CancellationToken ct)
+    {
+        if (userRolesTable is null || string.IsNullOrWhiteSpace(role)) return;
+
+        var entity = UserRoleEntity.Create(role, userId);
+        entity.PartitionKey = _partitioner.PK(entity.PartitionKey);
+        await userRolesTable.UpsertEntityAsync(entity, TableUpdateMode.Replace, ct);
+        await LogUpsertAsync("UserRoles", entity.PartitionKey, entity.RowKey, ct);
+    }
+
+    private Task DeleteRoleIndexAsync(string role, string userId, CancellationToken ct)
+    {
+        if (userRolesTable is null || string.IsNullOrWhiteSpace(role)) return Task.CompletedTask;
+
+        return TryDeleteRowAsync(
+            userRolesTable, _partitioner.PK(UserRoleEntity.Normalize(role)), userId, "UserRoles", ct);
+    }
+
     private async Task TryDeleteRowAsync(TableClient table, string pk, string rk, string tombstoneTable, CancellationToken ct)
     {
         if (tombstoneWriter is not null)
@@ -564,6 +613,7 @@ public sealed class TableUserStore(
         await usersTable.AddEntityAsync(userEntity, ct);
         await LogUpsertAsync("Users", userEntity.PartitionKey, userEntity.RowKey, ct);
         await WriteProfileIndexesAsync(user.NormalizedEmail, Normalize(user.FirstName), Normalize(user.LastName), user.Id, dropLegacy: false, ct);
+        await SyncRoleIndexAsync(previousRoles: null, user.Roles, user.Id, ct);
     }
 
     /// <summary>
@@ -653,6 +703,10 @@ public sealed class TableUserStore(
             var oldLast = Normalize(existing.Value.LastName);
             var newLast = Normalize(user.LastName);
             var lastChanged = userLastNamesTable is not null && !string.Equals(oldLast, newLast, StringComparison.Ordinal);
+            // Read from the STORED entity, not from the incoming model: the caller may have mutated
+            // the same instance it read, in which case user.Roles is already the new set and there is
+            // nothing left to diff against.
+            var oldRoles = existing.Value.ToModel().Roles;
 
             var userEntity = UserEntity.FromModel(user);
             userEntity.PartitionKey = _partitioner.PK(userEntity.PartitionKey);
@@ -731,6 +785,8 @@ public sealed class TableUserStore(
                 if (newLast is not null) await WriteNameIndexAsync(userLastNamesTable!, newLastTokens?.Invoke(), "UserLastNames", newLast, user.Id, ct);
                 if (oldLast is not null) await DeleteNameIndexAsync(userLastNamesTable!, oldLastTokens?.Invoke(), oldLast, user.Id, "UserLastNames", ct);
             }
+
+            await SyncRoleIndexAsync(oldRoles, user.Roles, user.Id, ct);
         }
         catch (RequestFailedException ex) when (ex.Status == 404)
         {
@@ -776,6 +832,10 @@ public sealed class TableUserStore(
             if (normLast is not null && userLastNamesTable is not null)
                 await DeleteNameIndexAsync(userLastNamesTable, lastTokens?.Invoke(), normLast, userId, "UserLastNames", ct);
 
+            // Drop this user's role memberships — otherwise a deleted account keeps answering
+            // "who administers this", which is the one question the index exists to answer.
+            await SyncRoleIndexAsync(existing.Value.ToModel().Roles, roles: null, userId, ct);
+
             // Delete all external login entries for this user — independent row pairs, so remove them
             // concurrently instead of one blocking round-trip each.
             var logins = await GetLoginsAsync(userId, ct);
@@ -814,6 +874,15 @@ public sealed class TableUserStore(
         // 2-4. Rewrite the profile-derived indexes (email lookup, domain, name prefixes) under the current
         //       keys, dropping any legacy plaintext-keyed rows. Shared with CreateAsync (dropLegacy:false).
         await WriteProfileIndexesAsync(normalizedEmail, normFirst, normLast, userId, dropLegacy: true, ct);
+
+        // 5. Role membership. This is what backfills the index onto users who existed before it did —
+        //    without it the index only ever describes accounts touched since it shipped, and a role
+        //    granted years ago is invisible. Upsert-only: reindex adds what the user holds now and
+        //    never removes, so it cannot race a concurrent grant into deleting a live membership.
+        foreach (var role in entity.ToModel().Roles)
+        {
+            await WriteRoleIndexAsync(role, userId, ct);
+        }
     }
 
     /// <summary>
@@ -1309,6 +1378,40 @@ public sealed class TableUserStore(
                 results.Add(user);
             if (results.Count >= maxResults)
                 break;
+        }
+        return results;
+    }
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// A single-partition query — role membership is partitioned by role, so this reads exactly the
+    /// rows it returns rather than scanning users and filtering. The index key is the role name
+    /// itself (see <see cref="UserRoleEntity"/>), so there is no tokenizer round-trip and no
+    /// migration window to search across.
+    /// <para>
+    /// A membership row whose user has since vanished is skipped rather than erroring: the index is a
+    /// convenience over the user store, never the authority on who exists.
+    /// </para>
+    /// </remarks>
+    public async Task<IReadOnlyList<AuthUser>> ListUsersInRoleAsync(string roleName, int maxResults = 200, CancellationToken ct = default)
+    {
+        if (userRolesTable is null)
+            throw new NotSupportedException(
+                "The role membership index is not configured on this store, so the users in a role cannot be listed.");
+
+        if (string.IsNullOrWhiteSpace(roleName)) return [];
+
+        var pk = _partitioner.PK(UserRoleEntity.Normalize(roleName));
+        var ids = await CollectUserIdsAsync(
+            userRolesTable.QueryAsync<UserRoleEntity>(e => e.PartitionKey == pk, cancellationToken: ct),
+            e => e.UserId, maxResults, ct);
+
+        var results = new List<AuthUser>(ids.Count);
+        foreach (var id in ids)
+        {
+            var user = await GetAsync(id, ct);
+            if (user is not null)
+                results.Add(user);
         }
         return results;
     }

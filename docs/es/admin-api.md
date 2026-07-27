@@ -386,6 +386,25 @@ Content-Type: application/json
 GET /api/v1/roles/user/{userId}
 ```
 
+### Usuarios de un rol
+
+```
+GET /api/v1/roles/{roleName}/users?maxResults=200
+```
+
+La inversa del anterior — quién tiene este rol — resuelta con un índice de pertenencia a roles en
+lugar de leer todos los usuarios. Devuelve `{ "roleName": "...", "members": [ { "userId", "email",
+"firstName", "lastName", "roles" } ] }`; cada miembro incluye su conjunto completo de roles, porque
+una consola que lista un rol casi siempre quiere mostrar qué más tienen sus miembros.
+
+`404 role_not_found` si el rol no existe, en lugar de una lista vacía — "nadie lo tiene" y "has
+escrito mal el rol" son problemas distintos. `501 not_supported` si el almacén configurado no indexa
+la pertenencia a roles, por la misma razón: una lista vacía se leería como "nadie administra esto".
+
+Las cuentas creadas antes de que existiera el índice son invisibles para él hasta que se reindexan
+(`IUserStore.ReindexUserAsync`, que hace upsert de las pertenencias de un usuario sin eliminar
+ninguna).
+
 ## Tokens SCIM
 
 ### Generar token

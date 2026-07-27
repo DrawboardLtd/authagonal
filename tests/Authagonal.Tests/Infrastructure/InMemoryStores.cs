@@ -81,6 +81,18 @@ public sealed class InMemoryUserStore : IUserStore
         return Task.FromResult<(IReadOnlyList<AuthUser>, bool)>((paged, list.Count > count));
     }
 
+    /// <summary>
+    /// Filters the dictionary rather than modelling a reverse index — the Table store's index is what
+    /// the index tests exercise; here the point is only that callers get the right ANSWER.
+    /// </summary>
+    public Task<IReadOnlyList<AuthUser>> ListUsersInRoleAsync(string roleName, int maxResults = 200, CancellationToken ct = default)
+        => Task.FromResult<IReadOnlyList<AuthUser>>(string.IsNullOrWhiteSpace(roleName)
+            ? []
+            : _users.Values
+                .Where(u => u.Roles.Contains(roleName, StringComparer.OrdinalIgnoreCase))
+                .Take(maxResults)
+                .ToList());
+
     public Task<IReadOnlyList<AuthUser>> SearchAsync(string query, int maxResults = 20, CancellationToken ct = default)
     {
         if (string.IsNullOrWhiteSpace(query))

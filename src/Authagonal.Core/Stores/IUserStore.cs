@@ -98,6 +98,20 @@ public interface IUserStore
         => Task.FromResult<IReadOnlyList<AuthUser>>([]);
 
     /// <summary>
+    /// The users holding <paramref name="roleName"/>, backed by the role membership index.
+    /// </summary>
+    /// <remarks>
+    /// Throws rather than returning empty on a store with no such index, because an empty answer to
+    /// "who holds this role" is indistinguishable from "nobody does" — and code acting on that
+    /// distinction is deciding who administers something. A caller that would rather degrade than
+    /// fail can catch it; a caller that silently believed an empty list could not.
+    /// </remarks>
+    /// <exception cref="NotSupportedException">The store does not index role membership.</exception>
+    Task<IReadOnlyList<AuthUser>> ListUsersInRoleAsync(string roleName, int maxResults = 200, CancellationToken ct = default)
+        => throw new NotSupportedException(
+            $"{GetType().Name} does not index role membership, so it cannot list the users in a role.");
+
+    /// <summary>
     /// Re-write one user to the current at-rest scheme: re-encrypt the profile's PII and rewrite the
     /// profile-derived index rows (email, domain, first/last name) under the current keys, removing any
     /// legacy-keyed rows. Idempotent — the cold-row backfill for enabling encryption. Default is a no-op.

@@ -19,6 +19,7 @@ public static class RoleEndpoints
         group.MapPost("/assign", AssignRole);
         group.MapPost("/unassign", UnassignRole);
         group.MapGet("/user/{userId}", GetUserRoles);
+        group.MapGet("/{roleName}/users", ListUsersInRole);
 
         return app;
     }
@@ -139,6 +140,50 @@ public static class RoleEndpoints
         }
 
         return TypedResults.Json(new UserRolesResponse { UserId = user.Id, Roles = user.Roles }, AuthagonalJsonContext.Default.UserRolesResponse);
+    }
+
+    /// <summary>
+    /// The users holding a role — the counterpart to <c>GET /user/{userId}</c>, and what an admin
+    /// console needs to render "who administers this" without reading every account.
+    /// </summary>
+    /// <remarks>
+    /// Answers 404 for a role that does not exist, rather than an empty list. "Nobody holds this" and
+    /// "you have misspelled the role" are different problems, and a console that cannot tell them
+    /// apart shows an empty table for both.
+    /// </remarks>
+    private static async Task<IResult> ListUsersInRole(
+        string roleName,
+        IRoleStore roleStore,
+        IUserStore userStore,
+        int? maxResults,
+        CancellationToken ct)
+    {
+        var role = await roleStore.GetByNameAsync(roleName, ct);
+        if (role is null)
+            return TypedResults.Json(new ErrorInfoResponse { Error = "role_not_found", ErrorDescription = $"Role '{roleName}' not found" }, AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 404);
+
+        try
+        {
+            var users = await userStore.ListUsersInRoleAsync(role.Name, maxResults ?? 200, ct);
+            return TypedResults.Json(new RoleMembersResponse
+            {
+                RoleName = role.Name,
+                Members = users.Select(u => new RoleMemberResponse
+                {
+                    UserId = u.Id,
+                    Email = u.Email,
+                    FirstName = u.FirstName,
+                    LastName = u.LastName,
+                    Roles = u.Roles,
+                }).ToList(),
+            }, AuthagonalJsonContext.Default.RoleMembersResponse);
+        }
+        catch (NotSupportedException ex)
+        {
+            // The configured store does not index role membership. Say so, rather than answering with
+            // an empty membership list that reads as "nobody holds this role".
+            return TypedResults.Json(new ErrorInfoResponse { Error = "not_supported", ErrorDescription = ex.Message }, AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 501);
+        }
     }
 
     private static async Task<IResult> GetUserRoles(
