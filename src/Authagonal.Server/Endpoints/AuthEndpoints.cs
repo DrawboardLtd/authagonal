@@ -1,6 +1,7 @@
 using System.Security.Claims;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Authagonal.Core.Models;
@@ -27,7 +28,10 @@ public static class AuthEndpoints
         group.MapPost("/register", RegisterAsync).AllowAnonymous().DisableAntiforgery();
         // GET: the clickable email-verification link (token in the query string). POST: the
         // custom-login-UI / programmatic path (token in a JSON body). The handler accepts either.
-        group.MapGet("/confirm-email", ConfirmEmailAsync).AllowAnonymous();
+        // GET renders a one-click page; it MUST NOT confirm. Mail security products (Defender for
+        // Office Safe Links, Proofpoint, Mimecast), link prefetchers and chat unfurlers all issue GETs
+        // on emailed URLs, and a GET that consumed the token burned the link before the human clicked.
+        group.MapGet("/confirm-email", ConfirmEmailPageAsync).AllowAnonymous();
         group.MapPost("/confirm-email", ConfirmEmailAsync).AllowAnonymous().DisableAntiforgery();
         group.MapPost("/logout", LogoutAsync).RequireAuthorization().DisableAntiforgery();
         group.MapPost("/forgot-password", ForgotPasswordAsync).AllowAnonymous().DisableAntiforgery();
@@ -509,6 +513,101 @@ public static class AuthEndpoints
         return TypedResults.Json(new RegistrationSuccess { Success = true, UserId = user.Id }, AuthagonalJsonContext.Default.RegistrationSuccess, statusCode: 201);
     }
 
+    /// <summary>
+    /// GET /api/auth/confirm-email — renders a one-click confirmation page. Read-only by design.
+    /// </summary>
+    /// <remarks>
+    /// Confirmation is a state change, so it belongs on a POST. Every mail security product in the
+    /// enterprise market (Defender for Office Safe Links, Proofpoint, Mimecast) fetches the URLs in
+    /// inbound mail, as do link prefetchers and chat unfurlers. When the GET performed the confirmation,
+    /// those fetches consumed the single-use token and the real user arrived to "this link has already
+    /// been used" — most reliably for exactly the enterprise customers who matter most. Scanners do not
+    /// submit forms, so the button is what makes this survive them.
+    ///
+    /// No script: the auth host's CSP allows inline styles but not inline script, and an auto-submitting
+    /// page would hand the token straight back to any scanner that executes JavaScript.
+    /// </remarks>
+    private static async Task<IResult> ConfirmEmailPageAsync(
+        HttpContext httpContext,
+        IUserStore userStore,
+        CancellationToken ct)
+    {
+        var token = httpContext.Request.Query["token"].FirstOrDefault();
+        if (string.IsNullOrWhiteSpace(token))
+            return ConfirmPage("Something is missing", "This confirmation link is incomplete. Open the most recent verification email and try the link there.", null);
+
+        // Read-only inspection, so the page can say something useful before the user clicks. Nothing
+        // here writes, so a scanner reaching it changes nothing.
+        var (email, expired) = InspectConfirmToken(token);
+        if (email is null)
+            return ConfirmPage("This link doesn't look right", "Open the most recent verification email and use the link there.", null);
+        if (expired)
+            return ConfirmPage("This link has expired", "Sign in to have a new verification email sent.", null);
+
+        var user = await userStore.FindByEmailAsync(email, ct);
+        if (user is not null && user.EmailConfirmed && string.IsNullOrWhiteSpace(user.PendingPasswordHash))
+            return ConfirmPage("Your email is already confirmed", "You can sign in now.", null);
+
+        return ConfirmPage(
+            "Confirm your email",
+            $"Confirm that {email} belongs to you.",
+            token);
+    }
+
+    /// <summary>Decodes a confirmation token without touching the store. Returns (email, expired).</summary>
+    private static (string? Email, bool Expired) InspectConfirmToken(string token)
+    {
+        try
+        {
+            var parts = Encoding.UTF8.GetString(Convert.FromBase64String(token)).Split("||");
+            if (parts.Length < 3) return (null, false);
+            if (!long.TryParse(parts[2], out var expiresAtUnix)) return (null, false);
+            return (parts[1], DateTimeOffset.UtcNow.ToUnixTimeSeconds() > expiresAtUnix);
+        }
+        catch
+        {
+            return (null, false);
+        }
+    }
+
+    /// <summary>
+    /// The confirmation page. Deliberately tiny and dependency-free so it renders identically for every
+    /// tenant without pulling the SPA in. A form post, never a redirect or a script.
+    /// </summary>
+    private static IResult ConfirmPage(string heading, string body, string? token)
+    {
+        var action = token is null
+            ? "<a class=\"btn\" href=\"/login\">Go to sign in</a>"
+            : $"""
+               <form method="post" action="/api/auth/confirm-email">
+                 <input type="hidden" name="token" value="{HtmlEncoder.Default.Encode(token)}" />
+                 <button class="btn" type="submit">Confirm my email</button>
+               </form>
+               """;
+
+        var html = $$"""
+            <!doctype html><html lang="en"><head><meta charset="utf-8">
+            <meta name="viewport" content="width=device-width,initial-scale=1">
+            <meta name="robots" content="noindex,nofollow">
+            <title>{{HtmlEncoder.Default.Encode(heading)}}</title>
+            <style>
+              body { font:16px/1.55 -apple-system,Segoe UI,Roboto,sans-serif; color:#1c1e22;
+                     display:flex; min-height:100vh; margin:0; align-items:center; justify-content:center; }
+              main { max-width:26rem; padding:2rem; text-align:center; }
+              h1 { font-size:1.35rem; margin:0 0 .5rem; }
+              p { color:#5b6270; margin:0 0 1.75rem; }
+              .btn { display:inline-block; background:#1c1e22; color:#fff; border:0; border-radius:6px;
+                     padding:.7rem 1.4rem; font:inherit; cursor:pointer; text-decoration:none; }
+            </style></head><body><main>
+            <h1>{{HtmlEncoder.Default.Encode(heading)}}</h1>
+            <p>{{HtmlEncoder.Default.Encode(body)}}</p>
+            {{action}}
+            </main></body></html>
+            """;
+
+        return Results.Content(html, "text/html; charset=utf-8");
+    }
+
     private static async Task<IResult> ConfirmEmailAsync(
         HttpContext httpContext,
         IUserStore userStore,
@@ -525,6 +624,15 @@ public static class AuthEndpoints
             var body = await httpContext.Request.ReadFromJsonAsync<ConfirmEmailRequest>(ct);
             token = body?.Token;
         }
+        if (string.IsNullOrWhiteSpace(token) && httpContext.Request.HasFormContentType)
+        {
+            var form = await httpContext.Request.ReadFormAsync(ct);
+            token = form["token"].FirstOrDefault();
+        }
+
+        // The confirm page posts a form and expects to land somewhere human-readable; programmatic
+        // callers post JSON and keep the JSON contract they already have.
+        var wantsHtml = httpContext.Request.HasFormContentType;
 
         if (string.IsNullOrWhiteSpace(token))
             return JsonResults.Error("invalid_request", "Token is required.");
@@ -557,7 +665,24 @@ public static class AuthEndpoints
             return JsonResults.Error("invalid_token", "Invalid or expired verification link.");
 
         if (user.SecurityStamp != securityStamp)
+        {
+            // Already confirmed by an earlier click (or by a scanner that beat the user to it). The
+            // link's assertion — this address is verified — is TRUE, so saying "invalid" is both wrong
+            // and unactionable. Only report failure when there is genuinely nothing confirmed.
+            // A pending claim is excluded: promoting a staged credential needs the live stamp, so that
+            // case really has failed and must not be reported as success.
+            if (user.EmailConfirmed && string.IsNullOrWhiteSpace(user.PendingPasswordHash))
+            {
+                logger.LogInformation("Email confirmation replayed for {UserId} ({Email}) — already confirmed", user.Id, user.Email);
+                return wantsHtml
+                    ? Results.Redirect("/login?email_confirmed=1")
+                    : TypedResults.Json(
+                        new ConfirmEmailResponse { Message = "Email confirmed successfully.", AppLink = null },
+                        AuthagonalJsonContext.Default.ConfirmEmailResponse);
+            }
+
             return JsonResults.Error("invalid_token", "This verification link has already been used or has expired.");
+        }
 
         // Passwordless-account claim completion: this click IS the fresh ownership proof the claim
         // was waiting for. Run the downstream conversion FIRST (it may reject — e.g. seat policy),
@@ -584,7 +709,7 @@ public static class AuthEndpoints
                 clean.UpdatedAt = DateTimeOffset.UtcNow;
                 await userStore.UpdateAsync(clean, CancellationToken.None);
                 logger.LogWarning(ex, "Passwordless-claim conversion rejected for {Email}", user.Email);
-                return HttpMethods.IsGet(httpContext.Request.Method)
+                return wantsHtml
                     ? Results.Redirect($"/login?error=provisioning_rejected&error_description={Uri.EscapeDataString(ex.Message)}")
                     : JsonResults.Error("provisioning_rejected", ex.Message);
             }
@@ -618,9 +743,9 @@ public static class AuthEndpoints
             catch { flowReturnUrl = null; }
         }
 
-        // A clicked email link (GET) lands the user on the login page, not raw JSON; the programmatic
-        // POST path keeps the JSON contract (now with the resolved continue-to-app link, if any).
-        if (HttpMethods.IsGet(httpContext.Request.Method))
+        // The confirm page's form post lands the user on the login page, not raw JSON; the
+        // programmatic POST path keeps the JSON contract (with the resolved continue-to-app link).
+        if (wantsHtml)
         {
             var landing = "/login?email_confirmed=1";
             if (flowClientId is not null)

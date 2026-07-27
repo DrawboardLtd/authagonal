@@ -394,11 +394,10 @@ public sealed class AuthEndpointTests : IAsyncLifetime
         var before = await _factory.UserStore.FindByEmailAsync("verify-me@example.com");
         Assert.False(before!.EmailConfirmed, "user should start unconfirmed");
 
-        // Follow the verification link the way a user actually does: a GET on the clicked link.
-        // (This guards the regression where the route was POST-only and a clicked link 404'd to a
-        // blank SPA page, leaving the user unverified.)
+        // Follow the link the way a user actually does: GET renders the confirm page, the button
+        // posts the form. The GET must not confirm on its own — see ConfirmEmail_Get_DoesNotConfirm.
         var sent = _factory.EmailService.SentEmails.Last(e => e.Type == "verification" && e.Email == "verify-me@example.com");
-        var confirm = await _client.GetAsync(new Uri(sent.CallbackUrl).PathAndQuery);
+        var confirm = await ClickAndConfirmAsync(sent.CallbackUrl);
 
         Assert.Equal(HttpStatusCode.Redirect, confirm.StatusCode);
         Assert.Contains("email_confirmed=1", confirm.Headers.Location?.ToString() ?? "");
@@ -422,7 +421,7 @@ public sealed class AuthEndpointTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.Created, register.StatusCode);
 
         var sent = _factory.EmailService.SentEmails.Last(e => e.Type == "verification" && e.Email == "verify-journey@example.com");
-        var confirm = await _client.GetAsync(new Uri(sent.CallbackUrl).PathAndQuery);
+        var confirm = await ClickAndConfirmAsync(sent.CallbackUrl);
 
         Assert.Equal(HttpStatusCode.Redirect, confirm.StatusCode);
         var landing = confirm.Headers.Location?.ToString() ?? "";
@@ -437,7 +436,7 @@ public sealed class AuthEndpointTests : IAsyncLifetime
         await _client.PostAsJsonAsync("/api/auth/register",
             new { email = "verify-plain@example.com", password = "NewPass1234!" });
         var sent = _factory.EmailService.SentEmails.Last(e => e.Type == "verification" && e.Email == "verify-plain@example.com");
-        var confirm = await _client.GetAsync(new Uri(sent.CallbackUrl).PathAndQuery);
+        var confirm = await ClickAndConfirmAsync(sent.CallbackUrl);
 
         Assert.Equal(HttpStatusCode.Redirect, confirm.StatusCode);
         Assert.DoesNotContain("returnUrl=", confirm.Headers.Location?.ToString() ?? "");
@@ -457,6 +456,116 @@ public sealed class AuthEndpointTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.OK, confirm.StatusCode);
         var after = await _factory.UserStore.FindByEmailAsync("verify-post@example.com");
         Assert.True(after!.EmailConfirmed);
+    }
+
+
+    /// <summary>Drives the confirmation the way a human now does: GET the page, then post the form.</summary>
+    private async Task<HttpResponseMessage> ClickAndConfirmAsync(string callbackUrl)
+    {
+        var pathAndQuery = new Uri(callbackUrl).PathAndQuery;
+        var page = await _client.GetAsync(pathAndQuery);
+        Assert.Equal(HttpStatusCode.OK, page.StatusCode);
+
+        var token = System.Web.HttpUtility.ParseQueryString(new Uri(callbackUrl).Query)["token"]!;
+        return await _client.PostAsync("/api/auth/confirm-email",
+            new FormUrlEncodedContent([new KeyValuePair<string, string>("token", token)]));
+    }
+
+
+    [Fact]
+    public async Task ConfirmEmail_Get_DoesNotConfirm_SoScannersCannotBurnTheLink()
+    {
+        // THE regression. Mail security products (Defender Safe Links, Proofpoint, Mimecast), link
+        // prefetchers and chat unfurlers all GET the URLs in inbound mail. While GET performed the
+        // confirmation, those fetches consumed the single-use token and the real user landed on
+        // "this link has already been used" — worst of all for enterprise customers, who run exactly
+        // that tooling.
+        await _client.PostAsJsonAsync("/api/auth/register",
+            new { email = "scanner@example.com", password = "NewPass1234!" });
+        var sent = _factory.EmailService.SentEmails.Last(e => e.Type == "verification" && e.Email == "scanner@example.com");
+
+        // A scanner fetches the link, twice for good measure.
+        await _client.GetAsync(new Uri(sent.CallbackUrl).PathAndQuery);
+        var page = await _client.GetAsync(new Uri(sent.CallbackUrl).PathAndQuery);
+        Assert.Equal(HttpStatusCode.OK, page.StatusCode);
+        Assert.Contains("text/html", page.Content.Headers.ContentType?.ToString() ?? "");
+
+        var afterScan = await _factory.UserStore.FindByEmailAsync("scanner@example.com");
+        Assert.False(afterScan!.EmailConfirmed, "a GET must never confirm — that is what burned the token");
+
+        // The human then clicks the button and it still works.
+        var confirm = await ClickAndConfirmAsync(sent.CallbackUrl);
+        Assert.Equal(HttpStatusCode.Redirect, confirm.StatusCode);
+        var after = await _factory.UserStore.FindByEmailAsync("scanner@example.com");
+        Assert.True(after!.EmailConfirmed);
+    }
+
+    [Fact]
+    public async Task ConfirmEmail_ReplayedAfterSuccess_ReportsSuccessNotAnError()
+    {
+        // Double-click, back button, a second device opening the same mail. The link asserts "this
+        // address is verified", which stays true, so a replay must not read as a failure.
+        await _client.PostAsJsonAsync("/api/auth/register",
+            new { email = "replay@example.com", password = "NewPass1234!" });
+        var sent = _factory.EmailService.SentEmails.Last(e => e.Type == "verification" && e.Email == "replay@example.com");
+
+        var first = await ClickAndConfirmAsync(sent.CallbackUrl);
+        Assert.Equal(HttpStatusCode.Redirect, first.StatusCode);
+
+        var token = System.Web.HttpUtility.ParseQueryString(new Uri(sent.CallbackUrl).Query)["token"]!;
+
+        var replayForm = await _client.PostAsync("/api/auth/confirm-email",
+            new FormUrlEncodedContent([new KeyValuePair<string, string>("token", token)]));
+        Assert.Equal(HttpStatusCode.Redirect, replayForm.StatusCode);
+        Assert.Contains("email_confirmed=1", replayForm.Headers.Location?.ToString() ?? "");
+
+        var replayJson = await _client.PostAsJsonAsync("/api/auth/confirm-email", new { token });
+        Assert.Equal(HttpStatusCode.OK, replayJson.StatusCode);
+
+        // And the page itself says so rather than offering a button that would fail.
+        var page = await _client.GetAsync(new Uri(sent.CallbackUrl).PathAndQuery);
+        Assert.Contains("already confirmed", await page.Content.ReadAsStringAsync());
+    }
+
+    [Fact]
+    public async Task ConfirmEmail_ReplayedOnUnconfirmedAccount_StillFails()
+    {
+        // The idempotency must not become a blanket "any stale token is fine". With nothing confirmed
+        // there is no true assertion to stand behind, so it stays an error.
+        await _client.PostAsJsonAsync("/api/auth/register",
+            new { email = "stale@example.com", password = "NewPass1234!" });
+        var sent = _factory.EmailService.SentEmails.Last(e => e.Type == "verification" && e.Email == "stale@example.com");
+        var token = System.Web.HttpUtility.ParseQueryString(new Uri(sent.CallbackUrl).Query)["token"]!;
+
+        // Rotate the stamp without confirming, which is what any other credential change does.
+        var user = await _factory.UserStore.FindByEmailAsync("stale@example.com");
+        user!.SecurityStamp = Convert.ToBase64String(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32));
+        await _factory.UserStore.UpdateAsync(user);
+
+        var replay = await _client.PostAsJsonAsync("/api/auth/confirm-email", new { token });
+        Assert.Equal(HttpStatusCode.BadRequest, replay.StatusCode);
+
+        var after = await _factory.UserStore.FindByEmailAsync("stale@example.com");
+        Assert.False(after!.EmailConfirmed);
+    }
+
+
+    [Fact]
+    public async Task VerificationEmails_LinkToAnAnonymouslyClickableEndpoint()
+    {
+        // The email-change / resend-verification flows used to link at /api/v1/profile/confirm-email,
+        // which is POST-only AND behind RequireAuthorization("IdentityAdmin"). A clicked link is an
+        // anonymous GET, so that link could never work for anyone. Every verification email must point
+        // somewhere a signed-out browser can actually reach.
+        await _client.PostAsJsonAsync("/api/auth/register",
+            new { email = "clickable@example.com", password = "NewPass1234!" });
+        var sent = _factory.EmailService.SentEmails.Last(e => e.Type == "verification" && e.Email == "clickable@example.com");
+
+        Assert.DoesNotContain("/api/v1/profile/confirm-email", sent.CallbackUrl);
+
+        // Anonymous GET on the emailed URL renders, rather than 401/404/405.
+        var page = await _client.GetAsync(new Uri(sent.CallbackUrl).PathAndQuery);
+        Assert.Equal(HttpStatusCode.OK, page.StatusCode);
     }
 
     [Fact]
@@ -514,7 +623,11 @@ public sealed class AuthEndpointTests : IAsyncLifetime
 
         // The click IS the proof: credential promoted, then login works.
         var token = System.Web.HttpUtility.ParseQueryString(new System.Uri(mail.CallbackUrl).Query)["token"];
-        var confirm = await client.GetAsync($"/api/auth/confirm-email?token={System.Uri.EscapeDataString(token!)}");
+        // GET only renders the page now; the confirmation happens on the form post.
+        var page = await client.GetAsync($"/api/auth/confirm-email?token={System.Uri.EscapeDataString(token!)}");
+        Assert.Equal(HttpStatusCode.OK, page.StatusCode);
+        var confirm = await client.PostAsync("/api/auth/confirm-email",
+            new FormUrlEncodedContent([new KeyValuePair<string, string>("token", token!)]));
         Assert.Equal(HttpStatusCode.Redirect, confirm.StatusCode);
 
         var after = await factory.UserStore.GetAsync(federated.Id);
@@ -574,7 +687,11 @@ public sealed class AuthEndpointTests : IAsyncLifetime
         // The click applies the staged claim — the whitelisted key lands, the non-whitelisted key is gone.
         var mail = factory.EmailService.SentEmails.Last(e => e.Email == "claim-attrs@example.com" && e.Type == "verification");
         var token = System.Web.HttpUtility.ParseQueryString(new System.Uri(mail.CallbackUrl).Query)["token"];
-        var confirm = await client.GetAsync($"/api/auth/confirm-email?token={System.Uri.EscapeDataString(token!)}");
+        // GET only renders the page now; the confirmation happens on the form post.
+        var page = await client.GetAsync($"/api/auth/confirm-email?token={System.Uri.EscapeDataString(token!)}");
+        Assert.Equal(HttpStatusCode.OK, page.StatusCode);
+        var confirm = await client.PostAsync("/api/auth/confirm-email",
+            new FormUrlEncodedContent([new KeyValuePair<string, string>("token", token!)]));
         Assert.Equal(HttpStatusCode.Redirect, confirm.StatusCode);
 
         var after = await factory.UserStore.GetAsync(federated.Id);

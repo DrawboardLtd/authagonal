@@ -372,7 +372,11 @@ public static class UserEndpoints
             var expiresAt = DateTimeOffset.UtcNow.AddHours(authOptions.Value.EmailVerificationExpiryHours).ToUnixTimeSeconds();
             var tokenData = $"{securityStamp}||{user.Email}||{expiresAt}";
             var encodedToken = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(tokenData));
-            var callbackUrl = $"{issuer}/api/v1/profile/confirm-email?token={Uri.EscapeDataString(encodedToken)}";
+            // The PUBLIC confirmation endpoint. /api/v1/profile/confirm-email is POST-only AND behind
+            // RequireAuthorization("IdentityAdmin"), so an emailed link to it could never work: the click
+            // is an anonymous GET. The token is the authorization here — it is bound to the security
+            // stamp — and the public endpoint understands the identical token format.
+            var callbackUrl = $"{issuer}/api/auth/confirm-email?token={Uri.EscapeDataString(encodedToken)}";
 
             try
             {
@@ -572,7 +576,11 @@ public static class UserEndpoints
         var expiresAt = DateTimeOffset.UtcNow.AddHours(authOptions.Value.EmailVerificationExpiryHours).ToUnixTimeSeconds();
         var tokenData = $"{user.SecurityStamp}||{user.Email}||{expiresAt}";
         var encodedToken = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(tokenData));
-        var callbackUrl = $"{issuer}/api/v1/profile/confirm-email?token={Uri.EscapeDataString(encodedToken)}";
+        // The PUBLIC confirmation endpoint. /api/v1/profile/confirm-email is POST-only AND behind
+            // RequireAuthorization("IdentityAdmin"), so an emailed link to it could never work: the click
+            // is an anonymous GET. The token is the authorization here — it is bound to the security
+            // stamp — and the public endpoint understands the identical token format.
+            var callbackUrl = $"{issuer}/api/auth/confirm-email?token={Uri.EscapeDataString(encodedToken)}";
 
         await emailService.SendVerificationEmailAsync(user.Email, callbackUrl, ct);
 
