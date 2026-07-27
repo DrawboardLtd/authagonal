@@ -2,6 +2,48 @@
 
 ## [Unreleased]
 
+## [0.20.0], 2026-07-27
+
+An RFC-by-RFC security review, prompted by outside comments on SCIM and SAML. Each item below was
+checked against its RFC and the known CVE classes for that area; where a defence already existed it was
+left alone and pinned by a test rather than rewritten. Every fix marked as a defect has a regression
+test that fails against the previous release.
+
+### Security
+
+- **A revoked access token could be exchanged for a fresh, unrevoked one (RFC 8693).** Revocation was
+  enforced at the resource server, at userinfo and at introspection, but the token-exchange path never
+  consulted the revoked-token list. A revoked token still verifies and is still inside its `exp` —
+  cutting a token short before expiry is the entire point of revoking one — so it was dead at every API
+  and alive at `/connect/token`: hand it over as `subject_token`, receive a live successor. Revoking in
+  response to a compromise ended the token's use against resources while leaving it able to mint
+  replacements. Any client holding the exchange grant could do it.
+- **PKCE accepted `plain` for clients not marked `RequirePkce` (RFC 7636).** The S256 requirement sat
+  inside that check, so a client opting into PKCE *voluntarily* got no method validation — and RFC 7636
+  §4.3 makes a missing method mean `plain` as well. `plain` offers nothing against the attack PKCE
+  exists for: the challenge IS the verifier. **Breaking:** `plain` is refused everywhere now, and the
+  token endpoint no longer defaults a missing method. Discovery has only ever advertised S256.
+- **SAML signature verification: two structural gaps.** Only the first `Reference` was checked against
+  the signed element's ID, and a document with duplicate IDs left `#id` ambiguous — the URI string check
+  and `CheckSignature`'s own resolution could select different elements, which is the precondition for
+  every classic wrapping attack. Both refused now.
+- **Device flow (RFC 8628).** `user_code` was drawn with `byte % 31`, which is biased; generation is
+  unbiased now. Code entry is rate-limited per §5.2 (ten attempts per minute per subject).
+- **Algorithm pinning** across every inbound-token path — SAML signature and digest methods, client
+  assertions (RFC 7523), upstream `id_token`s, BFF back-channel logout tokens, and token exchange.
+  Measured honestly: .NET already refused the specific hostile inputs we could construct, so these are
+  policy made explicit rather than holes closed. They keep the guarantee a property of this code.
+- **BFF back-channel logout tokens now require a recent `iat`.** A logout token carries no `exp`, so
+  without a freshness bound one stayed valid indefinitely: capture a legitimate token, replay it after
+  the user signs back in, and they are logged out again, repeatably.
+
+### Added
+
+- **RFC 9207 — the authorization response names its issuer.** A client configured against several
+  authorization servers could not tell which one a code came back from, and that ambiguity is the
+  mix-up attack. `iss` is now returned and `authorization_response_iss_parameter_supported` advertised.
+  Additive; clients that ignore it are unaffected.
+
 ### Added
 
 - **SCIM: the full RFC 7644 §3.4.2.2 filter grammar.** All ten comparison operators (`eq ne co sw ew gt
@@ -36,6 +78,17 @@
     RFC 7644 §3.4.2.2, naming the supported grammar.
   - New `TryParse` reports Absent / Unsupported / Parsed, because "no filter" and "a filter I cannot
     read" are opposite answers. The lenient `Parse` is retained for embedding hosts.
+
+### Verified, unchanged
+
+Recorded so they are not re-audited: comment truncation (CVE-2017-11427/11428) does not apply because
+text is read with `InnerText`, which concatenates exactly what canonicalization signs — now pinned by a
+test building that payload. Parser-differential (CVE-2025-25291/25292) and DigestValue-hoisting
+(CVE-2024-45409) do not apply — one parser throughout, and signature material comes only from the
+direct-child signature element. Certificates are pinned from metadata and never taken from `KeyInfo`.
+Authorization codes are atomically single-use and bound to client and redirect URI. `redirect_uri`
+matching is component-wise exact. TOTP rejects replay within a step. WebAuthn pins origin and RP ID and
+rejects signature-counter regression.
 
 ## [0.18.0], 2026-07-27
 
