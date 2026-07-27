@@ -352,8 +352,9 @@ public sealed class ProtocolTokenService(
 
         if (!string.IsNullOrEmpty(authCode.CodeChallenge))
         {
-            var method = authCode.CodeChallengeMethod ?? "plain";
-            if (!PkceValidator.ValidateCodeVerifier(codeVerifier, authCode.CodeChallenge, method))
+            // No `?? "plain"` fallback: RFC 7636 makes a missing method mean plain, and plain is not
+            // accepted, so a challenge stored without one must fail rather than quietly downgrade.
+            if (!PkceValidator.ValidateCodeVerifier(codeVerifier, authCode.CodeChallenge, authCode.CodeChallengeMethod))
                 throw new InvalidOperationException("PKCE validation failed");
         }
 

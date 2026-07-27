@@ -5,18 +5,25 @@ namespace Authagonal.Protocol.Services;
 
 public static class PkceValidator
 {
-    public static bool ValidateCodeVerifier(string codeVerifier, string codeChallenge, string method)
+    /// <summary>
+    /// Verifies a code_verifier against a stored challenge. S256 only.
+    /// </summary>
+    /// <remarks>
+    /// <c>plain</c> is in RFC 7636 but provides no protection against the attack PKCE exists for: the
+    /// challenge IS the verifier, so anyone who can read the authorization request can redeem an
+    /// intercepted code. It is also the RFC's default when the method is omitted, so accepting it meant
+    /// a challenge sent without a method silently got the weakest form. Anything that is not S256 returns
+    /// false rather than throwing, so a code stored by any other path fails closed instead of 500ing.
+    /// </remarks>
+    public static bool ValidateCodeVerifier(string? codeVerifier, string? codeChallenge, string? method)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(codeVerifier);
-        ArgumentException.ThrowIfNullOrWhiteSpace(codeChallenge);
+        if (string.IsNullOrWhiteSpace(codeVerifier) || string.IsNullOrWhiteSpace(codeChallenge))
+            return false;
 
         return method switch
         {
             "S256" => ValidateS256(codeVerifier, codeChallenge),
-            "plain" => CryptographicOperations.FixedTimeEquals(
-                Encoding.ASCII.GetBytes(codeVerifier),
-                Encoding.ASCII.GetBytes(codeChallenge)),
-            _ => throw new ArgumentException($"Unsupported PKCE code challenge method: {method}", nameof(method))
+            _ => false,
         };
     }
 

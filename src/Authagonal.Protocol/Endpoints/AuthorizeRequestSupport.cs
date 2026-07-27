@@ -108,13 +108,19 @@ internal static class AuthorizeRequestSupport
                 return BuildErrorRedirect(redirectUri, "invalid_target", $"resource '{resource}' is not registered for this client", state);
         }
 
-        if (client.RequirePkce)
-        {
-            if (string.IsNullOrWhiteSpace(request.CodeChallenge))
-                return BuildErrorRedirect(redirectUri, "invalid_request", "code_challenge is required", state);
+        if (client.RequirePkce && string.IsNullOrWhiteSpace(request.CodeChallenge))
+            return BuildErrorRedirect(redirectUri, "invalid_request", "code_challenge is required", state);
 
-            if (string.IsNullOrWhiteSpace(request.CodeChallengeMethod) || request.CodeChallengeMethod != "S256")
-                return BuildErrorRedirect(redirectUri, "invalid_request", "code_challenge_method must be S256", state);
+        // The method is checked whenever a challenge is present, not only for RequirePkce clients. `plain`
+        // makes PKCE decorative — the challenge IS the verifier, so anyone positioned to read the
+        // authorization request (the attack PKCE exists to stop) can redeem an intercepted code. RFC 7636
+        // §4.3 also defaults a missing method to `plain`, so saying nothing degraded the same way. A
+        // client that opts into PKCE without being marked RequirePkce is doing so defensively, and used to
+        // get the weakest form of it. Discovery has always advertised S256 only; this agrees with it.
+        if (!string.IsNullOrWhiteSpace(request.CodeChallenge)
+            && !string.Equals(request.CodeChallengeMethod, "S256", StringComparison.Ordinal))
+        {
+            return BuildErrorRedirect(redirectUri, "invalid_request", "code_challenge_method must be S256", state);
         }
 
         request.RequestedScopes = requestedScopes;

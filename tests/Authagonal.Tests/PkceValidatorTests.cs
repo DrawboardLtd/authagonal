@@ -25,44 +25,38 @@ public class PkceValidatorTests
         Assert.False(PkceValidator.ValidateCodeVerifier("wrong-verifier", challenge, "S256"));
     }
 
+    /// plain is no longer accepted, even for a matching pair. It offers nothing against the attack PKCE
+    /// exists for — the challenge IS the verifier, so whoever can read the authorization request can
+    /// redeem the code — and discovery has only ever advertised S256.
     [Fact]
-    public void ValidateCodeVerifier_Plain_MatchingPair_ReturnsTrue()
+    public void ValidateCodeVerifier_Plain_IsRejectedEvenWhenItMatches()
     {
         var value = "my-plain-code-verifier";
-        Assert.True(PkceValidator.ValidateCodeVerifier(value, value, "plain"));
+        Assert.False(PkceValidator.ValidateCodeVerifier(value, value, "plain"));
+    }
+
+    /// RFC 7636 §4.3 makes a missing method mean plain, so silence must fail rather than downgrade.
+    [Fact]
+    public void ValidateCodeVerifier_MissingMethod_DoesNotDowngradeToPlain()
+    {
+        var value = "my-plain-code-verifier";
+        Assert.False(PkceValidator.ValidateCodeVerifier(value, value, null));
+        Assert.False(PkceValidator.ValidateCodeVerifier(value, value, ""));
     }
 
     [Fact]
-    public void ValidateCodeVerifier_Plain_Mismatch_ReturnsFalse()
+    public void ValidateCodeVerifier_UnsupportedMethod_ReturnsFalse()
     {
-        Assert.False(PkceValidator.ValidateCodeVerifier("verifier", "different", "plain"));
+        // Fails closed rather than throwing: an odd stored code should be a rejected grant, not a 500.
+        Assert.False(PkceValidator.ValidateCodeVerifier("v", "c", "RS256"));
     }
 
     [Fact]
-    public void ValidateCodeVerifier_Plain_IsCaseSensitive()
+    public void ValidateCodeVerifier_MissingVerifierOrChallenge_ReturnsFalse()
     {
-        Assert.False(PkceValidator.ValidateCodeVerifier("Verifier", "verifier", "plain"));
-    }
-
-    [Fact]
-    public void ValidateCodeVerifier_UnsupportedMethod_Throws()
-    {
-        Assert.Throws<ArgumentException>(() =>
-            PkceValidator.ValidateCodeVerifier("v", "c", "RS256"));
-    }
-
-    [Fact]
-    public void ValidateCodeVerifier_NullVerifier_Throws()
-    {
-        Assert.Throws<ArgumentNullException>(() =>
-            PkceValidator.ValidateCodeVerifier(null!, "challenge", "S256"));
-    }
-
-    [Fact]
-    public void ValidateCodeVerifier_NullChallenge_Throws()
-    {
-        Assert.Throws<ArgumentNullException>(() =>
-            PkceValidator.ValidateCodeVerifier("verifier", null!, "S256"));
+        Assert.False(PkceValidator.ValidateCodeVerifier(null, "challenge", "S256"));
+        Assert.False(PkceValidator.ValidateCodeVerifier("verifier", null, "S256"));
+        Assert.False(PkceValidator.ValidateCodeVerifier("", "challenge", "S256"));
     }
 
     private static string Base64UrlEncode(byte[] input)
