@@ -117,10 +117,19 @@ public static class DeviceAuthorizationEndpoint
             IGrantStore grantStore,
             IUserStore userStore,
             IScopeRoleGate scopeRoleGate,
+            IRateLimiter rateLimiter,
             CancellationToken ct) =>
         {
             if (httpContext.User.Identity?.IsAuthenticated != true)
                 return JsonResults.Error("not_authenticated", 401);
+
+            // RFC 8628 §5.2: rate-limit user_code entry. A user_code is ~39 bits and this endpoint
+            // already demands an authenticated session, so guessing is impractical rather than merely
+            // slow — but an authenticated attacker grinding codes would otherwise be unbounded, and the
+            // prize is a device approved in someone else's name.
+            var approverSubject = httpContext.User.FindFirst("sub")?.Value ?? "anonymous";
+            if (await rateLimiter.IsRateLimitedAsync($"device-approve|{approverSubject}", 10, TimeSpan.FromMinutes(1), ct))
+                return JsonResults.Error("too_many_requests", 429);
 
             var form = await httpContext.Request.ReadFormAsync(ct);
             var userCode = form["user_code"].FirstOrDefault()?.Trim().ToUpperInvariant();
@@ -186,10 +195,12 @@ public static class DeviceAuthorizationEndpoint
     {
         // 8-character alphanumeric (no ambiguous chars: 0/O, 1/I/L)
         const string chars = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
-        var bytes = RandomNumberGenerator.GetBytes(8);
+        // GetInt32, not (byte % 31): 256 is not a multiple of 31, so the modulo drew the first eight
+        // letters from nine byte values each and the rest from eight. A small bias, but it costs nothing
+        // to not have one in the value standing between a stranger and an approved device.
         var code = new char[8];
         for (var i = 0; i < 8; i++)
-            code[i] = chars[bytes[i] % chars.Length];
+            code[i] = chars[RandomNumberGenerator.GetInt32(chars.Length)];
         return $"{new string(code, 0, 4)}-{new string(code, 4, 4)}";
     }
 
