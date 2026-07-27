@@ -172,6 +172,17 @@ internal static class ClientAuthentication
             RequireSignedTokens = true,
             IssuerSigningKeys = jwks.GetSigningKeys(),
             ValidateIssuerSigningKey = true,
+            // Pin the algorithms rather than accepting whatever the assertion header asks for. Keys come
+            // from the client's registered JWKS and never from a jku/jwk/x5u header (IdentityModel does
+            // not resolve those), so this is not the classic RS/HS confusion — but an explicit list means
+            // a symmetric key appearing in a client's JWKS cannot quietly turn client authentication into
+            // an HMAC over a value the client also publishes. RFC 7518 asymmetric algorithms only.
+            ValidAlgorithms =
+            [
+                SecurityAlgorithms.RsaSha256, SecurityAlgorithms.RsaSha384, SecurityAlgorithms.RsaSha512,
+                SecurityAlgorithms.RsaSsaPssSha256, SecurityAlgorithms.RsaSsaPssSha384, SecurityAlgorithms.RsaSsaPssSha512,
+                SecurityAlgorithms.EcdsaSha256, SecurityAlgorithms.EcdsaSha384, SecurityAlgorithms.EcdsaSha512,
+            ],
             ClockSkew = TimeSpan.FromSeconds(60),
         });
         if (!validated.IsValid)
