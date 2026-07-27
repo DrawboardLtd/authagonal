@@ -6,8 +6,10 @@ using System.Text.Json;
 using System.Web;
 using Authagonal.Core.Constants;
 using Authagonal.Core.Models;
+using Authagonal.Core.Stores;
 using Authagonal.Protocol;
 using Authagonal.Tests.Infrastructure;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.IdentityModel.JsonWebTokens;
 
 namespace Authagonal.Tests;
@@ -315,6 +317,28 @@ public sealed class TokenExchangeTests : IAsyncLifetime
 
         Assert.True(exchangedExp <= subjectExp,
             $"exchanged exp {exchangedExp} must not exceed subject exp {subjectExp}");
+    }
+
+    /// <summary>
+    /// Revoking an access token must end its authority, including its ability to produce successors.
+    /// A revoked token still verifies and is still inside its exp — revocation exists precisely to cut
+    /// a token short — so if the exchange does not consult the revocation list, handing the dead token
+    /// to /connect/token mints a live one and the revocation achieved nothing.
+    /// </summary>
+    [Fact]
+    public async Task Exchange_OfRevokedSubjectToken_IsRefused()
+    {
+        var primary = await GetPrimaryAccessTokenAsync();
+
+        // Sanity: it exchanges before revocation, so the refusal below is the revocation and not setup.
+        Assert.Equal(HttpStatusCode.OK, (await ExchangeAsync(primary, scope: $"openid {AppScope}")).StatusCode);
+
+        var revoked = _factory.Services.GetRequiredService<IRevokedTokenStore>();
+        var jti = ReadClaims(primary)["jti"];
+        await revoked.AddAsync(jti, DateTimeOffset.UtcNow.AddHours(1));
+
+        var response = await ExchangeAsync(primary, scope: $"openid {AppScope}");
+        Assert.NotEqual(HttpStatusCode.OK, response.StatusCode);
     }
 
     private async Task<string> GetPrimaryAccessTokenAsync()

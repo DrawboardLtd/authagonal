@@ -29,7 +29,10 @@ public sealed class ProtocolTokenService(
     // constructions) keep working; absent means "no client is an agent".
     IAgentProfileStore? agentProfileStore = null,
     IConnectorCatalog? connectorCatalog = null,
-    IEnumerable<IAuthHook>? authHooks = null) : IProtocolTokenService
+    IEnumerable<IAuthHook>? authHooks = null,
+    // Optional for the same reason as the seams above (hand-constructed hosts), but wired everywhere
+    // real: without it a REVOKED subject_token can still be exchanged for a fresh one.
+    IRevokedTokenStore? revokedTokenStore = null) : IProtocolTokenService
 {
     /// <summary>Per-user scope entitlement, re-applied at refresh. Built over the injected scope
     /// store rather than taken from DI so hosts that construct this service by hand keep working.</summary>
@@ -708,6 +711,8 @@ public sealed class ProtocolTokenService(
             ValidateLifetime = true,
             IssuerSigningKeys = keys,
             ValidateIssuerSigningKey = true,
+            // We signed this token ourselves, so accept only what we sign with.
+            ValidAlgorithms = [SecurityAlgorithms.EcdsaSha256, SecurityAlgorithms.EcdsaSha384, SecurityAlgorithms.EcdsaSha512],
             ClockSkew = TimeSpan.FromSeconds(60),
         };
 
@@ -717,6 +722,20 @@ public sealed class ProtocolTokenService(
             throw new InvalidOperationException("subject_token is not a valid access token issued by this server");
 
         var tokenClaims = validated.Claims;
+
+        // Revocation has to be honoured HERE, not only at the resource server. A revoked access token
+        // keeps a valid signature and a live exp — that is the whole point of revoking before expiry —
+        // so without this check the token can be handed to /connect/token and exchanged for a fresh,
+        // unrevoked one. Revoking in response to a compromise would end the token's use at APIs while
+        // leaving it able to mint successors.
+        if (revokedTokenStore is not null
+            && tokenClaims.TryGetValue("jti", out var subjectJti)
+            && subjectJti is string subjectJtiValue
+            && !string.IsNullOrEmpty(subjectJtiValue)
+            && await revokedTokenStore.IsRevokedAsync(subjectJtiValue, ct))
+        {
+            throw new InvalidOperationException("subject_token has been revoked");
+        }
 
         // Delegation of a user identity only: a client-credentials token has no sub to act for.
         if (!tokenClaims.TryGetValue("sub", out var subValue) || subValue is not string sub || string.IsNullOrEmpty(sub))
