@@ -9,7 +9,7 @@ Authagonal is designed to scale both vertically and horizontally with no special
 
 ## Stateless by design
 
-All persistent state is stored in the backing table store, Azure Table Storage, or DynamoDB on the AWS backend. There is no in-process state that requires sticky sessions or coordination between instances:
+All persistent state is stored in the backing store — Azure Table Storage, DynamoDB on the AWS backend, or PostgreSQL on the self-hosted SQL backend. There is no in-process state that requires sticky sessions or coordination between instances:
 
 - **Signing keys**: loaded from Table Storage, refreshed hourly
 - **Authorization codes and refresh tokens**: stored in Table Storage with single-use enforcement
@@ -74,9 +74,14 @@ builder.Services.AddAuthagonal(builder.Configuration,
 // AWS: leadership + event bus via DynamoDB (Authagonal.AwsProvider)
 builder.Services.AddAuthagonal(builder.Configuration,
     cluster => cluster.UseAwsDynamo(dynamoDb));
+
+// PostgreSQL: leadership via a conditional-upsert lease row, event bus via an
+// append-only log in the same database (Authagonal.SqlProvider)
+builder.Services.AddAuthagonal(builder.Configuration,
+    cluster => cluster.UseSql(sqlDataSource));
 ```
 
-`UseAzureStorageBus` / `UseAwsDynamoBus` register the event bus only, keeping the in-process (always-leader) lease, use them on nodes that must receive cluster events but must never contend for leadership.
+`UseAzureStorageBus` / `UseAwsDynamoBus` / `UseSqlBus` register the event bus only, keeping the in-process (always-leader) lease, use them on nodes that must receive cluster events but must never contend for leadership.
 
 > **Note:** with the in-process default on multiple nodes, *every* node believes it is the leader. That's harmless for most workloads, but enable a real lease backend before turning on `Auth:KeyRotationEnabled` across multiple instances.
 

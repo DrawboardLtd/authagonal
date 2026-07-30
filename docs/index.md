@@ -9,7 +9,7 @@ title: Home
 
 # Authagonal
 
-OAuth 2.0 / OpenID Connect / SAML 2.0 authentication server for .NET, backed by pluggable cloud storage, Azure Table Storage or AWS (DynamoDB / S3 / Secrets Manager).
+OAuth 2.0 / OpenID Connect / SAML 2.0 authentication server for .NET, backed by pluggable storage: your own PostgreSQL or SQLite, Azure Table Storage, or AWS (DynamoDB / S3 / Secrets Manager).
 
 A single, self-contained deployment. The server and login UI ship as one Docker image, the SPA is served from the same origin as the API, so cookie auth, redirects, and CSP all work without cross-origin complexity.
 
@@ -34,7 +34,7 @@ A single, self-contained deployment. The server and login UI ship as one Docker 
 - **HashiCorp Vault Transit**: remote JWT signing without local private key access
 - **Composable Library**: `AddAuthagonal()` / `UseAuthagonal()` to host in your own project with custom service overrides
 - **Native AOT Ready**: IL trimming and source-generated JSON serialization for fast startup
-- **Pluggable cloud storage**: Azure Table Storage or AWS (DynamoDB / S3 / Secrets Manager); low-cost, serverless-friendly backends
+- **Pluggable storage**: self-hosted PostgreSQL or SQLite (no cloud account), or Azure Table Storage / AWS (DynamoDB / S3 / Secrets Manager) for low-cost serverless-friendly backends
 - **Backup & Restore**: incremental backups (change-log-driven with a full-scan backstop), integrity verification, tombstone-based delete tracking
 - **Admin APIs**: user CRUD, SAML/OIDC provider management, SSO domain routing, token impersonation
 

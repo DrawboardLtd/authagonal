@@ -2,6 +2,36 @@
 
 ## [Unreleased]
 
+### Added
+
+- **`Authagonal.SqlProvider`: self-hosted storage on PostgreSQL or SQLite.** The full
+  `Authagonal.Core.Stores` surface, clustering (`ILeaseProvider`, `IClusterEventBus`) and the
+  DataProtection key ring, with no cloud account, emulator or managed service. Reference the package and
+  call `AddAuthagonalPostgres(…)` / `AddAuthagonalSqlite(…)` before `AddAuthagonal()` — the same
+  contract as `Authagonal.AwsProvider`. Nothing else changes: `Authagonal.Server` does not reference it,
+  so an Azure- or AWS-only application never pulls in Npgsql or the SQLite native binaries.
+
+  Tables mirror the Azure and DynamoDB layouts one-for-one and are created on startup if absent, so a
+  backup taken on one backend restores onto another.
+
+  Every operation that must not race is a single statement: `DELETE … RETURNING` for single-use
+  redemption (authorization codes, MFA challenges, OIDC state, SAML request ids),
+  `UPDATE … WHERE consumedAt IS NULL` for refresh rotation, `UPDATE … WHERE version = @v` with retry
+  for the lockout counter, `INSERT … ON CONFLICT DO NOTHING` for SAML assertion replay detection, and a
+  conditional upsert for the leader-election lease. One test suite runs over both dialects.
+
+  On PostgreSQL the key columns are pinned to `COLLATE "C"`. The key scheme is byte-ordinal throughout
+  — prefix bounds, env-partition ranges, the grant expiry sweep, keyset paging — and a database created
+  with a linguistic collation (`en_US.UTF-8` and ICU locales are the common defaults) orders
+  punctuation and case differently, which would have made those scans silently return the wrong rows:
+  expired grants never reaped, prefix search missing matches. The suite runs against an ICU-collated
+  database to keep the pin honest.
+
+  Neither engine expires rows the way DynamoDB TTL does, so `SqlExpiryReaper` sweeps the transient
+  tables (SAML replay, OIDC state, MFA challenges, upstream refresh tokens, the revocation list).
+  Grants stay with `IGrantStore.RemoveExpiredAsync`, which owns all three of their tables and the
+  matching tombstones.
+
 ## [0.20.0], 2026-07-27
 
 An RFC-by-RFC security review, prompted by outside comments on SCIM and SAML. Each item below was

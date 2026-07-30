@@ -85,7 +85,7 @@ Reference the Authagonal packages in your own ASP.NET Core project:
 <PackageReference Include="Authagonal.AzureProvider" Version="x.y.z" />
 ```
 
-The storage provider package is pluggable: `Authagonal.AzureProvider` for Azure Table Storage (the default `AddAuthagonal()` wiring), or `Authagonal.AwsProvider` for DynamoDB / S3 / Secrets Manager, see [AWS backend](#aws-backend) below.
+The storage provider package is pluggable: `Authagonal.AzureProvider` for Azure Table Storage (the default `AddAuthagonal()` wiring), `Authagonal.SqlProvider` for self-hosted PostgreSQL or SQLite (see [SQL backend](#sql-backend)), or `Authagonal.AwsProvider` for DynamoDB / S3 / Secrets Manager (see [AWS backend](#aws-backend)).
 
 Then compose it into your `Program.cs`:
 
@@ -106,6 +106,30 @@ See [Extensibility](extensibility) for all override points and [demos/custom-ser
 ### Email
 
 The built-in [Resend](https://resend.com) sender activates automatically when `Email:ResendApiKey` and `Email:SenderEmail` are configured, no service registration needed. Without any `IEmailService`, verification and password-reset emails are **silently discarded**, and because login requires a confirmed email by default, self-registered users can never sign in (`UseAuthagonal` logs a warning at startup). Either set the `Email:*` keys, register your own `IEmailService` before `AddAuthagonal()`, or list your domains in `Auth:AutoConfirmEmailDomains` to skip verification (dev/test only). See [Configuration → Email](configuration#email).
+
+## SQL backend
+
+To run on your own database instead of a cloud service, reference `Authagonal.SqlProvider` and register it **before** `AddAuthagonal()`, those registrations are what make `AddAuthagonal()` skip its Azure Table Storage wiring:
+
+```csharp
+using Authagonal.SqlProvider;
+
+// PostgreSQL — the production self-hosted backend
+builder.Services.AddAuthagonalPostgres("Host=db;Database=authagonal;Username=auth;Password=…");
+
+// or SQLite — one file, no server. Suits embedded hosts, CI and small single-node deployments
+builder.Services.AddAuthagonalSqlite("Data Source=authagonal.db");
+
+builder.Services.AddAuthagonal(builder.Configuration);
+```
+
+Tables mirror the Azure and DynamoDB layouts one-for-one and are created on startup if absent (every statement is `IF NOT EXISTS`, so it is safe to race across pods and a no-op against a schema you provisioned yourself). No `Storage:*` configuration is needed. The DataProtection key ring is persisted to the same database, so cookies and antiforgery tokens survive restarts and work across pods with no extra service.
+
+SQLite serializes writers, so it is a single-node backend — the in-process lease and cluster event bus registered by default are the correct pairing there. A multi-pod PostgreSQL deployment wants `clustering.UseSql(dataSource)` for leader election.
+
+> **Collation.** On PostgreSQL the key columns are pinned to `COLLATE "C"`. The key scheme is byte-ordinal throughout (prefix bounds, env-partition ranges, the grant expiry sweep, keyset paging), and a database created with a linguistic collation — `en_US.UTF-8` and ICU locales are the common defaults — would order punctuation and case differently and silently return the wrong rows. The pin makes the layout independent of how the database was created; you do not need to create it any particular way.
+
+See the [package README](https://github.com/authagonal/authagonal/tree/master/src/Authagonal.SqlProvider) for the table layout, the concurrency primitives behind each single-use guarantee, and how to add a dialect for another engine.
 
 ## AWS backend
 

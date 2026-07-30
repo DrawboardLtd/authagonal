@@ -4,7 +4,7 @@
 
 <h1 align="center">Authagonal</h1>
 
-<p align="center">Self-hosted OAuth 2.0 / OpenID Connect / SAML 2.0 authentication server for .NET.<br>Pluggable cloud storage, Azure Table Storage or AWS (DynamoDB / S3 / Secrets Manager).</p>
+<p align="center">Self-hosted OAuth 2.0 / OpenID Connect / SAML 2.0 authentication server for .NET.<br>Pluggable storage: your own PostgreSQL or SQLite, Azure Table Storage, or AWS (DynamoDB / S3 / Secrets Manager).</p>
 
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT License"></a>
@@ -36,6 +36,7 @@ This starts the auth server on `http://localhost:8080` with an Azurite storage e
 | `src/Authagonal.Protocol` | Embeddable OIDC / OAuth 2.0 protocol surface, bring your own identity (`IOidcSubjectResolver`) and storage (`IClientStore` / `IGrantStore` / `IScopeStore` / `ISigningKeyStore`). No user store, no SAML, no admin UI. |
 | `src/Authagonal.AzureProvider` | Azure Table Storage implementation of the stores (formerly `Authagonal.Storage`) |
 | `src/Authagonal.AwsProvider` | AWS implementation, DynamoDB / S3 / Secrets Manager stores and clustering |
+| `src/Authagonal.SqlProvider` | Self-hosted SQL implementation, PostgreSQL or SQLite, plus clustering and the DataProtection key ring |
 | `src/Authagonal.Backup` | Backup, restore, merge and rollup library for the storage backends |
 | `src/Authagonal.Server` | ASP.NET Core host, OIDC, SAML, auth API, admin API |
 | `login-app` | React/TypeScript login SPA (Vite), published as `@authagonal/login` |
@@ -83,7 +84,7 @@ This starts the auth server on `http://localhost:8080` with an Azurite storage e
 | Option | Description |
 |---|---|
 | **Docker image** | `drawboardci/authagonal`, pre-built, configure via env vars and branding.json |
-| **NuGet library** | Reference `Authagonal.Server` + a provider (`Authagonal.AzureProvider` or `Authagonal.AwsProvider`), call `AddAuthagonal()`, override services |
+| **NuGet library** | Reference `Authagonal.Server` + a provider (`Authagonal.AzureProvider`, `Authagonal.SqlProvider` or `Authagonal.AwsProvider`), call `AddAuthagonal()`, override services |
 | **npm package** | `@authagonal/login`, the login SPA as a component library; import base components, override what you need |
 | **Managed cloud** | [Authagonal Cloud](https://authagonal.io), we host and operate it for you |
 
