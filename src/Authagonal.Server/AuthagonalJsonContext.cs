@@ -65,6 +65,7 @@ namespace Authagonal.Server;
 [JsonSerializable(typeof(RecoveryCodesResponse))]
 [JsonSerializable(typeof(DeviceAuthorizationResponse))]
 [JsonSerializable(typeof(DeviceApprovedResponse))]
+[JsonSerializable(typeof(DeviceInfoResponse))]
 [JsonSerializable(typeof(IntrospectionInactiveResponse))]
 [JsonSerializable(typeof(ConsentInfoResponse))]
 [JsonSerializable(typeof(BackChannelLogoutResult))]

@@ -1,3 +1,4 @@
+using Authagonal.Core.Constants;
 using Authagonal.Core.Stores;
 using Authagonal.Server.Services;
 using Microsoft.IdentityModel.JsonWebTokens;
@@ -85,6 +86,14 @@ public static class IntrospectionEndpoint
             });
 
             if (!result.IsValid)
+                return InactiveResponse();
+
+            // RFC 7662 introspects access and refresh tokens. An id_token or a logout token is neither,
+            // and both are signed by the same key — reporting one as `active` would let a caller launder a
+            // non-credential into something a resource server treats as live.
+            if (!TokenTypes.IsAccessToken(
+                    (result.SecurityToken as Microsoft.IdentityModel.JsonWebTokens.JsonWebToken)?.Typ,
+                    result.Claims.ContainsKey))
                 return InactiveResponse();
 
             // Note: any enabled, authenticated client may introspect a JWT access token it presents —

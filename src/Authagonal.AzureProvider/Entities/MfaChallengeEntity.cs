@@ -22,6 +22,10 @@ public sealed class MfaChallengeEntity : ITableEntity
     public bool IsConsumed { get; set; }
     public int Attempts { get; set; }
 
+    /// <summary>Stored as the underlying int. A row written before this column existed reads back as 0,
+    /// which is <see cref="MfaChallengePurpose.Verify"/> — the least-privileged case.</summary>
+    public int Purpose { get; set; }
+
     public static MfaChallengeEntity FromModel(MfaChallenge challenge) => new()
     {
         PartitionKey = challenge.ChallengeId,
@@ -34,6 +38,7 @@ public sealed class MfaChallengeEntity : ITableEntity
         ExpiresAt = challenge.ExpiresAt,
         IsConsumed = challenge.IsConsumed,
         Attempts = challenge.Attempts,
+        Purpose = (int)challenge.Purpose,
     };
 
     public MfaChallenge ToModel() => new()
@@ -47,5 +52,6 @@ public sealed class MfaChallengeEntity : ITableEntity
         ExpiresAt = ExpiresAt,
         IsConsumed = IsConsumed,
         Attempts = Attempts,
+        Purpose = (MfaChallengePurpose)Purpose,
     };
 }

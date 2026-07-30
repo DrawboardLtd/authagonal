@@ -1,3 +1,4 @@
+using Authagonal.Core.Constants;
 using Authagonal.Core.Models;
 using Authagonal.Core.Stores;
 using Authagonal.Server.Services;
@@ -53,6 +54,15 @@ public static class UserinfoEndpoint
             var result = await handler.ValidateTokenAsync(token, validationParams);
 
             if (!result.IsValid)
+                return Results.Unauthorized();
+
+            // Every JWT this server signs shares one issuer and one key, so a valid signature does not
+            // establish that the bearer holds an ACCESS token. Without this, an id_token or a back-channel
+            // logout token was accepted here (cross-JWT confusion) — an id_token is issued to the client,
+            // not as a credential for calling the OP.
+            if (!TokenTypes.IsAccessToken(
+                    (result.SecurityToken as Microsoft.IdentityModel.JsonWebTokens.JsonWebToken)?.Typ,
+                    result.Claims.ContainsKey))
                 return Results.Unauthorized();
 
             var subjectId = result.Claims.TryGetValue("sub", out var sub) ? sub?.ToString() : null;

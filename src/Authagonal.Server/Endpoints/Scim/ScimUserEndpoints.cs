@@ -133,9 +133,9 @@ public static class ScimUserEndpoints
 
         return ScimResults.Success(new ScimListResponse<ScimUserResource>
         {
-            // The true total is unknowable without a full scan under cursor pagination; report the
-            // returned count (accurate whenever nextCursor is absent, i.e. the listing completed).
-            TotalResults = resourcesOut.Count,
+            // Only a COMPLETED listing has a knowable total. When nextCursor is present, omit it rather
+            // than reporting the page size — see ScimListResponse.TotalResults.
+            TotalResults = nextCursor is null ? resourcesOut.Count : null,
             StartIndex = 1,
             ItemsPerPage = resourcesOut.Count,
             Resources = resourcesOut,
@@ -163,6 +163,25 @@ public static class ScimUserEndpoints
         return ScimResults.Success(ScimUserResource.FromUser(user, baseUrl));
     }
 
+    /// <summary>
+    /// A deliberately conservative address check: one '@' with non-empty local and domain parts, a dot in
+    /// the domain, and no whitespace or control characters. Not RFC 5322 — the point is to refuse values
+    /// that are not addresses at all, since a SCIM userName is stored as a PRE-VERIFIED email and becomes a
+    /// storage key, a blind-index entry, and the input to email-based account linking.
+    /// </summary>
+    private static bool IsPlausibleEmail(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value) || value.Length > 320) return false;
+        foreach (var c in value)
+            if (char.IsWhiteSpace(c) || char.IsControl(c)) return false;
+
+        var at = value.IndexOf('@');
+        if (at <= 0 || at != value.LastIndexOf('@') || at == value.Length - 1) return false;
+
+        var domain = value[(at + 1)..];
+        return domain.Contains('.') && !domain.StartsWith('.') && !domain.EndsWith('.');
+    }
+
     private static async Task<IResult> CreateUserAsync(
         ScimCreateUserRequest request,
         HttpContext httpContext,
@@ -170,6 +189,7 @@ public static class ScimUserEndpoints
         IProvisioningOrchestrator provisioning,
         Authagonal.Core.Services.ITenantContext tenantContext,
         IRateLimiter rateLimiter,
+        IConfiguration configuration,
         ILogger<Program> logger,
         CancellationToken ct)
     {
@@ -188,6 +208,30 @@ public static class ScimUserEndpoints
             return ScimResults.BadRequest("userName is required");
 
         email = email.ToLowerInvariant();
+
+        // A SCIM-provisioned user is created with EmailConfirmed = true, so the address it names is treated
+        // as proven from that moment on — which makes it the input to email-based account linking and to
+        // password reset. Two guards follow from that.
+        //
+        // First, it must actually be an address. An unparseable userName would otherwise be stored as a
+        // pre-verified email and become a storage key and an index entry.
+        if (!IsPlausibleEmail(email))
+            return ScimResults.BadRequest("userName must be a valid email address");
+
+        // Second, the provisioning client may only create users in domains it is authorised for. Without
+        // this, ANY SCIM token could mint a pre-verified account for any address — including a domain
+        // belonging to another tenant — and that account then feeds federation auto-linking and (before
+        // the SSO-only guard on forgot-password) a local password reset.
+        var scimDomain = email.Split('@').Last();
+        var allowedDomains = configuration
+            .GetSection($"Scim:Clients:{clientId}:AllowedEmailDomains").Get<string[]>() ?? [];
+        if (allowedDomains.Length > 0 &&
+            !allowedDomains.Contains(scimDomain, StringComparer.OrdinalIgnoreCase))
+        {
+            logger.LogWarning(
+                "SCIM client {ClientId} attempted to provision {Email} outside its allowed domains", clientId, email);
+            return ScimResults.BadRequest($"Domain '{scimDomain}' is not permitted for this provisioning client");
+        }
 
         // Check if user already exists
         var existing = await userStore.FindByEmailAsync(email, ct);
@@ -222,7 +266,7 @@ public static class ScimUserEndpoints
             FirstName = firstName,
             LastName = lastName,
             ExternalId = request.ExternalId,
-            IsActive = request.Active,
+            IsActive = request.ActiveOnCreate,
             Locale = Locales.Normalize(request.PreferredLanguageOrLocale),
             ScimProvisionedByClientId = clientId,
             LockoutEnabled = true,
@@ -262,8 +306,10 @@ public static class ScimUserEndpoints
         ScimCreateUserRequest request,
         HttpContext httpContext,
         IUserStore userStore,
+        IGrantStore grantStore,
         Authagonal.Core.Services.ITenantContext tenantContext,
         IRateLimiter rateLimiter,
+        ILogger<Program> logger,
         CancellationToken ct)
     {
         var clientId = GetClientId(httpContext);
@@ -298,7 +344,12 @@ public static class ScimUserEndpoints
 
         user.FirstName = request.Name?.GivenName;
         user.LastName = request.Name?.FamilyName;
-        user.IsActive = request.Active;
+
+        // Omitted `active` leaves the flag alone. Assigning a defaulted-true value here meant a PUT that
+        // never mentioned `active` silently reactivated a deprovisioned user.
+        var wasActive = user.IsActive;
+        if (request.Active is { } activeRequested)
+            user.IsActive = activeRequested;
         // PUT replaces the whole resource — a missing preferredLanguage clears the stored locale.
         user.Locale = Locales.Normalize(request.PreferredLanguageOrLocale);
 
@@ -316,6 +367,16 @@ public static class ScimUserEndpoints
 
         user.UpdatedAt = DateTimeOffset.UtcNow;
         await userStore.UpdateAsync(user, ct);
+
+        // Deactivating must REVOKE, not merely mark. PATCH and DELETE already do this; PUT did not, so
+        // deprovisioning through the replace path left every refresh token and stored consent live and the
+        // user kept working until each token expired on its own.
+        if (wasActive && !user.IsActive)
+        {
+            await grantStore.RemoveAllBySubjectAsync(user.Id, ct);
+            logger.LogInformation(
+                "SCIM user {UserId} deactivated via PUT by client {ClientId}; grants revoked", user.Id, clientId);
+        }
 
         return ScimResults.Success(ScimUserResource.FromUser(user, baseUrl));
     }
@@ -349,7 +410,12 @@ public static class ScimUserEndpoints
             .Select(o => new ScimPatchApplier.PatchOperation(o.Op, o.Path, o.Value))
             .ToList();
 
-        ScimPatchApplier.ApplyToUser(user, operations);
+        // Report what could not be applied instead of answering 200 regardless. `patch.supported = true` is
+        // advertised, so a silently-dropped operation left the directory believing a write had landed.
+        var unsupported = ScimPatchApplier.ApplyToUser(user, operations);
+        if (unsupported.Count > 0)
+            return ScimResults.Error(400, "invalidPath",
+                "Unsupported PATCH operation(s): " + string.Join("; ", unsupported));
 
         // If the patch changed the email, re-check the global index BEFORE persisting so it can't
         // repoint another account's email→userId mapping at this record (account-takeover clobber).

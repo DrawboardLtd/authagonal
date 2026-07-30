@@ -231,6 +231,56 @@ public sealed class DeviceAuthorizationTests : IAsyncLifetime
     // Helpers
     // -----------------------------------------------------------------------
 
+    /// <summary>
+    /// The approval screen showed nothing about what was being approved, and
+    /// <c>verification_uri_complete</c> pre-fills the code — so approval was one click on an opaque prompt.
+    /// That is RFC 8628 §5.4's remote-phishing / illicit-consent-grant shape: an attacker starts a device
+    /// flow, sends the victim the complete URI, and the victim authorises the ATTACKER's device against
+    /// their own account. This endpoint is what makes informed consent possible.
+    /// </summary>
+    [Fact]
+    public async Task DeviceInfo_DescribesTheRequestingClientAndScopes()
+    {
+        await _factory.SeedTestUserAsync();
+        var deviceCodes = await RequestDeviceCodes();
+        await _client.PostAsJsonAsync("/api/auth/login", new { email = "test@example.com", password = "Test1234!" });
+
+        var response = await _client.GetAsync(
+            $"/api/auth/device/info?user_code={Uri.EscapeDataString(deviceCodes.UserCode)}");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+
+        // Which application is asking — the client the DEVICE request was made for, not the browser's.
+        Assert.Equal(AuthagonalTestFactory.AdminClientId, body.GetProperty("clientId").GetString());
+        Assert.False(string.IsNullOrWhiteSpace(body.GetProperty("clientName").GetString()));
+        // ...and for what.
+        Assert.True(body.GetProperty("scopes").GetArrayLength() > 0);
+    }
+
+    /// <summary>Anonymous callers must not be able to probe codes through the info endpoint.</summary>
+    [Fact]
+    public async Task DeviceInfo_NotAuthenticated_Returns401()
+    {
+        var deviceCodes = await RequestDeviceCodes();
+
+        var response = await _client.GetAsync(
+            $"/api/auth/device/info?user_code={Uri.EscapeDataString(deviceCodes.UserCode)}");
+
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task DeviceInfo_InvalidCode_Returns400()
+    {
+        await _factory.SeedTestUserAsync();
+        await _client.PostAsJsonAsync("/api/auth/login", new { email = "test@example.com", password = "Test1234!" });
+
+        var response = await _client.GetAsync("/api/auth/device/info?user_code=ZZZZ-9999");
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
     private async Task<DeviceCodes> RequestDeviceCodes()
     {
         var form = new FormUrlEncodedContent(new Dictionary<string, string>

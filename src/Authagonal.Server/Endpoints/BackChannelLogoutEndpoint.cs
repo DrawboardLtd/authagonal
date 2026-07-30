@@ -1,3 +1,4 @@
+using Authagonal.Core.Constants;
 using System.Security.Claims;
 using Authagonal.Core.Models;
 using Authagonal.Core.Services;
@@ -122,6 +123,12 @@ public static class BackChannelLogoutEndpoint
             Issuer = issuer,
             Audience = clientId,
             IssuedAt = DateTime.UtcNow,
+            // With Expires unset IdentityModel stamps exp = iat + 60 minutes, so a captured logout token
+            // stayed replayable for an hour. Two minutes covers the delivery POST.
+            Expires = DateTime.UtcNow.AddMinutes(2),
+            // Explicit kind: this token was accepted as a subject_token at /connect/token and exchanged for
+            // a live access token.
+            TokenType = TokenTypes.LogoutJwt,
             Claims = new Dictionary<string, object>
             {
                 ["sub"] = subjectId,

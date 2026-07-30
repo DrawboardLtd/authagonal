@@ -143,6 +143,12 @@ public sealed class ProtocolTokenService(
             IssuedAt = now.UtcDateTime,
             Expires = expires.UtcDateTime,
             SigningCredentials = keyManager.GetSigningCredentials(),
+            // RFC 9068 §2.1: an OAuth 2.0 access token in JWT form carries typ "at+jwt". Without it every
+            // token this server signs had the identical header `typ: JWT` — access tokens, id_tokens and
+            // both logout tokens — so nothing downstream could tell them apart by inspection. That is what
+            // let an id_token or a back-channel logout token be presented as `subject_token` at
+            // /connect/token and exchanged for a live access token. See TokenTypes.AccessTokenJwt.
+            TokenType = TokenTypes.AccessTokenJwt,
             Claims = claims
         };
 
@@ -713,6 +719,13 @@ public sealed class ProtocolTokenService(
             ValidateIssuerSigningKey = true,
             // We signed this token ourselves, so accept only what we sign with.
             ValidAlgorithms = [SecurityAlgorithms.EcdsaSha256, SecurityAlgorithms.EcdsaSha384, SecurityAlgorithms.EcdsaSha512],
+            // Pin the token KIND, not just its signature. All four JWT mint sites in this server share one
+            // issuer and one key, so "we signed it" says nothing about what it is. Without this an id_token
+            // or a back-channel logout token passed every check here and was exchanged for a live access
+            // token carrying the victim's sub and roles — and neither carries a jti, so the revocation
+            // check below silently degraded to a no-op and RevocationEndpoint (which requires client_id and
+            // jti) could not revoke them at all, leaving no operator remedy short of key rotation.
+            ValidTypes = [TokenTypes.AccessTokenJwt],
             ClockSkew = TimeSpan.FromSeconds(60),
         };
 
@@ -722,6 +735,23 @@ public sealed class ProtocolTokenService(
             throw new InvalidOperationException("subject_token is not a valid access token issued by this server");
 
         var tokenClaims = validated.Claims;
+
+        // Belt and braces for tokens minted BEFORE the typ header was stamped, which are still inside their
+        // lifetime and would otherwise carry no typ and be rejected — or, on a handler that treats a missing
+        // typ as acceptable, be let through. Only an access token has both of these: an id_token has
+        // neither, and a logout token has neither. Requiring jti additionally guarantees the revocation
+        // check above is meaningful rather than skipped.
+        if (!tokenClaims.TryGetValue("client_id", out var clientIdProbe)
+            || clientIdProbe is not string { Length: > 0 })
+            throw new InvalidOperationException("subject_token carries no client_id and is not an access token");
+
+        if (!tokenClaims.TryGetValue("jti", out var jtiProbe)
+            || jtiProbe is not string { Length: > 0 })
+            throw new InvalidOperationException("subject_token carries no jti and is not an access token");
+
+        // An id_token carries nonce; a logout token carries events. Neither is ever an access token.
+        if (tokenClaims.ContainsKey("events") || tokenClaims.ContainsKey("nonce"))
+            throw new InvalidOperationException("subject_token is not an access token");
 
         // Revocation has to be honoured HERE, not only at the resource server. A revoked access token
         // keeps a valid signature and a live exp — that is the whole point of revoking before expiry —
@@ -884,6 +914,31 @@ public sealed class ProtocolTokenService(
             throw new ProtocolTokenException("invalid_authorization_details",
                 "authorization_details must be an RFC 9396 array of objects with a string 'type'");
 
+        // RFC 9396 §5: the AS must reject a `type` it does not understand. Unknown types were parsed,
+        // carried through the intersection and RE-EMITTED into the signed claim, so the token asserted
+        // authority over a resource this AS has no definition for — a resource server that trusts the
+        // issuer would honour a grant nobody here could evaluate or audit. Only enforced when a catalog is
+        // registered; a host with no catalog has no vocabulary to check against.
+        if (connectorCatalog is not null && !requestedAuthority.IsUnrestricted)
+        {
+            foreach (var grant in requestedAuthority.Grants)
+            {
+                var descriptor = await connectorCatalog.GetAsync(grant.Type, ct);
+                if (descriptor is null)
+                    throw new ProtocolTokenException("invalid_authorization_details",
+                        $"unknown authorization_details type '{grant.Type}'");
+
+                if (descriptor.Actions is { Count: > 0 })
+                {
+                    var unknown = grant.Actions.FirstOrDefault(a =>
+                        !descriptor.Actions.Any(d => string.Equals(d.Name, a, StringComparison.Ordinal)));
+                    if (unknown is not null)
+                        throw new ProtocolTokenException("invalid_authorization_details",
+                            $"unknown action '{unknown}' for authorization_details type '{grant.Type}'");
+                }
+            }
+        }
+
         var subjectAuthority = ReadAuthorityClaim(subjectToken);
 
         AuthoritySet? effective = null;
@@ -988,12 +1043,56 @@ public sealed class ProtocolTokenService(
         }
         else if (!requestedAuthority.IsUnrestricted || !subjectAuthority.IsUnrestricted)
         {
-            // No profile — plain exchange, but authority still narrows (never widens): the
-            // exchanged token carries subject ∩ requested when either side is constrained.
+            // No profile — plain exchange. Authority may only NARROW here, never originate.
+            //
+            // The subject token has authority to attenuate only if it carries an authorization_details
+            // claim. When it does not, ReadAuthorityClaim yields Unrestricted, and
+            // Unrestricted.Intersect(requested) returns `requested` VERBATIM (AuthoritySet.cs:62-63) — so
+            // the client's request became the claim the AS signed. That is authority forgery, not
+            // narrowing: any client holding the exchange grant could mint an issuer-signed token asserting
+            // fine-grained authority (payment initiation, and so on) that no admin ceiling, no consent
+            // record and no user interaction ever produced. And it is the universal case, because no token
+            // issued via the authorization-code, refresh, device or profile-less client-credentials paths
+            // carries authorization_details at all.
+            //
+            // A client with nothing to attenuate has nothing to request.
+            if (subjectAuthority.IsUnrestricted && !requestedAuthority.IsUnrestricted)
+                throw new ProtocolTokenException("invalid_authorization_details",
+                    "the subject token carries no authorization_details to narrow, so this exchange cannot " +
+                    "request any; an agent profile is required to originate authority");
+
             effective = subjectAuthority.Intersect(requestedAuthority);
             if (effective.Grants.Count == 0)
                 throw new ProtocolTokenException("invalid_target",
                     "the requested authorization_details are not within the subject token's authority");
+        }
+
+        // Delegation provenance survives an exchange by a client that has NO agent profile. Both the act
+        // chain and the sub-delegation budget used to be handled only inside the profile branch above, so an
+        // unprofiled exchange client stripped the RFC 8693 `act` chain and skipped MaxDelegationDepth
+        // entirely — laundering a delegated token into one that looks first-party, with no record of the
+        // agents it passed through and no bound on how many more hops it could take.
+        if (agentProfile is null && actorJson is null && !string.IsNullOrEmpty(subjectToken))
+        {
+            var carriedChain = ReadActorChain(subjectToken);
+            if (carriedChain.Count > 0)
+            {
+                if (agentProfileStore is not null)
+                {
+                    for (var i = 0; i < carriedChain.Count; i++)
+                    {
+                        var actorProfile = await agentProfileStore.GetAsync(carriedChain[i], ct);
+                        var budget = actorProfile?.MaxDelegationDepth ?? 0;
+                        if (i + 1 > budget)
+                            throw new ProtocolTokenException("invalid_grant",
+                                $"delegation depth exceeded: agent '{carriedChain[i]}' permits {budget} hop(s) of sub-delegation");
+                    }
+                }
+
+                // This client IS acting on the subject's behalf, profile or not — record it on top of the
+                // existing chain rather than discarding the chain.
+                actorJson = BuildActorClaim(clientId, subjectToken);
+            }
         }
 
         subject = subject with { SessionMaxExpiresAt = effectiveExpiry };
@@ -1153,12 +1252,49 @@ public sealed class ProtocolTokenService(
         return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(canonical)));
     }
 
+    /// <summary>
+    /// How many distinct approvals one agent may leave awaiting a single user's decision. A human queue is
+    /// a scarce resource; without a cap an agent could bury a genuine request under noise.
+    /// </summary>
+    private const int MaxOutstandingApprovalsPerAgent = 20;
+
     private async Task<string> CreatePendingApprovalAsync(
         string clientId, string subjectId, AuthoritySet slice,
         IReadOnlyList<string> pendingActions, string requestHash, CancellationToken ct)
     {
-        var id = Guid.NewGuid().ToString("N");
         var now = DateTimeOffset.UtcNow;
+
+        // Idempotency + a flood bound. Nothing previously stopped an agent with standing consent from
+        // parking an unbounded number of approvals in a human's queue: every retry of the SAME request
+        // created another one, and a loop could bury a genuine request under noise (or exhaust grant
+        // storage). RequestHash already identifies the exact request, so an identical pending approval is
+        // returned rather than duplicated, and distinct ones are capped per (agent, subject).
+        var existing = await grantStore.GetBySubjectAsync(subjectId, ct);
+        var pending = existing
+            .Where(g => g.Type == Approval.GrantType
+                        && string.Equals(g.ClientId, clientId, StringComparison.Ordinal)
+                        && g.ExpiresAt > now)
+            .ToList();
+
+        foreach (var g in pending)
+        {
+            var parsed = Approval.Parse(g.Data);
+            if (parsed is { Status: ApprovalStatus.Pending }
+                && string.Equals(parsed.RequestHash, requestHash, StringComparison.Ordinal))
+            {
+                logger.LogInformation(
+                    "Reusing pending approval {ApprovalId} for an identical request from agent {ClientId}",
+                    parsed.Id, clientId);
+                return parsed.Id;
+            }
+        }
+
+        if (pending.Count >= MaxOutstandingApprovalsPerAgent)
+            throw new ProtocolTokenException("invalid_grant",
+                $"too many approvals are already awaiting this user's decision for this agent " +
+                $"(limit {MaxOutstandingApprovalsPerAgent}); resolve or let them expire before requesting more");
+
+        var id = Guid.NewGuid().ToString("N");
         var data = new ApprovalData
         {
             Id = id,

@@ -43,5 +43,13 @@ public interface ISamlReplayCache
     /// Record an assertion ID the first time it's seen. Returns true if new (not a replay), false if it
     /// was already seen.
     /// </summary>
-    Task<bool> CheckAndStoreAssertionIdAsync(string assertionId, CancellationToken ct = default);
+    /// <param name="retainUntil">
+    /// The instant until which this id MUST stay remembered — the assertion's own confirmation deadline
+    /// plus clock skew. SAML 2.0 Profiles §4.1.4.5 requires retention "for the length of time for which the
+    /// assertion would be considered valid": a shorter retention forgets the id while the assertion is
+    /// still acceptable, so re-presenting it reads as a first sighting. Null falls back to the
+    /// implementation's default TTL, which is only safe when the caller has no bound to give.
+    /// </param>
+    Task<bool> CheckAndStoreAssertionIdAsync(
+        string assertionId, DateTimeOffset? retainUntil = null, CancellationToken ct = default);
 }

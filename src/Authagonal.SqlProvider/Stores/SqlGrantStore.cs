@@ -204,10 +204,19 @@ public sealed class SqlGrantStore(
     }
 
     public Task RemoveAllBySubjectAsync(string subjectId, CancellationToken ct = default)
-        => RemoveBySubjectAsync(subjectId, clientId: null, ct);
+        => RemoveBySubjectCoreAsync(subjectId, clientId: null, types: null, ct);
 
     public Task RemoveAllBySubjectAndClientAsync(string subjectId, string clientId, CancellationToken ct = default)
-        => RemoveBySubjectAsync(subjectId, clientId, ct);
+        => RemoveBySubjectCoreAsync(subjectId, clientId, types: null, ct);
+
+    public Task RemoveBySubjectAsync(
+        string subjectId,
+        IReadOnlyCollection<string> types,
+        string? clientId = null,
+        CancellationToken ct = default)
+        => types.Count == 0
+            ? Task.CompletedTask
+            : RemoveBySubjectCoreAsync(subjectId, clientId, new HashSet<string>(types, StringComparer.Ordinal), ct);
 
     public async Task<IReadOnlyList<PersistedGrant>> GetBySubjectAsync(string subjectId, CancellationToken ct = default)
     {
@@ -257,7 +266,12 @@ public sealed class SqlGrantStore(
         }
     }
 
-    private async Task RemoveBySubjectAsync(string subjectId, string? clientId, CancellationToken ct)
+    /// <summary>
+    /// Bulk subject removal. <paramref name="types"/> null means every type; otherwise only those types
+    /// are removed (the index row carries <c>type</c>, so this costs no extra reads).
+    /// </summary>
+    private async Task RemoveBySubjectCoreAsync(
+        string subjectId, string? clientId, HashSet<string>? types, CancellationToken ct)
     {
         var spk = partitioner.PK(subjectId);
         var filter = SqlKeyFilter.Partition(spk);
@@ -265,7 +279,10 @@ public sealed class SqlGrantStore(
 
         var rows = new List<SqlRow>();
         await foreach (var row in grantsBySubject.QueryAsync(filter, ct).ConfigureAwait(false))
+        {
+            if (types is not null && !types.Contains(row.GetStr("type"))) continue;
             rows.Add(row);
+        }
 
         foreach (var row in rows)
         {

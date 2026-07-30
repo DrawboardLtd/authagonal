@@ -84,7 +84,13 @@ internal static class AuthorizeRequestSupport
             return BuildErrorRedirect(redirectUri, "invalid_scope", "scope is required", state);
 
         var requestedScopes = request.Scope.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-        var invalidScopes = requestedScopes.Except(client.AllowedScopes, StringComparer.OrdinalIgnoreCase).ToArray();
+        // Ordinal, NOT OrdinalIgnoreCase. RFC 6749 §3.3 makes scope tokens case-sensitive, and matching
+        // loosely here was a privilege-escalation path: `Admin` satisfied this check against a registered
+        // `admin`, then missed the per-user entitlement gate (IScopeStore point-reads the exact name, so a
+        // case variant reads as an unregistered scope, which ScopeRoleGate deliberately leaves alone) — and
+        // the IdentityAdmin policy then matched it case-insensitively. Loose here plus exact at the gate
+        // plus loose at the policy is the whole bug; a case variant is simply an unknown scope.
+        var invalidScopes = requestedScopes.Except(client.AllowedScopes, StringComparer.Ordinal).ToArray();
         if (invalidScopes.Length > 0)
             return BuildErrorRedirect(redirectUri, "invalid_scope", $"Scopes not allowed: {string.Join(", ", invalidScopes)}", state);
 

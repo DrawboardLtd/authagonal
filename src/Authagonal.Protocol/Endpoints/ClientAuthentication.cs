@@ -100,6 +100,17 @@ internal static class ClientAuthentication
             if (string.IsNullOrWhiteSpace(clientSecret))
                 return (null, error("invalid_client", "client_secret is required"));
 
+            // Bound the guesses BEFORE spending the hash. Verification runs a ~100k-iteration PBKDF2 per
+            // attempt on an endpoint reachable without any credential, so unthrottled it is both an
+            // unbounded offline-strength-per-request guessing oracle against the client secret and a CPU
+            // amplifier: one request per core saturates the host. Keyed per client so one client's traffic
+            // cannot lock out another's, and resolved through the DI seam so a host with a distributed
+            // limiter gets a cluster-wide bound.
+            var limiter = httpContext.RequestServices.GetService<IRateLimiter>();
+            if (limiter is not null &&
+                await limiter.IsRateLimitedAsync($"client-secret|{client.ClientId}", 30, TimeSpan.FromMinutes(1), ct))
+                return (null, error("invalid_client", "Too many authentication attempts"));
+
             if (!await secretVerifier.VerifyAsync(client, clientSecret, ct))
                 return (null, error("invalid_client", "Invalid client credentials"));
         }
@@ -231,9 +242,14 @@ internal static class ClientAuthentication
             }
         }
 
+        // https-only was the ONLY check here: nothing stopped an admin- or DCR-registered jwks_uri from
+        // naming an internal address, and this fetch is reachable from an anonymous /connect/token request
+        // (RFC 9700 §4.14 — SSRF from server-fetched client metadata). Every other outbound URL in the
+        // product goes through this guard; this path was the one that did not.
         if (string.IsNullOrWhiteSpace(client.JwksUri) ||
             !Uri.TryCreate(client.JwksUri, UriKind.Absolute, out var uri) ||
-            uri.Scheme != Uri.UriSchemeHttps)
+            uri.Scheme != Uri.UriSchemeHttps ||
+            !Authagonal.Core.Services.OutboundUrl.IsSafe(client.JwksUri))
             return null;
 
         if (JwksCache.TryGetValue(client.JwksUri, out var cached) &&

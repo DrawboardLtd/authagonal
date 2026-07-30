@@ -18,5 +18,11 @@ public interface ISecretProvider
     /// For plaintext provider, returns the value unchanged.
     /// For vault-backed providers, stores the secret and returns a vault reference.
     /// </summary>
+    /// <param name="name">
+    /// The STORAGE KEY for this secret, not a label. Vault-backed providers write to it directly, so it
+    /// MUST be unique per distinct value — reusing one name across several secrets silently overwrites the
+    /// earlier ones and every reference then resolves to whichever was written last. When protecting a set
+    /// of related secrets (e.g. a user's recovery codes), include the per-item id in the name.
+    /// </param>
     Task<string> ProtectAsync(string name, string plaintext, CancellationToken ct = default);
 }

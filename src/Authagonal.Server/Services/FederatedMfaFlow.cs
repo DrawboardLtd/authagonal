@@ -68,6 +68,7 @@ public static class FederatedMfaFlow
                 UserId = user.Id,
                 ClientId = clientId,
                 ReturnUrl = returnUrl,
+                Purpose = MfaChallengePurpose.Verify,
                 CreatedAt = DateTimeOffset.UtcNow,
                 ExpiresAt = DateTimeOffset.UtcNow.AddMinutes(authOptions.MfaChallengeExpiryMinutes),
             };
@@ -112,6 +113,7 @@ public static class FederatedMfaFlow
                 UserId = user.Id,
                 ClientId = clientId,
                 ReturnUrl = returnUrl,
+                Purpose = MfaChallengePurpose.Enrol,
                 CreatedAt = DateTimeOffset.UtcNow,
                 ExpiresAt = DateTimeOffset.UtcNow.AddMinutes(authOptions.MfaSetupTokenExpiryMinutes),
             };

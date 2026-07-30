@@ -79,6 +79,14 @@ public static class ScimFilterParser
         if (string.IsNullOrWhiteSpace(filter))
             return true; // absent: not an error, just no filter
 
+        // Length cap before tokenizing. Any real SCIM filter is far shorter than this; the bound exists so
+        // an attacker cannot pay one request to make the parser do unbounded work.
+        if (filter.Length > MaxFilterLength)
+        {
+            error = $"Filter exceeds the maximum supported length of {MaxFilterLength} characters.";
+            return false;
+        }
+
         try
         {
             var tokens = Tokenizer.Tokenize(filter);
@@ -94,6 +102,20 @@ public static class ScimFilterParser
             return false;
         }
     }
+
+    /// <summary>
+    /// Maximum accepted filter length. RFC 7644 sets no bound, so this is ours.
+    /// </summary>
+    private const int MaxFilterLength = 1024;
+
+    /// <summary>
+    /// Maximum grouping depth. <c>ParseExpression → ParseAnd → ParseNot → ParsePrimary</c> is mutually
+    /// recursive, descending on every <c>(</c> and on every value-path <c>[</c>, with no bound — so a filter
+    /// of nested parentheses overflowed the stack. A <see cref="StackOverflowException"/> cannot be caught
+    /// in .NET: it terminates the PROCESS, taking down every tenant served by that worker, from a single
+    /// unauthenticated-in-effect request against a SCIM endpoint. Real filters nest two or three deep.
+    /// </summary>
+    private const int MaxFilterDepth = 20;
 
     private sealed class ScimFilterFormatException(string message) : Exception(message);
 
@@ -217,6 +239,22 @@ public static class ScimFilterParser
     // ── Parser ───────────────────────────────────────────────────────────────────────────────────
     private sealed class Parser(List<Token> tokens)
     {
+        private int _depth;
+
+        /// <summary>
+        /// Enters a nesting level, throwing past <see cref="MaxFilterDepth"/>. Every recursive descent
+        /// (a parenthesised group, a NOT group, a value-path bracket) must be wrapped in this so the
+        /// recursion is bounded rather than bounded by the stack.
+        /// </summary>
+        private void EnterDepth()
+        {
+            if (++_depth > MaxFilterDepth)
+                throw new ScimFilterFormatException(
+                    $"Filter nesting exceeds the maximum supported depth of {MaxFilterDepth}.");
+        }
+
+        private void ExitDepth() => _depth--;
+
         private int _pos;
 
         private Token Current => tokens[_pos];
@@ -265,7 +303,9 @@ public static class ScimFilterParser
                 if (Current.Kind != TokenKind.LParen)
                     throw new ScimFilterFormatException("'not' must be followed by a parenthesised filter.");
                 _pos++;
+                EnterDepth();
                 var inner = ParseExpression();
+                ExitDepth();
                 Expect(TokenKind.RParen, ")");
                 return new ScimFilterExpression.Not(inner);
             }
@@ -277,7 +317,9 @@ public static class ScimFilterParser
             if (Current.Kind == TokenKind.LParen)
             {
                 _pos++;
+                EnterDepth();
                 var inner = ParseExpression();
+                ExitDepth();
                 Expect(TokenKind.RParen, ")");
                 return inner;
             }
@@ -336,7 +378,10 @@ public static class ScimFilterParser
             if (Current.Kind == TokenKind.LBracket)
             {
                 _pos++;
+                // The value-path bracket is the second recursive descent, and nests just as deeply.
+                EnterDepth();
                 valueFilter = ParseExpression();
+                ExitDepth();
                 Expect(TokenKind.RBracket, "]");
                 valueFilterIndex = segments.Count - 1;
 

@@ -77,7 +77,12 @@ public sealed class SamlReplayCache(TableClient tableClient, IOptions<CacheOptio
     /// Stores the assertion ID with a TTL to prevent replay. Returns true if the
     /// assertion is new (not replayed); false if it was already seen.
     /// </summary>
-    public async Task<bool> CheckAndStoreAssertionIdAsync(string assertionId, CancellationToken ct = default)
+    /// <remarks>
+    /// <paramref name="retainUntil"/> is accepted but unused: these rows are never expired, so retention
+    /// already satisfies SAML 2.0 Profiles §4.1.4.5 for any assertion lifetime.
+    /// </remarks>
+    public async Task<bool> CheckAndStoreAssertionIdAsync(
+        string assertionId, DateTimeOffset? retainUntil = null, CancellationToken ct = default)
     {
         var entity = new TableEntity(assertionId, "assertion")
         {

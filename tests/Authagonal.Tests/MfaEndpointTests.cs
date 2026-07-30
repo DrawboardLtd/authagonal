@@ -245,18 +245,79 @@ public class MfaEndpointTests : IAsyncDisposable
         var validCode = totpService.GenerateCode(secret);
         var wrongCode = validCode == "000000" ? "111111" : "000000";
 
-        // 5 wrong attempts: the 5th burns the challenge.
+        // 5 wrong attempts. The first four are plain rejections; the fifth exhausts the per-ACCOUNT
+        // failure budget (the same durable, atomically-incremented counter the password step uses) and
+        // locks the account, which also burns the challenge.
+        //
+        // The per-challenge counter alone was never a real bound: it is a read-modify-write against a
+        // blind full-row upsert in every provider, so concurrent guesses shared one value, and an attacker
+        // could mint a fresh challenge whenever the budget ran out. The account counter cannot be raced and
+        // survives across challenges.
         for (int i = 1; i <= 5; i++)
         {
             var resp = await client.PostAsJsonAsync("/api/auth/mfa/verify", new { challengeId, method = "totp", code = wrongCode });
-            Assert.Equal(System.Net.HttpStatusCode.Unauthorized, resp.StatusCode);
             var err = (await resp.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("error").GetString();
-            Assert.Equal(i < 5 ? "invalid_code" : "too_many_attempts", err);
+            if (i < 5)
+            {
+                Assert.Equal(System.Net.HttpStatusCode.Unauthorized, resp.StatusCode);
+                Assert.Equal("invalid_code", err);
+            }
+            else
+            {
+                Assert.Equal(System.Net.HttpStatusCode.Locked, resp.StatusCode);
+                Assert.Equal("locked_out", err);
+            }
         }
 
         // Burned — the correct code no longer works.
         var afterBurn = await client.PostAsJsonAsync("/api/auth/mfa/verify", new { challengeId, method = "totp", code = validCode });
         Assert.Equal(System.Net.HttpStatusCode.BadRequest, afterBurn.StatusCode);
+
+        // And the lockout is durable, not merely a property of the consumed challenge: a fresh password
+        // login is refused too, so the attacker cannot simply request another challenge and keep guessing.
+        var relogin = await client.PostAsJsonAsync("/api/auth/login",
+            new { email = "test@example.com", password = "Test1234!" });
+        Assert.Equal(System.Net.HttpStatusCode.Locked, relogin.StatusCode);
+    }
+
+    /// <summary>
+    /// A user who mistypes and then succeeds must not be left one attempt from a lockout — the success
+    /// path resets the same counter the password step resets.
+    /// </summary>
+    [Fact]
+    public async Task MfaVerify_SuccessAfterFailures_ResetsTheAccountCounter()
+    {
+        await _factory.SeedTestDataAsync();
+        var user = await _factory.SeedTestUserAsync();
+        user.MfaEnabled = true;
+        await _factory.UserStore.UpdateAsync(user);
+
+        var testClient = await _factory.ClientStore.GetAsync(AuthagonalTestFactory.TestClientId);
+        testClient!.MfaPolicy = MfaPolicy.Enabled;
+        await _factory.ClientStore.UpsertAsync(testClient);
+
+        var secret = await EnrollTotpForUser(user.Id);
+        var client = _factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+
+        var loginResponse = await client.PostAsJsonAsync(
+            $"/api/auth/login?returnUrl=/connect/authorize?client_id={AuthagonalTestFactory.TestClientId}",
+            new { email = "test@example.com", password = "Test1234!" });
+        var challengeId = (await loginResponse.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("challengeId").GetString();
+
+        var totpService = _factory.Services.GetRequiredService<TotpService>();
+        var validCode = totpService.GenerateCode(secret);
+        var wrongCode = validCode == "000000" ? "111111" : "000000";
+
+        // Two fumbles, then the real code.
+        for (var i = 0; i < 2; i++)
+            await client.PostAsJsonAsync("/api/auth/mfa/verify", new { challengeId, method = "totp", code = wrongCode });
+
+        var ok = await client.PostAsJsonAsync("/api/auth/mfa/verify", new { challengeId, method = "totp", code = validCode });
+        Assert.Equal(System.Net.HttpStatusCode.OK, ok.StatusCode);
+
+        var after = await _factory.UserStore.GetAsync(user.Id);
+        Assert.Equal(0, after!.AccessFailedCount);
+        Assert.Null(after.LockoutEnd);
     }
 
     [Fact]

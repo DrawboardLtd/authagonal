@@ -37,7 +37,12 @@ public sealed class DynamoSamlReplayCache(DynamoTable table, TimeSpan ttl) : ISa
         return connectionId is null ? null : new SamlRequestState(connectionId, old.GetS("returnUrl"));
     }
 
-    public async Task<bool> CheckAndStoreAssertionIdAsync(string assertionId, CancellationToken ct = default)
+    /// <remarks>
+    /// <paramref name="retainUntil"/> is accepted but unused: no TTL attribute is written, so these rows
+    /// are never expired and retention already satisfies SAML 2.0 Profiles §4.1.4.5.
+    /// </remarks>
+    public async Task<bool> CheckAndStoreAssertionIdAsync(
+        string assertionId, DateTimeOffset? retainUntil = null, CancellationToken ct = default)
     {
         var item = Dyn.Item(assertionId, AssertionSk);
         item.PutDate("createdAt", DateTimeOffset.UtcNow);

@@ -43,10 +43,21 @@ public sealed class SqlSamlReplayCache(SqlTable table, TimeSpan ttl) : ISamlRepl
         return connectionId is null ? null : new SamlRequestState(connectionId, old.GetS("returnUrl"));
     }
 
-    public async Task<bool> CheckAndStoreAssertionIdAsync(string assertionId, CancellationToken ct = default)
+    public async Task<bool> CheckAndStoreAssertionIdAsync(
+        string assertionId, DateTimeOffset? retainUntil = null, CancellationToken ct = default)
     {
         var now = DateTimeOffset.UtcNow;
-        var row = new SqlRow(assertionId, AssertionSk) { ExpiresAt = now.Add(ttl) };
+
+        // Retention is the LATER of the default TTL and the assertion's own acceptability deadline. It used
+        // to be the fixed TTL alone, and SqlExpiryReaper sweeps this table — so with an IdP whose assertions
+        // outlive the TTL, the id was deleted while the assertion was still acceptable, and PutIfAbsentAsync
+        // then reported the replay as a first sighting. This is the only provider that expired these rows:
+        // the Azure and DynamoDB caches keep them indefinitely and were never exposed.
+        var expires = now.Add(ttl);
+        if (retainUntil is { } deadline && deadline > expires)
+            expires = deadline;
+
+        var row = new SqlRow(assertionId, AssertionSk) { ExpiresAt = expires };
         row.PutDate("createdAt", now);
         // Insert-if-absent: true only for the first sighting, so a replayed assertion loses the race
         // even when two nodes process it at the same moment.

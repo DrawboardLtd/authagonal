@@ -15,6 +15,12 @@ namespace Authagonal.Server.Endpoints;
 
 public static class SamlEndpoints
 {
+    /// <summary>
+    /// Cap on the decoded SAML response. A real assertion is a few KB; ASP.NET Core's default form limit
+    /// would otherwise permit ~4 MB of attacker XML to reach the parser on an anonymous endpoint.
+    /// </summary>
+    private const int MaxSamlResponseBytes = 512 * 1024;
+
 
     public static IEndpointRouteBuilder MapSamlEndpoints(this IEndpointRouteBuilder app)
     {
@@ -104,9 +110,23 @@ public static class SamlEndpoints
         IConfiguration configuration,
         IOptions<AuthOptions> authOptions,
         IOptions<CacheOptions> cacheOptions,
+        Authagonal.Core.Services.IRateLimiter rateLimiter,
         ILogger<Program> logger,
         CancellationToken ct)
     {
+        // The ACS is anonymous, antiforgery-disabled and does real cryptographic work per request
+        // (RSA unwrap + symmetric decrypt + signature verification). Unthrottled, it is both a CPU
+        // amplifier and the request budget an adaptive chosen-ciphertext attack spends — the padding-oracle
+        // and Bleichenbacher attacks on the EncryptedAssertion path need ~10^4-10^5 probes, so a per-source
+        // ceiling is a real cost increase even with the error responses now collapsed to one constant.
+        // Keyed on the raw peer, not a forwarded header, so it cannot be evaded by spoofing X-Forwarded-For.
+        var acsPeer = Services.Cluster.InternalEndpointGuard.RawPeerAddress(httpContext)?.ToString() ?? "unknown";
+        if (await rateLimiter.IsRateLimitedAsync($"saml-acs|{connectionId}|{acsPeer}", 60, TimeSpan.FromMinutes(1), ct))
+        {
+            logger.LogWarning("SAML ACS rate limit hit for connection {ConnectionId}", connectionId);
+            return Results.StatusCode(429);
+        }
+
         // Read form data. RelayState is only meaningful for IdP-initiated flows now (the IdP's
         // configured default RelayState); SP-initiated return URLs ride the stored request row (F56).
         var form = await httpContext.Request.ReadFormAsync(ct);
@@ -131,11 +151,19 @@ public static class SamlEndpoints
         string? expectedInResponseTo = null;
         try
         {
-            // Quick parse to find InResponseTo without full validation
+            // Quick parse to find InResponseTo before signature validation. Uses the SAME hardened loader
+            // as the full parse — this used to be a bare XmlDocument.LoadXml, whose XmlTextReader parses
+            // DTDs with no entity-expansion cap, so a ~1 KB document of nested internal entities expanded
+            // to gigabytes here before any authentication, signature or replay check ran. XmlResolver =
+            // null blocked external entities but not internal expansion.
             var responseBytes = Convert.FromBase64String(samlResponse);
+            if (responseBytes.Length > MaxSamlResponseBytes)
+            {
+                logger.LogWarning("SAML response exceeds {Max} bytes; refusing", MaxSamlResponseBytes);
+                return RedirectWithError(relayState, "saml_error", "SAML response is too large.");
+            }
             var responseXml = System.Text.Encoding.UTF8.GetString(responseBytes);
-            var quickDoc = new System.Xml.XmlDocument { XmlResolver = null };
-            quickDoc.LoadXml(responseXml);
+            var quickDoc = Services.Saml.SamlResponseParser.LoadHardened(responseXml);
             expectedInResponseTo = quickDoc.DocumentElement?.Attributes?["InResponseTo"]?.Value;
         }
         catch
@@ -234,7 +262,8 @@ public static class SamlEndpoints
             return Results.BadRequest(new { error = "saml_invalid", error_description = "SAML assertion is missing an ID." });
         }
 
-        var isNewAssertion = await replayCache.CheckAndStoreAssertionIdAsync(parseResult.AssertionId, ct);
+        var isNewAssertion = await replayCache.CheckAndStoreAssertionIdAsync(
+            parseResult.AssertionId, parseResult.AcceptableUntil, ct);
         if (!isNewAssertion)
         {
             logger.LogWarning("SAML assertion replay detected: AssertionId={AssertionId}, ConnectionId={ConnectionId}",
@@ -749,19 +778,12 @@ public static class SamlEndpoints
         }
     }
 
-    private static string SanitizeReturnUrl(string? url)
-    {
-        if (string.IsNullOrWhiteSpace(url))
-            return "/";
-
-        // Must be a same-site relative path. Reject anything a browser could read as an authority:
-        // "//host", a leading "/\", or any embedded backslash (WHATWG treats '\' as '/', so "/\evil.com"
-        // navigates off-site). RelayState is attacker-controllable, so this is load-bearing. See F37.
-        if (!url.StartsWith('/') || url.StartsWith("//") || url.Contains('\\'))
-            return "/";
-
-        return url;
-    }
+    /// <summary>
+    /// RelayState and returnUrl are attacker-controllable, so this is load-bearing (F37). Delegates to the
+    /// one shared implementation — the four local copies had already drifted, and none of them rejected the
+    /// ASCII tab that the URL parser strips and Kestrel forwards verbatim, which defeated all of them.
+    /// </summary>
+    private static string SanitizeReturnUrl(string? url) => Authagonal.Core.Services.LocalRedirect.Sanitize(url);
 
     // F48c: append the error to relayState with the correct separator (relayState is the original
     // /authorize URL and already carries a query, so a naive "?error=" produced a malformed double-"?").

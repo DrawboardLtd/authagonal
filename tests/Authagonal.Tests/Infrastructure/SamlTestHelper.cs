@@ -36,7 +36,8 @@ public static class SamlTestHelper
         TimeSpan? validFor = null,
         string? extraAttributesXml = null,
         string? sessionIndex = null,
-        bool signAssertion = false)
+        bool signAssertion = false,
+        SubjectConfirmationShape confirmationShape = SubjectConfirmationShape.Conforming)
     {
         var now = DateTime.UtcNow;
         var notBefore = now.AddMinutes(-5);
@@ -66,11 +67,35 @@ public static class SamlTestHelper
             IssueInstant=""{now:O}"">");
         sb.Append($@"<saml:Issuer>{issuer}</saml:Issuer>");
 
+        // The bearer confirmation, in whichever shape the test asked for. Every non-conforming variant here
+        // was ACCEPTED before the parser stopped treating these checks as "only if present".
+        var confirmation = confirmationShape switch
+        {
+            SubjectConfirmationShape.Conforming =>
+                $@"<saml:SubjectConfirmation Method=""urn:oasis:names:tc:SAML:2.0:cm:bearer"">
+                <saml:SubjectConfirmationData Recipient=""{acsUrl}"" NotOnOrAfter=""{notOnOrAfter:O}""/>
+            </saml:SubjectConfirmation>",
+            SubjectConfirmationShape.Absent => "",
+            SubjectConfirmationShape.NoConfirmationData =>
+                @"<saml:SubjectConfirmation Method=""urn:oasis:names:tc:SAML:2.0:cm:bearer""/>",
+            SubjectConfirmationShape.NoRecipient =>
+                $@"<saml:SubjectConfirmation Method=""urn:oasis:names:tc:SAML:2.0:cm:bearer"">
+                <saml:SubjectConfirmationData NotOnOrAfter=""{notOnOrAfter:O}""/>
+            </saml:SubjectConfirmation>",
+            SubjectConfirmationShape.NoNotOnOrAfter =>
+                $@"<saml:SubjectConfirmation Method=""urn:oasis:names:tc:SAML:2.0:cm:bearer"">
+                <saml:SubjectConfirmationData Recipient=""{acsUrl}""/>
+            </saml:SubjectConfirmation>",
+            SubjectConfirmationShape.UnparseableNotOnOrAfter =>
+                $@"<saml:SubjectConfirmation Method=""urn:oasis:names:tc:SAML:2.0:cm:bearer"">
+                <saml:SubjectConfirmationData Recipient=""{acsUrl}"" NotOnOrAfter=""not-a-timestamp""/>
+            </saml:SubjectConfirmation>",
+            _ => throw new ArgumentOutOfRangeException(nameof(confirmationShape)),
+        };
+
         sb.Append($@"<saml:Subject>
             <saml:NameID Format=""urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress"">{nameId}</saml:NameID>
-            <saml:SubjectConfirmation Method=""urn:oasis:names:tc:SAML:2.0:cm:bearer"">
-                <saml:SubjectConfirmationData Recipient=""{acsUrl}"" NotOnOrAfter=""{notOnOrAfter:O}""/>
-            </saml:SubjectConfirmation>
+            {confirmation}
         </saml:Subject>");
 
         sb.Append($@"<saml:Conditions NotBefore=""{notBefore:O}"" NotOnOrAfter=""{notOnOrAfter:O}"">
@@ -120,7 +145,17 @@ public static class SamlTestHelper
     /// F54: replace the (signed) Assertion with an EncryptedAssertion encrypted to the given cert,
     /// the way ADFS does once the SP metadata advertises an encryption KeyDescriptor.
     /// </summary>
-    public static string EncryptAssertionInResponse(string base64Response, X509Certificate2 encryptionCert)
+    /// <summary>
+    /// Wraps the response's Assertion in an EncryptedAssertion.
+    /// </summary>
+    /// <param name="useRsa15">
+    /// When true, wraps the content key with RSA-PKCS#1 v1.5 — which the parser now REFUSES, because v1.5
+    /// unwrapping on an anonymous endpoint is a Bleichenbacher decryption oracle against the SP private
+    /// key. Note that .NET's <c>EncryptedXml.Encrypt(element, cert)</c> uses v1.5, so every encrypted-
+    /// assertion test here was previously exercising only the vulnerable algorithm.
+    /// </param>
+    public static string EncryptAssertionInResponse(
+        string base64Response, X509Certificate2 encryptionCert, bool useRsa15 = false)
     {
         var doc = new XmlDocument { PreserveWhitespace = true };
         doc.LoadXml(Encoding.UTF8.GetString(Convert.FromBase64String(base64Response)));
@@ -129,8 +164,59 @@ public static class SamlTestHelper
         nsm.AddNamespace("saml", "urn:oasis:names:tc:SAML:2.0:assertion");
         var assertion = (XmlElement)doc.SelectSingleNode("//saml:Assertion", nsm)!;
 
-        var encryptedXml = new EncryptedXml();
-        var encryptedData = encryptedXml.Encrypt(assertion, encryptionCert);
+        EncryptedData encryptedData;
+        if (useRsa15)
+        {
+            var encryptedXml = new EncryptedXml();
+            encryptedData = encryptedXml.Encrypt(assertion, encryptionCert);
+        }
+        else
+        {
+            // Build the OAEP-wrapped form real IdPs emit: AES-256-CBC content key, RSA-OAEP key transport.
+            using var aes = Aes.Create();
+            aes.KeySize = 256;
+            aes.GenerateKey();
+
+            var encryptedXml = new EncryptedXml();
+            var cipher = encryptedXml.EncryptData(assertion, aes, content: false);
+
+            encryptedData = new EncryptedData
+            {
+                Type = EncryptedXml.XmlEncElementUrl,
+                EncryptionMethod = new EncryptionMethod(EncryptedXml.XmlEncAES256Url),
+                CipherData = new CipherData(cipher),
+            };
+
+            using var rsa = encryptionCert.GetRSAPublicKey()!;
+            var wrapped = rsa.Encrypt(aes.Key, RSAEncryptionPadding.OaepSHA256);
+
+            var encryptedKey = new EncryptedKey
+            {
+                EncryptionMethod = new EncryptionMethod("http://www.w3.org/2009/xmlenc11#rsa-oaep"),
+                CipherData = new CipherData(wrapped),
+            };
+            var keyXml = encryptedKey.GetXml();
+            // Declare the OAEP digest, which the parser honours instead of trying paddings in turn.
+            var digest = keyXml.OwnerDocument.CreateElement("DigestMethod", SignedXml.XmlDsigNamespaceUrl);
+            digest.SetAttribute("Algorithm", SignedXml.XmlDsigSHA256Url);
+            keyXml.SelectSingleNode("*[local-name()='EncryptionMethod']")!.AppendChild(digest);
+
+            var ki = new KeyInfo();
+            ki.AddClause(new KeyInfoEncryptedKey(new EncryptedKey
+            {
+                EncryptionMethod = encryptedKey.EncryptionMethod,
+                CipherData = encryptedKey.CipherData,
+            }));
+            encryptedData.KeyInfo = ki;
+
+            var encryptedAssertionOaep = doc.CreateElement("saml", "EncryptedAssertion", "urn:oasis:names:tc:SAML:2.0:assertion");
+            encryptedAssertionOaep.AppendChild(doc.ImportNode(encryptedData.GetXml(), true));
+            // Replace the library-serialized EncryptedKey with ours, so the DigestMethod is present.
+            var libKey = encryptedAssertionOaep.SelectSingleNode(".//*[local-name()='EncryptedKey']");
+            libKey!.ParentNode!.ReplaceChild(doc.ImportNode(keyXml, true), libKey);
+            assertion.ParentNode!.ReplaceChild(encryptedAssertionOaep, assertion);
+            return Convert.ToBase64String(Encoding.UTF8.GetBytes(doc.OuterXml));
+        }
 
         var encryptedAssertion = doc.CreateElement("saml", "EncryptedAssertion", "urn:oasis:names:tc:SAML:2.0:assertion");
         encryptedAssertion.AppendChild(doc.ImportNode(encryptedData.GetXml(), true));
@@ -234,4 +320,20 @@ public static class SamlTestHelper
         var issuerNode = responseElement.GetElementsByTagName("Issuer", "urn:oasis:names:tc:SAML:2.0:assertion")[0];
         responseElement.InsertAfter(doc.ImportNode(signedXml.GetXml(), true), issuerNode);
     }
+}
+/// <summary>
+/// Bearer <c>SubjectConfirmation</c> shapes, for pinning the fail-open that SAML 2.0 Profiles
+/// §4.1.4.2/§4.1.4.3 forbids. The parser used to enforce every part of this only when present, so an
+/// assertion missing any of it was accepted — and because SubjectConfirmationData/NotOnOrAfter is the SHORT
+/// validity bound (minutes) while Conditions/NotOnOrAfter is the long one (~an hour), losing it let an
+/// assertion stay acceptable long enough to outlive the replay cache and be replayed.
+/// </summary>
+public enum SubjectConfirmationShape
+{
+    Conforming,
+    Absent,
+    NoConfirmationData,
+    NoRecipient,
+    NoNotOnOrAfter,
+    UnparseableNotOnOrAfter,
 }

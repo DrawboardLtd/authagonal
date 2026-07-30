@@ -30,6 +30,19 @@ public sealed record SamlParseResult
     public Dictionary<string, List<string>> AttributeValues { get; init; } = new(StringComparer.OrdinalIgnoreCase);
     public string? SessionIndex { get; init; }
     public string? AssertionId { get; init; }
+
+    /// <summary>
+    /// The instant after which this assertion is no longer acceptable to us — the bearer
+    /// SubjectConfirmationData's NotOnOrAfter plus the allowed clock skew.
+    /// </summary>
+    /// <remarks>
+    /// The replay record for <see cref="AssertionId"/> must be retained at least this long (SAML 2.0
+    /// Profiles §4.1.4.5: keep used ids "for the length of time for which the assertion would be considered
+    /// valid"). The caches previously used a fixed TTL unrelated to the assertion, so an id could be
+    /// forgotten while the assertion was still acceptable — at which point re-presenting it read as a first
+    /// sighting.
+    /// </remarks>
+    public DateTimeOffset? AcceptableUntil { get; init; }
 }
 
 public sealed class SamlResponseParser(ILogger<SamlResponseParser> logger)
@@ -40,6 +53,85 @@ public sealed class SamlResponseParser(ILogger<SamlResponseParser> logger)
     /// IdP cert rollover mid-cache-window would otherwise fail logins until the TTL lapses).
     /// </summary>
     public const string SignatureFailure = "No valid signature found on Response or Assertion.";
+
+    /// <summary>
+    /// The single message returned for EVERY assertion-decryption failure — wrong key, refused algorithm,
+    /// malformed structure, bad padding, all of it.
+    /// </summary>
+    /// <remarks>
+    /// The ACS is anonymous, unauthenticated and (before this) unthrottled, and it used to reflect the
+    /// underlying <c>CryptographicException.Message</c> to the caller. Distinguishable failure responses
+    /// are exactly what a Bleichenbacher attack on RSA key transport and a CBC padding-oracle attack on the
+    /// data layer consume; with a distinguishing signal, recovering a captured assertion (or forging one
+    /// raw RSA signature) costs on the order of 10^4-10^5 requests. Keeping the response constant removes
+    /// the signal, and it is why the response must not vary by stage either.
+    /// </remarks>
+    public const string DecryptionFailure = "Could not decrypt the assertion.";
+
+    /// <summary>
+    /// Loads attacker-supplied SAML XML with DTD processing prohibited and entity expansion disabled.
+    /// <c>PreserveWhitespace</c> is on because signature validation depends on it.
+    /// </summary>
+    /// <remarks>
+    /// The ONLY way this project should turn SAML bytes into a document. Setting <c>XmlResolver = null</c>
+    /// alone is not sufficient: it blocks external entities (XXE) but does nothing about expansion of
+    /// entities declared in the internal subset, and <c>XmlDocument.LoadXml</c> builds an
+    /// <c>XmlTextReader</c> whose <c>DtdProcessing</c> defaults to <c>Parse</c> with no cap on
+    /// <c>MaxCharactersFromEntities</c>. A ~1 KB document with nine levels of nested internal entities
+    /// therefore expanded to gigabytes — a "billion laughs" DoS reachable pre-authentication on the
+    /// anonymous ACS. The endpoint's separate ad-hoc parse (used only to read InResponseTo before
+    /// signature validation) had exactly that shape, so this helper is public and both callers use it.
+    /// </remarks>
+    public static XmlDocument LoadHardened(string xml)
+    {
+        var doc = new XmlDocument { PreserveWhitespace = true, XmlResolver = null };
+        var readerSettings = new XmlReaderSettings
+        {
+            DtdProcessing = DtdProcessing.Prohibit,
+            XmlResolver = null,
+            MaxCharactersFromEntities = 0,
+        };
+        using var stringReader = new System.IO.StringReader(xml);
+        using var xmlReader = XmlReader.Create(stringReader, readerSettings);
+        doc.Load(xmlReader);
+        return doc;
+    }
+
+    /// <summary>XML Encryption 1.1 RSA-OAEP key transport, digest declared by a DigestMethod child.</summary>
+    private const string Xmlenc11RsaOaepUrl = "http://www.w3.org/2009/xmlenc11#rsa-oaep";
+
+    /// <summary>
+    /// The OAEP padding declared by an <c>EncryptedKey</c>'s <c>EncryptionMethod/DigestMethod</c>, so the
+    /// declared algorithm is honoured rather than discovered by trial. Returns a single padding whenever
+    /// the digest is stated; only an ABSENT DigestMethod falls back to a two-element list, and that is a
+    /// structural ambiguity in the document rather than attacker-selected — OAEP is not vulnerable to the
+    /// adaptive chosen-ciphertext attack that makes a PKCS#1 v1.5 trial loop an oracle.
+    /// </summary>
+    private static System.Security.Cryptography.RSAEncryptionPadding[] OaepPaddingsFor(
+        XmlElement encryptedKeyElement, XmlDocument doc, bool defaultToSha1)
+    {
+        var ns = new XmlNamespaceManager(doc.NameTable);
+        ns.AddNamespace("xenc", EncryptedXml.XmlEncNamespaceUrl);
+        ns.AddNamespace("ds", SignedXml.XmlDsigNamespaceUrl);
+
+        var digest = (encryptedKeyElement.SelectSingleNode("xenc:EncryptionMethod/ds:DigestMethod", ns)
+            as XmlElement)?.GetAttribute("Algorithm");
+
+        return digest switch
+        {
+            SignedXml.XmlDsigSHA256Url => [System.Security.Cryptography.RSAEncryptionPadding.OaepSHA256],
+            SignedXml.XmlDsigSHA384Url => [System.Security.Cryptography.RSAEncryptionPadding.OaepSHA384],
+            SignedXml.XmlDsigSHA512Url => [System.Security.Cryptography.RSAEncryptionPadding.OaepSHA512],
+            SignedXml.XmlDsigSHA1Url => [System.Security.Cryptography.RSAEncryptionPadding.OaepSHA1],
+            // No DigestMethod. mgf1p implies SHA-1; xenc11 without one is under-specified, so prefer
+            // SHA-256 and fall back to SHA-1 for interoperability with older IdPs.
+            _ => defaultToSha1
+                ? [System.Security.Cryptography.RSAEncryptionPadding.OaepSHA1,
+                   System.Security.Cryptography.RSAEncryptionPadding.OaepSHA256]
+                : [System.Security.Cryptography.RSAEncryptionPadding.OaepSHA256,
+                   System.Security.Cryptography.RSAEncryptionPadding.OaepSHA1],
+        };
+    }
 
     public SamlParseResult Parse(string base64Response, SamlResponseValidationContext context)
     {
@@ -57,18 +149,10 @@ public sealed class SamlResponseParser(ILogger<SamlResponseParser> logger)
 
         // 2. Load into XmlDocument (PreserveWhitespace = true is critical for signature validation).
         // DTDs are prohibited to block XXE and internal entity-expansion DoS on this attacker-supplied XML.
-        var doc = new XmlDocument { PreserveWhitespace = true, XmlResolver = null };
+        XmlDocument doc;
         try
         {
-            var readerSettings = new XmlReaderSettings
-            {
-                DtdProcessing = DtdProcessing.Prohibit,
-                XmlResolver = null,
-                MaxCharactersFromEntities = 0,
-            };
-            using var stringReader = new System.IO.StringReader(System.Text.Encoding.UTF8.GetString(responseBytes));
-            using var xmlReader = XmlReader.Create(stringReader, readerSettings);
-            doc.Load(xmlReader);
+            doc = LoadHardened(System.Text.Encoding.UTF8.GetString(responseBytes));
         }
         catch (XmlException ex)
         {
@@ -137,8 +221,13 @@ public sealed class SamlResponseParser(ILogger<SamlResponseParser> logger)
                 }
                 catch (Exception ex)
                 {
+                    // ONE constant message for every decryption failure, whatever the cause. Reflecting
+                    // ex.Message returned the exact CryptographicException text to an anonymous caller,
+                    // which is the distinguishing signal a Bleichenbacher (RSA key transport) or CBC
+                    // padding-oracle attack needs — it turns ~10^4-10^5 probes into a plaintext recovery
+                    // or a signature forgery. Detail goes to the log only.
                     logger.LogWarning(ex, "Failed to decrypt EncryptedAssertion");
-                    return Fail($"Failed to decrypt the EncryptedAssertion: {ex.Message}");
+                    return Fail(DecryptionFailure);
                 }
                 assertionNode = responseElement.SelectSingleNode("saml:EncryptedAssertion/saml:Assertion", nsManager)
                     ?? responseElement.SelectSingleNode("saml:Assertion", nsManager);
@@ -200,52 +289,72 @@ public sealed class SamlResponseParser(ILogger<SamlResponseParser> logger)
             return Fail("Assertion audience does not match the expected audience.");
         }
 
-        // 9. Validate SubjectConfirmation
-        var subjectConfirmationNode = assertionElement.SelectSingleNode(
-            "saml:Subject/saml:SubjectConfirmation", nsManager);
-        if (subjectConfirmationNode is XmlElement subjectConfirmation)
+        // 9. Validate SubjectConfirmation. REQUIRED, not conditional — SAML 2.0 Profiles §4.1.4.2/§4.1.4.3
+        // (with errata E52/E26) require at least one bearer <SubjectConfirmation> whose
+        // <SubjectConfirmationData> carries a Recipient matching this ACS and a NotOnOrAfter bounding
+        // confirmation, and require the SP to verify each.
+        //
+        // Every part of this used to be enforced only "if present", so an assertion with no
+        // SubjectConfirmation at all, or with one carrying no SubjectConfirmationData, was accepted. That
+        // mattered beyond conformance: SubjectConfirmationData/NotOnOrAfter is the SHORT bound (minutes at
+        // Entra/Okta/Google) while Conditions/NotOnOrAfter is the long one (~an hour), so with the short
+        // bound absent an assertion stayed acceptable far longer than its issuer intended — long enough to
+        // outlive the replay cache's retention and be replayed. Fixing the fail-open is what closes that
+        // compound issue; the retention bound below is the second half.
+        //
+        // NOTE: only the FIRST SubjectConfirmation is examined, so "at least one bearer confirmation" is
+        // really "the first one must be bearer". That is stricter than the spec, not looser.
+        if (assertionElement.SelectSingleNode("saml:Subject/saml:SubjectConfirmation", nsManager)
+            is not XmlElement subjectConfirmation)
+            return Fail("Assertion is missing the required Subject/SubjectConfirmation element.");
+
+        var method = subjectConfirmation.Attributes?["Method"]?.Value;
+        if (!string.Equals(method, SamlConstants.BearerConfirmation, StringComparison.Ordinal))
         {
-            var method = subjectConfirmation.Attributes?["Method"]?.Value;
-            if (!string.Equals(method, SamlConstants.BearerConfirmation, StringComparison.Ordinal))
-            {
-                logger.LogWarning("Unsupported SubjectConfirmation method: {Method}", method);
-                return Fail($"Unsupported SubjectConfirmation method: {method}");
-            }
-
-            var confirmationData = subjectConfirmation.SelectSingleNode(
-                "saml:SubjectConfirmationData", nsManager) as XmlElement;
-            if (confirmationData is not null)
-            {
-                var recipient = confirmationData.Attributes?["Recipient"]?.Value;
-                if (!string.IsNullOrEmpty(recipient) &&
-                    !string.Equals(recipient, context.ExpectedAcsUrl, StringComparison.OrdinalIgnoreCase))
-                {
-                    logger.LogWarning("Recipient mismatch: expected={Expected}, actual={Actual}",
-                        context.ExpectedAcsUrl, recipient);
-                    return Fail("SubjectConfirmationData Recipient does not match the expected ACS URL.");
-                }
-
-                var dataNotOnOrAfterStr = confirmationData.Attributes?["NotOnOrAfter"]?.Value;
-                if (dataNotOnOrAfterStr is not null &&
-                    DateTimeOffset.TryParse(dataNotOnOrAfterStr, out var dataNotOnOrAfter))
-                {
-                    if (now - context.ClockSkew >= dataNotOnOrAfter)
-                    {
-                        logger.LogWarning("SubjectConfirmationData expired: NotOnOrAfter={NotOnOrAfter}, Now={Now}",
-                            dataNotOnOrAfter, now);
-                        return Fail("SubjectConfirmationData has expired.");
-                    }
-                }
-
-                var dataInResponseTo = confirmationData.Attributes?["InResponseTo"]?.Value;
-                if (context.ExpectedInResponseTo is not null && dataInResponseTo is not null &&
-                    !string.Equals(dataInResponseTo, context.ExpectedInResponseTo, StringComparison.Ordinal))
-                {
-                    logger.LogWarning("SubjectConfirmationData InResponseTo mismatch");
-                    return Fail("SubjectConfirmationData InResponseTo does not match.");
-                }
-            }
+            logger.LogWarning("Unsupported SubjectConfirmation method: {Method}", method);
+            return Fail($"Unsupported SubjectConfirmation method: {method}");
         }
+
+        if (subjectConfirmation.SelectSingleNode("saml:SubjectConfirmationData", nsManager)
+            is not XmlElement confirmationData)
+            return Fail("Assertion is missing the required SubjectConfirmationData element.");
+
+        var recipient = confirmationData.Attributes?["Recipient"]?.Value;
+        if (string.IsNullOrEmpty(recipient))
+            return Fail("SubjectConfirmationData is missing the required Recipient attribute.");
+        if (!string.Equals(recipient, context.ExpectedAcsUrl, StringComparison.OrdinalIgnoreCase))
+        {
+            logger.LogWarning("Recipient mismatch: expected={Expected}, actual={Actual}",
+                context.ExpectedAcsUrl, recipient);
+            return Fail("SubjectConfirmationData Recipient does not match the expected ACS URL.");
+        }
+
+        // The confirmation window. Required, and unparseable is a failure rather than "skip the check" —
+        // fail-open on a malformed timestamp is the same defect as fail-open on a missing one.
+        var dataNotOnOrAfterStr = confirmationData.Attributes?["NotOnOrAfter"]?.Value;
+        if (string.IsNullOrEmpty(dataNotOnOrAfterStr))
+            return Fail("SubjectConfirmationData is missing the required NotOnOrAfter attribute.");
+        if (!DateTimeOffset.TryParse(dataNotOnOrAfterStr, out var dataNotOnOrAfter))
+            return Fail("SubjectConfirmationData NotOnOrAfter is not a valid timestamp.");
+        if (now - context.ClockSkew >= dataNotOnOrAfter)
+        {
+            logger.LogWarning("SubjectConfirmationData expired: NotOnOrAfter={NotOnOrAfter}, Now={Now}",
+                dataNotOnOrAfter, now);
+            return Fail("SubjectConfirmationData has expired.");
+        }
+
+        var dataInResponseTo = confirmationData.Attributes?["InResponseTo"]?.Value;
+        if (context.ExpectedInResponseTo is not null && dataInResponseTo is not null &&
+            !string.Equals(dataInResponseTo, context.ExpectedInResponseTo, StringComparison.Ordinal))
+        {
+            logger.LogWarning("SubjectConfirmationData InResponseTo mismatch");
+            return Fail("SubjectConfirmationData InResponseTo does not match.");
+        }
+
+        // How long this assertion remains acceptable to US. The replay record must be retained at least
+        // this long (SAML 2.0 Profiles §4.1.4.5), otherwise the id is forgotten while the assertion is
+        // still valid and can be presented again.
+        var acceptableUntil = dataNotOnOrAfter + context.ClockSkew;
 
         // 10. Extract NameID
         var nameIdNode = assertionElement.SelectSingleNode("saml:Subject/saml:NameID", nsManager);
@@ -314,7 +423,8 @@ public sealed class SamlResponseParser(ILogger<SamlResponseParser> logger)
             Attributes = attributes,
             AttributeValues = attributeValues,
             SessionIndex = sessionIndex,
-            AssertionId = assertionId
+            AssertionId = assertionId,
+            AcceptableUntil = acceptableUntil
         };
     }
 
@@ -577,15 +687,24 @@ public sealed class SamlResponseParser(ILogger<SamlResponseParser> logger)
         var wrappedKey = encryptedKey.CipherData?.CipherValue
             ?? throw new InvalidOperationException("EncryptedKey has no CipherValue.");
 
-        // Key transport: try the paddings real IdPs use, preferring what the algorithm URI declares.
+        // Key transport. RSA-PKCS#1 v1.5 is REFUSED: XML Encryption 1.1 §5.5.1 deprecates it and the OASIS
+        // SAML V2.0 Implementation Profile for Encryption requires RSA-OAEP, precisely because v1.5
+        // unwrapping is a Bleichenbacher/ROBOT decryption oracle against the SP private key. The ACS is
+        // anonymous and unauthenticated, and the SP keypair is minted for every connection whether or not
+        // the IdP encrypts, so accepting v1.5 armed that oracle by default on every connection.
+        //
+        // The declared algorithm is honoured rather than trying paddings in turn: a trial loop is itself an
+        // oracle, because which padding "succeeded" is attacker-observable through timing and behaviour.
         var keyAlgorithm = encryptedKey.EncryptionMethod?.KeyAlgorithm ?? "";
         var paddings = keyAlgorithm switch
         {
-            EncryptedXml.XmlEncRSAOAEPUrl => new[] { System.Security.Cryptography.RSAEncryptionPadding.OaepSHA1, System.Security.Cryptography.RSAEncryptionPadding.OaepSHA256 },
-            EncryptedXml.XmlEncRSA15Url => new[] { System.Security.Cryptography.RSAEncryptionPadding.Pkcs1 },
-            // xenc11 rsa-oaep (digest negotiated separately) or anything else: try the common three.
-            _ => new[] { System.Security.Cryptography.RSAEncryptionPadding.OaepSHA256, System.Security.Cryptography.RSAEncryptionPadding.OaepSHA1, System.Security.Cryptography.RSAEncryptionPadding.Pkcs1 },
+            // xmlenc#rsa-oaep-mgf1p: MGF1-SHA1 with the digest given by an optional DigestMethod child.
+            EncryptedXml.XmlEncRSAOAEPUrl => OaepPaddingsFor(encryptedKeyElement, doc, defaultToSha1: true),
+            // xenc11#rsa-oaep: digest declared explicitly.
+            Xmlenc11RsaOaepUrl => OaepPaddingsFor(encryptedKeyElement, doc, defaultToSha1: false),
+            _ => throw new InvalidOperationException(DecryptionFailure),
         };
+
         byte[]? contentKey = null;
         foreach (var padding in paddings)
         {
@@ -597,7 +716,7 @@ public sealed class SamlResponseParser(ILogger<SamlResponseParser> logger)
             catch (System.Security.Cryptography.CryptographicException) { }
         }
         if (contentKey is null)
-            throw new InvalidOperationException("Could not unwrap the assertion encryption key with the SP private key (wrong SP cert, or an unsupported key-transport algorithm).");
+            throw new InvalidOperationException(DecryptionFailure);
 
         var dataAlgorithm = encryptedData.EncryptionMethod?.KeyAlgorithm ?? "";
         System.Security.Cryptography.SymmetricAlgorithm symmetric = dataAlgorithm switch
@@ -605,7 +724,9 @@ public sealed class SamlResponseParser(ILogger<SamlResponseParser> logger)
             EncryptedXml.XmlEncAES128Url or EncryptedXml.XmlEncAES192Url or EncryptedXml.XmlEncAES256Url
                 => System.Security.Cryptography.Aes.Create(),
             EncryptedXml.XmlEncTripleDESUrl => System.Security.Cryptography.TripleDES.Create(),
-            _ => throw new InvalidOperationException($"Unsupported assertion encryption algorithm '{dataAlgorithm}' (AES-GCM is not supported; configure AES-CBC at the IdP)."),
+            // Constant message: naming the rejected algorithm told an attacker which of their probes was
+            // structurally wrong versus cryptographically wrong.
+            _ => throw new InvalidOperationException(DecryptionFailure),
         };
         try
         {

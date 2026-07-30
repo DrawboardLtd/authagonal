@@ -638,6 +638,78 @@ public sealed class AuthEndpointTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.OK, login.StatusCode);
     }
 
+    /// <summary>
+    /// The verification link is bound to the credential that was staged when it was ISSUED. Without that
+    /// binding the link asserted only "this address is verified", so it promoted whatever happened to be
+    /// staged at click time — meaning a second claimant who staged after the first link was sent had THEIR
+    /// password promoted by the first claimant's click. Both emails land in the same (real owner's) inbox,
+    /// so the owner clicking their own link handed the account to the later claimant.
+    /// </summary>
+    [Fact]
+    public async Task PasswordlessClaim_LinkIsBoundToTheCredentialItWasIssuedFor()
+    {
+        await using var factory = new AuthagonalTestFactory { ConfigureAuthOptions = o => o.AllowPasswordlessAccountClaim = true };
+        var client = factory.CreateClient(new() { AllowAutoRedirect = false });
+        await factory.SeedTestDataAsync();
+
+        var federated = new Authagonal.Core.Models.AuthUser
+        {
+            Id = System.Guid.NewGuid().ToString("N"),
+            Email = "race@example.com",
+            NormalizedEmail = "RACE@EXAMPLE.COM",
+            PasswordHash = null,
+            EmailConfirmed = true,
+            LockoutEnabled = true,
+            SecurityStamp = System.Convert.ToBase64String(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32)),
+            CreatedAt = System.DateTimeOffset.UtcNow,
+        };
+        await factory.UserStore.CreateAsync(federated);
+
+        // Claimant ONE stages, and its link is emailed.
+        await client.PostAsJsonAsync("/api/auth/register",
+            new { email = "race@example.com", password = "First1234!" });
+        var firstMail = factory.EmailService.SentEmails
+            .Last(e => e.Email == "race@example.com" && e.Type == "verification");
+        var firstToken = System.Web.HttpUtility.ParseQueryString(new System.Uri(firstMail.CallbackUrl).Query)["token"]!;
+
+        // Claimant TWO stages afterwards, replacing the staged credential.
+        await client.PostAsJsonAsync("/api/auth/register",
+            new { email = "race@example.com", password = "Second999!" });
+
+        // The owner clicks the FIRST link. It must be refused, not silently promote claimant two's password.
+        var confirm = await client.PostAsync("/api/auth/confirm-email",
+            new FormUrlEncodedContent([new KeyValuePair<string, string>("token", firstToken)]));
+
+        var afterStale = await factory.UserStore.GetAsync(federated.Id);
+        Assert.Null(afterStale!.PasswordHash);
+
+        // Neither password logs in off the back of that click.
+        foreach (var pw in new[] { "First1234!", "Second999!" })
+        {
+            var attempt = await client.PostAsJsonAsync("/api/auth/login",
+                new { email = "race@example.com", password = pw });
+            Assert.NotEqual(HttpStatusCode.OK, attempt.StatusCode);
+        }
+
+        // Claimant two's OWN link still works — the binding refuses stale links, it does not brick the flow.
+        var secondMail = factory.EmailService.SentEmails
+            .Last(e => e.Email == "race@example.com" && e.Type == "verification");
+        var secondToken = System.Web.HttpUtility.ParseQueryString(new System.Uri(secondMail.CallbackUrl).Query)["token"]!;
+        Assert.NotEqual(firstToken, secondToken);
+
+        var confirmSecond = await client.PostAsync("/api/auth/confirm-email",
+            new FormUrlEncodedContent([new KeyValuePair<string, string>("token", secondToken)]));
+        Assert.Equal(HttpStatusCode.Redirect, confirmSecond.StatusCode);
+
+        var final = await factory.UserStore.GetAsync(federated.Id);
+        Assert.NotNull(final!.PasswordHash);
+        var ok = await client.PostAsJsonAsync("/api/auth/login",
+            new { email = "race@example.com", password = "Second999!" });
+        Assert.Equal(HttpStatusCode.OK, ok.StatusCode);
+
+        _ = confirm;
+    }
+
     [Fact]
     public async Task Register_PasswordlessAccountClaim_StagesProfileAndWhitelistsAttributes()
     {

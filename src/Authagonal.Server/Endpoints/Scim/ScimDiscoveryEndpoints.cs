@@ -27,6 +27,19 @@ public static class ScimDiscoveryEndpoints
             schemas = new[] { "urn:ietf:params:scim:schemas:core:2.0:ServiceProviderConfig" },
             documentationUri = $"{baseUrl}/docs/scim",
             patch = new { supported = true },
+            // Pagination is CURSOR-based (draft-ietf-scim-cursor-pagination): pass a response's
+            // `nextCursor` back as ?cursor=. `startIndex` past the first page is refused with 400, and
+            // nothing here said so — a conforming client had to discover that by failing. `totalResults` is
+            // omitted while a listing is incomplete, because under cursor pagination the true total is not
+            // knowable without a full scan and reporting the page size instead led syncing clients to stop
+            // after one page and silently miss users.
+            pagination = new
+            {
+                cursor = true,
+                index = false,
+                defaultPageSize = 100,
+                maxPageSize = 200,
+            },
             bulk = new { supported = false, maxOperations = 0, maxPayloadSize = 0 },
             filter = new { supported = true, maxResults = 200 },
             changePassword = new { supported = false },

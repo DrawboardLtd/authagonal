@@ -2,6 +2,183 @@
 
 ## [Unreleased]
 
+### Security
+
+- **Any authenticated user could reach the full admin API by changing the case of a scope name.** Three
+  components disagreed about scope-name comparison: the client allow-list matched case-INsensitively so
+  `Admin` passed, `IScopeStore` point-reads the exact name so a case variant looked *unregistered* — and
+  `ScopeRoleGate` deliberately leaves unregistered scopes alone — while the `IdentityAdmin` policy then
+  matched the minted claim case-insensitively and honoured it. Scope tokens are case-sensitive (RFC 6749
+  §3.3), so a variant is simply an unknown scope and is now refused at the authorize endpoint; the
+  entitlement gate additionally resolves against the whole registered set so it fails closed on its own.
+  **Breaking:** a client sending a differently-cased scope than the one registered now gets `invalid_scope`.
+
+- **An embedded space in a scope name was a permanent admin backdoor.** `AllowedScopes` is joined into a
+  space-delimited `scope` string on the wire, so an entry like `"authagonal-admin x"` was one opaque string
+  to the reservation's whole-string comparison but two scopes to every consumer that splits. The check now
+  splits each entry, lives in one place (`AdminScopeReservation`) used by all three write paths, and
+  whitespace in a scope name is refused outright. `ClientSeedService` had **no** reservation check at all,
+  so configuration could hand a client the scope the admin API and DCR both refuse to grant.
+
+- **Token exchange accepted any JWT this server signs as `subject_token`.** All four mint sites shared one
+  issuer, one key and the default `typ: JWT`, so an id_token or a back-channel logout token was exchanged
+  for a live access token carrying the victim's `sub` and roles. Worse, neither carries a `jti`, so the
+  0.20.0 revocation check silently degraded to a no-op and `RevocationEndpoint` (which requires `client_id`
+  and `jti`) could not revoke them at all — there was no operator remedy short of rotating signing keys.
+  Access tokens now carry RFC 9068 `at+jwt` and the exchange pins `ValidTypes`, with claim-shape checks on
+  top so tokens minted before the header existed keep working through their remaining lifetime. The same
+  pin closes cross-JWT confusion at userinfo and introspection. Logout tokens are typed `logout+jwt` and
+  given an explicit 2-minute expiry instead of inheriting IdentityModel's 60-minute default.
+  **Note for resource servers:** any validator with a strict `typ` allow-list must accept `at+jwt`.
+
+- **`/_internal/backchannel-logout` was remote unauthenticated mass session destruction.** With
+  `Cluster:Secret` unset the guard fell back to "the source address looks private", reading
+  `Connection.RemoteIpAddress` — which `UseForwardedHeaders` has already overwritten from the
+  client-supplied `X-Forwarded-For`. The forwarded trust set defaulted to EMPTY, which means *every* caller
+  is a trusted proxy, so any internet client could claim `10.0.0.1` and revoke every grant for an arbitrary
+  subject. The guard now reads the raw peer captured before forwarded headers are applied, accepts loopback
+  only (a private-range address is not a credential), and the trust set defaults to the loopback/RFC1918
+  ranges with a startup warning to pin the real CIDR.
+
+- **The SAML EncryptedAssertion path was a decryption oracle against the SP private key.** RSA-PKCS#1 v1.5
+  was accepted, `Pkcs1` sat in a catch-all fallback that tried paddings in turn rather than honouring the
+  declared algorithm, CBC used default PKCS7 padding — and the exact `CryptographicException` message was
+  returned to an anonymous, unauthenticated, unthrottled caller. That is Bleichenbacher/ROBOT plus a CBC
+  padding oracle, and the SP keypair is minted for *every* connection whether or not the IdP encrypts, so
+  it was armed by default everywhere. v1.5 is refused, the declared OAEP digest is honoured, every
+  decryption failure returns one constant message, and the ACS is rate-limited. Also removed the
+  pre-signature "quick parse" that used a second, unhardened reader (`XmlDocument.LoadXml`, DTD processing
+  enabled) — a ~1 KB document of nested internal entities expanded to gigabytes before any signature check.
+  Both parses now share one hardened loader, with a size cap.
+  *Found while fixing:* .NET's `EncryptedXml.Encrypt(element, cert)` uses v1.5, so the project's own test
+  fixture had only ever exercised the vulnerable algorithm.
+
+- **A token-exchange client with no agent profile dictated the `authorization_details` the AS signed.**
+  `ReadAuthorityClaim` returns `Unrestricted` when the subject token has no authority claim — the universal
+  case — and `Unrestricted.Intersect(x)` returns `x` verbatim, so the client's request *became* the signed
+  claim. Any client holding the exchange grant could mint issuer-signed fine-grained authority that no
+  admin ceiling, consent record or user interaction ever produced. A client with nothing to attenuate now
+  gets `invalid_authorization_details`.
+
+- **The credentialed CORS policy applied to every endpoint.** The provider ignores `policyName` and
+  `UseCors()` supplies none, so any origin a client registered could read authenticated responses from the
+  cookie-authenticated interactive-auth API — including `POST /api/auth/mfa/recovery/generate`, which
+  returns plaintext recovery codes. Client-registered origins are now honoured only on the OAuth protocol
+  surface; everything else uses operator configuration. Dynamic registration no longer accepts an arbitrary
+  origin list either: origins are derived from the registrant's own validated https redirect URIs.
+
+- **A nested-parenthesis SCIM filter killed the worker process.** The filter parser's mutual recursion had
+  no depth bound, and a `StackOverflowException` cannot be caught in .NET — it terminates the process,
+  taking down every tenant on that pod from one request. Depth (~20) and total length (1024) are now bounded
+  and surface as `400 invalidFilter`.
+
+- **Passwordless passkey sign-in did not require user verification.** It was marked `mfa_authenticated` and
+  documented as strong auth, but UV was `Preferred` and the resulting flag was never inspected, so an
+  assertion proving only possession of an unlocked device satisfied an MFA-required policy. Passwordless now
+  requires UV (Fido2 enforces it during assertion); the second-factor path keeps `Preferred`, where a
+  password was already presented.
+
+- **SAML bearer confirmation was entirely fail-open, and replay retention ignored assertion validity.**
+  Every part of `SubjectConfirmation` was checked only "if present", so an assertion with none at all was
+  accepted. That is not just conformance: `SubjectConfirmationData/NotOnOrAfter` is the SHORT bound (minutes
+  at Entra/Okta/Google) while `Conditions/NotOnOrAfter` is ~an hour, so losing it left an assertion
+  acceptable long enough to outlive the replay cache and be replayed. Bearer confirmation with `Recipient`
+  and `NotOnOrAfter` is now required (an unparseable timestamp fails rather than skipping the check), and
+  the replay record is retained for at least the assertion's own acceptability window. Only the SQL provider
+  expired these rows; Azure and DynamoDB keep them indefinitely and were never exposed.
+
+- **Federated account squatting, and SCIM as a takeover primitive.** JIT provisioning did not gate on
+  `email_verified`, so anyone able to configure a self-service IdP could pre-create `ceo@acme.com`; when
+  Acme's real connection was added, the genuine user's first login adopted that account along with the
+  attacker's still-valid `(issuer, subject)` binding. JIT now refuses an unverified email and refuses a
+  domain that `ISsoDomainStore` routes to a different connection. Separately, SCIM could mint a
+  **pre-verified** account for any address, and `/auth/forgot-password` would then issue a reset for it —
+  `ResetPasswordAsync` sets `PasswordHash` unconditionally — so repointing a bound account's email
+  converted into authenticating as the real user's `sub` at every relying party, bypassing the upstream IdP.
+  SCIM now validates the address and honours an optional per-client domain allow-list, and no reset is
+  issued for an account with no local password.
+
+- **A passwordless-account claim link promoted whatever was staged at click time.** Two claimants both send
+  a verification link to the same (real owner's) inbox; the link asserted only "this address is verified",
+  so the owner clicking their *own* link promoted the later claimant's password. The link is now bound to
+  the credential staged when it was issued and refuses to promote a different one.
+
+- **MFA verification had no per-account failure counter, and the per-challenge one could be raced.**
+  `FailAttemptAsync` read `Attempts` from a snapshot and wrote it back with a blind full-row upsert in every
+  provider (no ETag, no version column, no atomic increment on `IMfaStore`), so concurrent guesses shared one
+  value — and an attacker could mint a fresh challenge whenever the budget ran out, making "5 guesses per
+  challenge" no bound at all. Verification now goes through the same durable, atomically-incremented,
+  cluster-wide lockout counter as the password step, plus a per-subject rate limit; success resets it.
+  **Breaking:** the 5th wrong MFA code now locks the account (HTTP 423) rather than only burning the
+  challenge.
+
+- **The device-flow approval screen showed nothing about what was being approved.** With
+  `verification_uri_complete` pre-filling the code, approval was one click on an opaque prompt — RFC 8628
+  §5.4's remote-phishing shape, where an attacker starts a device flow, sends the victim the complete URI,
+  and the victim authorises the attacker's device against their own account. A new authenticated,
+  rate-limited `GET /api/auth/device/info` returns the requesting client and the scopes that would actually
+  be granted (post-entitlement-gate), and the login app now requires an explicit confirmation showing both.
+
+- **An MFA challenge was accepted as an MFA enrolment token, so the password alone was enough to take
+  over an enrolled account.** Login returns an `MfaChallenge` id in two very different situations — "you
+  have a second factor, prove it" and "you have none, enrol one" — and the record carried nothing to tell
+  them apart. `MfaSetupEndpoints.ResolveUserIdAsync` accepted any live challenge in `X-MFA-Setup-Token`
+  and returned its `UserId` as an authenticated identity, with no session and no check of which kind it
+  held. Four sinks made that exploitable, all reachable with a correct password and no second factor:
+
+  - `POST /recovery/generate` returned ten fresh recovery codes **and deleted the victim's real ones**;
+    one code then satisfied `/verify` and signed a cookie carrying `mfa_authenticated`.
+  - `POST /webauthn/setup` + `/webauthn/confirm` enrolled an attacker-controlled passkey, which survived
+    a victim password reset (reset rotates the security stamp and clears grants but touches no MFA
+    credential) — persistent takeover, not a one-shot bypass.
+  - `POST /totp/confirm` was a second TOTP acceptance path with **no attempt counter at all** and no
+    replay-ledger write: wrong codes were free guesses against a 10⁶ space, a code already burned at
+    `/verify` was still accepted here, and success issued a session.
+  - `/verify` accepted *unconfirmed* `TOTP (pending)` / `WebAuthn (pending)` rows as live factors, and
+    those rows had no expiry — an abandoned enrolment left a permanent, self-service-invisible factor.
+
+  `MfaChallenge` now carries an `MfaChallengePurpose` (`Verify` / `Enrol` / `PasswordlessDiscovery`) set
+  at every mint site and enforced at every consumer. `Verify = 0` so a row written by a previous
+  deployment reads back as the least-privileged case. Additionally, and independently of the
+  discriminator: `/recovery/generate` now requires a real session, `/totp/confirm` is rate-limited and
+  counts failures against the challenge budget and burns the accepted step, pending rows expire after 30
+  minutes, and a challenge with an empty `UserId` is refused outright (`/passwordless/begin` minted one to
+  anonymous callers, and the callers' `userId is null` guard let an empty string through). Each layer is
+  independently sufficient for most sinks, verified by disabling them one at a time.
+
+- **`--dry-run --mode clean` deleted everything, for real.** `CleanTableAsync` ran before the `DryRun`
+  check that guarded the writes, so the flag whose entire purpose is to make a restore safe was the most
+  destructive option the tool offered. Now gated like every other mutation.
+
+- **A clean restore of an incremental destroyed every unchanged row.** The manifest has always recorded
+  `Mode: "incremental"`; nothing read it. Emptying the table and then applying a delta leaves only the
+  delta. Refused now, with the correct sequence in the error; `AllowCleanFromIncremental` overrides.
+
+- **A clean restore wiped sibling envs sharing the physical table.** Sandbox envs are keyed
+  `{env}|{natural}` in shared tables, and the wipe was unscoped. New `--clean-env` scopes it to one env's
+  PartitionKey range; the bound uses `char.MaxValue` rather than `~`, so keys containing non-ASCII
+  characters are inside the range instead of being silently skipped.
+
+- **A concurrent login silently reverted administrative writes (Azure provider).**
+  `RecordSuccessfulLoginAsync` read the user entity and wrote it back with an unconditional full-entity
+  `Replace`, so anything an admin changed between the read and the write was discarded — not just the
+  login columns but `IsActive` (undoing a SCIM deprovision), `MfaEnabled` (undoing an enrolment, which
+  login gates on), `RolesJson` (undoing a role revocation), `PasswordHash` and `SecurityStamp`. An
+  attacker who keeps authenticating controls one side of that race. Now ETag-conditional with retry,
+  mirroring `RecordFailedLoginAsync` directly below it.
+
+- **Nine of every ten recovery codes were dead, and the tenth worked ten times.** All ten were protected
+  under one secret-provider name, and `ISecretProvider.ProtectAsync` treats `name` as the storage key, so
+  each call overwrote the last and every reference resolved to the final hash. Now keyed per code.
+  `ProtectAsync`'s contract documents that `name` must be unique per distinct value.
+
+- **`IUserStore.CreateAsync` silently overwrote an existing account on the SQL and DynamoDB providers.**
+  Azure has always failed closed via `AddEntityAsync` (409) while SQL used `INSERT … ON CONFLICT DO
+  UPDATE` and DynamoDB a plain `PutItem`, so a create on an existing id replaced that account's password
+  hash, roles, MFA flag and email. Both are insert-only now (`PutIfAbsentAsync` /
+  `attribute_not_exists(pk)`). The one call site that does not generate its own id is OIDC JIT federation
+  with `UseUpstreamSubjectAsUserId`, where the id is the upstream `sub`.
+
 ## [0.21.0], 2026-07-30
 
 ### Added

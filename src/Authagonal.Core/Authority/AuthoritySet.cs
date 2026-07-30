@@ -51,7 +51,9 @@ public sealed class AuthoritySet
     /// <summary>
     /// The greatest lower bound of two authority sets: the result permits an
     /// (action, context) pair only if BOTH inputs permit it. Types present on only one side
-    /// are dropped; actions intersect; locations intersect (empty = unrestricted);
+    /// are dropped; actions intersect; locations intersect — an UNSPECIFIED (empty) side carries the
+    /// other's locations over, but two non-empty sides that share nothing drop the grant entirely rather
+    /// than collapsing to the empty-means-unrestricted encoding;
     /// constraints meet per <see cref="ConstraintValue.Meet"/> (a constraint present on one
     /// side only carries over — it is a restriction, and restrictions never expire in an
     /// intersection); action policies take the most restrictive.
@@ -78,12 +80,20 @@ public sealed class AuthoritySet
     {
         var actions = a.Actions.Intersect(b.Actions, StringComparer.Ordinal).ToList();
 
+        // Empty means "unrestricted" in this model, so an intersection that EMPTIES a non-empty pair must
+        // not be represented as an empty list — that would read as unrestricted and widen authority through
+        // an intersection, which inverts the operation. Two disjoint location sets permit nothing in common,
+        // so the grant is dropped instead (signalled by clearing Actions, which the caller already filters
+        // on). Only a genuinely unspecified side carries the other's locations over.
+        var locationsDisjoint = false;
         var locations = (a.Locations.Count, b.Locations.Count) switch
         {
             (0, _) => b.Locations,
             (_, 0) => a.Locations,
             _ => a.Locations.Intersect(b.Locations, StringComparer.Ordinal).ToList(),
         };
+        if (a.Locations.Count > 0 && b.Locations.Count > 0 && locations.Count == 0)
+            locationsDisjoint = true;
 
         var constraints = new Dictionary<string, ConstraintValue>(StringComparer.Ordinal);
         foreach (var (name, value) in a.Constraints)
@@ -106,7 +116,7 @@ public sealed class AuthoritySet
         return new AuthorityGrant
         {
             Type = a.Type,
-            Actions = actions,
+            Actions = locationsDisjoint ? [] : actions,
             Locations = locations,
             Constraints = constraints.Count > 0 ? constraints : AuthorityGrant.EmptyConstraints,
             ActionPolicies = policies.Count > 0 ? policies : AuthorityGrant.EmptyPolicies,

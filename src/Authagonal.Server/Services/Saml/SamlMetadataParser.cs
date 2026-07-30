@@ -17,11 +17,13 @@ public sealed class SamlMetadataParser(IHttpClientFactory httpClientFactory)
 
     public async Task<SamlIdpMetadata> ParseFromUrlAsync(string metadataUrl, CancellationToken ct = default)
     {
-        if (!OutboundUrlValidator.IsSafe(metadataUrl))
-            throw new InvalidOperationException("SAML metadata URL is not an allowed external endpoint.");
-
+        // SafeOutboundHttp re-validates every redirect hop. The guard used to run once, on this URL only,
+        // while the client followed redirects automatically — so a 302 from the (admin-configured, but
+        // attacker-influenced) metadata host reached a target the guard never saw. It also bounds the
+        // response, since an unbounded read on a path reachable from the anonymous ACS is a memory
+        // amplifier regardless of where it points.
         var client = httpClientFactory.CreateClient("SamlMetadata");
-        var response = await client.GetStringAsync(metadataUrl, ct);
+        var response = await SafeOutboundHttp.GetStringAsync(client, metadataUrl, ct: ct);
         return Parse(response);
     }
 

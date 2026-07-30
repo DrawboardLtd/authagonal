@@ -13,20 +13,80 @@ public static partial class ScimPatchApplier
     [GeneratedRegex("^value\\s+eq\\s+\"(?<id>[^\"]*)\"$", RegexOptions.IgnoreCase)]
     private static partial Regex MemberValueFilter();
 
-    public static void ApplyToUser(AuthUser user, IReadOnlyList<PatchOperation> operations)
+    /// <summary>
+    /// Applies user PATCH operations. Returns the operations that could NOT be honoured, so the caller can
+    /// answer 400 instead of 200.
+    /// </summary>
+    /// <remarks>
+    /// <c>remove</c> was not handled at all — it fell through the <c>replace or add</c> test and was silently
+    /// discarded — and an unrecognised path did nothing while the response still said 200. The
+    /// ServiceProviderConfig advertises <c>patch.supported = true</c>, so a client had every reason to
+    /// believe a clear-attribute or unknown-path operation had been applied when it had not. Silent success
+    /// on a write is the failure mode that matters: a directory believes it deprovisioned an attribute and
+    /// never retries.
+    /// </remarks>
+    public static IReadOnlyList<string> ApplyToUser(AuthUser user, IReadOnlyList<PatchOperation> operations)
     {
+        var unsupported = new List<string>();
+
         foreach (var op in operations)
         {
             var normalizedOp = op.Op.ToLowerInvariant();
             var path = NormalizePath(op.Path);
 
-            if (normalizedOp is "replace" or "add")
+            switch (normalizedOp)
             {
-                if (op.Value is null)
-                    continue;
+                case "replace" or "add":
+                    if (op.Value is null)
+                    {
+                        unsupported.Add($"{op.Op} {op.Path}: no value supplied");
+                        continue;
+                    }
+                    if (!ApplyUserValue(user, path, op.Value.Value))
+                        unsupported.Add($"{op.Op} {op.Path}: unsupported path");
+                    break;
 
-                ApplyUserValue(user, path, op.Value.Value);
+                case "remove":
+                    if (!RemoveUserValue(user, path))
+                        unsupported.Add($"remove {op.Path}: unsupported path");
+                    break;
+
+                default:
+                    unsupported.Add($"{op.Op}: unsupported operation");
+                    break;
             }
+        }
+
+        return unsupported;
+    }
+
+    /// <summary>
+    /// Clears a user attribute. Only attributes with a meaningful empty state are removable: RFC 7644
+    /// §3.5.2.2 aside, clearing <c>userName</c> or <c>active</c> would leave the resource unusable, so those
+    /// are refused rather than silently ignored.
+    /// </summary>
+    private static bool RemoveUserValue(AuthUser user, string? path)
+    {
+        switch (path?.ToLowerInvariant())
+        {
+            case "name.givenname":
+                user.FirstName = null;
+                return true;
+            case "name.familyname":
+                user.LastName = null;
+                return true;
+            case "displayname":
+                user.FirstName = null;
+                user.LastName = null;
+                return true;
+            case "externalid":
+                user.ExternalId = null;
+                return true;
+            case "preferredlanguage" or "locale":
+                user.Locale = null;
+                return true;
+            default:
+                return false;
         }
     }
 
@@ -79,7 +139,7 @@ public static partial class ScimPatchApplier
         }
     }
 
-    private static void ApplyUserValue(AuthUser user, string? path, JsonElement value)
+    private static bool ApplyUserValue(AuthUser user, string? path, JsonElement value)
     {
         switch (path?.ToLowerInvariant())
         {
@@ -128,9 +188,14 @@ public static partial class ScimPatchApplier
                 if (value.ValueKind == JsonValueKind.Object)
                 {
                     ApplyUserFromObject(user, value);
+                    return true;
                 }
-                break;
+                return false;
+            default:
+                return false;
         }
+
+        return true;
     }
 
     private static void ApplyUserFromObject(AuthUser user, JsonElement obj)

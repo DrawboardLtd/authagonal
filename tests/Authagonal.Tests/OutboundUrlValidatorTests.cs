@@ -101,4 +101,36 @@ public class OutboundUrlValidatorTests
     [InlineData("http://223.255.255.255/")]                           // just below multicast
     public void PublicIPv4RangeBoundaries_AreAllowed(string url)
         => Assert.True(OutboundUrlValidator.IsSafe(url));
+
+    // -----------------------------------------------------------------------
+    // Trailing-dot bypass (#55)
+    // -----------------------------------------------------------------------
+
+    /// <summary>
+    /// A trailing dot is a fully-qualified form that DNS resolves exactly like the bare name, but
+    /// <c>IPAddress.TryParse</c> rejects it — so a literal internal address fell past the literal-IP branch
+    /// to the permissive default, and "localhost." matched neither the equality test nor the ".local"
+    /// suffix. One character defeated the entire guard, including the cloud metadata address.
+    /// </summary>
+    [Theory]
+    [InlineData("http://169.254.169.254./latest/meta-data/")]  // cloud metadata, FQDN form
+    [InlineData("https://169.254.169.254./")]
+    [InlineData("http://127.0.0.1./")]
+    [InlineData("http://10.0.0.5./")]
+    [InlineData("http://192.168.1.1./")]
+    [InlineData("http://172.16.0.1./")]
+    [InlineData("http://localhost./")]
+    [InlineData("http://localhost../")]                        // repeated dots
+    [InlineData("http://foo.internal./")]
+    [InlineData("http://foo.local./")]
+    public void TrailingDotHosts_AreBlocked(string url)
+        => Assert.False(OutboundUrlValidator.IsSafe(url), url);
+
+    /// <summary>A legitimate external host with a trailing dot must still be allowed — the fix normalises,
+    /// it does not blanket-reject the FQDN form.</summary>
+    [Theory]
+    [InlineData("https://idp.example.com./metadata")]
+    [InlineData("https://login.microsoftonline.com./common/v2.0/.well-known/openid-configuration")]
+    public void TrailingDotExternalHosts_AreAllowed(string url)
+        => Assert.True(OutboundUrlValidator.IsSafe(url), url);
 }

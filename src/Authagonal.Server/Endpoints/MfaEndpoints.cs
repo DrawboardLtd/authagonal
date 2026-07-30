@@ -35,6 +35,8 @@ public static class MfaEndpoints
         RecoveryCodeService recoveryCodeService,
         WebAuthnService webAuthnService,
         IEnumerable<IAuthHook> authHooks,
+        IRateLimiter rateLimiter,
+        Microsoft.Extensions.Options.IOptions<AuthOptions> authOptions,
         ILogger<Program> logger,
         CancellationToken ct)
     {
@@ -52,11 +54,36 @@ public static class MfaEndpoints
         if (challenge is null)
             return JsonResults.Error("invalid_challenge");
 
+        // Only a verification challenge proves a second factor here. An enrolment token belongs to the
+        // /api/auth/mfa/* setup endpoints, and a passwordless-discovery challenge identifies nobody and is
+        // redeemed at /passwordless/complete.
+        if (challenge.Purpose != MfaChallengePurpose.Verify)
+            return JsonResults.Error("invalid_challenge");
+
         var user = await userStore.GetAsync(challenge.UserId, ct);
         if (user is null)
             return JsonResults.Error("user_not_found");
 
-        var credentials = await mfaStore.GetCredentialsAsync(challenge.UserId, ct);
+        // Per-subject request ceiling. The per-challenge Attempts counter below is a read-modify-write
+        // against a blind full-row upsert in every provider (no ETag, no version column, and IMfaStore
+        // exposes no atomic increment), so concurrent guesses all read the same value and all write the
+        // same value — a measured ~6x amplification in-process, and far wider against a real store where
+        // the window spans a network round trip. This gate does not race, and it is the bound that
+        // actually holds.
+        if (await rateLimiter.IsRateLimitedAsync($"mfa-verify|{challenge.UserId}", 10, TimeSpan.FromMinutes(1), ct))
+            return JsonResults.Error("too_many_attempts", 429);
+
+        // An account already locked out by failed MFA (or failed password) attempts cannot be verified
+        // against — otherwise the lockout applies to the password step only and MFA guessing continues.
+        if (user.LockoutEnabled && user.LockoutEnd.HasValue && user.LockoutEnd > DateTimeOffset.UtcNow)
+            return JsonResults.Error("locked_out", 423);
+
+        // Only CONFIRMED factors can satisfy a verification. A pending enrolment row holds a live TOTP
+        // seed or registration challenge from an attempt the user never completed; accepting one would
+        // make an abandoned enrolment a permanent second factor.
+        var credentials = (await mfaStore.GetCredentialsAsync(challenge.UserId, ct))
+            .Where(MfaSetupEndpoints.IsConfirmed)
+            .ToList();
 
         // How many wrong guesses a single challenge tolerates before it's burned (→ fresh login).
         const int maxAttempts = 5;
@@ -66,6 +93,23 @@ public static class MfaEndpoints
         async Task<IResult> FailAttemptAsync(string method, string errorCode)
         {
             await authHooks.RunOnMfaVerifyFailedAsync(user.Id, user.Email, method, ct);
+
+            // Durable, atomic and cluster-wide: the SAME counter the password step uses. Every provider
+            // implements this with a conditional write plus retry (ETag / version column), so unlike the
+            // per-challenge counter below it cannot be defeated by concurrency — and unlike the
+            // per-challenge counter it survives the attacker minting a fresh challenge, which was the gap
+            // that made "5 guesses per challenge" no bound at all.
+            var opts = authOptions.Value;
+            var lockedOut = await userStore.RecordFailedLoginAsync(
+                user.Id, opts.MaxFailedAttempts, TimeSpan.FromMinutes(opts.LockoutDurationMinutes), ct);
+            if (lockedOut)
+            {
+                await mfaStore.ConsumeChallengeAsync(challenge.ChallengeId, ct);
+                return JsonResults.Error("locked_out", 423);
+            }
+
+            // Best-effort per-challenge budget, kept for the fast path (a mistyped digit should not need a
+            // fresh login). Known to be non-atomic; the two gates above are what bound an attacker.
             challenge.Attempts++;
             if (challenge.Attempts >= maxAttempts)
             {
@@ -220,6 +264,11 @@ public static class MfaEndpoints
         // Verified — consume the challenge now (atomic delete, anti-replay) before issuing the session.
         await mfaStore.ConsumeChallengeAsync(challenge.ChallengeId, ct);
 
+        // Clear the failure counter that FailAttemptAsync increments, so a user who mistypes a digit and
+        // then succeeds is not left one attempt away from a lockout on their next sign-in. Same reset the
+        // password step performs on success.
+        await userStore.RecordSuccessfulLoginAsync(user.Id, ct: ct);
+
         // Run the onUserAuthenticated hook BEFORE establishing the session, so an enforced hook that
         // rejects the login prevents the cookie from being issued (not a 500 after it's already set).
         await authHooks.RunOnUserAuthenticatedAsync(user.Id, user.Email, "password", challenge.ClientId, ct);
@@ -241,12 +290,18 @@ public static class MfaEndpoints
         WebAuthnService webAuthnService,
         CancellationToken ct)
     {
-        var options = webAuthnService.CreateAssertionOptions([]);
+        // Passwordless: the passkey is the ONLY factor, so require user verification. Without it an
+        // assertion proves possession of an unlocked device and nothing more, yet this path signs a session
+        // marked mfa_authenticated.
+        var options = webAuthnService.CreateAssertionOptions([], requireUserVerification: true);
         var challenge = new MfaChallenge
         {
             ChallengeId = Convert.ToHexString(RandomNumberGenerator.GetBytes(32)).ToLowerInvariant(),
             UserId = "",
             WebAuthnChallenge = options.ToJson(),
+            // Minted to an anonymous caller and identifies nobody (UserId is empty). Tagged explicitly so
+            // it can never be mistaken for proof of identity by the setup endpoints.
+            Purpose = MfaChallengePurpose.PasswordlessDiscovery,
             CreatedAt = DateTimeOffset.UtcNow,
             ExpiresAt = DateTimeOffset.UtcNow.AddMinutes(5),
         };
@@ -270,6 +325,8 @@ public static class MfaEndpoints
         ISsoDomainStore ssoDomainStore,
         WebAuthnService webAuthnService,
         IEnumerable<IAuthHook> authHooks,
+        IRateLimiter rateLimiter,
+        Microsoft.Extensions.Options.IOptions<AuthOptions> authOptions,
         ILogger<Program> logger,
         CancellationToken ct)
     {
@@ -281,6 +338,13 @@ public static class MfaEndpoints
         // Consume the challenge atomically (anti-replay).
         var challenge = await mfaStore.ConsumeChallengeAsync(request.ChallengeId, ct);
         if (challenge is null || string.IsNullOrWhiteSpace(challenge.WebAuthnChallenge))
+            return JsonResults.Error("invalid_challenge");
+
+        // Only a discovery challenge may be redeemed here. This path resolves the user FROM the passkey
+        // and signs them in with no password, so accepting a verification or enrolment challenge — both of
+        // which are issued to a caller who named a user — would let that caller sign in as whoever owns
+        // the asserted credential instead.
+        if (challenge.Purpose != MfaChallengePurpose.PasswordlessDiscovery)
             return JsonResults.Error("invalid_challenge");
 
         AuthenticatorAssertionRawResponse assertionResponse;

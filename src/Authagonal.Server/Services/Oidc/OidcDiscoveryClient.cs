@@ -23,13 +23,13 @@ public sealed class OidcDiscoveryClient(IHttpClientFactory httpClientFactory, IM
         if (memoryCache.TryGetValue<OidcDiscoveryDocument>(cacheKey, out var cached) && cached is not null)
             return cached;
 
-        if (!OutboundUrlValidator.IsSafe(metadataUrl))
-            throw new InvalidOperationException("OIDC metadata URL is not an allowed external endpoint.");
-
         var client = httpClientFactory.CreateClient("OidcDiscovery");
 
-        // Fetch the discovery document
-        var discoveryJson = await client.GetStringAsync(metadataUrl, ct);
+        // Fetch the discovery document. SafeOutboundHttp validates this URL and every redirect target —
+        // the guard here previously ran once and the client then followed redirects on its own, which is the
+        // hop it never inspected. This file already understood the principle (see the comment below about
+        // re-validating document-derived endpoints); it just could not enforce it across a redirect.
+        var discoveryJson = await SafeOutboundHttp.GetStringAsync(client, metadataUrl, ct: ct);
         using var discoveryDoc = JsonDocument.Parse(discoveryJson);
         var root = discoveryDoc.RootElement;
 
@@ -55,8 +55,8 @@ public sealed class OidcDiscoveryClient(IHttpClientFactory httpClientFactory, IM
             || (userinfoEndpoint is not null && !OutboundUrlValidator.IsSafe(userinfoEndpoint)))
             throw new InvalidOperationException("OIDC discovery document referenced a disallowed endpoint URL.");
 
-        // Fetch JWKS
-        var jwksJson = await client.GetStringAsync(jwksUri, ct);
+        // Fetch JWKS — same per-hop validation.
+        var jwksJson = await SafeOutboundHttp.GetStringAsync(client, jwksUri, ct: ct);
         var jwks = JsonWebKeySet.Create(jwksJson);
 
         var document = new OidcDiscoveryDocument(

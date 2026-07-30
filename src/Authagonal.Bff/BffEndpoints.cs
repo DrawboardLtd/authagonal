@@ -519,10 +519,10 @@ internal static class BffEndpoints
     {
         if (string.IsNullOrEmpty(returnUrl))
             return "/";
-        // Local relative path. Mirror ASP.NET Url.IsLocalUrl: must start '/', and the second
-        // char must be neither '/' (protocol-relative "//evil.com") nor '\' — browsers normalize
-        // '\'→'/' in a Location header, so "/\evil.com" would redirect off-site as "//evil.com".
-        if (returnUrl.StartsWith('/') && (returnUrl.Length == 1 || (returnUrl[1] != '/' && returnUrl[1] != '\\')))
+        // Shared local-path decision. This used to inspect only returnUrl[1], so a backslash later in the
+        // path slipped through, and (like every other copy) it did not reject the ASCII tab that the URL
+        // parser strips before parsing.
+        if (Authagonal.Core.Services.LocalRedirect.IsSafeLocalPath(returnUrl))
             return returnUrl;
         if (Uri.TryCreate(returnUrl, UriKind.Absolute, out var abs))
         {

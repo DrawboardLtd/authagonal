@@ -159,6 +159,7 @@ public static class OidcEndpoints
         ISecretProvider secretProvider,
         Authagonal.Core.Services.ITenantContext tenantContext,
         IProvisioningOrchestrator provisioning,
+        ISsoDomainStore ssoDomainStore,
         IConfiguration configuration,
         IOptions<AuthOptions> authOptions,
         ILogger<Program> logger,
@@ -410,6 +411,33 @@ public static class OidcEndpoints
                 case FederationJitPolicy.Decision.RejectInviteRequired:
                     logger.LogInformation("JIT rejected for OIDC connection {ConnectionId}: no provisioning context on the request for unknown user {Email}", stateData.ConnectionId, email);
                     return RedirectWithError(returnUrl, "access_denied", "This login requires an invitation. Contact your administrator.");
+            }
+
+            // An upstream that will not vouch for the address must not mint an account bearing it. Without
+            // this, anyone able to configure a self-service IdP could JIT-create `ceo@acme.com` before Acme's
+            // real connection existed; when it was added, the genuine user's first login found that account
+            // by email and — under a domain-vouched connection — adopted it, together with the attacker's
+            // still-valid (issuer, subject) login binding. That is nOAuth-shaped account takeover.
+            if (!emailVerified)
+            {
+                logger.LogWarning(
+                    "JIT rejected for OIDC connection {ConnectionId}: upstream did not verify email {Email}",
+                    stateData.ConnectionId, email);
+                return RedirectWithError(returnUrl, "access_denied",
+                    "Your identity provider did not verify this email address. Contact your administrator.");
+            }
+
+            // And the domain must not already belong to a DIFFERENT connection. Otherwise a permissive
+            // connection can squat addresses in a domain another connection is the authority for.
+            var jitEmailDomain = email.Split('@').Last().ToLowerInvariant();
+            var domainOwner = await ssoDomainStore.GetAsync(jitEmailDomain, ct);
+            if (domainOwner is not null && !string.Equals(domainOwner.ConnectionId, stateData.ConnectionId, StringComparison.Ordinal))
+            {
+                logger.LogWarning(
+                    "JIT rejected: domain {Domain} is routed to connection {Owner}, not {ConnectionId}",
+                    jitEmailDomain, domainOwner.ConnectionId, stateData.ConnectionId);
+                return RedirectWithError(returnUrl, "access_denied",
+                    "This email domain is managed by a different identity provider. Contact your administrator.");
             }
 
             user = new AuthUser
@@ -764,19 +792,10 @@ public static class OidcEndpoints
         return null;
     }
 
+    /// <summary>See <see cref="Authagonal.Core.Services.LocalRedirect"/> — one shared implementation, and it
+    /// rejects the control characters that defeated every local copy of this check.</summary>
     private static string SanitizeReturnUrl(string? url)
-    {
-        if (string.IsNullOrWhiteSpace(url))
-            return "/login";
-
-        // Must be a same-site relative path. Reject anything a browser could read as an authority:
-        // "//host", a leading "/\", or any embedded backslash (WHATWG treats '\' as '/', so "/\evil.com"
-        // navigates off-site). See F37.
-        if (!url.StartsWith('/') || url.StartsWith("//") || url.Contains('\\'))
-            return "/login";
-
-        return url;
-    }
+        => Authagonal.Core.Services.LocalRedirect.Sanitize(url, "/login");
 
     // F48c: appends the OAuth error to returnUrl with the correct separator. returnUrl is the original
     // /authorize URL, which already carries a query string — a naive "?error=" produced a malformed

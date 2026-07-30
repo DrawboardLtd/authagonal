@@ -1,3 +1,4 @@
+using Authagonal.Core.Constants;
 using Authagonal.Core.Services;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
@@ -40,6 +41,11 @@ internal static class UserinfoEndpoint
                 // resource server, which pins its own audience.
                 AudienceValidator = (audiences, _, _) => audiences?.Any() == true,
                 ValidateLifetime = true,
+                // Pin the algorithm, as the Server host's userinfo does. This validator was the one
+                // inbound-token path with no ValidAlgorithms — a policy gap rather than a live hole
+                // (the keys are EC, so no HMAC provider can be constructed over them), but the
+                // guarantee belongs in this code rather than in a library default.
+                ValidAlgorithms = ["ES256", "ES384", "ES512"],
                 IssuerSigningKeys = keys,
                 ValidateIssuerSigningKey = true,
                 ClockSkew = TimeSpan.FromSeconds(60)
@@ -49,6 +55,13 @@ internal static class UserinfoEndpoint
             var result = await handler.ValidateTokenAsync(token, validationParams);
 
             if (!result.IsValid)
+                return Results.Unauthorized();
+
+            // Only an access token may call userinfo — see the Server host's equivalent check. An
+            // id_token or a logout token carries the same issuer and signature but is not a credential.
+            if (!TokenTypes.IsAccessToken(
+                    (result.SecurityToken as Microsoft.IdentityModel.JsonWebTokens.JsonWebToken)?.Typ,
+                    result.Claims.ContainsKey))
                 return Results.Unauthorized();
 
             // Userinfo returns whatever claims the access token carried that look user-identifying.

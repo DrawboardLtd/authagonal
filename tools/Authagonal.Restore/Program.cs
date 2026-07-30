@@ -15,6 +15,8 @@ var tableFilter = GetArg(cliArgs, "--tables")?.Split(',', StringSplitOptions.Rem
 var prefix = GetArg(cliArgs, "--prefix") ?? "";
 var modeStr = GetArg(cliArgs, "--mode") ?? "upsert";
 var dryRun = HasFlag(cliArgs, "--dry-run");
+var cleanEnv = GetArg(cliArgs, "--clean-env");
+var allowCleanIncremental = HasFlag(cliArgs, "--allow-clean-from-incremental");
 
 if (connectionString is null || inputDir is null || HasFlag(cliArgs, "--help"))
 {
@@ -31,7 +33,16 @@ if (connectionString is null || inputDir is null || HasFlag(cliArgs, "--help"))
       --tables <t1,t2,...>         Comma-separated list of tables to restore
       --prefix <prefix>            Table name prefix (for multi-tenant)
       --mode <mode>                Restore mode: upsert (default), merge, or clean
+      --clean-env <env>            With --mode clean, wipe only this env's rows
+                                   (PartitionKey prefix "<env>|"). Omit only when the
+                                   tables hold a single env — otherwise a clean restore
+                                   destroys every sibling env in the same table.
+      --allow-clean-from-incremental
+                                   Permit --mode clean against an incremental backup.
+                                   Refused by default: it would leave the table holding
+                                   only the delta, destroying every unchanged row.
       --dry-run                    Show what would be restored without writing
+                                   (writes nothing and deletes nothing)
       --help                       Show this help
     """);
     return (connectionString is null || inputDir is null) && !HasFlag(cliArgs, "--help") ? 1 : 0;
@@ -63,6 +74,8 @@ var options = new RestoreOptions
     TablePrefix = string.IsNullOrEmpty(prefix) ? null : prefix,
     Mode = mode,
     DryRun = dryRun,
+    CleanEnvPrefix = string.IsNullOrEmpty(cleanEnv) ? null : $"{cleanEnv}|",
+    AllowCleanFromIncremental = allowCleanIncremental,
 };
 
 var service = new RestoreService(serviceClient, source, options);

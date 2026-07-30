@@ -63,6 +63,7 @@ public static class AuthEndpoints
         IEnumerable<IAuthHook> authHooks,
         IOptions<AuthOptions> authOptions,
         ITenantContext tenantContext,
+        IRateLimiter rateLimiter,
         ILogger<Program> logger,
         CancellationToken ct)
     {
@@ -71,6 +72,31 @@ public static class AuthEndpoints
 
         if (string.IsNullOrWhiteSpace(request.Password))
             return JsonResults.Error("password_required");
+
+        // Two bounds, both absent before. Per-account lockout (further down) does nothing against SPRAYING —
+        // one attempt each against ten thousand accounts trips no counter — and because an unknown email is
+        // deliberately verified against a dummy hash to keep response timing uniform, every unauthenticated
+        // request costs a full PBKDF2, making this endpoint a CPU amplifier as well as an unthrottled
+        // credential oracle.
+        //
+        // Keyed on the RAW peer address, captured before forwarded headers are applied, so a spoofed
+        // X-Forwarded-For cannot mint a fresh budget per request.
+        var lo = authOptions.Value;
+        var peer = Services.Cluster.InternalEndpointGuard.RawPeerAddress(httpContext)?.ToString() ?? "unknown";
+        if (await rateLimiter.IsRateLimitedAsync(
+                $"login|ip|{peer}", lo.MaxLoginAttemptsPerIp, TimeSpan.FromMinutes(lo.LoginWindowMinutes), ct))
+        {
+            logger.LogWarning("Login rate limit hit for source {Peer}", peer);
+            return JsonResults.Error("too_many_attempts", 429);
+        }
+
+        // And per identifier, so a distributed spray cannot concentrate on one account either. Uses the
+        // submitted email rather than a resolved user, so it costs nothing for an unknown address and stays
+        // enumeration-neutral.
+        if (await rateLimiter.IsRateLimitedAsync(
+                $"login|id|{request.Email.ToLowerInvariant()}",
+                lo.MaxLoginAttemptsPerIp, TimeSpan.FromMinutes(lo.LoginWindowMinutes), ct))
+            return JsonResults.Error("too_many_attempts", 429);
 
         // Check SSO domain first
         var domain = request.Email.Split('@', 2).LastOrDefault()?.ToLowerInvariant();
@@ -204,6 +230,7 @@ public static class AuthEndpoints
                 UserId = user.Id,
                 ClientId = clientId,
                 ReturnUrl = returnUrl,
+                Purpose = MfaChallengePurpose.Verify,
                 CreatedAt = DateTimeOffset.UtcNow,
                 ExpiresAt = DateTimeOffset.UtcNow.AddMinutes(authOptions.Value.MfaChallengeExpiryMinutes),
             };
@@ -255,6 +282,7 @@ public static class AuthEndpoints
                 UserId = user.Id,
                 ClientId = clientId,
                 ReturnUrl = returnUrl,
+                Purpose = MfaChallengePurpose.Enrol,
                 CreatedAt = DateTimeOffset.UtcNow,
                 ExpiresAt = DateTimeOffset.UtcNow.AddMinutes(authOptions.Value.MfaSetupTokenExpiryMinutes),
             };
@@ -491,6 +519,14 @@ public static class AuthEndpoints
         var flowClientId = ExtractClientIdFromReturnUrl(flowReturnUrl);
         var expiresAt = DateTimeOffset.UtcNow.AddHours(ao.EmailVerificationExpiryHours).ToUnixTimeSeconds();
         var payload = $"{user.SecurityStamp}||{user.Email}||{expiresAt}";
+        // Bind the link to the credential that was staged when it was issued. Without this the link says
+        // only "this address is verified", so it promotes WHATEVER is staged at click time: a second
+        // claimant who staged after the first link was sent had their credential promoted by the first
+        // claimant's click — including the genuine owner's click on their own link. The digest is
+        // self-describing ("pc=") rather than positional, so it composes with the optional clientId and
+        // returnUrl fields and older links simply carry no binding.
+        if (!string.IsNullOrWhiteSpace(user.PendingPasswordHash))
+            payload += $"||pc={StagedCredentialDigest(user.PendingPasswordHash)}";
         if (flowClientId is not null || !string.IsNullOrWhiteSpace(flowReturnUrl))
             payload += $"||{flowClientId}";
         if (!string.IsNullOrWhiteSpace(flowReturnUrl) && flowReturnUrl.Length <= 2048)
@@ -690,6 +726,23 @@ public static class AuthEndpoints
         // caller's abort token (same shielding as registration).
         if (!string.IsNullOrWhiteSpace(user.PendingPasswordHash))
         {
+            // The link must be the one issued FOR this staged credential. If someone else staged a claim
+            // after this link was sent, the digests differ and we refuse rather than promoting their
+            // credential on this click. Links minted before the binding existed carry no "pc=" field; those
+            // are still accepted, so an in-flight claim is not broken by the deploy.
+            var boundDigest = parts.FirstOrDefault(p => p.StartsWith("pc=", StringComparison.Ordinal))?[3..];
+            if (boundDigest is not null &&
+                !string.Equals(boundDigest, StagedCredentialDigest(user.PendingPasswordHash), StringComparison.Ordinal))
+            {
+                logger.LogWarning(
+                    "Passwordless-claim link for {Email} does not match the currently staged credential; refusing to promote",
+                    user.Email);
+                return wantsHtml
+                    ? Results.Redirect("/login?error=claim_superseded")
+                    : JsonResults.Error("claim_superseded",
+                        "Another claim was submitted for this account. Request a new verification link.");
+            }
+
             // This click IS the fresh ownership proof. Apply the staged profile/attributes (in memory)
             // so the downstream conversion sees the claim's signup context (org name, etc.), then run it.
             ApplyPendingClaim(user);
@@ -793,6 +846,20 @@ public static class AuthEndpoints
         {
             logger.LogInformation("Password reset requested for non-existent email: {Email}", request.Email);
             // Artificial delay to prevent timing-based email enumeration
+            await Task.Delay(TimeSpan.FromMilliseconds(100 + RandomNumberGenerator.GetInt32(200)), ct);
+            return TypedResults.Json(new SuccessResponse(), AuthagonalJsonContext.Default.SuccessResponse);
+        }
+
+        // An SSO-only account has no password to reset. Sending a reset link for one turns "control of the
+        // mailbox" into "a local password login", which is the step that converts an email repointing (via
+        // SCIM PATCH, or a squatted federated account) into full takeover of the federated identity — the
+        // local password then satisfies sign-in for the same `sub` at every relying party, bypassing the
+        // upstream IdP and whatever conditional access it enforces. Enumeration-neutral: same success
+        // response, no email sent.
+        if (string.IsNullOrEmpty(user.PasswordHash) && string.IsNullOrEmpty(user.PendingPasswordHash))
+        {
+            logger.LogInformation(
+                "Password reset requested for SSO-only account {Email}; no local password exists to reset", user.Email);
             await Task.Delay(TimeSpan.FromMilliseconds(100 + RandomNumberGenerator.GetInt32(200)), ct);
             return TypedResults.Json(new SuccessResponse(), AuthagonalJsonContext.Default.SuccessResponse);
         }
@@ -1228,6 +1295,16 @@ public static class AuthEndpoints
             RedirectUrl = redirectUrl
         }, AuthagonalJsonContext.Default.SsoCheckResponse);
     }
+
+    /// <summary>
+    /// A short digest of a staged password hash, used to bind a verification link to the specific claim it
+    /// was issued for. Truncated because it only needs to distinguish concurrent claims, and it travels in a
+    /// URL; it is not a secret (the hash it covers is already only reachable server-side) and it is compared
+    /// for equality, never used to authenticate.
+    /// </summary>
+    private static string StagedCredentialDigest(string pendingPasswordHash) =>
+        Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(pendingPasswordHash)))
+            .ToLowerInvariant()[..16];
 
     private static string Base64UrlEncode(byte[] bytes)
     {

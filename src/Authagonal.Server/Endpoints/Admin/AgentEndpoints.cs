@@ -57,6 +57,17 @@ public static class AgentEndpoints
         if (request.Mode is not (null or "delegated" or "service" or "both"))
             return BadRequest("mode must be one of: delegated, service, both");
 
+        // An agent's client_id becomes the `sub` of an entry in the RFC 8693 `act` chain — an assertion
+        // about WHICH software acted. A public client proves nothing about its identity (anyone who knows the
+        // client_id can present it), so attaching a profile to one makes that assertion unauthenticated:
+        // the audit trail names an actor that any party could have impersonated, and approvals recorded
+        // against it are meaningless.
+        if (!client.RequireClientSecret || client.ClientSecretHashes.Count == 0)
+            return BadRequest(
+                "an agent profile requires a confidential client: the agent's client_id is asserted in the " +
+                "act chain, so it must be authenticated. Set RequireClientSecret and register a secret " +
+                "(or a jwks_uri for private_key_jwt).");
+
         // The profile requires the grant types its mode runs on — catching the mismatch here
         // beats a runtime unauthorized_client for every task the agent ever attempts.
         if (mode is AgentMode.Delegated or AgentMode.Both &&

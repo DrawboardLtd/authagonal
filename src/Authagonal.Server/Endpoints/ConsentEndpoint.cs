@@ -80,7 +80,14 @@ public static class ConsentEndpoint
                     var redirectUri = queryParams["redirect_uri"];
                     var state = queryParams["state"];
 
-                    if (!string.IsNullOrEmpty(redirectUri))
+                    // The redirect_uri here was parsed out of the CALLER-supplied returnUrl, so it is
+                    // attacker-chosen. It must be one this client registered. Emitting an OAuth error to an
+                    // unregistered URI is an open redirect on the IdP origin and violates RFC 6749
+                    // §4.1.2.1 ("MUST NOT automatically redirect the user-agent to the invalid redirection
+                    // URI"). /connect/authorize already refuses this — see the F46 guard in
+                    // AuthorizeRequestSupport — but the consent deny path bypassed it entirely.
+                    if (!string.IsNullOrEmpty(redirectUri)
+                        && client.RedirectUris.Contains(redirectUri, StringComparer.Ordinal))
                     {
                         var errorBuilder = new UriBuilder(redirectUri);
                         var errorParams = System.Web.HttpUtility.ParseQueryString(errorBuilder.Query);
@@ -131,8 +138,15 @@ public static class ConsentEndpoint
                 ExpiresAt = DateTimeOffset.UtcNow.AddYears(5), // consent doesn't expire quickly
             }, ct);
 
-            // Redirect back to authorize endpoint to complete the flow
-            return TypedResults.Json(new RedirectResponse { Redirect = request.ReturnUrl ?? "/" }, AuthagonalJsonContext.Default.RedirectResponse);
+            // Redirect back to the authorize endpoint to complete the flow. Sanitised: this value was
+            // echoed verbatim and the login app assigns it to window.location.href, so an attacker who got
+            // a signed-in user to open /login/consent?...&returnUrl=https://evil.example had them redirected
+            // off-site from the IdP's own origin on clicking Allow. A `javascript:` URI reached the same
+            // sink and was contained only by the CSP, which makes that CSP load-bearing rather than
+            // defence-in-depth — so the value is bounded to a same-site path here instead.
+            return TypedResults.Json(
+                new RedirectResponse { Redirect = Authagonal.Core.Services.LocalRedirect.Sanitize(request.ReturnUrl) },
+                AuthagonalJsonContext.Default.RedirectResponse);
         }).RequireAuthorization();
 
         // List all consent grants for the current user

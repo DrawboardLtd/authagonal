@@ -68,6 +68,9 @@
 
   <!-- End session -->
   <data name="EndSession_SignedOut" xml:space="preserve"><value>A sua sess&#xE3;o foi encerrada.</value></data>
+  <data name="EndSession_ConfirmPrompt" xml:space="preserve"><value>Terminar a sessão em {0}?</value></data>
+  <data name="EndSession_ConfirmButton" xml:space="preserve"><value>Terminar sessão</value></data>
+  <data name="EndSession_CancelButton" xml:space="preserve"><value>Cancelar</value></data>
 
   <!-- Admin user endpoint messages -->
   <data name="Admin_UserNotFound" xml:space="preserve"><value>Utilizador '{0}' n&#xE3;o encontrado</value></data>

@@ -36,6 +36,28 @@ public sealed class DynamoTable(IAmazonDynamoDB db, string name)
     public Task PutAsync(Dictionary<string, AttributeValue> item, CancellationToken ct = default)
         => db.PutItemAsync(new PutItemRequest { TableName = name, Item = item }, ct);
 
+    /// <summary>
+    /// Insert only if no item with this key exists; returns false when one already does. The DynamoDB
+    /// analog of Azure's <c>AddEntityAsync</c> (409), for records that must never be silently replaced.
+    /// </summary>
+    public async Task<bool> PutIfAbsentAsync(Dictionary<string, AttributeValue> item, CancellationToken ct = default)
+    {
+        try
+        {
+            await db.PutItemAsync(new PutItemRequest
+            {
+                TableName = name,
+                Item = item,
+                ConditionExpression = "attribute_not_exists(pk)",
+            }, ct).ConfigureAwait(false);
+            return true;
+        }
+        catch (ConditionalCheckFailedException)
+        {
+            return false;
+        }
+    }
+
     // ── deletes ──
 
     /// <summary>Unconditional delete; succeeds even if the item is already gone.</summary>

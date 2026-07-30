@@ -339,44 +339,7 @@ public sealed class TableGrantStore(
             entities.Add(entity);
         }
 
-        // Tombstone-first (F24e): every key is derivable from the materialized index rows, so record
-        // the whole batch before deleting anything — a crash mid-way can only leave rows that are
-        // tombstoned AND still live, which later writes out-timestamp (safe), never a lost delete.
-        if (tombstoneWriter is not null && entities.Count > 0)
-        {
-            await tombstoneWriter.WriteBatchAsync("Grants",
-                entities.Select(e => (partitioner.PK(e.HashedKey), GrantEntity.GrantRowKey)), ct);
-            await tombstoneWriter.WriteBatchAsync("GrantsByExpiry",
-                entities.Select(e => (partitioner.PK(GrantByExpiryEntity.GetPartitionKey(e.ExpiresAt, e.HashedKey)), e.HashedKey)), ct);
-            await tombstoneWriter.WriteBatchAsync("GrantsBySubject",
-                entities.Select(e => (e.PartitionKey, e.RowKey)), ct);
-        }
-
-        foreach (var entity in entities)
-        {
-            var grantPk = partitioner.PK(entity.HashedKey);
-            // Delete from primary grants table
-            try
-            {
-                await grantsTable.DeleteEntityAsync(grantPk, GrantEntity.GrantRowKey, cancellationToken: ct);
-            }
-            catch (RequestFailedException ex) when (ex.Status == 404) { }
-
-            // Delete from expiry index
-            var expiryPartition = partitioner.PK(GrantByExpiryEntity.GetPartitionKey(entity.ExpiresAt, entity.HashedKey));
-            try
-            {
-                await grantsByExpiryTable.DeleteEntityAsync(expiryPartition, entity.HashedKey, cancellationToken: ct);
-            }
-            catch (RequestFailedException ex) when (ex.Status == 404) { }
-
-            // Delete from subject index — entity.PartitionKey already env-prefixed
-            try
-            {
-                await grantsBySubjectTable.DeleteEntityAsync(entity.PartitionKey, entity.RowKey, cancellationToken: ct);
-            }
-            catch (RequestFailedException ex) when (ex.Status == 404) { }
-        }
+        await DeleteIndexedGrantsAsync(entities, ct);
     }
 
     public async Task RemoveAllBySubjectAndClientAsync(string subjectId, string clientId, CancellationToken ct = default)
@@ -392,6 +355,43 @@ public sealed class TableGrantStore(
             entities.Add(entity);
         }
 
+        await DeleteIndexedGrantsAsync(entities, ct);
+    }
+
+    public async Task RemoveBySubjectAsync(
+        string subjectId,
+        IReadOnlyCollection<string> types,
+        string? clientId = null,
+        CancellationToken ct = default)
+    {
+        if (types.Count == 0) return;
+
+        var subjectPk = partitioner.PK(subjectId);
+        // Type is materialized on the index row (and leads its RowKey), so this needs no primary-table
+        // reads. The type filter is applied client-side rather than in the OData filter because the set
+        // is small and a multi-value `or` chain is both slower to plan and easy to get wrong.
+        var wanted = new HashSet<string>(types, StringComparer.Ordinal);
+        var entities = new List<GrantBySubjectEntity>();
+        var query = clientId is null
+            ? grantsBySubjectTable.QueryAsync<GrantBySubjectEntity>(
+                e => e.PartitionKey == subjectPk, cancellationToken: ct)
+            : grantsBySubjectTable.QueryAsync<GrantBySubjectEntity>(
+                e => e.PartitionKey == subjectPk && e.ClientId == clientId, cancellationToken: ct);
+
+        await foreach (var entity in query)
+        {
+            if (wanted.Contains(entity.Type))
+                entities.Add(entity);
+        }
+
+        await DeleteIndexedGrantsAsync(entities, ct);
+    }
+
+    /// <summary>
+    /// Deletes the primary row plus both index rows for every supplied subject-index entity.
+    /// </summary>
+    private async Task DeleteIndexedGrantsAsync(List<GrantBySubjectEntity> entities, CancellationToken ct)
+    {
         // Tombstone-first (F24e): every key is derivable from the materialized index rows, so record
         // the whole batch before deleting anything — a crash mid-way can only leave rows that are
         // tombstoned AND still live, which later writes out-timestamp (safe), never a lost delete.

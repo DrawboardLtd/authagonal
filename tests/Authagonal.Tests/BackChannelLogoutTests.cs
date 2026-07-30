@@ -317,15 +317,40 @@ public sealed class BackChannelLogoutTests : IAsyncLifetime
 /// Direct unit tests for InternalEndpointGuard: shared-secret comparison when configured,
 /// and the loopback/private-address fallback when no secret is set.
 /// </summary>
+/// <summary>
+/// <c>/_internal/backchannel-logout</c> revokes every grant for an arbitrary subject, so its guard is
+/// load-bearing. It used to fall back to "the source address looks private" whenever
+/// <c>Cluster:Secret</c> was unset, reading <c>Connection.RemoteIpAddress</c> — which
+/// <c>UseForwardedHeaders</c> has already OVERWRITTEN from the client-supplied <c>X-Forwarded-For</c>.
+/// With the trust set defaulting to empty (meaning every caller is a trusted proxy), any internet client
+/// could send <c>X-Forwarded-For: 10.0.0.1</c> and pass: remote unauthenticated mass session destruction.
+/// Four independent review findings landed here.
+///
+/// Two behaviour changes are pinned below. The guard now reads the RAW peer address captured before
+/// forwarded headers are applied, and a private-range peer is no longer sufficient on its own — in a
+/// shared cluster network that trusts every neighbouring workload, which is exactly what the forged
+/// header impersonated. Loopback remains allowed for single-node development.
+/// </summary>
 public sealed class InternalEndpointGuardTests
 {
     private const string Secret = "guard-secret-123";
 
-    private static DefaultHttpContext Context(string? remoteIp = null, string? headerValue = null)
+    private static DefaultHttpContext Context(
+        string? rawPeer = null,
+        string? effectivePeer = null,
+        string? forwardedFor = null,
+        string? headerValue = null,
+        bool stashRawPeer = true)
     {
         var ctx = new DefaultHttpContext();
-        if (remoteIp is not null)
-            ctx.Connection.RemoteIpAddress = IPAddress.Parse(remoteIp);
+        // effectivePeer models what UseForwardedHeaders leaves in RemoteIpAddress; rawPeer is the socket.
+        var effective = effectivePeer ?? rawPeer;
+        if (effective is not null)
+            ctx.Connection.RemoteIpAddress = IPAddress.Parse(effective);
+        if (stashRawPeer && rawPeer is not null)
+            ctx.Items[InternalEndpointGuard.RawPeerAddressItem] = IPAddress.Parse(rawPeer);
+        if (forwardedFor is not null)
+            ctx.Request.Headers["X-Forwarded-For"] = forwardedFor;
         if (headerValue is not null)
             ctx.Request.Headers[InternalEndpointGuard.SecretHeader] = headerValue;
         return ctx;
@@ -348,22 +373,37 @@ public sealed class InternalEndpointGuardTests
     {
         // Once a secret is configured, the IP fallback no longer applies — even loopback
         // callers must present the header.
-        Assert.False(InternalEndpointGuard.IsAuthorized(Context(remoteIp: "127.0.0.1"), Secret));
+        Assert.False(InternalEndpointGuard.IsAuthorized(Context(rawPeer: "127.0.0.1"), Secret));
     }
 
+    /// <summary>A correct secret is a credential and works from anywhere, including a public peer.</summary>
+    [Fact]
+    public void SecretConfigured_PublicPeerWithCorrectHeader_Authorized()
+        => Assert.True(InternalEndpointGuard.IsAuthorized(
+            Context(rawPeer: "203.0.113.7", headerValue: Secret), Secret));
+
     [Theory]
-    [InlineData("127.0.0.1")]      // IPv4 loopback
-    [InlineData("::1")]            // IPv6 loopback
-    [InlineData("10.1.2.3")]       // RFC1918 10/8
-    [InlineData("172.16.0.1")]     // RFC1918 172.16/12 lower bound
-    [InlineData("172.31.255.254")] // RFC1918 172.16/12 upper bound
-    [InlineData("192.168.1.1")]    // RFC1918 192.168/16
-    [InlineData("169.254.10.10")]  // IPv4 link-local
-    [InlineData("fd00::1")]        // IPv6 unique local fc00::/7
-    [InlineData("fe80::1")]        // IPv6 link-local
+    [InlineData("127.0.0.1")] // IPv4 loopback
+    [InlineData("::1")]       // IPv6 loopback
+    public void NoSecret_Loopback_Authorized(string ip)
+        => Assert.True(InternalEndpointGuard.IsAuthorized(Context(rawPeer: ip), secret: null));
+
+    /// <summary>
+    /// CHANGED BEHAVIOUR: a private-range peer no longer authorizes on its own. Previously every address
+    /// below was accepted, which is what made the forged-header bypass effective — the attacker only had
+    /// to name one of them.
+    /// </summary>
+    [Theory]
+    [InlineData("10.1.2.3")]        // RFC1918 10/8
+    [InlineData("172.16.0.1")]      // RFC1918 172.16/12 lower bound
+    [InlineData("172.31.255.254")]  // RFC1918 172.16/12 upper bound
+    [InlineData("192.168.1.1")]     // RFC1918 192.168/16
+    [InlineData("169.254.10.10")]   // IPv4 link-local (also the cloud metadata range)
+    [InlineData("fd00::1")]         // IPv6 unique local fc00::/7
+    [InlineData("fe80::1")]         // IPv6 link-local
     [InlineData("::ffff:10.0.0.1")] // IPv4-mapped IPv6, private
-    public void NoSecret_InternalAddress_Authorized(string ip)
-        => Assert.True(InternalEndpointGuard.IsAuthorized(Context(remoteIp: ip), secret: null));
+    public void NoSecret_PrivateAddress_Rejected(string ip)
+        => Assert.False(InternalEndpointGuard.IsAuthorized(Context(rawPeer: ip), secret: null));
 
     [Theory]
     [InlineData("8.8.8.8")]              // public IPv4
@@ -371,11 +411,44 @@ public sealed class InternalEndpointGuardTests
     [InlineData("2001:4860:4860::8888")] // public IPv6
     [InlineData("::ffff:8.8.8.8")]       // IPv4-mapped IPv6, public
     public void NoSecret_PublicAddress_Rejected(string ip)
-        => Assert.False(InternalEndpointGuard.IsAuthorized(Context(remoteIp: ip), secret: null));
+        => Assert.False(InternalEndpointGuard.IsAuthorized(Context(rawPeer: ip), secret: null));
 
     [Theory]
     [InlineData(null)]
     [InlineData("")]
     public void NoSecret_NullRemoteIp_Rejected(string? secret)
         => Assert.False(InternalEndpointGuard.IsAuthorized(Context(), secret));
+
+    /// <summary>
+    /// The original bypass, end to end: a public peer claims a private address, the forwarded middleware
+    /// rewrites RemoteIpAddress to it, and the guard used to trust the result.
+    /// </summary>
+    [Fact]
+    public void NoSecret_SpoofedForwardedFor_Rejected()
+        => Assert.False(InternalEndpointGuard.IsAuthorized(
+            Context(rawPeer: "203.0.113.7", effectivePeer: "10.0.0.1", forwardedFor: "10.0.0.1"),
+            secret: null));
+
+    /// <summary>Claiming loopback via a header from a non-loopback peer must not pass either.</summary>
+    [Fact]
+    public void NoSecret_SpoofedLoopbackHeader_Rejected()
+        => Assert.False(InternalEndpointGuard.IsAuthorized(
+            Context(rawPeer: "203.0.113.7", effectivePeer: "127.0.0.1", forwardedFor: "127.0.0.1"),
+            secret: null));
+
+    /// <summary>
+    /// If the capture middleware did not run and a forwarded header is present, the guard cannot
+    /// distinguish a genuine peer from a rewritten one, so it refuses rather than guessing.
+    /// </summary>
+    [Fact]
+    public void NoSecret_MissingRawPeerWithForwardedHeader_Rejected()
+        => Assert.False(InternalEndpointGuard.IsAuthorized(
+            Context(effectivePeer: "127.0.0.1", forwardedFor: "127.0.0.1", stashRawPeer: false),
+            secret: null));
+
+    /// <summary>Without any forwarded header the live connection address is still trustworthy.</summary>
+    [Fact]
+    public void NoSecret_MissingRawPeerNoForwardedHeader_FallsBackToConnection()
+        => Assert.True(InternalEndpointGuard.IsAuthorized(
+            Context(effectivePeer: "127.0.0.1", stashRawPeer: false), secret: null));
 }

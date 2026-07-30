@@ -97,8 +97,8 @@ public static class ClientRegistrationEndpoint
         knownScopes.UnionWith(builtInScopes);
 
         // The administrative scope is never grantable through open registration.
-        var adminScope = configuration["AdminApi:Scope"] ?? "authagonal-admin";
-        if (requestedScopes.Contains(adminScope, StringComparer.OrdinalIgnoreCase))
+        var adminScope = configuration["AdminApi:Scope"] ?? AdminScopeReservation.DefaultAdminScope;
+        if (AdminScopeReservation.Grants(requestedScopes, adminScope))
             return TypedResults.Json(
                 new ErrorInfoResponse { Error = "invalid_scope", ErrorDescription = "The administrative scope cannot be registered" },
                 AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 403);
@@ -126,6 +126,23 @@ public static class ClientRegistrationEndpoint
         if (offlineAccess && !grantTypes.Contains("refresh_token"))
             grantTypes = [.. grantTypes, "refresh_token"];
 
+        // Both logout URIs are fetched/navigated by the SERVER (back-channel is an outbound POST from the
+        // logout path, front-channel is rendered into an iframe), and anonymous DCR sets them. Unvalidated,
+        // that is unauthenticated SSRF with an attacker-chosen target — so they go through the same guard as
+        // every other outbound URL, at registration time rather than only at use time.
+        foreach (var logoutUri in new[] { request.BackchannelLogoutUri, request.FrontchannelLogoutUri })
+        {
+            if (string.IsNullOrWhiteSpace(logoutUri)) continue;
+            if (!Authagonal.Core.Services.OutboundUrl.IsSafe(logoutUri))
+                return TypedResults.Json(
+                    new ErrorInfoResponse
+                    {
+                        Error = "invalid_client_metadata",
+                        ErrorDescription = "Logout URIs must be external https endpoints.",
+                    },
+                    AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 400);
+        }
+
         var client = new OAuthClient
         {
             ClientId = clientId,
@@ -139,7 +156,13 @@ public static class ClientRegistrationEndpoint
             FrontChannelLogoutSessionRequired = request.FrontchannelLogoutSessionRequired ?? true,
             Audiences = request.Audiences ?? [],
             AllowedScopes = requestedScopes,
-            AllowedCorsOrigins = request.AllowedCorsOrigins ?? [],
+            // Restricted to the origins of the registrant's OWN already-validated https redirect URIs.
+            // An arbitrary list here landed in a server-wide credentialed CORS allowlist that (before it was
+            // path-scoped) applied to every endpoint including the cookie-authenticated account API, so an
+            // anonymous registrant could name any origin and read authenticated responses from it. Deriving
+            // the origins instead means a registrant can only ever reach origins it already had to prove a
+            // redirect URI for.
+            AllowedCorsOrigins = CorsOriginsFromRedirectUris(redirectUris),
             RequirePkce = true,
             AllowOfflineAccess = offlineAccess,
             RequireClientSecret = !isPublicClient,
@@ -169,6 +192,26 @@ public static class ClientRegistrationEndpoint
         };
 
         return TypedResults.Json(response, AuthagonalJsonContext.Default.ClientRegistrationResponse, statusCode: 201);
+    }
+
+    /// <summary>
+    /// The https origins implied by a client's validated redirect URIs. Loopback and custom-scheme URIs
+    /// (native apps) contribute nothing: a browser never sends those as an <c>Origin</c>.
+    /// </summary>
+    private static List<string> CorsOriginsFromRedirectUris(IEnumerable<string> redirectUris)
+    {
+        var origins = new List<string>();
+        foreach (var uri in redirectUris)
+        {
+            if (!Uri.TryCreate(uri, UriKind.Absolute, out var parsed)) continue;
+            if (parsed.Scheme != Uri.UriSchemeHttps) continue;
+            var origin = parsed.IsDefaultPort
+                ? $"{parsed.Scheme}://{parsed.Host}"
+                : $"{parsed.Scheme}://{parsed.Host}:{parsed.Port}";
+            if (!origins.Contains(origin, StringComparer.OrdinalIgnoreCase))
+                origins.Add(origin);
+        }
+        return origins;
     }
 
     private static string GenerateClientId()

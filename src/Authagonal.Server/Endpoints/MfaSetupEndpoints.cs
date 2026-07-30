@@ -15,6 +15,33 @@ public static class MfaSetupEndpoints
 {
     private const string SetupTokenHeader = "X-MFA-Setup-Token";
 
+    /// <summary>Name marking a TOTP row that has been created but not yet proved by the user.</summary>
+    internal const string PendingTotpName = "TOTP (pending)";
+
+    /// <summary>Name marking a WebAuthn row holding registration options, not yet a real credential.</summary>
+    internal const string PendingWebAuthnName = "WebAuthn (pending)";
+
+    /// <summary>
+    /// True when a credential is a real, proved factor rather than an in-progress enrolment row. Pending
+    /// rows carry a live TOTP seed or registration challenge and must never count as a second factor —
+    /// they are created before the user demonstrates anything, so an abandoned enrolment attempt would
+    /// otherwise leave a usable credential behind.
+    /// </summary>
+    internal static bool IsConfirmed(MfaCredential c)
+        => c.Name is not PendingTotpName and not PendingWebAuthnName;
+
+    /// <summary>
+    /// How long an unconfirmed enrolment row stays usable. <see cref="MfaCredential"/> carries no expiry
+    /// column — the provider reapers sweep challenges, not credentials — so the bound is applied here
+    /// against <see cref="MfaCredential.CreatedAt"/>. Generous next to the 15-minute setup token, since an
+    /// enrolment ceremony involves the user installing an authenticator app, but finite: without it an
+    /// abandoned attempt leaves a live seed or registration challenge on the account permanently.
+    /// </summary>
+    private static readonly TimeSpan PendingCredentialMaxAge = TimeSpan.FromMinutes(30);
+
+    private static bool IsPendingExpired(MfaCredential c)
+        => !IsConfirmed(c) && DateTimeOffset.UtcNow - c.CreatedAt > PendingCredentialMaxAge;
+
     public static IEndpointRouteBuilder MapMfaSetupEndpoints(this IEndpointRouteBuilder app)
     {
         // No .RequireAuthorization() — endpoints accept either cookie auth or setup token.
@@ -36,6 +63,15 @@ public static class MfaSetupEndpoints
     /// Resolves user identity from cookie auth or X-MFA-Setup-Token header.
     /// Returns (userId, setupChallenge) where setupChallenge is non-null when authenticated via token.
     /// </summary>
+    /// <remarks>
+    /// This is the only identity gate in front of the enrolment endpoints, so it is where the purpose of
+    /// a challenge is enforced. A challenge id is handed to a caller who has proved a password but holds
+    /// no session, and login mints one for an already-enrolled user too — so accepting any live challenge
+    /// here would let a password-only attacker drive factor enrolment against an enrolled victim
+    /// (mint recovery codes, enrol their own passkey, brute-force TOTP at <c>/totp/confirm</c>). Only
+    /// <see cref="MfaChallengePurpose.Enrol"/> is accepted, and a challenge that identifies nobody is
+    /// refused outright.
+    /// </remarks>
     private static async Task<(string? UserId, MfaChallenge? SetupChallenge)> ResolveUserIdAsync(
         HttpContext httpContext, IMfaStore mfaStore, CancellationToken ct)
     {
@@ -52,6 +88,16 @@ public static class MfaSetupEndpoints
 
         var challenge = await mfaStore.GetChallengeAsync(token, ct);
         if (challenge is null)
+            return (null, null);
+
+        // A verification challenge (the user already HAS a factor) or a passwordless-discovery challenge
+        // (which identifies nobody) confers no enrolment authority. Only an enrolment token does.
+        if (challenge.Purpose != MfaChallengePurpose.Enrol)
+            return (null, null);
+
+        // Defence in depth: a challenge with no subject cannot authenticate anybody. Callers guard on
+        // `userId is null`, which an empty string would slip past — so reject it here.
+        if (string.IsNullOrWhiteSpace(challenge.UserId))
             return (null, null);
 
         return (challenge.UserId, challenge);
@@ -76,7 +122,7 @@ public static class MfaSetupEndpoints
 
         // Exclude pending setup credentials from status
         var confirmed = credentials
-            .Where(c => c.Name is not "TOTP (pending)" and not "WebAuthn (pending)")
+            .Where(IsConfirmed)
             .ToList();
 
         var methods = confirmed.Select(c => new MfaMethodInfo
@@ -119,12 +165,12 @@ public static class MfaSetupEndpoints
 
         // Clean up any orphaned pending TOTP setup credentials
         var pendingTotp = credentials
-            .Where(c => c.Type == MfaCredentialType.Totp && c.Name == "TOTP (pending)")
+            .Where(c => c.Type == MfaCredentialType.Totp && c.Name == PendingTotpName)
             .ToList();
         foreach (var pending in pendingTotp)
             await mfaStore.DeleteCredentialAsync(userId, pending.Id, ct);
 
-        if (credentials.Any(c => c.Type == MfaCredentialType.Totp && c.Name != "TOTP (pending)"))
+        if (credentials.Any(c => c.Type == MfaCredentialType.Totp && IsConfirmed(c)))
             return JsonResults.Error("totp_already_enrolled", 409);
 
         // Generate secret
@@ -158,7 +204,7 @@ public static class MfaSetupEndpoints
             Id = setupToken,
             UserId = userId,
             Type = MfaCredentialType.Totp,
-            Name = "TOTP (pending)",
+            Name = PendingTotpName,
             SecretProtected = protectedSecret,
             CreatedAt = DateTimeOffset.UtcNow,
         };
@@ -174,6 +220,7 @@ public static class MfaSetupEndpoints
         IUserStore userStore,
         TotpService totpService,
         ISecretProvider secretProvider,
+        IRateLimiter rateLimiter,
         IEnumerable<IAuthHook> authHooks,
         CancellationToken ct)
     {
@@ -183,20 +230,55 @@ public static class MfaSetupEndpoints
         if (string.IsNullOrWhiteSpace(request.SetupToken) || string.IsNullOrWhiteSpace(request.Code))
             return JsonResults.Error("invalid_request");
 
-        // Find the pending credential
+        // Find the pending credential. It MUST still be pending: this endpoint is a TOTP acceptance path
+        // that issues a session, so allowing it against an already-confirmed credential would make it a
+        // second, unthrottled /verify.
         var cred = await mfaStore.GetCredentialAsync(userId, request.SetupToken, ct);
-        if (cred is null || cred.Type != MfaCredentialType.Totp)
+        if (cred is null || cred.Type != MfaCredentialType.Totp || cred.Name != PendingTotpName)
             return JsonResults.Error("invalid_setup_token");
+
+        // A stale pending seed is not enrollable — drop it and make the user restart, so an abandoned
+        // attempt cannot be confirmed weeks later by whoever still holds the setup token.
+        if (IsPendingExpired(cred))
+        {
+            await mfaStore.DeleteCredentialAsync(userId, cred.Id, ct);
+            return JsonResults.Error("setup_expired");
+        }
+
+        // Throttle. This endpoint accepts a 6-digit code and issues a cookie, so without a bound it is a
+        // brute-force oracle against a 10^6 space. Keyed on the subject, matching the budget /verify
+        // applies per challenge.
+        if (await rateLimiter.IsRateLimitedAsync($"mfa-totp-confirm|{userId}", 10, TimeSpan.FromMinutes(1), ct))
+            return JsonResults.Error("too_many_attempts", 429);
 
         // Verify code against the stored secret
         var secretBase64 = await secretProvider.ResolveAsync(cred.SecretProtected!, ct);
         var secret = Convert.FromBase64String(secretBase64);
 
-        if (!totpService.VerifyCode(secret, request.Code))
+        // Take the matched step (not the bool wrapper) so the code can be burned below — otherwise the
+        // enrolment code stays replayable at /verify for the rest of its window.
+        var matchedStep = totpService.GetMatchingStep(secret, request.Code, cred.LastTotpStep ?? long.MinValue);
+        if (matchedStep is null)
+        {
+            // Count the failure against the challenge budget, exactly as /verify does, so a wrong code here
+            // is not a free guess.
+            if (setupChallenge is not null)
+            {
+                setupChallenge.Attempts++;
+                if (setupChallenge.Attempts >= 5)
+                {
+                    await mfaStore.ConsumeChallengeAsync(setupChallenge.ChallengeId, ct);
+                    return JsonResults.Error("too_many_attempts", 401);
+                }
+                await mfaStore.StoreChallengeAsync(setupChallenge, ct);
+            }
             return JsonResults.Error("invalid_code");
+        }
 
-        // Confirm: update the credential name to indicate it's active
+        // Confirm: name it active AND burn the accepted step so this code cannot be replayed at /verify.
         cred.Name = "Authenticator app";
+        cred.LastTotpStep = matchedStep;
+        cred.LastUsedAt = DateTimeOffset.UtcNow;
         await mfaStore.UpdateCredentialAsync(cred, ct);
 
         // Set MfaEnabled on user
@@ -248,7 +330,7 @@ public static class MfaSetupEndpoints
 
         // Clean up any orphaned pending WebAuthn setup credentials (from cancelled attempts)
         var pendingWebAuthn = existingCredentials
-            .Where(c => c.Type == MfaCredentialType.WebAuthn && c.Name == "WebAuthn (pending)")
+            .Where(c => c.Type == MfaCredentialType.WebAuthn && c.Name == PendingWebAuthnName)
             .ToList();
         foreach (var pending in pendingWebAuthn)
             await mfaStore.DeleteCredentialAsync(userId, pending.Id, ct);
@@ -262,7 +344,7 @@ public static class MfaSetupEndpoints
         // every account keeps a device-independent factor and a "Required" MFA policy can't be satisfied
         // by a passkey alone (which would risk a lockout on a device the passkey isn't on). Enforced here
         // at the boundary, not just hidden in the client.
-        var hasConfirmedTotp = existingCredentials.Any(c => c.Type == MfaCredentialType.Totp && c.Name != "TOTP (pending)");
+        var hasConfirmedTotp = existingCredentials.Any(c => c.Type == MfaCredentialType.Totp && IsConfirmed(c));
         if (!hasConfirmedTotp)
             return Results.Json(new ErrorInfoResponse { Error = "totp_required_first" }, AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 400);
 
@@ -274,7 +356,7 @@ public static class MfaSetupEndpoints
             Id = setupToken,
             UserId = userId,
             Type = MfaCredentialType.WebAuthn,
-            Name = "WebAuthn (pending)",
+            Name = PendingWebAuthnName,
             PublicKeyJson = options.ToJson(),
             CreatedAt = DateTimeOffset.UtcNow,
         };
@@ -306,10 +388,17 @@ public static class MfaSetupEndpoints
         if (string.IsNullOrWhiteSpace(request.SetupToken) || string.IsNullOrWhiteSpace(request.AttestationResponse))
             return JsonResults.Error("invalid_request");
 
-        // Find the pending setup credential
+        // Find the pending setup credential. Must still be pending and still fresh — see TotpConfirmAsync.
         var setupCred = await mfaStore.GetCredentialAsync(userId, request.SetupToken, ct);
-        if (setupCred is null || setupCred.Type != MfaCredentialType.WebAuthn || setupCred.PublicKeyJson is null)
+        if (setupCred is null || setupCred.Type != MfaCredentialType.WebAuthn || setupCred.PublicKeyJson is null
+            || setupCred.Name != PendingWebAuthnName)
             return JsonResults.Error("invalid_setup_token");
+
+        if (IsPendingExpired(setupCred))
+        {
+            await mfaStore.DeleteCredentialAsync(userId, setupCred.Id, ct);
+            return JsonResults.Error("setup_expired");
+        }
 
         var originalOptions = CredentialCreateOptions.FromJson(setupCred.PublicKeyJson);
         AuthenticatorAttestationRawResponse attestationResponse;
@@ -387,12 +476,20 @@ public static class MfaSetupEndpoints
         IEnumerable<IAuthHook> authHooks,
         CancellationToken ct)
     {
-        var (userId, _) = await ResolveUserIdAsync(httpContext, mfaStore, ct);
+        var (userId, setupChallenge) = await ResolveUserIdAsync(httpContext, mfaStore, ct);
         if (userId is null) return Results.Unauthorized();
 
-        // Must have TOTP or WebAuthn enrolled first
+        // Regenerating look-up secrets is factor MANAGEMENT, not first-factor enrolment: it hands out ten
+        // live bypass codes and destroys the user's existing ones. That needs a real session, same as
+        // DeleteCredentialAsync below. The enrolment flow still reaches this — /totp/confirm and
+        // /webauthn/confirm sign the cookie once the factor is proved, so the client calls this after.
+        if (setupChallenge is not null)
+            return JsonResults.Error("session_required", 403);
+
+        // Must have a CONFIRMED TOTP or WebAuthn factor first. A pending (unconfirmed) enrolment row is
+        // not a factor — treating it as one would let an abandoned setup attempt mint recovery codes.
         var existing = await mfaStore.GetCredentialsAsync(userId, ct);
-        if (!existing.Any(c => c.Type is MfaCredentialType.Totp or MfaCredentialType.WebAuthn))
+        if (!existing.Any(c => (c.Type is MfaCredentialType.Totp or MfaCredentialType.WebAuthn) && IsConfirmed(c)))
             return JsonResults.Error("primary_method_required");
 
         // Delete existing recovery codes
@@ -406,7 +503,12 @@ public static class MfaSetupEndpoints
         var (plaintextCodes, credentials) = recoveryCodeService.Generate(userId);
         foreach (var cred in credentials)
         {
-            cred.SecretProtected = await secretProvider.ProtectAsync($"mfa-recovery-{userId}", cred.SecretProtected!, ct);
+            // Name must be unique PER CODE: ISecretProvider treats `name` as the storage key, so ten codes
+            // sharing one name meant each ProtectAsync overwrote the last. Nine of the ten codes then
+            // resolved to the tenth's hash — nine were dead and one was accepted ten times, quietly turning
+            // a ten-use recovery set into a single code. cred.Id is a fresh GUID per code.
+            cred.SecretProtected = await secretProvider.ProtectAsync(
+                $"mfa-recovery-{userId}-{cred.Id}", cred.SecretProtected!, ct);
             await mfaStore.CreateCredentialAsync(cred, ct);
         }
 

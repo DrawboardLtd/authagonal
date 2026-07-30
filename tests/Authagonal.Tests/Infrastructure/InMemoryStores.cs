@@ -263,6 +263,23 @@ public sealed class InMemoryGrantStore : IGrantStore
         return Task.CompletedTask;
     }
 
+    public Task RemoveBySubjectAsync(
+        string subjectId,
+        IReadOnlyCollection<string> types,
+        string? clientId = null,
+        CancellationToken ct = default)
+    {
+        var wanted = new HashSet<string>(types, StringComparer.Ordinal);
+        var keys = _grants
+            .Where(kvp => kvp.Value.SubjectId == subjectId
+                          && wanted.Contains(kvp.Value.Type)
+                          && (clientId is null || kvp.Value.ClientId == clientId))
+            .Select(kvp => kvp.Key);
+        foreach (var key in keys)
+            _grants.TryRemove(key, out _);
+        return Task.CompletedTask;
+    }
+
     public Task<IReadOnlyList<PersistedGrant>> GetBySubjectAsync(string subjectId, CancellationToken ct = default)
     {
         var grants = _grants.Values.Where(g => g.SubjectId == subjectId).ToList();

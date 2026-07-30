@@ -373,4 +373,126 @@ public sealed class ScimUserEndpointTests : IAsyncDisposable
     }
 
     public ValueTask DisposeAsync() => _factory.DisposeAsync();
+
+    // -----------------------------------------------------------------------
+    // Deprovisioning must stick (#69)
+    // -----------------------------------------------------------------------
+
+    /// <summary>
+    /// <c>ScimCreateUserRequest.Active</c> was a non-nullable bool defaulting to TRUE, and PUT assigned it
+    /// straight onto <c>IsActive</c> — so a replace that simply did not mention <c>active</c> reactivated a
+    /// deprovisioned user. An offboarded account came back on the next directory sync, silently.
+    /// </summary>
+    [Fact]
+    public async Task ReplaceUser_OmittingActive_DoesNotReactivateADeprovisionedUser()
+    {
+        await _factory.SeedTestDataAsync();
+        var (_, rawToken) = await _factory.SeedScimClientAsync();
+        var client = _factory.CreateClient();
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", rawToken);
+
+        var created = await client.PostAsJsonAsync("/scim/v2/Users", new
+        {
+            schemas = new[] { "urn:ietf:params:scim:schemas:core:2.0:User" },
+            userName = "offboard@example.com",
+            active = true,
+        });
+        created.EnsureSuccessStatusCode();
+        var id = (await created.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetString()!;
+
+        // Deprovision.
+        var deactivate = await client.PutAsJsonAsync($"/scim/v2/Users/{id}", new
+        {
+            schemas = new[] { "urn:ietf:params:scim:schemas:core:2.0:User" },
+            userName = "offboard@example.com",
+            active = false,
+        });
+        deactivate.EnsureSuccessStatusCode();
+        Assert.False((await _factory.UserStore.GetAsync(id))!.IsActive);
+
+        // A later sync that does NOT mention `active` must leave them deprovisioned.
+        var resync = await client.PutAsJsonAsync($"/scim/v2/Users/{id}", new
+        {
+            schemas = new[] { "urn:ietf:params:scim:schemas:core:2.0:User" },
+            userName = "offboard@example.com",
+            name = new { givenName = "Off", familyName = "Board" },
+        });
+        resync.EnsureSuccessStatusCode();
+
+        Assert.False((await _factory.UserStore.GetAsync(id))!.IsActive,
+            "a PUT omitting `active` reactivated a deprovisioned user");
+    }
+
+    /// <summary>An explicit active=true must still reactivate — the fix preserves, it does not freeze.</summary>
+    [Fact]
+    public async Task ReplaceUser_ExplicitActiveTrue_StillReactivates()
+    {
+        await _factory.SeedTestDataAsync();
+        var (_, rawToken) = await _factory.SeedScimClientAsync();
+        var client = _factory.CreateClient();
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", rawToken);
+
+        var created = await client.PostAsJsonAsync("/scim/v2/Users", new
+        {
+            schemas = new[] { "urn:ietf:params:scim:schemas:core:2.0:User" },
+            userName = "rehire@example.com",
+            active = false,
+        });
+        created.EnsureSuccessStatusCode();
+        var id = (await created.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetString()!;
+
+        var reactivate = await client.PutAsJsonAsync($"/scim/v2/Users/{id}", new
+        {
+            schemas = new[] { "urn:ietf:params:scim:schemas:core:2.0:User" },
+            userName = "rehire@example.com",
+            active = true,
+        });
+        reactivate.EnsureSuccessStatusCode();
+
+        Assert.True((await _factory.UserStore.GetAsync(id))!.IsActive);
+    }
+
+    /// <summary>
+    /// Deactivating via PUT must revoke grants, not merely set a flag. PATCH and DELETE already did; PUT
+    /// left every refresh token and stored consent live, so the offboarded user kept working.
+    /// </summary>
+    [Fact]
+    public async Task ReplaceUser_Deactivating_RevokesGrants()
+    {
+        await _factory.SeedTestDataAsync();
+        var (_, rawToken) = await _factory.SeedScimClientAsync();
+        var client = _factory.CreateClient();
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", rawToken);
+
+        var created = await client.PostAsJsonAsync("/scim/v2/Users", new
+        {
+            schemas = new[] { "urn:ietf:params:scim:schemas:core:2.0:User" },
+            userName = "revoke-me@example.com",
+            active = true,
+        });
+        created.EnsureSuccessStatusCode();
+        var id = (await created.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetString()!;
+
+        await _factory.GrantStore.StoreAsync(new Authagonal.Core.Models.PersistedGrant
+        {
+            Key = $"rt:{Guid.NewGuid():N}",
+            Type = "refresh_token",
+            SubjectId = id,
+            ClientId = AuthagonalTestFactory.TestClientId,
+            Data = "{}",
+            CreatedAt = DateTimeOffset.UtcNow,
+            ExpiresAt = DateTimeOffset.UtcNow.AddDays(30),
+        });
+        Assert.NotEmpty(await _factory.GrantStore.GetBySubjectAsync(id));
+
+        var deactivate = await client.PutAsJsonAsync($"/scim/v2/Users/{id}", new
+        {
+            schemas = new[] { "urn:ietf:params:scim:schemas:core:2.0:User" },
+            userName = "revoke-me@example.com",
+            active = false,
+        });
+        deactivate.EnsureSuccessStatusCode();
+
+        Assert.Empty(await _factory.GrantStore.GetBySubjectAsync(id));
+    }
 }

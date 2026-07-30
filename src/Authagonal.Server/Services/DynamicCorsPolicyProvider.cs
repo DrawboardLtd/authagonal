@@ -17,9 +17,32 @@ public sealed class DynamicCorsPolicyProvider(
     // serve one tenant's allowed origins to another, so the cache is keyed by tenant.
     private readonly ConcurrentDictionary<string, (string[] Origins, DateTimeOffset Expiry)> _cache = new();
 
+    /// <summary>
+    /// Path prefixes where a CLIENT-registered origin may be honoured: the OAuth/OIDC protocol surface a
+    /// browser-based relying party legitimately calls cross-origin.
+    /// </summary>
+    /// <remarks>
+    /// A whitelist, deliberately. This provider ignores <c>policyName</c> and <c>app.UseCors()</c> is called
+    /// with none, so whatever it returns applies to EVERY endpoint — previously including the
+    /// cookie-authenticated interactive-auth API. Since the policy also sets <c>AllowCredentials</c>, any
+    /// origin a client registered could read authenticated responses from <c>/api/auth/*</c>, which covers
+    /// the account and consent APIs and <c>POST /api/auth/mfa/recovery/generate</c> — an endpoint that
+    /// returns plaintext recovery codes. Dynamic client registration let an anonymous registrant add an
+    /// origin to that list, so the whole chain was reachable without credentials.
+    /// </remarks>
+    private static readonly string[] ClientOriginPathPrefixes =
+    [
+        "/connect/",        // token, userinfo, revocation, introspection, endsession
+        "/.well-known/",    // discovery, jwks
+    ];
+
     public async Task<CorsPolicy?> GetPolicyAsync(HttpContext context, string? policyName)
     {
-        var origins = await GetAllowedOriginsAsync(context);
+        var path = context.Request.Path.Value ?? "";
+        var clientOriginsAllowed = ClientOriginPathPrefixes.Any(
+            p => path.StartsWith(p, StringComparison.OrdinalIgnoreCase));
+
+        var origins = await GetAllowedOriginsAsync(context, includeClientOrigins: clientOriginsAllowed);
 
         if (origins.Length == 0)
             return null;
@@ -43,8 +66,20 @@ public sealed class DynamicCorsPolicyProvider(
         return policyBuilder.Build();
     }
 
-    private async Task<string[]> GetAllowedOriginsAsync(HttpContext context)
+    private async Task<string[]> GetAllowedOriginsAsync(HttpContext context, bool includeClientOrigins)
     {
+        var staticOnly = configuration.GetSection("AllowedCorsOrigins").Get<string[]>() ?? [];
+
+        // Outside the protocol surface, only operator-controlled configuration counts. Resolved without
+        // touching the client store or the cache, so a registrant cannot influence this at all.
+        if (!includeClientOrigins)
+        {
+            return staticOnly
+                .Where(o => !string.IsNullOrWhiteSpace(o))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+        }
+
         var tenantId = context.RequestServices.GetService<ITenantContext>()?.TenantId ?? "default";
 
         if (_cache.TryGetValue(tenantId, out var entry) && DateTimeOffset.UtcNow < entry.Expiry)
@@ -57,7 +92,7 @@ public sealed class DynamicCorsPolicyProvider(
             if (_cache.TryGetValue(tenantId, out entry) && DateTimeOffset.UtcNow < entry.Expiry)
                 return entry.Origins;
 
-            var staticOrigins = configuration.GetSection("AllowedCorsOrigins").Get<string[]>() ?? [];
+            var staticOrigins = staticOnly;
 
             var clientOrigins = new List<string>();
             try

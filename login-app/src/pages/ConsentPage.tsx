@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
+import { isSameOriginPath, resolveRedirect } from '../lib/returnUrl';
 import { useTranslation } from 'react-i18next';
 import { useSearchParams } from 'react-router';
 import { CardTitle, CardFooter } from '../components/ui/card';
@@ -211,7 +212,20 @@ export default function ConsentPage() {
       });
       const data = await res.json();
       if (data.redirect) {
-        window.location.href = data.redirect;
+        // Validate before navigating, like every sibling page does. This assigned data.redirect
+        // straight to window.location.href, and the server echoed the caller-supplied returnUrl into
+        // it — so a crafted /login/consent?...&returnUrl=https://evil.example sent the user off-site
+        // from the IdP's own origin on Allow, and a `javascript:` URI reached the same sink (contained
+        // only by the CSP). isSameOriginPath runs the real URL parser, so it also rejects the ASCII-tab
+        // trick that a string-prefix check misses.
+        //
+        // The deny branch legitimately returns an ABSOLUTE redirect_uri (now checked server-side
+        // against the client's registered URIs), so allow that through resolveRedirect's registered-app
+        // allow-list rather than forcing same-origin.
+        const target = isSameOriginPath(data.redirect)
+          ? data.redirect
+          : await resolveRedirect(data.redirect, () => '/');
+        window.location.href = target;
       }
     } catch {
       setError(t('consent.submitError'));

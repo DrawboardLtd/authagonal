@@ -1,3 +1,5 @@
+using Microsoft.AspNetCore.Http;
+using System.Net.Http;
 using Authagonal.Core.Clustering;
 using Authagonal.Core.Models;
 using Authagonal.Core.Services;
@@ -187,7 +189,14 @@ public static class AuthagonalExtensions
         // ---------------------------------------------------------------------------
         services.AddSingleton<PasswordHasher>();
         services.AddSingleton<PasswordValidator>();
-        services.AddHttpClient("Provisioning");
+        services.AddHttpClient("Provisioning")
+            // No automatic redirect following, and a bounded timeout. The SSRF guard only ever inspected the
+            // URL the caller supplied, so an automatic 302 reached a host it never saw — see
+            // SafeOutboundHttp, which resolves hops manually and re-validates each one. The timeout matches
+            // every other outbound client in the codebase; these two were left at the 100-second default,
+            // which made a slow remote host a request-slot amplifier on anonymous endpoints.
+            .ConfigureHttpClient(c => c.Timeout = TimeSpan.FromSeconds(10))
+            .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AllowAutoRedirect = false });
 
         // Protocol — token service, key manager (when not pre-registered), auth-code
         // service. Server maps AuthOptions into AuthagonalProtocolOptions so there's one
@@ -262,14 +271,28 @@ public static class AuthagonalExtensions
         // ---------------------------------------------------------------------------
         // SAML services
         // ---------------------------------------------------------------------------
-        services.AddHttpClient("SamlMetadata");
+        services.AddHttpClient("SamlMetadata")
+            // No automatic redirect following, and a bounded timeout. The SSRF guard only ever inspected the
+            // URL the caller supplied, so an automatic 302 reached a host it never saw — see
+            // SafeOutboundHttp, which resolves hops manually and re-validates each one. The timeout matches
+            // every other outbound client in the codebase; these two were left at the 100-second default,
+            // which made a slow remote host a request-slot amplifier on anonymous endpoints.
+            .ConfigureHttpClient(c => c.Timeout = TimeSpan.FromSeconds(10))
+            .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AllowAutoRedirect = false });
         services.AddMemoryCache();
         services.AddSingleton<SamlMetadataParser>();
         services.AddSingleton<SamlResponseParser>();
         // ---------------------------------------------------------------------------
         // OIDC services
         // ---------------------------------------------------------------------------
-        services.AddHttpClient("OidcDiscovery");
+        services.AddHttpClient("OidcDiscovery")
+            // No automatic redirect following, and a bounded timeout. The SSRF guard only ever inspected the
+            // URL the caller supplied, so an automatic 302 reached a host it never saw — see
+            // SafeOutboundHttp, which resolves hops manually and re-validates each one. The timeout matches
+            // every other outbound client in the codebase; these two were left at the 100-second default,
+            // which made a slow remote host a request-slot amplifier on anonymous endpoints.
+            .ConfigureHttpClient(c => c.Timeout = TimeSpan.FromSeconds(10))
+            .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AllowAutoRedirect = false });
         services.AddSingleton<OidcDiscoveryClient>();
 
         // ---------------------------------------------------------------------------
@@ -443,7 +466,12 @@ public static class AuthagonalExtensions
         services.AddAuthagonalClustering(configuration, configureClustering);
 
         // Rate limiting is in-process per node; the authoritative global limit is enforced at the edge.
-        services.TryAddSingleton<IRateLimiter, InProcessRateLimiter>();
+        // The concrete limiter, plus a decorator that scopes every key to the current tenant. Without the
+        // decorator all tenants share one budget per logical key, so one tenant can exhaust another's.
+        services.TryAddSingleton<InProcessRateLimiter>();
+        services.TryAddSingleton<IRateLimiter>(sp => new TenantScopedRateLimiter(
+            sp.GetRequiredService<InProcessRateLimiter>(),
+            sp.GetRequiredService<IHttpContextAccessor>()));
 
         return services;
     }
@@ -453,6 +481,24 @@ public static class AuthagonalExtensions
     /// CORS, rate limiting, authentication, authorization, and static file serving.
     /// Call this before <see cref="MapAuthagonalEndpoints"/>.
     /// </summary>
+    /// <summary>
+    /// Fallback trusted-proxy ranges used when <c>ForwardedHeaders:KnownProxies</c> and
+    /// <c>:KnownNetworks</c> are both unset. Loopback plus the RFC1918 / link-local / ULA ranges an
+    /// in-cluster ingress occupies — enough that a public client cannot forge X-Forwarded-*, while still
+    /// honouring headers from a real sidecar or ingress. Operators should pin their actual CIDR.
+    /// </summary>
+    private static readonly string[] DefaultTrustedProxyNetworks =
+    [
+        "127.0.0.0/8",     // loopback
+        "::1/128",         // loopback (v6)
+        "10.0.0.0/8",      // RFC1918
+        "172.16.0.0/12",   // RFC1918
+        "192.168.0.0/16",  // RFC1918
+        "169.254.0.0/16",  // link-local
+        "fc00::/7",        // unique local (v6)
+        "fe80::/10",       // link-local (v6)
+    ];
+
     public static WebApplication UseAuthagonal(this WebApplication app)
     {
         // The most common integrator trap: no email sender + the confirmed-email login gate
@@ -487,29 +533,69 @@ public static class AuthagonalExtensions
             ForwardLimit = app.Configuration.GetValue("ForwardedHeaders:ForwardLimit", 1),
         };
         // Start from an empty trust set (the framework default of loopback-only would ignore XFF
-        // entirely behind a non-loopback ingress).
+        // entirely behind a non-loopback ingress) and then populate it — see the fallback below, which
+        // matters because an empty set means "every caller is a trusted proxy".
         fhOptions.KnownProxies.Clear();
 #if NET10_0_OR_GREATER
         fhOptions.KnownIPNetworks.Clear();
 #else
         fhOptions.KnownNetworks.Clear();
 #endif
+        var configuredProxies = 0;
         foreach (var proxy in app.Configuration.GetSection("ForwardedHeaders:KnownProxies").Get<string[]>() ?? [])
         {
             if (System.Net.IPAddress.TryParse(proxy, out var ip))
+            {
                 fhOptions.KnownProxies.Add(ip);
+                configuredProxies++;
+            }
         }
         foreach (var network in app.Configuration.GetSection("ForwardedHeaders:KnownNetworks").Get<string[]>() ?? [])
         {
             var parts = network.Split('/');
             if (parts.Length == 2 && System.Net.IPAddress.TryParse(parts[0], out var prefix) &&
                 int.TryParse(parts[1], out var prefixLength))
+            {
 #if NET10_0_OR_GREATER
                 fhOptions.KnownIPNetworks.Add(new System.Net.IPNetwork(prefix, prefixLength));
 #else
                 fhOptions.KnownNetworks.Add(new Microsoft.AspNetCore.HttpOverrides.IPNetwork(prefix, prefixLength));
 #endif
+                configuredProxies++;
+            }
         }
+
+        // Nothing configured. An EMPTY trust set does not mean "trust nobody" — it means the middleware
+        // accepts X-Forwarded-* from ANY caller, so a direct internet client could set its own client IP
+        // and scheme. That poisons every IP-keyed decision (rate limits, the /_internal guard) and every
+        // generated absolute URL (password-reset links, redirects). Default to the private ranges a real
+        // ingress lives in, so a public peer cannot forge, and tell the operator to pin it properly.
+        if (configuredProxies == 0)
+        {
+            foreach (var cidr in DefaultTrustedProxyNetworks)
+            {
+                var parts = cidr.Split('/');
+                var prefix = System.Net.IPAddress.Parse(parts[0]);
+                var length = int.Parse(parts[1]);
+#if NET10_0_OR_GREATER
+                fhOptions.KnownIPNetworks.Add(new System.Net.IPNetwork(prefix, length));
+#else
+                fhOptions.KnownNetworks.Add(new Microsoft.AspNetCore.HttpOverrides.IPNetwork(prefix, length));
+#endif
+            }
+
+            app.Services.GetRequiredService<ILoggerFactory>()
+                .CreateLogger("Authagonal.ForwardedHeaders")
+                .LogWarning(
+                    "ForwardedHeaders:KnownProxies/KnownNetworks is not configured. Defaulting to the loopback " +
+                    "and private ranges ({Networks}). Set these to your ingress/pod CIDR so only that proxy may " +
+                    "set the client IP and scheme.",
+                    string.Join(", ", DefaultTrustedProxyNetworks));
+        }
+
+        // Record the untampered peer address BEFORE forwarded headers can overwrite it, so an
+        // authorization decision can be made on the real peer rather than a client-supplied header.
+        app.UseRawPeerAddressCapture();
         app.UseForwardedHeaders(fhOptions);
 
         app.UseExceptionHandlingMiddleware();

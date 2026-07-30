@@ -11,6 +11,21 @@ public sealed class AuthOptions
     public int LockoutDurationMinutes { get; set; } = 10;
 
     // --- Registration rate limiting ---
+    /// <summary>
+    /// Password attempts allowed per source address per <see cref="LoginWindowMinutes"/>.
+    /// </summary>
+    /// <remarks>
+    /// Per-account lockout does not bound SPRAYING: one attempt each against ten thousand accounts never
+    /// trips any account's counter. And because an unknown email is verified against a dummy hash to keep
+    /// the response timing uniform (which is the right call — it prevents enumeration), every unauthenticated
+    /// request pays a full PBKDF2, so the endpoint is a CPU amplifier as well. This is the bound on both.
+    /// Generous enough for a household behind one NAT address.
+    /// </remarks>
+    public int MaxLoginAttemptsPerIp { get; set; } = 30;
+
+    /// <summary>Window for <see cref="MaxLoginAttemptsPerIp"/>.</summary>
+    public int LoginWindowMinutes { get; set; } = 5;
+
     public int MaxRegistrationsPerIp { get; set; } = 5;
     public int RegistrationWindowMinutes { get; set; } = 60;
 

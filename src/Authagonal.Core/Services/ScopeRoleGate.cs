@@ -47,11 +47,26 @@ public sealed class ScopeRoleGate(IScopeStore scopeStore) : IScopeRoleGate
         // resolve them.
         var roles = new HashSet<string>(userRoles ?? [], StringComparer.Ordinal);
 
+        // Resolve against the full registered set, indexed case-INsensitively. A point-read on the exact
+        // name would return null for a case variant (`Admin` vs a registered `admin`), and "unregistered"
+        // means "leave alone" below — so a caller could skip the gate on a gated scope just by changing its
+        // case, while downstream consumers (notably the IdentityAdmin policy) match case-insensitively and
+        // honoured it. Requests are rejected earlier for a case variant, but this gate must not depend on
+        // that: it is the "may this person have it" half and has to fail closed on its own.
+        var all = await scopeStore.ListAsync(ct);
+        var byName = new Dictionary<string, Models.Scope>(StringComparer.OrdinalIgnoreCase);
+        foreach (var s in all)
+            byName[s.Name] = s;
+
         var kept = new List<string>(requested.Count);
         foreach (var name in requested)
         {
-            var scope = await scopeStore.GetAsync(name, ct);
-            if (scope is null || scope.AllowedRoles.Count == 0 || scope.AllowedRoles.Any(roles.Contains))
+            // Genuinely unregistered scopes are still left alone — what a client may ask for is the client
+            // store's business, and dropping unknown names here would mask configuration mistakes as
+            // permission problems.
+            if (!byName.TryGetValue(name, out var scope)
+                || scope.AllowedRoles.Count == 0
+                || scope.AllowedRoles.Any(roles.Contains))
                 kept.Add(name);
         }
 

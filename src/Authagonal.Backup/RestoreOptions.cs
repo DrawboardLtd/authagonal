@@ -18,9 +18,32 @@ public sealed class RestoreOptions
     public RestoreMode Mode { get; set; } = RestoreMode.Upsert;
 
     /// <summary>
-    /// If true, parse backup files but don't write anything.
+    /// If true, parse backup files but don't write anything — and, critically, don't DELETE anything
+    /// either. <see cref="RestoreMode.Clean"/> honours this too; a dry run that emptied the target tables
+    /// would be the most destructive operation the tool offers.
     /// </summary>
     public bool DryRun { get; set; }
+
+    /// <summary>
+    /// PartitionKey prefix that scopes a <see cref="RestoreMode.Clean"/> wipe, matching
+    /// <c>EnvPartitioner</c>'s <c>{env}|</c> scheme (e.g. <c>"sandbox-3|"</c>). When set, Clean deletes
+    /// only rows in that env; when null, Clean empties the whole physical table.
+    ///
+    /// Sandbox envs share one set of tables, so an unscoped Clean restore of one env's backup destroys
+    /// every sibling env in the same table. Leave null only when the table holds a single env (the live
+    /// tables), where a whole-table wipe is what Clean is expected to mean.
+    /// </summary>
+    public string? CleanEnvPrefix { get; set; }
+
+    /// <summary>
+    /// Permit <see cref="RestoreMode.Clean"/> against a backup whose manifest records
+    /// <c>Mode == "incremental"</c>. Refused by default: an incremental contains only the rows that
+    /// changed since its watermark, so emptying the table first leaves it holding just that delta — every
+    /// unchanged row is destroyed. The correct sequence is a Clean restore of the parent full followed by
+    /// Upsert restores of the incrementals. Set this only when you genuinely intend the delta to be the
+    /// entire resulting dataset.
+    /// </summary>
+    public bool AllowCleanFromIncremental { get; set; }
 
     /// <summary>
     /// Verify each data file's SHA-256 against the manifest's recorded hash before applying any of

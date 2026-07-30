@@ -512,27 +512,60 @@ public sealed class TableUserStore(
     /// encrypted PII columns. The entity is read raw and written back with Replace, so the ciphertext
     /// fields round-trip verbatim — zero Vault round-trips, versus the ~14 (decrypt 7 + re-encrypt 7) a
     /// full <see cref="UpdateAsync"/> would spend just to write a timestamp on every login. Email/name are
-    /// unchanged, so the blind indexes need no update either. Last-writer-wins (no ETag) is fine for
-    /// login-state columns.
+    /// unchanged, so the blind indexes need no update either.
     /// </summary>
+    /// <remarks>
+    /// The write is ETag-conditional with retry, mirroring <see cref="RecordFailedLoginAsync"/>. It used to
+    /// be an unconditional full-entity Replace, and "last-writer-wins is fine for login-state columns" was
+    /// wrong: Replace writes back EVERY column that was read, so any administrative write landing between
+    /// the read above and the write below was silently reverted — including <c>IsActive</c> (undoing a SCIM
+    /// deprovision), <c>MfaEnabled</c> (undoing an enrolment, which login gates on), <c>RolesJson</c>
+    /// (undoing a role revocation), <c>PasswordHash</c> and <c>SecurityStamp</c>. An attacker who keeps
+    /// authenticating controls one side of that race, so it was not a narrow window.
+    /// </remarks>
     public async Task RecordSuccessfulLoginAsync(string userId, string? rehashedPassword = null, CancellationToken ct = default)
     {
-        try
+        var pk = _partitioner.PK(userId);
+        for (var attempt = 0; attempt < 5; attempt++)
         {
-            var e = (await usersTable.GetEntityAsync<UserEntity>(
-                _partitioner.PK(userId), UserEntity.ProfileRowKey, cancellationToken: ct)).Value;
+            UserEntity e;
+            try
+            {
+                e = (await usersTable.GetEntityAsync<UserEntity>(
+                    pk, UserEntity.ProfileRowKey, cancellationToken: ct)).Value;
+            }
+            catch (RequestFailedException ex) when (ex.Status == 404)
+            {
+                return; // User deleted between auth and stamp — nothing to record.
+            }
+
             var now = DateTimeOffset.UtcNow;
             e.AccessFailedCount = 0;
             e.LockoutEnd = null;
             e.LastLoginAt = now;
             e.UpdatedAt = now;
             if (rehashedPassword is not null) e.PasswordHash = rehashedPassword;
-            await usersTable.UpsertEntityAsync(e, TableUpdateMode.Replace, ct);
+
+            try
+            {
+                // Replace (not Merge) so LockoutEnd is actually cleared rather than left in place, and
+                // If-Match so a concurrent administrative write turns into a 412 we re-read instead of
+                // overwriting.
+                await usersTable.UpdateEntityAsync(e, e.ETag, TableUpdateMode.Replace, ct);
+                return;
+            }
+            catch (RequestFailedException ex) when (ex.Status == 412)
+            {
+                // Lost the race — re-read the fresh entity and re-apply the login-state columns on top.
+            }
+            catch (RequestFailedException ex) when (ex.Status == 404)
+            {
+                return; // Deleted underneath us mid-retry.
+            }
         }
-        catch (RequestFailedException ex) when (ex.Status == 404)
-        {
-            // User deleted between auth and stamp — nothing to record.
-        }
+
+        // Sustained contention. Dropping the stamp loses a LastLoginAt and defers a lockout-counter reset
+        // to the next successful login; silently reverting an admin's write would be far worse.
     }
 
     public async Task<AuthUser?> GetAsync(string userId, CancellationToken ct = default)

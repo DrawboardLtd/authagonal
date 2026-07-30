@@ -111,6 +111,69 @@ public static class DeviceAuthorizationEndpoint
         .DisableAntiforgery()
         .WithTags("OAuth");
 
+        // What the user is actually being asked to approve. RFC 8628 §5.4 warns that the device flow's
+        // remote-phishing shape depends on the user understanding the grant: the approval screen showed
+        // nothing about the requesting client or the scopes, and `verification_uri_complete` pre-fills the
+        // code, so approval was a single click on an opaque prompt. That is the illicit-consent-grant
+        // pattern — an attacker starts a device flow, sends the victim the complete URI, and the victim
+        // authorises the ATTACKER's device against their own account.
+        //
+        // Authenticated (the caller must be the person who would approve) and rate-limited on the SAME
+        // bucket as the approval itself, so this cannot become an unauthenticated code-probing oracle or a
+        // way to spend the approval budget for free.
+        app.MapGet("/api/auth/device/info", async (
+            HttpContext httpContext,
+            IGrantStore grantStore,
+            IClientStore clientStore,
+            IUserStore userStore,
+            IScopeRoleGate scopeRoleGate,
+            IRateLimiter rateLimiter,
+            CancellationToken ct) =>
+        {
+            if (httpContext.User.Identity?.IsAuthenticated != true)
+                return JsonResults.Error("not_authenticated", 401);
+
+            var subject = httpContext.User.FindFirst("sub")?.Value ?? "anonymous";
+            if (await rateLimiter.IsRateLimitedAsync($"device-approve|{subject}", 10, TimeSpan.FromMinutes(1), ct))
+                return JsonResults.Error("too_many_requests", 429);
+
+            var userCode = httpContext.Request.Query["user_code"].FirstOrDefault()?.Trim().ToUpperInvariant();
+            if (string.IsNullOrWhiteSpace(userCode))
+                return TypedResults.Json(new ErrorInfoResponse { Error = "user_code_required" },
+                    AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 400);
+
+            var userCodeGrant = await grantStore.GetAsync($"device_user:{userCode}", ct);
+            if (userCodeGrant is null || userCodeGrant.ConsumedAt is not null || userCodeGrant.ExpiresAt < DateTimeOffset.UtcNow)
+                return TypedResults.Json(
+                    new ErrorInfoResponse { Error = "invalid_user_code", Message = "Code is invalid or expired" },
+                    AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 400);
+
+            var deviceGrant = await grantStore.GetAsync($"device:{userCodeGrant.Data}", ct);
+            if (deviceGrant is null || deviceGrant.ExpiresAt < DateTimeOffset.UtcNow)
+                return TypedResults.Json(new ErrorInfoResponse { Error = "expired", Message = "Device code has expired" },
+                    AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 400);
+
+            var data = JsonSerializer.Deserialize(deviceGrant.Data, AuthagonalJsonContext.Default.DeviceCodeData)!;
+            var client = await clientStore.GetAsync(data.ClientId, ct);
+
+            // Show the scopes that would ACTUALLY be granted, after the per-user entitlement gate the
+            // approval endpoint applies — displaying the raw request would overstate the grant.
+            var subjectId = httpContext.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value
+                ?? httpContext.User.FindFirst("sub")?.Value;
+            var approver = subjectId is null ? null : await userStore.GetAsync(subjectId, ct);
+            var entitled = await scopeRoleGate.FilterAsync(data.Scopes, approver?.Roles, ct);
+
+            return TypedResults.Json(new DeviceInfoResponse
+            {
+                ClientId = data.ClientId,
+                ClientName = client?.ClientName ?? data.ClientId,
+                ClientUri = client?.ClientUri,
+                LogoUri = client?.LogoUri,
+                Scopes = [.. entitled],
+            }, AuthagonalJsonContext.Default.DeviceInfoResponse);
+        })
+        .WithTags("OAuth");
+
         // User approval endpoint — called by the login app after authentication
         app.MapPost("/api/auth/device/approve", async (
             HttpContext httpContext,
@@ -207,6 +270,19 @@ public static class DeviceAuthorizationEndpoint
     private static IResult DeviceError(string error, string description) =>
         JsonResults.OAuthError(error, description,
             statusCode: error == "invalid_client" ? 401 : 400);
+}
+
+/// <summary>
+/// What the device-approval screen must display before the user can approve: which application is asking,
+/// and for what. Without this the user approved an opaque prompt.
+/// </summary>
+public sealed class DeviceInfoResponse
+{
+    public string ClientId { get; set; } = "";
+    public string ClientName { get; set; } = "";
+    public string? ClientUri { get; set; }
+    public string? LogoUri { get; set; }
+    public List<string> Scopes { get; set; } = [];
 }
 
 internal sealed class DeviceCodeData

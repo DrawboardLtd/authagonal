@@ -237,9 +237,22 @@ public sealed class DynamoUserStore(
 
     // ── create / update / delete ─────────────────────────────────────────────────
 
+    /// <summary>
+    /// Insert-only: refuses to replace an existing user rather than silently overwriting one.
+    /// </summary>
+    /// <remarks>
+    /// This used to be a plain <c>PutItem</c>, which replaces. Creating a user whose id already existed
+    /// therefore overwrote that account's password hash, roles, MFA flag and email. The Azure provider has
+    /// always failed closed here via <c>AddEntityAsync</c> (409); the divergence bit hardest on the one
+    /// call site that does not generate its own id — OIDC JIT federation with
+    /// <c>UseUpstreamSubjectAsUserId</c>, where the id is the upstream <c>sub</c>.
+    /// </remarks>
     public async Task CreateAsync(AuthUser user, CancellationToken ct = default)
     {
-        await users.PutAsync(await UserItemAsync(user, version: 0, ct).ConfigureAwait(false), ct).ConfigureAwait(false);
+        var inserted = await users.PutIfAbsentAsync(await UserItemAsync(user, version: 0, ct).ConfigureAwait(false), ct).ConfigureAwait(false);
+        if (!inserted)
+            throw new InvalidOperationException(
+                $"A user with id '{user.Id}' already exists. CreateAsync will not overwrite an existing user.");
         await LogUpsertAsync("Users", partitioner.PK(user.Id), Profile, ct).ConfigureAwait(false);
         await WriteProfileIndexesAsync(user.NormalizedEmail, Normalize(user.FirstName), Normalize(user.LastName), user.Id, dropLegacy: false, ct).ConfigureAwait(false);
     }

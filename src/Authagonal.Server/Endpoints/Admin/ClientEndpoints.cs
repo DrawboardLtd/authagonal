@@ -137,8 +137,10 @@ public static class ClientEndpoints
 
     private static bool IsAdminScopeRequested(IEnumerable<string> scopes, IConfiguration configuration)
     {
-        var adminScope = configuration["AdminApi:Scope"] ?? "authagonal-admin";
-        return scopes.Contains(adminScope, StringComparer.OrdinalIgnoreCase);
+        var adminScope = configuration["AdminApi:Scope"] ?? AdminScopeReservation.DefaultAdminScope;
+        // Splits each entry on whitespace: a whole-string comparison treated "authagonal-admin x" as an
+        // unrelated scope while every consumer that splits saw the admin scope inside it.
+        return AdminScopeReservation.Grants(scopes, adminScope);
     }
 
     // Copy of a client with secret hashes stripped, for safe return to admins. Never mutate the

@@ -295,6 +295,41 @@ public abstract class SqlProviderTestsBase : IAsyncLifetime
         Assert.Null(await store.GetAsync("missing"));
     }
 
+    /// <summary>
+    /// CreateAsync is insert-only. It used to be an upsert on this provider (INSERT … ON CONFLICT DO
+    /// UPDATE), so creating a user whose id already existed silently replaced that account's password
+    /// hash, roles, MFA flag and email — while the Azure provider failed closed on the same call. The one
+    /// caller that does not generate its own id is OIDC JIT federation with UseUpstreamSubjectAsUserId,
+    /// where the id is the upstream `sub`.
+    /// </summary>
+    [Fact]
+    public async Task User_CreateDoesNotOverwriteAnExistingAccount()
+    {
+        var store = await UserStoreAsync();
+        await store.CreateAsync(User("u1", "victim@acme.com", "Victim", "Real", "org-1"));
+
+        var victim = await store.GetAsync("u1");
+        victim!.PasswordHash = "victim-hash";
+        victim.Roles = ["user"];
+        await store.UpdateAsync(victim);
+
+        // A second create on the same id must be refused, not applied.
+        var collide = User("u1", "attacker@evil.example", "Attacker", "Fake", "org-2");
+        collide.PasswordHash = "attacker-hash";
+        collide.Roles = ["tenant-admin"];
+        await Assert.ThrowsAsync<InvalidOperationException>(() => store.CreateAsync(collide));
+
+        var after = await store.GetAsync("u1");
+        Assert.Equal("victim@acme.com", after!.Email);
+        Assert.Equal("victim-hash", after.PasswordHash);
+        Assert.Contains("user", after.Roles);
+        Assert.DoesNotContain("tenant-admin", after.Roles);
+
+        // The victim is still findable by their own email, and the attacker's never resolves to them.
+        Assert.Equal("u1", (await store.FindByEmailAsync("VICTIM@ACME.COM"))?.Id);
+        Assert.Null(await store.FindByEmailAsync("ATTACKER@EVIL.EXAMPLE"));
+    }
+
     [Fact]
     public async Task User_EmailChangeMovesTheIndexWithNoStaleHit()
     {

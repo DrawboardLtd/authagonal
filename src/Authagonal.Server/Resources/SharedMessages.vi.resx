@@ -68,6 +68,9 @@
 
   <!-- End session -->
   <data name="EndSession_SignedOut" xml:space="preserve"><value>Bạn đã đăng xuất.</value></data>
+  <data name="EndSession_ConfirmPrompt" xml:space="preserve"><value>Đăng xuất khỏi {0}?</value></data>
+  <data name="EndSession_ConfirmButton" xml:space="preserve"><value>Đăng xuất</value></data>
+  <data name="EndSession_CancelButton" xml:space="preserve"><value>Hủy</value></data>
 
   <!-- Admin user endpoint messages -->
   <data name="Admin_UserNotFound" xml:space="preserve"><value>Không tìm thấy người dùng '{0}'</value></data>

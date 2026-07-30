@@ -180,8 +180,20 @@ public sealed class ScimListResponse<T>
     [JsonPropertyName("schemas")]
     public string[] Schemas { get; set; } = ["urn:ietf:params:scim:api:messages:2.0:ListResponse"];
 
+    /// <summary>
+    /// Total matching resources, OMITTED when the listing is incomplete.
+    /// </summary>
+    /// <remarks>
+    /// Under cursor pagination the true total is unknowable without a full scan, and this used to report the
+    /// returned page's size instead. A syncing client reads <c>totalResults</c>, sees it equal the number of
+    /// resources it just received, and concludes it has the whole directory — silently missing every user
+    /// beyond the first page, which for a deprovisioning sync means offboarded accounts are never removed.
+    /// draft-ietf-scim-cursor-pagination permits omitting it when unknown; a client that then errors is
+    /// failing loudly, which is strictly better than silently under-reading the directory.
+    /// </remarks>
     [JsonPropertyName("totalResults")]
-    public int TotalResults { get; set; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public int? TotalResults { get; set; }
 
     [JsonPropertyName("startIndex")]
     public int StartIndex { get; set; }
@@ -240,8 +252,20 @@ public sealed class ScimCreateUserRequest
     [JsonPropertyName("emails")]
     public ScimEmail[]? Emails { get; set; }
 
+    /// <summary>
+    /// NULLABLE so "omitted" is distinguishable from "false".
+    /// </summary>
+    /// <remarks>
+    /// This was a non-nullable <c>bool</c> defaulting to <c>true</c>, and <c>PUT /Users/{id}</c> assigned it
+    /// straight onto <c>IsActive</c> — so a PUT that simply did not mention <c>active</c> REACTIVATED a
+    /// deprovisioned user. An offboarded account came back on the next directory sync, silently. On create,
+    /// omitted still means active (a new user is active by default); on replace, omitted now means unchanged.
+    /// </remarks>
     [JsonPropertyName("active")]
-    public bool Active { get; set; } = true;
+    public bool? Active { get; set; }
+
+    /// <summary>Create semantics: a new user is active unless explicitly told otherwise.</summary>
+    public bool ActiveOnCreate => Active ?? true;
 
     /// <summary>SCIM core attribute (RFC 7643) for the user's preferred written/spoken language —
     /// the IdP's directory value. Mapped to <c>AuthUser.Locale</c> so SSO/SCIM users (who never see a

@@ -1,3 +1,4 @@
+using Authagonal.Core.Services;
 using Authagonal.Core.Models;
 using Authagonal.Core.Stores;
 using Authagonal.Server.Services;
@@ -45,8 +46,15 @@ public static class ScimGroupEndpoints
         int? startIndex,
         int? count,
         string? filter,
+        IRateLimiter rateLimiter,
         CancellationToken ct)
     {
+        // The Group endpoints had no rate limiting at all, and every list is a full table scan of all
+        // groups — so an authenticated SCIM token could drive unbounded scan load. Same bucket and budget as
+        // the User endpoints; the limiter is tenant-scoped by its decorator.
+        if (await rateLimiter.IsRateLimitedAsync($"scim|{CallerClientId(httpContext) ?? "anonymous"}", 200, TimeSpan.FromMinutes(1), ct))
+            return ScimResults.Error(429, "tooMany", "Too many SCIM requests. Please try again later.");
+
         var baseUrl = GetBaseUrl(tenantContext);
         var start = startIndex ?? 1;
         var pageSize = Math.Min(count ?? 100, 200);
@@ -89,8 +97,15 @@ public static class ScimGroupEndpoints
         HttpContext httpContext,
         IScimGroupStore groupStore,
         Authagonal.Core.Services.ITenantContext tenantContext,
+        IRateLimiter rateLimiter,
         CancellationToken ct)
     {
+        // The Group endpoints had no rate limiting at all, and every list is a full table scan of all
+        // groups — so an authenticated SCIM token could drive unbounded scan load. Same bucket and budget as
+        // the User endpoints; the limiter is tenant-scoped by its decorator.
+        if (await rateLimiter.IsRateLimitedAsync($"scim|{CallerClientId(httpContext) ?? "anonymous"}", 200, TimeSpan.FromMinutes(1), ct))
+            return ScimResults.Error(429, "tooMany", "Too many SCIM requests. Please try again later.");
+
         var group = await groupStore.GetAsync(id, ct);
         if (group is null || !OwnedByCaller(group, httpContext))
             return ScimResults.NotFound($"Group '{id}' not found");
@@ -99,14 +114,55 @@ public static class ScimGroupEndpoints
         return ScimResults.Success(ScimGroupResource.FromGroup(group, baseUrl));
     }
 
+    /// <summary>
+    /// Drops member ids that do not name a user this SCIM client provisioned, returning the rejected ones.
+    /// </summary>
+    /// <remarks>
+    /// Membership was taken verbatim: any id at all was stored, including one belonging to another tenant's
+    /// SCIM client or naming no user. Because group membership drives role assignment through
+    /// <c>IScimGroupRoleMappingStore</c>, writing an arbitrary id into a role-mapped group is a privilege
+    /// path — the next token issued for that subject picks up the mapped roles. Checking ownership (not just
+    /// existence) is what makes it cross-tenant-safe.
+    /// </remarks>
+    private static async Task<List<string>> RetainOwnedMembersAsync(
+        ScimGroup group, string clientId, IUserStore userStore, CancellationToken ct)
+    {
+        var rejected = new List<string>();
+        var kept = new List<string>();
+
+        foreach (var memberId in group.MemberUserIds.Distinct(StringComparer.Ordinal))
+        {
+            var member = await userStore.GetAsync(memberId, ct);
+            if (member is null ||
+                !string.Equals(member.ScimProvisionedByClientId, clientId, StringComparison.Ordinal))
+            {
+                rejected.Add(memberId);
+                continue;
+            }
+            kept.Add(memberId);
+        }
+
+        group.MemberUserIds.Clear();
+        group.MemberUserIds.AddRange(kept);
+        return rejected;
+    }
+
     private static async Task<IResult> CreateGroupAsync(
         ScimCreateGroupRequest request,
         HttpContext httpContext,
         IScimGroupStore groupStore,
         Authagonal.Core.Services.ITenantContext tenantContext,
         ILogger<Program> logger,
+        IUserStore userStore,
+        IRateLimiter rateLimiter,
         CancellationToken ct)
     {
+        // The Group endpoints had no rate limiting at all, and every list is a full table scan of all
+        // groups — so an authenticated SCIM token could drive unbounded scan load. Same bucket and budget as
+        // the User endpoints; the limiter is tenant-scoped by its decorator.
+        if (await rateLimiter.IsRateLimitedAsync($"scim|{CallerClientId(httpContext) ?? "anonymous"}", 200, TimeSpan.FromMinutes(1), ct))
+            return ScimResults.Error(429, "tooMany", "Too many SCIM requests. Please try again later.");
+
         var baseUrl = GetBaseUrl(tenantContext);
 
         if (string.IsNullOrWhiteSpace(request.DisplayName))
@@ -131,6 +187,13 @@ public static class ScimGroupEndpoints
             CreatedAt = DateTimeOffset.UtcNow,
         };
 
+        // Membership must name users THIS client provisioned. Group membership drives role assignment, so
+        // an unchecked id in a role-mapped group is a privilege path.
+        var rejectedMembers = await RetainOwnedMembersAsync(group, CallerClientId(httpContext) ?? "", userStore, ct);
+        if (rejectedMembers.Count > 0)
+            return ScimResults.Error(400, "invalidValue",
+                "These member ids do not name users provisioned by this client: " + string.Join(", ", rejectedMembers));
+
         await groupStore.CreateAsync(group, ct);
 
         logger.LogInformation("SCIM group created: {GroupId} ({DisplayName})", group.Id, group.DisplayName);
@@ -144,8 +207,16 @@ public static class ScimGroupEndpoints
         HttpContext httpContext,
         IScimGroupStore groupStore,
         Authagonal.Core.Services.ITenantContext tenantContext,
+        IUserStore userStore,
+        IRateLimiter rateLimiter,
         CancellationToken ct)
     {
+        // The Group endpoints had no rate limiting at all, and every list is a full table scan of all
+        // groups — so an authenticated SCIM token could drive unbounded scan load. Same bucket and budget as
+        // the User endpoints; the limiter is tenant-scoped by its decorator.
+        if (await rateLimiter.IsRateLimitedAsync($"scim|{CallerClientId(httpContext) ?? "anonymous"}", 200, TimeSpan.FromMinutes(1), ct))
+            return ScimResults.Error(429, "tooMany", "Too many SCIM requests. Please try again later.");
+
         var baseUrl = GetBaseUrl(tenantContext);
 
         var group = await groupStore.GetAsync(id, ct);
@@ -163,6 +234,13 @@ public static class ScimGroupEndpoints
             .ToList() ?? [];
         group.UpdatedAt = DateTimeOffset.UtcNow;
 
+        // Membership must name users THIS client provisioned. Group membership drives role assignment, so
+        // an unchecked id in a role-mapped group is a privilege path.
+        var rejectedMembers = await RetainOwnedMembersAsync(group, CallerClientId(httpContext) ?? "", userStore, ct);
+        if (rejectedMembers.Count > 0)
+            return ScimResults.Error(400, "invalidValue",
+                "These member ids do not name users provisioned by this client: " + string.Join(", ", rejectedMembers));
+
         await groupStore.UpdateAsync(group, ct);
 
         return ScimResults.Success(ScimGroupResource.FromGroup(group, baseUrl));
@@ -175,8 +253,16 @@ public static class ScimGroupEndpoints
         IScimGroupStore groupStore,
         Authagonal.Core.Services.ITenantContext tenantContext,
         ILogger<Program> logger,
+        IUserStore userStore,
+        IRateLimiter rateLimiter,
         CancellationToken ct)
     {
+        // The Group endpoints had no rate limiting at all, and every list is a full table scan of all
+        // groups — so an authenticated SCIM token could drive unbounded scan load. Same bucket and budget as
+        // the User endpoints; the limiter is tenant-scoped by its decorator.
+        if (await rateLimiter.IsRateLimitedAsync($"scim|{CallerClientId(httpContext) ?? "anonymous"}", 200, TimeSpan.FromMinutes(1), ct))
+            return ScimResults.Error(429, "tooMany", "Too many SCIM requests. Please try again later.");
+
         var baseUrl = GetBaseUrl(tenantContext);
 
         var group = await groupStore.GetAsync(id, ct);
@@ -190,6 +276,13 @@ public static class ScimGroupEndpoints
         ScimPatchApplier.ApplyToGroup(group, operations);
 
         group.UpdatedAt = DateTimeOffset.UtcNow;
+        // Membership must name users THIS client provisioned. Group membership drives role assignment, so
+        // an unchecked id in a role-mapped group is a privilege path.
+        var rejectedMembers = await RetainOwnedMembersAsync(group, CallerClientId(httpContext) ?? "", userStore, ct);
+        if (rejectedMembers.Count > 0)
+            return ScimResults.Error(400, "invalidValue",
+                "These member ids do not name users provisioned by this client: " + string.Join(", ", rejectedMembers));
+
         await groupStore.UpdateAsync(group, ct);
 
         logger.LogInformation("SCIM group patched: {GroupId}", group.Id);
@@ -202,8 +295,15 @@ public static class ScimGroupEndpoints
         HttpContext httpContext,
         IScimGroupStore groupStore,
         ILogger<Program> logger,
+        IRateLimiter rateLimiter,
         CancellationToken ct)
     {
+        // The Group endpoints had no rate limiting at all, and every list is a full table scan of all
+        // groups — so an authenticated SCIM token could drive unbounded scan load. Same bucket and budget as
+        // the User endpoints; the limiter is tenant-scoped by its decorator.
+        if (await rateLimiter.IsRateLimitedAsync($"scim|{CallerClientId(httpContext) ?? "anonymous"}", 200, TimeSpan.FromMinutes(1), ct))
+            return ScimResults.Error(429, "tooMany", "Too many SCIM requests. Please try again later.");
+
         var group = await groupStore.GetAsync(id, ct);
         if (group is null || !OwnedByCaller(group, httpContext))
             return ScimResults.NotFound($"Group '{id}' not found");

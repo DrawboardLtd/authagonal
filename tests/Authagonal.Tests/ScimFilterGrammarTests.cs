@@ -210,4 +210,81 @@ public sealed class ScimFilterGrammarTests
         Assert.True(Eval("userName eq \"alice@example.com\" and active eq true", User()));
         Assert.False(Eval("userName eq \"alice@example.com\" and active eq false", User()));
     }
+
+    // -----------------------------------------------------------------------
+    // Resource bounds (#29)
+    // -----------------------------------------------------------------------
+
+    /// <summary>
+    /// ParseExpression → ParseAnd → ParseNot → ParsePrimary is mutually recursive and descended on every
+    /// '(' with no bound, so nested parentheses overflowed the stack. A StackOverflowException cannot be
+    /// caught in .NET — it terminates the PROCESS, so one request killed the worker and every tenant it
+    /// served. It must come back as a catchable parse error instead.
+    /// </summary>
+    [Theory]
+    [InlineData(60)]
+    [InlineData(500)]
+    [InlineData(5000)]
+    public void Deeply_nested_parentheses_are_refused_not_fatal(int depth)
+    {
+        var filter = new string('(', depth) + "userName eq \"a\"" + new string(')', depth);
+
+        Assert.False(ScimFilterParser.TryParse(filter, out var expression, out var error));
+        Assert.Null(expression);
+        Assert.NotNull(error);
+        // Depth 60 is only ~136 characters, so this is the DEPTH budget rejecting it, not the length cap.
+        if (depth == 60)
+            Assert.Contains("depth", error, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>The value-path bracket is the second recursive descent and nests just as deeply.</summary>
+    [Fact]
+    public void Deeply_nested_value_paths_are_refused_not_fatal()
+    {
+        // emails[emails[emails[... type eq "work" ...]]]
+        const int depth = 200;
+        var filter = string.Concat(Enumerable.Repeat("emails[", depth))
+            + "type eq \"work\""
+            + new string(']', depth);
+
+        Assert.False(ScimFilterParser.TryParse(filter, out _, out var error));
+        Assert.NotNull(error);
+    }
+
+    /// <summary>'not(' descends too.</summary>
+    [Fact]
+    public void Deeply_nested_not_groups_are_refused_not_fatal()
+    {
+        const int depth = 300;
+        var filter = string.Concat(Enumerable.Repeat("not(", depth))
+            + "userName eq \"a\""
+            + new string(')', depth);
+
+        Assert.False(ScimFilterParser.TryParse(filter, out _, out var error));
+        Assert.NotNull(error);
+    }
+
+    /// <summary>An over-long filter is refused before tokenizing.</summary>
+    [Fact]
+    public void Over_long_filters_are_refused()
+    {
+        var filter = "userName eq \"" + new string('a', 4000) + "\"";
+        Assert.False(ScimFilterParser.TryParse(filter, out _, out var error));
+        Assert.Contains("length", error, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// Realistic nesting still parses — the bound must not break legitimate filters. Guards against
+    /// setting the depth budget so low it becomes a functional regression.
+    /// </summary>
+    [Theory]
+    [InlineData("(userName eq \"a\" or userName eq \"b\") and active eq true")]
+    [InlineData("not(active eq false) and (emails[type eq \"work\"] or emails[type eq \"home\"])")]
+    [InlineData("((((active eq true))))")]
+    [InlineData("emails[type eq \"work\" and value co \"@acme.com\"]")]
+    public void Realistic_nesting_still_parses(string filter)
+    {
+        Assert.True(ScimFilterParser.TryParse(filter, out var expression, out var error), error);
+        Assert.NotNull(expression);
+    }
 }

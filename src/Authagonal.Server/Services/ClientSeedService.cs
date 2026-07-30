@@ -1,5 +1,6 @@
 using Authagonal.Core.Models;
 using Authagonal.Core.Stores;
+using Authagonal.Core.Services;
 
 namespace Authagonal.Server.Services;
 
@@ -35,6 +36,33 @@ public sealed class ClientSeedService(
                 continue;
             }
 
+            var seededScopes = seed.Scopes ?? seed.AllowedScopes ?? [];
+
+            // The admin API and dynamic registration both refuse to grant a client the administrative
+            // scope; seeding applied no check at all, so configuration could hand a client the very thing
+            // those two paths exist to withhold. Skip the whole entry rather than silently dropping the
+            // scope — a seed that asks for this is a misconfiguration the operator needs to see.
+            var adminScope = configuration["AdminApi:Scope"] ?? AdminScopeReservation.DefaultAdminScope;
+            if (AdminScopeReservation.Grants(seededScopes, adminScope))
+            {
+                logger.LogError(
+                    "Refusing to seed client {Id}: it requests the reserved administrative scope '{Scope}'. " +
+                    "No client may hold it — a client_credentials client that did could mint admin tokens indefinitely.",
+                    clientId, adminScope);
+                continue;
+            }
+
+            // A scope entry containing whitespace expands into several scopes downstream, which is how the
+            // reservation above was bypassed. Reject rather than normalize: the intent is ambiguous.
+            if (AdminScopeReservation.FindMalformedScope(seededScopes) is { } malformed)
+            {
+                logger.LogError(
+                    "Refusing to seed client {Id}: scope entry '{Scope}' is not a single scope token. " +
+                    "Scope names cannot contain whitespace — list each scope separately.",
+                    clientId, malformed);
+                continue;
+            }
+
             // Build secret hashes: use explicit hashes if provided, otherwise hash plaintext secret
             var secretHashes = seed.SecretHashes ?? [];
             if (secretHashes.Count == 0 && !string.IsNullOrWhiteSpace(seed.ClientSecret))
@@ -50,7 +78,7 @@ public sealed class ClientSeedService(
                 AllowedGrantTypes = seed.GrantTypes ?? seed.AllowedGrantTypes ?? [],
                 RedirectUris = seed.RedirectUris ?? [],
                 PostLogoutRedirectUris = seed.PostLogoutRedirectUris ?? [],
-                AllowedScopes = seed.Scopes ?? seed.AllowedScopes ?? [],
+                AllowedScopes = seededScopes,
                 AllowedCorsOrigins = seed.CorsOrigins ?? seed.AllowedCorsOrigins ?? [],
                 RequirePkce = seed.RequirePkce ?? true,
                 AllowOfflineAccess = seed.AllowOfflineAccess ?? false,

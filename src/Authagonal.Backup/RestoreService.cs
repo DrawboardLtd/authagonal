@@ -24,6 +24,25 @@ public sealed class RestoreService(TableServiceClient serviceClient, IBackupSour
                 "WARNING: backup has no recorded file hashes; integrity cannot be verified. Restoring unverified data.");
         }
 
+        if (options.Mode == RestoreMode.Clean)
+        {
+            // The manifest has always recorded whether this backup is a full or an incremental; nothing
+            // used it. Cleaning before applying an incremental empties the table and then writes back only
+            // the changed rows, so every row that did NOT change in the window is destroyed.
+            var isIncremental = string.Equals(manifest?.Mode, "incremental", StringComparison.OrdinalIgnoreCase);
+            if (isIncremental && !options.AllowCleanFromIncremental)
+                throw new InvalidOperationException(
+                    $"Refusing a Clean restore of incremental backup '{backupId}': it contains only rows changed " +
+                    $"since {manifest?.Watermark:o}, so cleaning first would destroy every unchanged row. Restore the " +
+                    $"parent full ('{manifest?.ParentBackupId}') with --mode clean, then this incremental with " +
+                    "--mode upsert. Pass AllowCleanFromIncremental to override.");
+
+            if (options.CleanEnvPrefix is null && !options.DryRun)
+                Console.Error.WriteLine(
+                    "WARNING: --mode clean will empty the ENTIRE target table(s). If these tables hold more than " +
+                    "one env, set CleanEnvPrefix to scope the wipe to a single env.");
+        }
+
         foreach (var fileName in files)
         {
             if (fileName.StartsWith("_")) continue; // Skip metadata files (manifest, tombstones)
@@ -52,9 +71,12 @@ public sealed class RestoreService(TableServiceClient serviceClient, IBackupSour
             var tableClient = serviceClient.GetTableClient(physicalName);
             tableClient.CreateIfNotExists(ct);
 
-            if (options.Mode == RestoreMode.Clean)
+            // Gated on DryRun exactly like the entity writes below and the tombstone deletes: a dry run
+            // must not mutate anything, and an ungated clean made `--dry-run --mode clean` the single most
+            // destructive command in the tool.
+            if (options.Mode == RestoreMode.Clean && !options.DryRun)
             {
-                await CleanTableAsync(tableClient, ct);
+                await CleanTableAsync(tableClient, options.CleanEnvPrefix, ct);
             }
 
             var stream = await source.OpenReadAsync(backupId, fileName, ct);
@@ -191,9 +213,27 @@ public sealed class RestoreService(TableServiceClient serviceClient, IBackupSour
         }
     }
 
-    private static async Task CleanTableAsync(TableClient tableClient, CancellationToken ct)
+    /// <summary>
+    /// Deletes existing rows ahead of a Clean restore. When <paramref name="envPrefix"/> is supplied the
+    /// wipe is confined to that env's PartitionKey range, so restoring one sandbox env does not destroy
+    /// its siblings sharing the same physical table. Callers must not invoke this on a dry run.
+    /// </summary>
+    private static async Task CleanTableAsync(TableClient tableClient, string? envPrefix, CancellationToken ct)
     {
+        // Range filter rather than startswith: Table Storage has no prefix operator, and a PK range is a
+        // partition-ordered scan. The upper bound appends char.MaxValue so keys containing non-ASCII
+        // characters are still inside the range (a '~' bound would silently skip them, leaving rows behind
+        // that the restore then collides with).
+        string? filter = null;
+        if (!string.IsNullOrEmpty(envPrefix))
+        {
+            var lo = envPrefix;
+            var hi = envPrefix + char.MaxValue;
+            filter = $"PartitionKey ge '{Escape(lo)}' and PartitionKey lt '{Escape(hi)}'";
+        }
+
         var query = tableClient.QueryAsync<TableEntity>(
+            filter: filter,
             select: new[] { "PartitionKey", "RowKey" },
             cancellationToken: ct);
 
@@ -206,6 +246,9 @@ public sealed class RestoreService(TableServiceClient serviceClient, IBackupSour
             catch (RequestFailedException ex) when (ex.Status == 404) { }
         }
     }
+
+    /// <summary>Escapes a single quote for an OData string literal (doubled, per OData).</summary>
+    private static string Escape(string value) => value.Replace("'", "''");
 
     internal static TableEntity? DeserializeEntity(string json)
     {

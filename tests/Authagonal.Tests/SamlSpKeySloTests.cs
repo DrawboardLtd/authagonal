@@ -88,6 +88,73 @@ public class SamlSpKeyTests
         Assert.Equal("user@example.com", result.NameId);
     }
 
+    /// <summary>
+    /// RSA-PKCS#1 v1.5 key transport is refused. XML Encryption 1.1 §5.5.1 deprecates it and the OASIS
+    /// SAML encryption profile requires OAEP, because v1.5 unwrapping on an anonymous endpoint is a
+    /// Bleichenbacher decryption oracle against the SP private key — and the SP keypair is minted for every
+    /// connection whether or not the IdP encrypts, so it was armed by default everywhere.
+    /// </summary>
+    [Fact]
+    public void Parser_EncryptedAssertion_Rsa15_IsRefused()
+    {
+        const string acs = "https://sp.test/saml/c1/acs";
+        const string audience = "https://sp.test/saml/c1";
+
+        using var spCert = SamlSpKey.Load(SamlSpKey.CreateCertificate(audience));
+        using var spKey = spCert.GetRSAPrivateKey()!;
+
+        var signedResponse = SamlTestHelper.BuildSignedResponse(acs, audience, "user@example.com",
+            email: "user@example.com", signAssertion: true);
+        var encrypted = SamlTestHelper.EncryptAssertionInResponse(signedResponse, spCert, useRsa15: true);
+
+        var parser = new SamlResponseParser(NullLogger<SamlResponseParser>.Instance);
+        var result = parser.Parse(encrypted, new SamlResponseValidationContext(
+            acs, audience, null, [SamlTestHelper.TestCertificate], DecryptionKey: spKey));
+
+        Assert.False(result.Success);
+        // And the refusal is indistinguishable from any other decryption failure.
+        Assert.Equal(SamlResponseParser.DecryptionFailure, result.Error);
+    }
+
+    /// <summary>
+    /// Every decryption failure returns ONE constant message. Distinguishable responses are the signal a
+    /// padding-oracle or Bleichenbacher attack consumes; the parser used to reflect the underlying
+    /// CryptographicException text straight back to an anonymous caller.
+    /// </summary>
+    [Fact]
+    public void Parser_EncryptedAssertion_AllDecryptionFailuresLookIdentical()
+    {
+        const string acs = "https://sp.test/saml/c1/acs";
+        const string audience = "https://sp.test/saml/c1";
+
+        using var spCert = SamlSpKey.Load(SamlSpKey.CreateCertificate(audience));
+        // A DIFFERENT key: every unwrap attempt fails cryptographically.
+        using var wrongCert = SamlSpKey.Load(SamlSpKey.CreateCertificate("https://other.test"));
+        using var wrongKey = wrongCert.GetRSAPrivateKey()!;
+
+        var signedResponse = SamlTestHelper.BuildSignedResponse(acs, audience, "user@example.com",
+            email: "user@example.com", signAssertion: true);
+
+        var parser = new SamlResponseParser(NullLogger<SamlResponseParser>.Instance);
+        var errors = new List<string?>();
+
+        // Wrong key, correct algorithm.
+        errors.Add(parser.Parse(
+            SamlTestHelper.EncryptAssertionInResponse(signedResponse, spCert),
+            new SamlResponseValidationContext(acs, audience, null, [SamlTestHelper.TestCertificate],
+                DecryptionKey: wrongKey)).Error);
+
+        // Refused algorithm, correct key.
+        errors.Add(parser.Parse(
+            SamlTestHelper.EncryptAssertionInResponse(signedResponse, spCert, useRsa15: true),
+            new SamlResponseValidationContext(acs, audience, null, [SamlTestHelper.TestCertificate],
+                DecryptionKey: spCert.GetRSAPrivateKey()!)).Error);
+
+        // Every distinct failure cause yields the same response text.
+        Assert.All(errors, e => Assert.Equal(SamlResponseParser.DecryptionFailure, e));
+        Assert.Single(errors.Distinct());
+    }
+
     [Fact]
     public void Parser_EncryptedAssertion_WithoutKey_FailsWithActionableError()
     {

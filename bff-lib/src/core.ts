@@ -289,9 +289,24 @@ function hasAntiForgery(ctx: HttpCtx, o: ResolvedBffOptions): boolean {
   return ctx.getHeader(o.antiForgeryHeaderLower) !== undefined;
 }
 
+/**
+ * True when the value is a same-site relative path no browser can read as an authority.
+ *
+ * This check had drifted from the .NET implementations: it never rejected a backslash (WHATWG normalizes
+ * '\' to '/', so "/\evil.example" navigates off-site), and none of the copies rejected control
+ * characters. The URL parser strips every ASCII tab, LF and CR BEFORE parsing, so "/\t/evil.example"
+ * satisfies a "starts with / and not //" test and is then parsed as "//evil.example".
+ */
+function isSafeLocalPath(url: string): boolean {
+  // eslint-disable-next-line no-control-regex
+  if (/[\u0000-\u001F\u007F]/.test(url)) return false;
+  if (!url.startsWith('/') || url.startsWith('//') || url.includes('\\')) return false;
+  return true;
+}
+
 function sanitizeReturnUrl(returnUrl: string | null, o: ResolvedBffOptions): string {
   if (!returnUrl) return '/';
-  if (returnUrl.startsWith('/') && !returnUrl.startsWith('//')) return returnUrl;
+  if (isSafeLocalPath(returnUrl)) return returnUrl;
   try {
     const origin = new URL(returnUrl).origin;
     if (o.returnUrlAllowlist.some((a) => a.toLowerCase() === origin.toLowerCase())) return returnUrl;

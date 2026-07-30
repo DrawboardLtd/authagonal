@@ -98,7 +98,28 @@ public sealed class WebAuthnService(IHttpContextAccessor httpContextAccessor)
         };
     }
 
-    public AssertionOptions CreateAssertionOptions(IReadOnlyList<MfaCredential> webAuthnCredentials)
+    /// <summary>
+    /// Builds assertion options for a passkey challenge.
+    /// </summary>
+    /// <param name="requireUserVerification">
+    /// True for PASSWORDLESS sign-in, where the passkey is the only factor: user verification (a PIN,
+    /// biometric or device unlock) is what makes the assertion two-factor rather than mere possession of an
+    /// unlocked device. Fido2 enforces the requirement itself during <c>MakeAssertionAsync</c>, so setting
+    /// it here is load-bearing rather than advisory.
+    ///
+    /// False (the default) for the SECOND-FACTOR path, where a password has already been presented, so
+    /// possession alone is a genuine second factor and Preferred keeps older authenticators working.
+    /// </param>
+    /// <remarks>
+    /// This was <c>Preferred</c> everywhere and the resulting UV flag was never inspected, while
+    /// passwordless sign-in marked the session <c>mfa_authenticated</c> and the docs described it as strong
+    /// authentication. A passkey asserted without UV is single-factor possession, so a stolen unlocked
+    /// device satisfied an MFA-required policy. A credential that cannot do UV is now simply unusable
+    /// passwordlessly — it remains usable as a second factor.
+    /// </remarks>
+    public AssertionOptions CreateAssertionOptions(
+        IReadOnlyList<MfaCredential> webAuthnCredentials,
+        bool requireUserVerification = false)
     {
         var allowedCredentials = webAuthnCredentials
             .Where(c => c.Type == MfaCredentialType.WebAuthn && c.PublicKeyJson is not null)
@@ -113,7 +134,9 @@ public sealed class WebAuthnService(IHttpContextAccessor httpContextAccessor)
             new GetAssertionOptionsParams
             {
                 AllowedCredentials = allowedCredentials,
-                UserVerification = UserVerificationRequirement.Preferred,
+                UserVerification = requireUserVerification
+                    ? UserVerificationRequirement.Required
+                    : UserVerificationRequirement.Preferred,
             });
     }
 

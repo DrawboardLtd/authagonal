@@ -127,6 +127,23 @@ public sealed class ScimGroupEndpointTests : IAsyncDisposable
         Assert.Equal("invalidFilter", json.GetProperty("scimType").GetString());
     }
 
+    /// <summary>
+    /// Provisions a real SCIM user and returns its id. Group membership must name users THIS client
+    /// provisioned — an arbitrary id used to be stored verbatim, and because membership drives role
+    /// assignment that was a privilege path. Tests therefore use real ids, as a real IdP does.
+    /// </summary>
+    private static async Task<string> ProvisionUserAsync(HttpClient client, string userName)
+    {
+        var response = await client.PostAsJsonAsync("/scim/v2/Users", new
+        {
+            schemas = new[] { "urn:ietf:params:scim:schemas:core:2.0:User" },
+            userName,
+            active = true,
+        });
+        response.EnsureSuccessStatusCode();
+        return (await response.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetString()!;
+    }
+
     [Fact]
     public async Task PatchGroup_AddMembers()
     {
@@ -142,6 +159,9 @@ public sealed class ScimGroupEndpointTests : IAsyncDisposable
         var createJson = await createResponse.Content.ReadFromJsonAsync<JsonElement>();
         var groupId = createJson.GetProperty("id").GetString();
 
+        var m1 = await ProvisionUserAsync(client, "member-one@example.com");
+        var m2 = await ProvisionUserAsync(client, "member-two@example.com");
+
         var patchContent = new StringContent(
             JsonSerializer.Serialize(new
             {
@@ -152,7 +172,7 @@ public sealed class ScimGroupEndpointTests : IAsyncDisposable
                     {
                         op = "add",
                         path = "members",
-                        value = (object)new[] { new { value = "user-123" }, new { value = "user-456" } }
+                        value = (object)new[] { new { value = m1 }, new { value = m2 } }
                     }
                 }
             }), Encoding.UTF8, "application/scim+json");
@@ -173,11 +193,15 @@ public sealed class ScimGroupEndpointTests : IAsyncDisposable
         var client = _factory.CreateClient();
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", rawToken);
 
+        var ua = await ProvisionUserAsync(client, "user-a@example.com");
+        var ub = await ProvisionUserAsync(client, "user-b@example.com");
+        var uc = await ProvisionUserAsync(client, "user-c@example.com");
+
         // Create group with members
         var createResponse = await client.PostAsJsonAsync("/scim/v2/Groups", new
         {
             displayName = "Remove Test",
-            members = new[] { new { value = "user-a" }, new { value = "user-b" }, new { value = "user-c" } },
+            members = new[] { new { value = ua }, new { value = ub }, new { value = uc } },
         });
         var createJson = await createResponse.Content.ReadFromJsonAsync<JsonElement>();
         var groupId = createJson.GetProperty("id").GetString();
@@ -193,7 +217,7 @@ public sealed class ScimGroupEndpointTests : IAsyncDisposable
                     {
                         op = "remove",
                         path = "members",
-                        value = (object)new[] { new { value = "user-b" } }
+                        value = (object)new[] { new { value = ub } }
                     }
                 }
             }), Encoding.UTF8, "application/scim+json");
@@ -208,9 +232,9 @@ public sealed class ScimGroupEndpointTests : IAsyncDisposable
         var memberValues = new List<string>();
         foreach (var m in members.EnumerateArray())
             memberValues.Add(m.GetProperty("value").GetString()!);
-        Assert.Contains("user-a", memberValues);
-        Assert.Contains("user-c", memberValues);
-        Assert.DoesNotContain("user-b", memberValues);
+        Assert.Contains(ua, memberValues);
+        Assert.Contains(uc, memberValues);
+        Assert.DoesNotContain(ub, memberValues);
     }
 
     [Fact]

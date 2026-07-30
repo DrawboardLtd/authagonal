@@ -30,6 +30,24 @@ public interface IGrantStore
     Task RemoveAsync(string key, CancellationToken ct = default);
     Task RemoveAllBySubjectAsync(string subjectId, CancellationToken ct = default);
     Task RemoveAllBySubjectAndClientAsync(string subjectId, string clientId, CancellationToken ct = default);
+
+    /// <summary>
+    /// Removes the subject's grants whose <see cref="PersistedGrant.Type"/> appears in
+    /// <paramref name="types"/>, optionally narrowed to a single <paramref name="clientId"/>.
+    /// </summary>
+    /// <remarks>
+    /// Exists because the two bulk removals above are both too coarse for the callers that need them.
+    /// Ending a sign-in session must drop the session's token authority without deleting the user's
+    /// recorded consent, and revoking one authorized app must drop that app's refresh tokens without
+    /// touching every other client's. Both were reaching for
+    /// <see cref="RemoveAllBySubjectAsync"/> and destroying far more than they meant to. See
+    /// <see cref="Authagonal.Core.Constants.PersistedGrantTypes.SessionBound"/>.
+    /// </remarks>
+    Task RemoveBySubjectAsync(
+        string subjectId,
+        IReadOnlyCollection<string> types,
+        string? clientId = null,
+        CancellationToken ct = default);
     Task<IReadOnlyList<PersistedGrant>> GetBySubjectAsync(string subjectId, CancellationToken ct = default);
     Task RemoveExpiredAsync(DateTimeOffset cutoff, CancellationToken ct = default);
 }
