@@ -1,25 +1,17 @@
-# Default: the server on SQLite — one file, nothing else to run.
-#
-#   docker compose up
-#
-# The other backends override this same service (rather than adding a second one, which would fight
-# over port 8080):
-#
-#   docker compose -f docker-compose.yml -f docker-compose.postgres.yml up
-#   docker compose -f docker-compose.yml -f docker-compose.azure.yml up
-#
-# All three serve on http://localhost:8080.
 services:
+  azurite:
+    image: mcr.microsoft.com/azure-storage/azurite
+    ports:
+      - "10000:10000"  # Blob
+      - "10001:10001"  # Queue
+      - "10002:10002"  # Table
+
   authagonal:
     build: .
     ports:
       - "8080:8080"
     environment:
-      - Storage__Provider=sqlite
-      - Storage__ConnectionString=Data Source=/data/authagonal.db
+      - Storage__ConnectionString=DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;TableEndpoint=http://azurite:10002/devstoreaccount1;
       - Issuer=http://localhost:8080
-    volumes:
-      - authagonal-sqlite:/data
-
-volumes:
-  authagonal-sqlite:
+    depends_on:
+      - azurite

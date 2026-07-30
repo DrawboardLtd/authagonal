@@ -6,16 +6,13 @@
 
 - **`Authagonal.SqlProvider`: self-hosted storage on PostgreSQL or SQLite.** The full
   `Authagonal.Core.Stores` surface, clustering (`ILeaseProvider`, `IClusterEventBus`) and the
-  DataProtection key ring, with no cloud account, emulator or managed service. Select it with
-  `Storage:Provider=postgres` / `sqlite` — the shipped Docker image carries the provider, so that needs
-  no code change — or wire it explicitly with `AddAuthagonalPostgres(…)` /
-  `AddAuthagonalSqlite(…)` before `AddAuthagonal()`, the same contract as the AWS provider. Tables
-  mirror the Azure and DynamoDB layouts one-for-one and are created on startup if absent, so a backup
-  taken on one backend restores onto another.
+  DataProtection key ring, with no cloud account, emulator or managed service. Reference the package and
+  call `AddAuthagonalPostgres(…)` / `AddAuthagonalSqlite(…)` before `AddAuthagonal()` — the same
+  contract as `Authagonal.AwsProvider`. Nothing else changes: `Authagonal.Server` does not reference it,
+  so an Azure- or AWS-only application never pulls in Npgsql or the SQLite native binaries.
 
-  The PostgreSQL and SQLite drivers are deliberately **not** dependencies of `Authagonal.Server`:
-  referencing the server library does not pull Npgsql or the SQLite native binaries into an Azure- or
-  AWS-only application. That is what the new `Authagonal.Host` project is for (see below).
+  Tables mirror the Azure and DynamoDB layouts one-for-one and are created on startup if absent, so a
+  backup taken on one backend restores onto another.
 
   Every operation that must not race is a single statement: `DELETE … RETURNING` for single-use
   redemption (authorization codes, MFA challenges, OIDC state, SAML request ids),
@@ -34,20 +31,6 @@
   tables (SAML replay, OIDC state, MFA challenges, upstream refresh tokens, the revocation list).
   Grants stay with `IGrantStore.RemoveExpiredAsync`, which owns all three of their tables and the
   matching tombstones.
-
-### Changed
-
-- **The deployable is now `src/Authagonal.Host`, a thin entrypoint over the `Authagonal.Server`
-  library.** `Authagonal.Server` was serving as both the published library and the Docker entrypoint,
-  which meant any storage provider the image could select at runtime had to become a dependency of the
-  library package. The host now owns the entrypoint, `appsettings.json`, and the provider references, so
-  the image stays config-switchable while `Authagonal.Server`'s package dependencies are unchanged from
-  0.20.0. The Docker entrypoint is `Authagonal.Host.dll`; local development is
-  `dotnet run --project src/Authagonal.Host`. Nothing changes for library consumers, and log category
-  names are preserved.
-- **`docker compose up` now starts on SQLite** — one file, no emulator. The other backends override the
-  same service: `docker compose -f docker-compose.yml -f docker-compose.postgres.yml up`, and the
-  previous Azurite setup is `-f docker-compose.azure.yml`.
 
 ## [0.20.0], 2026-07-27
 

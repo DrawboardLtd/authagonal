@@ -2,7 +2,6 @@ using Authagonal.Core.Services;
 using Authagonal.Core.Stores;
 using Authagonal.SqlProvider.Sql;
 using Authagonal.SqlProvider.Stores;
-using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
@@ -162,48 +161,6 @@ public static class ServiceCollectionExtensions
             expiring, ExpirySweepInterval, sp.GetRequiredService<ILogger<SqlExpiryReaper>>()));
 
         return services;
-    }
-
-    /// <summary>
-    /// Registers the SQL stores when <c>Storage:Provider</c> asks for them, and does nothing at all
-    /// otherwise — so a host can call this unconditionally before <c>AddAuthagonal</c> and let
-    /// configuration pick the backend. This is how the shipped image supports
-    /// <c>Storage__Provider=postgres</c> with no code change, while keeping the PostgreSQL and SQLite
-    /// drivers out of the <c>Authagonal.Server</c> package for consumers who don't want them.
-    /// <list type="bullet">
-    /// <item><c>postgres</c> — needs <c>Storage:ConnectionString</c>; honours <c>Storage:Schema</c>
-    /// (default <c>public</c>).</item>
-    /// <item><c>sqlite</c> — <c>Storage:ConnectionString</c> defaults to <c>Data Source=authagonal.db</c>,
-    /// so a bare <c>docker run</c> comes up with durable state instead of failing.</item>
-    /// <item>anything else (including unset) — no-op; <c>AddAuthagonal</c> proceeds to its Azure wiring.</item>
-    /// </list>
-    /// </summary>
-    /// <returns>The service collection, so this composes in a chain.</returns>
-    public static IServiceCollection AddAuthagonalSqlStorageFromConfiguration(
-        this IServiceCollection services, IConfiguration configuration)
-    {
-        // Read directly rather than via the configuration binder, so this package needs only
-        // Configuration.Abstractions. Unset or unparseable means enabled, matching AddAuthagonal.
-        var nameIndexesEnabled = !bool.TryParse(configuration["Storage:NameIndexesEnabled"], out var enabled) || enabled;
-        var connectionString = configuration["Storage:ConnectionString"];
-
-        switch (configuration["Storage:Provider"]?.Trim().ToLowerInvariant())
-        {
-            case "postgres" or "postgresql":
-                if (string.IsNullOrWhiteSpace(connectionString))
-                    throw new InvalidOperationException(
-                        "Storage:ConnectionString must be configured for Storage:Provider=postgres.");
-                return services.AddAuthagonalPostgres(
-                    connectionString, configuration["Storage:Schema"] ?? "public", nameIndexesEnabled);
-
-            case "sqlite":
-                return services.AddAuthagonalSqlite(
-                    string.IsNullOrWhiteSpace(connectionString) ? "Data Source=authagonal.db" : connectionString,
-                    nameIndexesEnabled);
-
-            default:
-                return services;
-        }
     }
 
     /// <summary>

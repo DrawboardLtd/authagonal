@@ -9,25 +9,20 @@ Authagonal is configured via `appsettings.json` or environment variables. Enviro
 
 ## Required Settings
 
-`Storage:Provider` picks the backend. It defaults to `azure`, which needs **either** `Storage:ConnectionString` **or** `Storage:TableServiceUri` (the managed-identity path, preferred in production). The self-hosted backends take their connection string in `Storage:ConnectionString`.
+Storage can be configured one of two ways, supply **either** `Storage:ConnectionString` **or** `Storage:TableServiceUri` (the managed-identity path, preferred in production).
 
 | Setting | Env Variable | Description |
 |---|---|---|
-| `Storage:Provider` | `Storage__Provider` | `azure` (default), `postgres`, or `sqlite`. |
-| `Storage:ConnectionString` | `Storage__ConnectionString` | Backend-dependent: an Azure Table Storage connection string with an account key (suitable for dev / Azurite), a PostgreSQL connection string, or a SQLite `Data Source=…`. |
-| `Storage:TableServiceUri` | `Storage__TableServiceUri` | *(`azure` only)* Managed-identity Table Storage endpoint, e.g. `https://{account}.table.core.windows.net/`. Alternative to `Storage:ConnectionString` and **preferred in production**: authenticates via `DefaultAzureCredential` so no access key ever lands in a secret. The host must grant the workload identity the **Storage Table Data Contributor** role. |
+| `Storage:ConnectionString` | `Storage__ConnectionString` | Azure Table Storage connection string with an account key. Suitable for dev / Azurite. |
+| `Storage:TableServiceUri` | `Storage__TableServiceUri` | Managed-identity Table Storage endpoint, e.g. `https://{account}.table.core.windows.net/`. Alternative to `Storage:ConnectionString` and **preferred in production**: authenticates via `DefaultAzureCredential` so no access key ever lands in a secret. The host must grant the workload identity the **Storage Table Data Contributor** role. |
 | `Issuer` | `Issuer` | The public base URL of this server (e.g., `https://auth.example.com`) |
-
-A host that registers its own stores before calling `AddAuthagonal()` — the AWS bundle, or a custom backend — keeps them, and `Storage:*` is ignored entirely.
 
 ## Storage
 
 | Setting | Env Variable | Default | Description |
 |---|---|---|---|
-| `Storage:Provider` | `Storage__Provider` | `azure` | Storage backend: `azure` (Table Storage), `postgres`, or `sqlite`. See [Installation → SQL backend](installation#sql-backend). |
-| `Storage:ConnectionString` | `Storage__ConnectionString` | *(none)* | Connection string for the selected provider (see Required Settings). On `sqlite` it defaults to `Data Source=authagonal.db` when unset. |
-| `Storage:TableServiceUri` | `Storage__TableServiceUri` | *(none)* | *(`azure` only)* Managed-identity Table Storage URI (see Required Settings). Takes precedence over `Storage:ConnectionString` when both are set. |
-| `Storage:Schema` | `Storage__Schema` | `public` | *(`postgres` only)* Schema the tables are created in. Created if absent. |
+| `Storage:ConnectionString` | `Storage__ConnectionString` | *(none)* | Connection string with account key (see Required Settings). |
+| `Storage:TableServiceUri` | `Storage__TableServiceUri` | *(none)* | Managed-identity Table Storage URI (see Required Settings). Takes precedence over `Storage:ConnectionString` when both are set. |
 | `Storage:NameIndexesEnabled` | `Storage__NameIndexesEnabled` | `true` | Whether to maintain the `UserFirstNames` / `UserLastNames` prefix-search index tables that back admin name-prefix search. Set `false` on hosts that don't expose admin name search to skip those writes. **Scaling note:** these indexes use a single hot partition and cap throughput at roughly 2,000 ops/sec at scale, disable them if you don't need name search. |
 | `LoginAppUrl` | `LoginAppUrl` | `/login` | Base URL the `/connect/authorize` endpoint redirects to for the login SPA (login, step-up, and consent screens). Set this when the login UI is served from a different origin than the server; defaults to the relative `/login` path served by the bundled SPA. |
 
@@ -65,7 +60,6 @@ ASP.NET Core Data Protection keys (which encrypt the session cookie) must be sha
 | Setting | Default | Description |
 |---|---|---|
 | `DataProtection:BlobUri` | *(none)* | Explicit Azure Blob URI for the key ring (e.g. `https://{account}.blob.core.windows.net/dataprotection/keys.xml`). Authenticates via `DefaultAzureCredential`, the preferred production path alongside `Storage:TableServiceUri`. |
-| *(automatic, SQL)* | — | On `Storage:Provider=postgres` / `sqlite` the key ring is persisted to a `DataProtectionKeys` table in the same database. Nothing to configure, and no separate service to run. |
 | *(fallback)* | — | When `DataProtection:BlobUri` is unset and `Storage:ConnectionString` points at a real storage account (not Azurite), keys are persisted to a `dataprotection` container in that account automatically. With Azurite, keys fall back to the default file-based store. |
 
 On the AWS backend, pass an S3 client + bucket to `AddAuthagonalAwsStorage` to persist the key ring to S3, see [Installation → AWS backend](installation#aws-backend).
@@ -407,15 +401,12 @@ builder.Services.AddAuthagonal(builder.Configuration,
 builder.Services.AddAuthagonal(builder.Configuration,
     cluster => cluster.UseAwsDynamo(dynamoDb));
 
-// Self-hosted PostgreSQL: leadership via a conditional-upsert lease row,
-// event bus via an append-only log in the same database (Authagonal.SqlProvider)
+// Self-hosted PostgreSQL (Authagonal.SqlProvider)
 builder.Services.AddAuthagonal(builder.Configuration,
     cluster => cluster.UseSql(sqlDataSource));
 ```
 
 `UseAzureStorageBus` / `UseAwsDynamoBus` / `UseSqlBus` register the event bus only, keeping the in-process lease, for nodes that must receive cluster events but must never contend for leadership.
-
-A SQLite deployment is single-node by construction (SQLite serializes writers), so the in-process defaults are already correct there and need no clustering backend at all.
 
 See [Scaling](scaling) for how leadership and the event bus behave across instances.
 

@@ -83,8 +83,6 @@ builder.Services.AddAuthagonal(builder.Configuration,
 
 `UseAzureStorageBus` / `UseAwsDynamoBus` / `UseSqlBus` register the event bus only, keeping the in-process (always-leader) lease, use them on nodes that must receive cluster events but must never contend for leadership.
 
-SQLite is the exception to all of this: it serializes writers, so a SQLite deployment is one process by construction and the in-process defaults are already correct. Horizontal scaling on the self-hosted SQL backend means PostgreSQL.
-
 > **Note:** with the in-process default on multiple nodes, *every* node believes it is the leader. That's harmless for most workloads, but enable a real lease backend before turning on `Auth:KeyRotationEnabled` across multiple instances.
 
 See the [Configuration](configuration#cluster) page for all cluster settings.

@@ -13,13 +13,7 @@ Get Authagonal running locally in 5 minutes.
 docker compose up
 ```
 
-This starts Authagonal on `http://localhost:8080` backed by SQLite — one file, no emulator and no cloud
-account. To use one of the other backends instead:
-
-```bash
-docker compose -f docker-compose.yml -f docker-compose.postgres.yml up   # PostgreSQL
-docker compose -f docker-compose.yml -f docker-compose.azure.yml up      # Azure Table Storage (Azurite)
-```
+This starts Authagonal on `http://localhost:8080` with Azurite for storage.
 
 ## 2. Verify It's Running
 

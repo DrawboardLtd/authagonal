@@ -22,33 +22,12 @@ builder.Services.AddAuthagonalSqlite("Data Source=authagonal.db");
 builder.Services.AddAuthagonal(builder.Configuration);
 ```
 
-To keep the choice in configuration, call the config-driven form instead — a no-op unless
-`Storage:Provider` names a SQL backend, so it is safe to call unconditionally:
-
-```csharp
-builder.Services.AddAuthagonalSqlStorageFromConfiguration(builder.Configuration);
-builder.Services.AddAuthagonal(builder.Configuration);
-```
-
-That is what `Authagonal.Host` does, so with the published Docker image it takes no code at all:
-
-```bash
-Storage__Provider=postgres
-Storage__ConnectionString=Host=db;Database=authagonal;Username=auth;Password=…
-Storage__Schema=public          # optional, defaults to "public"
-```
-
-```bash
-Storage__Provider=sqlite
-Storage__ConnectionString=Data Source=/data/authagonal.db   # optional, defaults to ./authagonal.db
-```
-
 Tables are created on startup if absent (every statement is `IF NOT EXISTS`, so it is safe to race
 across pods and a no-op against a schema you provisioned yourself).
 
 This package is **not** a dependency of `Authagonal.Server` — referencing the server library never pulls
 Npgsql or the SQLite native binaries into an Azure- or AWS-only application. Reference it explicitly
-when you want a SQL backend; the shipped image already does.
+when you want a SQL backend, exactly as with `Authagonal.AwsProvider`.
 
 ## Which one
 

@@ -16,7 +16,6 @@
     <!-- Float on the 10.x major (Core already requires >= 10.0.x on both TFMs) so these never
          downgrade below what DataProtection's own patch releases transitively require — a fixed
          10.0.x pin trips NU1605 the moment DataProtection bumps its abstractions floor. -->
-    <PackageReference Include="Microsoft.Extensions.Configuration.Abstractions" Version="10.*" />
     <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.*" />
     <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" Version="10.*" />
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.*" />

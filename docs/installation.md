@@ -10,21 +10,6 @@ title: Installation
 Pull and run the pre-built image:
 
 ```bash
-# PostgreSQL
-docker run -p 8080:8080 \
-  -e Storage__Provider=postgres \
-  -e Storage__ConnectionString="Host=db;Database=authagonal;Username=auth;Password=…" \
-  -e Issuer="https://auth.example.com" \
-  drawboardci/authagonal
-
-# SQLite — mount a volume so the file survives the container
-docker run -p 8080:8080 -v authagonal:/data \
-  -e Storage__Provider=sqlite \
-  -e Storage__ConnectionString="Data Source=/data/authagonal.db" \
-  -e Issuer="https://auth.example.com" \
-  drawboardci/authagonal
-
-# Azure Table Storage (the default provider)
 docker run -p 8080:8080 \
   -e Storage__ConnectionString="your-connection-string" \
   -e Issuer="https://auth.example.com" \
@@ -33,16 +18,31 @@ docker run -p 8080:8080 \
 
 ## Docker Compose
 
-The repo ships a compose file per backend. The default needs nothing but Docker:
+For local development with Azurite (Azure Storage emulator):
 
-```bash
-docker compose up                                                        # SQLite
-docker compose -f docker-compose.yml -f docker-compose.postgres.yml up   # PostgreSQL
-docker compose -f docker-compose.yml -f docker-compose.azure.yml up      # Azure Table Storage (Azurite)
+```yaml
+services:
+  azurite:
+    image: mcr.microsoft.com/azure-storage/azurite
+    ports:
+      - "10000:10000"
+      - "10001:10001"
+      - "10002:10002"
+
+  authagonal:
+    build: .
+    ports:
+      - "8080:8080"
+    environment:
+      - Storage__ConnectionString=DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;TableEndpoint=http://azurite:10002/devstoreaccount1;
+      - Issuer=http://localhost:8080
+    depends_on:
+      - azurite
 ```
 
-The overrides replace the storage settings on the same `authagonal` service, so exactly one server runs
-whichever you pick.
+```bash
+docker compose up
+```
 
 ## Building from Source
 
@@ -63,7 +63,7 @@ npm ci
 npm run build
 
 # Run the server
-dotnet run --project src/Authagonal.Host
+dotnet run --project src/Authagonal.Server
 ```
 
 ### Docker Build
@@ -85,7 +85,7 @@ Reference the Authagonal packages in your own ASP.NET Core project:
 <PackageReference Include="Authagonal.AzureProvider" Version="x.y.z" />
 ```
 
-The storage provider package is pluggable: `Authagonal.SqlProvider` for self-hosted PostgreSQL or SQLite (see [SQL backend](#sql-backend) below), `Authagonal.AzureProvider` for Azure Table Storage (the default `AddAuthagonal()` wiring), or `Authagonal.AwsProvider` for DynamoDB / S3 / Secrets Manager (see [AWS backend](#aws-backend)).
+The storage provider package is pluggable: `Authagonal.AzureProvider` for Azure Table Storage (the default `AddAuthagonal()` wiring), `Authagonal.SqlProvider` for self-hosted PostgreSQL or SQLite (see [SQL backend](#sql-backend)), or `Authagonal.AwsProvider` for DynamoDB / S3 / Secrets Manager (see [AWS backend](#aws-backend)).
 
 Then compose it into your `Program.cs`:
 
@@ -109,43 +109,23 @@ The built-in [Resend](https://resend.com) sender activates automatically when `E
 
 ## SQL backend
 
-To run on your own database rather than a cloud service, set `Storage:Provider`. The published Docker image already carries the provider, so this needs no code change:
-
-```bash
-# PostgreSQL — the production self-hosted backend
-Storage__Provider=postgres
-Storage__ConnectionString=Host=db;Database=authagonal;Username=auth;Password=…
-Storage__Schema=public                                       # optional, defaults to "public"
-```
-
-```bash
-# SQLite — one file, no server
-Storage__Provider=sqlite
-Storage__ConnectionString=Data Source=/data/authagonal.db    # optional, defaults to ./authagonal.db
-```
-
-In a library host, reference `Authagonal.SqlProvider` and register it **before** `AddAuthagonal()` — those registrations are what make `AddAuthagonal()` skip its Azure Table Storage wiring, the same contract as the AWS provider:
+To run on your own database instead of a cloud service, reference `Authagonal.SqlProvider` and register it **before** `AddAuthagonal()`, those registrations are what make `AddAuthagonal()` skip its Azure Table Storage wiring:
 
 ```csharp
 using Authagonal.SqlProvider;
 
+// PostgreSQL — the production self-hosted backend
 builder.Services.AddAuthagonalPostgres("Host=db;Database=authagonal;Username=auth;Password=…");
-// or: builder.Services.AddAuthagonalSqlite("Data Source=authagonal.db");
+
+// or SQLite — one file, no server. Suits embedded hosts, CI and small single-node deployments
+builder.Services.AddAuthagonalSqlite("Data Source=authagonal.db");
+
 builder.Services.AddAuthagonal(builder.Configuration);
 ```
 
-To keep the choice in configuration instead — what `Authagonal.Host` does for the shipped image — call the config-driven form, which is a no-op unless `Storage:Provider` names a SQL backend:
+Tables mirror the Azure and DynamoDB layouts one-for-one and are created on startup if absent (every statement is `IF NOT EXISTS`, so it is safe to race across pods and a no-op against a schema you provisioned yourself). No `Storage:*` configuration is needed. The DataProtection key ring is persisted to the same database, so cookies and antiforgery tokens survive restarts and work across pods with no extra service.
 
-```csharp
-builder.Services.AddAuthagonalSqlStorageFromConfiguration(builder.Configuration);
-builder.Services.AddAuthagonal(builder.Configuration);
-```
-
-The PostgreSQL and SQLite drivers deliberately do **not** ship as dependencies of `Authagonal.Server`, so referencing the server library never pulls Npgsql or the SQLite native binaries into an Azure- or AWS-only application. Setting `Storage:Provider=postgres` without wiring the provider fails at startup with a message naming the call to add.
-
-Tables mirror the Azure and DynamoDB layouts one-for-one and are created on startup if absent (every statement is `IF NOT EXISTS`, so it is safe to race across pods and a no-op against a schema you provisioned yourself). The DataProtection key ring is persisted to the same database automatically, so cookies and antiforgery tokens survive restarts and work across pods with no extra service.
-
-Choosing between them: PostgreSQL for anything with more than one pod; SQLite for the quick start, embedded library hosts, CI, and small single-node deployments. SQLite serializes writers by construction, so it is a single-node backend — the in-process lease and cluster event bus registered by default are the correct pairing there, while a multi-pod PostgreSQL deployment wants `clustering.UseSql(dataSource)` for leader election.
+SQLite serializes writers, so it is a single-node backend — the in-process lease and cluster event bus registered by default are the correct pairing there. A multi-pod PostgreSQL deployment wants `clustering.UseSql(dataSource)` for leader election.
 
 > **Collation.** On PostgreSQL the key columns are pinned to `COLLATE "C"`. The key scheme is byte-ordinal throughout (prefix bounds, env-partition ranges, the grant expiry sweep, keyset paging), and a database created with a linguistic collation — `en_US.UTF-8` and ICU locales are the common defaults — would order punctuation and case differently and silently return the wrong rows. The pin makes the layout independent of how the database was created; you do not need to create it any particular way.
 
