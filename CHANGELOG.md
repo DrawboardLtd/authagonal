@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.21.0], 2026-07-30
+
 ### Added
 
 - **`Authagonal.SqlProvider`: self-hosted storage on PostgreSQL or SQLite.** The full
