@@ -2,6 +2,53 @@
 
 ## [Unreleased]
 
+### Added
+
+- **`Authagonal.SqlProvider`: self-hosted storage on PostgreSQL or SQLite.** The full
+  `Authagonal.Core.Stores` surface, clustering (`ILeaseProvider`, `IClusterEventBus`) and the
+  DataProtection key ring, with no cloud account, emulator or managed service. Select it with
+  `Storage:Provider=postgres` / `sqlite` — the shipped Docker image carries the provider, so that needs
+  no code change — or wire it explicitly with `AddAuthagonalPostgres(…)` /
+  `AddAuthagonalSqlite(…)` before `AddAuthagonal()`, the same contract as the AWS provider. Tables
+  mirror the Azure and DynamoDB layouts one-for-one and are created on startup if absent, so a backup
+  taken on one backend restores onto another.
+
+  The PostgreSQL and SQLite drivers are deliberately **not** dependencies of `Authagonal.Server`:
+  referencing the server library does not pull Npgsql or the SQLite native binaries into an Azure- or
+  AWS-only application. That is what the new `Authagonal.Host` project is for (see below).
+
+  Every operation that must not race is a single statement: `DELETE … RETURNING` for single-use
+  redemption (authorization codes, MFA challenges, OIDC state, SAML request ids),
+  `UPDATE … WHERE consumedAt IS NULL` for refresh rotation, `UPDATE … WHERE version = @v` with retry
+  for the lockout counter, `INSERT … ON CONFLICT DO NOTHING` for SAML assertion replay detection, and a
+  conditional upsert for the leader-election lease. One test suite runs over both dialects.
+
+  On PostgreSQL the key columns are pinned to `COLLATE "C"`. The key scheme is byte-ordinal throughout
+  — prefix bounds, env-partition ranges, the grant expiry sweep, keyset paging — and a database created
+  with a linguistic collation (`en_US.UTF-8` and ICU locales are the common defaults) orders
+  punctuation and case differently, which would have made those scans silently return the wrong rows:
+  expired grants never reaped, prefix search missing matches. The suite runs against an ICU-collated
+  database to keep the pin honest.
+
+  Neither engine expires rows the way DynamoDB TTL does, so `SqlExpiryReaper` sweeps the transient
+  tables (SAML replay, OIDC state, MFA challenges, upstream refresh tokens, the revocation list).
+  Grants stay with `IGrantStore.RemoveExpiredAsync`, which owns all three of their tables and the
+  matching tombstones.
+
+### Changed
+
+- **The deployable is now `src/Authagonal.Host`, a thin entrypoint over the `Authagonal.Server`
+  library.** `Authagonal.Server` was serving as both the published library and the Docker entrypoint,
+  which meant any storage provider the image could select at runtime had to become a dependency of the
+  library package. The host now owns the entrypoint, `appsettings.json`, and the provider references, so
+  the image stays config-switchable while `Authagonal.Server`'s package dependencies are unchanged from
+  0.20.0. The Docker entrypoint is `Authagonal.Host.dll`; local development is
+  `dotnet run --project src/Authagonal.Host`. Nothing changes for library consumers, and log category
+  names are preserved.
+- **`docker compose up` now starts on SQLite** — one file, no emulator. The other backends override the
+  same service: `docker compose -f docker-compose.yml -f docker-compose.postgres.yml up`, and the
+  previous Azurite setup is `-f docker-compose.azure.yml`.
+
 ## [0.20.0], 2026-07-27
 
 An RFC-by-RFC security review, prompted by outside comments on SCIM and SAML. Each item below was

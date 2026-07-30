@@ -2,10 +2,11 @@ FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
 WORKDIR /src
 COPY *.slnx ./
 # The CLI now drives the shared Authagonal.Migration engine, which pulls in Server (+ Protocol) and the
-# AzureProvider — copy each csproj so restore can resolve the graph before the full source copy.
+# Azure and SQL providers — copy each csproj so restore can resolve the graph before the full source copy.
 COPY src/Authagonal.Core/*.csproj src/Authagonal.Core/
 COPY src/Authagonal.Protocol/*.csproj src/Authagonal.Protocol/
 COPY src/Authagonal.AzureProvider/*.csproj src/Authagonal.AzureProvider/
+COPY src/Authagonal.SqlProvider/*.csproj src/Authagonal.SqlProvider/
 COPY src/Authagonal.Server/*.csproj src/Authagonal.Server/
 COPY src/Authagonal.Migration/*.csproj src/Authagonal.Migration/
 COPY tools/Authagonal.Migration.Cli/*.csproj tools/Authagonal.Migration.Cli/

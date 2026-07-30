@@ -1,0 +1,47 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\Authagonal.Core\Authagonal.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Npgsql" Version="9.*" />
+    <!-- Per-TFM so the major tracks the runtime, same rule as the provider packages. -->
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="9.*" Condition="'$(TargetFramework)' == 'net9.0'" />
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="10.*" Condition="'$(TargetFramework)' == 'net10.0'" />
+    <!-- Pin the SQLite native bundle: the build Microsoft.Data.Sqlite drags in transitively (2.1.11)
+         carries a known SQLite CVE (GHSA-2m69-gcr7-jv3q). Same approach as the other transitive
+         security pins in this repo. -->
+    <PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" Version="3.0.5" />
+    <!-- Float on the 10.x major (Core already requires >= 10.0.x on both TFMs) so these never
+         downgrade below what DataProtection's own patch releases transitively require — a fixed
+         10.0.x pin trips NU1605 the moment DataProtection bumps its abstractions floor. -->
+    <PackageReference Include="Microsoft.Extensions.Configuration.Abstractions" Version="10.*" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.*" />
+    <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" Version="10.*" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.*" />
+    <!-- For the SQL-backed DataProtection key-ring repository (IXmlRepository / KeyManagementOptions). -->
+    <PackageReference Include="Microsoft.AspNetCore.DataProtection" Version="9.*" Condition="'$(TargetFramework)' == 'net9.0'" />
+    <PackageReference Include="Microsoft.AspNetCore.DataProtection" Version="10.*" Condition="'$(TargetFramework)' == 'net10.0'" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <TargetFrameworks>net9.0;net10.0</TargetFrameworks>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsTrimmable>true</IsTrimmable>
+    <IsPackable>true</IsPackable>
+    <PackageId>Authagonal.SqlProvider</PackageId>
+    <Description>Self-hosted SQL (PostgreSQL / SQLite) implementation for Authagonal stores, clustering and DataProtection.</Description>
+    <Authors>Authagonal</Authors>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageProjectUrl>https://github.com/authagonal/authagonal</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/authagonal/authagonal</RepositoryUrl>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+
+</Project>

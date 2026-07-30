@@ -236,7 +236,7 @@ Like `IFieldCipher`, it is an optional store constructor parameter with a passth
 
 ## Change-Log Capture: IChangeWriter
 
-`IChangeWriter` (renamed from `ITombstoneWriter` in 0.6.0) records the key of every changed row to a dedicated change-log table, so incremental backups can find what changed without scanning the unindexed `Timestamp` column of the live tables. Deletes are captured for every table (a live-row scan cannot see a row that is gone); upserts are captured for the tables the backup reads from the log instead of scanning. Built-in implementations: `TableChangeWriter` (Azure Table Storage) and `DynamoChangeWriter` (DynamoDB).
+`IChangeWriter` (renamed from `ITombstoneWriter` in 0.6.0) records the key of every changed row to a dedicated change-log table, so incremental backups can find what changed without scanning the unindexed `Timestamp` column of the live tables. Deletes are captured for every table (a live-row scan cannot see a row that is gone); upserts are captured for the tables the backup reads from the log instead of scanning. Built-in implementations: `TableChangeWriter` (Azure Table Storage), `DynamoChangeWriter` (DynamoDB), and `SqlChangeWriter` (PostgreSQL / SQLite).
 
 ```csharp
 public interface IChangeWriter

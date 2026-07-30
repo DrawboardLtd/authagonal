@@ -53,14 +53,21 @@ public static class AuthagonalExtensions
         services.AddAuthagonalCore(configuration, configureClustering);
 
         // ---------------------------------------------------------------------------
-        // Single-tenant storage. Two configuration paths:
-        //   - Storage:ConnectionString — connection string with AccountKey (dev / Azurite)
-        //   - Storage:TableServiceUri  — managed-identity URI like
-        //     https://{account}.table.core.windows.net/. The host is responsible for
-        //     granting the workload's identity Storage Table Data Contributor.
-        // The MI path is preferred in production; access keys never need to land in
-        // a K8s secret.
+        // Single-tenant storage. Selected by Storage:Provider:
+        //   - "azure" (default) — Azure Table Storage, via one of:
+        //       Storage:ConnectionString — connection string with AccountKey (dev / Azurite)
+        //       Storage:TableServiceUri  — managed-identity URI like
+        //         https://{account}.table.core.windows.net/. The host is responsible for
+        //         granting the workload's identity Storage Table Data Contributor.
+        //       The MI path is preferred in production; access keys never need to land in
+        //       a K8s secret.
+        //   - "postgres" / "sqlite" — self-hosted SQL, wired by the host BEFORE this call via
+        //     Authagonal.SqlProvider (Authagonal.Host does it for the shipped image). Those drivers
+        //     stay out of this package so an Azure- or AWS-only consumer never pulls them in.
+        // A host that registered its own stores before calling this (the SQL path, the AWS path, or a
+        // custom backend) keeps them: everything below is skipped when an IUserStore is already present.
         // ---------------------------------------------------------------------------
+        var storageProvider = configuration["Storage:Provider"];
         var storageConnectionString = configuration["Storage:ConnectionString"];
         var tableServiceUri = configuration["Storage:TableServiceUri"];
         // Default true to keep existing config-driven deployments working unchanged.
@@ -68,19 +75,43 @@ public static class AuthagonalExtensions
         // the UserFirstNames / UserLastNames index writes (which use a single hot
         // partition and cap throughput at ~2k ops/sec at scale).
         var nameIndexesEnabled = configuration.GetValue("Storage:NameIndexesEnabled", true);
+        var normalizedProvider = storageProvider?.Trim().ToLowerInvariant();
+        // Whether Storage:ConnectionString holds a SQL connection string rather than an Azure one.
+        // Keyed off what was SELECTED, not off which branch below ran: a host that registers Azure
+        // stores itself (so the branch is skipped) must still get the blob key-ring fallback.
+        var sqlProviderSelected = normalizedProvider is "postgres" or "postgresql" or "sqlite";
         if (!services.Any(d => d.ServiceType == typeof(Authagonal.Core.Stores.IUserStore)))
         {
-            if (!string.IsNullOrWhiteSpace(tableServiceUri))
+            switch (normalizedProvider)
             {
-                services.AddTableStorage(new Uri(tableServiceUri), new Azure.Identity.DefaultAzureCredential(), nameIndexesEnabled);
-            }
-            else if (!string.IsNullOrWhiteSpace(storageConnectionString))
-            {
-                services.AddTableStorage(storageConnectionString, nameIndexesEnabled);
-            }
-            else
-            {
-                throw new InvalidOperationException("Either Storage:ConnectionString or Storage:TableServiceUri must be configured");
+                case null or "" or "azure":
+                    if (!string.IsNullOrWhiteSpace(tableServiceUri))
+                    {
+                        services.AddTableStorage(new Uri(tableServiceUri), new Azure.Identity.DefaultAzureCredential(), nameIndexesEnabled);
+                    }
+                    else if (!string.IsNullOrWhiteSpace(storageConnectionString))
+                    {
+                        services.AddTableStorage(storageConnectionString, nameIndexesEnabled);
+                    }
+                    else
+                    {
+                        throw new InvalidOperationException("Either Storage:ConnectionString or Storage:TableServiceUri must be configured");
+                    }
+                    break;
+
+                case "postgres" or "postgresql" or "sqlite":
+                    // Reached only when nothing registered the SQL stores first. Failing here with the
+                    // fix in the message beats falling through to the Azure path and reporting a
+                    // missing Table Storage connection string.
+                    throw new InvalidOperationException(
+                        $"Storage:Provider is '{storageProvider}', but no store is registered for it. Reference " +
+                        "Authagonal.SqlProvider and call AddAuthagonalSqlStorageFromConfiguration(configuration) " +
+                        "— or AddAuthagonalPostgres(...) / AddAuthagonalSqlite(...) — before AddAuthagonal(). " +
+                        "The shipped Docker image (Authagonal.Host) already does this.");
+
+                default:
+                    throw new InvalidOperationException(
+                        $"Unknown Storage:Provider '{storageProvider}'. Supported values: azure, postgres, sqlite.");
             }
         }
 
@@ -92,7 +123,11 @@ public static class AuthagonalExtensions
         {
             dataProtection.PersistKeysToAzureBlobStorage(new Uri(dpBlobUri), new Azure.Identity.DefaultAzureCredential());
         }
-        else if (!string.IsNullOrWhiteSpace(storageConnectionString) &&
+        // Skipped on the SQL backends: there Storage:ConnectionString is a SQL connection string, so
+        // handing it to BlobServiceClient would throw at startup — and Authagonal.SqlProvider has
+        // already persisted the key ring to the same database.
+        else if (!sqlProviderSelected &&
+                 !string.IsNullOrWhiteSpace(storageConnectionString) &&
                  !storageConnectionString.Contains("devstoreaccount1", StringComparison.OrdinalIgnoreCase))
         {
             var blobServiceClient = new BlobServiceClient(storageConnectionString);

@@ -13,10 +13,15 @@ COPY *.slnx ./
 COPY src/Authagonal.Core/*.csproj src/Authagonal.Core/
 COPY src/Authagonal.Protocol/*.csproj src/Authagonal.Protocol/
 COPY src/Authagonal.AzureProvider/*.csproj src/Authagonal.AzureProvider/
+COPY src/Authagonal.SqlProvider/*.csproj src/Authagonal.SqlProvider/
 COPY src/Authagonal.Server/*.csproj src/Authagonal.Server/
-RUN dotnet restore src/Authagonal.Server/
+COPY src/Authagonal.Host/*.csproj src/Authagonal.Host/
+# Authagonal.Host is the deployable: a thin entrypoint over the Authagonal.Server library that also
+# references the storage providers, so the image can pick one via Storage:Provider at runtime while the
+# published Authagonal.Server package stays free of their drivers.
+RUN dotnet restore src/Authagonal.Host/
 COPY src/ src/
-RUN dotnet publish src/Authagonal.Server/ -f net10.0 -c Release -o /app/publish --no-restore
+RUN dotnet publish src/Authagonal.Host/ -c Release -o /app/publish --no-restore
 
 # Stage 3: Runtime
 FROM mcr.microsoft.com/dotnet/aspnet:10.0
@@ -25,4 +30,4 @@ COPY --from=backend /app/publish .
 COPY --from=frontend /app/login-app/dist-spa ./wwwroot/
 EXPOSE 8080
 ENV ASPNETCORE_URLS=http://+:8080
-ENTRYPOINT ["dotnet", "Authagonal.Server.dll"]
+ENTRYPOINT ["dotnet", "Authagonal.Host.dll"]

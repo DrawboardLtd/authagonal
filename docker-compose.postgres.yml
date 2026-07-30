@@ -1,0 +1,33 @@
+# PostgreSQL backend. Overrides the SQLite defaults in docker-compose.yml:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.postgres.yml up
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      - POSTGRES_USER=authagonal
+      - POSTGRES_PASSWORD=authagonal
+      - POSTGRES_DB=authagonal
+    ports:
+      - "5432:5432"
+    volumes:
+      - authagonal-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U authagonal"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  authagonal:
+    environment:
+      - Storage__Provider=postgres
+      - Storage__ConnectionString=Host=postgres;Database=authagonal;Username=authagonal;Password=authagonal
+      - Issuer=http://localhost:8080
+    # The SQLite volume from the base file is not needed here, but leaving it mounted is harmless and
+    # keeps the override minimal.
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  authagonal-postgres:
