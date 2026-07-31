@@ -1147,7 +1147,10 @@
           "BCrypt.Net-Next": "[4.1.0, )",
           "Microsoft.AspNetCore.Authentication.JwtBearer": "[10.0.5, )",
           "Microsoft.IdentityModel.JsonWebTokens": "[8.17.0, )",
-          "Microsoft.IdentityModel.Tokens": "[8.17.0, )"
+          "Microsoft.IdentityModel.Protocols": "[8.17.0, )",
+          "Microsoft.IdentityModel.Protocols.OpenIdConnect": "[8.17.0, )",
+          "Microsoft.IdentityModel.Tokens": "[8.17.0, )",
+          "System.IdentityModel.Tokens.Jwt": "[8.17.0, )"
         }
       },
       "authagonal.server": {
@@ -1166,8 +1169,11 @@
           "Microsoft.AspNetCore.Authentication.JwtBearer": "[10.0.5, )",
           "Microsoft.Bcl.Memory": "[10.*, )",
           "Microsoft.IdentityModel.JsonWebTokens": "[8.17.0, )",
+          "Microsoft.IdentityModel.Protocols": "[8.17.0, )",
+          "Microsoft.IdentityModel.Protocols.OpenIdConnect": "[8.17.0, )",
           "Microsoft.IdentityModel.Tokens": "[8.17.0, )",
-          "QRCoder": "[1.6.0, )"
+          "QRCoder": "[1.6.0, )",
+          "System.IdentityModel.Tokens.Jwt": "[8.17.0, )"
         }
       },
       "authagonal.sqlprovider": {

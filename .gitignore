@@ -30,6 +30,10 @@ bld/
 # Node / React
 node_modules/
 login-app/dist/
+# `npm run build:spa` (what the Dockerfile runs) writes here, and it was not ignored. Beyond the
+# risk of committing the bundle, Tailwind's content scan picks the emitted JS up and generates
+# classes for it, so a stray dist-spa/ inflates the next build's CSS.
+login-app/dist-spa/
 demos/**/dist/
 demos/**/wwwroot/
 

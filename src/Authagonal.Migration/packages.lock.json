@@ -220,19 +220,19 @@
       },
       "Microsoft.IdentityModel.Protocols": {
         "type": "Transitive",
-        "resolved": "8.16.0",
-        "contentHash": "UFrU7d46UTsPQTa2HIEIpB9H1uJe1BW9FLw5uhEJ2ZuKdur8bcUA/bO5caq5dlBt5gNJeRIB3QQXYNs5fCQCZA==",
+        "resolved": "8.17.0",
+        "contentHash": "TYbO2KMvWvu8bxbEDCgzggNckCGjwr6NxFf2VYW7PpmCRbsoMNNgVYlCiRvy748t6gj5MJ8v/jcqWrcLMg6PaQ==",
         "dependencies": {
-          "Microsoft.IdentityModel.Tokens": "8.16.0"
+          "Microsoft.IdentityModel.Tokens": "8.17.0"
         }
       },
       "Microsoft.IdentityModel.Protocols.OpenIdConnect": {
         "type": "Transitive",
-        "resolved": "8.16.0",
-        "contentHash": "h4yVXyJsEBBX5lg2G5ftMsi5JzcNEGAzrNphA6DQ6eOd8P0s+cDCOyPwVTYLePZvJL5unbPvYIvzrbTXzFjXnQ==",
+        "resolved": "8.17.0",
+        "contentHash": "8DuZM96o2epBioyp56Q+H8bdGwO8FnU4nQMa0c6pboe9+monH9PZGY+CHKmsdw90ObJ5OXtiKG1TWuLbJp2VvQ==",
         "dependencies": {
-          "Microsoft.IdentityModel.Protocols": "8.16.0",
-          "System.IdentityModel.Tokens.Jwt": "8.16.0"
+          "Microsoft.IdentityModel.Protocols": "8.17.0",
+          "System.IdentityModel.Tokens.Jwt": "8.17.0"
         }
       },
       "Microsoft.IdentityModel.Tokens": {
@@ -279,11 +279,11 @@
       },
       "System.IdentityModel.Tokens.Jwt": {
         "type": "Transitive",
-        "resolved": "8.16.0",
-        "contentHash": "rrs2u7DRMXQG2yh0oVyF/vLwosfRv20Ld2iEpYcKwQWXHjfV+gFXNQsQ9p008kR9Ou4pxBs68Q6/9zC8Gi1wjg==",
+        "resolved": "8.17.0",
+        "contentHash": "nKikRYheDeSaXA3wGr2otwaiRFygBa25m+hc7MEomZVIEWZvKVqd8wgP9yn+8QpLRGgw//dUs4LErGx9gtVmAA==",
         "dependencies": {
-          "Microsoft.IdentityModel.JsonWebTokens": "8.16.0",
-          "Microsoft.IdentityModel.Tokens": "8.16.0"
+          "Microsoft.IdentityModel.JsonWebTokens": "8.17.0",
+          "Microsoft.IdentityModel.Tokens": "8.17.0"
         }
       },
       "System.IO.Hashing": {
@@ -327,7 +327,10 @@
           "BCrypt.Net-Next": "[4.1.0, )",
           "Microsoft.AspNetCore.Authentication.JwtBearer": "[10.0.5, )",
           "Microsoft.IdentityModel.JsonWebTokens": "[8.17.0, )",
-          "Microsoft.IdentityModel.Tokens": "[8.17.0, )"
+          "Microsoft.IdentityModel.Protocols": "[8.17.0, )",
+          "Microsoft.IdentityModel.Protocols.OpenIdConnect": "[8.17.0, )",
+          "Microsoft.IdentityModel.Tokens": "[8.17.0, )",
+          "System.IdentityModel.Tokens.Jwt": "[8.17.0, )"
         }
       },
       "authagonal.server": {
@@ -346,8 +349,11 @@
           "Microsoft.AspNetCore.Authentication.JwtBearer": "[10.0.5, )",
           "Microsoft.Bcl.Memory": "[10.*, )",
           "Microsoft.IdentityModel.JsonWebTokens": "[8.17.0, )",
+          "Microsoft.IdentityModel.Protocols": "[8.17.0, )",
+          "Microsoft.IdentityModel.Protocols.OpenIdConnect": "[8.17.0, )",
           "Microsoft.IdentityModel.Tokens": "[8.17.0, )",
-          "QRCoder": "[1.6.0, )"
+          "QRCoder": "[1.6.0, )",
+          "System.IdentityModel.Tokens.Jwt": "[8.17.0, )"
         }
       }
     },
@@ -642,19 +648,19 @@
       },
       "Microsoft.IdentityModel.Protocols": {
         "type": "Transitive",
-        "resolved": "8.16.0",
-        "contentHash": "UFrU7d46UTsPQTa2HIEIpB9H1uJe1BW9FLw5uhEJ2ZuKdur8bcUA/bO5caq5dlBt5gNJeRIB3QQXYNs5fCQCZA==",
+        "resolved": "8.17.0",
+        "contentHash": "TYbO2KMvWvu8bxbEDCgzggNckCGjwr6NxFf2VYW7PpmCRbsoMNNgVYlCiRvy748t6gj5MJ8v/jcqWrcLMg6PaQ==",
         "dependencies": {
-          "Microsoft.IdentityModel.Tokens": "8.16.0"
+          "Microsoft.IdentityModel.Tokens": "8.17.0"
         }
       },
       "Microsoft.IdentityModel.Protocols.OpenIdConnect": {
         "type": "Transitive",
-        "resolved": "8.16.0",
-        "contentHash": "h4yVXyJsEBBX5lg2G5ftMsi5JzcNEGAzrNphA6DQ6eOd8P0s+cDCOyPwVTYLePZvJL5unbPvYIvzrbTXzFjXnQ==",
+        "resolved": "8.17.0",
+        "contentHash": "8DuZM96o2epBioyp56Q+H8bdGwO8FnU4nQMa0c6pboe9+monH9PZGY+CHKmsdw90ObJ5OXtiKG1TWuLbJp2VvQ==",
         "dependencies": {
-          "Microsoft.IdentityModel.Protocols": "8.16.0",
-          "System.IdentityModel.Tokens.Jwt": "8.16.0"
+          "Microsoft.IdentityModel.Protocols": "8.17.0",
+          "System.IdentityModel.Tokens.Jwt": "8.17.0"
         }
       },
       "Microsoft.IdentityModel.Tokens": {
@@ -716,11 +722,11 @@
       },
       "System.IdentityModel.Tokens.Jwt": {
         "type": "Transitive",
-        "resolved": "8.16.0",
-        "contentHash": "rrs2u7DRMXQG2yh0oVyF/vLwosfRv20Ld2iEpYcKwQWXHjfV+gFXNQsQ9p008kR9Ou4pxBs68Q6/9zC8Gi1wjg==",
+        "resolved": "8.17.0",
+        "contentHash": "nKikRYheDeSaXA3wGr2otwaiRFygBa25m+hc7MEomZVIEWZvKVqd8wgP9yn+8QpLRGgw//dUs4LErGx9gtVmAA==",
         "dependencies": {
-          "Microsoft.IdentityModel.JsonWebTokens": "8.16.0",
-          "Microsoft.IdentityModel.Tokens": "8.16.0"
+          "Microsoft.IdentityModel.JsonWebTokens": "8.17.0",
+          "Microsoft.IdentityModel.Tokens": "8.17.0"
         }
       },
       "System.IO.Hashing": {
@@ -788,9 +794,12 @@
         "dependencies": {
           "Authagonal.Core": "[1.0.0, )",
           "BCrypt.Net-Next": "[4.1.0, )",
-          "Microsoft.AspNetCore.Authentication.JwtBearer": "[9.0.0, )",
+          "Microsoft.AspNetCore.Authentication.JwtBearer": "[9.0.14, 10.0.0)",
           "Microsoft.IdentityModel.JsonWebTokens": "[8.17.0, )",
-          "Microsoft.IdentityModel.Tokens": "[8.17.0, )"
+          "Microsoft.IdentityModel.Protocols": "[8.17.0, )",
+          "Microsoft.IdentityModel.Protocols.OpenIdConnect": "[8.17.0, )",
+          "Microsoft.IdentityModel.Tokens": "[8.17.0, )",
+          "System.IdentityModel.Tokens.Jwt": "[8.17.0, )"
         }
       },
       "authagonal.server": {
@@ -809,8 +818,11 @@
           "Microsoft.AspNetCore.Authentication.JwtBearer": "[9.0.14, 10.0.0)",
           "Microsoft.Bcl.Memory": "[10.*, )",
           "Microsoft.IdentityModel.JsonWebTokens": "[8.17.0, )",
+          "Microsoft.IdentityModel.Protocols": "[8.17.0, )",
+          "Microsoft.IdentityModel.Protocols.OpenIdConnect": "[8.17.0, )",
           "Microsoft.IdentityModel.Tokens": "[8.17.0, )",
-          "QRCoder": "[1.6.0, )"
+          "QRCoder": "[1.6.0, )",
+          "System.IdentityModel.Tokens.Jwt": "[8.17.0, )"
         }
       }
     }

@@ -15,6 +15,25 @@
       commit rather than as a surprise between two builds of the same source.
     -->
     <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
+
+    <!--
+      One version for the whole Microsoft.IdentityModel family, because a partial pin is worse
+      than no pin.
+
+      Server and Protocol pinned Microsoft.IdentityModel.JsonWebTokens and .Tokens at 8.17.0 and
+      left Microsoft.IdentityModel.Protocols, .Protocols.OpenIdConnect and
+      System.IdentityModel.Tokens.Jwt to whatever Microsoft.AspNetCore.Authentication.JwtBearer
+      dragged in — which was 8.0.1, seventeen patch releases behind, inside the same token
+      validation pipeline. An 8.0.1 .Protocols.OpenIdConnect fetching an upstream OIDC provider's
+      metadata and handing it to an 8.17.0 validator means every hardening added to metadata
+      retrieval in between is missing from the path that decides whether a federated id_token is
+      trustworthy. Microsoft's own guidance is to keep the family on one version.
+
+      Referencing $(IdentityModelVersion) everywhere makes that structural: the next advisory in
+      this family is one edit, and no sibling can be forgotten and silently float back to whatever
+      a transitive dependency asks for.
+    -->
+    <IdentityModelVersion>8.17.0</IdentityModelVersion>
   </PropertyGroup>
 
 </Project>

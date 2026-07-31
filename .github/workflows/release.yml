@@ -18,6 +18,11 @@ env:
   DOCKERHUB_DEMO_FRONTEND: authagonal/authagonal-demo-frontend
 
 jobs:
+  # The npm toolchains that produce the login UI and the demo images, checked before anything is
+  # published. Same gate that runs on every push and PR; see audit.yml.
+  audit:
+    uses: ./.github/workflows/audit.yml
+
   publish-nuget:
     runs-on: ubuntu-latest
     steps:
@@ -56,6 +61,7 @@ jobs:
           retention-days: 1
 
   publish-npm:
+    needs: audit
     runs-on: ubuntu-latest
     permissions:
       id-token: write
@@ -95,6 +101,7 @@ jobs:
           exit 1
 
   publish-npm-bff:
+    needs: audit
     runs-on: ubuntu-latest
     permissions:
       id-token: write

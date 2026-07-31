@@ -9,6 +9,7 @@ import MfaChallengePage from './pages/MfaChallengePage';
 import MfaSetupPage from './pages/MfaSetupPage';
 import DevicePage from './pages/DevicePage';
 import ConsentPage from './pages/ConsentPage';
+import AgentConsentPage from './pages/AgentConsentPage';
 import GrantsPage from './pages/GrantsPage';
 import AccountPage from './pages/AccountPage';
 
@@ -30,6 +31,9 @@ export default function App({ extraRoutes }: { extraRoutes?: ReactNode }) {
           <Route path="/mfa-setup" element={<MfaSetupPage />} />
           <Route path="/device" element={<DevicePage />} />
           <Route path="/consent" element={<ConsentPage />} />
+          {/* Granting an agent standing RFC 9396 authority. Distinct from /consent, which grants
+              OAuth scopes — the two authorize different things and must not share a screen. */}
+          <Route path="/consent/agents/:clientId" element={<AgentConsentPage />} />
           <Route path="/grants" element={<GrantsPage />} />
           <Route path="/account" element={<AccountPage />} />
           {extraRoutes}

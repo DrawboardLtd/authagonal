@@ -19,8 +19,15 @@
          silently. Bracketed above the fixed versions and below the next major. -->
     <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="[9.0.14,10.0.0)" Condition="'$(TargetFramework)' == 'net9.0'" />
     <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="10.0.5" Condition="'$(TargetFramework)' == 'net10.0'" />
-    <PackageReference Include="Microsoft.IdentityModel.JsonWebTokens" Version="8.17.0" />
-    <PackageReference Include="Microsoft.IdentityModel.Tokens" Version="8.17.0" />
+    <!-- The whole Microsoft.IdentityModel family on one version ($(IdentityModelVersion), set in
+         Directory.Build.props). The last three were previously left transitive and resolved to
+         8.0.1 behind JwtBearer's pin, alongside an 8.17.0 .Tokens in the same validation
+         pipeline. -->
+    <PackageReference Include="Microsoft.IdentityModel.JsonWebTokens" Version="$(IdentityModelVersion)" />
+    <PackageReference Include="Microsoft.IdentityModel.Tokens" Version="$(IdentityModelVersion)" />
+    <PackageReference Include="Microsoft.IdentityModel.Protocols" Version="$(IdentityModelVersion)" />
+    <PackageReference Include="Microsoft.IdentityModel.Protocols.OpenIdConnect" Version="$(IdentityModelVersion)" />
+    <PackageReference Include="System.IdentityModel.Tokens.Jwt" Version="$(IdentityModelVersion)" />
     <PackageReference Include="QRCoder" Version="1.6.0" />
     <PackageReference Include="Fido2.AspNet" Version="4.0.0" />
     <PackageReference Include="Azure.Storage.Blobs" Version="12.*" />

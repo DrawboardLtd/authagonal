@@ -24,8 +24,10 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="Microsoft.IdentityModel.JsonWebTokens" Version="8.17.0" />
-    <PackageReference Include="Microsoft.IdentityModel.Protocols.OpenIdConnect" Version="8.17.0" />
+    <!-- $(IdentityModelVersion) from Directory.Build.props — the same single version the rest of
+         the Microsoft.IdentityModel family is held at across every project. -->
+    <PackageReference Include="Microsoft.IdentityModel.JsonWebTokens" Version="$(IdentityModelVersion)" />
+    <PackageReference Include="Microsoft.IdentityModel.Protocols.OpenIdConnect" Version="$(IdentityModelVersion)" />
   </ItemGroup>
 
   <ItemGroup>

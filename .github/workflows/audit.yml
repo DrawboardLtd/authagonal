@@ -1,0 +1,85 @@
+# Fails on a known high/critical advisory in any of the npm workspaces.
+#
+# None of this reaches the running identity provider — the Dockerfile runs `npm run build:spa` and
+# ships only the built output, so no Vite dev server and no PostCSS runtime is in the image. It is
+# the BUILD that is exposed: the postcss and babel `sourceMappingURL` issues read arbitrary files
+# off whatever machine processes a CSS or JS file, and the machine that processes them here is a
+# GitHub runner whose sibling jobs hold the NuGet API key, both Docker Hub tokens and npm publish
+# OIDC. A stale lockfile on that runner is worth catching.
+#
+# The lockfiles are committed and CI installs with `npm ci`, which is the right setup — this is the
+# part that notices when it goes stale.
+name: npm audit
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  schedule:
+    # Weekly. Advisories are published against versions that stopped changing months ago, so a
+    # repository with no commits still drifts.
+    - cron: '0 5 * * 1'
+  # Called by the release workflow, which gates publishing on it.
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    strategy:
+      # Every workspace reports, rather than the first failure hiding the rest.
+      fail-fast: false
+      matrix:
+        dir:
+          - login-app
+          - bff-lib
+          - demos/sample-app/frontend
+          - demos/custom-server/login-app
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+
+      - name: npm audit (high and critical)
+        working-directory: ${{ matrix.dir }}
+        env:
+          # Advisories that are knowingly carried, by GHSA id, space-separated. An entry belongs
+          # here only when there is no fix short of a breaking major bump, and it comes straight
+          # back out the moment there is one.
+          #
+          #   GHSA-mh99-v99m-4gvg — brace-expansion unbounded-expansion OOM. Reached only through
+          #   eslint 9's minimatch@3, which pins brace-expansion ^1.1.7; the fix lands in
+          #   brace-expansion 5.0.8 and is backported to no earlier line, so `npm audit fix` offers
+          #   nothing but eslint@10. eslint is not on the publish path — release runs `npm ci`,
+          #   `npm run build`, `npm publish`, and never invokes it.
+          ACCEPTED: GHSA-mh99-v99m-4gvg
+        run: |
+          # `npm audit` exits non-zero when it finds anything, so the exit code is deliberately
+          # ignored here — the filter below decides, not npm.
+          npm audit --json > audit.json || true
+
+          UNACCEPTED=$(jq -r --arg accepted "$ACCEPTED" '
+            ($accepted | split(" ")) as $ok
+            | [ (.vulnerabilities // {}) | to_entries[] | .value
+                | select(.severity == "high" or .severity == "critical")
+                | .via[] | select(type == "object")
+                | { id: (.url | split("/") | last), severity: .severity, title: .title } ]
+            | unique_by(.id)
+            | map(select(.id as $i | ($ok | index($i)) | not))
+            | .[] | "  \(.severity)\t\(.id)\t\(.title)"
+          ' audit.json)
+
+          if [ -n "$UNACCEPTED" ]; then
+            echo "::error::${{ matrix.dir }}: high or critical advisories with no accepted exception"
+            echo "$UNACCEPTED"
+            echo
+            echo "Run 'npm audit fix' in ${{ matrix.dir }} and commit the lockfile."
+            exit 1
+          fi
+
+          echo "${{ matrix.dir }}: no unaccepted high or critical advisories."
