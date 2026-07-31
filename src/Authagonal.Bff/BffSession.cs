@@ -33,6 +33,17 @@ public sealed class BffSession
     /// <summary>Absolute session expiry, independent of token refreshes.</summary>
     public DateTimeOffset ExpiresAt { get; set; }
 
+    /// <summary>
+    /// When the session was established. Set once by the store; a token refresh does not move it.
+    /// </summary>
+    /// <remarks>
+    /// Compared against the subject/sid revocation markers on every load, so a back-channel logout
+    /// terminates a session whether or not the secondary index happened to record it. Sessions
+    /// serialized before this field existed read as <c>default</c>, which is before any marker and
+    /// therefore revoked by one — the safe direction.
+    /// </remarks>
+    public DateTimeOffset CreatedAt { get; set; }
+
     /// <summary>Non-sensitive id_token claims surfaced to the SPA via <c>/bff/user</c>.</summary>
     public Dictionary<string, string> Claims { get; set; } = new();
 }

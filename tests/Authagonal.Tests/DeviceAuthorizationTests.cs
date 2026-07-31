@@ -281,6 +281,72 @@ public sealed class DeviceAuthorizationTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
     }
 
+    // -----------------------------------------------------------------------
+    // F256 — a poll must not be able to roll back a consume
+    // -----------------------------------------------------------------------
+
+    [Fact]
+    public async Task ApprovingAnAlreadyRedeemedCode_IsRefused()
+    {
+        await _factory.SeedTestUserAsync();
+        var deviceCodes = await RequestDeviceCodes();
+        await _client.PostAsJsonAsync("/api/auth/login", new { email = "test@example.com", password = "Test1234!" });
+
+        var approveForm = new Dictionary<string, string> { ["user_code"] = deviceCodes.UserCode };
+        Assert.Equal(HttpStatusCode.OK,
+            (await _client.PostAsync("/api/auth/device/approve", new FormUrlEncodedContent(approveForm))).StatusCode);
+
+        var tokenForm = new Dictionary<string, string>
+        {
+            ["grant_type"] = GrantTypes.DeviceCode,
+            ["device_code"] = deviceCodes.DeviceCode,
+            ["client_id"] = AuthagonalTestFactory.AdminClientId,
+            ["client_secret"] = AuthagonalTestFactory.AdminClientSecret,
+        };
+        Assert.Equal(HttpStatusCode.OK,
+            (await _client.PostAsync("/connect/token", new FormUrlEncodedContent(tokenForm))).StatusCode);
+
+        // The approval write is an unconditional full-row upsert and the row it writes carries
+        // ConsumedAt = null, so an approval landing after a consume erases the marker the atomic
+        // consume depends on and one approval yields a second token set.
+        //
+        // Through the API this is already blocked one step earlier — the user_code grant is marked
+        // consumed on approval, so a second approval never reaches the device grant. The guard added
+        // on the device grant itself is the belt to that brace, for any path that reaches the
+        // approval write with a device code rather than a user code. This test pins the outcome both
+        // of them exist to produce.
+        var reapprove = await _client.PostAsync("/api/auth/device/approve", new FormUrlEncodedContent(approveForm));
+        Assert.Equal(HttpStatusCode.BadRequest, reapprove.StatusCode);
+
+        var secondToken = await _client.PostAsync("/connect/token", new FormUrlEncodedContent(tokenForm));
+        Assert.Equal(HttpStatusCode.BadRequest, secondToken.StatusCode);
+    }
+
+    [Fact]
+    public async Task PendingPoll_DoesNotRewriteTheGrant()
+    {
+        await _factory.SeedTestUserAsync();
+        var deviceCodes = await RequestDeviceCodes();
+
+        var before = await _factory.GrantStore.GetAsync($"device:{deviceCodes.DeviceCode}");
+        Assert.NotNull(before);
+
+        await _client.PostAsync("/connect/token", new FormUrlEncodedContent(new Dictionary<string, string>
+        {
+            ["grant_type"] = GrantTypes.DeviceCode,
+            ["device_code"] = deviceCodes.DeviceCode,
+            ["client_id"] = AuthagonalTestFactory.AdminClientId,
+            ["client_secret"] = AuthagonalTestFactory.AdminClientSecret,
+        }));
+
+        // The poll persisted a LastPolledAt marker through an unconditional upsert, which is what
+        // could land on top of a concurrent consume. The §3.5 interval now rides the rate limiter, so
+        // a pending poll leaves the grant untouched — nothing to roll anything back with.
+        var after = await _factory.GrantStore.GetAsync($"device:{deviceCodes.DeviceCode}");
+        Assert.NotNull(after);
+        Assert.Equal(before!.Data, after!.Data);
+    }
+
     private async Task<DeviceCodes> RequestDeviceCodes()
     {
         var form = new FormUrlEncodedContent(new Dictionary<string, string>

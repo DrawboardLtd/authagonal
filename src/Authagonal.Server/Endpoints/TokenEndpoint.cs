@@ -23,6 +23,7 @@ public static class TokenEndpoint
             UserStoreOidcSubjectResolver subjectResolver,
             IClientSecretVerifier secretVerifier,
             IEnumerable<IAuthHook> authHooks,
+            Authagonal.Core.Services.IRateLimiter rateLimiter,
             CancellationToken ct) =>
         {
             var form = await httpContext.Request.ReadFormAsync(ct);
@@ -56,7 +57,7 @@ public static class TokenEndpoint
                     GrantTypes.AuthorizationCode => await TokenGrantHandlers.HandleAuthorizationCode(form, tokenService, clientId, ct),
                     GrantTypes.RefreshToken => await TokenGrantHandlers.HandleRefreshToken(form, tokenService, clientId, ct),
                     GrantTypes.ClientCredentials => await TokenGrantHandlers.HandleClientCredentials(form, tokenService, clientId, ct),
-                    GrantTypes.DeviceCode => await HandleDeviceCode(form, tokenService, grantStore, userStore, subjectResolver, client, ct),
+                    GrantTypes.DeviceCode => await HandleDeviceCode(form, tokenService, grantStore, userStore, subjectResolver, rateLimiter, client, ct),
                     GrantTypes.TokenExchange => await TokenGrantHandlers.HandleTokenExchange(form, tokenService, clientId, ct),
                     _ => throw new UnreachableException()
                 };
@@ -81,6 +82,7 @@ public static class TokenEndpoint
         IGrantStore grantStore,
         IUserStore userStore,
         UserStoreOidcSubjectResolver subjectResolver,
+        Authagonal.Core.Services.IRateLimiter rateLimiter,
         OAuthClient client,
         CancellationToken ct)
     {
@@ -110,24 +112,24 @@ public static class TokenEndpoint
 
         // RFC 8628 §3.5 — throttle (F45): if the client polls faster than the advertised interval, tell
         // it to slow down instead of doing the work (the client must then add 5s to its interval).
-        // Tracked per device_code via LastPolledAt; enforced regardless of approval state.
-        var now = DateTimeOffset.UtcNow;
-        if (data.LastPolledAt is { } lastPolled &&
-            now - lastPolled < TimeSpan.FromSeconds(DeviceCodeData.PollIntervalSeconds))
+        //
+        // Through the rate limiter, keyed on the device code, rather than a LastPolledAt field written
+        // back with StoreAsync. That write was an unconditional full-row upsert in every provider, and
+        // the row it rewrote carries ConsumedAt = null — so a pending poll landing just after a
+        // concurrent approved poll's TryMarkConsumedAsync erased the consumed marker that the atomic
+        // consume depends on, and the device code became redeemable a second time. A poll counter is
+        // not worth reopening the double-redemption the conditional consume exists to close, and the
+        // limiter is the same mechanism user_code entry already throttles with.
+        if (await rateLimiter.IsRateLimitedAsync(
+                $"device-poll|{deviceCode}", 1, TimeSpan.FromSeconds(DeviceCodeData.PollIntervalSeconds), ct))
         {
             return JsonResults.OAuthError("slow_down", "Polling too frequently. Increase your interval and try again.");
         }
 
         if (!data.IsApproved || string.IsNullOrEmpty(data.SubjectId))
         {
-            // Record this poll so the next too-fast poll is throttled (best-effort — a lost update just
-            // means one un-throttled poll). Only the pending path persists; an approved poll consumes.
-            data.LastPolledAt = now;
-            grant.Key = $"device:{deviceCode}";
-            grant.Data = JsonSerializer.Serialize(data, AuthagonalJsonContext.Default.DeviceCodeData);
-            await grantStore.StoreAsync(grant, ct);
-
-            // RFC 8628 §3.5 — authorization_pending
+            // RFC 8628 §3.5 — authorization_pending. Nothing is written: the poll left no trace to
+            // roll anything back with.
             return JsonResults.OAuthError("authorization_pending", "The user has not yet approved the request");
         }
 

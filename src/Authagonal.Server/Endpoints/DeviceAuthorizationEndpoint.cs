@@ -218,6 +218,15 @@ public static class DeviceAuthorizationEndpoint
             if (deviceGrant is null || deviceGrant.ExpiresAt < DateTimeOffset.UtcNow)
                 return TypedResults.Json(new ErrorInfoResponse { Error = "expired", Message = "Device code has expired" }, AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 400);
 
+            // A code that has already been redeemed must not be approved again. The write below is an
+            // unconditional full-row upsert, and the row it writes carries ConsumedAt = null — so
+            // approving a consumed code erased the marker the atomic consume relies on and handed the
+            // device a second token set from one approval.
+            if (deviceGrant.ConsumedAt is not null)
+                return TypedResults.Json(
+                    new ErrorInfoResponse { Error = "invalid_user_code", Message = "Code is invalid or expired" },
+                    AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 400);
+
             // Approve — write the subject ID into the device code data
             var subjectId = httpContext.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value
                 ?? httpContext.User.FindFirst("sub")?.Value;
@@ -306,5 +315,11 @@ internal sealed class DeviceCodeData
     public string? SubjectId { get; set; }
 
     /// <summary>Timestamp of the last accepted token poll, for interval throttling. Null until first polled.</summary>
+    /// <summary>
+    /// No longer written. The RFC 8628 §3.5 poll interval is enforced through IRateLimiter keyed on
+    /// the device code, because persisting it meant an unconditional row rewrite on every pending
+    /// poll — which could erase a concurrent consume's marker. Kept so a grant serialized by an
+    /// earlier version still deserializes.
+    /// </summary>
     public DateTimeOffset? LastPolledAt { get; set; }
 }
