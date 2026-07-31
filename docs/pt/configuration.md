@@ -45,6 +45,7 @@ O armazenamento pode ser configurado de uma de duas formas: forneça **ou** `Sto
 | `Auth:MfaChallengeExpiryMinutes` | `5` | Tempo de vida do token de verificação MFA |
 | `Auth:MfaSetupTokenExpiryMinutes` | `15` | Tempo de vida do token de configuração MFA (para inscrição forçada) |
 | `Auth:Pbkdf2Iterations` | `100000` | Contagem de iterações PBKDF2 para hashing de senhas |
+| `Auth:FailedLoginMinimumMilliseconds` | `250` | Piso de tempo de relógio ao qual um login falho é mantido antes de devolver `invalid_credentials`, medido a partir do início da requisição. Fecha o oráculo temporal de enumeração de utilizadores: uma conta inexistente é verificada contra um hash fictício no formato PBKDF2 nativo, mas uma conta real pode ainda ter um hash bcrypt ou ASP.NET Identity V3 importado com um custo diferente, portanto igualar o trabalho é impossível e o que se impõe é igualar o tempo decorrido. Eleve-o acima do hash mais lento que a implantação detém, por exemplo se importou bcrypt acima do custo 11 ou aumentou `Pbkdf2Iterations` muito além do padrão: um único aviso é registado na primeira vez que um login falho ultrapassa o piso. `0` desativa o preenchimento e reabre o oráculo. |
 | `Auth:RefreshTokenReuseGraceSeconds` | `0` | Janela de tolerância opcional (segundos) para reutilização concorrente de refresh token. `0` (padrão) mantém a postura estrita: qualquer reutilização de um refresh token consumido revoga todos os tokens para aquele utilizador+cliente. Defina `> 0` para tratar uma reutilização dentro da janela como uma repetição idempotente (reentrega os tokens sucessores), útil para clientes móveis com falhas de conectividade. |
 | `Auth:DynamicClientRegistrationEnabled` | `false` | Habilita o endpoint de registo dinâmico de clientes `POST /connect/register` (RFC 7591). Desabilitado por padrão porque o registo aberto pode ser abusado em implantações multi-tenant. Consulte [Registo Dinâmico de Clientes](client-registration). |
 | `Auth:SigningKeyLifetimeDays` | `90` | Tempo de vida da chave de assinatura RSA antes da rotação automática |
@@ -84,6 +85,36 @@ No backend AWS, passe um cliente S3 + bucket a `AddAuthagonalAwsStorage` para pe
 | `BackgroundServices:TokenCleanupIntervalMinutes` | `60` | Intervalo de limpeza de tokens expirados |
 | `BackgroundServices:GrantReconciliationDelayMinutes` | `10` | Atraso inicial antes da primeira reconciliação de concessões |
 | `BackgroundServices:GrantReconciliationIntervalMinutes` | `30` | Intervalo de reconciliação de concessões |
+
+## Papéis
+
+Os papéis são definidos no array `Roles` e semeados na inicialização, junto com clientes, scopes e
+provedores. Semeá-los importa sobretudo quando um scope é restringido com
+[`AllowedRoles`](scopes#role-gated-scopes): um scope restringido a um papel que nada cria fica
+restringido para toda a gente, incluindo o operador que o configurou, e falha em silêncio -- o scope
+simplesmente nunca é concedido.
+
+```json
+{
+  "Roles": [
+    {
+      "Name": "staff-admin",
+      "Description": "Internal staff console",
+      "Members": [ "ada@example.com", "grace@example.com" ]
+    }
+  ]
+}
+```
+
+| Campo | Descrição |
+|---|---|
+| `Name` | O nome do papel, tal como usado em `Scope.AllowedRoles` e no claim `roles` do token |
+| `Description` | Legível por humanos; atualizada em arranques posteriores quando a semente indica uma |
+| `Members` | Emails colocados no papel a cada arranque. Um endereço ainda sem utilizador é ignorado com um aviso e tentado de novo no arranque seguinte -- o arranque nunca depende de uma conta que ninguém criou |
+
+A semeadura é **aditiva e idempotente**. Nunca remove um papel nem revoga uma pertença: a
+configuração não é a fonte da verdade sobre quem detém o quê, portanto um papel concedido através da
+API de administração sobrevive ao reinício seguinte.
 
 ## Clientes
 
@@ -371,9 +402,13 @@ builder.Services.AddAuthagonal(builder.Configuration,
 // AWS equivalent (Authagonal.AwsProvider)
 builder.Services.AddAuthagonal(builder.Configuration,
     cluster => cluster.UseAwsDynamo(dynamoDb));
+
+// Self-hosted PostgreSQL (Authagonal.SqlProvider)
+builder.Services.AddAuthagonal(builder.Configuration,
+    cluster => cluster.UseSql(sqlDataSource));
 ```
 
-`UseAzureStorageBus` / `UseAwsDynamoBus` registam apenas o barramento de eventos, mantendo a concessão em processo, para nós que devem receber eventos do cluster mas nunca devem disputar a liderança.
+`UseAzureStorageBus` / `UseAwsDynamoBus` / `UseSqlBus` registam apenas o barramento de eventos, mantendo a concessão em processo, para nós que devem receber eventos do cluster mas nunca devem disputar a liderança.
 
 Consulte [Escalabilidade](scaling) para saber como a liderança e o barramento de eventos se comportam entre instâncias.
 

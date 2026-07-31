@@ -86,7 +86,7 @@ docker build -f Dockerfile.migration -t authagonal-migration .
 <PackageReference Include="Authagonal.AzureProvider" Version="x.y.z" />
 ```
 
-存储提供者包是可插拔的：`Authagonal.AzureProvider` 用于 Azure Table Storage（默认的 `AddAuthagonal()` 接线），或 `Authagonal.AwsProvider` 用于 DynamoDB / S3 / Secrets Manager——参见下方的 [AWS 后端](#aws-backend)。
+存储提供者包是可插拔的：`Authagonal.AzureProvider` 用于 Azure Table Storage（默认的 `AddAuthagonal()` 接线），`Authagonal.SqlProvider` 用于自托管的 PostgreSQL 或 SQLite（参见 [SQL 后端](#sql-backend)），或 `Authagonal.AwsProvider` 用于 DynamoDB / S3 / Secrets Manager（参见 [AWS 后端](#aws-backend)）。
 
 然后在您的 `Program.cs` 中进行组合：
 
@@ -108,7 +108,32 @@ app.Run();
 
 内置的 [Resend](https://resend.com) 发送器会在配置了 `Email:ResendApiKey` 和 `Email:SenderEmail` 时自动激活——无需注册服务。如果没有任何 `IEmailService`，验证邮件和密码重置邮件会被**静默丢弃**，而由于登录默认要求已确认的邮箱，自助注册的用户将永远无法登录（`UseAuthagonal` 会在启动时记录一条警告）。请设置 `Email:*` 键、在 `AddAuthagonal()` 之前注册您自己的 `IEmailService`，或在 `Auth:AutoConfirmEmailDomains` 中列出您的域名以跳过验证（仅限开发/测试）。参见 [配置 → 邮件](configuration#email)。
 
-## AWS 后端
+## SQL 后端 {#sql-backend}
+
+要在您自己的数据库而非云服务上运行，请引用 `Authagonal.SqlProvider` 并在 `AddAuthagonal()` **之前**注册它——正是这些注册让 `AddAuthagonal()` 跳过其 Azure Table Storage 接线：
+
+```csharp
+using Authagonal.SqlProvider;
+
+// PostgreSQL — the production self-hosted backend
+builder.Services.AddAuthagonalPostgres(
+    "Host=db;Database=authagonal;Username=auth;Password=…;SSL Mode=VerifyFull;Root Certificate=/etc/ssl/certs/db-ca.pem");
+
+// or SQLite — one file, no server. Suits embedded hosts, CI and small single-node deployments
+builder.Services.AddAuthagonalSqlite("Data Source=authagonal.db");
+
+builder.Services.AddAuthagonal(builder.Configuration);
+```
+
+这些表与 Azure 和 DynamoDB 的布局一一对应，并在启动时按需创建（每条语句都是 `IF NOT EXISTS`，因此多个 Pod 并发创建是安全的，而对您自行预配的架构则是空操作）。无需任何 `Storage:*` 配置。Data Protection 密钥环持久化到同一个数据库，因此 cookie 和防伪令牌可在重启后保留，并可跨 Pod 工作，无需额外服务。
+
+SQLite 会将写入串行化，因此它是单节点后端——默认注册的进程内租约和集群事件总线正是那里的正确搭配。多 Pod 的 PostgreSQL 部署则需要 `clustering.UseSql(dataSource)` 来进行领导者选举。
+
+> **排序规则（Collation）。** 在 PostgreSQL 上，键列被固定为 `COLLATE "C"`。键方案自始至终按字节序（前缀边界、环境分区范围、授权过期清扫、keyset 分页），而使用语言排序规则创建的数据库——`en_US.UTF-8` 和 ICU 区域设置是常见默认值——对标点和大小写的排序方式不同，会静默返回错误的行。这一固定使布局与数据库的创建方式无关；您无需以任何特定方式创建它。
+
+表布局、每项一次性保证背后的并发原语，以及如何为其他引擎添加方言，参见 [包 README](https://github.com/authagonal/authagonal/tree/master/src/Authagonal.SqlProvider)。
+
+## AWS 后端 {#aws-backend}
 
 要在 AWS 而非 Azure 上运行，请引用 `Authagonal.AwsProvider` 并在 `AddAuthagonal()` **之前**注册 AWS 套件——正是这些注册让 `AddAuthagonal()` 跳过其 Azure Table Storage 接线：
 

@@ -224,6 +224,29 @@ Hai điểm hợp đồng quan trọng. `ProtectAsync` phải trả về một t
 
 `IIndexTokenizer` giữ cho các trường đã mã hóa vẫn có thể tìm kiếm được. Nó biến một giá trị plaintext đã chuẩn hóa thành một token chỉ mục mù có tính xác định, an toàn làm khóa bảng, thường là một HMAC có khóa với khóa nằm ngoài cơ sở dữ liệu. Tính xác định nghĩa là tra cứu bằng đẳng thức vẫn hoạt động ("email = x" trở thành "token = HMAC(x)"), trong khi một bản dump cơ sở dữ liệu không thể tính lại lẫn đảo ngược một token. Tìm kiếm theo tiền tố được xếp chồng lên trên bằng cách token hóa riêng từng tiền tố của một giá trị, vì một HMAC có khóa phá vỡ thứ tự và quét dải.
 
+> **Những gì một bản dump vẫn để lộ.** "Không thể tính lại lẫn đảo ngược" đúng với một token đơn lẻ,
+> chứ không đúng với toàn bộ chỉ mục. Ba phần dư còn lại, và bạn nên biết chúng trước khi dựa vào cơ
+> chế này:
+>
+>   *(Đã khắc phục.)* ~~**Cấu trúc.** Chỉ mục tiền tố ghi một hàng cho mỗi tiền tố, nên số hàng của
+>   một bản ghi bằng đúng độ dài của trường được lập chỉ mục.~~ Mỗi giá trị được lập chỉ mục nay ghi
+>   một số hàng cố định, được độn thêm các mồi nhử mà không truy vấn nào tạo ra được và một bản dump
+>   không thể phân biệt với tiền tố thật.
+> - **Đẳng thức và tần suất.** Token mang tính xác định theo thiết kế -- chính điều đó khiến việc tra
+>   cứu hoạt động -- nên một bản dump cho thấy những bản ghi nào dùng chung một giá trị và mỗi giá
+>   trị phổ biến đến đâu. Chỉ mục tên miền phân nhóm tập người dùng của bạn theo nơi làm việc, điều
+>   này thường đủ để nhận diện con người mà không cần khôi phục địa chỉ.
+> - **Plaintext được chọn.** Kẻ vừa đọc được kho lưu trữ *vừa* có thể khiến các giá trị được lập chỉ
+>   mục (đăng ký một tài khoản, được cấp phát qua SCIM) có thể gửi lên một ứng viên rồi tìm token của
+>   nó. Việc đó khôi phục được bất kỳ giá trị nào đoán được -- các tên miền phổ biến, các tên riêng
+>   phổ biến -- bất kể khóa nằm ở đâu, vì oracle chính là đường ghi chứ không phải thuật toán mã hóa.
+>
+> Token hóa phòng vệ đúng trường hợp mà nó được xây dựng cho: ai đó chỉ có một bản dump và không có
+> gì khác, đang cố đọc các địa chỉ. Hai phần dư còn lại đúng bằng những gì một oracle đăng ký vốn đã
+> để lộ. Nếu chúng là không chấp nhận được, hãy để các bảng chỉ mục tiền tố và tên miền không được
+> cấu hình -- tra cứu khớp chính xác không mang theo cả hai -- thay vì giả định rằng HMAC đã che phủ
+> chúng.
+
 ```csharp
 public interface IIndexTokenizer
 {
@@ -237,7 +260,7 @@ Giống như `IFieldCipher`, đây là một tham số constructor tùy chọn c
 
 ## Ghi nhật ký thay đổi: IChangeWriter
 
-`IChangeWriter` (đổi tên từ `ITombstoneWriter` trong 0.6.0) ghi lại khóa của mọi hàng đã thay đổi vào một bảng nhật ký thay đổi chuyên dụng, để các bản sao lưu tăng dần có thể tìm ra những gì đã thay đổi mà không cần quét cột `Timestamp` không được lập chỉ mục của các bảng đang hoạt động. Các thao tác xóa được ghi lại cho mọi bảng (một lần quét hàng đang hoạt động không thể thấy một hàng đã biến mất); các thao tác upsert được ghi lại cho những bảng mà bản sao lưu đọc từ nhật ký thay vì quét. Các triển khai tích hợp sẵn: `TableChangeWriter` (Azure Table Storage) và `DynamoChangeWriter` (DynamoDB).
+`IChangeWriter` (đổi tên từ `ITombstoneWriter` trong 0.6.0) ghi lại khóa của mọi hàng đã thay đổi vào một bảng nhật ký thay đổi chuyên dụng, để các bản sao lưu tăng dần có thể tìm ra những gì đã thay đổi mà không cần quét cột `Timestamp` không được lập chỉ mục của các bảng đang hoạt động. Các thao tác xóa được ghi lại cho mọi bảng (một lần quét hàng đang hoạt động không thể thấy một hàng đã biến mất); các thao tác upsert được ghi lại cho những bảng mà bản sao lưu đọc từ nhật ký thay vì quét. Các triển khai tích hợp sẵn: `TableChangeWriter` (Azure Table Storage), `DynamoChangeWriter` (DynamoDB) và `SqlChangeWriter` (PostgreSQL / SQLite).
 
 ```csharp
 public interface IChangeWriter

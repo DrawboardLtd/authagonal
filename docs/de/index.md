@@ -10,7 +10,7 @@ locale: de
 
 # Authagonal
 
-OAuth 2.0 / OpenID Connect / SAML 2.0 Authentifizierungsserver für .NET, mit austauschbarem Cloud-Speicher als Backend -- Azure Table Storage oder AWS (DynamoDB / S3 / Secrets Manager).
+OAuth 2.0 / OpenID Connect / SAML 2.0 Authentifizierungsserver für .NET, mit austauschbarem Speicher als Backend: Ihr eigenes PostgreSQL oder SQLite, Azure Table Storage oder AWS (DynamoDB / S3 / Secrets Manager).
 
 Eine einzelne, eigenständige Bereitstellung. Server und Login-Oberfläche werden als ein Docker-Image ausgeliefert -- die SPA wird vom selben Ursprung wie die API bereitgestellt, sodass Cookie-Authentifizierung, Weiterleitungen und CSP ohne Cross-Origin-Komplexität funktionieren.
 
@@ -26,6 +26,12 @@ Eine einzelne, eigenständige Bereitstellung. Server und Login-Oberfläche werde
 - **OAuth-Zustimmungsbildschirm** -- Zustimmung pro Client mit scope-bewusster erneuter Abfrage und Verwaltung der Gewährungen
 - **Device Authorization Grant** -- RFC 8628-Ablauf für eingabebeschränkte Geräte (Smart-TVs, CLIs, IoT)
 - **Token-Introspektion** -- RFC 7662, damit Ressourcenserver die Token-Gültigkeit überprüfen können
+- **Token-Signierung** -- ausschließlich ES256. Zugriffstoken tragen den `typ: at+jwt` aus RFC 9068,
+  damit ein Ressourcenserver sie von id_tokens und Logout-Token unterscheiden kann, **RFC
+  9068-Konformität wird jedoch nicht beansprucht**: §2.1 verlangt RS256 unter den unterstützten
+  Algorithmen, und dieser Server stellt ihn weder aus noch akzeptiert er ihn. Ein einziger
+  Algorithmus ist eine bewusste Haltung: Jeder zusätzlich akzeptierte Algorithmus ist eine weitere
+  Möglichkeit, einen Prüfer zum falschen zu überreden.
 - **Back-Channel-Logout** -- OIDC Back-Channel Logout 1.0-Benachrichtigungen an vertrauende Parteien
 - **DSGVO-Selbstbedienung** -- Datenexport und geplante Kontolöschung über die gehostete Kontoseite
 - **TCC-Bereitstellung** -- Try-Confirm-Cancel-Bereitstellung in nachgelagerte Anwendungen zum Zeitpunkt der Autorisierung
@@ -35,9 +41,20 @@ Eine einzelne, eigenständige Bereitstellung. Server und Login-Oberfläche werde
 - **HashiCorp Vault Transit** -- Remote-JWT-Signierung ohne lokalen Zugriff auf den privaten Schlüssel
 - **Kompositionsfähige Bibliothek** -- `AddAuthagonal()` / `UseAuthagonal()` zum Hosten in Ihrem eigenen Projekt mit benutzerdefinierten Service-Überschreibungen
 - **Native AOT-Bereitschaft** -- IL-Trimming und quellcodegenerierte JSON-Serialisierung für schnellen Start
-- **Austauschbarer Cloud-Speicher** -- Azure Table Storage oder AWS (DynamoDB / S3 / Secrets Manager); kostengünstige, serverlose Backends
+- **Austauschbarer Speicher** -- selbst betriebenes PostgreSQL oder SQLite (ohne Cloud-Konto), oder Azure Table Storage / AWS (DynamoDB / S3 / Secrets Manager) als kostengünstige, serverlose Backends
 - **Sicherung & Wiederherstellung** -- inkrementelle Sicherungen (änderungsprotokollgesteuert mit einem Voll-Scan-Rückfall), Integritätsprüfung, tombstone-basierte Löschverfolgung
 - **Admin-APIs** -- Benutzer-CRUD, SAML/OIDC-Anbieterverwaltung, SSO-Domainrouting, Token-Impersonation
+
+## Häufige Integrationen
+
+Aufgabenorientierte Anleitungen für die Abläufe, die Teams am häufigsten bauen. Diese Seiten liegen
+bislang nur auf Englisch vor:
+
+- **[Benutzer aufwerten](../user-upgrade)** -- ein Gast-, SSO- oder Einladungskonto über den passwortlosen Kontoanspruch in ein Konto mit eigenen Zugangsdaten überführen und beim Bestätigen die Beförderung vom Gast zum regulären Mitglied ausführen.
+- **[Self-Service-SSO](../self-service-sso)** -- JIT-Bereitstellung für Unternehmensverbindungen: Onboarding nur per Einladung gegenüber Self-Service, wie externe IdPs nicht zur Stolperfalle werden, und Zwischenseiten vor der Föderation.
+- **[Föderierte Sitzungen](../federated-sessions)** -- die lokale Sitzung widerrufen, sobald der vorgelagerte IdP es tut (`RevalidateOnRefresh`).
+- **[WebSocket-Authentifizierung](../websocket-auth)** -- Browser-WebSockets über das BFF authentifizieren, ohne ein Token offenzulegen.
+- **[Agentische Authentifizierung](../agentic-auth)** -- die Autorität eines Benutzers an KI-Agenten delegieren: registrierte Agenten, feingranulare RFC 9396-Autorität, zusammengesetzte Delegations-Token (RFC 8693 `act`), dauerhafte Zustimmung, bedarfsgesteuerte Genehmigungen, Capability-Tickets.
 
 ## Architektur
 

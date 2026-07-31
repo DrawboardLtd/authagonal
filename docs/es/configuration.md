@@ -45,6 +45,7 @@ El almacenamiento puede configurarse de dos maneras: proporcione **o bien** `Sto
 | `Auth:MfaChallengeExpiryMinutes` | `5` | Tiempo de vida del token de verificación MFA |
 | `Auth:MfaSetupTokenExpiryMinutes` | `15` | Tiempo de vida del token de configuración MFA (para inscripción forzada) |
 | `Auth:Pbkdf2Iterations` | `100000` | Número de iteraciones PBKDF2 para el hashing de contraseñas |
+| `Auth:FailedLoginMinimumMilliseconds` | `250` | Suelo de tiempo de reloj al que se retiene un inicio de sesión fallido antes de devolver `invalid_credentials`, medido desde el comienzo de la petición. Cierra el oráculo temporal de enumeración de usuarios: una cuenta inexistente se verifica contra un hash ficticio en el formato PBKDF2 nativo, pero una cuenta real puede seguir teniendo un hash bcrypt o ASP.NET Identity V3 importado con un coste distinto, así que igualar el trabajo es imposible y lo que se impone es igualar el tiempo transcurrido. Súbalo por encima del hash más lento que tenga el despliegue, por ejemplo si importó bcrypt con coste superior a 11 o elevó `Pbkdf2Iterations` muy por encima del valor predeterminado: se registra una única advertencia la primera vez que un inicio de sesión fallido lo excede. `0` desactiva el relleno y vuelve a abrir el oráculo. |
 | `Auth:RefreshTokenReuseGraceSeconds` | `0` | Ventana de gracia opcional (en segundos) para la reutilización concurrente del token de actualización. `0` (predeterminado) mantiene la postura estricta: cualquier reutilización de un token de actualización ya consumido revoca todos los tokens de ese usuario+cliente. Establezca `> 0` para tratar una reutilización dentro de la ventana como un reintento idempotente (vuelve a entregar los tokens sucesores), útil para clientes móviles con cortes de conectividad. |
 | `Auth:DynamicClientRegistrationEnabled` | `false` | Habilita el endpoint de registro dinámico de clientes `POST /connect/register` (RFC 7591). Deshabilitado por defecto porque el registro abierto puede ser objeto de abuso en despliegues multi-tenant. Ver [Registro dinámico de clientes](client-registration). |
 | `Auth:SigningKeyLifetimeDays` | `90` | Tiempo de vida de la clave de firma RSA antes de la rotación automática |
@@ -401,9 +402,13 @@ builder.Services.AddAuthagonal(builder.Configuration,
 // AWS equivalent (Authagonal.AwsProvider)
 builder.Services.AddAuthagonal(builder.Configuration,
     cluster => cluster.UseAwsDynamo(dynamoDb));
+
+// Self-hosted PostgreSQL (Authagonal.SqlProvider)
+builder.Services.AddAuthagonal(builder.Configuration,
+    cluster => cluster.UseSql(sqlDataSource));
 ```
 
-`UseAzureStorageBus` / `UseAwsDynamoBus` registran solo el bus de eventos, manteniendo la concesión en proceso, para nodos que deben recibir eventos del cluster pero nunca deben competir por el liderazgo.
+`UseAzureStorageBus` / `UseAwsDynamoBus` / `UseSqlBus` registran solo el bus de eventos, manteniendo la concesión en proceso, para nodos que deben recibir eventos del cluster pero nunca deben competir por el liderazgo.
 
 Ver [Escalabilidad](scaling) para conocer cómo se comportan el liderazgo y el bus de eventos entre instancias.
 

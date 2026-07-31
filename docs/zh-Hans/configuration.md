@@ -45,6 +45,7 @@ Authagonal 通过 `appsettings.json` 或环境变量进行配置。环境变量�
 | `Auth:MfaChallengeExpiryMinutes` | `5` | MFA 验证令牌有效期 |
 | `Auth:MfaSetupTokenExpiryMinutes` | `15` | MFA 设置令牌有效期（用于强制注册） |
 | `Auth:Pbkdf2Iterations` | `100000` | 密码哈希的 PBKDF2 迭代次数 |
+| `Auth:FailedLoginMinimumMilliseconds` | `250` | 失败登录在返回 `invalid_credentials` 之前被保持的挂钟时间下限，从请求开始处计时。用于关闭用户枚举的时间旁道：不存在的账户会针对原生 PBKDF2 格式的哑元哈希进行校验，但真实账户可能仍持有成本不同的、导入的 bcrypt 或 ASP.NET Identity V3 哈希——因此让计算量相等是不可能的，被强制相等的是耗时。请把它调到高于该部署所持有的最慢哈希，例如您导入了成本高于 11 的 bcrypt，或把 `Pbkdf2Iterations` 提到远超默认值——首次有失败登录超出该下限时会记录一条一次性警告。设为 `0` 将禁用填充并重新打开该旁道。 |
 | `Auth:RefreshTokenReuseGraceSeconds` | `0` | 并发刷新令牌重用的可选宽限窗口（秒）。`0`（默认）保持严格姿态：对已消费刷新令牌的任何重用都会撤销该用户+客户端的所有令牌。设为 `> 0` 则将窗口内的重用视为幂等重试（重新下发后继令牌）——对于网络连接不稳定的移动客户端很有用。 |
 | `Auth:DynamicClientRegistrationEnabled` | `false` | 启用 `POST /connect/register` 动态客户端注册端点（RFC 7591）。默认关闭，因为在多租户部署中开放注册可能被滥用。参见[动态客户端注册](client-registration)。 |
 | `Auth:SigningKeyLifetimeDays` | `90` | RSA 签名密钥在自动轮换前的有效期 |
@@ -84,6 +85,33 @@ ASP.NET Core Data Protection 密钥（用于加密会话 Cookie）必须在各�
 | `BackgroundServices:TokenCleanupIntervalMinutes` | `60` | 过期令牌清理间隔 |
 | `BackgroundServices:GrantReconciliationDelayMinutes` | `10` | 首次授权协调前的初始延迟 |
 | `BackgroundServices:GrantReconciliationIntervalMinutes` | `30` | 授权协调间隔 |
+
+## 角色
+
+角色在 `Roles` 数组中定义，并与客户端、scope 和提供者一同在启动时播种。当某个 scope 用
+[`AllowedRoles`](scopes#role-gated-scopes) 加以限制时，播种最为要紧：一个被限制到无人创建的角色上的
+scope，对所有人都是被限制的——包括配置它的运维人员本人——而且它会静默失败：该 scope 根本不会被授予。
+
+```json
+{
+  "Roles": [
+    {
+      "Name": "staff-admin",
+      "Description": "Internal staff console",
+      "Members": [ "ada@example.com", "grace@example.com" ]
+    }
+  ]
+}
+```
+
+| 字段 | 说明 |
+|---|---|
+| `Name` | 角色名称，用于 `Scope.AllowedRoles` 以及令牌的 `roles` claim |
+| `Description` | 供人阅读；当播种数据给出该字段时，会在后续启动时更新 |
+| `Members` | 每次启动时被放入该角色的邮箱地址。尚无对应用户的地址会被跳过并记录警告，下次启动时重试——启动过程绝不依赖于某个尚未被创建的账户 |
+
+播种是**增量且幂等**的。它绝不会删除角色或撤销成员资格：配置并不是「谁拥有什么」的权威来源，因此通过管理
+API 授予的角色能够在下次重启后继续存在。
 
 ## 客户端
 
@@ -371,9 +399,13 @@ builder.Services.AddAuthagonal(builder.Configuration,
 // AWS equivalent (Authagonal.AwsProvider)
 builder.Services.AddAuthagonal(builder.Configuration,
     cluster => cluster.UseAwsDynamo(dynamoDb));
+
+// Self-hosted PostgreSQL (Authagonal.SqlProvider)
+builder.Services.AddAuthagonal(builder.Configuration,
+    cluster => cluster.UseSql(sqlDataSource));
 ```
 
-`UseAzureStorageBus` / `UseAwsDynamoBus` 仅注册事件总线，保留进程内租约——适用于必须接收集群事件、但绝不能争夺领导权的节点。
+`UseAzureStorageBus` / `UseAwsDynamoBus` / `UseSqlBus` 仅注册事件总线，保留进程内租约——适用于必须接收集群事件、但绝不能争夺领导权的节点。
 
 详情请参阅[扩展](scaling)了解领导权和事件总线在各实例间的行为。
 

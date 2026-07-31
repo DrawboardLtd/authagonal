@@ -45,6 +45,7 @@ Bộ lưu trữ có thể được cấu hình theo một trong hai cách: cung 
 | `Auth:MfaChallengeExpiryMinutes` | `5` | Thời gian hiệu lực token xác thực MFA |
 | `Auth:MfaSetupTokenExpiryMinutes` | `15` | Thời gian hiệu lực token thiết lập MFA (cho đăng ký bắt buộc) |
 | `Auth:Pbkdf2Iterations` | `100000` | Số lần lặp PBKDF2 cho băm mật khẩu |
+| `Auth:FailedLoginMinimumMilliseconds` | `250` | Sàn thời gian thực mà một lần đăng nhập thất bại bị giữ lại trước khi trả về `invalid_credentials`, tính từ lúc bắt đầu request. Đóng lại oracle định thời cho phép liệt kê người dùng: một tài khoản không tồn tại được kiểm tra với một hash giả ở định dạng PBKDF2 gốc, nhưng một tài khoản thật vẫn có thể mang hash bcrypt hoặc ASP.NET Identity V3 đã nhập với chi phí khác, nên không thể làm cho khối lượng công việc bằng nhau, thứ được cưỡng chế là thời gian trôi qua bằng nhau. Hãy nâng nó lên trên hash chậm nhất mà triển khai đang giữ, ví dụ nếu bạn đã nhập bcrypt với cost trên 11 hoặc nâng `Pbkdf2Iterations` cao hơn nhiều so với mặc định: một cảnh báo duy nhất được ghi lần đầu tiên một lần đăng nhập thất bại vượt quá sàn. `0` tắt phần đệm và mở lại oracle. |
 | `Auth:RefreshTokenReuseGraceSeconds` | `0` | Cửa sổ ân hạn (giây) tùy chọn cho việc sử dụng lại refresh token đồng thời. `0` (mặc định) giữ thế phòng thủ nghiêm ngặt: bất kỳ lần sử dụng lại nào của một refresh token đã tiêu thụ đều thu hồi tất cả token của người dùng+client đó. Đặt giá trị `> 0` để coi một lần sử dụng lại trong cửa sổ như một lần thử lại idempotent (cấp lại các token kế thừa), hữu ích cho các client di động có kết nối chập chờn. |
 | `Auth:DynamicClientRegistrationEnabled` | `false` | Bật endpoint đăng ký client động `POST /connect/register` (RFC 7591). Tắt theo mặc định vì đăng ký mở có thể bị lạm dụng trong các triển khai đa tenant. Xem [Đăng ký Client động](client-registration). |
 | `Auth:SigningKeyLifetimeDays` | `90` | Thời gian hiệu lực khóa ký RSA trước khi tự động xoay vòng |
@@ -84,6 +85,36 @@ Trên backend AWS, hãy truyền một S3 client + bucket vào `AddAuthagonalAws
 | `BackgroundServices:TokenCleanupIntervalMinutes` | `60` | Khoảng cách dọn dẹp token hết hạn |
 | `BackgroundServices:GrantReconciliationDelayMinutes` | `10` | Độ trễ ban đầu trước lần đối chiếu cấp quyền đầu tiên |
 | `BackgroundServices:GrantReconciliationIntervalMinutes` | `30` | Khoảng cách đối chiếu cấp quyền |
+
+## Vai trò
+
+Các vai trò được định nghĩa trong mảng `Roles` và được khởi tạo khi khởi động, cùng với client, scope
+và provider. Việc khởi tạo chúng quan trọng nhất khi một scope bị chặn bằng
+[`AllowedRoles`](scopes#role-gated-scopes): một scope bị chặn theo một vai trò mà không có gì tạo ra
+thì bị chặn với tất cả mọi người, kể cả người vận hành đã cấu hình nó, và nó thất bại trong im lặng
+-- scope đơn giản là không bao giờ được cấp.
+
+```json
+{
+  "Roles": [
+    {
+      "Name": "staff-admin",
+      "Description": "Internal staff console",
+      "Members": [ "ada@example.com", "grace@example.com" ]
+    }
+  ]
+}
+```
+
+| Trường | Mô tả |
+|---|---|
+| `Name` | Tên vai trò, như được dùng trong `Scope.AllowedRoles` và trong claim `roles` của token |
+| `Description` | Dạng người đọc được; được cập nhật ở các lần khởi động sau khi phần khởi tạo có nêu |
+| `Members` | Các email được đưa vào vai trò ở mỗi lần khởi động. Một địa chỉ chưa có người dùng sẽ bị bỏ qua kèm cảnh báo và thử lại ở lần khởi động sau -- việc khởi động không bao giờ phụ thuộc vào một tài khoản chưa ai tạo |
+
+Việc khởi tạo là **cộng dồn và idempotent**. Nó không bao giờ xóa một vai trò hay thu hồi một tư cách
+thành viên: cấu hình không phải là nguồn sự thật về ai nắm giữ gì, nên một vai trò được cấp qua admin
+API vẫn tồn tại sau lần khởi động lại kế tiếp.
 
 ## Client
 
@@ -371,9 +402,13 @@ builder.Services.AddAuthagonal(builder.Configuration,
 // AWS equivalent (Authagonal.AwsProvider)
 builder.Services.AddAuthagonal(builder.Configuration,
     cluster => cluster.UseAwsDynamo(dynamoDb));
+
+// Self-hosted PostgreSQL (Authagonal.SqlProvider)
+builder.Services.AddAuthagonal(builder.Configuration,
+    cluster => cluster.UseSql(sqlDataSource));
 ```
 
-`UseAzureStorageBus` / `UseAwsDynamoBus` chỉ đăng ký event bus, giữ lease in-process, dành cho các node phải nhận sự kiện cụm nhưng không bao giờ được tranh quyền leader.
+`UseAzureStorageBus` / `UseAwsDynamoBus` / `UseSqlBus` chỉ đăng ký event bus, giữ lease in-process, dành cho các node phải nhận sự kiện cụm nhưng không bao giờ được tranh quyền leader.
 
 Xem [Mở rộng](scaling) để biết cách quyền leader và event bus hoạt động giữa các instance.
 

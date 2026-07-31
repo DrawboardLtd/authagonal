@@ -86,7 +86,7 @@ Référencez les packages Authagonal dans votre propre projet ASP.NET Core :
 <PackageReference Include="Authagonal.AzureProvider" Version="x.y.z" />
 ```
 
-Le package du fournisseur de stockage est interchangeable : `Authagonal.AzureProvider` pour Azure Table Storage (le câblage par défaut de `AddAuthagonal()`), ou `Authagonal.AwsProvider` pour DynamoDB / S3 / Secrets Manager, voir [backend AWS](#aws-backend) ci-dessous.
+Le package du fournisseur de stockage est interchangeable : `Authagonal.AzureProvider` pour Azure Table Storage (le câblage par défaut de `AddAuthagonal()`), `Authagonal.SqlProvider` pour PostgreSQL ou SQLite auto-hébergés (voir [backend SQL](#backend-sql)), ou `Authagonal.AwsProvider` pour DynamoDB / S3 / Secrets Manager (voir [backend AWS](#backend-aws)).
 
 Puis composez-le dans votre `Program.cs` :
 
@@ -107,6 +107,31 @@ Consultez [Extensibilité](extensibility) pour tous les points de substitution e
 ### Email
 
 L'expéditeur [Resend](https://resend.com) intégré s'active automatiquement lorsque `Email:ResendApiKey` et `Email:SenderEmail` sont configurés, sans enregistrement de service. Sans aucun `IEmailService`, les emails de vérification et de réinitialisation de mot de passe sont **ignorés silencieusement**, et comme la connexion exige un email confirmé par défaut, les utilisateurs auto-inscrits ne peuvent jamais se connecter (`UseAuthagonal` journalise un avertissement au démarrage). Définissez les clés `Email:*`, enregistrez votre propre `IEmailService` avant `AddAuthagonal()`, ou listez vos domaines dans `Auth:AutoConfirmEmailDomains` pour ignorer la vérification (dev/test uniquement). Voir [Configuration → Email](configuration#email).
+
+## Backend SQL
+
+Pour exécuter sur votre propre base de données plutôt que sur un service cloud, référencez `Authagonal.SqlProvider` et enregistrez-le **avant** `AddAuthagonal()` : ce sont ces enregistrements qui font que `AddAuthagonal()` ignore son câblage Azure Table Storage :
+
+```csharp
+using Authagonal.SqlProvider;
+
+// PostgreSQL — the production self-hosted backend
+builder.Services.AddAuthagonalPostgres(
+    "Host=db;Database=authagonal;Username=auth;Password=…;SSL Mode=VerifyFull;Root Certificate=/etc/ssl/certs/db-ca.pem");
+
+// or SQLite — one file, no server. Suits embedded hosts, CI and small single-node deployments
+builder.Services.AddAuthagonalSqlite("Data Source=authagonal.db");
+
+builder.Services.AddAuthagonal(builder.Configuration);
+```
+
+Les tables reproduisent un pour un les dispositions Azure et DynamoDB et sont créées au démarrage si elles sont absentes (chaque instruction est un `IF NOT EXISTS`, il est donc sans danger que plusieurs pods se disputent la création, et l'opération ne fait rien face à un schéma que vous avez provisionné vous-même). Aucune configuration `Storage:*` n'est nécessaire. Le trousseau de clés Data Protection est persisté dans la même base, de sorte que les cookies et les jetons antiforgery survivent aux redémarrages et fonctionnent entre pods sans service supplémentaire.
+
+SQLite sérialise les écritures : c'est donc un backend mononœud, et le bail en processus ainsi que le bus d'événements de cluster enregistrés par défaut y sont la bonne combinaison. Un déploiement PostgreSQL multi-pods voudra `clustering.UseSql(dataSource)` pour l'élection du leader.
+
+> **Collation.** Sur PostgreSQL, les colonnes de clé sont fixées à `COLLATE "C"`. Le schéma de clés est ordinal sur les octets de bout en bout (bornes de préfixe, plages de partition par environnement, le balayage d'expiration des octrois, la pagination par keyset), et une base créée avec une collation linguistique -- `en_US.UTF-8` et les locales ICU sont les valeurs par défaut courantes -- ordonnerait la ponctuation et la casse différemment et renverrait silencieusement les mauvaises lignes. Cette fixation rend la disposition indépendante de la façon dont la base a été créée ; vous n'avez pas besoin de la créer d'une manière particulière.
+
+Consultez le [README du package](https://github.com/authagonal/authagonal/tree/master/src/Authagonal.SqlProvider) pour la disposition des tables, les primitives de concurrence derrière chaque garantie d'usage unique, et la façon d'ajouter un dialecte pour un autre moteur.
 
 ## Backend AWS
 

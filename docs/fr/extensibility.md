@@ -224,6 +224,29 @@ Deux points du contrat comptent. `ProtectAsync` doit renvoyer un token de texte 
 
 `IIndexTokenizer` garde les champs chiffrés interrogeables. Il transforme une valeur en clair normalisée en un token de blind-index déterministe et compatible avec les clés de table, généralement un HMAC à clé dont la clé réside en dehors de la base de données. Le déterminisme signifie qu'une recherche d'égalité fonctionne toujours ("email = x" devient "token = HMAC(x)"), tandis qu'un dump de la base de données ne peut ni recalculer ni inverser un token. La recherche par préfixe se superpose en tokenisant séparément chaque préfixe d'une valeur, puisqu'un HMAC à clé détruit l'ordre et les balayages de plage.
 
+> **Ce qu'un dump révèle malgré tout.** « Ni recalculer ni inverser » est vrai d'un token isolé, pas
+> de l'index dans son ensemble. Trois résidus subsistent, et il vaut mieux les connaître avant de s'y
+> fier :
+>
+>   *(Corrigé.)* ~~**Structure.** L'index de préfixes écrit une ligne par préfixe, si bien que le
+>   nombre de lignes d'un enregistrement égale la longueur du champ indexé.~~ Chaque valeur indexée
+>   écrit désormais un nombre fixe de lignes, complété par des leurres qu'aucune requête ne peut
+>   produire et qu'un dump ne peut distinguer de vrais préfixes.
+> - **Égalité et fréquence.** Les tokens sont déterministes par construction, ce qui est précisément
+>   ce qui fait fonctionner la recherche : un dump montre donc quels enregistrements partagent une
+>   valeur et à quelle fréquence chacune apparaît. L'index de domaines regroupe votre population par
+>   employeur, ce qui identifie souvent des personnes sans récupérer d'adresse.
+> - **Texte clair choisi.** Quiconque peut à la fois lire le stockage *et* faire indexer des valeurs
+>   (créer un compte, être provisionné via SCIM) peut soumettre un candidat et chercher son token.
+>   Cela récupère toute valeur devinable -- domaines courants, prénoms courants -- où que réside la
+>   clé, car l'oracle est le chemin d'écriture et non le chiffrement.
+>
+> La tokenisation défend le cas pour lequel elle a été construite : quelqu'un qui détient un dump et
+> rien d'autre, et qui cherche à lire des adresses. Les deux résidus restants sont exactement ce
+> qu'un oracle d'inscription livre de toute façon. S'ils sont inacceptables, laissez les tables
+> d'index de préfixe et de domaine non configurées -- la recherche par correspondance exacte n'en
+> porte aucun -- plutôt que de supposer que le HMAC les couvre.
+
 ```csharp
 public interface IIndexTokenizer
 {
@@ -237,7 +260,7 @@ Comme `IFieldCipher`, c'est un paramètre de constructeur de store optionnel ave
 
 ## Capture du change-log : IChangeWriter
 
-`IChangeWriter` (renommé depuis `ITombstoneWriter` en 0.6.0) enregistre la clé de chaque ligne modifiée dans une table de change-log dédiée, afin que les sauvegardes incrémentielles puissent trouver ce qui a changé sans balayer la colonne `Timestamp` non indexée des tables actives. Les suppressions sont capturées pour chaque table (un balayage des lignes actives ne peut pas voir une ligne qui a disparu) ; les upserts sont capturés pour les tables que la sauvegarde lit depuis le log au lieu de les balayer. Implémentations intégrées : `TableChangeWriter` (Azure Table Storage) et `DynamoChangeWriter` (DynamoDB).
+`IChangeWriter` (renommé depuis `ITombstoneWriter` en 0.6.0) enregistre la clé de chaque ligne modifiée dans une table de change-log dédiée, afin que les sauvegardes incrémentielles puissent trouver ce qui a changé sans balayer la colonne `Timestamp` non indexée des tables actives. Les suppressions sont capturées pour chaque table (un balayage des lignes actives ne peut pas voir une ligne qui a disparu) ; les upserts sont capturés pour les tables que la sauvegarde lit depuis le log au lieu de les balayer. Implémentations intégrées : `TableChangeWriter` (Azure Table Storage), `DynamoChangeWriter` (DynamoDB) et `SqlChangeWriter` (PostgreSQL / SQLite).
 
 ```csharp
 public interface IChangeWriter

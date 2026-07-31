@@ -396,6 +396,8 @@ Content-Type: application/json
 
 Nécessite l'authentification par cookie. Approuve le code d'appareil pour l'utilisateur actuel. L'appareil peut ensuite échanger le code d'appareil contre des tokens via le point d'accès de token en utilisant le type de Grant `urn:ietf:params:oauth:grant-type:device_code`.
 
+Le code soumis est normalisé conformément à la RFC 8628 §6.1 avant la recherche : il est mis en majuscules et tout caractère hors de l'alphabet de 31 caractères du code est supprimé. `ABCD-EFGH`, `abcd-efgh`, `ABCDEFGH`, `ABCD EFGH` et un collage ayant transformé le tiret en tiret cadratin sont tous le même code. Le tiret n'existe que pour rendre le code plus facile à lire à voix haute. La saisie est limitée à dix tentatives par minute et par sujet (RFC 8628 §5.1) ; la onzième renvoie `429`. Ce compteur est par nœud avec le limiteur en-processus par défaut : un déploiement multi-répliques devrait donc aussi imposer la limite en périphérie.
+
 ## Introspection de Token (RFC 7662)
 
 ```

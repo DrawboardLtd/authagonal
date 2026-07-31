@@ -32,8 +32,10 @@ public sealed class Scope
     public string? DisplayName { get; set; }
     public string? Description { get; set; }
     public bool Emphasize { get; set; }
+    public string? Group { get; set; }
     public bool Required { get; set; }
     public bool ShowInDiscoveryDocument { get; set; } = true;
+    public List<string> AllowedRoles { get; set; } = [];
     public List<string> UserClaims { get; set; } = [];
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset? UpdatedAt { get; set; }
@@ -46,9 +48,50 @@ public sealed class Scope
 | `DisplayName` | Tên dễ đọc được hiển thị trên màn hình đồng ý |
 | `Description` | Mô tả dài hơn được hiển thị trên màn hình đồng ý |
 | `Emphasize` | Nếu `true`, màn hình đồng ý làm nổi bật scope này như một scope nhạy cảm |
+| `Group` | Tiêu đề trên màn hình đồng ý để xếp scope này vào. Chỉ là trình bày -- nó không bao giờ ảnh hưởng đến những gì được cấp |
 | `Required` | Nếu `true`, người dùng không thể bỏ chọn scope này khi đồng ý |
 | `ShowInDiscoveryDocument` | Nếu `true`, scope xuất hiện trong `/.well-known/openid-configuration` dưới `scopes_supported` |
+| `AllowedRoles` | Các vai trò mà người dùng phải nắm giữ để được cấp scope này. Để trống (mặc định) nghĩa là không chặn -- xem [Scope chặn theo vai trò](#role-gated-scopes) |
 | `UserClaims` | Các claim được thêm vào access token khi scope này được cấp |
+
+### Scope chặn theo vai trò {#role-gated-scopes}
+
+`AllowedScopes` của một client trả lời câu hỏi *ứng dụng này có được phép yêu cầu scope này không* --
+một câu hỏi đã được định đoạt trước khi bất kỳ ai đăng nhập. `AllowedRoles` trả lời nửa còn lại:
+*người này có được phép có nó không*. Cả hai lớp chặn đều áp dụng, và không lớp nào thay thế lớp kia.
+
+```json
+{
+  "name": "staff-admin",
+  "displayName": "Staff administration",
+  "allowedRoles": ["staff", "super-admin"]
+}
+```
+
+Với người dùng không nắm giữ vai trò nào trong danh sách, scope bị **loại khỏi grant**, chứ không bị
+từ chối: client đã yêu cầu trọn bộ của nó và được cho biết, qua `scope` được phản hồi lại trong token
+response (RFC 6749 §3.3), rằng nó nhận được ít hơn. Chính điều này cho phép một ứng dụng phục vụ cả
+nhân viên nội bộ lẫn mọi người khác -- bề mặt dành cho nhân viên là một scope trong số nhiều scope, và
+chỉ những người có quyền mới nhận được nó.
+
+Một request mà *mọi* scope được yêu cầu đều bị loại sẽ thất bại với `access_denied`, vì không còn gì
+để phát hành token cả.
+
+Lớp chặn này áp dụng ở mọi nơi mà một token được đúc cho con người:
+
+| Luồng | Nơi nó chạy |
+|---|---|
+| Authorization code | Tại `/connect/authorize`, ngay khi biết người dùng và **trước** bước đồng ý -- nhờ vậy màn hình không bao giờ chào mời một quyền không thể được cấp |
+| Device code | Tại `/api/auth/device/approve`, điểm đầu tiên trong luồng đó mà subject được biết |
+| Refresh | Ở mỗi lần xoay vòng, đối chiếu với các vai trò vừa được phân giải lại. Đây là nơi việc thu hồi một vai trò thực sự có hiệu lực, vì grant vẫn ghi lại những gì đã được phê duyệt lúc đăng nhập |
+| Token exchange | Không bị chặn riêng: một lần trao đổi chỉ có thể thu hẹp phạm vi trong chính các scope của subject token, nên không bao giờ chạm tới được scope mà subject chưa được cấp |
+
+Các grant client_credentials không có subject và được cố ý không đụng tới -- thẩm quyền của một client
+máy chính là phần đăng ký của nó.
+
+Khởi tạo một scope từ cấu hình có thể thêm hoặc thay đổi `AllowedRoles` nhưng không thể xóa trắng nó
+(giống như với `UserClaims`, một trường bị bỏ qua sẽ giữ nguyên giá trị đã lưu). Để gỡ bỏ lớp chặn,
+hãy `PUT` scope đó với một mảng rỗng tường minh.
 
 ## Các endpoint quản trị
 

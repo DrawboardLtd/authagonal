@@ -396,6 +396,8 @@ Content-Type: application/json
 
 Requiere autenticación por cookie. Aprueba el código de dispositivo para el usuario actual. El dispositivo puede entonces intercambiar el código de dispositivo por tokens mediante el endpoint de token usando el tipo de concesión `urn:ietf:params:oauth:grant-type:device_code`.
 
+El código enviado se normaliza según RFC 8628 §6.1 antes de la búsqueda: se pasa a mayúsculas y se descarta todo carácter fuera del alfabeto de 31 caracteres del código. `ABCD-EFGH`, `abcd-efgh`, `ABCDEFGH`, `ABCD EFGH` y un pegado que convirtió el guion en una raya son todos el mismo código. El guion existe solo para que el código sea más fácil de leer en voz alta. La entrada está limitada a diez intentos por minuto y por sujeto (RFC 8628 §5.1); el undécimo devuelve `429`. Ese contador es por nodo con el limitador en proceso predeterminado, así que un despliegue con varias réplicas debería imponer además el límite en el borde.
+
 ## Introspección de tokens (RFC 7662)
 
 ```

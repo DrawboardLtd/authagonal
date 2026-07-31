@@ -45,6 +45,7 @@ Le stockage peut être configuré de deux manières : fournissez **soit** `Stora
 | `Auth:MfaChallengeExpiryMinutes` | `5` | Durée de vie du jeton de vérification MFA |
 | `Auth:MfaSetupTokenExpiryMinutes` | `15` | Durée de vie du jeton de configuration MFA (pour l'inscription forcée) |
 | `Auth:Pbkdf2Iterations` | `100000` | Nombre d'itérations PBKDF2 pour le hachage du mot de passe |
+| `Auth:FailedLoginMinimumMilliseconds` | `250` | Plancher de temps horloge auquel une connexion échouée est maintenue avant de renvoyer `invalid_credentials`, mesuré depuis le début de la requête. Ferme l'oracle temporel d'énumération d'utilisateurs : un compte inexistant est vérifié contre un hachage factice au format PBKDF2 natif, mais un compte réel peut encore porter un hachage bcrypt ou ASP.NET Identity V3 importé à un coût différent ; égaliser le travail est donc impossible et c'est le temps écoulé qui est imposé. Relevez-le au-dessus du hachage le plus lent que détient le déploiement, par exemple si vous avez importé du bcrypt au-delà du coût 11 ou augmenté `Pbkdf2Iterations` bien au-delà de la valeur par défaut : un avertissement unique est journalisé la première fois qu'une connexion échouée dépasse le plancher. `0` désactive le remplissage et rouvre l'oracle. |
 | `Auth:RefreshTokenReuseGraceSeconds` | `0` | Fenêtre de grâce optionnelle (en secondes) pour la réutilisation concurrente du jeton de rafraîchissement. `0` (par défaut) maintient la posture stricte : toute réutilisation d'un jeton de rafraîchissement déjà consommé révoque tous les jetons de cet utilisateur+client. Définissez `> 0` pour traiter une réutilisation dans la fenêtre comme une nouvelle tentative idempotente (re-livre les jetons successeurs), utile pour les clients mobiles avec des coupures de connectivité. |
 | `Auth:DynamicClientRegistrationEnabled` | `false` | Active le point d'accès d'enregistrement dynamique de client `POST /connect/register` (RFC 7591). Désactivé par défaut car l'enregistrement ouvert peut être abusé dans les déploiements multi-tenant. Voir [Enregistrement dynamique de client](client-registration). |
 | `Auth:SigningKeyLifetimeDays` | `90` | Durée de vie de la clé de signature RSA avant rotation automatique |
@@ -84,6 +85,36 @@ Sur le backend AWS, passez un client S3 + un bucket à `AddAuthagonalAwsStorage`
 | `BackgroundServices:TokenCleanupIntervalMinutes` | `60` | Intervalle de nettoyage des jetons expirés |
 | `BackgroundServices:GrantReconciliationDelayMinutes` | `10` | Délai initial avant la première réconciliation des autorisations |
 | `BackgroundServices:GrantReconciliationIntervalMinutes` | `30` | Intervalle de réconciliation des autorisations |
+
+## Rôles
+
+Les rôles sont définis dans le tableau `Roles` et injectés au démarrage, au même titre que les
+clients, les scopes et les fournisseurs. Les injecter compte surtout lorsqu'un scope est restreint
+par [`AllowedRoles`](scopes#role-gated-scopes) : un scope restreint à un rôle que rien ne crée est
+restreint pour tout le monde, y compris l'opérateur qui l'a configuré, et il échoue en silence : le
+scope n'est tout simplement jamais accordé.
+
+```json
+{
+  "Roles": [
+    {
+      "Name": "staff-admin",
+      "Description": "Internal staff console",
+      "Members": [ "ada@example.com", "grace@example.com" ]
+    }
+  ]
+}
+```
+
+| Champ | Description |
+|---|---|
+| `Name` | Le nom du rôle, tel qu'utilisé dans `Scope.AllowedRoles` et dans le claim `roles` du jeton |
+| `Description` | Lisible par un humain ; mise à jour aux démarrages suivants lorsque l'injection en indique une |
+| `Members` | Emails placés dans le rôle à chaque démarrage. Une adresse sans utilisateur existant est ignorée avec un avertissement et réessayée au démarrage suivant : le démarrage ne dépend jamais d'un compte que personne n'a créé |
+
+L'injection est **additive et idempotente**. Elle ne supprime jamais un rôle ni ne révoque une
+appartenance : la configuration n'est pas la source de vérité de qui détient quoi, de sorte qu'un
+rôle accordé via l'API d'administration survit au redémarrage suivant.
 
 ## Clients
 
@@ -371,9 +402,13 @@ builder.Services.AddAuthagonal(builder.Configuration,
 // AWS equivalent (Authagonal.AwsProvider)
 builder.Services.AddAuthagonal(builder.Configuration,
     cluster => cluster.UseAwsDynamo(dynamoDb));
+
+// Self-hosted PostgreSQL (Authagonal.SqlProvider)
+builder.Services.AddAuthagonal(builder.Configuration,
+    cluster => cluster.UseSql(sqlDataSource));
 ```
 
-`UseAzureStorageBus` / `UseAwsDynamoBus` enregistrent uniquement le bus d'événements, en conservant le bail en-processus, pour les nœuds qui doivent recevoir les événements du cluster mais ne doivent jamais se disputer le leadership.
+`UseAzureStorageBus` / `UseAwsDynamoBus` / `UseSqlBus` enregistrent uniquement le bus d'événements, en conservant le bail en-processus, pour les nœuds qui doivent recevoir les événements du cluster mais ne doivent jamais se disputer le leadership.
 
 Voir [Mise à l'échelle](scaling) pour le comportement du leadership et du bus d'événements entre les instances.
 

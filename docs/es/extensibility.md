@@ -224,6 +224,29 @@ Dos puntos del contrato importan. `ProtectAsync` debe devolver un token de texto
 
 `IIndexTokenizer` mantiene los campos cifrados como aptos para búsqueda. Convierte un valor de texto plano normalizado en un token de índice ciego determinista y seguro como clave de tabla, típicamente un HMAC con clave donde la clave vive fuera de la base de datos. El determinismo significa que una búsqueda por igualdad sigue funcionando ("email = x" se convierte en "token = HMAC(x)"), mientras que un volcado de la base de datos no puede ni recomputar ni revertir un token. La búsqueda por prefijo se superpone tokenizando cada prefijo de un valor por separado, ya que un HMAC con clave destruye el orden y los escaneos por rango.
 
+> **Lo que un volcado sigue revelando.** "Ni recomputar ni revertir" es cierto de un token aislado,
+> no del índice en su conjunto. Sobreviven tres residuos, y conviene conocerlos antes de confiar en
+> esto:
+>
+>   *(Corregido.)* ~~**Estructura.** El índice de prefijos escribe una fila por prefijo, así que el
+>   número de filas de un registro equivale a la longitud del campo indexado.~~ Cada valor indexado
+>   escribe ahora un número fijo de filas, rellenado con señuelos que ninguna consulta puede producir
+>   y que un volcado no puede distinguir de prefijos reales.
+> - **Igualdad y frecuencia.** Los tokens son deterministas por construcción, que es lo que hace
+>   funcionar la búsqueda, así que un volcado muestra qué registros comparten un valor y con qué
+>   frecuencia aparece cada uno. El índice de dominios agrupa su población por empleador, lo que a
+>   menudo identifica a personas sin recuperar una dirección.
+> - **Texto plano elegido.** Quien pueda leer el almacén *y además* provocar que se indexen valores
+>   (registrar una cuenta, ser aprovisionado por SCIM) puede enviar un candidato y buscar su token.
+>   Eso recupera cualquier valor adivinable -- dominios comunes, nombres de pila comunes -- sin
+>   importar dónde viva la clave, porque el oráculo es la ruta de escritura, no el cifrado.
+>
+> La tokenización defiende el caso para el que fue construida: alguien que tiene un volcado y nada
+> más, intentando leer direcciones. Los dos residuos que quedan son exactamente lo que un oráculo de
+> registro entrega de todos modos. Si son inaceptables, deje sin configurar las tablas de índice de
+> prefijo y de dominio -- la búsqueda por coincidencia exacta no acarrea ninguno de los dos -- en
+> lugar de suponer que el HMAC los cubre.
+
 ```csharp
 public interface IIndexTokenizer
 {
@@ -237,7 +260,7 @@ Al igual que `IFieldCipher`, es un parámetro de constructor de almacén opciona
 
 ## Captura de registro de cambios: IChangeWriter
 
-`IChangeWriter` (renombrado desde `ITombstoneWriter` en 0.6.0) registra la clave de cada fila modificada en una tabla de registro de cambios dedicada, de modo que las copias de seguridad incrementales puedan encontrar lo que cambió sin escanear la columna `Timestamp` no indexada de las tablas en vivo. Las eliminaciones se capturan para cada tabla (un escaneo de filas en vivo no puede ver una fila que ya no existe); las inserciones/actualizaciones (upserts) se capturan para las tablas que la copia de seguridad lee del registro en lugar de escanear. Implementaciones integradas: `TableChangeWriter` (Azure Table Storage) y `DynamoChangeWriter` (DynamoDB).
+`IChangeWriter` (renombrado desde `ITombstoneWriter` en 0.6.0) registra la clave de cada fila modificada en una tabla de registro de cambios dedicada, de modo que las copias de seguridad incrementales puedan encontrar lo que cambió sin escanear la columna `Timestamp` no indexada de las tablas en vivo. Las eliminaciones se capturan para cada tabla (un escaneo de filas en vivo no puede ver una fila que ya no existe); las inserciones/actualizaciones (upserts) se capturan para las tablas que la copia de seguridad lee del registro en lugar de escanear. Implementaciones integradas: `TableChangeWriter` (Azure Table Storage), `DynamoChangeWriter` (DynamoDB) y `SqlChangeWriter` (PostgreSQL / SQLite).
 
 ```csharp
 public interface IChangeWriter

@@ -45,6 +45,7 @@ Der Speicher kann auf zwei Arten konfiguriert werden: geben Sie **entweder** `St
 | `Auth:MfaChallengeExpiryMinutes` | `5` | Gültigkeitsdauer des MFA-Abfrage-Tokens |
 | `Auth:MfaSetupTokenExpiryMinutes` | `15` | Gültigkeitsdauer des MFA-Setup-Tokens (für erzwungene Registrierung) |
 | `Auth:Pbkdf2Iterations` | `100000` | PBKDF2-Iterationsanzahl für Passwort-Hashing |
+| `Auth:FailedLoginMinimumMilliseconds` | `250` | Untergrenze der Wanduhrzeit, auf die eine fehlgeschlagene Anmeldung gehalten wird, bevor `invalid_credentials` zurückgegeben wird, gemessen ab Beginn der Anfrage. Schließt das Zeit-Orakel zur Benutzer-Enumeration: Ein nicht vorhandenes Konto wird gegen einen Dummy-Hash im nativen PBKDF2-Format geprüft, ein echtes Konto kann aber weiterhin einen importierten bcrypt- oder ASP.NET-Identity-V3-Hash mit anderen Kosten tragen -- gleicher Aufwand ist also unmöglich, erzwungen wird stattdessen gleiche verstrichene Zeit. Setzen Sie den Wert über den langsamsten Hash Ihres Deployments, z. B. wenn Sie bcrypt oberhalb von Kostenfaktor 11 importiert oder `Pbkdf2Iterations` deutlich über den Standard angehoben haben -- beim ersten Überschreiten wird einmalig eine Warnung protokolliert. `0` deaktiviert die Auffüllung und öffnet das Orakel wieder. |
 | `Auth:RefreshTokenReuseGraceSeconds` | `0` | Optionales Toleranzfenster (in Sekunden) für die gleichzeitige Wiederverwendung von Refresh-Tokens. `0` (Standard) behält die strenge Haltung bei: Jede Wiederverwendung eines bereits eingelösten Refresh-Tokens widerruft alle Token für diesen Benutzer+Client. Setzen Sie einen Wert `> 0`, um eine Wiederverwendung innerhalb des Fensters als idempotenten Wiederholungsversuch zu behandeln (die Nachfolger-Token werden erneut ausgeliefert), nützlich für mobile Clients mit instabiler Verbindung. |
 | `Auth:DynamicClientRegistrationEnabled` | `false` | Aktiviert den Endpunkt `POST /connect/register` für die dynamische Client-Registrierung (RFC 7591). Standardmäßig deaktiviert, da offene Registrierung in Multi-Mandanten-Deployments missbraucht werden kann. Siehe [Dynamische Client-Registrierung](client-registration). |
 | `Auth:SigningKeyLifetimeDays` | `90` | RSA-Signaturschlüssel-Lebensdauer vor automatischer Rotation |
@@ -84,6 +85,36 @@ Die Schlüssel von ASP.NET Core Data Protection (die das Sitzungs-Cookie verschl
 | `BackgroundServices:TokenCleanupIntervalMinutes` | `60` | Intervall für die Bereinigung abgelaufener Token |
 | `BackgroundServices:GrantReconciliationDelayMinutes` | `10` | Anfangsverzögerung vor der ersten Grant-Abstimmung |
 | `BackgroundServices:GrantReconciliationIntervalMinutes` | `30` | Intervall für die Grant-Abstimmung |
+
+## Rollen
+
+Rollen werden im `Roles`-Array definiert und beim Start initialisiert, zusammen mit Clients, Scopes
+und Anbietern. Am wichtigsten ist das Initialisieren, wenn ein Scope mit
+[`AllowedRoles`](scopes#role-gated-scopes) gebunden ist: Ein Scope, der an eine Rolle gebunden ist,
+die niemand anlegt, ist für alle gesperrt -- auch für den Betreiber, der ihn konfiguriert hat -- und
+das schlägt stillschweigend fehl: der Scope wird schlicht nie gewährt.
+
+```json
+{
+  "Roles": [
+    {
+      "Name": "staff-admin",
+      "Description": "Internal staff console",
+      "Members": [ "ada@example.com", "grace@example.com" ]
+    }
+  ]
+}
+```
+
+| Feld | Beschreibung |
+|---|---|
+| `Name` | Der Rollenname, wie er in `Scope.AllowedRoles` und im `roles`-Token-Claim verwendet wird |
+| `Description` | Menschenlesbar; wird bei späteren Starts aktualisiert, wenn die Initialisierung eine angibt |
+| `Members` | E-Mail-Adressen, die bei jedem Start in die Rolle aufgenommen werden. Eine Adresse ohne zugehörigen Benutzer wird mit einer Warnung übersprungen und beim nächsten Start erneut versucht -- der Start hängt niemals von einem Konto ab, das noch niemand angelegt hat |
+
+Das Initialisieren ist **additiv und idempotent**. Es entfernt niemals eine Rolle und widerruft nie
+eine Mitgliedschaft: Die Konfiguration ist nicht die maßgebliche Quelle dafür, wer was besitzt, und
+eine über die Admin-API gewährte Rolle übersteht daher den nächsten Neustart.
 
 ## Clients
 
@@ -371,9 +402,13 @@ builder.Services.AddAuthagonal(builder.Configuration,
 // AWS-Äquivalent (Authagonal.AwsProvider)
 builder.Services.AddAuthagonal(builder.Configuration,
     cluster => cluster.UseAwsDynamo(dynamoDb));
+
+// Selbst betriebenes PostgreSQL (Authagonal.SqlProvider)
+builder.Services.AddAuthagonal(builder.Configuration,
+    cluster => cluster.UseSql(sqlDataSource));
 ```
 
-`UseAzureStorageBus` / `UseAwsDynamoBus` registrieren nur den Event-Bus und behalten die In-Prozess-Lease bei: für Knoten, die Cluster-Ereignisse empfangen müssen, aber niemals um die Leadership konkurrieren dürfen.
+`UseAzureStorageBus` / `UseAwsDynamoBus` / `UseSqlBus` registrieren nur den Event-Bus und behalten die In-Prozess-Lease bei: für Knoten, die Cluster-Ereignisse empfangen müssen, aber niemals um die Leadership konkurrieren dürfen.
 
 Wie sich Leadership und Event-Bus über Instanzen hinweg verhalten, erfahren Sie unter [Skalierung](scaling).
 

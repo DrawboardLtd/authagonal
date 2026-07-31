@@ -86,7 +86,7 @@ Referencie os pacotes Authagonal no seu próprio projeto ASP.NET Core:
 <PackageReference Include="Authagonal.AzureProvider" Version="x.y.z" />
 ```
 
-O pacote do provedor de armazenamento é plugável: `Authagonal.AzureProvider` para Azure Table Storage (a configuração padrão do `AddAuthagonal()`), ou `Authagonal.AwsProvider` para DynamoDB / S3 / Secrets Manager. Consulte [Backend AWS](#aws-backend) abaixo.
+O pacote do provedor de armazenamento é plugável: `Authagonal.AzureProvider` para Azure Table Storage (a configuração padrão do `AddAuthagonal()`), `Authagonal.SqlProvider` para PostgreSQL ou SQLite auto-hospedados (consulte [Backend SQL](#backend-sql)), ou `Authagonal.AwsProvider` para DynamoDB / S3 / Secrets Manager (consulte [Backend AWS](#backend-aws)).
 
 Em seguida, componha-o no seu `Program.cs`:
 
@@ -107,6 +107,31 @@ Consulte [Extensibilidade](extensibility) para todos os pontos de extensão e [d
 ### Email
 
 O remetente [Resend](https://resend.com) integrado é ativado automaticamente quando `Email:ResendApiKey` e `Email:SenderEmail` estão configurados, sem necessidade de registrar um serviço. Sem nenhum `IEmailService`, os emails de verificação e de redefinição de senha são **descartados silenciosamente** e, como o login exige um email confirmado por padrão, os usuários auto-registrados nunca conseguem entrar (`UseAuthagonal` registra um aviso na inicialização). Defina as chaves `Email:*`, registre seu próprio `IEmailService` antes de `AddAuthagonal()`, ou liste seus domínios em `Auth:AutoConfirmEmailDomains` para pular a verificação (apenas dev/teste). Consulte [Configuração → Email](configuration#email).
+
+## Backend SQL
+
+Para executar no seu próprio banco de dados em vez de um serviço de nuvem, referencie `Authagonal.SqlProvider` e registre-o **antes** de `AddAuthagonal()`: são esses registros que fazem o `AddAuthagonal()` pular sua configuração do Azure Table Storage:
+
+```csharp
+using Authagonal.SqlProvider;
+
+// PostgreSQL — the production self-hosted backend
+builder.Services.AddAuthagonalPostgres(
+    "Host=db;Database=authagonal;Username=auth;Password=…;SSL Mode=VerifyFull;Root Certificate=/etc/ssl/certs/db-ca.pem");
+
+// or SQLite — one file, no server. Suits embedded hosts, CI and small single-node deployments
+builder.Services.AddAuthagonalSqlite("Data Source=authagonal.db");
+
+builder.Services.AddAuthagonal(builder.Configuration);
+```
+
+As tabelas espelham um a um os layouts do Azure e do DynamoDB e são criadas na inicialização se não existirem (toda instrução é um `IF NOT EXISTS`, então é seguro que vários pods disputem a criação e nada acontece contra um esquema que você mesmo provisionou). Nenhuma configuração `Storage:*` é necessária. O conjunto de chaves do Data Protection é persistido no mesmo banco, de modo que cookies e tokens antiforgery sobrevivem a reinicializações e funcionam entre pods sem nenhum serviço adicional.
+
+O SQLite serializa as escritas, portanto é um backend de nó único: o lease em processo e o barramento de eventos de cluster registrados por padrão são a combinação correta ali. Uma implantação PostgreSQL com vários pods vai querer `clustering.UseSql(dataSource)` para a eleição de líder.
+
+> **Collation.** No PostgreSQL as colunas de chave são fixadas em `COLLATE "C"`. O esquema de chaves é ordinal por bytes de ponta a ponta (limites de prefixo, faixas de partição por ambiente, a varredura de expiração de concessões, a paginação por keyset), e um banco criado com uma collation linguística -- `en_US.UTF-8` e locales ICU são os padrões comuns -- ordenaria pontuação e maiúsculas de outra forma e retornaria silenciosamente as linhas erradas. A fixação torna o layout independente de como o banco foi criado; você não precisa criá-lo de nenhuma maneira específica.
+
+Consulte o [README do pacote](https://github.com/authagonal/authagonal/tree/master/src/Authagonal.SqlProvider) para o layout das tabelas, as primitivas de concorrência por trás de cada garantia de uso único, e como adicionar um dialeto para outro motor.
 
 ## Backend AWS
 
