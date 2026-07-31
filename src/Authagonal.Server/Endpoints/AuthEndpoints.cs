@@ -405,6 +405,24 @@ public static class AuthEndpoints
         if (string.IsNullOrWhiteSpace(request.Email) || string.IsNullOrWhiteSpace(request.Password))
             return JsonResults.Error("email_and_password_required");
 
+        // Per-RECIPIENT cap as well as per-IP.
+        //
+        // Registration sends mail to a caller-chosen address, and the only bound was per source IP —
+        // so a distributed caller (or one with a pool of addresses) could have this server deliver
+        // unbounded mail to a single victim, from the tenant's own verified sending domain. That is
+        // both a harassment vector aimed at the recipient and a deliverability risk for the sender.
+        // Forgot-password already carries exactly this cap; registration did not, though it is the
+        // same primitive and needs no existing account.
+        var recipient = request.Email.Trim().ToLowerInvariant();
+        if (await rateLimiter.IsRateLimitedAsync(
+                $"register|to|{recipient}", ao.MaxPasswordResetsPerEmail,
+                TimeSpan.FromMinutes(ao.PasswordResetWindowMinutes), ct))
+        {
+            // Neutral: the same 429 an IP-throttled caller gets, so the cap does not become an
+            // account-existence oracle of its own.
+            return JsonResults.Error("rate_limited", "Too many registration attempts. Please try again later.", 429);
+        }
+
         // Basic email format validation. The single-'@' requirement is load-bearing rather than
         // cosmetic: an address with two of them has a domain that is ambiguous by construction, and
         // the forced-SSO gates and the storage layer resolved that ambiguity differently — so
@@ -576,7 +594,22 @@ public static class AuthEndpoints
 
         logger.LogInformation("User registered: {UserId} ({Email})", user.Id, user.Email);
 
-        return TypedResults.Json(new RegistrationSuccess { Success = true, UserId = user.Id }, AuthagonalJsonContext.Default.RegistrationSuccess, statusCode: 201);
+        // A throwaway id on the CLAIM path, matching the neutral duplicate-registration response.
+        //
+        // The claim path returned the existing account's real id (its OIDC `sub`) while the duplicate
+        // path returns a fresh Guid — so an anonymous caller could tell the two apart by whether the
+        // id they got back later resolved, and when AllowPasswordlessAccountClaim is on that is a
+        // deterministic "does a passwordless account exist for this address" oracle that also hands
+        // over the subject identifier. The client does not use this value; only the neutrality of the
+        // two responses matters.
+        return TypedResults.Json(
+            new RegistrationSuccess
+            {
+                Success = true,
+                UserId = isUpgrade ? Guid.NewGuid().ToString("D") : user.Id,
+            },
+            AuthagonalJsonContext.Default.RegistrationSuccess,
+            statusCode: 201);
     }
 
     /// <summary>
