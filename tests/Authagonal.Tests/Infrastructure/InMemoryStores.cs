@@ -731,19 +731,37 @@ public sealed class InMemoryScopeStore : IScopeStore
 
 public sealed class InMemoryRevokedTokenStore : IRevokedTokenStore
 {
-    private readonly ConcurrentDictionary<string, DateTimeOffset> _revoked = new();
+    private readonly ConcurrentDictionary<string, (DateTimeOffset ExpiresAt, bool Won)> _revoked = new();
 
     public Task AddAsync(string jti, DateTimeOffset expiresAt, string? clientId = null, CancellationToken ct = default)
     {
-        _revoked[jti] = expiresAt;
+        _revoked[jti] = (expiresAt, Won: true);
         return Task.CompletedTask;
     }
 
     public Task<bool> IsRevokedAsync(string jti, CancellationToken ct = default)
     {
-        if (_revoked.TryGetValue(jti, out var expiresAt) && expiresAt > DateTimeOffset.UtcNow)
+        if (_revoked.TryGetValue(jti, out var entry) && entry.ExpiresAt > DateTimeOffset.UtcNow)
             return Task.FromResult(true);
         return Task.FromResult(false);
+    }
+
+    /// <summary>
+    /// Atomic here for the same reason it is atomic in every real backend: the interface default is a
+    /// read then a write, and a test double that used it would let a replay through and call it a
+    /// pass.
+    /// </summary>
+    public Task<bool> TryClaimOnceAsync(
+        string key, DateTimeOffset expiresAt, string? clientId = null, CancellationToken ct = default)
+    {
+        var claimed = _revoked.AddOrUpdate(
+            key,
+            _ => (expiresAt, Won: true),
+            (_, existing) => existing.ExpiresAt > DateTimeOffset.UtcNow
+                ? (existing.ExpiresAt, Won: false)   // still live — a genuine replay
+                : (expiresAt, Won: true));           // lapsed — reclaimable
+
+        return Task.FromResult(claimed.Won);
     }
 }
 

@@ -261,14 +261,32 @@ internal static class ClientAuthentication
         var replayCache = httpContext.RequestServices.GetService<IRevokedTokenStore>();
         if (replayCache is not null)
         {
-            var replayKey = $"client_assertion:{clientId}:{jti}";
-            if (await replayCache.IsRevokedAsync(replayKey, ct))
+            // One atomic claim, not a read followed by a write.
+            //
+            // This was IsRevokedAsync then AddAsync, over backends whose AddAsync is an unconditional
+            // upsert — so two requests carrying the same assertion both read "not seen", both wrote,
+            // and both authenticated. Single-use held only for sequential presentations, which is not
+            // what an attacker who captured an assertion does with it.
+            //
+            // The key is hashed rather than composed from the raw jti. The jti is a claim the client
+            // controls entirely and it was used verbatim as a storage key: on Azure Table a RowKey
+            // containing '/', '\\', '#', '?', a control character, or over 1024 characters is a 400
+            // that neither store path handled. Hashing makes the key fixed-width and charset-safe on
+            // every backend, and gives up nothing — the value is never read back, only matched.
+            if (!await replayCache.TryClaimOnceAsync(ReplayKey(clientId, jti), expiresAt, clientId, ct))
                 return (null, error("invalid_client", "client_assertion has already been used"));
-            await replayCache.AddAsync(replayKey, expiresAt, clientId, ct);
         }
 
         return (client, null);
     }
+
+    /// <summary>
+    /// The single-use ledger key for one client's assertion jti: fixed-width lowercase hex, so no
+    /// backend's key charset or length limit is reachable from a client-supplied claim.
+    /// </summary>
+    private static string ReplayKey(string clientId, string jti) =>
+        "ca-" + Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(
+            Encoding.UTF8.GetBytes($"client_assertion:{clientId}:{jti}")));
 
     /// <summary>Inline JWKS wins; a JwksUri is fetched through the host's HttpClient factory
     /// (or a shared fallback) and cached for <see cref="JwksCacheTtl"/>.</summary>

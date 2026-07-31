@@ -24,6 +24,28 @@ public sealed class SqlRevokedTokenStore(SqlTable table, EnvPartitioner partitio
         return table.PutAsync(row, ct);
     }
 
+    /// <inheritdoc />
+    public async Task<bool> TryClaimOnceAsync(
+        string key, DateTimeOffset expiresAt, string? clientId = null, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(key)) return false;
+
+        var row = new SqlRow(partitioner.PK(Partition), key) { ExpiresAt = expiresAt };
+        row.PutDate("expiresAt", expiresAt);
+        row.PutS("clientId", clientId);
+        row.PutDate("revokedAt", DateTimeOffset.UtcNow);
+
+        if (await table.PutIfAbsentAsync(row, ct).ConfigureAwait(false)) return true;
+
+        // Present. An entry past its own expiry protects nothing — IsRevokedAsync says as much — so
+        // the key is reclaimable; anything still live is a genuine replay.
+        var existing = await table.GetAsync(partitioner.PK(Partition), key, ct: ct).ConfigureAwait(false);
+        if (existing is not null && existing.GetDate("expiresAt") > DateTimeOffset.UtcNow) return false;
+
+        await table.PutAsync(row, ct).ConfigureAwait(false);
+        return true;
+    }
+
     public async Task<bool> IsRevokedAsync(string jti, CancellationToken ct = default)
     {
         if (string.IsNullOrWhiteSpace(jti)) return false;

@@ -567,6 +567,41 @@ public abstract class SqlProviderTestsBase : IAsyncLifetime
         Assert.False(await store.IsRevokedAsync("never-seen"));
     }
 
+    /// <summary>
+    /// F314 / F263 — the single-use claim behind RFC 7523 client-assertion replay protection.
+    /// </summary>
+    /// <remarks>
+    /// It was IsRevokedAsync followed by AddAsync, and AddAsync is an unconditional upsert on every
+    /// backend — so two requests carrying the same assertion both read "not seen", both wrote, and
+    /// both authenticated. Asserted at the store, because that is where the atomicity has to live:
+    /// through the endpoint the window is real but too narrow to provoke reliably, and a test that
+    /// only sometimes reproduces a race is worse than no test.
+    /// </remarks>
+    [Fact]
+    public async Task RevokedTokenStore_ClaimHasExactlyOneWinnerUnderConcurrency()
+    {
+        var store = new SqlRevokedTokenStore(await T("RevokedTokens"), Live);
+        var expires = DateTimeOffset.UtcNow.AddMinutes(5);
+
+        var results = await Task.WhenAll(Enumerable.Range(0, 12)
+            .Select(_ => Task.Run(() => store.TryClaimOnceAsync("ca-contended", expires, "web"))));
+
+        Assert.Equal(1, results.Count(won => won));
+        Assert.False(await store.TryClaimOnceAsync("ca-contended", expires, "web"));
+    }
+
+    [Fact]
+    public async Task RevokedTokenStore_ALapsedClaimIsReclaimable()
+    {
+        // A claim past its own expiry protects nothing — IsRevokedAsync already ignores it — so
+        // holding the key forever would just be a slow leak of unusable rows.
+        var store = new SqlRevokedTokenStore(await T("RevokedTokens"), Live);
+
+        Assert.True(await store.TryClaimOnceAsync("ca-lapsed", DateTimeOffset.UtcNow.AddMinutes(-5), "web"));
+        Assert.True(await store.TryClaimOnceAsync("ca-lapsed", DateTimeOffset.UtcNow.AddMinutes(5), "web"));
+        Assert.False(await store.TryClaimOnceAsync("ca-lapsed", DateTimeOffset.UtcNow.AddMinutes(5), "web"));
+    }
+
     [Fact]
     public async Task ScimTokenStore_KeepsForwardAndReverseRowsInSync()
     {

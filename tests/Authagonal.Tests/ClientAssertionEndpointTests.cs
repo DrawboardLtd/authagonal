@@ -121,6 +121,62 @@ public sealed class ClientAssertionEndpointTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task AnAssertionIsSingleUse()
+    {
+        // RFC 7523 makes the jti single-use, so a captured assertion is worth nothing after its first
+        // presentation.
+        //
+        // Sequential only, deliberately. The defect was that this was enforced as IsRevokedAsync then
+        // AddAsync over backends whose AddAsync is an unconditional upsert, which two CONCURRENT
+        // presentations both slip through — but that window is too narrow to provoke reliably through
+        // TestServer, and a test that reproduces a race only sometimes is worse than no test. The
+        // atomicity is asserted where it lives, on the store:
+        // SqlProviderTestsBase.RevokedTokenStore_ClaimHasExactlyOneWinnerUnderConcurrency, which runs
+        // against SQLite and a real PostgreSQL.
+        var assertion = BuildAssertion(_signingKey);
+
+        Task<HttpResponseMessage> Present() => _client.PostAsync("/connect/token", new FormUrlEncodedContent(
+            new Dictionary<string, string>
+            {
+                ["grant_type"] = "client_credentials",
+                ["scope"] = AuthagonalTestFactory.AdminScope,
+                ["client_assertion_type"] = "urn:ietf:params:oauth:client-assertion-type:jwt-bearer",
+                ["client_assertion"] = assertion,
+            }));
+
+        Assert.True((await Present()).IsSuccessStatusCode);
+
+        var replay = await Present();
+        Assert.False(replay.IsSuccessStatusCode);
+        Assert.Contains("already been used", await replay.Content.ReadAsStringAsync(), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task AJtiThatIsHostileAsAStorageKey_IsStillAccepted()
+    {
+        // The jti is a client-controlled claim and was used verbatim as an Azure Table RowKey, where
+        // '/', '\\', '#', '?', a control character or 1024+ characters is a 400 that neither store
+        // path handled. Hashing the composite key makes it fixed-width and charset-safe.
+        //
+        // This passes with or without the hashing, because the in-memory store has no key charset or
+        // length limit — only Azure Table does. It is kept as the guard that hashing did not break
+        // an ordinary jti; the exposure it describes is provider-specific and not reproducible here.
+        var assertion = BuildAssertion(_signingKey, jti: "a/b\\c#d?e" + new string('x', 2000));
+
+        var response = await _client.PostAsync("/connect/token", new FormUrlEncodedContent(
+            new Dictionary<string, string>
+            {
+                ["grant_type"] = "client_credentials",
+                ["scope"] = AuthagonalTestFactory.AdminScope,
+                ["client_assertion_type"] = "urn:ietf:params:oauth:client-assertion-type:jwt-bearer",
+                ["client_assertion"] = assertion,
+            }));
+
+        Assert.True(response.IsSuccessStatusCode,
+            $"a well-formed assertion was refused because of its jti: {await response.Content.ReadAsStringAsync()}");
+    }
+
+    [Fact]
     public async Task Introspect_FromPublicClient_IsStillRefused()
     {
         // The anti-scanning rule (RFC 7662 §2.1) has to survive the rework: a public client naming
@@ -165,7 +221,7 @@ public sealed class ClientAssertionEndpointTests : IAsyncLifetime
     /// A fresh jti each time — assertions are single-use, so a shared one would make the second call
     /// in any test fail for the wrong reason.
     /// </summary>
-    private static string BuildAssertion(ECDsa key)
+    private static string BuildAssertion(ECDsa key, string? jti = null)
     {
         var securityKey = new ECDsaSecurityKey(key) { KeyId = KeyId };
         var now = DateTime.UtcNow;
@@ -177,7 +233,7 @@ public sealed class ClientAssertionEndpointTests : IAsyncLifetime
             Subject = new System.Security.Claims.ClaimsIdentity(
             [
                 new System.Security.Claims.Claim("sub", KeyClientId),
-                new System.Security.Claims.Claim("jti", Guid.NewGuid().ToString("N")),
+                new System.Security.Claims.Claim("jti", jti ?? Guid.NewGuid().ToString("N")),
             ]),
             NotBefore = now,
             Expires = now.AddMinutes(2),

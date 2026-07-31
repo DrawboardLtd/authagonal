@@ -680,6 +680,47 @@ public sealed class TableUserStore(
     /// (the reindex/backfill path), also removes the matching legacy plaintext-keyed rows once tokenization
     /// is on, so at "contract" no plaintext index rows remain.
     /// </summary>
+    /// <summary>
+    /// Writes the email→userId binding with an insert-if-absent, and accepts an existing row only when
+    /// it already names this user.
+    /// </summary>
+    /// <remarks>
+    /// This row is the authority for <see cref="FindByEmailAsync"/> — password login, password reset,
+    /// SCIM matching and federated account linking all resolve an identity through it. Every write of
+    /// it was an unconditional Replace, so it would happily repoint an existing binding at a different
+    /// user; uniqueness rested entirely on callers doing a FindByEmailAsync first, which is a
+    /// check-then-act with several round trips of gap. Two concurrent registrations for one address
+    /// could therefore both pass their check and the second silently take ownership of the first's
+    /// login identifier. The store already uses the atomic primitive next door — CreateAsync writes
+    /// the profile row with AddEntityAsync — so this is the same guarantee, applied to the row that
+    /// actually decides who you are.
+    /// </remarks>
+    private async Task ClaimEmailIndexAsync(string emailPk, string normalizedEmail, string userId, CancellationToken ct)
+    {
+        var entity = UserEmailEntity.Create(normalizedEmail, userId);
+        entity.PartitionKey = emailPk;
+
+        try
+        {
+            await userEmailsTable.AddEntityAsync(entity, ct);
+        }
+        catch (Azure.RequestFailedException ex) when (ex.Status == 409)
+        {
+            // Already bound. Re-registering the same user's own address is ordinary (a reindex, a
+            // retried write, a no-op profile update) and must stay idempotent; a different user
+            // holding it is the collision this exists to catch.
+            var existing = await TryGetEmailIndexUserIdAsync(emailPk, ct).ConfigureAwait(false);
+            if (existing is not null && !string.Equals(existing, userId, StringComparison.Ordinal))
+                throw new InvalidOperationException(
+                    $"The email address is already registered to a different user ({emailPk}).");
+
+            // Same user, or a row with no usable UserId — rewrite so the binding is well-formed.
+            await userEmailsTable.UpsertEntityAsync(entity, TableUpdateMode.Replace, ct);
+        }
+
+        await LogUpsertAsync("UserEmails", emailPk, UserEmailEntity.LookupRowKey, ct);
+    }
+
     private async Task WriteProfileIndexesAsync(
         string normalizedEmail, string? normalizedFirst, string? normalizedLast, string userId, bool dropLegacy, CancellationToken ct)
     {
@@ -693,12 +734,9 @@ public sealed class TableUserStore(
         var lastTokens = ReserveNameTokens(batch, userLastNamesTable, normalizedLast);
         await batch.RunAsync(ct);
 
-        // Email lookup.
+        // Email lookup — claimed, not overwritten. See ClaimEmailIndexAsync.
         var emailPk = _partitioner.PK(emailToken());
-        var emailEntity = UserEmailEntity.Create(normalizedEmail, userId);
-        emailEntity.PartitionKey = emailPk;
-        await userEmailsTable.UpsertEntityAsync(emailEntity, TableUpdateMode.Replace, ct);
-        await LogUpsertAsync("UserEmails", emailPk, UserEmailEntity.LookupRowKey, ct);
+        await ClaimEmailIndexAsync(emailPk, normalizedEmail, userId, ct);
         if (dropLegacy && _indexTokenized)
         {
             var plainPk = _partitioner.PK(normalizedEmail);
@@ -804,10 +842,10 @@ public sealed class TableUserStore(
                 // lookup (login-lockout). Old≠new here, so the PKs differ and the new write can't collide with
                 // the row we then delete. Mirrors ReindexUserAsync's "write current FIRST (no login gap), then
                 // drop legacy".
-                var emailEntity = UserEmailEntity.Create(newNormalizedEmail, user.Id);
-                emailEntity.PartitionKey = _partitioner.PK(newEmailToken!());
-                await userEmailsTable.UpsertEntityAsync(emailEntity, TableUpdateMode.Replace, ct);
-                await LogUpsertAsync("UserEmails", emailEntity.PartitionKey, emailEntity.RowKey, ct);
+                // The new binding is CLAIMED, not written over: if another user already holds this
+                // address the claim throws and the old binding is left alone, so the caller's
+                // check-then-act gap cannot end in one user owning another's login identifier.
+                await ClaimEmailIndexAsync(_partitioner.PK(newEmailToken!()), newNormalizedEmail, user.Id, ct);
                 await DeleteEmailIndexAsync(oldNormalizedEmail, oldEmailToken!(), ct);
 
                 // Local-part prefix index: keyed on the bit before '@', so rewrite when THAT changed

@@ -24,6 +24,29 @@ public sealed class DynamoRevokedTokenStore(DynamoTable table, EnvPartitioner pa
         return table.PutAsync(item, ct);
     }
 
+    /// <inheritdoc />
+    public async Task<bool> TryClaimOnceAsync(
+        string key, DateTimeOffset expiresAt, string? clientId = null, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(key)) return false;
+
+        var item = Dyn.Item(partitioner.PK(Partition), key);
+        item.PutDate("expiresAt", expiresAt);
+        item.PutS("clientId", clientId);
+        item.PutDate("revokedAt", DateTimeOffset.UtcNow);
+        item.PutTtl(expiresAt.AddDays(1));
+
+        if (await table.PutIfAbsentAsync(item, ct).ConfigureAwait(false)) return true;
+
+        // Present. An entry past its own expiry protects nothing — IsRevokedAsync says as much — so
+        // the key is reclaimable; anything still live is a genuine replay.
+        var existing = await table.GetAsync(partitioner.PK(Partition), key, ct).ConfigureAwait(false);
+        if (existing is not null && existing.GetDate("expiresAt") > DateTimeOffset.UtcNow) return false;
+
+        await table.PutAsync(item, ct).ConfigureAwait(false);
+        return true;
+    }
+
     public async Task<bool> IsRevokedAsync(string jti, CancellationToken ct = default)
     {
         if (string.IsNullOrWhiteSpace(jti)) return false;
