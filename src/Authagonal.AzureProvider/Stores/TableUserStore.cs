@@ -304,16 +304,30 @@ public sealed class TableUserStore(
     // both tables. Legacy and tokenized rows never collide (different PartitionKey shape), so both coexist
     // during migration; search reads both.
     private const int NamePrefixMin = 2;   // == legacy UserFirstNameEntity.PartitionKeyLength — the min searchable length
-    private const int NamePrefixMax = 16;  // cap on indexed prefix length: bounds rows/name; a longer query matches the first 16 chars
+    private const int NamePrefixMax = 16;
+
+    /// <summary>
+    /// Every indexed value writes exactly this many prefix rows, short ones included.
+    /// </summary>
+    /// <remarks>
+    /// The count used to be (length - 1), capped — so a dump leaked the length of every name and email
+    /// local-part without breaking a single token. Padding to a constant removes that channel; the
+    /// extra rows are decoys that no query can produce and that a dump cannot tell from real ones.
+    /// The cost is a fixed write fan-out per indexed field rather than one proportional to length.
+    /// </remarks>
+    private const int NamePrefixCount = NamePrefixMax - NamePrefixMin + 1;
+
+    private static IReadOnlyList<string> PadToFixedCount(IReadOnlyList<string> prefixes, string value)
+        => Authagonal.Core.Services.BlindIndexPadding.Pad(prefixes, value, NamePrefixCount);  // cap on indexed prefix length: bounds rows/name; a longer query matches the first 16 chars
 
     private static IReadOnlyList<string> NamePrefixesOf(string normalizedName)
     {
-        if (normalizedName.Length < NamePrefixMin) return [normalizedName];
+        if (normalizedName.Length < NamePrefixMin) return PadToFixedCount([normalizedName], normalizedName);
         var hi = Math.Min(normalizedName.Length, NamePrefixMax);
-        var prefixes = new List<string>(hi - NamePrefixMin + 1);
+        var prefixes = new List<string>(NamePrefixCount);
         for (var len = NamePrefixMin; len <= hi; len++)
             prefixes.Add(normalizedName[..len]);
-        return prefixes;
+        return PadToFixedCount(prefixes, normalizedName);
     }
 
     // Name-index write over prefix tokens reserved via ReserveNameTokens: non-null exactly when

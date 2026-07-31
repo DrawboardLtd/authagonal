@@ -226,8 +226,9 @@ Two contract points matter. `ProtectAsync` must return a self-describing ciphert
 > **What a dump still reveals.** "Neither recompute nor reverse" is true of a single token and not of
 > the index as a whole. Three residues survive, and they are worth knowing before you rely on this:
 >
-> - **Structure.** The prefix index writes one row per prefix, so a record's row count equals the
->   length of the indexed field — a dump leaks how long every email local-part and every name is.
+>   *(Fixed.)* ~~**Structure.** The prefix index writes one row per prefix, so a record's row count
+>   equals the length of the indexed field.~~ Every indexed value now writes a fixed number of rows,
+>   padded with decoys that no query can produce and that a dump cannot tell from real prefixes.
 > - **Equality and frequency.** Tokens are deterministic by construction, which is what makes lookup
 >   work, so a dump shows which records share a value and how common each value is. The domain index
 >   buckets your population by employer, which often identifies people without recovering an address.
@@ -237,8 +238,9 @@ Two contract points matter. `ProtectAsync` must return a self-describing ciphert
 >   lives, because the oracle is the write path rather than the cipher.
 >
 > Tokenization defends against the case it was built for: someone holding a dump and nothing else,
-> trying to read addresses. If that residue is unacceptable, leave the prefix and domain indexes off
-> — exact-match lookup carries none of it — rather than assuming the HMAC covers them.
+> trying to read addresses. The two residues that remain are exactly what a registration oracle gives
+> away anyway. If they are unacceptable, leave the prefix and domain index tables unconfigured —
+> exact-match lookup carries neither — rather than assuming the HMAC covers them.
 
 ```csharp
 public interface IIndexTokenizer

@@ -23,9 +23,12 @@ namespace Authagonal.Core.Services;
 /// it is:
 /// <list type="bullet">
 /// <item><description>
-/// <b>Structure.</b> The prefix index emits one row per prefix of a value, so the ROW COUNT for a
-/// record equals the length of the indexed field. A dump therefore leaks how long every email
-/// local-part and every name is, without breaking a single token.
+/// <b>Structure — CLOSED.</b> The prefix index used to emit one row per prefix, so the row count for
+/// a record equalled the length of the indexed field: a dump leaked how long every email local-part
+/// and every name was, without breaking a single token. Every indexed value now writes a fixed number
+/// of rows, the shortfall filled with decoys derived from the value (see
+/// <see cref="BlindIndexPadding"/>) — deterministic, so a delete removes exactly what a write added,
+/// and indistinguishable from real prefixes to anyone holding only a dump.
 /// </description></item>
 /// <item><description>
 /// <b>Equality and frequency.</b> Tokens are deterministic by construction — that is what makes
@@ -43,9 +46,10 @@ namespace Authagonal.Core.Services;
 /// </list>
 /// Tokenization defends against the case it was built for: an attacker with a dump and nothing else,
 /// trying to read addresses. It is not a defence against an attacker who also holds a registration
-/// oracle. A deployment that cannot accept the residue above should leave the prefix and domain
-/// indexes off (search degrades to exact-match lookup, which carries none of it) rather than assume
-/// the HMAC covers them.
+/// oracle — and the two residues above that remain are exactly the ones that oracle already gives
+/// away for free. A deployment that cannot accept them should leave the prefix and domain index
+/// tables unconfigured (search degrades to exact-match lookup, which carries neither) rather than
+/// assume the HMAC covers them.
 /// </remarks>
 public interface IIndexTokenizer
 {
