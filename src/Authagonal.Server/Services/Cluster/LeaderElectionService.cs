@@ -20,9 +20,37 @@ public sealed class LeaderElectionService(
 {
     private const string LeaderResource = "authagonal-leader";
 
+    /// <summary>Longest lease any supported backend actually honours (Azure blob leases cap at 60s).</summary>
+    private static readonly TimeSpan MaxLeaseTtl = TimeSpan.FromSeconds(60);
+
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        // Cluster:Enabled was documented as the master switch — "when false the node runs standalone
+        // (always leader, in-process event bus)" — and read nowhere, so setting it false did nothing
+        // and the node kept contending for a distributed lease. An operator who had deliberately
+        // taken a node out of the cluster still had it participating.
+        if (!options.Value.Enabled)
+        {
+            election.Update(true, Timeout.InfiniteTimeSpan);
+            logger.LogInformation("Cluster:Enabled is false — running standalone as permanent leader.");
+            return;
+        }
+
         var ttl = TimeSpan.FromSeconds(Math.Max(5, options.Value.LeaseTtlSeconds));
+
+        // The Azure blob-lease backend caps a lease at 60 seconds, so a configured TTL above that is
+        // silently truncated by the backend while this node believes it holds the longer one — which
+        // is sustained dual leadership, not a slow failover. Bounded here so the local deadline and
+        // the backend agree.
+        if (ttl > MaxLeaseTtl)
+        {
+            logger.LogWarning(
+                "Cluster:LeaseTtlSeconds is {Configured}s; capping at {Max}s because lease backends do not " +
+                "honour longer leases and the mismatch produces two nodes believing they are leader.",
+                ttl.TotalSeconds, MaxLeaseTtl.TotalSeconds);
+            ttl = MaxLeaseTtl;
+        }
+
         var renewInterval = TimeSpan.FromSeconds(Math.Max(2, ttl.TotalSeconds / 2));
 
         using var timer = new PeriodicTimer(renewInterval);
