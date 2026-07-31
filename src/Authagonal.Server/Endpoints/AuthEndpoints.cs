@@ -201,8 +201,11 @@ public static class AuthEndpoints
                 // race the counter and slip past the lockout threshold.
                 var opts = authOptions.Value;
                 var locked = await userStore.RecordFailedLoginAsync(user.Id, opts.MaxFailedAttempts, TimeSpan.FromMinutes(opts.LockoutDurationMinutes), ct);
+                // Addresses go through LogSafe.Email everywhere in this file (see its remarks): the login,
+                // registration, confirmation and reset paths are anonymous, so the value is caller-supplied
+                // text, and the log is the wrong place to keep the directory's login identifiers.
                 if (locked)
-                    logger.LogWarning("Account locked out for user {UserId} ({Email})", user.Id, user.Email);
+                    logger.LogWarning("Account locked out for user {UserId} ({Email})", user.Id, LogSafe.Email(user.Email));
             }
 
             // The audit-hook reason stays granular (internal only — never reaches the caller); the
@@ -356,7 +359,7 @@ public static class AuthEndpoints
         await CookieSignInHelper.SignInAsync(httpContext, user);
 
         var name = CookieSignInHelper.GetDisplayName(user);
-        logger.LogInformation("User {UserId} ({Email}) signed in", user.Id, user.Email);
+        logger.LogInformation("User {UserId} ({Email}) signed in", user.Id, LogSafe.Email(user.Email));
 
         // If Enabled but user hasn't enrolled, hint that MFA is available (user is not enrolled here)
         var mfaAvailable = effectivePolicy == MfaPolicy.Enabled;
@@ -535,7 +538,7 @@ public static class AuthEndpoints
             }
             catch (Exception ex)
             {
-                logger.LogError(ex, "Failed to send account-exists email to {Email}", existing.Email);
+                logger.LogError(ex, "Failed to send account-exists email to {Email}", LogSafe.Email(existing.Email));
             }
             logger.LogInformation("Registration attempt for an existing credentialed email — neutral response returned");
             return TypedResults.Json(new RegistrationSuccess { Success = true, UserId = Guid.NewGuid().ToString("D") }, AuthagonalJsonContext.Default.RegistrationSuccess, statusCode: 201);
@@ -615,7 +618,7 @@ public static class AuthEndpoints
             {
                 // Roll back the brand-new account.
                 await userStore.DeleteAsync(user.Id, ct);
-                logger.LogWarning(ex, "Provisioning rejected registration for {Email}", user.Email);
+                logger.LogWarning(ex, "Provisioning rejected registration for {Email}", LogSafe.Email(user.Email));
                 return TypedResults.Json(new ErrorInfoResponse { Error = "provisioning_rejected", Message = ex.Message }, AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 422);
             }
         }
@@ -629,7 +632,7 @@ public static class AuthEndpoints
         // claim requires its own click, so it falls through to the verification email.
         if (user.EmailConfirmed && !isUpgrade)
         {
-            logger.LogInformation("User registered (email pre-verified): {UserId} ({Email})", user.Id, user.Email);
+            logger.LogInformation("User registered (email pre-verified): {UserId} ({Email})", user.Id, LogSafe.Email(user.Email));
             return TypedResults.Json(new RegistrationSuccess { Success = true, UserId = user.Id, EmailVerified = true }, AuthagonalJsonContext.Default.RegistrationSuccess, statusCode: 201);
         }
 
@@ -669,10 +672,10 @@ public static class AuthEndpoints
         }
         catch (Exception ex)
         {
-            logger.LogError(ex, "Failed to send verification email to {Email}", user.Email);
+            logger.LogError(ex, "Failed to send verification email to {Email}", LogSafe.Email(user.Email));
         }
 
-        logger.LogInformation("User registered: {UserId} ({Email})", user.Id, user.Email);
+        logger.LogInformation("User registered: {UserId} ({Email})", user.Id, LogSafe.Email(user.Email));
 
         // A throwaway id on the CLAIM path, matching the neutral duplicate-registration response.
         //
@@ -905,7 +908,7 @@ public static class AuthEndpoints
             // case really has failed and must not be reported as success.
             if (user.EmailConfirmed && string.IsNullOrWhiteSpace(user.PendingPasswordHash))
             {
-                logger.LogInformation("Email confirmation replayed for {UserId} ({Email}) — already confirmed", user.Id, user.Email);
+                logger.LogInformation("Email confirmation replayed for {UserId} ({Email}) — already confirmed", user.Id, LogSafe.Email(user.Email));
                 return wantsHtml
                     ? Results.Redirect("/login?email_confirmed=1")
                     : TypedResults.Json(
@@ -943,7 +946,7 @@ public static class AuthEndpoints
             {
                 logger.LogWarning(
                     "Passwordless-claim link for {Email} does not match the currently staged credential; refusing to promote",
-                    user.Email);
+                    LogSafe.Email(user.Email));
                 return wantsHtml
                     ? Results.Redirect("/login?error=claim_superseded")
                     : JsonResults.Error("claim_superseded",
@@ -968,7 +971,7 @@ public static class AuthEndpoints
                 clean.SecurityStamp = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
                 clean.UpdatedAt = DateTimeOffset.UtcNow;
                 await userStore.UpdateAsync(clean, CancellationToken.None);
-                logger.LogWarning(ex, "Passwordless-claim conversion rejected for {Email}", user.Email);
+                logger.LogWarning(ex, "Passwordless-claim conversion rejected for {Email}", LogSafe.Email(user.Email));
                 return wantsHtml
                     ? Results.Redirect($"/login?error=provisioning_rejected&error_description={Uri.EscapeDataString(ex.Message)}")
                     : JsonResults.Error("provisioning_rejected", ex.Message);
@@ -976,7 +979,7 @@ public static class AuthEndpoints
             user.PasswordHash = user.PendingPasswordHash;
             user.PendingPasswordHash = null;
             user.PendingClaimJson = null;
-            logger.LogInformation("Passwordless account claimed by {UserId} ({Email}) — credential promoted after fresh verification", user.Id, user.Email);
+            logger.LogInformation("Passwordless account claimed by {UserId} ({Email}) — credential promoted after fresh verification", user.Id, LogSafe.Email(user.Email));
         }
 
         user.EmailConfirmed = true;
@@ -984,7 +987,7 @@ public static class AuthEndpoints
         user.UpdatedAt = DateTimeOffset.UtcNow;
         await userStore.UpdateAsync(user, CancellationToken.None);
 
-        logger.LogInformation("Email confirmed for user {UserId} ({Email})", user.Id, user.Email);
+        logger.LogInformation("Email confirmed for user {UserId} ({Email})", user.Id, LogSafe.Email(user.Email));
 
         // Notify hooks (e.g. the Cloud lifts the unverified-tenant user cap when the owner confirms).
         await authHooks.RunOnEmailConfirmedAsync(user.Id, user.Email, ct);
@@ -1057,10 +1060,11 @@ public static class AuthEndpoints
             // anonymous — so the log took arbitrary caller-controlled text (CR/LF for forged entries
             // in a line-oriented sink, control characters, unbounded length) and, for a real address,
             // recorded PII about someone who never used the service. Only the domain is kept, which
-            // is what the line is actually diagnostic for.
+            // is what the line is actually diagnostic for — and the domain is still caller-controlled
+            // text (everything after the last '@'), so it goes through LogSafe rather than raw.
             logger.LogInformation(
                 "Password reset requested for a non-existent account in domain {Domain}",
-                Authagonal.Core.Services.EmailDomain.Of(request.Email) ?? "(none)");
+                Authagonal.Core.Services.LogSafe.Text(Authagonal.Core.Services.EmailDomain.Of(request.Email)));
             // Artificial delay to prevent timing-based email enumeration
             await Task.Delay(TimeSpan.FromMilliseconds(100 + RandomNumberGenerator.GetInt32(200)), ct);
             return TypedResults.Json(new SuccessResponse(), AuthagonalJsonContext.Default.SuccessResponse);
@@ -1075,7 +1079,8 @@ public static class AuthEndpoints
         if (string.IsNullOrEmpty(user.PasswordHash) && string.IsNullOrEmpty(user.PendingPasswordHash))
         {
             logger.LogInformation(
-                "Password reset requested for SSO-only account {Email}; no local password exists to reset", user.Email);
+                "Password reset requested for SSO-only account {Email}; no local password exists to reset",
+                LogSafe.Email(user.Email));
             await Task.Delay(TimeSpan.FromMilliseconds(100 + RandomNumberGenerator.GetInt32(200)), ct);
             return TypedResults.Json(new SuccessResponse(), AuthagonalJsonContext.Default.SuccessResponse);
         }
@@ -1086,7 +1091,7 @@ public static class AuthEndpoints
         var rlOpts = authOptions.Value;
         if (await rateLimiter.IsRateLimitedAsync($"pwreset|{user.Email}", rlOpts.MaxPasswordResetsPerEmail, TimeSpan.FromMinutes(rlOpts.PasswordResetWindowMinutes), ct))
         {
-            logger.LogInformation("Password reset rate-limited for {Email}", user.Email);
+            logger.LogInformation("Password reset rate-limited for {Email}", LogSafe.Email(user.Email));
             return TypedResults.Json(new SuccessResponse(), AuthagonalJsonContext.Default.SuccessResponse);
         }
 
@@ -1121,11 +1126,11 @@ public static class AuthEndpoints
         try
         {
             await emailService.SendPasswordResetEmailAsync(user.Email, callbackUrl, ct);
-            logger.LogInformation("Password reset email sent to {Email}", user.Email);
+            logger.LogInformation("Password reset email sent to {Email}", LogSafe.Email(user.Email));
         }
         catch (Exception ex)
         {
-            logger.LogError(ex, "Failed to send password reset email to {Email}", user.Email);
+            logger.LogError(ex, "Failed to send password reset email to {Email}", LogSafe.Email(user.Email));
         }
 
         return TypedResults.Json(new SuccessResponse(), AuthagonalJsonContext.Default.SuccessResponse);
@@ -1222,7 +1227,7 @@ public static class AuthEndpoints
         if (newlyConfirmed)
             await authHooks.RunOnEmailConfirmedAsync(user.Id, user.Email, ct);
 
-        logger.LogInformation("Password reset completed for user {UserId} ({Email})", user.Id, user.Email);
+        logger.LogInformation("Password reset completed for user {UserId} ({Email})", user.Id, LogSafe.Email(user.Email));
 
         // Offer the reset-complete page a "continue to {app}" target: the flow's client, else the
         // tenant default. Null keeps the plain "sign in" UX.

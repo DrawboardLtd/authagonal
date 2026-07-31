@@ -34,11 +34,25 @@ public static class SsoEndpoints
 
     // SAML endpoints
 
+    /// <summary>
+    /// What an SSO write is recorded as. A connection decides which external IdP may assert who a user is,
+    /// and with JIT enabled it can create accounts — so creating or repointing one is the strongest
+    /// account-takeover lever in the product, and it left no audit record at all. The domains travel in the
+    /// detail because "which domain did they claim" is the fact that turns a row into an incident.
+    /// </summary>
+    private static string DomainDetail(string connectionName, IEnumerable<string> domains)
+    {
+        var list = string.Join(", ", domains);
+        return list.Length == 0 ? connectionName : $"{connectionName} [{list}]";
+    }
+
     private static async Task<IResult> CreateSamlConnection(
         CreateSamlRequest request,
         ISamlProviderStore samlStore,
         ISsoDomainStore ssoDomainStore,
         ISecretProvider secretProvider,
+        IAuditLogger audit,
+        HttpContext http,
         CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(request.ConnectionName))
@@ -105,6 +119,9 @@ public static class SsoEndpoints
             }, ct);
         }
 
+        await audit.LogAsync(AdminActor.Of(http), "saml_connection.created", "saml_connection", connectionId,
+            DomainDetail(config.ConnectionName, config.AllowedDomains), ct);
+
         return Results.Created($"/api/v1/saml/connections/{connectionId}", config);
     }
 
@@ -126,6 +143,8 @@ public static class SsoEndpoints
         UpdateSamlRequest request,
         ISamlProviderStore samlStore,
         ISsoDomainStore ssoDomainStore,
+        IAuditLogger audit,
+        HttpContext http,
         CancellationToken ct)
     {
         var config = await samlStore.GetAsync(connectionId, ct);
@@ -201,6 +220,11 @@ public static class SsoEndpoints
             }
         }
 
+        // Repointing an existing connection — new metadata, or a new domain list — is the same takeover
+        // lever as creating one, and cheaper for an attacker because the connection is already trusted.
+        await audit.LogAsync(AdminActor.Of(http), "saml_connection.updated", "saml_connection", connectionId,
+            DomainDetail(config.ConnectionName, config.AllowedDomains), ct);
+
         return Results.Ok(config);
     }
 
@@ -208,6 +232,8 @@ public static class SsoEndpoints
         string connectionId,
         ISamlProviderStore samlStore,
         ISsoDomainStore ssoDomainStore,
+        IAuditLogger audit,
+        HttpContext http,
         CancellationToken ct)
     {
         var config = await samlStore.GetAsync(connectionId, ct);
@@ -216,6 +242,11 @@ public static class SsoEndpoints
 
         await ssoDomainStore.DeleteByConnectionAsync(connectionId, ct);
         await samlStore.DeleteAsync(connectionId, ct);
+
+        // Deleting a connection locks every user who signs in through it out of their tenant, so it is a
+        // denial-of-service an operator must be able to attribute.
+        await audit.LogAsync(AdminActor.Of(http), "saml_connection.deleted", "saml_connection", connectionId,
+            DomainDetail(config.ConnectionName, config.AllowedDomains), ct);
 
         return Results.NoContent();
     }
@@ -227,6 +258,8 @@ public static class SsoEndpoints
         IOidcProviderStore oidcStore,
         ISsoDomainStore ssoDomainStore,
         ISecretProvider secretProvider,
+        IAuditLogger audit,
+        HttpContext http,
         CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(request.ConnectionName))
@@ -289,6 +322,9 @@ public static class SsoEndpoints
             }, ct);
         }
 
+        await audit.LogAsync(AdminActor.Of(http), "oidc_connection.created", "oidc_connection", connectionId,
+            DomainDetail(config.ConnectionName, config.AllowedDomains), ct);
+
         // Return a copy with the secret stripped — never mutate the stored/returned config itself
         // (some stores hand back the cached instance, which would wipe the real secret).
         return Results.Created($"/api/v1/oidc/connections/{connectionId}", WithoutSecret(config));
@@ -311,6 +347,8 @@ public static class SsoEndpoints
         string connectionId,
         IOidcProviderStore oidcStore,
         ISsoDomainStore ssoDomainStore,
+        IAuditLogger audit,
+        HttpContext http,
         CancellationToken ct)
     {
         var config = await oidcStore.GetAsync(connectionId, ct);
@@ -319,6 +357,9 @@ public static class SsoEndpoints
 
         await ssoDomainStore.DeleteByConnectionAsync(connectionId, ct);
         await oidcStore.DeleteAsync(connectionId, ct);
+
+        await audit.LogAsync(AdminActor.Of(http), "oidc_connection.deleted", "oidc_connection", connectionId,
+            DomainDetail(config.ConnectionName, config.AllowedDomains), ct);
 
         return Results.NoContent();
     }

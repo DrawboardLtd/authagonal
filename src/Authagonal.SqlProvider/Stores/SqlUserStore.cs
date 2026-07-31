@@ -591,7 +591,11 @@ public sealed class SqlUserStore(
 
         while (true)
         {
-            var (rows, next) = await users.ScanPageAsync(filter, token, Math.Max(count, 25), ct).ConfigureAwait(false);
+            // The caller's count is a page-size HINT (see IUserStore.ListPageAsync), and it became the scan
+            // page size verbatim — so ?count=10000000 on the admin listing asked the database for ten
+            // million rows, and decrypted every one, in a single call. Clamped at both ends: the floor
+            // keeps a filtered scan from crawling, the ceiling keeps one call's working set bounded.
+            var (rows, next) = await users.ScanPageAsync(filter, token, Math.Clamp(count, 25, 500), ct).ConfigureAwait(false);
             foreach (var row in rows)
             {
                 AuthUser user;

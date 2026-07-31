@@ -118,7 +118,10 @@ public static class UserEndpoints
         IUserStore userStore,
         CancellationToken ct)
     {
-        var page = await userStore.ListPageAsync(organizationId, count ?? 100, continuationToken, ct);
+        // Clamped, like search. count reached the store unbounded, so ?count=10000000 asked one request to
+        // read — and, with field encryption on, decrypt — the entire directory into memory before
+        // answering. The continuation token is how a caller gets more than a page.
+        var page = await userStore.ListPageAsync(organizationId, Math.Clamp(count ?? 100, 1, 200), continuationToken, ct);
         return TypedResults.Json(new UserListResponse
         {
             Users = page.Users.Select(Summarize).ToList(),

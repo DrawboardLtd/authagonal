@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using Authagonal.Core.Models;
+using Authagonal.Core.Services;
 using Authagonal.Core.Stores;
 
 namespace Authagonal.Server.Endpoints.Admin;
@@ -24,6 +25,8 @@ public static class ScimTokenEndpoints
         GenerateScimTokenRequest request,
         IScimTokenStore scimTokenStore,
         IClientStore clientStore,
+        IAuditLogger audit,
+        HttpContext http,
         ILogger<Program> logger,
         CancellationToken ct)
     {
@@ -54,6 +57,12 @@ public static class ScimTokenEndpoints
         };
 
         await scimTokenStore.StoreAsync(token, ct);
+
+        // A SCIM token is a directory-wide read/write credential, shown once and never recoverable. It was
+        // recorded only as an unstructured log line with no actor, so the audit trail — which faithfully
+        // records who renamed a client — held nothing about who minted the credential that can rewrite
+        // every user in the tenant.
+        await audit.LogAsync(AdminActor.Of(http), "scim_token.created", "scim_token", token.TokenId, token.ClientId, ct);
 
         logger.LogInformation("SCIM token generated: {TokenId} for client {ClientId}", token.TokenId, token.ClientId);
 
@@ -96,6 +105,8 @@ public static class ScimTokenEndpoints
         string tokenId,
         string? clientId,
         IScimTokenStore scimTokenStore,
+        IAuditLogger audit,
+        HttpContext http,
         ILogger<Program> logger,
         CancellationToken ct)
     {
@@ -103,6 +114,10 @@ public static class ScimTokenEndpoints
             return TypedResults.Json(new ErrorInfoResponse { Error = "invalid_request", ErrorDescription = "clientId query parameter is required" }, AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 400);
 
         await scimTokenStore.RevokeAsync(tokenId, clientId, ct);
+
+        // Revocation is the other half: cutting a connector's access is exactly the change an operator
+        // later has to prove was deliberate rather than an attacker disabling provisioning.
+        await audit.LogAsync(AdminActor.Of(http), "scim_token.revoked", "scim_token", tokenId, clientId, ct);
 
         logger.LogInformation("SCIM token revoked: {TokenId} for client {ClientId}", tokenId, clientId);
 

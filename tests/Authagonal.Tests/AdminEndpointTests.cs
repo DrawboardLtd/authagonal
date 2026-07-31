@@ -459,4 +459,33 @@ public sealed class AdminEndpointTests : IAsyncLifetime
         Assert.DoesNotContain("passwordHash", json.ToString(), StringComparison.OrdinalIgnoreCase);
     }
 
+    /// <summary>
+    /// count reached the store unbounded, so ?count=10000000 asked one admin request to read — and with
+    /// field encryption on, decrypt — the entire directory into memory in a single page. It is clamped;
+    /// the continuation token is how a caller gets the rest.
+    /// </summary>
+    [Fact]
+    public async Task ListUsers_ClampsThePageSize()
+    {
+        SetAdminAuth();
+        for (var i = 0; i < 250; i++)
+        {
+            await _factory.UserStore.CreateAsync(new Authagonal.Core.Models.AuthUser
+            {
+                Id = $"bulk-{i:D4}",
+                Email = $"bulk-{i:D4}@example.com",
+                NormalizedEmail = $"BULK-{i:D4}@EXAMPLE.COM",
+                CreatedAt = DateTimeOffset.UtcNow,
+            });
+        }
+
+        var response = await _client.GetAsync("/api/v1/profile/?count=10000000");
+        response.EnsureSuccessStatusCode();
+
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.True(json.GetProperty("users").GetArrayLength() <= 200,
+            $"page held {json.GetProperty("users").GetArrayLength()} users");
+        Assert.False(string.IsNullOrEmpty(json.GetProperty("continuationToken").GetString()));
+    }
+
 }

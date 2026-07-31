@@ -301,4 +301,142 @@ public sealed class ScimPatchApplierTests
         LastName = "Family",
         CreatedAt = DateTimeOffset.UtcNow,
     };
+
+    // -----------------------------------------------------------------------
+    // Groups: honest failure (#44, #147)
+    // -----------------------------------------------------------------------
+
+    /// <summary>
+    /// The group applier had no default arm, so an unknown verb was dropped and the endpoint still answered
+    /// 200 with the resource — the connector records the operation as applied and never retries it.
+    /// </summary>
+    [Fact]
+    public void ApplyToGroup_UnknownOperation_IsReported()
+    {
+        var unsupported = ScimPatchApplier.ApplyToGroup(CreateTestGroup(),
+            [new ScimPatchApplier.PatchOperation("frobnicate", "members", null)]);
+
+        Assert.NotEmpty(unsupported);
+    }
+
+    /// <summary>An attribute this provider does not carry must be reported, not silently ignored.</summary>
+    [Fact]
+    public void ApplyToGroup_UnknownPath_IsReported()
+    {
+        var unsupported = ScimPatchApplier.ApplyToGroup(CreateTestGroup(),
+            [new ScimPatchApplier.PatchOperation("replace", "description",
+                JsonDocument.Parse("\"Team\"").RootElement)]);
+
+        Assert.NotEmpty(unsupported);
+    }
+
+    /// <summary>An add/replace with no value applies nothing, so it cannot be answered with 200.</summary>
+    [Fact]
+    public void ApplyToGroup_ValuelessReplace_IsReported()
+    {
+        var unsupported = ScimPatchApplier.ApplyToGroup(CreateTestGroup(),
+            [new ScimPatchApplier.PatchOperation("replace", "displayName", null)]);
+
+        Assert.NotEmpty(unsupported);
+    }
+
+    /// <summary>
+    /// {"op":"remove","path":"displayName"} matched neither the member-filter branch nor the members
+    /// branch, so the case body did nothing at all and the caller was told it had succeeded.
+    /// </summary>
+    [Fact]
+    public void ApplyToGroup_RemoveOfARequiredAttribute_IsReported()
+    {
+        var group = CreateTestGroup();
+
+        var unsupported = ScimPatchApplier.ApplyToGroup(group,
+            [new ScimPatchApplier.PatchOperation("remove", "displayName", null)]);
+
+        Assert.NotEmpty(unsupported);
+        Assert.Equal("Test Group", group.DisplayName);
+    }
+
+    /// <summary>externalId is the one group attribute with a meaningful empty state.</summary>
+    [Fact]
+    public void ApplyToGroup_RemoveExternalId_ClearsIt()
+    {
+        var group = CreateTestGroup();
+        group.ExternalId = "grp-1";
+
+        var unsupported = ScimPatchApplier.ApplyToGroup(group,
+            [new ScimPatchApplier.PatchOperation("remove", "externalId", null)]);
+
+        Assert.Empty(unsupported);
+        Assert.Null(group.ExternalId);
+    }
+
+    /// <summary>The pathless shape Entra sends to rename a group is applied, not dropped.</summary>
+    [Fact]
+    public void ApplyToGroup_PathlessReplace_RenamesTheGroup()
+    {
+        var group = CreateTestGroup();
+
+        var unsupported = ScimPatchApplier.ApplyToGroup(group,
+            [new ScimPatchApplier.PatchOperation("replace", null,
+                JsonDocument.Parse("""{"displayName": "Renamed"}""").RootElement)]);
+
+        Assert.Empty(unsupported);
+        Assert.Equal("Renamed", group.DisplayName);
+    }
+
+    /// <summary>
+    /// Non-vacuity: the supported member operations must still report nothing, or the endpoint would 400
+    /// every deprovisioning PATCH an IdP sends.
+    /// </summary>
+    [Fact]
+    public void ApplyToGroup_SupportedMemberOperations_ReportNothing()
+    {
+        var group = CreateTestGroup();
+        group.MemberUserIds = ["user1", "user2"];
+
+        Assert.Empty(ScimPatchApplier.ApplyToGroup(group,
+            [new ScimPatchApplier.PatchOperation("add", "members",
+                JsonDocument.Parse("""[{"value": "user3"}]""").RootElement)]));
+        Assert.Empty(ScimPatchApplier.ApplyToGroup(group,
+            [new ScimPatchApplier.PatchOperation("remove", "members[value eq \"user1\"]", null)]));
+        Assert.Empty(ScimPatchApplier.ApplyToGroup(group,
+            [new ScimPatchApplier.PatchOperation("replace", "displayName",
+                JsonDocument.Parse("\"Renamed\"").RootElement)]));
+        Assert.Equal(["user2", "user3"], group.MemberUserIds);
+        Assert.Equal("Renamed", group.DisplayName);
+    }
+
+    // -----------------------------------------------------------------------
+    // RFC 7644 §3.5.2 scimTypes: noTarget and mutability, not invalidPath for everything
+    // -----------------------------------------------------------------------
+
+    /// <summary>A remove with no path names nothing to remove — the RFC gives that its own scimType.</summary>
+    [Fact]
+    public void Remove_WithNoPath_IsNoTarget()
+    {
+        var user = Assert.Throws<ScimPatchException>(() => ScimPatchApplier.ApplyToUser(NewUser(),
+            [new ScimPatchApplier.PatchOperation("remove", null, null)]));
+        Assert.Equal("noTarget", user.ScimType);
+
+        var group = Assert.Throws<ScimPatchException>(() => ScimPatchApplier.ApplyToGroup(CreateTestGroup(),
+            [new ScimPatchApplier.PatchOperation("remove", "", null)]));
+        Assert.Equal("noTarget", group.ScimType);
+    }
+
+    /// <summary>
+    /// id and meta are assigned by the server. Reporting them as invalidPath told a connector its
+    /// attribute mapping was wrong; mutability tells it the truth, which is "never retry this".
+    /// </summary>
+    [Theory]
+    [InlineData("id")]
+    [InlineData("meta")]
+    [InlineData("meta.lastModified")]
+    public void Write_ToAServerAssignedAttribute_IsMutability(string path)
+    {
+        var ex = Assert.Throws<ScimPatchException>(() => ScimPatchApplier.ApplyToUser(NewUser(),
+            [new ScimPatchApplier.PatchOperation("replace", path,
+                JsonDocument.Parse("\"x\"").RootElement)]));
+
+        Assert.Equal("mutability", ex.ScimType);
+    }
 }

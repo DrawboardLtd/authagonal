@@ -62,40 +62,74 @@ public static class ScimGroupEndpoints
             return ScimResults.Error(400, "invalidValue", projectionError);
 
         var baseUrl = GetBaseUrl(tenantContext);
-        var start = startIndex ?? 1;
-        var pageSize = Math.Min(count ?? 100, 200);
-
-        // Scope enumeration to groups owned by the calling SCIM client.
-        var (groups, _) = await groupStore.ListAsync(CallerClientId(httpContext), 0, int.MaxValue, ct);
+        var start = Math.Max(startIndex ?? 1, 1);
+        var pageSize = Math.Clamp(count ?? 100, 1, 200);
+        var clientId = CallerClientId(httpContext);
 
         // A filter is honoured or refused, never quietly dropped — silently listing every group answers a
         // different question than the one asked (RFC 7644 §3.4.2.2).
         if (!ScimFilterParser.TryParse(filter, out var filterExpression, out var filterError))
             return ScimResults.Error(400, "invalidFilter", filterError!);
 
-        // Evaluated against the resource as the client would receive it, so members[...] value paths and
-        // meta.* work the same way they do for users.
-        var candidates = groups
-            .OrderBy(g => g.CreatedAt)
-            .Select(g => ScimGroupResource.FromGroup(g, baseUrl));
-        if (filterExpression is not null)
-            candidates = candidates.Where(r => ScimFilterEvaluator.Matches(filterExpression, r));
-
-        var filteredList = candidates.ToList();
-        var paged = filteredList
-            .Skip(start - 1)
-            .Take(pageSize)
-            .ToList();
-
-        var response = new ScimListResponse<object>
+        // Unfiltered listing asks the store for the page it will return. It used to ask for
+        // (0, int.MaxValue) and then page in memory, so one request materialised — and serialised to a
+        // JsonNode — every group in the tenant no matter how small the page requested. Scoped to groups
+        // owned by the calling SCIM client.
+        if (filterExpression is null)
         {
-            TotalResults = filteredList.Count,
-            StartIndex = start,
-            ItemsPerPage = paged.Count,
-            Resources = ScimProjection.ApplyAll(paged, projection),
-        };
+            var (page, total) = await groupStore.ListAsync(clientId, start, pageSize, ct);
+            var pageResources = page.Select(g => ScimGroupResource.FromGroup(g, baseUrl)).ToList();
+            return ScimResults.Success(new ScimListResponse<object>
+            {
+                TotalResults = total,
+                StartIndex = start,
+                ItemsPerPage = pageResources.Count,
+                Resources = ScimProjection.ApplyAll(pageResources, projection),
+            });
+        }
 
-        return ScimResults.Success(response);
+        // A filter has to be evaluated against the resource as the client would receive it (so members[...]
+        // value paths and meta.* behave as they do for users), which means serialising candidates. That is
+        // done over bounded windows rather than the whole tenant: at most MaxFilterWindows × WindowSize
+        // groups are materialised for one request.
+        const int WindowSize = 200;
+        const int MaxFilterWindows = 10;
+
+        var matches = new List<ScimGroupResource>();
+        var matched = 0;
+        var scanned = 0;
+        var exhausted = false;
+
+        for (var window = 0; window < MaxFilterWindows; window++)
+        {
+            var (groups, total) = await groupStore.ListAsync(clientId, scanned + 1, WindowSize, ct);
+            scanned += groups.Count;
+
+            foreach (var group in groups)
+            {
+                var resource = ScimGroupResource.FromGroup(group, baseUrl);
+                if (!ScimFilterEvaluator.Matches(filterExpression, resource))
+                    continue;
+                matched++;
+                if (matched > start - 1 && matches.Count < pageSize)
+                    matches.Add(resource);
+            }
+
+            exhausted = groups.Count == 0 || scanned >= total;
+            if (exhausted || matches.Count >= pageSize)
+                break;
+        }
+
+        return ScimResults.Success(new ScimListResponse<object>
+        {
+            // Only a completed scan knows the true total. Reporting what this page matched when groups past
+            // the window were never examined would tell a syncing client it had seen everything — see
+            // ScimListResponse.TotalResults.
+            TotalResults = exhausted ? matched : null,
+            StartIndex = start,
+            ItemsPerPage = matches.Count,
+            Resources = ScimProjection.ApplyAll(matches, projection),
+        });
     }
 
     private static async Task<IResult> GetGroupAsync(
@@ -285,14 +319,21 @@ public static class ScimGroupEndpoints
             .Select(o => new ScimPatchApplier.PatchOperation(o.Op, o.Path, o.Value))
             .ToList();
 
+        // Report what could not be applied instead of answering 200 regardless — the same contract the
+        // user endpoint got. A membership change the applier dropped but reported as done leaves the
+        // departed user holding this group's mapped roles, and the IdP never retries it.
+        IReadOnlyList<string> unsupported;
         try
         {
-            ScimPatchApplier.ApplyToGroup(group, operations);
+            unsupported = ScimPatchApplier.ApplyToGroup(group, operations);
         }
         catch (ScimPatchException ex)
         {
             return ScimResults.Error(400, ex.ScimType, ex.Message);
         }
+        if (unsupported.Count > 0)
+            return ScimResults.Error(400, "invalidPath",
+                "Unsupported PATCH operation(s): " + string.Join("; ", unsupported));
 
         group.UpdatedAt = DateTimeOffset.UtcNow;
         // Membership must name users THIS client provisioned. Group membership drives role assignment, so
