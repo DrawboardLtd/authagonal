@@ -82,7 +82,7 @@ dotnet run --project tools/Authagonal.Migration.Cli -- \
 | `SamlProviderConfigurations` | SamlProviders + SsoDomains | `AllowedDomains` CSV split into SSO domain records |
 | `OidcProviderConfigurations` | OidcProviders + SsoDomains | Same domain splitting |
 | `AspNetUserTokens` (`AuthenticatorKey`, `RecoveryCodes`) | MfaCredentials | TOTP secret base32→protected (`duende-totp`); recovery codes hashed (`duende-rc-{n}`); user skipped if MFA already present |
-| Duende `PersistedGrants` (refresh tokens) | Grants | Opt-in via `MigrateRefreshTokens`; non-expired only. If skipped, users re-login. |
+| Duende `PersistedGrants` (refresh tokens) | Grants | **Not possible against stock Duende** — see below. Requires `MigrateRefreshTokens` *and* `SourceGrantKeysAreUnhashed`; otherwise skipped with a warning and users re-login. |
 
 ## Options
 
@@ -93,7 +93,8 @@ dotnet run --project tools/Authagonal.Migration.Cli -- \
 | `Version` | `"1"` | Run marker. Bump to re-run a delta sweep. Only a `Completed`, non-`DryRun` marker blocks a re-run |
 | `UsersMode` | `CreateOnly` | `CreateOnly` skips existing users; `Upsert` overwrites. **Never `Upsert` post-cutover** — it clobbers rehashed passwords and new MFA |
 | `MigrateClients` | `true` | Migrate OAuth clients |
-| `MigrateRefreshTokens` | `false` | Include active refresh tokens |
+| `MigrateRefreshTokens` | `false` | Include active refresh tokens. Requires `SourceGrantKeysAreUnhashed` |
+| `SourceGrantKeysAreUnhashed` | `false` | Asserts the source `PersistedGrants.Key` holds handles verbatim. Only true for a fork with a custom grant store |
 
 ## Idempotency & delta sweeps
 
@@ -103,6 +104,15 @@ users registered since. Existing records are skipped (or updated under `Upsert`)
 
 ## What is NOT migrated
 
+- **Live refresh tokens, against stock Duende.** Duende's `DefaultGrantStore` never persists a
+  refresh-token handle: `PersistedGrants.Key` holds `base64(SHA-256(handle + ":" + grantType))`, and
+  the presented handle is hashed again on lookup. The handle is therefore not recoverable from the
+  source database, and migrated rows would be permanently unredeemable — which is worse than not
+  migrating, because the report counts them as created and the breakage only surfaces at the first
+  token refresh after cutover. Plan the cutover around one re-login, or run a dual-read shim during
+  the transition window. `SourceGrantKeysAreUnhashed` exists only for a fork whose grant store
+  persists handles verbatim, and such a fork also owns translating `PersistedGrants.Data` from
+  Duende's `RefreshToken` shape into `RefreshTokenData`.
 - **SCIM tokens and groups**, **user provisions** — no Duende equivalent; start empty.
 - **Signing keys** — not automated. To keep existing tokens valid across cutover, export the RSA
   signing key from Duende and import it into the `SigningKeys` table close to cutover.
@@ -112,6 +122,6 @@ users registered since. Existing records are skipped (or updated under `Upsert`)
 1. Deploy dark (`Enabled=false`).
 2. `Enabled=true, DryRun=true` → restart → review the report at `/admin/migration/status`.
 3. `DryRun=false` → restart → verify the marker is `Completed` + spot-check logins.
-4. Bump `Version` for the final delta sweep, then repoint clients/BFFs to Authagonal (one forced
-   re-login expected unless refresh tokens were migrated).
+4. Bump `Version` for the final delta sweep, then repoint clients/BFFs to Authagonal. **Expect one
+   forced re-login** — see below.
 5. Monitor; rollback = repoint to the untouched Duende deployment.

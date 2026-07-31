@@ -59,8 +59,10 @@ public class DuendeMigrationArchetypeTests(DuendeMigrationArchetypeFixture fixtu
         await SeedDuendeAsync(fixture.Sql.GetConnectionString());
 
         var stores = BuildStores(fixture.Azurite.GetConnectionString(), out var tableClients);
+        // A recording provider, so the test can tell "protected" from "written through".
+        var secrets = new RecordingSecretProvider();
         var engine = new DuendeMigrationEngine(
-            stores, new PlaintextSecretProvider(), CheapHasher.RecoveryCodes(),
+            stores, secrets, CheapHasher.RecoveryCodes(),
             NullLogger<DuendeMigrationEngine>.Instance);
 
         var report = await engine.RunAsync(new DuendeMigrationOptions
@@ -68,6 +70,9 @@ public class DuendeMigrationArchetypeTests(DuendeMigrationArchetypeFixture fixtu
             Enabled = true,
             DryRun = false,
             UsersMode = UsersMode.CreateOnly,
+            // Requested but not assertable, so the pass must refuse rather than write rows that look
+            // migrated and are permanently unredeemable.
+            MigrateRefreshTokens = true,
             Source = new DuendeMigrationOptions.SourceOptions { ConnectionString = fixture.Sql.GetConnectionString() },
         });
 
@@ -110,8 +115,11 @@ public class DuendeMigrationArchetypeTests(DuendeMigrationArchetypeFixture fixtu
         var totp = Assert.Single(creds, c => c.Type == MfaCredentialType.Totp);
         Assert.Equal("duende-totp", totp.Id);
         Assert.Equal(2, creds.Count(c => c.Type == MfaCredentialType.RecoveryCode));
-        // PlaintextSecretProvider stores the base64 secret as-is; decoding it recovers the raw key.
-        var recovered = Convert.FromBase64String(totp.SecretProtected!);
+        // The seed goes through the secret provider, so it is a reference rather than the value —
+        // resolving it recovers the raw key. Asserting on the stored string directly (as this did
+        // when the provider was a passthrough) could not have caught a seed written unprotected.
+        Assert.StartsWith(RecordingSecretProvider.Prefix, totp.SecretProtected!, StringComparison.Ordinal);
+        var recovered = Convert.FromBase64String(await secrets.ResolveAsync(totp.SecretProtected!));
         Assert.Equal(TotpSecret, recovered);
         var totpService = new TotpService();
         var code = totpService.GenerateCode(recovered);
@@ -124,6 +132,29 @@ public class DuendeMigrationArchetypeTests(DuendeMigrationArchetypeFixture fixtu
         var verifier = new PasswordHasherClientSecretVerifier(hasher);
         Assert.True(await verifier.VerifyAsync(apiClient, ApiAuthSecret));
         Assert.False(await verifier.VerifyAsync(apiClient, "wrong-secret"));
+
+        // 8. F160 — the upstream OIDC provider's client secret goes through the secret provider.
+        //
+        // It was assigned straight from the source column, so it landed in the store as cleartext
+        // even where the deployment is configured with Key Vault — and invisibly, because an
+        // unprefixed value is treated as "legacy plaintext" and returned unchanged, so federation
+        // kept working and nothing said this one provider's secret was not in the vault. It also
+        // defeats the mitigation the backup docs offer for exactly this exposure.
+        var provider = await stores.OidcProviders.GetAsync("oidc-7");
+        Assert.NotNull(provider);
+        Assert.NotEqual("upstream-secret-value", provider!.ClientSecret);
+        Assert.StartsWith(RecordingSecretProvider.Prefix, provider.ClientSecret, StringComparison.Ordinal);
+        Assert.Equal("upstream-secret-value", await secrets.ResolveAsync(provider.ClientSecret));
+
+        // 9. F98 — the refresh-token pass refuses rather than writing unredeemable rows.
+        //
+        // Duende stores base64(SHA-256(handle + ":" + grantType)), never the handle. Copying that
+        // column as though it were the handle produced rows under a key nothing could ever look up:
+        // every "migrated" token was dead, the report counted them as created, and the operator found
+        // out at the first refresh after cutover.
+        Assert.Equal(0, report.RefreshTokensCreated);
+        Assert.Contains(report.Warnings, w => w.Contains("refresh-token", StringComparison.OrdinalIgnoreCase));
+        Assert.Null(await stores.Grants.GetAsync("hashed-key-not-a-handle"));
 
         // idempotent re-run writes nothing new.
         var second = await engine.RunAsync(new DuendeMigrationOptions
@@ -176,6 +207,31 @@ public class DuendeMigrationArchetypeTests(DuendeMigrationArchetypeFixture fixtu
     // ---------------------------------------------------------------------------
     // Seed a minimal Duende-shaped schema + the archetype rows.
     // ---------------------------------------------------------------------------
+    /// <summary>
+    /// An ISecretProvider that can be told apart from a passthrough one: it prefixes what it
+    /// protects, so a value written straight through is visibly distinguishable from a protected
+    /// reference. PlaintextSecretProvider returns its input, which is exactly why the original defect
+    /// was invisible to a test using it.
+    /// </summary>
+    private sealed class RecordingSecretProvider : ISecretProvider
+    {
+        public const string Prefix = "test-vault:";
+
+        private readonly System.Collections.Concurrent.ConcurrentDictionary<string, string> _values = new(StringComparer.Ordinal);
+
+        public Task<string> ProtectAsync(string name, string plaintext, CancellationToken ct = default)
+        {
+            _values[name] = plaintext;
+            return Task.FromResult(Prefix + name);
+        }
+
+        public Task<string> ResolveAsync(string secretReference, CancellationToken ct = default) =>
+            Task.FromResult(secretReference.StartsWith(Prefix, StringComparison.Ordinal)
+                && _values.TryGetValue(secretReference[Prefix.Length..], out var value)
+                    ? value
+                    : secretReference);
+    }
+
     private static async Task SeedDuendeAsync(string connectionString)
     {
         var bcryptHash = BCrypt.Net.BCrypt.HashPassword(BcryptPassword);
@@ -207,6 +263,30 @@ public class DuendeMigrationArchetypeTests(DuendeMigrationArchetypeFixture fixtu
                 BackChannelLogoutUri nvarchar(max), BackChannelLogoutSessionRequired bit, DeviceCodeLifetime int);
             CREATE TABLE ClientSecrets (Id int IDENTITY PRIMARY KEY, ClientId int, Value nvarchar(max), Expiration datetime2 NULL);
             CREATE TABLE ClientGrantTypes (Id int IDENTITY PRIMARY KEY, ClientId int, GrantType nvarchar(256));
+            CREATE TABLE OidcProviderConfigurations (
+                Id int PRIMARY KEY, MetadataLocation nvarchar(max), ConnectionName nvarchar(256),
+                RedirectUrl nvarchar(max), AllowedDomains nvarchar(max), ClientId nvarchar(256),
+                ClientSecret nvarchar(max));
+            CREATE TABLE PersistedGrants (
+                [Key] nvarchar(200) PRIMARY KEY, [Type] nvarchar(50), SubjectId nvarchar(200),
+                ClientId nvarchar(200), [Data] nvarchar(max), CreationTime datetime2,
+                Expiration datetime2 NULL, ConsumedTime datetime2 NULL);
+            """);
+
+        // An upstream OIDC provider whose client secret must not land in the store as cleartext.
+        await Exec(conn, """
+            INSERT INTO OidcProviderConfigurations
+              (Id, MetadataLocation, ConnectionName, RedirectUrl, AllowedDomains, ClientId, ClientSecret)
+            VALUES
+              (7, 'https://idp.test/.well-known/openid-configuration', 'Upstream', 'https://app.test/cb',
+               'acme.test', 'upstream-client', 'upstream-secret-value');
+            """);
+
+        // A Duende refresh grant. Its Key is the HASH of the handle, which is the whole problem.
+        await Exec(conn, """
+            INSERT INTO PersistedGrants ([Key], [Type], SubjectId, ClientId, [Data], CreationTime, Expiration)
+            VALUES ('hashed-key-not-a-handle', 'refresh_token', 'u-bcrypt', 'api_auth', '{}',
+                    GETUTCDATE(), DATEADD(day, 30, GETUTCDATE()));
             """);
 
         // Users

@@ -820,6 +820,33 @@ public sealed class DuendeMigrationEngine(
             while (await reader.ReadAsync(ct))
             {
                 var connectionId = $"oidc-{reader.GetInt32(0)}";
+
+                // Through the secret provider, like every other write path for an upstream provider
+                // (SsoEndpoints does exactly this). Assigning the column straight through wrote the
+                // upstream IdP's client secret into the store as cleartext even where the deployment
+                // is configured with Key Vault — and the downgrade was invisible, because
+                // KeyVaultSecretProvider passes an unprefixed value through as "legacy plaintext", so
+                // federation kept working and nothing said this one provider's secret was not in the
+                // vault. It also defeats the mitigation the backup documentation offers: backups carry
+                // upstream client secrets in cleartext "with the default plaintext secret provider",
+                // which implies configuring Key Vault fixes it. For a migrated provider it did not.
+                var rawClientSecret = reader.GetStringOrNull(6) ?? "";
+                var clientSecret = rawClientSecret;
+                if (!options.DryRun && rawClientSecret.Length > 0)
+                {
+                    try
+                    {
+                        clientSecret = await secretProvider.ProtectAsync(
+                            $"oidc-{connectionId}-client-secret", rawClientSecret, ct);
+                    }
+                    catch (Exception ex)
+                    {
+                        report.Warnings.Add(
+                            $"Could not protect the client secret for OIDC provider '{connectionId}' " +
+                            $"({ex.GetType().Name}); it has been stored as cleartext and should be rotated.");
+                    }
+                }
+
                 var config = new OidcProviderConfig
                 {
                     ConnectionId = connectionId,
@@ -827,7 +854,7 @@ public sealed class DuendeMigrationEngine(
                     MetadataLocation = reader.GetString(1),
                     RedirectUrl = reader.GetStringOrNull(3) ?? "",
                     ClientId = reader.GetString(5),
-                    ClientSecret = reader.GetStringOrNull(6) ?? "",
+                    ClientSecret = clientSecret,
                     AllowedDomains = SplitDomains(reader.GetStringOrNull(4)),
                 };
 
@@ -862,11 +889,40 @@ public sealed class DuendeMigrationEngine(
     // ---------------------------------------------------------------------------
     // 10. Refresh tokens (opt-in)
     // ---------------------------------------------------------------------------
+    /// <summary>
+    /// Refuses to run unless the operator asserts the source store holds unhashed handles.
+    /// </summary>
+    /// <remarks>
+    /// Duende's DefaultGrantStore never persists a refresh-token handle: PersistedGrants.Key holds
+    /// base64(SHA-256(handle + ":" + grantType)), and the presented handle is hashed again on lookup.
+    /// This pass read that column and treated it as the handle, so TableGrantStore hashed it a SECOND
+    /// time and the row landed under a key nothing could ever produce. At redemption the store is
+    /// asked for the handle the client actually holds, which hashes to something entirely different —
+    /// a guaranteed miss. Every "migrated" refresh token was unredeemable, and the handle is not
+    /// recoverable from the hash, so the pass could not have worked as written.
+    ///
+    /// It is worse than a no-op. The rows are real: they consume storage, they carry Duende's
+    /// RefreshToken JSON rather than RefreshTokenData (a second, independent breakage — the
+    /// deserialize would yield null Subject and Scopes), and the migration reports them as created.
+    /// An operator plans a cutover on the promise that sessions survive it, and discovers at the
+    /// first token refresh that every user is logged out.
+    /// </remarks>
     private async Task MigrateRefreshTokensAsync(
         SqlConnection sql, DuendeMigrationOptions options, DuendeMigrationReport report, CancellationToken ct)
     {
         if (!await sql.TableExistsAsync("PersistedGrants", ct))
             return;
+
+        if (!options.SourceGrantKeysAreUnhashed)
+        {
+            report.Warnings.Add(
+                "Refresh-token migration was requested but skipped: Duende stores only a hash of each " +
+                "refresh-token handle, so live handles cannot be migrated by construction. Plan the " +
+                "cutover around one re-login, or run a dual-read shim during the transition window. " +
+                "Set SourceGrantKeysAreUnhashed only for a fork whose grant store persists handles " +
+                "verbatim.");
+            return;
+        }
 
         var grants = new List<PersistedGrant>();
         await using (var cmd = sql.CreateCommand())
@@ -885,6 +941,9 @@ public sealed class DuendeMigrationEngine(
                     Type = reader.GetString(1),
                     SubjectId = reader.GetStringOrNull(2),
                     ClientId = reader.GetString(3),
+                    // Duende's RefreshToken JSON, not RefreshTokenData. Copied verbatim because a
+                    // faithful translation would have to invent the fields our shape requires; a fork
+                    // that sets SourceGrantKeysAreUnhashed owns making these agree.
                     Data = reader.GetString(4),
                     CreatedAt = reader.GetDateTime(5),
                     ExpiresAt = reader.IsDBNull(6) ? DateTimeOffset.UtcNow.AddDays(30) : reader.GetDateTime(6),

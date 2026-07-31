@@ -30,7 +30,22 @@ public sealed class DuendeMigrationOptions
     public bool MigrateClients { get; set; } = true;
 
     /// <summary>Migrate live refresh tokens. Off by default — cutover forces one re-login.</summary>
+    /// <remarks>
+    /// Requires <see cref="SourceGrantKeysAreUnhashed"/>. Stock Duende cannot satisfy it — see there.
+    /// </remarks>
     public bool MigrateRefreshTokens { get; set; }
+
+    /// <summary>
+    /// Asserts that the source PersistedGrants.Key column holds refresh-token handles verbatim rather
+    /// than Duende's hash of them. Only a fork with a custom grant store can set this truthfully.
+    /// </summary>
+    /// <remarks>
+    /// Stock Duende stores base64(SHA-256(handle + ":" + grantType)) and hashes the presented handle
+    /// again on lookup, so the handle is not recoverable and live tokens cannot be migrated at all.
+    /// Without this assertion the refresh-token pass is skipped with a warning rather than writing
+    /// rows that look migrated and are permanently unredeemable.
+    /// </remarks>
+    public bool SourceGrantKeysAreUnhashed { get; set; }
 
     /// <summary>
     /// Bounded write concurrency for the high-volume passes (users, external logins, MFA, refresh

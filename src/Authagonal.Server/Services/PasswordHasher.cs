@@ -163,6 +163,16 @@ public sealed class PasswordHasher
             || hash.StartsWith(Sha512Prefix, StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// True for the bare unsalted digest formats the Duende migration imports
+    /// (<c>SHA256$</c>/<c>SHA512$</c>) — verifiable, but recoverable from a store dump by rainbow
+    /// table, so worth naming out loud.
+    /// </summary>
+    public static bool IsUnsaltedDigestHash(string hash) =>
+        !string.IsNullOrWhiteSpace(hash)
+        && (hash.StartsWith(Sha256Prefix, StringComparison.Ordinal)
+            || hash.StartsWith(Sha512Prefix, StringComparison.Ordinal));
+
     private static bool IsBcryptHash(string hash)
     {
         foreach (var prefix in BcryptPrefixes)

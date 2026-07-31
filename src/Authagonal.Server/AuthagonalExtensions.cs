@@ -263,6 +263,11 @@ public static class AuthagonalExtensions
         // through the same path as user passwords. Must TryAdd before AddAuthagonalProtocol.
         services.TryAddSingleton<IClientSecretVerifier, PasswordHasherClientSecretVerifier>();
 
+        // Names any client still on a bare unsalted digest. The verifier upgrades the hash on first
+        // successful authentication, so this only ever reports clients that are not being used —
+        // which are precisely the ones the automatic upgrade cannot reach.
+        services.AddSingleton<IHostedService, LegacySecretHashWarning>();
+
         services.AddAuthagonalProtocol(_ => { });
 
         // Subject resolver — maps ClaimsPrincipal / OidcSubject back to AuthUser via the user store.
