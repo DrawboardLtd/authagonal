@@ -78,7 +78,11 @@ public static class UserEndpoints
         if (string.IsNullOrWhiteSpace(q))
             return TypedResults.Json(new UserSearchResponse(), AuthagonalJsonContext.Default.UserSearchResponse);
 
-        var users = await userStore.SearchAsync(q.Trim(), maxResults ?? 20, ct);
+        // Clamped. maxResults reached the store unbounded, so one admin-scoped request could ask for
+        // the entire directory in a single page — a memory and egress amplifier on a table that holds
+        // every user's PII, and the kind of request a compromised admin token makes first.
+        var pageSize = Math.Clamp(maxResults ?? 20, 1, 200);
+        var users = await userStore.SearchAsync(q.Trim(), pageSize, ct);
         return TypedResults.Json(new UserSearchResponse { Users = users.Select(Summarize).ToList() },
             AuthagonalJsonContext.Default.UserSearchResponse);
     }

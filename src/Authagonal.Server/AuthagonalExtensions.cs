@@ -733,7 +733,27 @@ public static class AuthagonalExtensions
     /// </summary>
     public static WebApplication MapAuthagonalEndpoints(this WebApplication app)
     {
-        app.MapHealthChecks("/health").AllowAnonymous();
+        // Anonymous, but no longer a free storage query per request.
+        //
+        // Each call ran a live store probe, so an unauthenticated caller could drive database load
+        // with a trivially cheap request — and the response is cached briefly so a load balancer
+        // polling every second does not multiply that by every replica. Liveness does not change
+        // faster than this window.
+        app.MapHealthChecks("/health", new Microsoft.AspNetCore.Diagnostics.HealthChecks.HealthCheckOptions
+        {
+            ResultStatusCodes =
+            {
+                [Microsoft.Extensions.Diagnostics.HealthChecks.HealthStatus.Healthy] = StatusCodes.Status200OK,
+                [Microsoft.Extensions.Diagnostics.HealthChecks.HealthStatus.Degraded] = StatusCodes.Status200OK,
+                [Microsoft.Extensions.Diagnostics.HealthChecks.HealthStatus.Unhealthy] = StatusCodes.Status503ServiceUnavailable,
+            },
+        })
+        .AllowAnonymous()
+        .AddEndpointFilter(async (context, next) =>
+        {
+            context.HttpContext.Response.Headers.CacheControl = "public, max-age=5";
+            return await next(context);
+        });
 
         app.MapDiscoveryEndpoints();
         app.MapJwksEndpoint();

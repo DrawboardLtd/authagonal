@@ -56,8 +56,22 @@ public static class ClientEndpoints
         if (InvalidSecretHashes(client) is { } createHashError)
             return TypedResults.Json(new ErrorInfoResponse { Error = "invalid_request", ErrorDescription = createHashError }, AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 400);
 
-        if (scopeGuard.FindUngrantableScope(http.User, client.AllowedScopes) is not null)
-            return Results.Forbid();
+        // 403 with a reason, not Results.Forbid().
+        //
+        // Forbid() runs the authentication scheme's forbid handler, and on a cookie scheme that is a
+        // 302 to /login — so an admin API client that had authenticated perfectly well was answered
+        // with a login page for an authorization failure. It could not tell "your token expired" from
+        // "you may not grant that scope", and an automated caller followed the redirect and parsed
+        // HTML as its API response.
+        if (scopeGuard.FindUngrantableScope(http.User, client.AllowedScopes) is { } ungrantable)
+            return TypedResults.Json(
+                new ErrorInfoResponse
+                {
+                    Error = "forbidden_scope",
+                    ErrorDescription = $"You may not grant the scope '{ungrantable}' to a client.",
+                },
+                AuthagonalJsonContext.Default.ErrorInfoResponse,
+                statusCode: 403);
 
         // Reserve the admin scope: no client may hold it, otherwise an admin could mint a
         // client_credentials client that issues admin tokens indefinitely (privilege persistence).

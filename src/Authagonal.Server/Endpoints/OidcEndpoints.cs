@@ -110,8 +110,15 @@ public static class OidcEndpoints
             upstreamScope += " offline_access";
         }
 
+        // '?' only when the endpoint has no query of its own. Several IdPs publish an
+        // authorization_endpoint that already carries one (a tenant or policy parameter — Azure AD B2C
+        // and PingFederate both do), and appending a second '?' produced a URL whose first real
+        // parameter was swallowed into the previous value. The whole federation then failed with an
+        // error from the upstream that named a parameter this server had sent correctly.
+        var authorizeSeparator = discovery.AuthorizationEndpoint.Contains('?') ? '&' : '?';
+
         var authorizationUrl = $"{discovery.AuthorizationEndpoint}" +
-            $"?client_id={Uri.EscapeDataString(config.ClientId)}" +
+            $"{authorizeSeparator}client_id={Uri.EscapeDataString(config.ClientId)}" +
             $"&redirect_uri={Uri.EscapeDataString(redirectUri)}" +
             $"&response_type=code" +
             $"&scope={Uri.EscapeDataString(upstreamScope)}" +

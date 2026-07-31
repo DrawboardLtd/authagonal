@@ -9,7 +9,10 @@ login-app/dist
 **/*.md
 **/*.user
 **/*.suo
-.env*
-appsettings.*.json
-!appsettings.json
-!appsettings.Development.json
+# Recursive, matching the **/ rules above. Root-anchored patterns excluded only the top-level
+# copies, so a nested demos/*/.env or src/*/appsettings.Production.json — exactly where real
+# per-environment secrets live — was copied into the image and shipped.
+**/.env*
+**/appsettings.*.json
+!**/appsettings.json
+!**/appsettings.Development.json
