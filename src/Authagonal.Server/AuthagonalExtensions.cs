@@ -370,11 +370,30 @@ public static class AuthagonalExtensions
             options.SlidingExpiration = true;
             options.Cookie.HttpOnly = true;
             options.Cookie.SameSite = SameSiteMode.Lax;
-            // Behind a TLS-terminating proxy that forwards X-Forwarded-Proto, SameAsRequest already
-            // yields a Secure cookie. Operators can force Secure unconditionally via config.
-            options.Cookie.SecurePolicy = configuration.GetValue("Authentication:AlwaysSecureCookie", false)
-                ? CookieSecurePolicy.Always
-                : CookieSecurePolicy.SameAsRequest;
+            // Secure by default.
+            //
+            // SameAsRequest looks equivalent behind a TLS-terminating proxy, but it depends on
+            // X-Forwarded-Proto arriving and being trusted: a misconfigured ingress, a health probe on
+            // plain HTTP, or a proxy that drops the header yields a NON-Secure session cookie, which
+            // then rides any plaintext request to the same host. The failure is silent and the cookie
+            // is the whole session. Hosts that genuinely serve over HTTP — local development — set
+            // Authentication:AllowInsecureCookie.
+            options.Cookie.SecurePolicy = configuration.GetValue("Authentication:AllowInsecureCookie", false)
+                ? CookieSecurePolicy.SameAsRequest
+                : CookieSecurePolicy.Always;
+
+            // __Host- binds the cookie to this exact origin: the browser refuses it unless it is
+            // Secure, Path=/ and has no Domain attribute, which means a sibling subdomain — or anything
+            // that manages to set cookies for the registrable domain — cannot overwrite the session
+            // cookie. Without the prefix that overwrite is a session-fixation primitive the server
+            // cannot detect. Skipped when the operator has opted into insecure cookies, since the
+            // prefix requires Secure and the browser would otherwise reject the cookie outright.
+            if (!configuration.GetValue("Authentication:AllowInsecureCookie", false)
+                && string.IsNullOrEmpty(configuration["Authentication:CookieDomain"]))
+            {
+                options.Cookie.Name = "__Host-" + options.Cookie.Name;
+                options.Cookie.Path = "/";
+            }
 
             options.Events.OnValidatePrincipal = async context =>
             {
@@ -669,11 +688,21 @@ public static class AuthagonalExtensions
         // token, leaving their submit buttons permanently disabled. Tight default otherwise.
         var turnstileConfigured = !string.IsNullOrWhiteSpace(
             app.Services.GetService<IOptions<TurnstileOptions>>()?.Value.SiteKey);
+        // base-uri and form-action are both present because neither falls back to default-src.
+        //
+        // Without base-uri, an injected <base> tag re-points every relative URL on the page — which on
+        // the login app means the form posts, the script src and the API calls — while the CSP still
+        // reads as locked down. Without form-action, an injected form posts credentials to any origin
+        // the attacker chooses; script-src does not constrain a form target. These are the two
+        // directives that matter most on a page whose whole job is to collect a password.
+        const string cspTail = "; img-src 'self' data: https:; font-src 'self' data:; " +
+            "style-src 'self' 'unsafe-inline'; frame-ancestors 'none'; object-src 'none'; " +
+            "base-uri 'self'; form-action 'self'";
+
         var csp = turnstileConfigured
             ? "default-src 'self'; script-src 'self' https://challenges.cloudflare.com; " +
-              "frame-src https://challenges.cloudflare.com; img-src 'self' data: https:; " +
-              "font-src 'self' data:; style-src 'self' 'unsafe-inline'; frame-ancestors 'none'; object-src 'none'"
-            : "default-src 'self'; img-src 'self' data: https:; font-src 'self' data:; style-src 'self' 'unsafe-inline'; frame-ancestors 'none'; object-src 'none'";
+              "frame-src https://challenges.cloudflare.com" + cspTail
+            : "default-src 'self'" + cspTail;
 
         app.Use(async (context, next) =>
         {
