@@ -50,6 +50,42 @@ public sealed class SqlMfaStore(
             await tombstones.WriteAsync("MfaCredentials", pk, credentialId, ct).ConfigureAwait(false);
     }
 
+    public Task<bool> TryClaimTotpStepAsync(string userId, string credentialId, long step, CancellationToken ct = default)
+        => ClaimAsync(userId, credentialId, c => (c.LastTotpStep ?? long.MinValue) < step, c => c.LastTotpStep = step, ct);
+
+    public Task<bool> TryConsumeRecoveryCodeAsync(string userId, string credentialId, CancellationToken ct = default)
+        => ClaimAsync(userId, credentialId, c => !c.IsConsumed, c => c.IsConsumed = true, ct);
+
+    /// <summary>
+    /// Re-reads the credential, re-tests the guard against what is actually stored, and writes under a
+    /// version compare-and-set — so the transition happens for exactly one caller.
+    /// </summary>
+    /// <remarks>
+    /// A lost CAS is reported as a lost claim rather than retried. Contention on a single MFA credential
+    /// row means two requests are verifying the same credential at the same instant, which is the case
+    /// this exists to refuse; retrying would only re-read a row whose guard the winner has already
+    /// closed, and failing closed is the right answer for a second factor either way.
+    /// </remarks>
+    private async Task<bool> ClaimAsync(
+        string userId, string credentialId, Func<MfaCredential, bool> guard, Action<MfaCredential> apply, CancellationToken ct)
+    {
+        var pk = partitioner.PK(userId);
+        var row = await credentials.GetAsync(pk, credentialId, ct: ct).ConfigureAwait(false);
+        if (row is null) return false;
+
+        var credential = ReadCredential(row);
+        if (!guard(credential)) return false;
+
+        apply(credential);
+        credential.LastUsedAt = DateTimeOffset.UtcNow;
+
+        var updated = new SqlRow(pk, credentialId)
+        {
+            Data = JsonSerializer.Serialize(credential, SqlJsonContext.Default.MfaCredential),
+        };
+        return await credentials.UpdateIfVersionAsync(updated, row.Version, ct).ConfigureAwait(false);
+    }
+
     public async Task DeleteAllCredentialsAsync(string userId, CancellationToken ct = default)
     {
         var pk = partitioner.PK(userId);

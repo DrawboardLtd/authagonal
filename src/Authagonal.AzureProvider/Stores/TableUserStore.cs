@@ -320,13 +320,19 @@ public sealed class TableUserStore(
     private static IReadOnlyList<string> PadToFixedCount(IReadOnlyList<string> prefixes, string value)
         => Authagonal.Core.Services.BlindIndexPadding.Pad(prefixes, value, NamePrefixCount);  // cap on indexed prefix length: bounds rows/name; a longer query matches the first 16 chars
 
+    /// <remarks>
+    /// Sliced on rune boundaries, not UTF-16 code units — see <see cref="TextPrefix"/>. A lone
+    /// surrogate is not a legal Table Storage PartitionKey, so a first/last name holding any non-BMP
+    /// character used to fail its index write outright here.
+    /// </remarks>
     private static IReadOnlyList<string> NamePrefixesOf(string normalizedName)
     {
-        if (normalizedName.Length < NamePrefixMin) return PadToFixedCount([normalizedName], normalizedName);
-        var hi = Math.Min(normalizedName.Length, NamePrefixMax);
+        var boundaries = TextPrefix.Boundaries(normalizedName);
+        if (boundaries.Count < NamePrefixMin) return PadToFixedCount([normalizedName], normalizedName);
+        var hi = Math.Min(boundaries.Count, NamePrefixMax);
         var prefixes = new List<string>(NamePrefixCount);
-        for (var len = NamePrefixMin; len <= hi; len++)
-            prefixes.Add(normalizedName[..len]);
+        for (var runes = NamePrefixMin; runes <= hi; runes++)
+            prefixes.Add(normalizedName[..boundaries[runes - 1]]);
         return PadToFixedCount(prefixes, normalizedName);
     }
 
@@ -430,7 +436,7 @@ public sealed class TableUserStore(
     // tokenization is off — the same set of inputs that gated the old _indexTokenized branch).
     private async Task<List<string>> SearchNameIndexAsync(TableClient? table, string? tokenPk, string prefix, string prefixEnd, int maxResults, CancellationToken ct)
     {
-        if (table is null || prefix.Length < NamePrefixMin) return [];
+        if (table is null || TextPrefix.RuneCount(prefix) < NamePrefixMin) return [];
 
         var ids = new List<string>();
         var seen = new HashSet<string>(StringComparer.Ordinal);
@@ -1418,10 +1424,13 @@ public sealed class TableUserStore(
             var batch = new TokenBatch(_tokenizer);
             Func<string>? localToken = null, nameToken = null;
             var local = LocalPartOf(prefix) ?? prefix;
-            if (userEmailLocalPrefixesTable is not null && local.Length >= NamePrefixMin)
-                localToken = batch.Add(local.Length > NamePrefixMax ? local[..NamePrefixMax] : local);
-            if ((userFirstNamesTable ?? userLastNamesTable) is not null && prefix.Length >= NamePrefixMin)
-                nameToken = batch.Add(prefix.Length > NamePrefixMax ? prefix[..NamePrefixMax] : prefix);
+            // Counted and cut in runes, exactly as NamePrefixesOf writes them (see TextPrefix). Cutting
+            // at code unit 16 instead splits a surrogate pair, so the token looked up here is an HMAC
+            // over a string the write side never produced.
+            if (userEmailLocalPrefixesTable is not null && TextPrefix.RuneCount(local) >= NamePrefixMin)
+                localToken = batch.Add(TextPrefix.Take(local, NamePrefixMax));
+            if ((userFirstNamesTable ?? userLastNamesTable) is not null && TextPrefix.RuneCount(prefix) >= NamePrefixMin)
+                nameToken = batch.Add(TextPrefix.Take(prefix, NamePrefixMax));
             await batch.RunAsync(ct);
             localPrefixPk = localToken is null ? null : _partitioner.PK(localToken());
             namePrefixPk = nameToken is null ? null : _partitioner.PK(nameToken());

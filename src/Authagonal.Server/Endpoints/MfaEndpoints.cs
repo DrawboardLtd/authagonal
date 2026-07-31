@@ -140,9 +140,15 @@ public static class MfaEndpoints
                 if (matchedStep is null)
                     return await FailAttemptAsync("totp", "invalid_code");
 
-                totpCred.LastTotpStep = matchedStep;
-                totpCred.LastUsedAt = DateTimeOffset.UtcNow;
-                await mfaStore.UpdateCredentialAsync(totpCred, ct);
+                // The match above was decided against a value read before this request began, so on its
+                // own it only rejects a SEQUENTIAL replay: N requests carrying the same captured code all
+                // read the same step, all matched, and all used to write it back and succeed. That is the
+                // real-time-phishing case RFC 6238 §5.2 exists for — the proxy replays the victim's code
+                // alongside the victim's own login and both get in. Spending the step has to be the write.
+                // Winning the claim IS the persist — there is deliberately no follow-up write here, since
+                // an unconditional one would put back the lost update the claim exists to prevent.
+                if (!await mfaStore.TryClaimTotpStepAsync(user.Id, totpCred.Id, matchedStep.Value, ct))
+                    return await FailAttemptAsync("totp", "invalid_code");
 
                 await authHooks.RunOnMfaVerifiedAsync(user.Id, user.Email, "totp", ct);
                 break;
@@ -174,9 +180,11 @@ public static class MfaEndpoints
                 if (matchedCred is null)
                     return await FailAttemptAsync("recovery", "invalid_code");
 
-                matchedCred.IsConsumed = true;
-                matchedCred.LastUsedAt = DateTimeOffset.UtcNow;
-                await mfaStore.UpdateCredentialAsync(matchedCred, ct);
+                // Same race as TOTP above, on a code that is a single-use bypass of the entire second
+                // factor: two requests presenting the same one both saw IsConsumed = false and both
+                // blind-wrote it true, so one code admitted two sessions. The flip has to be the claim.
+                if (!await mfaStore.TryConsumeRecoveryCodeAsync(user.Id, matchedCred.Id, ct))
+                    return await FailAttemptAsync("recovery", "invalid_code");
 
                 await authHooks.RunOnMfaVerifiedAsync(user.Id, user.Email, "recovery", ct);
                 break;

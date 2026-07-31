@@ -108,25 +108,13 @@ public sealed class SqlUserStore(
     }
 
     /// <remarks>
-    /// Sliced on rune boundaries, not UTF-16 code units. A name containing any non-BMP character —
-    /// an emoji, a CJK extension-B ideograph, a mathematical alphanumeric — is stored as a surrogate
-    /// pair, and slicing at an arbitrary code-unit offset cut it in half. The resulting lone
-    /// surrogate then became an index row key, where its UTF-8 encoding is undefined for the driver:
-    /// either a replacement character that corrupts the key so the row is never found again, or an
-    /// encoding exception surfacing as a 500.
+    /// Sliced on rune boundaries, not UTF-16 code units — see <see cref="TextPrefix"/> for why, and
+    /// note that the read side (<see cref="SearchAsync"/>) has to slice the same way or the two
+    /// halves of the index never meet.
     /// </remarks>
     private static IReadOnlyList<string> NamePrefixesOf(string normalizedName)
     {
-        // Offsets at which a rune ends, so every prefix is a whole sequence of scalar values.
-        var boundaries = new List<int>();
-        for (var i = 0; i < normalizedName.Length;)
-        {
-            i += char.IsHighSurrogate(normalizedName[i]) && i + 1 < normalizedName.Length
-                 && char.IsLowSurrogate(normalizedName[i + 1])
-                ? 2
-                : 1;
-            boundaries.Add(i);
-        }
+        var boundaries = TextPrefix.Boundaries(normalizedName);
 
         if (boundaries.Count < NamePrefixMin) return PadToFixedCount([normalizedName], normalizedName);
 
@@ -134,7 +122,11 @@ public sealed class SqlUserStore(
         var prefixes = new List<string>(NamePrefixCount);
         for (var runes = NamePrefixMin; runes <= hi; runes++)
             prefixes.Add(normalizedName[..boundaries[runes - 1]]);
-        return prefixes;
+        // Padded, like the Azure and AWS stores: an unpadded set writes one row per prefix, so the row
+        // count in a dump equals the length of the name it indexed — the length channel the padding
+        // exists to close. Only the short-name branch above was padded here, which left every name of
+        // two runes or more leaking its length on this backend alone.
+        return PadToFixedCount(prefixes, normalizedName);
     }
 
     // Collects every value a write needs tokens for and computes them in ONE TokenizeBatchAsync call
@@ -671,6 +663,12 @@ public sealed class SqlUserStore(
         if (string.IsNullOrWhiteSpace(query)) return [];
         query = query.Trim();
 
+        // A search term is free text off an admin/API request and it goes on to build key ranges. One
+        // that is not well-formed UTF-16 — a lone surrogate, trivially typed as %ED%A0%80 — matches no
+        // stored key (none can hold one) and previously cost a full range scan to establish that,
+        // because the prefix had no computable upper bound. Refuse it at the door.
+        if (!TextPrefix.IsWellFormed(query)) return [];
+
         var results = new List<AuthUser>();
         var seen = new HashSet<string>(StringComparer.Ordinal);
 
@@ -693,10 +691,13 @@ public sealed class SqlUserStore(
             var batch = new TokenBatch(_tokenizer);
             Func<string>? localToken = null, nameToken = null;
             var local = LocalPartOf(prefix) ?? prefix;
-            if (userEmailLocalPrefixes is not null && local.Length >= NamePrefixMin)
-                localToken = batch.Add(local.Length > NamePrefixMax ? local[..NamePrefixMax] : local);
-            if ((userFirstNames ?? userLastNames) is not null && prefix.Length >= NamePrefixMin)
-                nameToken = batch.Add(prefix.Length > NamePrefixMax ? prefix[..NamePrefixMax] : prefix);
+            // Counted and cut in runes, exactly as NamePrefixesOf writes them. Cutting at code unit 16
+            // instead splits a surrogate pair, so the token this looks up is an HMAC over a string the
+            // write side never produced — a search for an emoji-bearing name silently found nothing.
+            if (userEmailLocalPrefixes is not null && TextPrefix.RuneCount(local) >= NamePrefixMin)
+                localToken = batch.Add(TextPrefix.Take(local, NamePrefixMax));
+            if ((userFirstNames ?? userLastNames) is not null && TextPrefix.RuneCount(prefix) >= NamePrefixMin)
+                nameToken = batch.Add(TextPrefix.Take(prefix, NamePrefixMax));
             await batch.RunAsync(ct).ConfigureAwait(false);
             localPrefixPk = localToken is null ? null : partitioner.PK(localToken());
             namePrefixPk = nameToken is null ? null : partitioner.PK(nameToken());
@@ -765,7 +766,7 @@ public sealed class SqlUserStore(
     // the plaintext range scan for migration-window rows. Off: the plaintext scheme only.
     private async Task<List<string>> SearchNameIndexAsync(SqlTable? table, string? tokenPk, string prefix, int maxResults, CancellationToken ct)
     {
-        if (table is null || prefix.Length < NamePrefixMin) return [];
+        if (table is null || TextPrefix.RuneCount(prefix) < NamePrefixMin) return [];
 
         var ids = new List<string>();
         var seen = new HashSet<string>(StringComparer.Ordinal);
@@ -1066,8 +1067,10 @@ public sealed class SqlUserStore(
         await TryDeleteRowAsync(table, LegacyNamePk(normalizedName), $"{normalizedName}|{userId}", tombstoneTable, ct).ConfigureAwait(false);
     }
 
+    // Two runes, not two code units: a name whose second character is non-BMP ("A😀…") sliced at two
+    // code units yields a bare high surrogate as the partition key.
     private string LegacyNamePk(string normalizedName)
-        => partitioner.PK(normalizedName.Length >= NamePrefixMin ? normalizedName[..NamePrefixMin] : normalizedName);
+        => partitioner.PK(TextPrefix.Take(normalizedName, NamePrefixMin));
 
     // Tombstone-first (F24e), then an unconditional delete (succeeds even if the row is already gone).
     private async Task TryDeleteRowAsync(SqlTable table, string pk, string sk, string tombstoneTable, CancellationToken ct)

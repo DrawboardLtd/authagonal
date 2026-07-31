@@ -21,6 +21,9 @@ public sealed class DynamoMfaStore(
     private const string ChallengeSk = "challenge";
     private const string Lookup = "lookup";
 
+    /// <summary>Optimistic-concurrency stamp, written only by the single-use claim path.</summary>
+    private const string VersionAttribute = "_v";
+
     public async Task<IReadOnlyList<MfaCredential>> GetCredentialsAsync(string userId, CancellationToken ct = default)
     {
         var results = new List<MfaCredential>();
@@ -45,6 +48,42 @@ public sealed class DynamoMfaStore(
         // Clear the WebAuthn credential-id index row so no stale lookup survives the delete.
         if (old is not null) await DeleteWebAuthnIndexForAsync(ReadCredential(old), ct).ConfigureAwait(false);
         if (old is not null && tombstones is not null) await tombstones.WriteAsync("MfaCredentials", pk, credentialId, ct).ConfigureAwait(false);
+    }
+
+    public Task<bool> TryClaimTotpStepAsync(string userId, string credentialId, long step, CancellationToken ct = default)
+        => ClaimAsync(userId, credentialId, c => (c.LastTotpStep ?? long.MinValue) < step, c => c.LastTotpStep = step, ct);
+
+    public Task<bool> TryConsumeRecoveryCodeAsync(string userId, string credentialId, CancellationToken ct = default)
+        => ClaimAsync(userId, credentialId, c => !c.IsConsumed, c => c.IsConsumed = true, ct);
+
+    /// <summary>
+    /// Re-reads the credential, re-tests the guard against what is actually stored, and writes under a
+    /// version compare-and-set — so the transition happens for exactly one caller.
+    /// </summary>
+    /// <remarks>
+    /// <c>_v</c> is written only by this path, so an untouched credential has none and the first claim
+    /// conditions on its absence. A lost race is reported as a lost claim rather than retried:
+    /// contention here means two requests are verifying the same credential at the same instant, which
+    /// is the case this exists to refuse.
+    /// </remarks>
+    private async Task<bool> ClaimAsync(
+        string userId, string credentialId, Func<MfaCredential, bool> guard, Action<MfaCredential> apply, CancellationToken ct)
+    {
+        var pk = partitioner.PK(userId);
+        var existing = await credentials.GetAsync(pk, credentialId, ct).ConfigureAwait(false);
+        if (existing is null) return false;
+
+        var credential = ReadCredential(existing);
+        if (!guard(credential)) return false;
+
+        apply(credential);
+        credential.LastUsedAt = DateTimeOffset.UtcNow;
+
+        long? expected = existing.ContainsKey(VersionAttribute) ? existing.GetN(VersionAttribute) : null;
+        var item = Dyn.Item(pk, credentialId);
+        item.PutS("data", JsonSerializer.Serialize(credential, AwsJsonContext.Default.MfaCredential));
+        item.PutN(VersionAttribute, (expected ?? 0) + 1);
+        return await credentials.UpdateIfVersionAsync(item, expected, ct).ConfigureAwait(false);
     }
 
     public async Task DeleteAllCredentialsAsync(string userId, CancellationToken ct = default)

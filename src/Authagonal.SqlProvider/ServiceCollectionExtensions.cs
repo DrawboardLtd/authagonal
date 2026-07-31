@@ -162,6 +162,14 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IHostedService>(sp => new SqlExpiryReaper(
             expiring, ExpirySweepInterval, sp.GetRequiredService<ILogger<SqlExpiryReaper>>()));
 
+        // Resolved at host start, not here: a host may register its cipher either side of this call,
+        // which is the same ordering problem that made the DataProtection check read resolved options
+        // rather than configuration.
+        services.AddSingleton<IHostedService>(sp => new SigningKeyProtectionCheck(
+            sp.GetService<IFieldCipher>(),
+            sp.GetService<Microsoft.Extensions.Hosting.IHostEnvironment>(),
+            sp.GetRequiredService<ILogger<SigningKeyProtectionCheck>>()));
+
         return services;
     }
 

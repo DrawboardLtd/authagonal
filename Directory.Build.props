@@ -10,11 +10,27 @@
       compromised upstream enters the build silently, with nothing in the repository recording what
       was actually used.
 
-      The lock files are committed. CI should restore in locked mode (the RestoreLockedMode
-      property, or the equivalent CLI switch) so a graph change has to arrive as a deliberate
-      commit rather than as a surprise between two builds of the same source.
+      The lock files are committed, and CI restores in locked mode (below) so a graph change has to
+      arrive as a deliberate commit rather than as a surprise between two builds of the same source.
     -->
     <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
+
+    <!--
+      Locked mode, on CI only.
+
+      A committed lock file alone changes nothing about what gets built: without locked mode, a
+      restore that finds a newer version for a floating range silently re-resolves, REWRITES the lock
+      file, and carries on. So the release build on a fresh runner could still pull an unreviewed
+      minor or patch of Npgsql, DataProtection or Azure.Storage.Blobs — the exact ingestion the lock
+      file was added to stop — and the only evidence would be a dirty file in a workspace nobody
+      inspects. Locked mode makes that restore FAIL instead, which is the whole point: the graph
+      moves when someone commits a new lock file, not when nuget.org changes under the build.
+
+      CI only, because locally re-resolving is the normal way to take a dependency bump; the
+      developer then commits the resulting lock file and CI holds them to it. GitHub Actions sets
+      CI=true, and MSBuild surfaces environment variables as properties.
+    -->
+    <RestoreLockedMode Condition="'$(RestoreLockedMode)' == '' And ('$(CI)' == 'true' Or '$(ContinuousIntegrationBuild)' == 'true')">true</RestoreLockedMode>
 
     <!--
       One version for the whole Microsoft.IdentityModel family, because a partial pin is worse

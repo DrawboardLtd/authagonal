@@ -3,6 +3,7 @@ using System.Data.Common;
 using System.Runtime.CompilerServices;
 using System.Text;
 using System.Text.Json;
+using Authagonal.Core.Services;
 
 namespace Authagonal.SqlProvider.Sql;
 
@@ -161,6 +162,34 @@ public sealed class SqlTable(SqlDataSource source, string name)
     }
 
     /// <summary>
+    /// Compare-and-set on the row version: writes the whole row only if it still carries
+    /// <paramref name="expectedVersion"/>. True for the one caller whose read was not overtaken.
+    /// Never inserts, so a row deleted between the read and the write is not resurrected.
+    /// </summary>
+    /// <remarks>
+    /// This is the general form of <see cref="UpdateIfAttrNullAsync"/>, for the single-use transitions
+    /// whose guard lives inside the document rather than in a promoted attribute — spending a TOTP time
+    /// step, consuming a recovery code. Those were read-check-write, so concurrent requests carrying the
+    /// same code all passed the check and all wrote.
+    /// </remarks>
+    public async Task<bool> UpdateIfVersionAsync(SqlRow row, long expectedVersion, CancellationToken ct = default)
+    {
+        await using var connection = await source.OpenAsync(ct).ConfigureAwait(false);
+        await using var cmd = connection.CreateCommand();
+        cmd.CommandText = $"""
+            UPDATE {_ref}
+               SET data = @data,
+                   attrs = {source.Dialect.AttrsParameter},
+                   expires_at = @expires,
+                   version = version + 1
+             WHERE pk = @pk AND sk = @sk AND version = @version
+            """;
+        BindRow(cmd, row);
+        Add(cmd, "@version", expectedVersion);
+        return await cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false) == 1;
+    }
+
+    /// <summary>
     /// Read-modify-write of the promoted attributes under optimistic concurrency, retrying on a lost
     /// race. The document column is never read or written, so an encrypting store pays no cipher
     /// round-trip to stamp a login timestamp.
@@ -310,6 +339,12 @@ public sealed class SqlTable(SqlDataSource source, string name)
         if (filter.Pk is not null) Bind("pk = @f_pk", "@f_pk", filter.Pk);
         if (filter.PkPrefix is { Length: > 0 } pkPrefix)
         {
+            // An ill-formed prefix has no successor for UpperBound to compute, and the `is { } hi`
+            // below would then simply drop the upper bound — leaving `pk >= @prefix` open-ended and
+            // range-scanning the rest of the table from a caller-supplied search term. It also cannot
+            // match anything: an unpaired surrogate has no UTF-8 encoding, so no stored key contains
+            // one. Zero rows is both the honest answer and the bounded one.
+            if (!TextPrefix.IsWellFormed(pkPrefix)) return [];
             Bind("pk >= @f_pkp", "@f_pkp", pkPrefix);
             if (UpperBound(pkPrefix) is { } hi) Bind("pk < @f_pkph", "@f_pkph", hi);
         }
@@ -319,6 +354,8 @@ public sealed class SqlTable(SqlDataSource source, string name)
         if (filter.Sk is not null) Bind("sk = @f_sk", "@f_sk", filter.Sk);
         if (filter.SkPrefix is { Length: > 0 } skPrefix)
         {
+            // Same reasoning as the pk prefix above: unbounded beats nothing only for the attacker.
+            if (!TextPrefix.IsWellFormed(skPrefix)) return [];
             Bind("sk >= @f_skp", "@f_skp", skPrefix);
             if (UpperBound(skPrefix) is { } hi) Bind("sk < @f_skph", "@f_skph", hi);
         }
@@ -392,8 +429,9 @@ public sealed class SqlTable(SqlDataSource source, string name)
         if (!Rune.TryGetRuneAt(prefix, lastRuneStart, out var last))
         {
             // An unpaired surrogate: not a scalar value, so there is no successor to compute and the
-            // string should never have reached a key column. Leave the range open rather than
-            // fabricating a bound from a malformed input.
+            // string should never have reached a key column. Returning null here is safe only because
+            // FetchAsync refuses an ill-formed prefix outright — when it merely dropped the predicate,
+            // this branch was the open-ended-scan trigger with a different spelling.
             return null;
         }
 

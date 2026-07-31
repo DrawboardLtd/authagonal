@@ -461,12 +461,15 @@ public sealed class InMemoryMfaStore : IMfaStore
 
     public Task<IReadOnlyList<MfaCredential>> GetCredentialsAsync(string userId, CancellationToken ct = default)
     {
-        var creds = _credentials.Values.Where(c => c.UserId == userId).ToList();
+        var creds = _credentials.Values.Where(c => c.UserId == userId).Select(Detach).ToList();
         return Task.FromResult<IReadOnlyList<MfaCredential>>(creds);
     }
 
     public Task<MfaCredential?> GetCredentialAsync(string userId, string credentialId, CancellationToken ct = default)
-        => Task.FromResult(_credentials.GetValueOrDefault($"{userId}|{credentialId}"));
+    {
+        var credential = _credentials.GetValueOrDefault($"{userId}|{credentialId}");
+        return Task.FromResult(credential is null ? null : Detach(credential));
+    }
 
     public Task CreateCredentialAsync(MfaCredential credential, CancellationToken ct = default)
     {
@@ -474,17 +477,72 @@ public sealed class InMemoryMfaStore : IMfaStore
         return Task.CompletedTask;
     }
 
+    /// <summary>
+    /// Drops the unconditional <see cref="UpdateCredentialAsync"/> write, leaving the single-use claim
+    /// as the only thing that can advance a credential.
+    /// </summary>
+    /// <remarks>
+    /// The real stores make the claim conditional (version CAS on SQL and DynamoDB, ETag on Azure
+    /// Table), and the losing writer's blind write is what never lands. In-process there is nothing to
+    /// lose a race against, so a fake that also persists the blind write would pass whether or not the
+    /// caller ever consults the claim. Suppressing it is what makes "the claim IS the write"
+    /// observable without depending on thread scheduling.
+    /// </remarks>
+    public bool SuppressBlindCredentialWrites { get; set; }
+
     public Task UpdateCredentialAsync(MfaCredential credential, CancellationToken ct = default)
     {
+        if (SuppressBlindCredentialWrites) return Task.CompletedTask;
         _credentials[$"{credential.UserId}|{credential.Id}"] = credential;
         return Task.CompletedTask;
     }
+
+    // Reads hand back a detached copy, as every real store does — they deserialize a document or map
+    // a table entity. Sharing the stored instance let a caller's in-memory mutation "persist" without
+    // any write at all, which is not a property any backend has.
+    private static MfaCredential Detach(MfaCredential c) => new()
+    {
+        Id = c.Id,
+        UserId = c.UserId,
+        Type = c.Type,
+        Name = c.Name,
+        SecretProtected = c.SecretProtected,
+        PublicKeyJson = c.PublicKeyJson,
+        SignCount = c.SignCount,
+        LastTotpStep = c.LastTotpStep,
+        IsConsumed = c.IsConsumed,
+        CreatedAt = c.CreatedAt,
+        LastUsedAt = c.LastUsedAt,
+    };
 
     public Task DeleteCredentialAsync(string userId, string credentialId, CancellationToken ct = default)
     {
         if (_credentials.TryRemove($"{userId}|{credentialId}", out var removed))
             CleanWebAuthnIndex(removed);
         return Task.CompletedTask;
+    }
+
+    // The production stores make these a conditional write (version CAS on SQL/Dynamo, ETag on Azure)
+    // so a captured TOTP code or recovery code cannot be redeemed by two concurrent requests. A lock is
+    // the in-process equivalent; without one the fake would pass tests the real backends fail.
+    private readonly object _claimGate = new();
+
+    public Task<bool> TryClaimTotpStepAsync(string userId, string credentialId, long step, CancellationToken ct = default)
+        => Task.FromResult(Claim(userId, credentialId, c => (c.LastTotpStep ?? long.MinValue) < step, c => c.LastTotpStep = step));
+
+    public Task<bool> TryConsumeRecoveryCodeAsync(string userId, string credentialId, CancellationToken ct = default)
+        => Task.FromResult(Claim(userId, credentialId, c => !c.IsConsumed, c => c.IsConsumed = true));
+
+    private bool Claim(string userId, string credentialId, Func<MfaCredential, bool> guard, Action<MfaCredential> apply)
+    {
+        lock (_claimGate)
+        {
+            if (!_credentials.TryGetValue($"{userId}|{credentialId}", out var credential)) return false;
+            if (!guard(credential)) return false;
+            apply(credential);
+            credential.LastUsedAt = DateTimeOffset.UtcNow;
+            return true;
+        }
     }
 
     public Task DeleteAllCredentialsAsync(string userId, CancellationToken ct = default)
