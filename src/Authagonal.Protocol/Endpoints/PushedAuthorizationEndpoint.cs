@@ -65,6 +65,15 @@ internal static class PushedAuthorizationEndpoint
             // point the error surfaces to the END USER mid-flow instead of to the client that made
             // the mistake. Validating here also means an invalid request never occupies a stored row.
             var pushed = AuthorizeRequest.Read(new ParRequestParameters(parameters));
+
+            // Checked before the generic pass so the client gets RFC 9396 §5's error code rather than
+            // this endpoint's catch-all invalid_request. A pushed request is the one place where a
+            // wrong code is especially costly: the client fixes what it can see.
+            if (!string.IsNullOrWhiteSpace(pushed.AuthorizationDetails))
+                return JsonResults.OAuthError("invalid_authorization_details",
+                    "authorization_details is not accepted at the authorization endpoint; "
+                    + "request rich authorization details on the token endpoint (RFC 8693 exchange)");
+
             if (AuthorizeRequestSupport.Validate(client, pushed) is not null)
             {
                 return JsonResults.OAuthError(

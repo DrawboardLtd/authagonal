@@ -58,6 +58,21 @@ internal sealed class AuthorizeRequest
     /// <summary>The space-delimited <c>prompt</c> values (OIDC Core §3.1.2.1).</summary>
     public string[] Prompts { get; init; } = [];
 
+    /// <summary>
+    /// RFC 9396 <c>authorization_details</c>, read only so it can be REFUSED here.
+    /// </summary>
+    /// <remarks>
+    /// Rich Authorization Requests are implemented on the token-exchange path, not at the
+    /// authorization endpoint: nothing here parsed the parameter, ProtocolAuthorizationCode carries
+    /// no authority, and the consent screen never saw it. So a client that sent it got a code and an
+    /// access token with no authorization_details claim and no error — and RFC 9396 §5 forbids
+    /// exactly that: "The AS MUST refuse to process any unknown authorization details type … MUST
+    /// abort processing and respond with an error invalid_authorization_details." Silently ignoring
+    /// is neither processing nor refusing, and it is the dangerous direction: the client believes it
+    /// asked for a constrained grant and received a broader one.
+    /// </remarks>
+    public string? AuthorizationDetails { get; init; }
+
     /// <summary>Set by <see cref="AuthorizeRequestSupport.Validate"/>.</summary>
     public string[] RequestedScopes { get; set; } = [];
 
@@ -81,6 +96,7 @@ internal sealed class AuthorizeRequest
                 : null,
             Prompts = (source.Get("prompt") ?? string.Empty)
                 .Split(' ', StringSplitOptions.RemoveEmptyEntries),
+            AuthorizationDetails = source.Get("authorization_details"),
         };
     }
 
@@ -99,6 +115,30 @@ internal sealed class AuthorizeRequest
         if (authTime is not { } established) return true;
         return now - established > TimeSpan.FromSeconds(maxAge);
     }
+
+    /// <summary>
+    /// OIDC Core §3.1.2.1 <c>prompt=none</c>: "The Authorization Server MUST NOT display any
+    /// authentication or consent user interface pages."
+    /// </summary>
+    /// <remarks>
+    /// This is what silent renewal is built on. An RP loads the authorize URL in a hidden iframe and
+    /// expects either a code or a named error; instead it got a 302 to the login SPA, which renders a
+    /// login form inside an invisible frame the user cannot see. The RP has no way to distinguish
+    /// that from a slow response, so silent renewal simply hangs — and on a well-behaved RP the frame
+    /// is sandboxed away, so the user is never told their session ended. Worse, the OP is displaying
+    /// authentication UI in a framed context, which is where clickjacking against a login form lives.
+    /// </remarks>
+    public bool NoInteractionAllowed => Prompts.Contains("none", StringComparer.Ordinal);
+
+    /// <summary><c>prompt=login</c> and <c>prompt=select_account</c> both demand a fresh
+    /// authentication — the latter because a single-session OP offers account choice by returning the
+    /// user to the login screen.</summary>
+    public bool DemandsFreshAuthentication =>
+        Prompts.Contains("login", StringComparer.Ordinal) || Prompts.Contains("select_account", StringComparer.Ordinal);
+
+    /// <summary><c>prompt=consent</c>: the RP demands the consent screen even where a stored grant
+    /// would otherwise satisfy the request.</summary>
+    public bool DemandsConsent => Prompts.Contains("consent", StringComparer.Ordinal);
 }
 
 /// <summary>
@@ -136,6 +176,33 @@ internal static class AuthorizeRequestSupport
         // it, and the RP has no way to tell which happened.
         if (request.RawMaxAge is { Length: > 0 } && request.MaxAge is null)
             return BuildErrorRedirect(redirectUri, "invalid_request", "max_age must be a non-negative integer", state, issuer);
+
+        // RFC 9396 §5 — refused, not ignored. See AuthorizeRequest.AuthorizationDetails for why
+        // ignoring is the dangerous direction. The error names where RAR does work, so a client that
+        // read authorization_details_types_supported from discovery is told which endpoint honours it
+        // rather than being left to guess.
+        if (!string.IsNullOrWhiteSpace(request.AuthorizationDetails))
+            return BuildErrorRedirect(redirectUri, "invalid_authorization_details",
+                "authorization_details is not accepted at the authorization endpoint; "
+                + "request rich authorization details on the token endpoint (RFC 8693 exchange)",
+                state, issuer);
+
+        // OIDC Core §3.1.2.1: "If this parameter contains none with any other value, an error is
+        // returned." The combination is self-contradictory — none forbids UI, every other value asks
+        // for some — so honouring either half silently picks one for the RP.
+        if (request.NoInteractionAllowed && request.Prompts.Length > 1)
+            return BuildErrorRedirect(redirectUri, "invalid_request",
+                "prompt=none must not be combined with any other prompt value", state, issuer);
+
+        // Values outside the registry are refused rather than dropped: an RP that sends a prompt the
+        // OP does not understand is making a demand, and answering as if it had not is the same
+        // silent non-compliance max_age had.
+        foreach (var prompt in request.Prompts)
+        {
+            if (prompt is not ("none" or "login" or "consent" or "select_account"))
+                return BuildErrorRedirect(redirectUri, "invalid_request",
+                    $"Unsupported prompt value '{prompt}'", state, issuer);
+        }
 
         var requestedScopes = request.Scope.Split(' ', StringSplitOptions.RemoveEmptyEntries);
         // Ordinal, NOT OrdinalIgnoreCase. RFC 6749 §3.3 makes scope tokens case-sensitive, and matching

@@ -149,6 +149,23 @@ public static class AuthorityJson
             });
         }
 
+        // RFC 9396 §2 permits an authorization_details array to carry several entries of the same
+        // type, and this model cannot represent that: AuthoritySet is keyed by type, so From()
+        // meet-merges duplicates into their intersection. That is a REINTERPRETATION of what was
+        // asked for, and §5 does not offer it as an option — an input the AS cannot represent must be
+        // refused with invalid_authorization_details.
+        //
+        // The direction matters. Meet-merging narrows, so it never grants more than was asked; but a
+        // caller that sends two independent grants of one type and gets back only what they have in
+        // common has silently lost authority it believes it holds, and will not find out until the
+        // resource server refuses an action the caller was sure it had been granted. Refusing says so
+        // at the point the request is made.
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var grant in grants)
+        {
+            if (!seen.Add(grant.Type)) return false;
+        }
+
         set = AuthoritySet.From(grants);
         return true;
     }

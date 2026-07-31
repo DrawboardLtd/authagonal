@@ -96,7 +96,7 @@ public static class AuthorizeEndpoint
             // an authenticated principal as unauthenticated and re-run login/federation.
             var isAuthenticated = httpContext.User.Identity?.IsAuthenticated == true;
 
-            var forceReauth = request.Prompts.Contains("login");
+            var forceReauth = request.DemandsFreshAuthentication;
 
             // OIDC Core §3.1.2.1: when the elapsed time since the end-user last actively authenticated
             // exceeds max_age, the OP MUST actively re-authenticate them. The parameter was read
@@ -124,6 +124,14 @@ public static class AuthorizeEndpoint
             // Check authentication
             if (!isAuthenticated || forceReauth)
             {
+                // OIDC Core §3.1.2.1: with prompt=none the OP MUST NOT display authentication UI —
+                // it answers with an error instead. Everything below this line renders something.
+                if (request.NoInteractionAllowed)
+                    return AuthorizeRequestSupport.BuildErrorRedirect(
+                        redirectUri, "login_required",
+                        "The end-user is not authenticated and prompt=none forbids interaction",
+                        state, tenantContext.Issuer);
+
                 // prompt=login: drop any existing session before sending the user to log in, so a stale SSO
                 // cookie can't be silently reused as the re-authenticated identity.
                 if (forceReauth && isAuthenticated)
@@ -230,6 +238,16 @@ public static class AuthorizeEndpoint
             if (authenticatedUser is { MfaEnabled: true } &&
                 httpContext.User.FindFirst(CookieSignInHelper.MfaAuthenticatedClaim)?.Value != "true")
             {
+                // A step-up is interaction, so prompt=none cannot have it either. interaction_required
+                // rather than login_required: the user IS authenticated, they just have not cleared a
+                // second factor, and telling the RP "log in" would send it round a loop that ends here
+                // again.
+                if (request.NoInteractionAllowed)
+                    return AuthorizeRequestSupport.BuildErrorRedirect(
+                        redirectUri, "interaction_required",
+                        "Multi-factor authentication is required and prompt=none forbids interaction",
+                        state, tenantContext.Issuer);
+
                 await httpContext.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
                 var stepUpLoginUrl = configuration["LoginAppUrl"] ?? "/login";
                 var stepUpReturn = $"{httpContext.Request.Path}{httpContext.Request.QueryString}";
@@ -268,11 +286,23 @@ public static class AuthorizeEndpoint
                 // Built identically at every exit below, so it is written once.
                 IResult RedirectToConsent()
                 {
+                    if (request.NoInteractionAllowed)
+                        return AuthorizeRequestSupport.BuildErrorRedirect(
+                            redirectUri, "consent_required",
+                            "Consent is required and prompt=none forbids interaction",
+                            state, tenantContext.Issuer);
+
                     var consentAppUrl = configuration["LoginAppUrl"] ?? "/login";
                     var authorizeUrl = $"{httpContext.Request.Path}{httpContext.Request.QueryString}";
                     return Results.Redirect(
                         $"{consentAppUrl.TrimEnd('/')}/consent?returnUrl={Uri.EscapeDataString(authorizeUrl)}&client_id={Uri.EscapeDataString(clientId)}&scope={Uri.EscapeDataString(string.Join(" ", requestedScopes))}");
                 }
+
+                // prompt=consent: the RP asks for the screen regardless of what is stored. Combined
+                // with none it is already refused as invalid_request, so this cannot reach the UI on a
+                // no-interaction request.
+                if (request.DemandsConsent)
+                    return RedirectToConsent();
 
                 var existingConsent = await grantStore.GetAsync(consentKey, ct);
                 if (existingConsent is null)

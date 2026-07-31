@@ -117,7 +117,7 @@ internal static class AuthorizeEndpoint
             // this host challenges whatever scheme the embedding application registered.
             var isAuthenticated = principal.Identity?.IsAuthenticated == true;
             var forceReauth = isAuthenticated
-                && (request.Prompts.Contains("login")
+                && (request.DemandsFreshAuthentication
                     || request.RequiresReauthentication(ReadAuthTime(principal), DateTimeOffset.UtcNow));
 
             // A PAR request carries its prompt/max_age in the pushed payload, so they cannot be
@@ -130,6 +130,16 @@ internal static class AuthorizeEndpoint
             {
                 forceReauth = false;
             }
+
+            // OIDC Core §3.1.2.1: prompt=none forbids the OP from displaying any authentication UI,
+            // and a Challenge is exactly that. Both the re-auth demand below and the unauthenticated
+            // branch after it end in one, so both answer the RP with a named error instead. Without
+            // this, a silent-renewal iframe was served a login form it could never show the user.
+            if (request.NoInteractionAllowed && (forceReauth || !isAuthenticated))
+                return AuthorizeRequestSupport.BuildErrorRedirect(
+                    request.RedirectUri, "login_required",
+                    "The end-user is not authenticated and prompt=none forbids interaction",
+                    request.State, tenantContext.Issuer);
 
             if (forceReauth)
             {

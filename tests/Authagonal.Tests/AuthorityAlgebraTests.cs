@@ -247,13 +247,18 @@ public sealed class AuthorityAlgebraTests
     }
 
     [Fact]
-    public void Json_DuplicateTypes_MergeByMeet()
+    public void Json_DuplicateTypes_AreRefused()
     {
+        // Previously asserted that duplicates meet-merge into their intersection. RFC 9396 §2 says an
+        // authorization_details array MAY carry several entries of the same type, and this model —
+        // keyed by type — cannot represent that. §5 does not offer "silently reinterpret": an input
+        // the AS cannot represent must be refused.
+        //
+        // Merging never granted more than was asked, so this was never an escalation. It was a silent
+        // LOSS: a caller sending two independent grants of one type got back only what they had in
+        // common, and found out at the resource server, on an action it was sure it had been granted.
         const string json = """[{"type":"email","actions":["send","read"]},{"type":"email","actions":["send"]}]""";
-        Assert.True(AuthorityJson.TryParse(json, out var parsed));
-
-        var grant = Assert.Single(parsed.Grants);
-        Assert.Equal(["send"], grant.Actions);
+        Assert.False(AuthorityJson.TryParse(json, out _));
     }
 
     [Fact]
