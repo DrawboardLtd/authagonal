@@ -645,8 +645,31 @@ public sealed class TableUserStore(
 
         await usersTable.AddEntityAsync(userEntity, ct);
         await LogUpsertAsync("Users", userEntity.PartitionKey, userEntity.RowKey, ct);
-        await WriteProfileIndexesAsync(user.NormalizedEmail, Normalize(user.FirstName), Normalize(user.LastName), user.Id, dropLegacy: false, ct);
-        await SyncRoleIndexAsync(previousRoles: null, user.Roles, user.Id, ct);
+
+        // The profile row is durable from here. If index writing then fails, the user exists but
+        // cannot be found by email — invisible to FindByEmailAsync and so to every duplicate check,
+        // yet still occupying an id and still listed. That is the split-brain state the email-index
+        // hardening elsewhere exists to prevent, reachable by any input the storage service rejects
+        // as a key. Undo the profile row rather than leave a record nothing can reach.
+        try
+        {
+            await WriteProfileIndexesAsync(user.NormalizedEmail, Normalize(user.FirstName), Normalize(user.LastName), user.Id, dropLegacy: false, ct);
+            await SyncRoleIndexAsync(previousRoles: null, user.Roles, user.Id, ct);
+        }
+        catch
+        {
+            try
+            {
+                await usersTable.DeleteEntityAsync(userEntity.PartitionKey, userEntity.RowKey, cancellationToken: ct);
+            }
+            catch
+            {
+                // Best effort. The original failure is the one worth surfacing — swallowing it here
+                // to report a cleanup failure would hide what actually went wrong.
+            }
+
+            throw;
+        }
     }
 
     /// <summary>

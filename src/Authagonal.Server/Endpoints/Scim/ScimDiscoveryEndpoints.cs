@@ -15,8 +15,45 @@ public static class ScimDiscoveryEndpoints
         app.MapGet("/scim/ResourceTypes", GetResourceTypes).AllowAnonymous();
         app.MapGet("/scim/v2/ResourceTypes", GetResourceTypes).AllowAnonymous();
 
+        // RFC 7644 §4 defines these as addressable resources, and every one of them already
+        // advertised its own meta.location — at a URL nothing served. The requests fell through the
+        // API routes to the SPA fallback, so a client that followed the location it was given got
+        // 200 text/html: the login page, parsed as a SCIM resource. A discovery client cannot tell
+        // that from a real answer, and "the schema endpoint returned HTML" is a confusing enough
+        // symptom that it reads as a routing bug rather than a missing route.
+        app.MapGet("/scim/Schemas/{id}", GetSchemaById).AllowAnonymous();
+        app.MapGet("/scim/v2/Schemas/{id}", GetSchemaById).AllowAnonymous();
+        app.MapGet("/scim/ResourceTypes/{id}", GetResourceTypeById).AllowAnonymous();
+        app.MapGet("/scim/v2/ResourceTypes/{id}", GetResourceTypeById).AllowAnonymous();
+
         return app;
     }
+
+    /// <summary>RFC 7644 §4: a single schema, addressed by its URN.</summary>
+    private static IResult GetSchemaById(string id, Authagonal.Core.Services.ITenantContext tenantContext)
+    {
+        var match = SchemaResources(tenantContext.Issuer)
+            .FirstOrDefault(s => string.Equals(s.Id, id, StringComparison.Ordinal));
+
+        return match is null
+            ? ScimResults.NotFound($"Schema '{id}' not found")
+            : ScimResults.SuccessVerbatim(match.Body);
+    }
+
+    /// <summary>RFC 7644 §4: a single resource type, addressed by its id ("User" / "Group").</summary>
+    private static IResult GetResourceTypeById(string id, Authagonal.Core.Services.ITenantContext tenantContext)
+    {
+        var match = ResourceTypeResources(tenantContext.Issuer)
+            .FirstOrDefault(r => string.Equals(r.Id, id, StringComparison.OrdinalIgnoreCase));
+
+        return match is null
+            ? ScimResults.NotFound($"ResourceType '{id}' not found")
+            : ScimResults.SuccessVerbatim(match.Body);
+    }
+
+    /// <summary>An addressable discovery resource: its identifier, and the body both the collection
+    /// and the single-resource route serve.</summary>
+    private sealed record DiscoveryResource(string Id, object Body);
 
     private static IResult GetServiceProviderConfig(Authagonal.Core.Services.ITenantContext tenantContext)
     {
@@ -66,55 +103,7 @@ public static class ScimDiscoveryEndpoints
 
     private static IResult GetSchemas(Authagonal.Core.Services.ITenantContext tenantContext)
     {
-        var baseUrl = tenantContext.Issuer;
-
-        var schemas = new object[]
-        {
-            new
-            {
-                id = "urn:ietf:params:scim:schemas:core:2.0:User",
-                name = "User",
-                description = "User Account",
-                attributes = new object[]
-                {
-                    SchemaAttribute("userName", "string", "Unique identifier for the User, typically email.", required: true, uniqueness: "server"),
-                    SchemaAttribute("name", "complex", "The components of the user's real name.", subAttributes: new object[]
-                    {
-                        SchemaAttribute("givenName", "string", "The given name of the User."),
-                        SchemaAttribute("familyName", "string", "The family name of the User."),
-                        SchemaAttribute("formatted", "string", "The full name."),
-                    }),
-                    SchemaAttribute("displayName", "string", "The name of the User suitable for display."),
-                    SchemaAttribute("emails", "complex", "Email addresses for the User.", multiValued: true, subAttributes: new object[]
-                    {
-                        SchemaAttribute("value", "string", "Email address value."),
-                        SchemaAttribute("type", "string", "Email type (e.g. work)."),
-                        SchemaAttribute("primary", "boolean", "Is this the primary email."),
-                    }),
-                    SchemaAttribute("active", "boolean", "Whether the user account is active."),
-                    SchemaAttribute("externalId", "string", "External identifier from the provisioning client."),
-                },
-                meta = new { resourceType = "Schema", location = $"{baseUrl}/scim/v2/Schemas/urn:ietf:params:scim:schemas:core:2.0:User" },
-            },
-            new
-            {
-                id = "urn:ietf:params:scim:schemas:core:2.0:Group",
-                name = "Group",
-                description = "Group",
-                attributes = new object[]
-                {
-                    SchemaAttribute("displayName", "string", "A human-readable name for the Group.", required: true),
-                    SchemaAttribute("members", "complex", "A list of members of the Group.", multiValued: true, subAttributes: new object[]
-                    {
-                        SchemaAttribute("value", "string", "Identifier of the group member."),
-                        SchemaAttribute("$ref", "reference", "The URI of the member resource."),
-                        SchemaAttribute("type", "string", "The type of the member (User)."),
-                    }),
-                    SchemaAttribute("externalId", "string", "External identifier from the provisioning client."),
-                },
-                meta = new { resourceType = "Schema", location = $"{baseUrl}/scim/v2/Schemas/urn:ietf:params:scim:schemas:core:2.0:Group" },
-            },
-        };
+        var schemas = SchemaResources(tenantContext.Issuer).Select(s => s.Body).ToArray();
 
         var response = new
         {
@@ -128,31 +117,7 @@ public static class ScimDiscoveryEndpoints
 
     private static IResult GetResourceTypes(Authagonal.Core.Services.ITenantContext tenantContext)
     {
-        var baseUrl = tenantContext.Issuer;
-
-        var resourceTypes = new object[]
-        {
-            new
-            {
-                schemas = new[] { "urn:ietf:params:scim:schemas:core:2.0:ResourceType" },
-                id = "User",
-                name = "User",
-                endpoint = "/scim/v2/Users",
-                description = "User Account",
-                schema = "urn:ietf:params:scim:schemas:core:2.0:User",
-                meta = new { resourceType = "ResourceType", location = $"{baseUrl}/scim/v2/ResourceTypes/User" },
-            },
-            new
-            {
-                schemas = new[] { "urn:ietf:params:scim:schemas:core:2.0:ResourceType" },
-                id = "Group",
-                name = "Group",
-                endpoint = "/scim/v2/Groups",
-                description = "Group",
-                schema = "urn:ietf:params:scim:schemas:core:2.0:Group",
-                meta = new { resourceType = "ResourceType", location = $"{baseUrl}/scim/v2/ResourceTypes/Group" },
-            },
-        };
+        var resourceTypes = ResourceTypeResources(tenantContext.Issuer).Select(r => r.Body).ToArray();
 
         var response = new
         {
@@ -163,6 +128,84 @@ public static class ScimDiscoveryEndpoints
 
         return ScimResults.SuccessVerbatim(response);
     }
+
+    /// <summary>
+    /// The one definition both the collection and the single-resource route serve, so the body a
+    /// client gets from meta.location cannot drift from the body it got in the listing.
+    /// </summary>
+    private static DiscoveryResource[] SchemaResources(string baseUrl) =>
+    [
+        new("urn:ietf:params:scim:schemas:core:2.0:User", new
+        {
+            schemas = new[] { "urn:ietf:params:scim:schemas:core:2.0:Schema" },
+            id = "urn:ietf:params:scim:schemas:core:2.0:User",
+            name = "User",
+            description = "User Account",
+            attributes = new object[]
+            {
+                SchemaAttribute("userName", "string", "Unique identifier for the User, typically email.", required: true, uniqueness: "server"),
+                SchemaAttribute("name", "complex", "The components of the user's real name.", subAttributes: new object[]
+                {
+                    SchemaAttribute("givenName", "string", "The given name of the User."),
+                    SchemaAttribute("familyName", "string", "The family name of the User."),
+                    SchemaAttribute("formatted", "string", "The full name."),
+                }),
+                SchemaAttribute("displayName", "string", "The name of the User suitable for display."),
+                SchemaAttribute("emails", "complex", "Email addresses for the User.", multiValued: true, subAttributes: new object[]
+                {
+                    SchemaAttribute("value", "string", "Email address value."),
+                    SchemaAttribute("type", "string", "Email type (e.g. work)."),
+                    SchemaAttribute("primary", "boolean", "Is this the primary email."),
+                }),
+                SchemaAttribute("active", "boolean", "Whether the user account is active."),
+                SchemaAttribute("externalId", "string", "External identifier from the provisioning client."),
+            },
+            meta = new { resourceType = "Schema", location = $"{baseUrl}/scim/v2/Schemas/urn:ietf:params:scim:schemas:core:2.0:User" },
+        }),
+        new("urn:ietf:params:scim:schemas:core:2.0:Group", new
+        {
+            schemas = new[] { "urn:ietf:params:scim:schemas:core:2.0:Schema" },
+            id = "urn:ietf:params:scim:schemas:core:2.0:Group",
+            name = "Group",
+            description = "Group",
+            attributes = new object[]
+            {
+                SchemaAttribute("displayName", "string", "A human-readable name for the Group.", required: true),
+                SchemaAttribute("members", "complex", "A list of members of the Group.", multiValued: true, subAttributes: new object[]
+                {
+                    SchemaAttribute("value", "string", "Identifier of the group member."),
+                    SchemaAttribute("$ref", "reference", "The URI of the member resource."),
+                    SchemaAttribute("type", "string", "The type of the member (User)."),
+                }),
+                SchemaAttribute("externalId", "string", "External identifier from the provisioning client."),
+            },
+            meta = new { resourceType = "Schema", location = $"{baseUrl}/scim/v2/Schemas/urn:ietf:params:scim:schemas:core:2.0:Group" },
+        }),
+    ];
+
+    private static DiscoveryResource[] ResourceTypeResources(string baseUrl) =>
+    [
+        new("User", new
+        {
+            schemas = new[] { "urn:ietf:params:scim:schemas:core:2.0:ResourceType" },
+            id = "User",
+            name = "User",
+            endpoint = "/scim/v2/Users",
+            description = "User Account",
+            schema = "urn:ietf:params:scim:schemas:core:2.0:User",
+            meta = new { resourceType = "ResourceType", location = $"{baseUrl}/scim/v2/ResourceTypes/User" },
+        }),
+        new("Group", new
+        {
+            schemas = new[] { "urn:ietf:params:scim:schemas:core:2.0:ResourceType" },
+            id = "Group",
+            name = "Group",
+            endpoint = "/scim/v2/Groups",
+            description = "Group",
+            schema = "urn:ietf:params:scim:schemas:core:2.0:Group",
+            meta = new { resourceType = "ResourceType", location = $"{baseUrl}/scim/v2/ResourceTypes/Group" },
+        }),
+    ];
 
     private static object SchemaAttribute(
         string name, string type, string description,

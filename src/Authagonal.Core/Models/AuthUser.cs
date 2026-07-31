@@ -41,6 +41,18 @@ public sealed class AuthUser
     public string? ExternalId { get; set; }
     public bool IsActive { get; set; } = true;
     public string? ScimProvisionedByClientId { get; set; }
+
+    /// <summary>
+    /// When the provisioning client deleted this resource over SCIM. Non-null means the record is a
+    /// tombstone: RFC 7644 §3.6 lets a provider keep the row, but then it MUST answer 404 for every
+    /// operation on it and MUST omit it from query results.
+    /// </summary>
+    /// <remarks>
+    /// Distinct from <see cref="IsActive"/>, which is the directory's `active` flag and describes a
+    /// user who still exists. Deactivation is reversible by the provisioning client; a tombstone is
+    /// only reclaimed by creating the resource afresh.
+    /// </remarks>
+    public DateTimeOffset? ScimDeletedAt { get; set; }
     public List<string> Roles { get; set; } = [];
     public Dictionary<string, string> CustomAttributes { get; set; } = [];
     public DateTimeOffset CreatedAt { get; set; }

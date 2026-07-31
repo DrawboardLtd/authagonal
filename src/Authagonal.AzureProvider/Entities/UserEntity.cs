@@ -34,6 +34,7 @@ public sealed class UserEntity : ITableEntity
     public string? ExternalId { get; set; }
     public bool IsActive { get; set; } = true;
     public string? ScimProvisionedByClientId { get; set; }
+    public DateTimeOffset? ScimDeletedAt { get; set; }
     public string RolesJson { get; set; } = "[]";
     public string CustomAttributesJson { get; set; } = "{}";
     public DateTimeOffset CreatedAt { get; set; }
@@ -64,6 +65,7 @@ public sealed class UserEntity : ITableEntity
         ExternalId = user.ExternalId,
         IsActive = user.IsActive,
         ScimProvisionedByClientId = user.ScimProvisionedByClientId,
+        ScimDeletedAt = user.ScimDeletedAt,
         RolesJson = JsonSerializer.Serialize(user.Roles, AzureJsonContext.Default.ListString),
         CustomAttributesJson = JsonSerializer.Serialize(user.CustomAttributes, AzureJsonContext.Default.DictionaryStringString),
         CreatedAt = user.CreatedAt,
@@ -94,6 +96,7 @@ public sealed class UserEntity : ITableEntity
         ExternalId = ExternalId,
         IsActive = IsActive,
         ScimProvisionedByClientId = ScimProvisionedByClientId,
+        ScimDeletedAt = ScimDeletedAt,
         Roles = JsonSerializer.Deserialize(RolesJson, AzureJsonContext.Default.ListString) ?? [],
         CustomAttributes = JsonSerializer.Deserialize(CustomAttributesJson, AzureJsonContext.Default.DictionaryStringString) ?? [],
         CreatedAt = CreatedAt,

@@ -46,6 +46,8 @@ public static class ScimGroupEndpoints
         int? startIndex,
         int? count,
         string? filter,
+        string? attributes,
+        string? excludedAttributes,
         IRateLimiter rateLimiter,
         CancellationToken ct)
     {
@@ -54,6 +56,10 @@ public static class ScimGroupEndpoints
         // the User endpoints; the limiter is tenant-scoped by its decorator.
         if (await rateLimiter.IsRateLimitedAsync($"scim|{CallerClientId(httpContext) ?? "anonymous"}", 200, TimeSpan.FromMinutes(1), ct))
             return ScimResults.Error(429, "tooMany", "Too many SCIM requests. Please try again later.");
+
+        // RFC 7644 §3.9 projection, honoured or refused — same rule as the filter below.
+        if (!ScimProjection.TryCreate(attributes, excludedAttributes, out var projection, out var projectionError))
+            return ScimResults.Error(400, "invalidValue", projectionError);
 
         var baseUrl = GetBaseUrl(tenantContext);
         var start = startIndex ?? 1;
@@ -81,12 +87,12 @@ public static class ScimGroupEndpoints
             .Take(pageSize)
             .ToList();
 
-        var response = new ScimListResponse<ScimGroupResource>
+        var response = new ScimListResponse<object>
         {
             TotalResults = filteredList.Count,
             StartIndex = start,
             ItemsPerPage = paged.Count,
-            Resources = paged,
+            Resources = ScimProjection.ApplyAll(paged, projection),
         };
 
         return ScimResults.Success(response);
@@ -98,8 +104,13 @@ public static class ScimGroupEndpoints
         IScimGroupStore groupStore,
         Authagonal.Core.Services.ITenantContext tenantContext,
         IRateLimiter rateLimiter,
+        string? attributes,
+        string? excludedAttributes,
         CancellationToken ct)
     {
+        if (!ScimProjection.TryCreate(attributes, excludedAttributes, out var projection, out var projectionError))
+            return ScimResults.Error(400, "invalidValue", projectionError);
+
         // The Group endpoints had no rate limiting at all, and every list is a full table scan of all
         // groups — so an authenticated SCIM token could drive unbounded scan load. Same bucket and budget as
         // the User endpoints; the limiter is tenant-scoped by its decorator.

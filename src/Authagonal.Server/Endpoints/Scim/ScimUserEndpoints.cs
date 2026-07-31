@@ -31,6 +31,23 @@ public static class ScimUserEndpoints
     private static string GetClientId(HttpContext ctx) =>
         ctx.User.FindFirst("client_id")?.Value ?? "";
 
+    /// <summary>
+    /// Whether this provisioning client may see the record at all: it must own it, and it must not
+    /// have deleted it.
+    /// </summary>
+    /// <remarks>
+    /// RFC 7644 §3.6 permits keeping the row after a DELETE, but then the provider "MUST return 404
+    /// for all operations associated with the previously deleted resource" and MUST omit it from
+    /// query results. Only the ownership half was checked, so a deleted user stayed readable,
+    /// listable and — because it kept the email index entry — still answered 409 on a re-create. That
+    /// last one wedges provisioning permanently: a leaver who is re-hired can never be re-created,
+    /// and the connector cannot even see why, because the resource reads as present and fine.
+    /// </remarks>
+    private static bool IsVisibleTo(AuthUser? user, string clientId) =>
+        user is not null
+        && user.ScimDeletedAt is null
+        && string.Equals(user.ScimProvisionedByClientId, clientId, StringComparison.Ordinal);
+
     private static string GetBaseUrl(Authagonal.Core.Services.ITenantContext tenantContext) =>
         tenantContext.Issuer;
 
@@ -70,11 +87,17 @@ public static class ScimUserEndpoints
         int? count,
         string? filter,
         string? cursor,
+        string? attributes,
+        string? excludedAttributes,
         CancellationToken ct)
     {
         var clientId = GetClientId(httpContext);
         if (await rateLimiter.IsRateLimitedAsync($"scim|{clientId}", 200, TimeSpan.FromMinutes(1), ct))
             return ScimResults.Error(429, "tooMany", "Too many SCIM requests. Please try again later.");
+
+        // Honoured or refused, never dropped — same rule the filter parameter already follows.
+        if (!ScimProjection.TryCreate(attributes, excludedAttributes, out var projection, out var projectionError))
+            return ScimResults.Error(400, "invalidValue", projectionError);
 
         var baseUrl = GetBaseUrl(tenantContext);
 
@@ -100,16 +123,15 @@ public static class ScimUserEndpoints
                 ? await userStore.FindByEmailAsync(indexedValue, ct)
                 : await userStore.FindByExternalIdAsync(clientId, indexedValue, ct);
             // Same scoping as the listing: only users this SCIM client provisioned.
-            var resources = match is not null
-                            && string.Equals(match.ScimProvisionedByClientId, clientId, StringComparison.Ordinal)
-                ? new List<ScimUserResource> { ScimUserResource.FromUser(match, baseUrl) }
+            var resources = IsVisibleTo(match, clientId)
+                ? new List<ScimUserResource> { ScimUserResource.FromUser(match!, baseUrl) }
                 : [];
-            return ScimResults.Success(new ScimListResponse<ScimUserResource>
+            return ScimResults.Success(new ScimListResponse<object>
             {
                 TotalResults = resources.Count,
                 StartIndex = 1,
                 ItemsPerPage = resources.Count,
-                Resources = resources,
+                Resources = ScimProjection.ApplyAll(resources, projection),
             });
         }
 
@@ -129,7 +151,11 @@ public static class ScimUserEndpoints
         for (var pages = 0; pages < 10; pages++)
         {
             var page = await userStore.ListByScimClientPageAsync(clientId, pageSize, nextCursor, ct);
-            IEnumerable<ScimUserResource> pageResources = page.Users.Select(u => ScimUserResource.FromUser(u, baseUrl));
+            // Tombstones are dropped here rather than in the store: the provider-side filter is a
+            // projected attribute on the row, and every backend would need the same new projection.
+            IEnumerable<ScimUserResource> pageResources = page.Users
+                .Where(u => u.ScimDeletedAt is null)
+                .Select(u => ScimUserResource.FromUser(u, baseUrl));
             if (filterExpression is not null)
                 pageResources = pageResources.Where(r => ScimFilterEvaluator.Matches(filterExpression, r));
 
@@ -139,7 +165,7 @@ public static class ScimUserEndpoints
                 break;
         }
 
-        return ScimResults.Success(new ScimListResponse<ScimUserResource>
+        return ScimResults.Success(new ScimListResponse<object>
         {
             // Only a COMPLETED listing has a knowable total. When nextCursor is present, omit it rather
             // than reporting the page size — see ScimListResponse.TotalResults.
@@ -147,7 +173,7 @@ public static class ScimUserEndpoints
             StartIndex = 1,
             // count=0 asks for the total without the resources (§3.4.2.4).
             ItemsPerPage = countOnly ? 0 : resourcesOut.Count,
-            Resources = countOnly ? [] : resourcesOut,
+            Resources = countOnly ? [] : ScimProjection.ApplyAll(resourcesOut, projection),
             NextCursor = nextCursor,
         });
     }
@@ -158,18 +184,24 @@ public static class ScimUserEndpoints
         IUserStore userStore,
         Authagonal.Core.Services.ITenantContext tenantContext,
         IRateLimiter rateLimiter,
+        string? attributes,
+        string? excludedAttributes,
         CancellationToken ct)
     {
+        if (!ScimProjection.TryCreate(attributes, excludedAttributes, out var projection, out var projectionError))
+            return ScimResults.Error(400, "invalidValue", projectionError);
+
         var clientId = GetClientId(httpContext);
         if (await rateLimiter.IsRateLimitedAsync($"scim|{clientId}", 200, TimeSpan.FromMinutes(1), ct))
             return ScimResults.Error(429, "tooMany", "Too many SCIM requests. Please try again later.");
 
         var user = await userStore.GetAsync(id, ct);
-        if (user is null || !string.Equals(user.ScimProvisionedByClientId, clientId, StringComparison.Ordinal))
+        if (!IsVisibleTo(user, clientId))
             return ScimResults.NotFound($"User '{id}' not found");
+        user = user!;
 
         var baseUrl = GetBaseUrl(tenantContext);
-        return ScimResults.Success(ScimUserResource.FromUser(user, baseUrl));
+        return ScimResults.Success(ScimProjection.Apply(ScimUserResource.FromUser(user, baseUrl), projection));
     }
 
     /// <summary>
@@ -182,13 +214,38 @@ public static class ScimUserEndpoints
     {
         if (string.IsNullOrWhiteSpace(value) || value.Length > 320) return false;
         foreach (var c in value)
-            if (char.IsWhiteSpace(c) || char.IsControl(c)) return false;
+            if (char.IsWhiteSpace(c) || char.IsControl(c) || IsKeyHostile(c)) return false;
 
         var at = value.IndexOf('@');
         if (at <= 0 || at != value.LastIndexOf('@') || at == value.Length - 1) return false;
 
         var domain = value[(at + 1)..];
         return domain.Contains('.') && !domain.StartsWith('.') && !domain.EndsWith('.');
+    }
+
+    /// <summary>
+    /// Characters no supported backend accepts inside a key. Azure Table forbids all four outright;
+    /// the others reserve them in composite keys.
+    /// </summary>
+    /// <remarks>
+    /// This is not cosmetic. With the default non-tokenizing configuration the normalized email IS
+    /// the email index's PartitionKey, and the profile row is written before the index rows — so a
+    /// key the storage service rejects fails AFTER the user is durably created, leaving a record no
+    /// lookup can reach. None of these characters can appear in an unquoted addr-spec anyway, so
+    /// refusing them costs nothing an IdP would legitimately send.
+    /// </remarks>
+    private static bool IsKeyHostile(char c) => c is '/' or '\\' or '#' or '?';
+
+    /// <summary>
+    /// externalId is the other SCIM-supplied string that becomes a key — it is a component of the
+    /// (clientId, externalId) index — so it carries the same constraints, plus a length bound.
+    /// </summary>
+    private static bool IsUsableExternalId(string value)
+    {
+        if (value.Length > 256) return false;
+        foreach (var c in value)
+            if (char.IsControl(c) || IsKeyHostile(c)) return false;
+        return true;
     }
 
     private static async Task<IResult> CreateUserAsync(
@@ -227,6 +284,9 @@ public static class ScimUserEndpoints
         if (!IsPlausibleEmail(email))
             return ScimResults.BadRequest("userName must be a valid email address");
 
+        if (!string.IsNullOrEmpty(request.ExternalId) && !IsUsableExternalId(request.ExternalId))
+            return ScimResults.BadRequest("externalId contains characters that cannot be stored, or is too long");
+
         // Second, the provisioning client may only create users in domains it is authorised for. Without
         // this, ANY SCIM token could mint a pre-verified account for any address — including a domain
         // belonging to another tenant — and that account then feeds federation auto-linking and (before
@@ -244,14 +304,23 @@ public static class ScimUserEndpoints
 
         // Check if user already exists
         var existing = await userStore.FindByEmailAsync(email, ct);
-        if (existing is not null)
+
+        // A record this client already deleted is not a conflict — RFC 7644 §3.6 says a deleted
+        // resource SHOULD NOT be considered when determining resource conflicts. It still owns the
+        // email index entry, though, so the only way to honour that is to reclaim the row in place
+        // rather than create a second one behind the same address.
+        var reclaiming = existing is not null
+            && existing.ScimDeletedAt is not null
+            && string.Equals(existing.ScimProvisionedByClientId, clientId, StringComparison.Ordinal);
+
+        if (existing is not null && !reclaiming)
             return ScimResults.Conflict($"User with userName '{email}' already exists");
 
         // Check externalId uniqueness
         if (!string.IsNullOrEmpty(request.ExternalId))
         {
             var byExtId = await userStore.FindByExternalIdAsync(clientId, request.ExternalId, ct);
-            if (byExtId is not null)
+            if (byExtId is not null && byExtId.ScimDeletedAt is null && (!reclaiming || byExtId.Id != existing!.Id))
                 return ScimResults.Conflict($"User with externalId '{request.ExternalId}' already exists");
         }
 
@@ -268,7 +337,11 @@ public static class ScimUserEndpoints
 
         var user = new AuthUser
         {
-            Id = Guid.NewGuid().ToString("N"),
+            // Reclaiming keeps the row's identity so the email index it owns stays consistent; every
+            // other field is set from the request, so the result is the new resource, not a revived
+            // old one. Credentials are deliberately not carried over — a fresh SecurityStamp and no
+            // password hash mean nothing the deleted account held survives the reclaim.
+            Id = reclaiming ? existing!.Id : Guid.NewGuid().ToString("N"),
             Email = email,
             NormalizedEmail = email.ToUpperInvariant(),
             EmailConfirmed = true, // SCIM-provisioned users are pre-confirmed (SSO-only)
@@ -278,12 +351,16 @@ public static class ScimUserEndpoints
             IsActive = request.ActiveOnCreate,
             Locale = Locales.Normalize(request.PreferredLanguageOrLocale),
             ScimProvisionedByClientId = clientId,
+            ScimDeletedAt = null,
             LockoutEnabled = true,
             SecurityStamp = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32)),
             CreatedAt = DateTimeOffset.UtcNow,
         };
 
-        await userStore.CreateAsync(user, ct);
+        if (reclaiming)
+            await userStore.UpdateAsync(user, ct);
+        else
+            await userStore.CreateAsync(user, ct);
 
         // Store externalId index
         if (!string.IsNullOrEmpty(request.ExternalId))
@@ -334,17 +411,23 @@ public static class ScimUserEndpoints
         var baseUrl = GetBaseUrl(tenantContext);
 
         var user = await userStore.GetAsync(id, ct);
-        if (user is null || !string.Equals(user.ScimProvisionedByClientId, clientId, StringComparison.Ordinal))
+        if (!IsVisibleTo(user, clientId))
             return ScimResults.NotFound($"User '{id}' not found");
+        user = user!;
 
         // Extract email
         var email = request.UserName;
         if (string.IsNullOrEmpty(email) && request.Emails?.Length > 0)
             email = request.Emails.FirstOrDefault(e => e.Primary)?.Value ?? request.Emails[0].Value;
 
+        if (!string.IsNullOrEmpty(request.ExternalId) && !IsUsableExternalId(request.ExternalId))
+            return ScimResults.BadRequest("externalId contains characters that cannot be stored, or is too long");
+
         if (!string.IsNullOrWhiteSpace(email))
         {
             email = email.ToLowerInvariant();
+            if (!IsPlausibleEmail(email))
+                return ScimResults.BadRequest("userName must be a valid email address");
             if (!string.Equals(email, user.Email, StringComparison.OrdinalIgnoreCase))
             {
                 // Re-check the global email index so an email change can't repoint another account's
@@ -423,8 +506,9 @@ public static class ScimUserEndpoints
         var baseUrl = GetBaseUrl(tenantContext);
 
         var user = await userStore.GetAsync(id, ct);
-        if (user is null || !string.Equals(user.ScimProvisionedByClientId, clientId, StringComparison.Ordinal))
+        if (!IsVisibleTo(user, clientId))
             return ScimResults.NotFound($"User '{id}' not found");
+        user = user!;
 
         var wasActive = user.IsActive;
         var oldExternalId = user.ExternalId;
@@ -450,6 +534,14 @@ public static class ScimUserEndpoints
         if (unsupported.Count > 0)
             return ScimResults.Error(400, "invalidPath",
                 "Unsupported PATCH operation(s): " + string.Join("; ", unsupported));
+
+        // The applier writes straight onto the model, so the same key constraints the create path
+        // enforces have to be re-checked here — otherwise PATCH is the way around them.
+        if (!IsPlausibleEmail(user.Email))
+            return ScimResults.Error(400, "invalidValue", "userName must be a valid email address");
+        if (!string.IsNullOrEmpty(user.ExternalId) && !IsUsableExternalId(user.ExternalId))
+            return ScimResults.Error(400, "invalidValue",
+                "externalId contains characters that cannot be stored, or is too long");
 
         // If the patch changed the email, re-check the global index BEFORE persisting so it can't
         // repoint another account's email→userId mapping at this record (account-takeover clobber).
@@ -510,13 +602,22 @@ public static class ScimUserEndpoints
             return ScimResults.Error(429, "tooMany", "Too many SCIM requests. Please try again later.");
 
         var user = await userStore.GetAsync(id, ct);
-        if (user is null || !string.Equals(user.ScimProvisionedByClientId, clientId, StringComparison.Ordinal))
+        if (!IsVisibleTo(user, clientId))
             return ScimResults.NotFound($"User '{id}' not found");
+        user = user!;
 
-        // Soft delete: deactivate
+        // Soft delete: deactivate AND tombstone. The deactivation is what kills the sessions; the
+        // tombstone is what makes the resource gone, which deactivation on its own never did.
         user.IsActive = false;
+        user.ScimDeletedAt = DateTimeOffset.UtcNow;
         user.UpdatedAt = DateTimeOffset.UtcNow;
         await userStore.UpdateAsync(user, ct);
+
+        // The externalId index is dropped so a re-provision can bind the same externalId to the new
+        // resource. The email index is deliberately kept — it is what lets the create path find the
+        // tombstone and reclaim it in place, instead of stranding a second row behind the address.
+        if (!string.IsNullOrEmpty(user.ExternalId))
+            await userStore.RemoveExternalIdAsync(user.Id, clientId, user.ExternalId, ct);
 
         // Revoke all grants
         await grantStore.RemoveAllBySubjectAsync(user.Id, ct);
