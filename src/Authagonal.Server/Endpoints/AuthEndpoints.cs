@@ -125,9 +125,31 @@ public static class AuthEndpoints
         // disabled, unconfirmed, wrong password) is deferred until AFTER password verification and
         // returns an identical invalid_credentials, so a wrong-password attempt can't enumerate which
         // emails exist or what state they're in.
-        if (user is not null && user.LockoutEnabled && user.LockoutEnd.HasValue && user.LockoutEnd > DateTimeOffset.UtcNow)
+        //
+        // The 423 itself used to void that guarantee on this very endpoint: six wrong guesses against
+        // a real address eventually produced `locked_out` with a retryAfter, while the same guesses
+        // against an address with no account produced `invalid_credentials` forever. Since every
+        // account-creation path sets LockoutEnabled, that was a definitive existence oracle over the
+        // whole directory — undoing the dummy hash, the deferred state checks, the neutral duplicate
+        // registration and the randomised forgot-password delay.
+        //
+        // So: the verify is still short-circuited (the CPU saving is the point), but WHICH answer the
+        // caller gets is decided after the presented password has been judged. A caller who knows the
+        // password is told why they are blocked; a caller who does not learns nothing.
+        var lockedOut = user is not null && user.LockoutEnabled
+            && user.LockoutEnd.HasValue && user.LockoutEnd > DateTimeOffset.UtcNow;
+
+        if (lockedOut)
         {
-            var remaining = user.LockoutEnd.Value - DateTimeOffset.UtcNow;
+            // Compared against the stored hash directly rather than through the normal path below,
+            // which has side effects (rehash-on-login) a locked account must not trigger.
+            var passwordCorrect = user is { PasswordHash: not null and not "" }
+                && passwordHasher.VerifyPassword(request.Password, user.PasswordHash) != PasswordVerifyResult.Failed;
+
+            if (!passwordCorrect)
+                return JsonResults.Error("invalid_credentials", 401);
+
+            var remaining = user!.LockoutEnd!.Value - DateTimeOffset.UtcNow;
             return TypedResults.Json(new LockedOutError { Error = "locked_out", RetryAfter = (int)remaining.TotalSeconds }, AuthagonalJsonContext.Default.LockedOutError, statusCode: 423);
         }
 
@@ -463,9 +485,14 @@ public static class AuthEndpoints
                 LockoutEnabled = true,
                 SecurityStamp = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32)),
                 CreatedAt = DateTimeOffset.UtcNow,
-                CustomAttributes = request.CustomAttributes is { Count: > 0 }
-                    ? new Dictionary<string, string>(request.CustomAttributes)
-                    : [],
+                // Filtered exactly as the claim path is. These two branches of RegisterAsync feed the
+                // identical sinks — downstream TCC provisioning, OidcSubject.CustomAttributes, and
+                // any token claim a scope's UserClaims releases — but only the claim path was
+                // whitelisted, and 0.11.0 added that whitelist precisely because these values "reach
+                // downstream provisioning and can ride the real owner's tokens". The asymmetry was
+                // the bug: an anonymous registrant's dictionary was copied on verbatim, with no key
+                // filter and no bound on count or length.
+                CustomAttributes = FilterSelfServiceAttributes(request.CustomAttributes, ao.ClaimAllowedAttributeKeys),
             };
 
             await userStore.CreateAsync(user, ct);
@@ -574,35 +601,61 @@ public static class AuthEndpoints
 
         // Read-only inspection, so the page can say something useful before the user clicks. Nothing
         // here writes, so a scanner reaching it changes nothing.
-        var (email, expired) = InspectConfirmToken(token);
+        var (email, expired, stamp) = InspectConfirmToken(token);
         if (email is null)
             return ConfirmPage("This link doesn't look right", "Open the most recent verification email and use the link there.", null);
         if (expired)
             return ConfirmPage("This link has expired", "Sign in to have a new verification email sent.", null);
 
+        // The security stamp in the token is checked BEFORE anything account-specific is rendered.
+        //
+        // It was not checked at all on this path: InspectConfirmToken verifies no integrity, only that
+        // the value is base64 splitting into three "||" segments with a parseable expiry — so anyone
+        // could forge a token for any address. The page then read the store with that attacker-chosen
+        // email and branched the heading on real account state, reporting "this address has a confirmed
+        // account" versus "it does not", and distinguishing an account mid-passwordless-claim as a
+        // bonus. One anonymous, unthrottled GET undid the dummy PBKDF2 hash on login, the neutral 201
+        // on duplicate registration and the randomised forgot-password delay.
+        //
+        // A forged token now renders exactly what a valid-but-unconfirmed one does, so the response
+        // carries no information about whether the address exists.
         var user = await userStore.FindByEmailAsync(email, ct);
-        if (user is not null && user.EmailConfirmed && string.IsNullOrWhiteSpace(user.PendingPasswordHash))
+        var stampMatches = user is not null
+            && !string.IsNullOrEmpty(user.SecurityStamp)
+            && string.Equals(user.SecurityStamp, stamp, StringComparison.Ordinal);
+
+        if (stampMatches && user!.EmailConfirmed && string.IsNullOrWhiteSpace(user.PendingPasswordHash))
             return ConfirmPage("Your email is already confirmed", "You can sign in now.", null);
 
+        // The address is not echoed back: it came from the caller, so repeating it confirms nothing
+        // and turns the page into a reflector.
         return ConfirmPage(
             "Confirm your email",
-            $"Confirm that {email} belongs to you.",
+            "Confirm that this address belongs to you.",
             token);
     }
 
-    /// <summary>Decodes a confirmation token without touching the store. Returns (email, expired).</summary>
-    private static (string? Email, bool Expired) InspectConfirmToken(string token)
+    /// <summary>
+    /// Decodes a confirmation token without touching the store. Returns (email, expired, stamp).
+    /// </summary>
+    /// <remarks>
+    /// This performs no integrity check — it cannot, since it reads no store — so <c>stamp</c> is an
+    /// unverified claim about which account the token is for. Callers MUST compare it against the
+    /// resolved user's <c>SecurityStamp</c> before rendering or returning anything that depends on
+    /// that account existing.
+    /// </remarks>
+    private static (string? Email, bool Expired, string? Stamp) InspectConfirmToken(string token)
     {
         try
         {
             var parts = Encoding.UTF8.GetString(Convert.FromBase64String(token)).Split("||");
-            if (parts.Length < 3) return (null, false);
-            if (!long.TryParse(parts[2], out var expiresAtUnix)) return (null, false);
-            return (parts[1], DateTimeOffset.UtcNow.ToUnixTimeSeconds() > expiresAtUnix);
+            if (parts.Length < 3) return (null, false, null);
+            if (!long.TryParse(parts[2], out var expiresAtUnix)) return (null, false, null);
+            return (parts[1], DateTimeOffset.UtcNow.ToUnixTimeSeconds() > expiresAtUnix, parts[0]);
         }
         catch
         {
-            return (null, false);
+            return (null, false, null);
         }
     }
 
@@ -641,7 +694,23 @@ public static class AuthEndpoints
             </main></body></html>
             """;
 
-        return Results.Content(html, "text/html; charset=utf-8");
+        // The page embeds the confirmation token in a form field, so it must not be stored by a shared
+        // cache or a proxy. Results.Content sets no cache headers, which leaves an HTML response
+        // heuristically cacheable.
+        return Results.Text(html, "text/html; charset=utf-8").WithNoStore();
+    }
+
+    /// <summary>Marks a response no-store, for bodies that carry a single-use token.</summary>
+    private static IResult WithNoStore(this IResult inner) => new NoStoreResult(inner);
+
+    private sealed class NoStoreResult(IResult inner) : IResult
+    {
+        public Task ExecuteAsync(HttpContext httpContext)
+        {
+            httpContext.Response.Headers.CacheControl = "no-store";
+            httpContext.Response.Headers.Pragma = "no-cache";
+            return inner.ExecuteAsync(httpContext);
+        }
     }
 
     private static async Task<IResult> ConfirmEmailAsync(
@@ -1329,19 +1398,49 @@ public static class AuthEndpoints
 
     // Build the staged claim payload (JSON) from a register request, whitelisting custom-attribute keys
     // (empty allowlist = allow all). Returns null when there is nothing to stage.
+    /// <summary>Bounds on attributes accepted from an anonymous self-service caller.</summary>
+    /// <remarks>
+    /// The allow-list is opt-in (an empty <c>ClaimAllowedAttributeKeys</c> means "allow any key"), so
+    /// on a default deployment these bounds are the only thing standing between an anonymous
+    /// registration and unbounded attacker-chosen storage that rides the account's tokens and its
+    /// downstream provisioning payloads.
+    /// </remarks>
+    private const int MaxSelfServiceAttributes = 32;
+    private const int MaxSelfServiceAttributeKeyLength = 64;
+    private const int MaxSelfServiceAttributeValueLength = 1024;
+
+    /// <summary>
+    /// The custom attributes a self-service caller may set: allow-listed by key, bounded in count and
+    /// length, and never a claim name the protocol layer treats as its own.
+    /// </summary>
+    private static Dictionary<string, string> FilterSelfServiceAttributes(
+        Dictionary<string, string>? supplied, List<string> allowedAttributeKeys)
+    {
+        var result = new Dictionary<string, string>(StringComparer.Ordinal);
+        if (supplied is not { Count: > 0 }) return result;
+
+        foreach (var kv in supplied)
+        {
+            if (result.Count >= MaxSelfServiceAttributes) break;
+            if (string.IsNullOrWhiteSpace(kv.Key)) continue;
+            if (kv.Key.Length > MaxSelfServiceAttributeKeyLength) continue;
+            if ((kv.Value?.Length ?? 0) > MaxSelfServiceAttributeValueLength) continue;
+            if (allowedAttributeKeys.Count > 0 && !allowedAttributeKeys.Contains(kv.Key)) continue;
+
+            result[kv.Key] = kv.Value ?? string.Empty;
+        }
+
+        return result;
+    }
+
     private static string? BuildPendingClaimJson(RegisterRequest request, List<string> allowedAttributeKeys)
     {
         var data = new PendingClaimData
         {
             FirstName = string.IsNullOrWhiteSpace(request.FirstName) ? null : request.FirstName.Trim(),
             LastName = string.IsNullOrWhiteSpace(request.LastName) ? null : request.LastName.Trim(),
+            CustomAttributes = FilterSelfServiceAttributes(request.CustomAttributes, allowedAttributeKeys),
         };
-        if (request.CustomAttributes is { Count: > 0 })
-        {
-            foreach (var kv in request.CustomAttributes)
-                if (allowedAttributeKeys.Count == 0 || allowedAttributeKeys.Contains(kv.Key))
-                    data.CustomAttributes[kv.Key] = kv.Value;
-        }
         if (data.FirstName is null && data.LastName is null && data.CustomAttributes.Count == 0)
             return null;
         return JsonSerializer.Serialize(data, AuthagonalJsonContext.Default.PendingClaimData);

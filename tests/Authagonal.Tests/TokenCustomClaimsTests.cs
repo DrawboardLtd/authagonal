@@ -38,11 +38,11 @@ public sealed class TokenCustomClaimsTests
         await factory.ScopeStore.CreateAsync(new Scope
         {
             Name = "projects-api.read",
-            UserClaims = ["org_id", "org_role"],
+            UserClaims = ["org_tier", "org_role"],
         });
 
         var user = await factory.SeedTestUserAsync();
-        user.CustomAttributes["org_id"] = "org-123";
+        user.CustomAttributes["org_tier"] = "enterprise";
         user.CustomAttributes["org_role"] = "admin";
         user.CustomAttributes["secret_internal"] = "should-not-leak";
         await factory.UserStore.UpdateAsync(user);
@@ -55,14 +55,14 @@ public sealed class TokenCustomClaimsTests
         // With the app scope: listed claims appear.
         var withScope = await tokens.CreateAccessTokenAsync(subject, client, ["openid", "projects-api.read"]);
         var claimsWith = ReadClaims(withScope);
-        Assert.Equal("org-123", claimsWith["org_id"]);
+        Assert.Equal("enterprise", claimsWith["org_tier"]);
         Assert.Equal("admin", claimsWith["org_role"]);
         Assert.False(claimsWith.ContainsKey("secret_internal"));
 
         // Without the app scope: no custom claims leak through.
         var withoutScope = await tokens.CreateAccessTokenAsync(subject, client, ["openid"]);
         var claimsWithout = ReadClaims(withoutScope);
-        Assert.False(claimsWithout.ContainsKey("org_id"));
+        Assert.False(claimsWithout.ContainsKey("org_tier"));
         Assert.False(claimsWithout.ContainsKey("org_role"));
     }
 
@@ -108,7 +108,7 @@ public sealed class TokenCustomClaimsTests
             AdditionalClaims = new Dictionary<string, string>
             {
                 ["LinkShareToken"] = "tok-abc",
-                ["org_id"] = "org-xyz",
+                ["org_tier"] = "enterprise",
                 ["unlisted_claim"] = "carried",
             },
         };
@@ -117,7 +117,7 @@ public sealed class TokenCustomClaimsTests
         var claims = ReadClaims(jwt);
 
         Assert.Equal("tok-abc", claims["LinkShareToken"]);
-        Assert.Equal("org-xyz", claims["org_id"]);
+        Assert.Equal("enterprise", claims["org_tier"]);
         Assert.Equal("carried", claims["unlisted_claim"]);
     }
 

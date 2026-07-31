@@ -117,21 +117,48 @@ public sealed class AuthEndpointTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Login_Lockout_AfterMaxFailedAttempts()
+    public async Task Login_Lockout_WithCorrectPassword_ReportsLockedOut()
     {
         await _factory.SeedTestUserAsync();
 
-        // 5 failed attempts
-        for (int i = 0; i < 5; i++)
+        for (int i = 0; i < 6; i++)
             await _client.PostAsJsonAsync("/api/auth/login", new { email = "test@example.com", password = "Wrong!" });
 
-        // 6th attempt should return locked_out
-        var response = await _client.PostAsJsonAsync("/api/auth/login", new { email = "test@example.com", password = "Wrong!" });
+        // A caller who proves the password is told why they are blocked — that is the useful part of
+        // the 423, and it discloses nothing they did not already know.
+        var response = await _client.PostAsJsonAsync("/api/auth/login",
+            new { email = "test@example.com", password = "Test1234!" });
 
         Assert.Equal((HttpStatusCode)423, response.StatusCode);
         var json = await response.Content.ReadFromJsonAsync<JsonElement>();
         Assert.Equal("locked_out", json.GetProperty("error").GetString());
         Assert.True(json.GetProperty("retryAfter").GetInt32() > 0);
+    }
+
+    [Fact]
+    public async Task Login_Lockout_WithWrongPassword_IsIndistinguishableFromAnUnknownAccount()
+    {
+        // This test previously asserted the opposite: that a sixth WRONG password produced 423. That
+        // made lockout a definitive account-existence oracle — six guesses against a real address
+        // eventually answered locked_out, while the same guesses against an address with no account
+        // answered invalid_credentials forever. Since every account-creation path sets LockoutEnabled,
+        // it covered the whole directory, and it undid the dummy-hash timing equalisation, the neutral
+        // duplicate registration and the randomised forgot-password delay on the same surface.
+        await _factory.SeedTestUserAsync();
+
+        for (int i = 0; i < 6; i++)
+            await _client.PostAsJsonAsync("/api/auth/login", new { email = "test@example.com", password = "Wrong!" });
+
+        var real = await _client.PostAsJsonAsync("/api/auth/login",
+            new { email = "test@example.com", password = "Wrong!" });
+        var unknown = await _client.PostAsJsonAsync("/api/auth/login",
+            new { email = "no-such-account@example.com", password = "Wrong!" });
+
+        Assert.Equal(HttpStatusCode.Unauthorized, real.StatusCode);
+        Assert.Equal(HttpStatusCode.Unauthorized, unknown.StatusCode);
+        Assert.Equal(
+            await real.Content.ReadAsStringAsync(),
+            await unknown.Content.ReadAsStringAsync());
     }
 
     [Fact]
@@ -522,9 +549,15 @@ public sealed class AuthEndpointTests : IAsyncLifetime
         var replayJson = await _client.PostAsJsonAsync("/api/auth/confirm-email", new { token });
         Assert.Equal(HttpStatusCode.OK, replayJson.StatusCode);
 
-        // And the page itself says so rather than offering a button that would fail.
+        // The page renders the generic confirm prompt rather than reporting account state. Confirming
+        // it reports "already confirmed" is what made this an anonymous existence oracle: the token is
+        // unauthenticated and forgeable, so anyone could ask about any address. The button does not
+        // fail — the POST above is what answers, and it answers correctly.
         var page = await _client.GetAsync(new Uri(sent.CallbackUrl).PathAndQuery);
-        Assert.Contains("already confirmed", await page.Content.ReadAsStringAsync());
+        var body = await page.Content.ReadAsStringAsync();
+        Assert.Contains("Confirm your email", body);
+        Assert.DoesNotContain("already confirmed", body);
+        Assert.Equal("no-store", page.Headers.CacheControl?.ToString());
     }
 
     [Fact]

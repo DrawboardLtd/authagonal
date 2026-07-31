@@ -66,7 +66,13 @@ public static class AgentConsentEndpoints
                 Ceiling = ToElement(profile.Ceiling),
                 Connectors = connectors,
             }, AuthagonalJsonContext.Default.AgentConsentInfoResponse);
-        });
+        })
+        // Its three siblings below all require authorization; this one did not, and the host sets no
+        // FallbackPolicy, so an endpoint with no authorization metadata is anonymous. The body is not
+        // a summary — it is the agent's complete RFC 9396 ceiling plus every per-action policy — so
+        // any unauthenticated caller could enumerate exactly what each registered agent is permitted
+        // to do. The screen it feeds is only ever rendered to a signed-in user.
+        .RequireAuthorization();
 
         // Grant (or replace) standing consent. The stored floor is granted ∩ live ceiling —
         // a floor can tighten a policy (auto → ask) but never loosen or widen anything.

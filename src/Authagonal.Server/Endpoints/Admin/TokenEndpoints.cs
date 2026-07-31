@@ -1,4 +1,5 @@
 using Authagonal.Core.Models;
+using Authagonal.Core.Services;
 using Authagonal.Core.Stores;
 using Authagonal.Protocol.Services;
 using Authagonal.Server.Services;
@@ -16,12 +17,26 @@ public static class TokenEndpoints
         return app;
     }
 
+    /// <remarks>
+    /// This mints a token AS another user, so it must clear every gate the ordinary mint paths do.
+    /// It cleared none of them: it called <c>BuildSubjectAsync</c> — the raw builder — directly,
+    /// while every other caller reaches it through <c>ResolveAsync</c>/<c>ResolveRefreshAsync</c>,
+    /// which reject an inactive user first. So a deactivated account still produced a usable access
+    /// token, even though <c>UpdateUser</c> deliberately revokes grants and rotates the security
+    /// stamp on deactivation because "a disabled account that keeps working until its token expires
+    /// has not been disabled". Likewise <c>client.Enabled</c> (enforced at authorize, client
+    /// authentication and introspection), <see cref="IScopeRoleGate"/> (documented as applying on
+    /// every path that mints a token for a human) and the <see cref="IAuthHook"/> pre-mint gate that
+    /// /connect/token runs for every grant.
+    /// </remarks>
     private static async Task<IResult> CreateTokenForUser(
         HttpContext httpContext,
         IProtocolTokenService tokenService,
         IClientStore clientStore,
         IUserStore userStore,
         UserStoreOidcSubjectResolver subjectResolver,
+        IScopeRoleGate scopeRoleGate,
+        IEnumerable<IAuthHook> authHooks,
         IConfiguration configuration,
         CancellationToken ct)
     {
@@ -41,9 +56,16 @@ public static class TokenEndpoints
         if (client is null)
             return Results.NotFound(new { error = "client_not_found", error_description = $"Client '{clientId}' not found" });
 
+        if (!client.Enabled)
+            return Results.Json(new { error = "unauthorized_client", error_description = $"Client '{clientId}' is disabled" }, statusCode: 403);
+
         var user = await userStore.GetAsync(userId, ct);
         if (user is null)
             return Results.NotFound(new { error = "user_not_found", error_description = $"User '{userId}' not found" });
+
+        // Deactivation must mean the same thing here as everywhere else.
+        if (!user.IsActive)
+            return Results.Json(new { error = "user_inactive", error_description = $"User '{userId}' is deactivated" }, statusCode: 403);
 
         var scopes = string.IsNullOrWhiteSpace(scopesParam)
             ? client.AllowedScopes
@@ -62,7 +84,16 @@ public static class TokenEndpoints
         if (scopes.Contains(adminScope, StringComparer.OrdinalIgnoreCase))
             return Results.Json(new { error = "forbidden_scope", error_description = $"The '{adminScope}' scope cannot be issued via this endpoint" }, statusCode: 403);
 
+        // Role-gated scopes are entitlements of the impersonated user, not of the admin doing the
+        // impersonating. Without this the endpoint handed out scopes the target holds no role for —
+        // on the one path where the caller chooses both the user and the scopes.
+        scopes = (await scopeRoleGate.FilterAsync(scopes, user.Roles, ct)).ToList();
+
         var subject = await subjectResolver.BuildSubjectAsync(user, client, ct: ct);
+
+        // The documented "throw to reject the token issuance" gate. Impersonation is the issuance a
+        // host most needs to see, and it was the one issuance the hooks never heard about.
+        await authHooks.RunOnTokenIssuedAsync(user.Id, client.ClientId, "admin_mint", ct);
 
         var accessToken = await tokenService.CreateAccessTokenAsync(subject, client, scopes, ct: ct);
         // Refresh token only when offline access was actually requested and the client allows it —

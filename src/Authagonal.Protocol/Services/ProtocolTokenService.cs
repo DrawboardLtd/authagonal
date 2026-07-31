@@ -54,6 +54,16 @@ public sealed class ProtocolTokenService(
         "scope", "client_id", "nonce", "auth_time", "acr", "amr",
         "roles", "groups", "sid",
         AuthorityClaims.AuthorizationDetails, AuthorityClaims.Actor,
+
+        // org_id is emitted as a first-class claim, but only when the subject actually has an
+        // organization — so an account with none left an empty slot that a self-chosen custom
+        // attribute could fill, given any scope in the tenant listing org_id in its UserClaims.
+        "org_id",
+
+        // The marker SAML/OIDC just-in-time provisioning writes to record that an account came from
+        // a trusted upstream. Only the federation callbacks may assert it; from user-controlled
+        // storage it is a forged provenance claim.
+        "federated_connection",
     };
 
     public async Task<string> CreateAccessTokenAsync(

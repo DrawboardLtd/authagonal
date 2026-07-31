@@ -88,18 +88,24 @@ public class ClusteringAzureTests(AzuriteFixture azurite)
         var poll = TimeSpan.FromMilliseconds(200);
         var bus = NewBus(table, poll);
 
-        var hits = 0;
-        bus.Subscribe("wanted", (_, _) => { Interlocked.Increment(ref hits); return Task.CompletedTask; });
+        var wantedHits = 0;
+        var unwantedHits = 0;
+        bus.Subscribe("wanted", (_, _) => { Interlocked.Increment(ref wantedHits); return Task.CompletedTask; });
+        bus.Subscribe("also-unsubscribed-from", (_, _) => { Interlocked.Increment(ref unwantedHits); return Task.CompletedTask; });
 
         await bus.StartAsync(CancellationToken.None);
         try
         {
+            // Published FIRST, so by the time the later "wanted" message arrives the poller has
+            // necessarily passed this one. That ordering is what proves it was filtered out — the
+            // previous version slept a fixed second and asserted nothing had arrived yet, which says
+            // "not delivered promptly", not "not delivered", and went red whenever a loaded machine
+            // starved the 200ms poller.
             await bus.PublishAsync("unwanted", ReadOnlyMemory<byte>.Empty);
-            await Task.Delay(TimeSpan.FromSeconds(1));
-            Assert.Equal(0, Volatile.Read(ref hits));
-
             await bus.PublishAsync("wanted", ReadOnlyMemory<byte>.Empty);
-            await WaitForAsync(() => Volatile.Read(ref hits) == 1, TimeSpan.FromSeconds(15));
+
+            await WaitForAsync(() => Volatile.Read(ref wantedHits) == 1, TimeSpan.FromSeconds(30));
+            Assert.Equal(0, Volatile.Read(ref unwantedHits));
         }
         finally
         {
