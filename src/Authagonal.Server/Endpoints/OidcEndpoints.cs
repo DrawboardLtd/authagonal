@@ -296,9 +296,16 @@ public static class OidcEndpoints
         // present, and wherever azp appears it MUST be this client. Without it, a token the upstream
         // IdP issued for a different relying party — one that merely also lists us — is accepted as
         // if it were issued to us.
+        // Counting the audiences is fiddlier than it looks, and getting it wrong made this whole check
+        // dead code once already. TokenValidationResult.Claims boxes a REPEATED claim into a
+        // List<object>, which is not IEnumerable<string>; and a single aud arrives as a string, which
+        // IS IEnumerable<char> but not IEnumerable<string>. So matching on IEnumerable<string> matched
+        // neither shape, audiences was always 0 or 1, and the multi-audience branch below could never
+        // run. String is tested first here precisely because a string is itself enumerable.
         var audiences = validationResult.Claims.TryGetValue("aud", out var audClaim) switch
         {
-            true when audClaim is IEnumerable<string> many => many.Count(),
+            true when audClaim is string => 1,
+            true when audClaim is System.Collections.IEnumerable many => many.Cast<object>().Count(),
             true when audClaim is not null => 1,
             _ => 0,
         };
