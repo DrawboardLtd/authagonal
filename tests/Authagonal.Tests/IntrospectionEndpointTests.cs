@@ -115,6 +115,15 @@ public sealed class IntrospectionEndpointTests : IAsyncLifetime
     public async Task Introspect_UserAccessToken_ReturnsSub()
     {
         var user = await _factory.SeedTestUserAsync();
+
+        // The admin client stands in for the resource server here, so the token must actually be
+        // addressed to it. RFC 7662 §4 has the AS answer `active: false` for a token the caller
+        // cannot use, and this fixture previously relied on that check being absent — introspecting a
+        // token minted for test-client while authenticating as an unrelated client.
+        var tokenClient = await _factory.ClientStore.GetAsync(AuthagonalTestFactory.TestClientId);
+        tokenClient!.Audiences.Add(AuthagonalTestFactory.AdminClientId);
+        await _factory.ClientStore.UpsertAsync(tokenClient);
+
         await _client.PostAsJsonAsync("/api/auth/login", new { email = "test@example.com", password = "Test1234!" });
 
         var (verifier, challenge) = GeneratePkce();
@@ -151,6 +160,51 @@ public sealed class IntrospectionEndpointTests : IAsyncLifetime
 
         Assert.True(json.GetProperty("active").GetBoolean());
         Assert.Equal(user.Id, json.GetProperty("sub").GetString());
+    }
+
+    [Fact]
+    public async Task Introspect_TokenForADifferentAudience_ReportsInactive()
+    {
+        // RFC 7662 §4. Disclosure was never the issue — a JWT is self-describing to whoever holds it
+        // — but the ANSWER was wrong: a resource server introspecting a token minted for a different
+        // audience was told `active: true`, which is the AS confirming a token it should have
+        // rejected. A resource server that (correctly) trusts introspection over its own audience
+        // check then accepted it.
+        var user = await _factory.SeedTestUserAsync();
+        await _client.PostAsJsonAsync("/api/auth/login", new { email = "test@example.com", password = "Test1234!" });
+
+        var (verifier, challenge) = GeneratePkce();
+        var authorizeUrl = $"/connect/authorize?client_id={AuthagonalTestFactory.TestClientId}" +
+            $"&redirect_uri={Uri.EscapeDataString("https://app.test/callback")}" +
+            $"&response_type=code&scope=openid" +
+            $"&state=test&code_challenge={challenge}&code_challenge_method=S256";
+
+        var authResponse = await _client.GetAsync(authorizeUrl);
+        var code = HttpUtility.ParseQueryString(authResponse.Headers.Location!.Query)["code"]!;
+
+        var tokenResponse = await _client.PostAsync("/connect/token", new FormUrlEncodedContent(
+            new Dictionary<string, string>
+            {
+                ["grant_type"] = "authorization_code",
+                ["code"] = code,
+                ["redirect_uri"] = "https://app.test/callback",
+                ["code_verifier"] = verifier,
+                ["client_id"] = AuthagonalTestFactory.TestClientId,
+            }));
+        var accessToken = (await tokenResponse.Content.ReadFromJsonAsync<JsonElement>())
+            .GetProperty("access_token").GetString()!;
+
+        // The admin client is not in this token's audience.
+        var request = new HttpRequestMessage(HttpMethod.Post, "/connect/introspect")
+        {
+            Content = new FormUrlEncodedContent(new Dictionary<string, string> { ["token"] = accessToken }),
+        };
+        request.Headers.Authorization = BasicAuth(AuthagonalTestFactory.AdminClientId, AuthagonalTestFactory.AdminClientSecret);
+
+        var response = await _client.SendAsync(request);
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+
+        Assert.False(json.GetProperty("active").GetBoolean());
     }
 
     private static AuthenticationHeaderValue BasicAuth(string clientId, string secret) =>

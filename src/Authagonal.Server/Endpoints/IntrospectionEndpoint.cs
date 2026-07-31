@@ -109,10 +109,24 @@ public static class IntrospectionEndpoint
                     result.Claims.ContainsKey))
                 return InactiveResponse();
 
-            // Note: any enabled, authenticated client may introspect a JWT access token it presents —
-            // this is the resource-server pattern, and the JWT is self-describing to whoever holds it,
-            // so introspection discloses nothing the caller couldn't already decode. (Opaque refresh
-            // tokens are owner-scoped below, since those are not self-describing.)
+            // RFC 7662 §4: the AS determines whether the token can be used at the resource server
+            // making the call, and answers `active: false` when it cannot.
+            //
+            // Disclosure was never the issue — a JWT is self-describing to whoever holds it — but the
+            // ANSWER was wrong: a resource server introspecting a token minted for a different
+            // audience was told `active: true`, which is the AS confirming a token it should have
+            // rejected. A resource server that (correctly) trusts introspection over its own audience
+            // check therefore accepted it.
+            //
+            // A token with no audience at all is left alone: it is addressed to nobody in particular,
+            // which the AS has no basis to narrow.
+            var tokenAudiences = ReadAudiences(result.Claims);
+            if (tokenAudiences.Count > 0
+                && !tokenAudiences.Contains(client.ClientId, StringComparer.Ordinal)
+                && !tokenAudiences.Any(a => client.Audiences.Contains(a, StringComparer.Ordinal)))
+            {
+                return InactiveResponse();
+            }
             var jti = result.Claims.TryGetValue("jti", out var jtiObj) ? jtiObj?.ToString() : null;
             if (!string.IsNullOrWhiteSpace(jti) && await revokedTokenStore.IsRevokedAsync(jti, ct))
                 return InactiveResponse();
@@ -170,6 +184,19 @@ public static class IntrospectionEndpoint
 
     private static IResult InactiveResponse() =>
         TypedResults.Json(new IntrospectionInactiveResponse(), AuthagonalJsonContext.Default.IntrospectionInactiveResponse);
+
+    /// <summary>The token's <c>aud</c>, which may be a single value or an array.</summary>
+    private static List<string> ReadAudiences(IDictionary<string, object> claims)
+    {
+        if (!claims.TryGetValue("aud", out var aud) || aud is null) return [];
+
+        return aud switch
+        {
+            string single => [single],
+            IEnumerable<object> many => many.Select(a => a?.ToString()).Where(a => a is not null).Cast<string>().ToList(),
+            _ => [aud.ToString()!],
+        };
+    }
 
     private static (string? ClientId, string? ClientSecret) ExtractClientCredentials(
         HttpContext httpContext, IFormCollection form)
