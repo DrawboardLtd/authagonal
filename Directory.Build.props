@@ -1,0 +1,20 @@
+<Project>
+
+  <PropertyGroup>
+    <!--
+      Lock files, so a restore resolves the same graph every time.
+
+      Every project floats at least one dependency (Version="9.*", "10.*", "4.*"), and with no lock
+      file each restore re-resolves them — including the release build, which restores fresh. That
+      means the shipped identity provider is not reproducible from its own source, and a regressed or
+      compromised upstream enters the build silently, with nothing in the repository recording what
+      was actually used.
+
+      The lock files are committed. CI should restore in locked mode (the RestoreLockedMode
+      property, or the equivalent CLI switch) so a graph change has to arrive as a deliberate
+      commit rather than as a surprise between two builds of the same source.
+    -->
+    <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
+  </PropertyGroup>
+
+</Project>

@@ -14,7 +14,10 @@
     <PackageReference Include="Azure.Extensions.AspNetCore.DataProtection.Keys" Version="1.5.0" />
     <PackageReference Include="Azure.Security.KeyVault.Secrets" Version="4.9.0" />
     <PackageReference Include="BCrypt.Net-Next" Version="4.1.0" />
-    <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="9.0.0" Condition="'$(TargetFramework)' == 'net9.0'" />
+    <!-- Patch floor, not a pin. 9.0.0 admits runtimes carrying an unauthenticated request-smuggling
+         bypass and three unauthenticated DoS CVEs; a net9.0 consumer restoring the old floor got them
+         silently. Bracketed above the fixed versions and below the next major. -->
+    <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="[9.0.14,10.0.0)" Condition="'$(TargetFramework)' == 'net9.0'" />
     <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="10.0.5" Condition="'$(TargetFramework)' == 'net10.0'" />
     <PackageReference Include="Microsoft.IdentityModel.JsonWebTokens" Version="8.17.0" />
     <PackageReference Include="Microsoft.IdentityModel.Tokens" Version="8.17.0" />
