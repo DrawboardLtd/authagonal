@@ -120,11 +120,17 @@ auth cookies. Configure one of:
 | `DataProtection:CertificateThumbprint` | Wraps the ring with a certificate from the machine store. |
 | `DataProtection:AllowUnencryptedKeyRing` | Explicitly accepts a plaintext ring; logged at Critical on every start. |
 
-> ⚠️ **The startup refusal does not cover this backend.** `AddAuthagonal` refuses to start when a ring
-> is persisted but unencrypted, but it can only detect the rings it attaches itself — the ones keyed off
-> `DataProtection:BlobUri` or `Storage:ConnectionString`. A SQL host attaches its own repository, before
-> or after `AddAuthagonal`, which that check cannot see. So a SQL deployment with none of the settings
-> above starts silently with a plaintext key ring. Set one of them deliberately.
+Set one of them deliberately, because startup checks for it. The check reads the *resolved* key-ring
+options rather than configuration, so it sees the repository this package attaches just as well as the
+Azure one, and the verdict is the same on every backend:
+
+- **Encrypted and persisted** — starts silently.
+- **Persisted, unencrypted, ring is empty** — refuses to start. Nothing depends on the ring yet, so the
+  insecure state never gets created.
+- **Persisted, unencrypted, ring already has keys** — starts, and logs at `Critical` every time. An
+  existing deployment's cookies are encrypted under those keys, so refusing on a version bump would be
+  an outage; fix it forward with one of the settings above.
+- **Development** — never refuses. The quick start runs on SQLite with no key on purpose.
 
 The complementary control is to stop the key ring sharing a blast radius with the application data at
 all. `PersistDataProtectionKeysToSql` takes its own `SqlDataSource`, so it can point at a separate
