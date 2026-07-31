@@ -730,10 +730,15 @@ public static class AuthEndpoints
         //
         // A forged token now renders exactly what a valid-but-unconfirmed one does, so the response
         // carries no information about whether the address exists.
+        // Fixed-time for the same reason as the POST below: `stamp` is the attacker-supplied half of a
+        // MAC-less token, and this route is anonymous, unthrottled and cheaper to grind than the POST,
+        // so an ordinal compare that short-circuits on the first differing byte is the better oracle of
+        // the two. (This site post-dated the sweep that fixed the other two.)
         var user = await userStore.FindByEmailAsync(email, ct);
         var stampMatches = user is not null
             && !string.IsNullOrEmpty(user.SecurityStamp)
-            && string.Equals(user.SecurityStamp, stamp, StringComparison.Ordinal);
+            && CryptographicOperations.FixedTimeEquals(
+                Encoding.UTF8.GetBytes(user.SecurityStamp), Encoding.UTF8.GetBytes(stamp ?? ""));
 
         if (stampMatches && user!.EmailConfirmed && string.IsNullOrWhiteSpace(user.PendingPasswordHash))
             return ConfirmPage("Your email is already confirmed", "You can sign in now.", null);

@@ -85,6 +85,18 @@ public static class UserinfoEndpoint
             var scopeClaim = result.Claims.TryGetValue("scope", out var scObj) ? scObj?.ToString() ?? "" : "";
             var scopes = scopeClaim.Split(' ', StringSplitOptions.RemoveEmptyEntries);
 
+            // OIDC Core §5.3.1: userinfo is reached with an access token issued for an OpenID Connect
+            // request. The comment above the validation parameters has always asserted "with the openid
+            // scope" while nothing checked it, so a pure-OAuth token — a client_credentials token, or
+            // one minted for an API-only scope — read this endpoint and got `sub` back. The per-claim
+            // gates below meant the residue was subject disclosure rather than PII, but the endpoint
+            // contract is the thing being fixed: this is the Protocol host's F197 defect, in the host
+            // that finding did not name.
+            if (!scopes.Contains(StandardScopes.OpenId, StringComparer.Ordinal))
+                return Results.Json(
+                    new { error = "insufficient_scope", error_description = "The access token does not carry the openid scope." },
+                    statusCode: StatusCodes.Status403Forbidden);
+
             var claims = new Dictionary<string, object?> { ["sub"] = user.Id };
 
             if (scopes.Contains(StandardScopes.Email, StringComparer.Ordinal))

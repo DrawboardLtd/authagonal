@@ -350,6 +350,61 @@ public sealed class SamlSpKeySloEndpointTests(AzuriteFixture azurite) : IAsyncLi
         Assert.True(SamlRedirectBinding.Verify(new Uri(url).Query, [signingCert]));
     }
 
+    /// <summary>
+    /// F300 — the published metadata must state the condition the login path actually applies. That
+    /// path signs when there is an SP key AND (the connection forces it OR the IdP's metadata declares
+    /// WantAuthnRequestsSigned); the metadata document computed only the first disjunct, so this exact
+    /// connection — SignAuthnRequests unset, IdP asking for signatures — signed every AuthnRequest
+    /// while publishing <c>AuthnRequestsSigned="false"</c> to the administrator configuring against it.
+    /// <para>
+    /// Paired deliberately with F54 above, which proves the same connection really does sign.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task F300_MetadataDeclaresAuthnRequestsSigned_WhenTheIdpAsksForIt()
+    {
+        var connectionId = await CreateConnectionAsync(new
+        {
+            connectionName = "ADFS Signed Requests Metadata",
+            entityId = "https://sp.test/adfs-sig-metadata",
+            metadataXml = SamlTestHelper.BuildIdpMetadata(wantAuthnRequestsSigned: true)
+        });
+
+        var (_, metadataXml) = await GetSpMetadataAsync(connectionId);
+
+        XNamespace md = "urn:oasis:names:tc:SAML:2.0:metadata";
+        var descriptor = XDocument.Parse(metadataXml).Root!.Element(md + "SPSSODescriptor")!;
+
+        Assert.Equal("true", (string?)descriptor.Attribute("AuthnRequestsSigned"));
+    }
+
+    /// <summary>
+    /// The control: an IdP that does not ask for signed requests, on a connection that does not force
+    /// them, must still publish false — the login path would not sign either. Without this the test
+    /// above would pass against an attribute hardcoded to "true".
+    /// <para>
+    /// Every connection is issued an SP keypair at create time (F54), so "no SP certificate" is not a
+    /// reachable state through the admin API and cannot serve as the control here.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task F300_MetadataDeclaresAuthnRequestsUnsigned_WhenNeitherSideAsksForIt()
+    {
+        var connectionId = await CreateConnectionAsync(new
+        {
+            connectionName = "Unsigned Requests Metadata",
+            entityId = "https://sp.test/unsigned-requests",
+            metadataXml = SamlTestHelper.BuildIdpMetadata()
+        });
+
+        var (_, metadataXml) = await GetSpMetadataAsync(connectionId);
+
+        XNamespace md = "urn:oasis:names:tc:SAML:2.0:metadata";
+        var descriptor = XDocument.Parse(metadataXml).Root!.Element(md + "SPSSODescriptor")!;
+
+        Assert.Equal("false", (string?)descriptor.Attribute("AuthnRequestsSigned"));
+    }
+
     [Fact]
     public async Task F55_SpInitiatedSlo_SendsLogoutRequest_AndResponseLegLandsOnReturnUrl()
     {
@@ -506,6 +561,161 @@ public sealed class SamlSpKeySloEndpointTests(AzuriteFixture azurite) : IAsyncLi
             """;
         var slo = await _client.GetAsync($"/saml/{connectionId}/slo?SAMLRequest={DeflateEncode(logoutRequest)}");
         Assert.Equal(HttpStatusCode.BadRequest, slo.StatusCode);
+    }
+
+    /// <summary>
+    /// F290 — the forced-logout gadget. The NameID binding only compared when a NameID was present, so
+    /// a LogoutRequest carrying none skipped the comparison and signed the browser out. Unsigned is
+    /// accepted when the session belongs to the connection, the route is an anonymous GET, and every
+    /// request carries a fresh ID so the replay cache never fires — which makes
+    /// <c>&lt;img src="…/slo?SAMLRequest=…"&gt;</c> on any page a repeatable logout of every visitor.
+    /// <para>
+    /// The second half is the control: the same session is then logged out by a well-formed request,
+    /// proving the session survived the refusal rather than the test asserting against a browser that
+    /// had already been signed out for some other reason.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task F290_LogoutRequestWithoutNameId_IsRefused_AndTheSessionSurvives()
+    {
+        var connectionId = await EstablishSamlSessionAsync("gadget-slo", "gadget-user@example.com");
+
+        var noNameId = $"""
+            <samlp:LogoutRequest xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol"
+                ID="_g{Guid.NewGuid():N}" Version="2.0" IssueInstant="{DateTime.UtcNow:O}">
+              <saml:Issuer xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion">https://idp.test</saml:Issuer>
+            </samlp:LogoutRequest>
+            """;
+        var refused = await _client.GetAsync($"/saml/{connectionId}/slo?SAMLRequest={DeflateEncode(noNameId)}");
+        Assert.Equal(HttpStatusCode.BadRequest, refused.StatusCode);
+
+        // Control: the session is still there, so a request naming the right subject still ends it.
+        var honoured = await _client.GetAsync(
+            $"/saml/{connectionId}/slo?SAMLRequest={DeflateEncode(LogoutRequestXml("gadget-user@example.com"))}");
+        Assert.Equal(HttpStatusCode.Redirect, honoured.StatusCode);
+    }
+
+    /// <summary>
+    /// The session is deliberately re-established between the two attempts. Without that the second
+    /// request is refused by the unsigned-without-a-session gate instead — a refusal that would pass
+    /// this test while proving nothing about the replay cache.
+    /// </summary>
+    [Fact]
+    public async Task F290_LogoutRequestReplay_IsRefused()
+    {
+        var connectionId = await CreateSloConnectionAsync("replay-slo");
+        await LoginThroughAcsAsync(connectionId, "replay-slo", "replay-user@example.com");
+
+        var xml = LogoutRequestXml("replay-user@example.com");
+        Assert.Equal(HttpStatusCode.Redirect,
+            (await _client.GetAsync($"/saml/{connectionId}/slo?SAMLRequest={DeflateEncode(xml)}")).StatusCode);
+
+        // Log back in, so the session gate cannot be what refuses the replay.
+        await LoginThroughAcsAsync(connectionId, "replay-slo", "replay-user@example.com");
+
+        // Same ID a second time: within the freshness window this was replayable without limit.
+        var replayed = await _client.GetAsync($"/saml/{connectionId}/slo?SAMLRequest={DeflateEncode(xml)}");
+        Assert.Equal(HttpStatusCode.BadRequest, replayed.StatusCode);
+        Assert.Contains("saml_replay", await replayed.Content.ReadAsStringAsync());
+    }
+
+    [Fact]
+    public async Task F290_StaleLogoutRequest_IsRefused()
+    {
+        var connectionId = await EstablishSamlSessionAsync("stale-slo", "stale-user@example.com");
+
+        var stale = LogoutRequestXml("stale-user@example.com", issueInstant: DateTime.UtcNow.AddMinutes(-30));
+        var response = await _client.GetAsync($"/saml/{connectionId}/slo?SAMLRequest={DeflateEncode(stale)}");
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    /// <summary>
+    /// NotOnOrAfter is optional on a LogoutRequest, and was read by nothing — so a request its own
+    /// issuer had already expired was honoured on the strength of the looser IssueInstant window.
+    /// </summary>
+    [Fact]
+    public async Task F290_LogoutRequestPastItsNotOnOrAfter_IsRefused()
+    {
+        var connectionId = await EstablishSamlSessionAsync("expiry-slo", "expiry-user@example.com");
+
+        // Fresh IssueInstant — so only the NotOnOrAfter can refuse this one.
+        var expired = LogoutRequestXml("expiry-user@example.com", notOnOrAfter: DateTime.UtcNow.AddMinutes(-10));
+        var response = await _client.GetAsync($"/saml/{connectionId}/slo?SAMLRequest={DeflateEncode(expired)}");
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task F290_LogoutRequestFromAnotherIssuer_IsRefused()
+    {
+        var connectionId = await EstablishSamlSessionAsync("issuer-slo", "issuer-user@example.com");
+
+        var wrongIssuer = LogoutRequestXml("issuer-user@example.com", issuer: "https://attacker.test");
+        var response = await _client.GetAsync($"/saml/{connectionId}/slo?SAMLRequest={DeflateEncode(wrongIssuer)}");
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    /// <summary>
+    /// The subject binding itself: a LogoutRequest naming a different subject than the browser's own
+    /// session must not end it.
+    /// </summary>
+    [Fact]
+    public async Task F290_LogoutRequestNamingAnotherSubject_IsRefused()
+    {
+        var connectionId = await EstablishSamlSessionAsync("subject-slo", "mine@example.com");
+
+        var otherSubject = LogoutRequestXml("someone-else@example.com");
+        var response = await _client.GetAsync($"/saml/{connectionId}/slo?SAMLRequest={DeflateEncode(otherSubject)}");
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    private static string LogoutRequestXml(
+        string nameId,
+        string issuer = "https://idp.test",
+        DateTime? issueInstant = null,
+        DateTime? notOnOrAfter = null)
+    {
+        var notOnOrAfterAttr = notOnOrAfter is null ? "" : $""" NotOnOrAfter="{notOnOrAfter:O}" """;
+        return $"""
+            <samlp:LogoutRequest xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol"
+                ID="_lq{Guid.NewGuid():N}" Version="2.0" IssueInstant="{issueInstant ?? DateTime.UtcNow:O}"{notOnOrAfterAttr}>
+              <saml:Issuer xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion">{issuer}</saml:Issuer>
+              <saml:NameID xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion">{nameId}</saml:NameID>
+            </samlp:LogoutRequest>
+            """;
+    }
+
+    /// <summary>Creates a connection, completes a real login through the ACS, and returns its id.</summary>
+    private async Task<string> EstablishSamlSessionAsync(string slug, string email)
+    {
+        var connectionId = await CreateSloConnectionAsync(slug);
+        await LoginThroughAcsAsync(connectionId, slug, email);
+        return connectionId;
+    }
+
+    private Task<string> CreateSloConnectionAsync(string slug) => CreateConnectionAsync(new
+    {
+        connectionName = slug,
+        entityId = $"https://sp.test/{slug}",
+        metadataXml = SamlTestHelper.BuildIdpMetadata(sloUrl: "https://idp.test/slo"),
+        allowedDomains = new[] { "example.com" }
+    });
+
+    private async Task LoginThroughAcsAsync(string connectionId, string slug, string email)
+    {
+        var login = await _client.GetAsync($"/saml/{connectionId}/login");
+        var acsUrl = $"{AuthagonalTestFactory.TestIssuer}/saml/{connectionId}/acs";
+        var saml = SamlTestHelper.BuildSignedResponse(
+            acsUrl, $"https://sp.test/{slug}", email,
+            inResponseTo: ExtractRequestId(login.Headers.Location!.ToString()),
+            email: email);
+
+        var acs = await _client.PostAsync($"/saml/{connectionId}/acs",
+            new FormUrlEncodedContent(new Dictionary<string, string> { ["SAMLResponse"] = saml }));
+        Assert.Equal(HttpStatusCode.Redirect, acs.StatusCode);
     }
 
     private static string DeflateEncode(string xml)

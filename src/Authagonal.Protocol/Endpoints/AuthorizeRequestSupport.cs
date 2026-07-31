@@ -100,6 +100,21 @@ internal sealed class AuthorizeRequest
         "authorization_details",
     ];
 
+    /// <summary>
+    /// The repeated-parameter scan over the QUERY STRING specifically, for the leg <see cref="Read"/>
+    /// structurally cannot cover.
+    /// </summary>
+    /// <remarks>
+    /// When a <c>request_uri</c> is present the parameter source becomes the PAR payload, so
+    /// <see cref="Read"/> scans that payload and the query string is never examined — yet the query is
+    /// exactly what a proxy, WAF or log pipeline in front of this server parses. Those normalise
+    /// duplicates last-wins about as often as .NET's first-wins, so an unscanned query is the
+    /// divergence this rule exists to remove: the intermediary records one <c>request_uri</c> and the
+    /// AS acts on another. Scanning the query on both legs makes the guarantee unconditional.
+    /// </remarks>
+    public static string? FindDuplicatedQueryParameter(IReadableRequestParameters query)
+        => SingleValuedParameters.FirstOrDefault(p => query.GetAll(p).Count() > 1);
+
     public static AuthorizeRequest Read(IReadableRequestParameters source)
     {
         var rawMaxAge = source.Get("max_age");

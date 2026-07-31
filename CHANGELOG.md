@@ -54,6 +54,67 @@
   set the opt-in explicitly. `dotnet run --project src/Authagonal.Server` now defaults to the `https` launch
   profile; the `http` profile carries the opt-in.
 
+### Security — audit remainder
+
+An independent audit of the info-severity fixes found ten of twenty-eight only partially closed. Two
+(`azp` multi-audience, the login timing oracle) were closed immediately; these are the rest, plus one
+adjacent defect the audit found while checking a finding it had already passed.
+
+- **SAML Single Logout was a forced-logout gadget.** The NameID binding only compared when a NameID was
+  present, so a `LogoutRequest` carrying none skipped the comparison entirely and signed the browser out.
+  Unsigned requests are accepted when the session belongs to the connection, `/saml/{id}/slo` is an
+  anonymous GET, and every request carries a fresh ID so the replay cache never fires — which made
+  `<img src="…/slo?SAMLRequest=…">` on any page a repeatable logout of every visitor on that connection.
+  An absent or encrypted identifier is now a refusal (Core §3.7.1 makes it mandatory), the subject
+  comparison is unconditional, and a session the connection did not establish — including any local
+  password session, which has no `saml_name_id` — is no longer that IdP's to end. `NotOnOrAfter` is now
+  honoured when the IdP states one, and SP-initiated logout state no longer shares a key namespace with
+  pending AuthnRequest IDs.
+
+- **Published SAML metadata contradicted the login path.** `AuthnRequestsSigned` was computed from
+  `SignAuthnRequests` alone, while the login path signs when there is an SP key AND (the connection forces
+  it OR the IdP's own metadata declares `WantAuthnRequestsSigned`). A connection with `SignAuthnRequests`
+  unset, talking to an IdP that wants signed requests, signed every AuthnRequest while publishing
+  `AuthnRequestsSigned="false"` — to the administrator configuring against that document. Both logout legs
+  also silently sent unsigned when the SP private key would not load; they now refuse, as the login path
+  already did.
+
+- **`bff-lib` pinned no signature algorithms.** The .NET BFF pinned its inbound `id_token` and logout-token
+  algorithms; the TypeScript package did not, on either call. jose refuses to resolve a key for `HS*` or
+  `none`, so this was a guarantee borrowed from a dependency rather than held by this code — the same
+  reasoning the .NET pin was added under. Both now pin the identical asymmetric set. The .NET logout
+  consumer also now sets `RequireSignedTokens` and `ValidateIssuerSigningKey` explicitly, which the
+  callback set and it inherited weaker defaults for.
+
+- **The provisioning-app quota re-count was eventually consistent on DynamoDB.** The cap is enforced by
+  counting after the write; `DynamoProvisioningAppStore.GetAllAsync` omitted `consistentRead`, so two
+  concurrent creates could each write and each count against a replica that had seen neither, keeping both
+  rows and exceeding a paid boundary exactly as before the fix. Now strongly consistent, matching every
+  other correctness-critical read in that provider. The compensating delete is audit-logged.
+
+- **`RestoreMode.Clean` scoped the wipe but not the import.** `CleanEnvPrefix` bounded which rows were
+  deleted and then applied the data file wholesale — and `BackupOptions` has no env filter, so a backup
+  from a shared sandbox table set contains every env's rows and restoring one env wrote all its siblings
+  back in. The apply is now scoped to the same prefix and reports what it skipped. Clean with no prefix
+  refuses rather than printing a warning to `Console.Error` that no host process surfaces;
+  `AllowCleanAllEnvs` is the explicit opt-out for a genuinely single-env table set.
+
+- **The repeated-parameter check never saw the query string on the PAR leg.** Once a `request_uri` is
+  present the parameter source becomes the pushed payload, so `?request_uri=A&request_uri=B` resolved
+  first-wins, unrefused and unlogged — while the proxy, WAF or log pipeline in front of the server parsed
+  the same query its own way. The query is now scanned on both legs, in both hosts.
+
+- **The security stamp was compared with an ordinal compare on a third path.**
+  `GET /api/auth/confirm-email` is anonymous and unthrottled, and the stamp is the whole of the
+  authorisation on a token that carries no MAC. Two sites were fixed when this was first reported; this one
+  post-dated that sweep. A convention test now covers the class rather than the instance, since no
+  behavioural test can distinguish a constant-time compare from a short-circuiting one.
+
+- **The Server host's userinfo never required the `openid` scope** — the defect its Protocol-host twin was
+  fixed for. The comment above the validation parameters asserted the requirement; nothing enforced it, so
+  a pure-OAuth access token read the endpoint and got `sub` back. Per-claim scope gates kept the residue to
+  subject disclosure rather than PII.
+
 ### Security
 
 - **Any authenticated user could reach the full admin API by changing the case of a scope name.** Three

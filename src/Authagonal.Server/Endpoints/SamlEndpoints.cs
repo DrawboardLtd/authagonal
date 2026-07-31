@@ -583,8 +583,12 @@ public static class SamlEndpoints
     private static async Task<IResult> MetadataAsync(
         string connectionId,
         ISamlProviderStore samlStore,
+        SamlMetadataParser metadataParser,
+        IMemoryCache memoryCache,
+        IOptions<CacheOptions> cacheOptions,
         Authagonal.Core.Services.ITenantContext tenantContext,
         Authagonal.Core.Services.ISecretProvider secretProvider,
+        ILogger<Program> logger,
         CancellationToken ct)
     {
         var config = await samlStore.GetAsync(connectionId, ct);
@@ -628,7 +632,36 @@ public static class SamlEndpoints
             """;
         }
 
-        var authnRequestsSigned = config.SignAuthnRequests == true && !string.IsNullOrEmpty(config.SpCertificate)
+        // This must publish the condition the LOGIN PATH uses, not a simpler one that happens to be
+        // easy to compute here. That path signs when there is an SP key AND (the connection forces it
+        // OR the IdP's own metadata declares WantAuthnRequestsSigned) — so a connection with
+        // SignAuthnRequests unset, talking to an IdP that wants signed requests, signed every
+        // AuthnRequest while advertising AuthnRequestsSigned="false". Metadata that contradicts
+        // observable behaviour is worse than no metadata: it is what the IdP administrator configures
+        // against.
+        var wantAuthnRequestsSigned = false;
+        if (!string.IsNullOrEmpty(config.SpCertificate) && config.SignAuthnRequests != true)
+        {
+            // Only the undecided case needs the IdP's opinion, so a connection that forces signing
+            // publishes correct metadata even while the IdP is unreachable.
+            try
+            {
+                var idpMetadata = await GetCachedMetadataAsync(config, metadataParser, memoryCache, cacheOptions.Value, ct);
+                wantAuthnRequestsSigned = idpMetadata.WantAuthnRequestsSigned;
+            }
+            catch (Exception ex)
+            {
+                // Publishing metadata must not depend on the IdP being up. Falling back to "false"
+                // matches what the login path would do in the same conditions — it loads the same
+                // metadata and fails the login outright — so the two do not diverge silently.
+                logger.LogWarning(ex,
+                    "SAML metadata for {ConnectionId}: could not load IdP metadata to determine AuthnRequestsSigned",
+                    connectionId);
+            }
+        }
+
+        var authnRequestsSigned = !string.IsNullOrEmpty(config.SpCertificate)
+            && (config.SignAuthnRequests == true || wantAuthnRequestsSigned)
             ? "true" : "false";
 
         // Metadata §2.4.4.1 defines WantAssertionsSigned as a REQUIREMENT that received
@@ -728,7 +761,11 @@ public static class SamlEndpoints
             return Results.Redirect(target);
 
         var requestId = "_" + Guid.NewGuid().ToString("N");
-        await replayCache.StoreRequestAsync(requestId, connectionId, target, ct);
+        // Namespaced away from pending AuthnRequest IDs, which share this store under the same sort
+        // key. Without the prefix a LogoutResponse could consume a pending login's row (and an ACS
+        // Response a pending logout's), letting one leg cancel the other's state. The signature and
+        // Issuer gates close the exploit; the namespace closes the collision itself.
+        await replayCache.StoreRequestAsync(LogoutStateKey(requestId), connectionId, target, ct);
 
         var url = SamlRequestBuilder.BuildLogoutRequestUrl(
             requestId, config.EntityId, metadata.SingleLogoutServiceUrl, nameId, nameIdFormat, sessionIndex);
@@ -737,8 +774,19 @@ public static class SamlEndpoints
         {
             using var spCert = SamlSpKey.Load(await secretProvider.ResolveAsync(config.SpCertificate, ct));
             using var rsa = spCert.GetRSAPrivateKey();
-            if (rsa is not null)
-                url = SamlRedirectBinding.Sign(url, rsa);
+            // Same reasoning as the login path: silently sending unsigned is the one outcome nobody
+            // can see. A connection that publishes an SP signing certificate has told its IdP to
+            // expect signatures, so a missing private key is a broken deployment, not a fallback.
+            if (rsa is null)
+            {
+                logger.LogError(
+                    "SAML connection {ConnectionId} has an SP certificate with no usable private key; refusing to send an unsigned LogoutRequest",
+                    connectionId);
+                return Results.Problem(
+                    "This SAML connection's SP certificate has no usable private key, so the LogoutRequest cannot be signed.",
+                    statusCode: 500);
+            }
+            url = SamlRedirectBinding.Sign(url, rsa);
         }
 
         logger.LogInformation("SAML SP-initiated logout for connection {ConnectionId}, RequestId={RequestId}", connectionId, requestId);
@@ -832,7 +880,9 @@ public static class SamlEndpoints
             }
 
             var inResponseTo = logoutResponse.Attributes?["InResponseTo"]?.Value;
-            var state = inResponseTo is null ? null : await replayCache.ValidateAndConsumeRequestAsync(inResponseTo, ct);
+            var state = inResponseTo is null
+                ? null
+                : await replayCache.ValidateAndConsumeRequestAsync(LogoutStateKey(inResponseTo), ct);
             return Results.Redirect(SanitizeReturnUrl(state?.ReturnUrl));
         }
 
@@ -892,6 +942,41 @@ public static class SamlEndpoints
             return Results.BadRequest(new { error = "saml_invalid", error_description = "LogoutRequest is outside the accepted freshness window." });
         }
 
+        // NotOnOrAfter is optional on a LogoutRequest (Core §3.7.1), but when the IdP states one it is
+        // the tighter bound and ignoring it means honouring a request its own issuer has expired.
+        var notOnOrAfterAttr = logoutRequest.Attributes?["NotOnOrAfter"]?.Value;
+        if (notOnOrAfterAttr is not null)
+        {
+            if (!SamlResponseParser.TryParseSamlInstant(notOnOrAfterAttr, out var notOnOrAfter))
+                return Results.BadRequest(new { error = "saml_invalid", error_description = "LogoutRequest has an unparseable NotOnOrAfter." });
+
+            if (DateTimeOffset.UtcNow >= notOnOrAfter + LogoutRequestClockSkew)
+            {
+                logger.LogWarning("SAML SLO: LogoutRequest for {ConnectionId} is past its NotOnOrAfter", connectionId);
+                return Results.BadRequest(new { error = "saml_invalid", error_description = "LogoutRequest is past its NotOnOrAfter." });
+            }
+        }
+
+        // Core §3.7.1 makes an identifier mandatory on a LogoutRequest, and the identifier is the only
+        // thing that says WHOSE session is to end. Reading it here rather than inside the session block
+        // below is the point: treating "no NameID" as "nothing to compare" made the binding fail open,
+        // and on an anonymous GET route that is a forced-logout gadget — an <img src> pointing at this
+        // URL with an unsigned request carrying a fresh ID and no NameID logged out every visitor on
+        // the connection, repeatedly, because each hit missed the replay cache on a new ID.
+        //
+        // An EncryptedID is refused rather than ignored for the same reason: it is an identifier this
+        // code cannot resolve, so it cannot be the one this session was established with.
+        var requestedNameId = logoutRequest
+            .GetElementsByTagName("NameID", SamlConstants.Saml2Assertion)
+            .Cast<System.Xml.XmlNode>()
+            .FirstOrDefault()?.InnerText?.Trim();
+
+        if (string.IsNullOrEmpty(requestedNameId))
+        {
+            logger.LogWarning("SAML SLO: LogoutRequest for {ConnectionId} carries no usable NameID — ignored", connectionId);
+            return Results.BadRequest(new { error = "saml_invalid", error_description = "LogoutRequest carries no NameID." });
+        }
+
         // Single-use, in the same per-connection namespace assertions use. Within the freshness
         // window a captured request was otherwise replayable without limit.
         if (!await replayCache.CheckAndStoreAssertionIdAsync(
@@ -908,14 +993,23 @@ public static class SamlEndpoints
         var sloAuth = await httpContext.AuthenticateAsync(CookieAuthenticationDefaults.AuthenticationScheme);
         if (sloAuth.Succeeded)
         {
+            // A session that this connection did not establish is not this IdP's to end. Both halves
+            // failed open before: a session with no saml_name_id is a local password session, and
+            // honouring an IdP's LogoutRequest against one let a federated connection terminate
+            // sessions it never issued.
+            var sessionConnectionId = sloAuth.Principal?.FindFirst("saml_connection")?.Value;
             var sessionNameId = sloAuth.Principal?.FindFirst("saml_name_id")?.Value;
-            var requestedNameId = logoutRequest
-                .GetElementsByTagName("NameID", SamlConstants.Saml2Assertion)
-                .Cast<System.Xml.XmlNode>()
-                .FirstOrDefault()?.InnerText?.Trim();
 
-            if (!string.IsNullOrEmpty(sessionNameId) && !string.IsNullOrEmpty(requestedNameId)
-                && !string.Equals(sessionNameId, requestedNameId, StringComparison.Ordinal))
+            if (string.IsNullOrEmpty(sessionNameId)
+                || !string.Equals(sessionConnectionId, connectionId, StringComparison.OrdinalIgnoreCase))
+            {
+                logger.LogWarning(
+                    "SAML SLO: LogoutRequest for {ConnectionId} against a session this connection did not establish — ignored",
+                    connectionId);
+                return Results.BadRequest(new { error = "saml_invalid", error_description = "LogoutRequest does not match this session." });
+            }
+
+            if (!string.Equals(sessionNameId, requestedNameId, StringComparison.Ordinal))
             {
                 logger.LogWarning(
                     "SAML SLO: LogoutRequest names a different subject than this browser's session for {ConnectionId} — ignored",
@@ -953,8 +1047,20 @@ public static class SamlEndpoints
         {
             using var spCert = SamlSpKey.Load(await secretProvider.ResolveAsync(config.SpCertificate, ct));
             using var rsa = spCert.GetRSAPrivateKey();
-            if (rsa is not null)
-                responseUrl = SamlRedirectBinding.Sign(responseUrl, rsa);
+            // The session has already ended by this point, so this leg reports the outcome rather than
+            // guarding it — but an unsigned LogoutResponse a strict IdP discards leaves the IdP
+            // believing the SP never completed, which is exactly the state that is impossible to
+            // diagnose from either side. Say so instead.
+            if (rsa is null)
+            {
+                logger.LogError(
+                    "SAML connection {ConnectionId} has an SP certificate with no usable private key; refusing to send an unsigned LogoutResponse",
+                    connectionId);
+                return Results.Problem(
+                    "This SAML connection's SP certificate has no usable private key, so the LogoutResponse cannot be signed.",
+                    statusCode: 500);
+            }
+            responseUrl = SamlRedirectBinding.Sign(responseUrl, rsa);
         }
         return Results.Redirect(responseUrl);
     }
@@ -981,11 +1087,19 @@ public static class SamlEndpoints
         return string.Equals(issuer, expectedEntityId, StringComparison.Ordinal);
     }
 
-    /// <summary>How old a LogoutRequest may be. It carries no expiry of its own.</summary>
+    /// <summary>
+    /// How old a LogoutRequest may be when its issuer states no <c>NotOnOrAfter</c> of its own.
+    /// </summary>
     private static readonly TimeSpan LogoutRequestMaxAge = TimeSpan.FromMinutes(5);
 
     /// <summary>Tolerance for an IdP clock running ahead of ours.</summary>
     private static readonly TimeSpan LogoutRequestClockSkew = TimeSpan.FromMinutes(2);
+
+    /// <summary>
+    /// Namespaces an SP-initiated LogoutRequest's pending state away from pending AuthnRequest IDs,
+    /// which live in the same store under the same sort key.
+    /// </summary>
+    private static string LogoutStateKey(string requestId) => "logout|" + requestId;
 
     /// <summary>Decode an SLO message: base64+deflate for the redirect binding, plain base64 for POST.</summary>
     private static System.Xml.XmlDocument? DecodeSloMessage(string value, bool isPost, ILogger logger)

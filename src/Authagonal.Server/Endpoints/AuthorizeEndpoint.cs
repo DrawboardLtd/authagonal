@@ -80,6 +80,13 @@ public static class AuthorizeEndpoint
                 return AuthorizeRequestSupport.BuildErrorRedirect(null, "request_uri_not_supported",
                     "request_uri is supported only for pushed authorization requests", initialState, tenantContext.Issuer);
 
+            // Scanned here, not only inside AuthorizeRequest.Read: on the PAR leg Read's source is the
+            // pushed payload, so without this the query string is never examined for duplicates at all.
+            if (AuthorizeRequest.FindDuplicatedQueryParameter(
+                    new QueryRequestParameters(httpContext.Request.Query)) is { } duplicated)
+                return AuthorizeRequestSupport.BuildErrorRedirect(null, "invalid_request",
+                    $"Parameter '{duplicated}' appears more than once", initialState, tenantContext.Issuer);
+
             IReadableRequestParameters source;
             DateTimeOffset? parCreatedAt = null;
             if (!string.IsNullOrWhiteSpace(requestUri))

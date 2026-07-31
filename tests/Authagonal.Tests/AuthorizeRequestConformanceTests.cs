@@ -71,6 +71,26 @@ public sealed class AuthorizeRequestConformanceTests : IAsyncLifetime
     /// has a validated one and answers a direct JSON body when it does not — and "does not" is itself
     /// the correct behaviour for several of these, so the assertion has to read both shapes.
     /// </summary>
+    /// <summary>
+    /// The error_description, read from wherever the error landed — the same two shapes
+    /// <see cref="ErrorOf"/> handles, since a refusal with no validated redirect_uri is delivered as
+    /// JSON rather than a redirect.
+    /// </summary>
+    private static async Task<string> DescriptionOf(HttpResponseMessage response)
+    {
+        if (response.Headers.Location is { } location)
+        {
+            var raw = location.ToString();
+            var query = raw.Contains('?') ? raw[raw.IndexOf('?')..] : "";
+            return HttpUtility.ParseQueryString(query)["error_description"] ?? "";
+        }
+
+        var body = await response.Content.ReadAsStringAsync();
+        return JsonDocument.Parse(body).RootElement.TryGetProperty("error_description", out var d)
+            ? d.GetString() ?? ""
+            : "";
+    }
+
     private static async Task<string> ErrorOf(HttpResponseMessage response)
     {
         if (response.Headers.Location is { } location)
@@ -118,6 +138,31 @@ public sealed class AuthorizeRequestConformanceTests : IAsyncLifetime
             Authorize() + $"&redirect_uri={Uri.EscapeDataString("https://app.test/callback")}");
 
         Assert.DoesNotContain("app.test", response.Headers.Location?.ToString() ?? "");
+    }
+
+    /// <summary>
+    /// The leg the scan structurally could not reach. Once a request_uri is present the parameter
+    /// source becomes the PAR payload, so AuthorizeRequest.Read scanned that payload and the query
+    /// string — the thing a proxy, WAF or log pipeline in front of this server actually parses — was
+    /// never examined at all. A repeated request_uri resolved first-wins and was neither refused nor
+    /// logged.
+    /// <para>
+    /// Both values are deliberately well-formed PAR URNs that were never issued: without the scan the
+    /// first is looked up and the request fails as "unknown, expired, or already consumed", so
+    /// asserting the error code alone would not distinguish the fix. The description is asserted too.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task RepeatedRequestUri_IsRefusedBeforeTheParLookup()
+    {
+        const string prefix = "urn:ietf:params:oauth:request_uri:";
+        var response = await _client.GetAsync(
+            Authorize() + $"&request_uri={Uri.EscapeDataString(prefix + "aaa")}" +
+                          $"&request_uri={Uri.EscapeDataString(prefix + "bbb")}");
+
+        Assert.Equal("invalid_request", await ErrorOf(response));
+        Assert.Contains("request_uri", await DescriptionOf(response));
+        Assert.DoesNotContain("unknown, expired", await DescriptionOf(response));
     }
 
     /// <summary>resource is legitimately repeatable per RFC 8707 §2 and must stay exempt.</summary>

@@ -454,6 +454,12 @@ internal static class BffEndpoints
             ValidateLifetime = false,      // a logout token carries no exp
             RequireExpirationTime = false,
             ValidAlgorithms = AsymmetricSigningAlgorithms,
+            // Both default to something weaker than the callback path sets: IdentityModel 8.17.0
+            // defaults ValidateIssuerSigningKey to false, so the callback checked signing-key validity
+            // periods and this consumer did not. Set explicitly rather than inherited, so the two
+            // consumers of the same JWKS agree.
+            RequireSignedTokens = true,
+            ValidateIssuerSigningKey = true,
         });
         if (!validation.IsValid)
         {

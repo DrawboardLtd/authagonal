@@ -29,10 +29,19 @@ public sealed class DynamoProvisioningAppStore(
         return item is null ? null : await ReadAsync(item, ct).ConfigureAwait(false);
     }
 
+    /// <remarks>
+    /// Strongly consistent, because the provisioning-app quota is enforced by counting through here
+    /// immediately after a write (<c>ProvisioningEndpoints.CreateApp</c>). Under the default eventually
+    /// consistent read, two concurrent creates can each write and each re-count against a replica that
+    /// has seen neither, so both keep their rows and a paid cap is exceeded — the exact race the
+    /// re-count exists to close. The other correctness-critical reads in this provider
+    /// (<c>DynamoSigningKeyStore</c>, <c>DynamoGrantStore</c>, <c>DynamoMfaStore</c>) opt in for the
+    /// same reason.
+    /// </remarks>
     public async Task<IReadOnlyList<ProvisioningAppConfig>> GetAllAsync(CancellationToken ct = default)
     {
         var apps = new List<ProvisioningAppConfig>();
-        await foreach (var item in table.QueryAsync(partitioner.PK(Partition), ct: ct).ConfigureAwait(false))
+        await foreach (var item in table.QueryAsync(partitioner.PK(Partition), consistentRead: true, ct: ct).ConfigureAwait(false))
             apps.Add(await ReadAsync(item, ct).ConfigureAwait(false));
         return apps;
     }

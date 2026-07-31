@@ -86,6 +86,14 @@ public sealed class RestoreOptions
     public bool AllowCleanFromIncremental { get; set; }
 
     /// <summary>
+    /// Permit <see cref="RestoreMode.Clean"/> with no <see cref="CleanEnvPrefix"/>, emptying the whole
+    /// physical table rather than one env's rows. Refused by default: nothing here can tell a
+    /// single-env table set from a shared sandbox one, and the failure is unrecoverable in the
+    /// direction that matters. Set this when the target tables genuinely hold a single env.
+    /// </summary>
+    public bool AllowCleanAllEnvs { get; set; }
+
+    /// <summary>
     /// Verify each data file's SHA-256 against the manifest's recorded hash before applying any of
     /// its entities. On (default) true a hash mismatch, or a data file absent from the manifest,
     /// aborts the restore — preventing a tampered backup from injecting entities (e.g. an admin

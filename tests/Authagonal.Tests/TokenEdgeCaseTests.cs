@@ -191,6 +191,31 @@ public sealed class TokenEdgeCaseTests : IAsyncLifetime
         Assert.Equal("test@example.com", json.GetProperty("email").GetString());
     }
 
+    /// <summary>
+    /// OIDC Core §5.3.1: userinfo answers an access token issued for an OpenID Connect request. The
+    /// comment above this endpoint's validation parameters has always said "with the openid scope"
+    /// while nothing checked it, so a pure-OAuth token read the endpoint and got <c>sub</c> back. The
+    /// per-claim scope gates meant the residue was subject disclosure rather than PII, which is why it
+    /// survived the sweep that closed the same defect in the Protocol host (F197).
+    /// </summary>
+    [Fact]
+    public async Task Userinfo_WithATokenLackingOpenidScope_IsRefused()
+    {
+        var tokens = await GetTokensViaPkce("profile+email");
+        var accessToken = tokens.GetProperty("access_token").GetString()!;
+
+        var request = new HttpRequestMessage(HttpMethod.Get, "/connect/userinfo");
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
+
+        var response = await _client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("insufficient_scope", json.GetProperty("error").GetString());
+        // And nothing about the subject leaked alongside the refusal.
+        Assert.False(json.TryGetProperty("sub", out _));
+    }
+
     [Fact]
     public async Task Userinfo_WithoutToken_Returns401()
     {
@@ -257,7 +282,7 @@ public sealed class TokenEdgeCaseTests : IAsyncLifetime
     // Helpers
     // -----------------------------------------------------------------------
 
-    private async Task<JsonElement> GetTokensViaPkce()
+    private async Task<JsonElement> GetTokensViaPkce(string scope = "openid+profile+email+offline_access")
     {
         await _factory.SeedTestUserAsync();
         await _client.PostAsJsonAsync("/api/auth/login", new { email = "test@example.com", password = "Test1234!" });
@@ -265,7 +290,7 @@ public sealed class TokenEdgeCaseTests : IAsyncLifetime
         var (verifier, challenge) = GeneratePkce();
         var authorizeUrl = $"/connect/authorize?client_id={AuthagonalTestFactory.TestClientId}" +
             $"&redirect_uri={Uri.EscapeDataString("https://app.test/callback")}" +
-            $"&response_type=code&scope=openid+profile+email+offline_access" +
+            $"&response_type=code&scope={scope}" +
             $"&state=test&code_challenge={challenge}&code_challenge_method=S256";
 
         var authResponse = await _client.GetAsync(authorizeUrl);

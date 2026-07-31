@@ -94,6 +94,11 @@ public static class ProvisioningEndpoints
             if (after.Count > max.Value)
             {
                 await store.DeleteAsync(appId, ct);
+                // The row existed, briefly, and its credentials were minted. A create that leaves no
+                // trace because it was rolled back is the one an operator cannot reconcile against a
+                // provisioning callback that already fired.
+                await audit.LogAsync(
+                    Actor(http), "provisioning_app.create_rejected", "provisioning_app", appId, app.Name, ct);
                 return TypedResults.Json(
                     new ErrorInfoResponse
                     {

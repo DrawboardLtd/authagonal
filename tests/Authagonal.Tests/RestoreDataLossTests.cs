@@ -146,4 +146,91 @@ public class RestoreDataLossTests(AzuriteFixture azurite)
         }
         finally { if (Directory.Exists(dir)) Directory.Delete(dir, true); }
     }
+
+    /// <summary>
+    /// The other half of F272: CleanEnvPrefix scoped the WIPE and then applied the data file wholesale.
+    /// BackupOptions has no env filter, so a backup taken from a shared table set contains every env's
+    /// rows, and restoring it into one env wrote all the siblings back in — an unscoped import wearing a
+    /// scoped restore's clothes.
+    /// <para>
+    /// The sibling row is deliberately mutated AFTER the backup and asserted to still hold the new
+    /// value. The test above cannot distinguish scoping from no scoping precisely because it asserts a
+    /// value the backup would have rewritten anyway; this one fails unless the foreign row is skipped.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task Clean_scoped_to_an_env_does_not_import_another_envs_rows()
+    {
+        var prefix = $"ev{Guid.NewGuid():N}";
+        var users = Table($"{prefix}Users");
+
+        await users.AddEntityAsync(new TableEntity("sandbox-1|u1", "profile") { ["Email"] = "one@example.com" });
+        await users.AddEntityAsync(new TableEntity("sandbox-2|u1", "profile") { ["Email"] = "backed-up@example.com" });
+
+        var dir = Path.Combine(Path.GetTempPath(), $"ev{Guid.NewGuid():N}");
+        try
+        {
+            var full = await new BackupService(_svc, new FileSystemBackupTarget(dir),
+                new BackupOptions { TablePrefix = prefix, Gzip = false }).RunAsync();
+
+            // sandbox-2 moves on after the backup was taken. A restore of sandbox-1 must not touch it.
+            await users.UpdateEntityAsync(
+                new TableEntity("sandbox-2|u1", "profile") { ["Email"] = "moved-on@example.com" },
+                Azure.ETag.All, TableUpdateMode.Replace);
+
+            var result = await new RestoreService(_svc, new FileSystemBackupSource(dir), new RestoreOptions
+            {
+                TablePrefix = prefix,
+                Mode = RestoreMode.Clean,
+                CleanEnvPrefix = "sandbox-1|",
+            }).RunAsync(full.BackupId);
+
+            var sibling = await users.GetEntityAsync<TableEntity>("sandbox-2|u1", "profile");
+            Assert.Equal("moved-on@example.com", sibling.Value["Email"]);
+
+            // And the skip is reported rather than silent.
+            Assert.True(result.Tables.Values.Sum(t => t.SkippedOtherEnv) > 0);
+        }
+        finally { if (Directory.Exists(dir)) Directory.Delete(dir, true); }
+    }
+
+    /// <summary>
+    /// Clean with no env prefix empties the whole physical table, including every other env sharing
+    /// it. That used to be a Console.Error warning — a library writing to stderr inside a host process
+    /// is not a signal anyone sees, least of all from a pipeline that discards it.
+    /// </summary>
+    [Fact]
+    public async Task Clean_without_an_env_prefix_is_refused_unless_explicitly_allowed()
+    {
+        var prefix = $"ev{Guid.NewGuid():N}";
+        var users = Table($"{prefix}Users");
+        await users.AddEntityAsync(new TableEntity("sandbox-1|u1", "profile") { ["Email"] = "one@example.com" });
+
+        var dir = Path.Combine(Path.GetTempPath(), $"ev{Guid.NewGuid():N}");
+        try
+        {
+            var full = await new BackupService(_svc, new FileSystemBackupTarget(dir),
+                new BackupOptions { TablePrefix = prefix, Gzip = false }).RunAsync();
+
+            var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                new RestoreService(_svc, new FileSystemBackupSource(dir), new RestoreOptions
+                {
+                    TablePrefix = prefix,
+                    Mode = RestoreMode.Clean,
+                }).RunAsync(full.BackupId));
+
+            Assert.Contains("CleanEnvPrefix", ex.Message);
+
+            // The opt-out is honoured, so a genuine single-env deployment is not blocked.
+            var allowed = await new RestoreService(_svc, new FileSystemBackupSource(dir), new RestoreOptions
+            {
+                TablePrefix = prefix,
+                Mode = RestoreMode.Clean,
+                AllowCleanAllEnvs = true,
+            }).RunAsync(full.BackupId);
+
+            Assert.True(allowed.Tables.Values.Sum(t => t.Restored) > 0);
+        }
+        finally { if (Directory.Exists(dir)) Directory.Delete(dir, true); }
+    }
 }

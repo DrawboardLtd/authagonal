@@ -93,10 +93,19 @@ public sealed class RestoreService(TableServiceClient serviceClient, IBackupSour
                     $"parent full ('{manifest?.ParentBackupId}') with --mode clean, then this incremental with " +
                     "--mode upsert. Pass AllowCleanFromIncremental to override.");
 
-            if (options.CleanEnvPrefix is null && !options.DryRun)
-                Console.Error.WriteLine(
-                    "WARNING: --mode clean will empty the ENTIRE target table(s). If these tables hold more than " +
-                    "one env, set CleanEnvPrefix to scope the wipe to a single env.");
+            // Refuse rather than warn. This used to write to Console.Error — the anti-pattern this same
+            // file rejects three screens up, because a library writing to stderr inside a host process
+            // is not a signal anyone sees, and the operator who most needs it is the one running this
+            // from a pipeline that discards it. The adjacent incremental guard above shows the shape.
+            //
+            // There is no way to detect a shared table set from here, so the choice is between
+            // destroying every env's rows on a maybe and requiring one explicit flag. AllowCleanAllEnvs
+            // is that flag: a deployment with one env per table set says so once.
+            if (options.CleanEnvPrefix is null && !options.DryRun && !options.AllowCleanAllEnvs)
+                throw new InvalidOperationException(
+                    "Refusing a Clean restore with no CleanEnvPrefix: this empties the ENTIRE target table(s), " +
+                    "including every other env sharing them. Set CleanEnvPrefix to scope the wipe to one env, " +
+                    "or pass AllowCleanAllEnvs if these tables genuinely hold a single env.");
         }
 
         foreach (var fileName in files)
@@ -140,6 +149,7 @@ public sealed class RestoreService(TableServiceClient serviceClient, IBackupSour
 
             long restored = 0;
             long errors = 0;
+            long skipped = 0;
 
             await using (stream)
             {
@@ -160,6 +170,19 @@ public sealed class RestoreService(TableServiceClient serviceClient, IBackupSour
                         var entity = DeserializeEntity(line);
                         if (entity is null) continue;
 
+                        // Scope the APPLY, not just the wipe. CleanEnvPrefix bounded which rows were
+                        // deleted and then imported the file wholesale, so restoring a backup taken
+                        // from a shared sandbox table set — BackupOptions has no env filter, so it
+                        // contains every env's rows — wrote every sibling env's rows back into the
+                        // target. The wipe was scoped and the restore was not, which is the half of
+                        // the finding the scoped delete looked like it had closed.
+                        if (options.CleanEnvPrefix is not null
+                            && !entity.PartitionKey.StartsWith(options.CleanEnvPrefix, StringComparison.Ordinal))
+                        {
+                            skipped++;
+                            continue;
+                        }
+
                         if (!options.DryRun)
                         {
                             var mode = options.Mode == RestoreMode.Merge
@@ -177,7 +200,7 @@ public sealed class RestoreService(TableServiceClient serviceClient, IBackupSour
                 }
             }
 
-            result.Tables[tableName] = new RestoreTableResult { Restored = restored, Errors = errors };
+            result.Tables[tableName] = new RestoreTableResult { Restored = restored, Errors = errors, SkippedOtherEnv = skipped };
         }
 
         // F24b: honor the backup's deletes. Restoring full + incrementals without applying tombstones
@@ -435,4 +458,11 @@ public sealed class RestoreTableResult
 {
     public long Restored { get; set; }
     public long Errors { get; set; }
+
+    /// <summary>
+    /// Rows in the backup that belong to another env and were not applied, because
+    /// <c>RestoreOptions.CleanEnvPrefix</c> scopes the restore as well as the wipe. Non-zero is normal
+    /// when restoring one env out of a shared table set; it is the count that says so out loud.
+    /// </summary>
+    public long SkippedOtherEnv { get; set; }
 }

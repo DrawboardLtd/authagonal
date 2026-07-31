@@ -18,6 +18,24 @@ export async function codeChallenge(verifier: string): Promise<string> {
   return base64url(new Uint8Array(digest));
 }
 
+/**
+ * Signature algorithms accepted on inbound tokens, shared by the callback `id_token` and the
+ * back-channel logout token so the two cannot drift — the .NET BFF pins the identical set in
+ * `BffEndpoints.AsymmetricSigningAlgorithms`, and parity between the two implementations is the
+ * standing rule for this package.
+ *
+ * Symmetric algorithms are excluded because they are what makes key confusion possible: an `HS256`
+ * token verified against a public key treats that public value as a shared secret. jose's
+ * `createLocalJWKSet`/`createRemoteJWKSet` refuse to resolve a key for `HS*` or `none` anyway, so
+ * this pin adds no protection jose does not already give — it makes the accepted set a property of
+ * this code rather than of a dependency's internals, which is what the finding asked for.
+ */
+const ASYMMETRIC_SIGNING_ALGORITHMS = [
+  'RS256', 'RS384', 'RS512',
+  'PS256', 'PS384', 'PS512',
+  'ES256', 'ES384', 'ES512',
+];
+
 interface OidcMetadata {
   issuer: string;
   authorization_endpoint: string;
@@ -104,7 +122,11 @@ export class OidcClient {
 
   async verifyIdToken(idToken: string, clientId: string): Promise<JWTPayload> {
     const m = await this.meta();
-    const { payload } = await jwtVerify(idToken, this.jwks!, { issuer: m.issuer, audience: clientId });
+    const { payload } = await jwtVerify(idToken, this.jwks!, {
+      issuer: m.issuer,
+      audience: clientId,
+      algorithms: ASYMMETRIC_SIGNING_ALGORITHMS,
+    });
     return payload;
   }
 
@@ -121,7 +143,11 @@ export class OidcClient {
    */
   async verifyLogoutToken(logoutToken: string, clientId: string): Promise<JWTPayload> {
     const m = await this.meta();
-    const { payload } = await jwtVerify(logoutToken, this.jwks!, { issuer: m.issuer, audience: clientId });
+    const { payload } = await jwtVerify(logoutToken, this.jwks!, {
+      issuer: m.issuer,
+      audience: clientId,
+      algorithms: ASYMMETRIC_SIGNING_ALGORITHMS,
+    });
 
     const iat = payload.iat;
     if (typeof iat !== 'number') {
