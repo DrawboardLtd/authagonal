@@ -1,6 +1,14 @@
-# Fails on a known high/critical advisory in any of the npm workspaces.
+# The frontend gates: npm advisories across every workspace, and login-app locale drift.
 #
-# None of this reaches the running identity provider — the Dockerfile runs `npm run build:spa` and
+# Both are here because both are failures that no other check can see. A vulnerable build
+# dependency compiles fine; a missing translation renders fine (in English). Nothing else in the
+# repository would report either one.
+#
+# (File name is audit.yml rather than something broader so the `uses:` reference in release.yml
+# stays put. The jobs below are what it does.)
+#
+# --- npm audit ---
+# None of it reaches the running identity provider — the Dockerfile runs `npm run build:spa` and
 # ships only the built output, so no Vite dev server and no PostCSS runtime is in the image. It is
 # the BUILD that is exposed: the postcss and babel `sourceMappingURL` issues read arbitrary files
 # off whatever machine processes a CSS or JS file, and the machine that processes them here is a
@@ -9,7 +17,7 @@
 #
 # The lockfiles are committed and CI installs with `npm ci`, which is the right setup — this is the
 # part that notices when it goes stale.
-name: npm audit
+name: Frontend checks
 
 on:
   push:
@@ -83,3 +91,22 @@ jobs:
           fi
 
           echo "${{ matrix.dir }}: no unaccepted high or critical advisories."
+
+  # Locale drift. i18next falls back to en for any key a locale is missing, so a dropped
+  # translation ships as untranslated English and nothing anywhere reports it — which is how
+  # oidcErrorGeneric stayed missing from seven of the ten shipped locales. No npm install: the
+  # script is dependency-free node, so this job is a checkout and a few milliseconds.
+  i18n:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+
+      # Same command a developer runs locally. The check lives in the repo, not in this file, so
+      # adding a key can be verified before it is pushed rather than after.
+      - name: Locale key parity
+        working-directory: login-app
+        run: npm run check:i18n

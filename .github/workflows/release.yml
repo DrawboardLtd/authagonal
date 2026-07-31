@@ -18,8 +18,9 @@ env:
   DOCKERHUB_DEMO_FRONTEND: authagonal/authagonal-demo-frontend
 
 jobs:
-  # The npm toolchains that produce the login UI and the demo images, checked before anything is
-  # published. Same gate that runs on every push and PR; see audit.yml.
+  # The frontend gates — npm advisories across every workspace, and login-app locale parity —
+  # checked before anything is published. Both jobs must pass; same gate that runs on every push
+  # and PR. See audit.yml.
   audit:
     uses: ./.github/workflows/audit.yml
 

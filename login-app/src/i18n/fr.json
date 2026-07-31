@@ -171,5 +171,6 @@
   "account.save": "Enregistrer les modifications",
   "account.saving": "Enregistrement…",
   "emailVerified": "L’adresse e-mail a été vérifiée ; connectez-vous pour continuer.",
-  "accountCreated": "Un compte a été créé ; connectez-vous pour continuer."
+  "accountCreated": "Un compte a été créé ; connectez-vous pour continuer.",
+  "oidcErrorGeneric": "La connexion n'a pas pu être effectuée. Veuillez réessayer."
 }

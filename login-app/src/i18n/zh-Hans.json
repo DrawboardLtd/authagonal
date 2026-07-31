@@ -171,5 +171,6 @@
   "account.save": "保存更改",
   "account.saving": "正在保存…",
   "emailVerified": "电子邮件已通过验证，请登录以继续操作。",
-  "accountCreated": "账户已创建——请登录以继续操作。"
+  "accountCreated": "账户已创建——请登录以继续操作。",
+  "oidcErrorGeneric": "登录未能完成，请重试。"
 }

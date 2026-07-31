@@ -171,5 +171,6 @@
   "account.save": "Änderungen speichern",
   "account.saving": "Wird gespeichert…",
   "emailVerified": "Die E-Mail-Adresse wurde überprüft – melden Sie sich an, um fortzufahren.",
-  "accountCreated": "Konto erstellt – melden Sie sich an, um fortzufahren."
+  "accountCreated": "Konto erstellt – melden Sie sich an, um fortzufahren.",
+  "oidcErrorGeneric": "Die Anmeldung konnte nicht abgeschlossen werden. Bitte versuchen Sie es erneut."
 }
