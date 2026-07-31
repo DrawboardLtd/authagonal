@@ -43,6 +43,17 @@ public sealed class BackupService(TableServiceClient serviceClient, IBackupTarge
         var suffix = watermark.HasValue ? "-incr" : "";
         var backupId = backupStart.ToString("yyyyMMdd-HHmmss") + suffix;
 
+        // One content key per backup, wrapped under the host's KEK. The KEK never touches the data,
+        // so it is not applied to gigabytes of plaintext, and a single archive can be released to
+        // someone by handing over its wrapped key rather than the KEK itself.
+        byte[]? contentKey = null;
+        string? wrappedContentKey = null;
+        if (options.EncryptionKey is { Length: > 0 } kek)
+        {
+            contentKey = BackupEncryption.NewContentKey();
+            wrappedContentKey = BackupEncryption.WrapKey(contentKey, kek);
+        }
+
         var sw = Stopwatch.StartNew();
         var manifest = new BackupManifest
         {
@@ -51,6 +62,7 @@ public sealed class BackupService(TableServiceClient serviceClient, IBackupTarge
             Mode = watermark.HasValue ? "incremental" : "full",
             Compressed = options.Gzip,
             Watermark = watermark,
+            WrappedContentKey = wrappedContentKey,
         };
 
         long totalEntities = 0;
@@ -74,6 +86,7 @@ public sealed class BackupService(TableServiceClient serviceClient, IBackupTarge
             Stream? outputStream = null;
             Stream? gzipStream = null;
             HashingStream? hashingStream = null;
+            Stream? encryptingStream = null;
 
             try
             {
@@ -101,19 +114,30 @@ public sealed class BackupService(TableServiceClient serviceClient, IBackupTarge
                         fileName = $"{tableName}{ext}";
                         outputStream = await target.OpenWriteAsync(backupId, fileName, ct);
                         // Hash the exact bytes written to the target so restore can verify integrity.
+                        // Outermost, so the hash covers the CIPHERTEXT — which is what restore reads
+                        // and can check before it holds a key, rather than after.
                         hashingStream = new HashingStream(outputStream);
                         // leaveOpen: true on both layers — otherwise disposing the writer cascades
                         // (writer → gzip → hashingStream → IncrementalHash), disposing the hash BEFORE
                         // GetHashHex() reads it below, which throws ObjectDisposedException. We dispose
                         // hashingStream explicitly after reading the hash.
+                        // Compress THEN encrypt: the other order would compress ciphertext, which does
+                        // not compress, and would leak nothing useful in exchange.
+                        Stream sink = hashingStream;
+                        if (contentKey is not null)
+                        {
+                            encryptingStream = BackupEncryption.Encrypt(hashingStream, contentKey, fileName, leaveOpen: true);
+                            sink = encryptingStream;
+                        }
+
                         if (options.Gzip)
                         {
-                            gzipStream = new GZipStream(hashingStream, CompressionLevel.Optimal, leaveOpen: true);
+                            gzipStream = new GZipStream(sink, CompressionLevel.Optimal, leaveOpen: true);
                             writer = new StreamWriter(gzipStream, System.Text.Encoding.UTF8, bufferSize: 8192, leaveOpen: true);
                         }
                         else
                         {
-                            writer = new StreamWriter(hashingStream, System.Text.Encoding.UTF8, bufferSize: 8192, leaveOpen: true);
+                            writer = new StreamWriter(sink, System.Text.Encoding.UTF8, bufferSize: 8192, leaveOpen: true);
                         }
                     }
 
@@ -135,9 +159,12 @@ public sealed class BackupService(TableServiceClient serviceClient, IBackupTarge
             {
                 if (writer is not null) await writer.DisposeAsync();
                 if (gzipStream is not null) await gzipStream.DisposeAsync();
+                // Disposed BEFORE the hash is read: this is what writes the terminator frame, and
+                // those bytes have to be inside the digest.
+                if (encryptingStream is not null) await encryptingStream.DisposeAsync();
                 if (hashingStream is not null)
                 {
-                    // writer + gzip are disposed, so every byte has flushed through the hash.
+                    // writer + gzip + encryption are disposed, so every byte has flushed through the hash.
                     if (fileName is not null) manifest.FileHashes[fileName] = hashingStream.GetHashHex();
                     await hashingStream.DisposeAsync();
                 }

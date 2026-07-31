@@ -51,6 +51,35 @@ public sealed class RestoreService(TableServiceClient serviceClient, IBackupSour
                 "its recorded hash.");
         }
 
+        // Envelope: unwrap the content key, and refuse a downgrade.
+        //
+        // A caller who supplies an EncryptionKey has said this deployment's backups are encrypted, so
+        // a plaintext archive is either older than that or has been substituted for one. Reading it
+        // anyway would make the encryption trivially downgradeable — drop a plaintext archive into the
+        // target and restore accepts it without a word.
+        byte[]? contentKey = null;
+        if (options.EncryptionKey is { Length: > 0 } kek)
+        {
+            if (string.IsNullOrEmpty(manifest?.WrappedContentKey))
+            {
+                if (!options.AllowUnencrypted)
+                    throw new InvalidOperationException(
+                        "An EncryptionKey was supplied but this backup is not encrypted. Restore it with " +
+                        "AllowUnencrypted if it predates backup encryption; otherwise treat the archive as " +
+                        "substituted.");
+            }
+            else
+            {
+                contentKey = BackupEncryption.UnwrapKey(manifest.WrappedContentKey, kek);
+            }
+        }
+        else if (!string.IsNullOrEmpty(manifest?.WrappedContentKey))
+        {
+            throw new InvalidOperationException(
+                "This backup is encrypted but no EncryptionKey was supplied. Provide the same " +
+                "key-encryption key the backup was written with.");
+        }
+
         if (options.Mode == RestoreMode.Clean)
         {
             // The manifest has always recorded whether this backup is a full or an incremental; nothing
@@ -114,7 +143,10 @@ public sealed class RestoreService(TableServiceClient serviceClient, IBackupSour
 
             await using (stream)
             {
-                Stream readStream = fileName.EndsWith(".gz") ? new GZipStream(stream, CompressionMode.Decompress) : stream;
+                // Decrypt then decompress — the mirror of compress-then-encrypt on the way out.
+                Stream plain = contentKey is null ? stream : BackupEncryption.Decrypt(stream, contentKey, fileName);
+                await using var decryptScope = ReferenceEquals(plain, stream) ? null : plain;
+                Stream readStream = fileName.EndsWith(".gz") ? new GZipStream(plain, CompressionMode.Decompress) : plain;
                 await using var decompressScope = fileName.EndsWith(".gz") ? readStream : null;
                 using var reader = new StreamReader(readStream, System.Text.Encoding.UTF8);
 
@@ -156,7 +188,7 @@ public sealed class RestoreService(TableServiceClient serviceClient, IBackupSour
         // a later incremental's recreate lands after the earlier delete.
         if (options.ApplyTombstones)
         {
-            result.TombstonesApplied = await ApplyTombstonesAsync(backupId, files, prefix, manifest, canVerify, ct);
+            result.TombstonesApplied = await ApplyTombstonesAsync(backupId, files, prefix, manifest, canVerify, contentKey, ct);
         }
 
         return result;
@@ -164,7 +196,7 @@ public sealed class RestoreService(TableServiceClient serviceClient, IBackupSour
 
     private async Task<long> ApplyTombstonesAsync(
         string backupId, IReadOnlyList<string> files, string prefix,
-        BackupManifest? manifest, bool canVerify, CancellationToken ct)
+        BackupManifest? manifest, bool canVerify, byte[]? contentKey, CancellationToken ct)
     {
         var fileName = files.FirstOrDefault(f => f is "_tombstones.jsonl.gz" or "_tombstones.jsonl");
         if (fileName is null) return 0; // full backups (and empty incrementals) carry no tombstone file
@@ -200,7 +232,9 @@ public sealed class RestoreService(TableServiceClient serviceClient, IBackupSour
         long applied = 0;
         await using (stream)
         {
-            Stream readStream = fileName.EndsWith(".gz") ? new GZipStream(stream, CompressionMode.Decompress) : stream;
+            Stream plain = contentKey is null ? stream : BackupEncryption.Decrypt(stream, contentKey, fileName);
+            await using var decryptScope = ReferenceEquals(plain, stream) ? null : plain;
+            Stream readStream = fileName.EndsWith(".gz") ? new GZipStream(plain, CompressionMode.Decompress) : plain;
             await using var decompressScope = fileName.EndsWith(".gz") ? readStream : null;
             using var reader = new StreamReader(readStream, System.Text.Encoding.UTF8);
 

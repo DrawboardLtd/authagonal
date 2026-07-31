@@ -19,12 +19,11 @@ namespace Authagonal.Server.Services;
 /// both mean the session's credentials stop existing, and this one did not.
 /// </para>
 /// <para>
-/// NOT covered: revoking someone ELSE'S session from the account page
-/// (<c>/api/auth/sessions/{id}</c>, <c>revoke-others</c>). The key is (userId, connectionId, sid), and
-/// <c>IUserSessionRegistry</c> exposes neither the connection id nor the sid — a
-/// <c>SessionDescriptor</c> carries an opaque ticket-store id and no principal. Closing that would
-/// mean widening the registry contract, which is a larger change than this finding warrants; those
-/// rows still expire on their own bound. Stated here rather than left to be discovered.
+/// This covers a host with NO server-side ticket store, where a sign-out is the only moment the
+/// principal is in hand. A host that does use one gets the same cleanup from
+/// <c>TableTicketStore.RemoveAsync</c>, which recovers the principal from the stored ticket and so
+/// catches every other way a session ends too — revoking one from the account page, "sign out
+/// everywhere", the expiry sweep. Both paths are idempotent, so a session covered by both is fine.
 /// </para>
 /// </remarks>
 internal static class UpstreamSessionCleanup

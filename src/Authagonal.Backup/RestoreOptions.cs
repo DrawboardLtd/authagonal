@@ -25,6 +25,24 @@ public sealed class RestoreOptions
     public bool AllowUnverified { get; set; }
 
     /// <summary>
+    /// The 32-byte key-encryption key the backup was written with. Required to restore an encrypted
+    /// archive.
+    /// </summary>
+    public byte[]? EncryptionKey { get; set; }
+
+    /// <summary>
+    /// Restore a PLAINTEXT archive even though <see cref="EncryptionKey"/> was supplied.
+    /// </summary>
+    /// <remarks>
+    /// Off by default, and that is the point: a caller who supplies a key has said this deployment's
+    /// backups are encrypted, so an archive that is not encrypted is either from before that was true
+    /// or has been substituted. Accepting it silently would make the encryption trivially
+    /// downgradeable — write a plaintext archive into the target and restore reads it without
+    /// complaint.
+    /// </remarks>
+    public bool AllowUnencrypted { get; set; }
+
+    /// <summary>
     /// Restore mode: Upsert (default), Merge, or Clean (delete all then restore).
     /// </summary>
     public RestoreMode Mode { get; set; } = RestoreMode.Upsert;

@@ -63,4 +63,18 @@ public sealed class BackupOptions
     /// key can prove the recorded file hashes were not rewritten along with the files.
     /// </summary>
     public byte[]? ManifestKey { get; set; }
+
+    /// <summary>
+    /// 32-byte key-encryption key. When set, every data file is encrypted with AES-256-GCM under a
+    /// per-backup content key, and that content key is wrapped under this one and recorded in the
+    /// manifest.
+    /// </summary>
+    /// <remarks>
+    /// Resolve it from wherever the deployment keeps key material — Key Vault, KMS, Vault — and NOT
+    /// from the backup target, or the envelope protects nothing. Without it the archive is plaintext
+    /// JSONL: MFA TOTP seeds (directly replayable second factors, with no rotation short of
+    /// re-enrolling the user) alongside every password hash, client secret hash and recovery-code hash
+    /// in the deployment, offline-crackable at leisure.
+    /// </remarks>
+    public byte[]? EncryptionKey { get; set; }
 }

@@ -20,14 +20,49 @@ public sealed class MergeService(IBackupSource source)
     /// tagging only the manifest leaves the physical id untagged, so id-based retention/selection
     /// (which lists blob prefixes, not manifests) still treats it as an ordinary daily full.
     /// </summary>
+    /// <param name="encryptionKey">
+    /// The key-encryption key the SOURCE backups were written with, and the one the merged output is
+    /// written with.
+    /// </param>
+    /// <remarks>
+    /// Required when any input is encrypted: without it the merge cannot read them, and — worse — a
+    /// rollup that silently produced a PLAINTEXT snapshot from encrypted inputs would be a downgrade
+    /// performed by the retention job itself, on the copy that outlives everything else.
+    /// </remarks>
     public async Task<BackupManifest> MergeToTargetAsync(
         string fullBackupId,
         IReadOnlyList<string> incrementalBackupIds,
         IBackupTarget target,
         bool gzip = true,
         CancellationToken ct = default,
-        string? newBackupId = null)
+        string? newBackupId = null,
+        byte[]? encryptionKey = null)
     {
+        // Content keys are per backup, so each input has its own — resolved once here rather than per
+        // file, and the merged output gets a fresh one of its own.
+        _sourceContentKeys.Clear();
+        foreach (var id in incrementalBackupIds.Prepend(fullBackupId))
+        {
+            var sourceManifest = await source.ReadManifestAsync(id, ct);
+            if (string.IsNullOrEmpty(sourceManifest?.WrappedContentKey)) continue;
+
+            if (encryptionKey is not { Length: > 0 })
+                throw new InvalidOperationException(
+                    $"Backup '{id}' is encrypted but no encryptionKey was supplied to the rollup. " +
+                    "Merging without it would either fail to read the inputs or write a plaintext " +
+                    "snapshot from encrypted ones.");
+
+            _sourceContentKeys[id] = BackupEncryption.UnwrapKey(sourceManifest.WrappedContentKey, encryptionKey);
+        }
+
+        byte[]? outputContentKey = null;
+        string? wrappedOutputKey = null;
+        if (encryptionKey is { Length: > 0 })
+        {
+            outputContentKey = BackupEncryption.NewContentKey();
+            wrappedOutputKey = BackupEncryption.WrapKey(outputContentKey, encryptionKey);
+        }
+
         var allTables = await CollectTableNamesAsync(fullBackupId, incrementalBackupIds, ct);
         var tombstones = await LoadTombstonesAsync(incrementalBackupIds, ct);
 
@@ -39,6 +74,7 @@ public sealed class MergeService(IBackupSource source)
             BackupTimestamp = backupStart,
             Mode = "full",
             Compressed = gzip,
+            WrappedContentKey = wrappedOutputKey,
         };
 
         long totalEntities = 0;
@@ -51,6 +87,7 @@ public sealed class MergeService(IBackupSource source)
             // same behaviour as the old dictionary merge.
             StreamWriter? writer = null;
             GZipStream? gzipStream = null;
+            Stream? encryptingStream = null;
             HashingStream? hashingStream = null;
             Stream? outputStream = null;
             string? fileName = null;
@@ -72,22 +109,30 @@ public sealed class MergeService(IBackupSource source)
                     fileName = $"{tableName}{ext}";
                     outputStream = await target.OpenWriteAsync(backupId, fileName, ct);
                     hashingStream = new HashingStream(outputStream);
+                    Stream sink = hashingStream;
+                    if (outputContentKey is not null)
+                    {
+                        encryptingStream = BackupEncryption.Encrypt(hashingStream, outputContentKey, fileName, leaveOpen: true);
+                        sink = encryptingStream;
+                    }
                     // leaveOpen on both layers so disposing the writer does not cascade into the hash
                     // before GetHashHex reads it — same reason, and the same shape, as BackupService.
                     if (gzip)
                     {
-                        gzipStream = new GZipStream(hashingStream, CompressionLevel.Optimal, leaveOpen: true);
+                        gzipStream = new GZipStream(sink, CompressionLevel.Optimal, leaveOpen: true);
                         writer = new StreamWriter(gzipStream, System.Text.Encoding.UTF8, bufferSize: 8192, leaveOpen: true);
                     }
                     else
                     {
-                        writer = new StreamWriter(hashingStream, System.Text.Encoding.UTF8, bufferSize: 8192, leaveOpen: true);
+                        writer = new StreamWriter(sink, System.Text.Encoding.UTF8, bufferSize: 8192, leaveOpen: true);
                     }
                     return writer;
                 }, ct);
 
             if (writer is not null) await writer.DisposeAsync();
             if (gzipStream is not null) await gzipStream.DisposeAsync();
+            // Before the hash is read: this writes the terminator frame.
+            if (encryptingStream is not null) await encryptingStream.DisposeAsync();
             if (hashingStream is not null)
             {
                 // writer + gzip are disposed, so every byte has flushed through the hash.
@@ -258,28 +303,56 @@ public sealed class MergeService(IBackupSource source)
 
     /// <summary>Streams a backed-up table's rows as ((PK, RK), jsonLine) without materializing the
     /// table. Auto-detects gzip; yields nothing when the file is absent.</summary>
+    /// <summary>Unwrapped content key per source backup id, for the current merge.</summary>
+    private readonly Dictionary<string, byte[]> _sourceContentKeys = new(StringComparer.Ordinal);
+
     private async IAsyncEnumerable<((string PK, string RK) Key, string Line)> ReadEntitiesAsync(
         string backupId, string tableName, [EnumeratorCancellation] CancellationToken ct)
     {
-        var stream = await source.OpenReadAsync(backupId, $"{tableName}.jsonl.gz", ct)
-                     ?? await source.OpenReadAsync(backupId, $"{tableName}.jsonl", ct);
+        // The ACTUAL file name matters: it is bound into the encryption's associated data, so guessing
+        // the compressed variant when the uncompressed one is on disk fails authentication.
+        var fileName = $"{tableName}.jsonl.gz";
+        var stream = await source.OpenReadAsync(backupId, fileName, ct);
+        if (stream is null)
+        {
+            fileName = $"{tableName}.jsonl";
+            stream = await source.OpenReadAsync(backupId, fileName, ct);
+        }
 
         if (stream is null) yield break;
 
         await using (stream)
         {
-            var buffered = new BufferedStream(stream);
-            var header = new byte[2];
-            var read = await buffered.ReadAsync(header, ct);
-            buffered.Position = 0;
-            Stream readStream = buffered;
+            var encrypted = _sourceContentKeys.TryGetValue(backupId, out var key);
+            var plain = encrypted ? BackupEncryption.Decrypt(stream, key!, fileName) : stream;
+            await using var decryptScope = ReferenceEquals(plain, stream) ? null : plain;
 
-            if (read >= 2 && header[0] == 0x1f && header[1] == 0x8b)
+            // The gzip sniff rewinds, which a decrypting stream cannot do — and does not need to:
+            // an encrypted file was written by this code, so its extension is authoritative. The
+            // sniff stays for plaintext archives, where it has always covered a mislabelled file.
+            Stream readStream;
+            Stream? sniffScope = null;
+            if (encrypted)
             {
-                readStream = new GZipStream(buffered, CompressionMode.Decompress);
+                readStream = fileName.EndsWith(".gz", StringComparison.Ordinal)
+                    ? new GZipStream(plain, CompressionMode.Decompress)
+                    : plain;
+            }
+            else
+            {
+                var buffered = new BufferedStream(plain);
+                sniffScope = buffered;
+                var header = new byte[2];
+                var read = await buffered.ReadAsync(header, ct);
+                buffered.Position = 0;
+                readStream = read >= 2 && header[0] == 0x1f && header[1] == 0x8b
+                    ? new GZipStream(buffered, CompressionMode.Decompress)
+                    : buffered;
             }
 
-            await using var decompressScope = readStream != buffered ? readStream : null;
+            await using var decompressScope = ReferenceEquals(readStream, plain) || ReferenceEquals(readStream, sniffScope)
+                ? null
+                : readStream;
             using var reader = new StreamReader(readStream, System.Text.Encoding.UTF8);
 
             string? line;
@@ -305,26 +378,45 @@ public sealed class MergeService(IBackupSource source)
 
         foreach (var incrId in incrementalBackupIds)
         {
-            var stream = await source.OpenReadAsync(incrId, "_tombstones.jsonl.gz", ct)
-                         ?? await source.OpenReadAsync(incrId, "_tombstones.jsonl", ct);
+            var tombstoneFile = "_tombstones.jsonl.gz";
+            var stream = await source.OpenReadAsync(incrId, tombstoneFile, ct);
+            if (stream is null)
+            {
+                tombstoneFile = "_tombstones.jsonl";
+                stream = await source.OpenReadAsync(incrId, tombstoneFile, ct);
+            }
 
             if (stream is null) continue;
 
             await using (stream)
             {
-                Stream readStream = stream;
-                var buffered = new BufferedStream(stream);
-                var header = new byte[2];
-                var read = await buffered.ReadAsync(header, ct);
-                buffered.Position = 0;
-                readStream = buffered;
+                var encrypted = _sourceContentKeys.TryGetValue(incrId, out var key);
+                var plain = encrypted ? BackupEncryption.Decrypt(stream, key!, tombstoneFile) : stream;
+                await using var decryptScope = ReferenceEquals(plain, stream) ? null : plain;
 
-                if (read >= 2 && header[0] == 0x1f && header[1] == 0x8b)
+                Stream readStream;
+                Stream? sniffScope = null;
+                if (encrypted)
                 {
-                    readStream = new GZipStream(buffered, CompressionMode.Decompress);
+                    readStream = tombstoneFile.EndsWith(".gz", StringComparison.Ordinal)
+                        ? new GZipStream(plain, CompressionMode.Decompress)
+                        : plain;
+                }
+                else
+                {
+                    var buffered = new BufferedStream(plain);
+                    sniffScope = buffered;
+                    var header = new byte[2];
+                    var read = await buffered.ReadAsync(header, ct);
+                    buffered.Position = 0;
+                    readStream = read >= 2 && header[0] == 0x1f && header[1] == 0x8b
+                        ? new GZipStream(buffered, CompressionMode.Decompress)
+                        : buffered;
                 }
 
-                await using var decompressScope = readStream != buffered ? readStream : null;
+                await using var decompressScope = ReferenceEquals(readStream, plain) || ReferenceEquals(readStream, sniffScope)
+                    ? null
+                    : readStream;
                 using var reader = new StreamReader(readStream, System.Text.Encoding.UTF8);
 
                 string? line;

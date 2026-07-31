@@ -1,5 +1,7 @@
 using System.Security.Claims;
 using Authagonal.Core.Services;
+using Authagonal.Core.Stores;
+using Microsoft.Extensions.DependencyInjection;
 using Azure;
 using Azure.Data.Tables;
 using Microsoft.AspNetCore.Authentication;
@@ -21,7 +23,8 @@ internal sealed class TableTicketStore(
     TableClient sessions,
     TableClient sessionsByUser,
     EnvPartitioner partitioner,
-    IHttpContextAccessor httpContextAccessor) : ITicketStore, IUserSessionRegistry
+    IHttpContextAccessor httpContextAccessor,
+    IServiceProvider? services = null) : ITicketStore, IUserSessionRegistry
 {
     internal const string Partition = "session";
 
@@ -62,16 +65,57 @@ internal sealed class TableTicketStore(
 
     public async Task RemoveAsync(string key)
     {
-        // Read the row first to learn the user id, so the index row (PK = userId) can also be removed.
+        // Read the row first to learn the user id, so the index row (PK = userId) can also be removed —
+        // and to recover the ticket, which is what makes the upstream cleanup below possible at all.
         string? userId = null;
-        try { userId = (await sessions.GetEntityAsync<SessionEntity>(SessionPk, key)).Value.UserId; }
+        AuthenticationTicket? ticket = null;
+        try
+        {
+            var row = (await sessions.GetEntityAsync<SessionEntity>(SessionPk, key)).Value;
+            userId = row.UserId;
+            try { ticket = TicketSerializer.Default.Deserialize(Convert.FromBase64String(row.Data)); }
+            catch (Exception) { /* unreadable ticket — the session still goes */ }
+        }
         catch (RequestFailedException ex) when (ex.Status == 404) { /* already gone */ }
+
+        // The upstream IdP's refresh token for this federated session dies with the session.
+        //
+        // The sign-out paths handled it by reading the key off the CURRENT principal, which left every
+        // other way a session ends — revoking one from the account page, "sign out everywhere", the
+        // expiry sweep — leaving a live bearer credential for another identity provider behind for up
+        // to its own seven-day bound. Those paths were previously described as unfixable because
+        // IUserSessionRegistry exposes neither the connection id nor the sid the key needs. It does not
+        // have to: the ticket is stored right here, so the principal that established the session is
+        // available at exactly the moment it is destroyed, whoever destroyed it.
+        if (ticket is not null) await RemoveUpstreamTokenAsync(ticket.Principal);
 
         // Both deletes swallow 404: a double logout / revoke race (or an already-swept expired row) must
         // not surface as a 500 on the cookie-auth hot path, and must not abort a bulk RevokeOthersAsync.
         await DeleteIfExistsAsync(sessions, SessionPk, key);
         if (!string.IsNullOrEmpty(userId))
             await DeleteIfExistsAsync(sessionsByUser, UserPk(userId), key);
+    }
+
+    /// <summary>
+    /// Drops the upstream refresh token belonging to a session that is ending. Best effort — a session
+    /// must still be revocable when the store is unreachable.
+    /// </summary>
+    private async Task RemoveUpstreamTokenAsync(ClaimsPrincipal principal)
+    {
+        var store = services?.GetService<IUpstreamRefreshTokenStore>();
+        if (store is null) return;
+
+        var userId = principal.FindFirst("sub")?.Value ?? principal.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+        var connectionId = principal.FindFirst("upstream_connection_id")?.Value;
+        var sid = principal.FindFirst("sid")?.Value;
+
+        // All three are part of the key. A session with no upstream connection was not federated with
+        // revalidation on, so there is nothing to remove.
+        if (string.IsNullOrEmpty(userId) || string.IsNullOrEmpty(connectionId) || string.IsNullOrEmpty(sid))
+            return;
+
+        try { await store.RemoveAsync(userId, connectionId, sid); }
+        catch (Exception) { /* the row expires on its own; revoking the session is what matters */ }
     }
 
     private static async Task DeleteIfExistsAsync(TableClient table, string pk, string rowKey)

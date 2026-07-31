@@ -41,6 +41,17 @@ public sealed class BackupManifest
     /// target cannot forge it.
     /// </remarks>
     public string? ManifestMac { get; set; }
+
+    /// <summary>
+    /// The backup's content key, wrapped under the host's key-encryption key. Null for a plaintext
+    /// archive.
+    /// </summary>
+    /// <remarks>
+    /// Its presence is what tells restore the data files are encrypted, and it is covered by
+    /// <see cref="ManifestMac"/> when a manifest key is configured — so an attacker cannot strip this
+    /// field to make an encrypted archive look plaintext without also breaking the MAC.
+    /// </remarks>
+    public string? WrappedContentKey { get; set; }
 }
 
 public sealed class TableBackupInfo

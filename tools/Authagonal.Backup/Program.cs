@@ -11,6 +11,24 @@ var cliArgs = Environment.GetCommandLineArgs().Skip(1).ToArray();
 
 var connectionString = GetArg(cliArgs, "--connection-string") ?? Environment.GetEnvironmentVariable("STORAGE_CONNECTION_STRING");
 var outputRoot = GetArg(cliArgs, "--output") ?? "./backups";
+
+byte[]? encryptionKey = null;
+var encryptionKeyArg = GetArg(cliArgs, "--encryption-key");
+if (!string.IsNullOrWhiteSpace(encryptionKeyArg))
+{
+    try { encryptionKey = Convert.FromBase64String(encryptionKeyArg); }
+    catch (FormatException)
+    {
+        Console.Error.WriteLine("ERROR: --encryption-key must be base64.");
+        return 1;
+    }
+
+    if (encryptionKey.Length != 32)
+    {
+        Console.Error.WriteLine($"ERROR: --encryption-key must decode to exactly 32 bytes (got {encryptionKey.Length}).");
+        return 1;
+    }
+}
 var incremental = HasFlag(cliArgs, "--incremental");
 var tableFilter = GetArg(cliArgs, "--tables")?.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 var prefix = GetArg(cliArgs, "--prefix") ?? "";
@@ -33,6 +51,10 @@ if (connectionString is null || HasFlag(cliArgs, "--help"))
       --tables <t1,t2,...>         Comma-separated list of tables to back up
       --prefix <prefix>            Table name prefix (for multi-tenant)
       --gzip                       Compress backup files with gzip (.jsonl.gz)
+      --encryption-key <base64>    32-byte AES-256 key-encryption key. Encrypts every data file with
+                                   AES-256-GCM under a per-backup content key, wrapped under this one
+                                   and recorded in the manifest. Keep it OUTSIDE the backup target —
+                                   an envelope whose key sits beside the archive protects nothing.
       --dry-run                    Show what would be backed up without writing
       --help                       Show this help
     """);
@@ -55,6 +77,7 @@ var options = new BackupOptions
     Incremental = incremental,
     Gzip = useGzip,
     DryRun = dryRun,
+    EncryptionKey = encryptionKey,
 };
 
 // Say what is about to be written in the clear, before writing it.
@@ -69,15 +92,16 @@ var selected = (options.Tables ?? BackupDefaults.Tables)
     .Where(t => options.IncludeSigningKeys || !string.Equals(t, "SigningKeys", StringComparison.OrdinalIgnoreCase))
     .ToList();
 
-if (selected.Count > 0 && !dryRun)
+if (selected.Count > 0 && !dryRun && encryptionKey is null)
 {
     Console.Error.WriteLine();
     Console.Error.WriteLine("This backup will contain credential material in CLEARTEXT:");
     foreach (var table in selected)
         Console.Error.WriteLine($"  {table,-24} {BackupDefaults.SecretBearingTables[table]}");
     Console.Error.WriteLine();
-    Console.Error.WriteLine("Files are created owner-only, which is not encryption. Store the archive");
-    Console.Error.WriteLine("somewhere encrypted and access-controlled, and treat it as a credential.");
+    Console.Error.WriteLine("Files are created owner-only, which is not encryption. Pass --encryption-key");
+    Console.Error.WriteLine("to encrypt the archive, or store it somewhere encrypted and access-controlled");
+    Console.Error.WriteLine("and treat it as a credential.");
     Console.Error.WriteLine();
 }
 

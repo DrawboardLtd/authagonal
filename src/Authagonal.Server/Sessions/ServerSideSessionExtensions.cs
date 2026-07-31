@@ -50,7 +50,10 @@ public static class ServerSideSessionExtensions
         services.AddHttpContextAccessor();
         // One instance behind both interfaces so "this session" flagging is shared.
         services.TryAddSingleton(sp => new TableTicketStore(
-            sessions, sessionsByUser, EnvPartitioner.Live, sp.GetRequiredService<IHttpContextAccessor>()));
+            sessions, sessionsByUser, EnvPartitioner.Live, sp.GetRequiredService<IHttpContextAccessor>(),
+            // Resolved lazily: the upstream-token store is optional, and RemoveAsync runs from the
+            // expiry sweep where there is no request scope to resolve it from.
+            sp));
         services.TryAddSingleton<ITicketStore>(sp => sp.GetRequiredService<TableTicketStore>());
         services.TryAddSingleton<IUserSessionRegistry>(sp => sp.GetRequiredService<TableTicketStore>());
         return services;
