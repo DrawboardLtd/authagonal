@@ -31,6 +31,7 @@
     "dev": "vite",
     "build": "vite build && tsc -b",
     "build:spa": "vite build --config vite.spa.config.ts",
+    "check:i18n": "node scripts/check-i18n.mjs",
     "lint": "eslint .",
     "preview": "vite preview"
   },
