@@ -80,8 +80,14 @@ public static class TokenEndpoints
         // Never issue the admin scope through this impersonation endpoint — otherwise a (possibly
         // time-limited) admin token can mint a long-lived admin access+refresh token, defeating
         // rotation/revocation.
-        var adminScope = configuration["AdminApi:Scope"] ?? "authagonal-admin";
-        if (scopes.Contains(adminScope, StringComparer.OrdinalIgnoreCase))
+        //
+        // Through AdminScopeReservation.Grants, which splits each entry on whitespace, rather than the
+        // whole-element Contains this used to do. A stored AllowedScopes entry is not necessarily one
+        // scope: with no `scopes` parameter this endpoint defaults to client.AllowedScopes verbatim, so
+        // an entry "openid authagonal-admin" was one opaque string here and two scopes in the emitted
+        // claim. Every sibling guard was moved to the split comparison; this one was left behind.
+        var adminScope = configuration["AdminApi:Scope"] ?? AdminScopeReservation.DefaultAdminScope;
+        if (AdminScopeReservation.Grants(scopes, adminScope))
             return Results.Json(new { error = "forbidden_scope", error_description = $"The '{adminScope}' scope cannot be issued via this endpoint" }, statusCode: 403);
 
         // Role-gated scopes are entitlements of the impersonated user, not of the admin doing the

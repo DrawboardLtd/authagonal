@@ -124,8 +124,10 @@ public sealed record OidcSubject
     /// scope-gated emission rules as <see cref="CustomAttributes"/>, but distinct so
     /// they survive across refresh rotations without bleeding into the per-user record.
     /// On refresh, the host carries this set forward unchanged from the prior subject;
-    /// <see cref="CustomAttributes"/> is re-read fresh from the user store. Federation
-    /// values win on key collision.
+    /// <see cref="CustomAttributes"/> is re-read fresh from the user store. On key collision the
+    /// STORE wins: these arrive verbatim from an upstream id_token, so letting them overwrite would
+    /// let a customer-controlled IdP restate any scope-released claim about their own user and beat
+    /// this server's record of it.
     /// </summary>
     public IReadOnlyDictionary<string, string>? FederationClaims { get; init; }
 

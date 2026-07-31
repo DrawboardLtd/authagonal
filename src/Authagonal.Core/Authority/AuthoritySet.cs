@@ -137,6 +137,48 @@ public sealed class AuthoritySet
         };
     }
 
+    /// <summary>
+    /// The first <c>(type, member)</c> in a CLIENT-SUPPLIED <paramref name="request"/> naming a
+    /// constraint this set does not define for that type, or null when every constraint the request
+    /// names was already part of the granted authority.
+    /// </summary>
+    /// <remarks>
+    /// RFC 9396 §5 requires the AS to refuse <c>authorization_details</c> it does not understand, and
+    /// this server has no type schema: <see cref="AuthorityJson"/> sweeps every member it does not
+    /// recognise into <see cref="AuthorityGrant.Constraints"/>. <see cref="Intersect"/> then carries a
+    /// constraint present on ONE side straight into the result — correct when both operands are grants
+    /// (a restriction never expires in a meet), but the request is not a grant. So a client could invent
+    /// a member nobody defined, have it survive the intersection, and get it SIGNED into the
+    /// authorization_details claim; a resource server reading an unrecognised member cannot tell a
+    /// restriction the user imposed from authority the AS conferred, so
+    /// <c>{"type":"payment","actions":["initiate"],"beneficiary":"attacker"}</c> reads as the latter.
+    /// <para>
+    /// Refused rather than silently dropped: dropping would hand back a token WIDER than the one the
+    /// client asked for, which is the more dangerous of the two surprises. An unrestricted set states no
+    /// vocabulary to check against — an admin who wrote an unrestricted ceiling said anything goes — so
+    /// it admits everything here and the check applies to the ceilings that actually name types.
+    /// </para>
+    /// </remarks>
+    public (string Type, string Member)? FindUngrantedConstraint(AuthoritySet request)
+    {
+        if (IsUnrestricted || request.IsUnrestricted) return null;
+
+        foreach (var requested in request.Grants)
+        {
+            if (requested.Constraints.Count == 0) continue;
+            var granted = GrantFor(requested.Type);
+            // A type this set does not grant at all is dropped by Intersect and reported by the
+            // caller's own "requested authority is not grantable" check — not this one's business.
+            if (granted is null) continue;
+
+            foreach (var (name, _) in requested.Constraints)
+                if (!granted.Constraints.ContainsKey(name))
+                    return (requested.Type, name);
+        }
+
+        return null;
+    }
+
     public AuthorityGrant? GrantFor(string type) =>
         Grants.FirstOrDefault(g => string.Equals(g.Type, type, StringComparison.Ordinal));
 

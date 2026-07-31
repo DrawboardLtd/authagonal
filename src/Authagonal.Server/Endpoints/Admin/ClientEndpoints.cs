@@ -78,6 +78,9 @@ public static class ClientEndpoints
         if (IsAdminScopeRequested(client.AllowedScopes, configuration))
             return TypedResults.Json(new ErrorInfoResponse { Error = "forbidden_scope", ErrorDescription = "The administrative scope cannot be granted to a client" }, AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 403);
 
+        if (MalformedScope(client.AllowedScopes) is { } createMalformed)
+            return TypedResults.Json(new ErrorInfoResponse { Error = "invalid_request", ErrorDescription = createMalformed }, AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 400);
+
         var existing = await store.GetAsync(client.ClientId, ct);
         if (existing is not null)
             return TypedResults.Json(new ErrorInfoResponse { Error = "client_exists", ErrorDescription = $"Client '{client.ClientId}' already exists" }, AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 409);
@@ -129,6 +132,9 @@ public static class ClientEndpoints
         // Reserve the admin scope: a client may never hold it.
         if (IsAdminScopeRequested(client.AllowedScopes, configuration))
             return TypedResults.Json(new ErrorInfoResponse { Error = "forbidden_scope", ErrorDescription = "The administrative scope cannot be granted to a client" }, AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 403);
+
+        if (MalformedScope(client.AllowedScopes) is { } updateMalformed)
+            return TypedResults.Json(new ErrorInfoResponse { Error = "invalid_request", ErrorDescription = updateMalformed }, AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 400);
 
         if (InvalidSecretHashes(client) is { } hashError)
             return TypedResults.Json(new ErrorInfoResponse { Error = "invalid_request", ErrorDescription = hashError }, AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 400);
@@ -212,6 +218,21 @@ public static class ClientEndpoints
         foreach (var other in all.Where(c => c.IsDefaultApplication && c.ClientId != keepClientId))
             await store.UpsertAsync(other with { IsDefaultApplication = false }, ct);
     }
+
+    /// <summary>
+    /// Why an entry is not a single scope token, or null when every entry is well-formed.
+    /// </summary>
+    /// <remarks>
+    /// The reservation above and <see cref="IClientScopeGuard.FindUngrantableScope"/> both compare whole
+    /// LIST ELEMENTS, while the emitted <c>scope</c> claim is space-delimited and every consumer splits
+    /// it. So a single stored entry containing whitespace evades both guards and then expands into
+    /// several scopes on the wire — the admin case is the sharpest, but a host with a restrictive
+    /// IClientScopeGuard was evadable exactly the same way for any scope it withholds.
+    /// </remarks>
+    private static string? MalformedScope(IEnumerable<string> scopes) =>
+        AdminScopeReservation.FindMalformedScope(scopes) is { } bad
+            ? $"Scope entry '{bad}' is not a single scope token. Scope names cannot contain whitespace — list each scope separately."
+            : null;
 
     private static bool IsAdminScopeRequested(IEnumerable<string> scopes, IConfiguration configuration)
     {

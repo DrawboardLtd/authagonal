@@ -1557,6 +1557,36 @@ public static class AuthEndpoints
     private const int MaxSelfServiceAttributeValueLength = 1024;
 
     /// <summary>
+    /// Attribute keys an anonymous self-service caller may never write, whatever the allow-list says.
+    /// </summary>
+    /// <remarks>
+    /// The allow-list is opt-in and empty by default, which means "allow any key" — so on a default
+    /// deployment the doc comment below ("never a claim name the protocol layer treats as its own") was
+    /// aspiration, not code. These names are TRUST MARKERS written by the federation callbacks and read
+    /// as authorization inputs downstream, so an anonymous POST /api/auth/register could assert them
+    /// about itself:
+    /// <list type="bullet">
+    /// <item><c>federated_connection</c> records WHICH upstream vouched for an account. The documented
+    /// self-service-SSO provisioner branches on it to place the user in that connection's org — with
+    /// none of the AllowedDomains / JIT-policy gates the real federation callback applies, and no inbox
+    /// proof. An attacker naming a tenant's connection joins that tenant.</item>
+    /// <item><c>org_id</c> decides tenancy, and is emitted as a first-class claim only when the subject
+    /// actually has an organization — leaving a slot a stored attribute could fill.</item>
+    /// <item><c>roles</c> / <c>groups</c> are authorization inputs this server resolves from its own
+    /// stores.</item>
+    /// </list>
+    /// The protocol layer refuses to EMIT these from custom attributes (ProtocolTokenService's reserved
+    /// claim names), but storage is a sink of its own: provisioning payloads, SCIM reads and the admin
+    /// UI all read the stored dictionary directly.
+    /// </remarks>
+    private static readonly HashSet<string> SelfServiceReservedAttributeKeys = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "federated_connection", "org_id", "roles", "groups",
+        "sub", "iss", "aud", "scope", "client_id", "sid", "acr", "amr",
+        "email", "email_verified",
+    };
+
+    /// <summary>
     /// The custom attributes a self-service caller may set: allow-listed by key, bounded in count and
     /// length, and never a claim name the protocol layer treats as its own.
     /// </summary>
@@ -1572,6 +1602,10 @@ public static class AuthEndpoints
             if (string.IsNullOrWhiteSpace(kv.Key)) continue;
             if (kv.Key.Length > MaxSelfServiceAttributeKeyLength) continue;
             if ((kv.Value?.Length ?? 0) > MaxSelfServiceAttributeValueLength) continue;
+            // Denylist first: a reserved key is refused even when an operator has explicitly
+            // allow-listed it, because no configuration makes an anonymous caller's word for
+            // "which connection vouched for me" true.
+            if (SelfServiceReservedAttributeKeys.Contains(kv.Key)) continue;
             if (allowedAttributeKeys.Count > 0 && !allowedAttributeKeys.Contains(kv.Key)) continue;
 
             result[kv.Key] = kv.Value ?? string.Empty;

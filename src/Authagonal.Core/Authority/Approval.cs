@@ -57,7 +57,12 @@ public sealed class ApprovalData
     /// <summary>Who resolved it (normally the delegating subject; recorded for audit).</summary>
     public string? ResolvedBy { get; set; }
 
-    /// <summary>Drives the token endpoint's slow_down throttle, mirroring the device flow.</summary>
+    /// <summary>
+    /// No longer written. The slow_down throttle runs through IRateLimiter keyed on the approval id,
+    /// because persisting it meant a full-payload upsert on every pending poll — which raced the user's
+    /// approve/deny and could write the stale Pending status back over their answer. Kept so an approval
+    /// serialized by an earlier version still deserializes. Mirrors DeviceCodeData.LastPolledAt.
+    /// </summary>
     public DateTimeOffset? LastPolledAt { get; set; }
 }
 
