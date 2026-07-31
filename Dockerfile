@@ -25,4 +25,10 @@ COPY --from=backend /app/publish .
 COPY --from=frontend /app/login-app/dist-spa ./wwwroot/
 EXPOSE 8080
 ENV ASPNETCORE_URLS=http://+:8080
+# Runs as a non-root user. The image ran as root, so a remote-code-execution bug anywhere in the
+# identity provider began with uid 0 inside the container — and with it the ability to write the
+# application binaries, read every mounted secret, and use any capability the runtime retained.
+# The aspnet base image ships this uid; it owns nothing, which is the point.
+USER $APP_UID
+
 ENTRYPOINT ["dotnet", "Authagonal.Server.dll"]

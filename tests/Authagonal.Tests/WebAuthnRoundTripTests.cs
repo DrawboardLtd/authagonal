@@ -27,12 +27,43 @@ public sealed class WebAuthnRoundTripTests
     // WebAuthnService now derives the FIDO2 relying party from the live request host (per-tenant hosts),
     // so drive it with an HTTP context whose host is RpId — giving ServerDomain=RpId and origin=Origin,
     // exactly what the VirtualAuthenticator signs over.
-    private static WebAuthnService NewService()
+    private static WebAuthnService NewService(params string[] allowedHosts)
     {
         var ctx = new DefaultHttpContext();
         ctx.Request.Scheme = "https";
         ctx.Request.Host = new HostString(RpId);
-        return new WebAuthnService(new StubHttpContextAccessor { HttpContext = ctx });
+        return new WebAuthnService(
+            new StubHttpContextAccessor { HttpContext = ctx },
+            Microsoft.Extensions.Options.Options.Create(new AuthOptions
+            {
+                WebAuthnAllowedHosts = [.. allowedHosts],
+            }));
+    }
+
+    /// <summary>
+    /// A host outside the allowlist cannot act as a relying party.
+    /// </summary>
+    /// <remarks>
+    /// Without this the RP ID and expected origin came from the request's own Host header, so the
+    /// origin and rpIdHash checks compared a request against itself. This test would pass against the
+    /// old code only because the harness happens to fix the host — which is precisely the property a
+    /// real deployment does not have, with AllowedHosts shipped as "*".
+    /// </remarks>
+    [Fact]
+    public void ResolvingAnUnlistedHost_IsRefused()
+    {
+        var ctx = new DefaultHttpContext();
+        ctx.Request.Scheme = "https";
+        ctx.Request.Host = new HostString("attacker.example");
+        var service = new WebAuthnService(
+            new StubHttpContextAccessor { HttpContext = ctx },
+            Microsoft.Extensions.Options.Options.Create(new AuthOptions
+            {
+                WebAuthnAllowedHosts = [RpId],
+            }));
+
+        Assert.Throws<InvalidOperationException>(() =>
+            service.CreateAttestationOptions(new AuthUser { Id = "u1", Email = "u@example.com", NormalizedEmail = "U@EXAMPLE.COM" }, []));
     }
 
     private sealed class StubHttpContextAccessor : IHttpContextAccessor

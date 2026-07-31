@@ -976,18 +976,30 @@ public sealed class ProtocolTokenService(
 
         // RFC 8707 resource + RFC 8693 audience both narrow aud; both must be pre-registered on
         // the exchanging client. resource values must additionally be absolute URIs.
+        // On the EXCHANGE path an empty Audiences list denies rather than meaning "unset".
+        //
+        // The "empty means unset, not deny-all" convention is deliberate at authorize and
+        // client_credentials, where it exists so a dynamically-registered client — which RFC 7591
+        // gives no way to declare audiences — can still name a resource. But the consequence differs
+        // in kind here: a client with no registered audiences could aim the exchanged token at ANY
+        // audience it named, and the subject token's own `aud` is never consulted (the subject-token
+        // validator accepts any non-empty audience), so the value landed verbatim in the minted
+        // token's `aud`. A client permitted to exchange tokens must declare the targets it may aim
+        // them at.
+        var exchangeAudiencesDeclared = client.Audiences.Count > 0;
+
         var targetAudiences = new List<string>();
         foreach (var r in resources?.Where(r => !string.IsNullOrWhiteSpace(r)) ?? [])
         {
             if (!Uri.TryCreate(r, UriKind.Absolute, out var u) || !string.IsNullOrEmpty(u.Fragment))
                 throw new InvalidOperationException($"Resource '{r}' is not a valid absolute URI");
-            if (client.Audiences.Count > 0 && !client.Audiences.Contains(r, StringComparer.Ordinal))
+            if (!exchangeAudiencesDeclared || !client.Audiences.Contains(r, StringComparer.Ordinal))
                 throw new InvalidOperationException($"Resource '{r}' is not registered for this client");
             targetAudiences.Add(r);
         }
         foreach (var a in audiences?.Where(a => !string.IsNullOrWhiteSpace(a)) ?? [])
         {
-            if (client.Audiences.Count > 0 && !client.Audiences.Contains(a, StringComparer.Ordinal))
+            if (!exchangeAudiencesDeclared || !client.Audiences.Contains(a, StringComparer.Ordinal))
                 throw new InvalidOperationException($"Resource '{a}' is not registered for this client");
             targetAudiences.Add(a);
         }

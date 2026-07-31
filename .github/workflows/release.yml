@@ -1,5 +1,11 @@
 name: Release
 
+# Least privilege by default: the release jobs hold the NuGet API key, both Docker Hub tokens and
+# npm publish OIDC, so a compromised action should inherit as little as possible. Jobs that need
+# more (id-token for OIDC, contents: write for releases) declare it themselves.
+permissions:
+  contents: read
+
 on:
   push:
     tags: ['v*']

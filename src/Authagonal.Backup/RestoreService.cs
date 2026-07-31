@@ -24,6 +24,28 @@ public sealed class RestoreService(TableServiceClient serviceClient, IBackupSour
                 "WARNING: backup has no recorded file hashes; integrity cannot be verified. Restoring unverified data.");
         }
 
+        // Authenticate the manifest itself before trusting the hashes in it. Verifying files against
+        // a manifest that sits unsigned beside them on the same target detects corruption but not
+        // tampering: whoever can rewrite a data file can rewrite its recorded hash too. The key comes
+        // from outside the target, so an attacker holding only the backup cannot forge the MAC.
+        if (options.ManifestKey is { Length: > 0 } manifestKey)
+        {
+            if (manifest is null || !ManifestAuthentication.Verify(manifest, manifestKey))
+            {
+                throw new InvalidOperationException(
+                    "Backup manifest failed authentication: its MAC is missing or does not verify under " +
+                    "the supplied key. The file hashes it carries cannot be trusted, so neither can the " +
+                    "backup. Restore without ManifestKey only if you accept unauthenticated data.");
+            }
+        }
+        else if (options.VerifyIntegrity)
+        {
+            Console.Error.WriteLine(
+                "WARNING: no ManifestKey supplied, so the manifest is unauthenticated. File hashes " +
+                "detect corruption but not tampering — anyone who can rewrite a backup file can rewrite " +
+                "its recorded hash.");
+        }
+
         if (options.Mode == RestoreMode.Clean)
         {
             // The manifest has always recorded whether this backup is a full or an incremental; nothing
@@ -156,8 +178,14 @@ public sealed class RestoreService(TableServiceClient serviceClient, IBackupSour
             }
             else
             {
-                Console.Error.WriteLine(
-                    "WARNING: the tombstone file has no recorded hash; applying unverified deletes.");
+                // Fatal, matching the data-file rule. A tombstone file absent from the manifest is
+                // exactly as much evidence of tampering as an unlisted data file — and it is the more
+                // dangerous of the two, because its content is a list of rows to DELETE. Warning and
+                // proceeding meant an attacker who could write to the backup target could have a
+                // restore remove records of their choosing.
+                throw new InvalidOperationException(
+                    $"Backup integrity check failed: '{fileName}' has no hash recorded in the manifest. " +
+                    "Pass SkipIntegrityCheck to restore anyway, accepting unverified deletes.");
             }
         }
 

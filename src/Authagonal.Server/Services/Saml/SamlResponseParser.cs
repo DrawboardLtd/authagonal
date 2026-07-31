@@ -29,6 +29,20 @@ public sealed record SamlParseResult
     /// </summary>
     public Dictionary<string, List<string>> AttributeValues { get; init; } = new(StringComparer.OrdinalIgnoreCase);
     public string? SessionIndex { get; init; }
+
+    /// <summary>
+    /// <c>InResponseTo</c> as it appears inside the SIGNED assertion
+    /// (<c>Subject/SubjectConfirmation/SubjectConfirmationData</c>), independent of the Response
+    /// wrapper's own copy.
+    /// </summary>
+    /// <remarks>
+    /// The wrapper's attribute is outside the signature when only the assertion is signed — which is
+    /// the common IdP configuration — so an attacker who captured a response could delete it and turn
+    /// an SP-initiated response into one the ACS accepted as "IdP-initiated", skipping request
+    /// validation and replay consumption entirely. This copy is covered by the signature, so it
+    /// cannot be stripped, and its presence is proof the flow really was SP-initiated.
+    /// </remarks>
+    public string? SignedInResponseTo { get; init; }
     public string? AssertionId { get; init; }
 
     /// <summary>
@@ -180,6 +194,9 @@ public sealed class SamlResponseParser(ILogger<SamlResponseParser> logger)
             logger.LogWarning("SAML response status: {Status}", statusValue);
             return Fail($"SAML response status is not Success: {statusValue}");
         }
+
+        // Set from the SIGNED assertion further down; declared here so it can reach the result.
+        string? signedInResponseTo = null;
 
         // 5. Validate InResponseTo
         if (context.ExpectedInResponseTo is not null)
@@ -343,7 +360,8 @@ public sealed class SamlResponseParser(ILogger<SamlResponseParser> logger)
             return Fail("SubjectConfirmationData has expired.");
         }
 
-        var dataInResponseTo = confirmationData.Attributes?["InResponseTo"]?.Value;
+        signedInResponseTo = confirmationData.Attributes?["InResponseTo"]?.Value;
+        var dataInResponseTo = signedInResponseTo;
         if (context.ExpectedInResponseTo is not null && dataInResponseTo is not null &&
             !string.Equals(dataInResponseTo, context.ExpectedInResponseTo, StringComparison.Ordinal))
         {
@@ -424,7 +442,8 @@ public sealed class SamlResponseParser(ILogger<SamlResponseParser> logger)
             AttributeValues = attributeValues,
             SessionIndex = sessionIndex,
             AssertionId = assertionId,
-            AcceptableUntil = acceptableUntil
+            AcceptableUntil = acceptableUntil,
+            SignedInResponseTo = signedInResponseTo,
         };
     }
 

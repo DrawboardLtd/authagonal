@@ -89,13 +89,43 @@ public static class SamlRedirectBinding
         return false;
     }
 
+    /// <summary>
+    /// Largest message the redirect binding will accept, compressed or inflated.
+    /// </summary>
+    /// <remarks>
+    /// Generous for any real AuthnRequest or LogoutRequest — those are a few kilobytes — and the
+    /// point is only to have a ceiling at all. DEFLATE reaches ratios above 1000:1 on repetitive
+    /// input, so an unbounded inflate on an anonymous endpoint that runs BEFORE any signature check
+    /// turns a few hundred kilobytes of query string into gigabytes of allocation.
+    /// </remarks>
+    private const int MaxRedirectMessageBytes = 256 * 1024;
+
     /// <summary>Inflate a redirect-binding SAMLRequest/SAMLResponse query value (base64 raw-deflate).</summary>
+    /// <exception cref="InvalidOperationException">The compressed or inflated size exceeds the cap.</exception>
     public static string Inflate(string base64Deflated)
     {
+        // Bounded before decoding too: the base64 is itself attacker-supplied and unbounded.
+        if (base64Deflated.Length > MaxRedirectMessageBytes)
+            throw new InvalidOperationException("SAML redirect-binding message exceeds the maximum accepted size");
+
         var compressed = Convert.FromBase64String(base64Deflated);
         using var input = new MemoryStream(compressed);
         using var deflate = new System.IO.Compression.DeflateStream(input, System.IO.Compression.CompressionMode.Decompress);
-        using var reader = new StreamReader(deflate, Encoding.UTF8);
-        return reader.ReadToEnd();
+
+        // Read into a bounded buffer rather than ReadToEnd, which would materialise the whole bomb
+        // before anything could object to its size.
+        var buffer = new byte[MaxRedirectMessageBytes + 1];
+        var total = 0;
+        while (total < buffer.Length)
+        {
+            var read = deflate.Read(buffer, total, buffer.Length - total);
+            if (read == 0) break;
+            total += read;
+        }
+
+        if (total > MaxRedirectMessageBytes)
+            throw new InvalidOperationException("SAML redirect-binding message exceeds the maximum inflated size");
+
+        return Encoding.UTF8.GetString(buffer, 0, total);
     }
 }

@@ -57,4 +57,10 @@ public sealed class BackupOptions
     /// exact window boundaries; production callers keep the default.
     /// </summary>
     public TimeSpan WatermarkSkewMargin { get; set; } = BackupDefaults.WatermarkSkewMargin;
+
+    /// <summary>
+    /// Key used to MAC the manifest. When set, the manifest is signed so a restore holding the same
+    /// key can prove the recorded file hashes were not rewritten along with the files.
+    /// </summary>
+    public byte[]? ManifestKey { get; set; }
 }

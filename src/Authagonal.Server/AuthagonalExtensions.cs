@@ -104,6 +104,40 @@ public static class AuthagonalExtensions
             dataProtection.PersistKeysToAzureBlobStorage(blobClient);
         }
 
+        // Encrypt the key ring at rest when the operator supplies a key. Without this the ring is
+        // persisted as PLAINTEXT XML on all three backends — no IXmlEncryptor was ever configured —
+        // and that ring protects the auth cookie, so anyone who can read the store can mint a valid
+        // session for any user. ASP.NET Core does warn about it, at Information level, which the
+        // shipped log configuration (Microsoft.AspNetCore: Warning) discards.
+        var dpKeyVaultKeyId = configuration["DataProtection:KeyVaultKeyId"];
+        var dpCertificateThumbprint = configuration["DataProtection:CertificateThumbprint"];
+        if (!string.IsNullOrWhiteSpace(dpKeyVaultKeyId))
+        {
+            dataProtection.ProtectKeysWithAzureKeyVault(
+                new Uri(dpKeyVaultKeyId), new Azure.Identity.DefaultAzureCredential());
+        }
+        else if (!string.IsNullOrWhiteSpace(dpCertificateThumbprint))
+        {
+            dataProtection.ProtectKeysWithCertificate(dpCertificateThumbprint);
+        }
+        else if (configuration.GetValue("DataProtection:AllowUnencryptedKeyRing", false))
+        {
+            // Explicitly acknowledged. Logged loudly so it appears in an audit rather than only in a
+            // config file nobody re-reads.
+            services.AddSingleton<IHostedService>(sp => new UnencryptedKeyRingWarning(
+                sp.GetRequiredService<ILogger<UnencryptedKeyRingWarning>>()));
+        }
+        else if (!string.IsNullOrWhiteSpace(dpBlobUri) || !string.IsNullOrWhiteSpace(storageConnectionString))
+        {
+            // A persistent key ring with no encryption is refused at startup rather than discovered
+            // later from a store dump.
+            throw new InvalidOperationException(
+                "The DataProtection key ring is persisted but not encrypted. This ring protects the " +
+                "authentication cookie, so a store read yields the ability to forge sessions. Set " +
+                "DataProtection:KeyVaultKeyId or DataProtection:CertificateThumbprint, or set " +
+                "DataProtection:AllowUnencryptedKeyRing=true to accept the risk explicitly.");
+        }
+
         // Signing-key management is provided by Authagonal.Protocol's ProtocolKeyManager
         // (registered via AddAuthagonalCore → AddAuthagonalProtocol). Single-tenant hosts
         // get it as an IKeyManager singleton; multi-tenant hosts that registered their own
@@ -351,10 +385,18 @@ public static class AuthagonalExtensions
                 if (userId is null || stampClaim is null)
                     return;
 
-                // Absolute session expiration — reject sessions older than 7 days
-                // regardless of sliding renewal to prevent indefinite session extension
-                if (context.Properties.IssuedUtc is DateTimeOffset issuedUtc &&
-                    DateTimeOffset.UtcNow - issuedUtc > TimeSpan.FromDays(7))
+                // Absolute session expiration — reject sessions older than 7 days regardless of
+                // sliding renewal, to prevent indefinite session extension.
+                //
+                // Measured against a stamp that renewal does not touch. It used to read
+                // Properties.IssuedUtc, which sliding renewal rewrites: the cookie handler sets
+                // _refreshIssuedUtc = now on every refresh and persists it as the ticket's new
+                // IssuedUtc, and the handler below sets ShouldRenew = true after every security-stamp
+                // revalidation — so the clock was reset at least every SecurityStampRevalidationMinutes
+                // of activity. IssuedUtc could therefore never reach 7 days on a session that was used
+                // at all, and this branch was dead code.
+                if (CookieSignInHelper.SessionStartedAt(context.Properties) is { } sessionStarted &&
+                    DateTimeOffset.UtcNow - sessionStarted > TimeSpan.FromDays(7))
                 {
                     context.RejectPrincipal();
                     await context.HttpContext.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);

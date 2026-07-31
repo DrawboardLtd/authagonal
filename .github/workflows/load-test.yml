@@ -58,4 +58,11 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - uses: grafana/setup-k6-action@v1
-      - run: k6 run tests/load/soak.js -e BASE_URL=${{ env.BASE_URL }} -e DURATION=${{ github.event.inputs.duration || '30m' }}
+      # Passed through the environment, not interpolated into the shell line. A workflow_dispatch
+      # input is free text, and `${{ ... }}` is substituted before the shell ever sees it — so a
+      # value containing a shell metacharacter executed as part of this command, on a runner holding
+      # the repository's secrets.
+      - run: k6 run tests/load/soak.js -e BASE_URL="$BASE_URL" -e DURATION="$DURATION"
+        env:
+          BASE_URL: ${{ env.BASE_URL }}
+          DURATION: ${{ github.event.inputs.duration || '30m' }}

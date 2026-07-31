@@ -46,7 +46,16 @@ public static class IntrospectionEndpoint
         if (!client.Enabled)
             return InactiveResponse();
 
-        if (client.RequireClientSecret)
+        // RFC 7662 §2.1: "To prevent token scanning attacks, the endpoint MUST also require some form
+        // of authorization to access this endpoint", repeated as a MUST in §4.
+        //
+        // Client authentication was gated on RequireClientSecret, so a PUBLIC client — every SPA and
+        // native client, and a client_id that is public by construction because it ships in the
+        // browser bundle — could introspect with nothing but that id. Any enabled public client in
+        // the deployment turned this into an anonymous token-scanning oracle.
+        if (!client.RequireClientSecret)
+            return Results.Json(new { error = "invalid_client" }, statusCode: 401);
+
         {
             if (string.IsNullOrWhiteSpace(clientSecret))
                 return InactiveResponse();

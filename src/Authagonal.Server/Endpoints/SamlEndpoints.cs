@@ -249,6 +249,38 @@ public static class SamlEndpoints
             return RedirectWithError(relayState, "saml_error", parseResult.Error ?? "Unknown error");
         }
 
+        // The SIGNED InResponseTo decides whether this was SP-initiated — not the Response wrapper's
+        // copy, which sits outside the signature whenever the IdP signs only the assertion (the common
+        // configuration). Deleting that one unsigned attribute from a captured response turned an
+        // SP-initiated response into one accepted as "IdP-initiated", which skipped request validation
+        // and replay consumption entirely, while the signature still verified.
+        //
+        // So an assertion carrying InResponseTo must always be matched to a real outstanding request,
+        // regardless of what the wrapper said.
+        if (parseResult.SignedInResponseTo is { Length: > 0 } signedInResponseTo
+            && expectedInResponseTo is null)
+        {
+            var signedRequestState = await replayCache.ValidateAndConsumeRequestAsync(signedInResponseTo, ct);
+            if (signedRequestState is null)
+            {
+                logger.LogWarning(
+                    "SAML assertion carries a signed InResponseTo with no matching outstanding request " +
+                    "(the Response wrapper's copy was absent — likely stripped): {InResponseTo}",
+                    signedInResponseTo);
+                return Results.BadRequest(new { error = "saml_replay", error_description = "SAML response replay detected or unknown request ID." });
+            }
+
+            if (!string.Equals(signedRequestState.ConnectionId, connectionId, StringComparison.OrdinalIgnoreCase))
+            {
+                logger.LogWarning("SAML connection mismatch on the signed InResponseTo: expected={Expected}, actual={Actual}",
+                    signedRequestState.ConnectionId, connectionId);
+                return Results.BadRequest(new { error = "connection_mismatch" });
+            }
+
+            if (!string.IsNullOrEmpty(signedRequestState.ReturnUrl))
+                relayState = SanitizeReturnUrl(signedRequestState.ReturnUrl);
+        }
+
         // Enforce assertion single-use for EVERY accepted assertion, regardless of flow.
         // The SP-initiated request-ID check above keys off the <Response> InResponseTo attribute,
         // which is NOT covered when an IdP signs only the <Assertion> (the common case). An attacker

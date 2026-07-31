@@ -12,6 +12,18 @@ public static class AuthagonalBffExtensions
 {
     /// <summary>Registers the BFF services. Register a distributed cache (e.g. Redis) before this call if
     /// you run more than one instance; otherwise an in-memory cache is used.</summary>
+    /// <remarks>
+    /// A shared cache is necessary for multi-instance operation but NOT sufficient. Refresh
+    /// single-flight (<see cref="BffRefreshCoordinator"/>) is per-process, so two replicas can read
+    /// the same session, both find it needs refreshing, and both redeem the same rotating refresh
+    /// token. The IdP reads a second redemption as a stolen-token replay and revokes the whole grant
+    /// family — signing the user out everywhere, from an entirely ordinary event.
+    /// <para>
+    /// Running more than one instance therefore also requires a non-zero
+    /// <c>Auth:RefreshTokenReuseGraceSeconds</c> on the identity provider (30 is the protocol layer's
+    /// own default), which serves the successor idempotently inside that window instead of revoking.
+    /// </para>
+    /// </remarks>
     public static IServiceCollection AddAuthagonalBff(this IServiceCollection services, Action<AuthagonalBffOptions> configure)
     {
         ArgumentNullException.ThrowIfNull(configure);

@@ -7,7 +7,9 @@ using Microsoft.AspNetCore.Http;
 
 namespace Authagonal.Server.Services;
 
-public sealed class WebAuthnService(IHttpContextAccessor httpContextAccessor)
+public sealed class WebAuthnService(
+    IHttpContextAccessor httpContextAccessor,
+    Microsoft.Extensions.Options.IOptions<AuthOptions> authOptions)
 {
     // Build the FIDO2 relying-party config from the ACTUAL request host, not a fixed startup value.
     // WebAuthn requires the RP ID to be the origin's registrable host and the origin to match exactly,
@@ -15,10 +17,36 @@ public sealed class WebAuthnService(IHttpContextAccessor httpContextAccessor)
     // must be resolved per request — a single startup Issuer would only ever be valid for one host, which
     // is why passkey setup failed for every tenant host. rp.id is the hostname (no port); the origin is
     // scheme + host (+ port) and must equal what the browser sends.
+    /// <remarks>
+    /// The per-request host is now checked against a configured allowlist first.
+    /// <para>
+    /// Resolving the RP per request is necessary for multi-tenant hosting, but taking it from the
+    /// request with nothing to check it against made both WebAuthn ceremonies self-referential: §7.1
+    /// steps 9/13 and §7.2 steps 13/14 compare the client's origin and rpIdHash against an expectation
+    /// that came from the same request. The library performs the comparison faithfully — against a
+    /// value the caller supplied. With <c>AllowedHosts</c> shipped as "*", nothing constrained the Host
+    /// header either.
+    /// </para>
+    /// <para>
+    /// An empty allowlist keeps the previous behaviour, because refusing every ceremony on upgrade
+    /// would lock out every existing passkey user; it is logged as a gap instead. Set
+    /// <c>Auth:WebAuthnAllowedHosts</c> to the real host list.
+    /// </para>
+    /// </remarks>
     private IFido2 ResolveFido2()
     {
         var req = httpContextAccessor.HttpContext?.Request
             ?? throw new InvalidOperationException("WebAuthn requires an active HTTP request.");
+
+        var allowed = authOptions.Value.WebAuthnAllowedHosts;
+        if (allowed.Count > 0 && !allowed.Contains(req.Host.Host, StringComparer.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException(
+                $"Host '{req.Host.Host}' is not in Auth:WebAuthnAllowedHosts, so it cannot act as a " +
+                "WebAuthn relying party. A credential registered under one RP ID must never be usable " +
+                "under another.");
+        }
+
         var origin = $"{req.Scheme}://{req.Host.Value}";
         return new Fido2(new Fido2Configuration
         {

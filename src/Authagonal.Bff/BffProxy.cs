@@ -1,6 +1,7 @@
 using System.Net.Http.Headers;
 using Authagonal.Core.Authority;
 using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.JsonWebTokens;
 
@@ -17,7 +18,47 @@ internal static class BffProxy
     {
         "Connection", "Keep-Alive", "Proxy-Authenticate", "Proxy-Authorization", "TE", "Trailer",
         "Transfer-Encoding", "Upgrade", "Host", "Cookie", "Authorization",
+
+        // Forwarding metadata. These were copied through verbatim, and the proxy never asserted its
+        // own — so from the upstream's point of view the BFF, a trusted reverse proxy, had just
+        // vouched for whatever client IP, host and scheme the caller chose to send. None of them is
+        // on the fetch spec's forbidden-header list, so any script in the SPA's origin could set
+        // them. They are re-set from server-side state below.
+        "X-Forwarded-For", "X-Forwarded-Host", "X-Forwarded-Proto", "X-Forwarded-Port",
+        "X-Forwarded-Prefix", "X-Real-IP", "Forwarded",
     };
+
+    /// <summary>
+    /// Builds the upstream URL and confirms it still addresses the configured upstream. False means
+    /// the composition escaped — the request must not be sent.
+    /// </summary>
+    /// <remarks>
+    /// The relative part is forced to start with '/' so it can never be read as a host label, and the
+    /// resulting authority and scheme are compared against the base. Both halves matter: the
+    /// normalisation prevents the escape, the comparison proves it.
+    /// </remarks>
+    internal static bool TryComposeTarget(string targetBaseUrl, string forwardedPath, string? query, out string targetUrl)
+    {
+        targetUrl = string.Empty;
+
+        if (!Uri.TryCreate(targetBaseUrl, UriKind.Absolute, out var baseUri)) return false;
+
+        var relative = forwardedPath.Length == 0 || forwardedPath[0] == '/'
+            ? forwardedPath
+            : "/" + forwardedPath;
+
+        if (!Uri.TryCreate(baseUri, relative, out var composed)) return false;
+
+        if (!string.Equals(composed.Authority, baseUri.Authority, StringComparison.OrdinalIgnoreCase)
+            || !string.Equals(composed.Scheme, baseUri.Scheme, StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        targetUrl = baseUri.GetLeftPart(UriPartial.Authority)
+            + baseUri.AbsolutePath.TrimEnd('/') + relative + query;
+        return true;
+    }
 
     // Match a prefix only on a segment boundary, so "/id" doesn't capture "/identity/..." (which
     // StripPrefix would then mangle into a slash-less "entity/..."). Internal for unit testing.
@@ -92,8 +133,10 @@ internal static class BffProxy
         BffRefreshCoordinator refresher,
         IHttpClientFactory httpClientFactory,
         BffExchangedTokens exchangedTokens,
+        ILoggerFactory loggerFactory,
         CancellationToken ct)
     {
+        var logger = loggerFactory.CreateLogger(typeof(BffProxy));
         var o = options.Value;
         if (!ctx.Request.Headers.ContainsKey(o.AntiForgeryHeader))
             return Results.StatusCode(StatusCodes.Status401Unauthorized);
@@ -124,7 +167,21 @@ internal static class BffProxy
         var forwardedPath = upstream.StripPrefix && PrefixMatches(apiPath, upstream.Prefix)
             ? apiPath[upstream.Prefix.Length..]
             : apiPath;
-        var targetUrl = upstream.TargetBaseUrl.TrimEnd('/') + forwardedPath + ctx.Request.QueryString;
+
+        // Composed as a URI and re-checked, not concatenated. PrefixMatches accepts any prefix ending
+        // in '/', and for those the slice above removes the LEADING slash — so forwardedPath became a
+        // relative string and string concatenation fused it onto the host label rather than the path.
+        // BffUpstream.Prefix defaults to "/", so a host that merely sets StripPrefix on a
+        // default-prefix upstream was in that state, and the first path segment after {BasePath}/api
+        // is fully caller-controlled: it could name any host, and the request went there carrying the
+        // session's bearer token.
+        if (!TryComposeTarget(upstream.TargetBaseUrl, forwardedPath, ctx.Request.QueryString.Value, out var targetUrl))
+        {
+            logger.LogError(
+                "Refusing to proxy: composed target left the configured upstream authority. Upstream {Base}, path {Path}",
+                upstream.TargetBaseUrl, forwardedPath);
+            return Results.StatusCode(StatusCodes.Status502BadGateway);
+        }
         var client = httpClientFactory.CreateClient("AuthagonalBffProxy");
 
         using var upstreamReq = new HttpRequestMessage(new HttpMethod(ctx.Request.Method), targetUrl);
@@ -140,6 +197,13 @@ internal static class BffProxy
                 continue;
             upstreamReq.Headers.TryAddWithoutValidation(h.Key, h.Value.ToArray());
         }
+
+        // Asserted by the proxy from what it actually observed, replacing anything the caller sent.
+        if (ctx.Connection.RemoteIpAddress is { } peer)
+            upstreamReq.Headers.TryAddWithoutValidation("X-Forwarded-For", peer.ToString());
+        upstreamReq.Headers.TryAddWithoutValidation("X-Forwarded-Proto", ctx.Request.Scheme);
+        if (ctx.Request.Host.HasValue)
+            upstreamReq.Headers.TryAddWithoutValidation("X-Forwarded-Host", ctx.Request.Host.Value);
         if (fresh is not null)
         {
             // Context-bound routes ride a downscoped exchanged token (cached per session+binding)

@@ -68,6 +68,17 @@ public sealed class AuthOptions
     public int MfaChallengeExpiryMinutes { get; set; } = 5;
     public int MfaSetupTokenExpiryMinutes { get; set; } = 15;
 
+    /// <summary>
+    /// Hosts permitted to act as a WebAuthn relying party. Empty (the default) accepts any host, which
+    /// preserves existing deployments but leaves the origin and rpIdHash checks self-referential.
+    /// </summary>
+    /// <remarks>
+    /// The RP ID and expected origin are derived from the request's own Host header, so without an
+    /// allowlist the values a ceremony is validated AGAINST come from the request being validated.
+    /// Set this to the real host list; on a multi-tenant deployment, to every tenant host.
+    /// </remarks>
+    public List<string> WebAuthnAllowedHosts { get; set; } = [];
+
     // --- Password hashing ---
 
     /// <summary>
@@ -100,6 +111,18 @@ public sealed class AuthOptions
     /// fire a second refresh with the same token (typically mobile apps with
     /// connectivity flaps). Matches Duende's ConsumedTokenUsageWindow concept.
     /// </summary>
+    /// <summary>
+    /// Window in which re-presenting an already-rotated refresh token returns its successor instead
+    /// of being treated as replay. 0 (the default) means strict: any reuse revokes the grant family.
+    /// </summary>
+    /// <remarks>
+    /// Left strict by default deliberately — it is the theft-detection behaviour, and weakening it
+    /// for every deployment is not the right answer to one client topology. But a multi-instance BFF
+    /// NEEDS a non-zero value: its refresh single-flight is per-process, so two replicas refreshing
+    /// one session concurrently both redeem the same token, which strict mode reads as replay and
+    /// answers by signing the user out everywhere. Set this (30 is the protocol layer's own default)
+    /// when running more than one BFF instance, or any client that can refresh concurrently.
+    /// </remarks>
     public int RefreshTokenReuseGraceSeconds { get; set; } = 0;
 
     // --- Signing keys ---

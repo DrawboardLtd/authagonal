@@ -60,6 +60,19 @@ internal static class ClientAuthentication
     /// endpoint's error result — endpoints differ on status codes (the token endpoint returns 400
     /// for a disabled client, PAR returns 401), so the mapping stays with the caller.
     /// </summary>
+    /// <summary>
+    /// True for the grant RFC 6749 §4.4 restricts to confidential clients, so a public client must be
+    /// refused even though it is otherwise "authenticated" by presenting its (public) client_id.
+    /// </summary>
+    /// <remarks>
+    /// Scoped to <c>client_credentials</c>: that is the explicit MUST. Token exchange is not
+    /// restricted this way by RFC 8693, and public clients legitimately exchange tokens here (the
+    /// BFF's context-bound exchange routes do exactly that), so refusing it would break a supported
+    /// flow rather than close a hole.
+    /// </remarks>
+    private static bool RequiresConfidentialClient(string? grantType) =>
+        grantType is Authagonal.Core.Constants.GrantTypes.ClientCredentials;
+
     public static async Task<(OAuthClient? Client, IResult? Error)> AuthenticateAsync(
         HttpContext httpContext,
         IFormCollection form,
@@ -68,6 +81,10 @@ internal static class ClientAuthentication
         Func<string, string, IResult> error,
         CancellationToken ct)
     {
+        // Read from the form rather than taken as a parameter so revocation and introspection, which
+        // carry no grant_type, are unaffected.
+        var grantType = form["grant_type"].FirstOrDefault();
+
         // private_key_jwt: a client assertion, when present, is the whole authentication —
         // it never falls back to the secret path (a failed assertion must not become a
         // weaker-credential retry).
@@ -94,6 +111,23 @@ internal static class ClientAuthentication
 
         if (!client.Enabled)
             return (null, error("unauthorized_client", "Client is disabled"));
+
+        // RFC 6749 §4.4: the client-credentials grant "MUST only be used by confidential clients",
+        // and §4.4.2 requires the client to authenticate per §3.2.1. Nothing enforced that: a client
+        // with RequireClientSecret=false and client_credentials in AllowedGrantTypes authenticated on
+        // a bare client_id, and neither token endpoint nor HandleClientCredentialsAsync re-checked.
+        // Token exchange is refused on the same grounds — it mints a token from another, which a
+        // caller that has proved nothing must not be able to do.
+        // Only when the client is actually configured for the grant — a client that does not hold
+        // client_credentials at all should still fail with the grant-type error, which says something
+        // more useful than "you are public".
+        if (!client.RequireClientSecret
+            && RequiresConfidentialClient(grantType)
+            && client.AllowedGrantTypes.Contains(Authagonal.Core.Constants.GrantTypes.ClientCredentials, StringComparer.Ordinal))
+        {
+            return (null, error("invalid_client",
+                $"The {grantType} grant requires a confidential client; '{client.ClientId}' is registered as public"));
+        }
 
         if (client.RequireClientSecret)
         {

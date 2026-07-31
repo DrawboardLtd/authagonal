@@ -818,6 +818,16 @@ public static class OidcEndpoints
         "scope", "client_id", "nonce", "auth_time", "acr", "amr", "sid",
         "at_hash", "c_hash", "azp",
         "email", "email_verified", "name", "given_name", "family_name", "phone_number",
+
+        // Claims this server derives itself and must not accept an upstream's word for.
+        //
+        // Federation claims are merged with overwriteExisting: true — deliberately, since they
+        // describe the authoritative state of the upstream-issued session — so an upstream id_token
+        // carrying one of these would have replaced the server's own value. org_id decides tenancy;
+        // roles and groups are authorization inputs resolved from this server's stores; and
+        // federated_connection is the marker recording WHICH upstream an account came from, so an
+        // upstream asserting it could name a different, more-trusted connection than its own.
+        "org_id", "roles", "groups", "federated_connection",
     };
 
     private static string? ConvertClaimValueToString(object? value)

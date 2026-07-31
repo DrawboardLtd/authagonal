@@ -17,6 +17,23 @@ public static class CookieSignInHelper
     /// /connect/authorize can honor prompt=login by requiring a session newer than the request.</summary>
     public const string AuthTimeClaim = "auth_time";
 
+    /// <summary>
+    /// Authentication-property key recording when this session began, in Unix seconds.
+    /// </summary>
+    /// <remarks>
+    /// Distinct from <c>Properties.IssuedUtc</c>, which sliding renewal rewrites on every refresh —
+    /// making it useless as an absolute-lifetime reference. This value is written once at sign-in and
+    /// never touched again, so the 7-day cap can actually fire.
+    /// </remarks>
+    public const string SessionStartedProperty = "session_started";
+
+    /// <summary>Reads <see cref="SessionStartedProperty"/>, or null when the session predates it.</summary>
+    public static DateTimeOffset? SessionStartedAt(AuthenticationProperties? properties)
+    {
+        var raw = properties?.GetString(SessionStartedProperty);
+        return long.TryParse(raw, out var seconds) ? DateTimeOffset.FromUnixTimeSeconds(seconds) : null;
+    }
+
     public static async Task SignInAsync(HttpContext httpContext, AuthUser user, bool mfaAuthenticated = false)
     {
         var name = $"{user.FirstName} {user.LastName}".Trim();
@@ -40,7 +57,10 @@ public static class CookieSignInHelper
         var identity = new ClaimsIdentity(claims, CookieAuthenticationDefaults.AuthenticationScheme);
         var principal = new ClaimsPrincipal(identity);
 
-        await httpContext.SignInAsync(CookieAuthenticationDefaults.AuthenticationScheme, principal);
+        var properties = new AuthenticationProperties();
+        properties.SetString(SessionStartedProperty, DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString());
+
+        await httpContext.SignInAsync(CookieAuthenticationDefaults.AuthenticationScheme, principal, properties);
     }
 
     public static string GetDisplayName(AuthUser user)

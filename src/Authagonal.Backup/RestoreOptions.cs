@@ -25,6 +25,16 @@ public sealed class RestoreOptions
     public bool DryRun { get; set; }
 
     /// <summary>
+    /// Key for verifying <see cref="BackupManifest.ManifestMac"/>. When set, a manifest that carries
+    /// no MAC or one that does not verify aborts the restore.
+    /// </summary>
+    /// <remarks>
+    /// Must be held somewhere the backup writer cannot reach. Supplying it is what turns file-hash
+    /// verification from a corruption check into a tampering check.
+    /// </remarks>
+    public byte[]? ManifestKey { get; set; }
+
+    /// <summary>
     /// PartitionKey prefix that scopes a <see cref="RestoreMode.Clean"/> wipe, matching
     /// <c>EnvPartitioner</c>'s <c>{env}|</c> scheme (e.g. <c>"sandbox-3|"</c>). When set, Clean deletes
     /// only rows in that env; when null, Clean empties the whole physical table.

@@ -27,6 +27,20 @@ public sealed class BackupManifest
     /// Key = filename (e.g. "Users.jsonl.gz"), Value = lowercase hex hash.
     /// </summary>
     public Dictionary<string, string> FileHashes { get; set; } = new();
+
+    /// <summary>
+    /// HMAC-SHA256 over the serialized manifest (with this field cleared), hex-encoded. Null when the
+    /// backup was written without a manifest key.
+    /// </summary>
+    /// <remarks>
+    /// Without this, integrity verification is self-referential: <see cref="FileHashes"/> is the only
+    /// thing authenticating the data files, and it sits in a plain JSON document beside them on the
+    /// same target. Anyone who can rewrite a data file can rewrite its hash in the same breath, so the
+    /// check detected corruption but not tampering — while the option that turns it on is called
+    /// VerifyIntegrity. The MAC key lives outside the backup target, so an attacker holding only the
+    /// target cannot forge it.
+    /// </remarks>
+    public string? ManifestMac { get; set; }
 }
 
 public sealed class TableBackupInfo

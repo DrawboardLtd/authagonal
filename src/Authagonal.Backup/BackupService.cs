@@ -157,7 +157,7 @@ public sealed class BackupService(TableServiceClient serviceClient, IBackupTarge
         long tombstoneCount = 0;
         if (effectiveWatermark.HasValue)
         {
-            tombstoneCount = await BackupTombstonesAsync(backupId, prefix, effectiveWatermark.Value, ct);
+            tombstoneCount = await BackupTombstonesAsync(backupId, prefix, effectiveWatermark.Value, manifest, ct);
         }
 
         sw.Stop();
@@ -167,6 +167,11 @@ public sealed class BackupService(TableServiceClient serviceClient, IBackupTarge
 
         if (!options.DryRun)
         {
+            // Signed last, once every file hash is in. Without a MAC the manifest authenticates
+            // nothing — it sits beside the files it vouches for, on the same target.
+            if (options.ManifestKey is { Length: > 0 } manifestKey)
+                ManifestAuthentication.Sign(manifest, manifestKey);
+
             await target.WriteManifestAsync(backupId, manifest, ct);
             await target.SetLastWatermarkAsync(backupStart, ct);
         }
@@ -212,8 +217,11 @@ public sealed class BackupService(TableServiceClient serviceClient, IBackupTarge
         }
     }
 
-    private async Task<long> BackupTombstonesAsync(string backupId, string prefix, DateTimeOffset watermark, CancellationToken ct)
+    private async Task<long> BackupTombstonesAsync(
+        string backupId, string prefix, DateTimeOffset watermark, BackupManifest manifest, CancellationToken ct)
     {
+        HashingStream? hashingStream = null;
+        string? tombstoneFileName = null;
         var physicalName = prefix + "Tombstones";
         var tableClient = serviceClient.GetTableClient(physicalName);
 
@@ -237,15 +245,26 @@ public sealed class BackupService(TableServiceClient serviceClient, IBackupTarge
                 if (writer is null && !options.DryRun)
                 {
                     var ext = options.Gzip ? ".jsonl.gz" : ".jsonl";
-                    outputStream = await target.OpenWriteAsync(backupId, $"_tombstones{ext}", ct);
+                    tombstoneFileName = $"_tombstones{ext}";
+                    outputStream = await target.OpenWriteAsync(backupId, tombstoneFileName, ct);
+
+                    // Hashed like every data file. It was the one backup artefact written with no
+                    // HashingStream and never entered into manifest.FileHashes — so restore had
+                    // nothing to verify it against and applied its deletes unchecked. A tombstone
+                    // file is a list of rows to remove, which makes an unverified one a way to
+                    // delete attacker-chosen records (a revocation entry, say) during a restore.
+                    hashingStream = new HashingStream(outputStream);
+                    // leaveOpen: true on both layers, for the reason spelled out on the data-file
+                    // path above — otherwise disposing the writer cascades down to the
+                    // IncrementalHash and GetHashHex() throws ObjectDisposedException.
                     if (options.Gzip)
                     {
-                        gzipStream = new GZipStream(outputStream, CompressionLevel.Optimal);
-                        writer = new StreamWriter(gzipStream, System.Text.Encoding.UTF8);
+                        gzipStream = new GZipStream(hashingStream, CompressionLevel.Optimal, leaveOpen: true);
+                        writer = new StreamWriter(gzipStream, System.Text.Encoding.UTF8, bufferSize: 8192, leaveOpen: true);
                     }
                     else
                     {
-                        writer = new StreamWriter(outputStream, System.Text.Encoding.UTF8);
+                        writer = new StreamWriter(hashingStream, System.Text.Encoding.UTF8, bufferSize: 8192, leaveOpen: true);
                     }
                 }
 
@@ -289,6 +308,12 @@ public sealed class BackupService(TableServiceClient serviceClient, IBackupTarge
         {
             if (writer is not null) await writer.DisposeAsync();
             if (gzipStream is not null) await gzipStream.DisposeAsync();
+
+            // Recorded before the underlying stream closes, so the digest covers everything written.
+            if (hashingStream is not null && tombstoneFileName is not null)
+                manifest.FileHashes[tombstoneFileName] = hashingStream.GetHashHex();
+
+            if (hashingStream is not null) await hashingStream.DisposeAsync();
             if (outputStream is not null) await outputStream.DisposeAsync();
         }
 
