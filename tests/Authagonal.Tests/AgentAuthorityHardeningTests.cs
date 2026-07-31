@@ -66,4 +66,54 @@ public class AgentAuthorityHardeningTests
         var grant = Assert.Single(a.Intersect(b).Grants);
         Assert.False(grant.ActionPolicies.ContainsKey("initiate"));
     }
+
+    // -----------------------------------------------------------------------
+    // F148 / F149 — the two ways evaluation failed open
+    // -----------------------------------------------------------------------
+
+    [Fact]
+    public void EmptyAllowlist_DeniesRatherThanPermitting()
+    {
+        // An allowlist that admits nothing is bottom, like Nothing. Treating it as "no constraint"
+        // inverted its meaning: the residue of a conflicting intersection PERMITTED everything.
+        var set = ParseAuthority("""
+            [{"type":"payments","actions":["initiate"],"recipient_domains":[]}]
+            """);
+
+        Assert.False(set.Permits("payments", "initiate", location: null,
+            context: new Dictionary<string, string> { ["recipient_domains"] = "acme.example" }));
+    }
+
+    [Fact]
+    public void StrictMode_DeniesWhenTheCallerSuppliedNoContextForAConstraint()
+    {
+        var set = ParseAuthority("""
+            [{"type":"payments","actions":["initiate"],"recipient_domains":["acme.example"]}]
+            """);
+
+        // Default (lenient) keeps the documented behaviour: the resource server is trusted to pass
+        // every key it knows about.
+        Assert.True(set.Permits("payments", "initiate"));
+
+        // Strict inverts it for callers that can enumerate what they support — a server that simply
+        // FORGETS to pass recipient_domains otherwise gets an unconstrained grant, silently.
+        Assert.False(set.Permits("payments", "initiate", location: null, context: null, strict: true));
+    }
+
+    [Fact]
+    public void Locations_NarrowTheGrant()
+    {
+        // locations was parsed, intersected and emitted, and consulted by no evaluator — so the one
+        // part of a grant that says WHERE the authority applies never narrowed anything.
+        var set = ParseAuthority("""
+            [{"type":"payments","actions":["initiate"],"locations":["https://api.acme.example"]}]
+            """);
+
+        Assert.True(set.Permits("payments", "initiate", "https://api.acme.example"));
+        Assert.False(set.Permits("payments", "initiate", "https://api.evil.example"));
+
+        // A caller that does not know its location is unaffected, so this cannot break an evaluator
+        // that has not been taught about locations yet.
+        Assert.True(set.Permits("payments", "initiate"));
+    }
 }

@@ -159,6 +159,35 @@ public sealed class AuthoritySet
     /// residue of a conflicting intersection.
     /// </summary>
     public bool Permits(string type, string action, IReadOnlyDictionary<string, string>? context = null)
+        => Permits(type, action, location: null, context, strict: false);
+
+    /// <param name="location">
+    /// The RFC 9396 <c>locations</c> value the caller is acting against, when it has one. A grant
+    /// that names locations permits only those.
+    /// </param>
+    /// <param name="strict">
+    /// When true, a constraint the caller supplied no context for DENIES instead of being skipped.
+    /// </param>
+    /// <remarks>
+    /// Both parameters exist because the default evaluation fails open in two ways.
+    /// <para>
+    /// Constraints with no matching context entry were skipped, which makes the guarantee "the
+    /// resource server is trusted to know which context keys matter" — so a server that simply
+    /// forgets to pass <c>recipient_domains</c> gets an unconstrained grant and nothing anywhere
+    /// reports it. Strict mode inverts that for callers that can enumerate what they support.
+    /// </para>
+    /// <para>
+    /// <c>locations</c> was parsed, intersected and emitted, and consulted by no evaluator — so the
+    /// one part of a grant that says WHERE the authority applies never narrowed anything. A caller
+    /// that passes its own location now gets it enforced.
+    /// </para>
+    /// </remarks>
+    public bool Permits(
+        string type,
+        string action,
+        string? location,
+        IReadOnlyDictionary<string, string>? context = null,
+        bool strict = false)
     {
         if (IsUnrestricted) return true;
 
@@ -166,10 +195,27 @@ public sealed class AuthoritySet
         if (grant is null) return false;
         if (grant.PolicyFor(action) == ActionPolicy.Deny) return false;
 
+        // A grant that names locations applies only at those locations.
+        if (grant.Locations.Count > 0 && location is not null
+            && !grant.Locations.Contains(location, StringComparer.Ordinal))
+        {
+            return false;
+        }
+
         foreach (var (name, constraint) in grant.Constraints)
         {
             if (constraint is ConstraintValue.NothingValue) return false;
-            if (context is null || !context.TryGetValue(name, out var contextValue)) continue;
+
+            // An allowlist that admits nothing is bottom, like Nothing — it can never be satisfied,
+            // so treating it as "no constraint" inverted its meaning entirely.
+            if (constraint is ConstraintValue.StringSet { Values.Count: 0 }) return false;
+
+            if (context is null || !context.TryGetValue(name, out var contextValue))
+            {
+                if (strict) return false;
+                continue;
+            }
+
             if (!Satisfies(constraint, contextValue)) return false;
         }
         return true;
