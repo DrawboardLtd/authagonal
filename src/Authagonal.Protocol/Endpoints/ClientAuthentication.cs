@@ -25,7 +25,22 @@ internal static class ClientAuthentication
 
     // Config-derived public key material only — identical on every pod, safe to cache in-memory.
     private static readonly ConcurrentDictionary<string, (JsonWebKeySet Keys, DateTimeOffset FetchedAt)> JwksCache = new();
-    private static readonly HttpClient FallbackHttpClient = new() { Timeout = TimeSpan.FromSeconds(10) };
+
+    /// <summary>
+    /// Cap on distinct jwks_uri values held at once. Every entry is keyed by a URL a client record
+    /// supplies, and dynamic client registration lets an anonymous caller create those records — so an
+    /// uncapped dictionary is an unbounded, process-lifetime allocation an attacker drives. Well past
+    /// any real deployment's client count; the eviction below only ever fires under abuse.
+    /// </summary>
+    private const int MaxCachedJwks = 512;
+
+    /// <summary>
+    /// Used only when the host did not register the named client (a host that composes its own
+    /// container). Redirects are off for the same reason they are off on the named client: jwks_uri is
+    /// checked once, before the request, and an automatic 302 sends it somewhere the check never saw.
+    /// </summary>
+    private static readonly HttpClient FallbackHttpClient =
+        new(new SocketsHttpHandler { AllowAutoRedirect = false }) { Timeout = TimeSpan.FromSeconds(10) };
     public static (string? ClientId, string? ClientSecret) ExtractClientCredentials(
         HttpContext httpContext, IFormCollection form)
     {
@@ -351,6 +366,7 @@ internal static class ClientAuthentication
                 ?? FallbackHttpClient;
             var json = await http.GetStringAsync(uri, ct);
             var keys = new JsonWebKeySet(json);
+            EvictExpiredJwks();
             JwksCache[client.JwksUri] = (keys, DateTimeOffset.UtcNow);
             return keys;
         }
@@ -371,5 +387,27 @@ internal static class ClientAuthentication
 
             return null;
         }
+    }
+
+    /// <summary>
+    /// Drops sets past the staleness bound, and — if that was not enough — the oldest entries, so the
+    /// cache stays bounded by <see cref="MaxCachedJwks"/> rather than by the number of client records an
+    /// anonymous DCR caller decided to create.
+    /// </summary>
+    private static void EvictExpiredJwks()
+    {
+        if (JwksCache.Count < MaxCachedJwks) return;
+
+        var now = DateTimeOffset.UtcNow;
+        foreach (var (url, entry) in JwksCache)
+        {
+            if (now - entry.FetchedAt >= MaxJwksStaleness)
+                JwksCache.TryRemove(url, out _);
+        }
+
+        // Still full: the entries are all live, so evict by age. Re-fetching an evicted set costs one
+        // request; keeping every set an attacker asked for costs the process.
+        foreach (var (url, _) in JwksCache.OrderBy(e => e.Value.FetchedAt).Take(JwksCache.Count - MaxCachedJwks + 1))
+            JwksCache.TryRemove(url, out _);
     }
 }

@@ -292,4 +292,54 @@ public class TccProvisioningOrchestratorTests
 
         Assert.Empty(await _provisions.GetByUserAsync("user-1"));
     }
+
+    // ── The SSRF guard, applied where the request is actually made ────
+    //
+    // The admin endpoint validates a callbackUrl on the way in, which covers only the values that
+    // arrive that way. A restore, a storage migration, a hand-edited row or a ProvisioningApps:*
+    // configuration entry all reach IProvisioningAppProvider without passing it — and these calls fire
+    // on the signup path, unattended, against an address chosen by whatever wrote that value.
+
+    [Theory]
+    [InlineData("http://169.254.169.254/latest/meta-data")]  // cloud instance metadata
+    [InlineData("http://127.0.0.1:8080/provisioning")]       // loopback
+    [InlineData("http://10.1.2.3/provisioning")]             // RFC1918
+    [InlineData("file:///etc/passwd")]                       // not http(s)
+    public async Task Try_AgainstAnInternalCallbackUrl_MakesNoRequest(string callbackUrl)
+    {
+        var orchestrator = NewOrchestrator(new ProvisioningApp("evil", callbackUrl, ApiKey: null));
+
+        await Assert.ThrowsAnyAsync<Exception>(() => orchestrator.ProvisionAsync(User()));
+
+        Assert.Empty(_handler.Calls);
+        Assert.Empty(await _provisions.GetByUserAsync("user-1"));
+    }
+
+    [Fact]
+    public async Task Deprovision_AgainstAnInternalCallbackUrl_MakesNoRequest()
+    {
+        await _provisions.StoreAsync(new UserProvision
+        {
+            UserId = "user-1",
+            AppId = "evil",
+            ProvisionedAt = DateTimeOffset.UtcNow,
+        });
+        var orchestrator = NewOrchestrator(
+            new ProvisioningApp("evil", "http://169.254.169.254/latest/meta-data", ApiKey: null));
+
+        await orchestrator.DeprovisionAllAsync("user-1");
+
+        Assert.Empty(_handler.Calls);
+    }
+
+    /// <summary>A legitimate external callback is untouched, so the guard costs nothing normal.</summary>
+    [Fact]
+    public async Task Try_AgainstAPublicCallbackUrl_IsUnaffected()
+    {
+        var orchestrator = NewOrchestrator(App("app1"));
+
+        await orchestrator.ProvisionAsync(User());
+
+        Assert.Equal(["app1:/try", "app1:/confirm"], CallSequence);
+    }
 }

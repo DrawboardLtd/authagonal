@@ -1,3 +1,4 @@
+using System.Net.Http;
 using Authagonal.Core.Services;
 using Authagonal.Protocol.Endpoints;
 using Authagonal.Protocol.Services;
@@ -90,6 +91,20 @@ public static class AuthagonalProtocolExtensions
         // defaulted here: AddAuthagonal wires protocol services before storage, so a TryAdd
         // fallback would shadow the provider's real store. ProtocolTokenService takes them as
         // optional constructor dependencies instead — absent means "no client is an agent".
+
+        // The client-JWKS fetch (private_key_jwt at /connect/token, ClientAuthentication).
+        //
+        // ClientAuthentication has always asked the factory for this name, and no host had ever
+        // registered it — so the factory handed back the default handler, which follows up to 50
+        // redirects. jwks_uri is admin- or DCR-settable and the fetch is reachable from an anonymous
+        // token request, so the SSRF guard that runs on the configured URL was walked past by a single
+        // `302 Location: https://<internal-host>/`: .NET only refuses https→http, and an https target
+        // inside a service mesh is exactly what an internal-network probe wants. Registered in the
+        // protocol package rather than in AddAuthagonal because ClientAuthentication lives here and a
+        // Protocol-only host must not be the one that misses it.
+        services.AddHttpClient("AuthagonalJwks")
+            .ConfigureHttpClient(c => c.Timeout = TimeSpan.FromSeconds(10))
+            .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AllowAutoRedirect = false });
 
         // Seeds clients/scopes from AuthagonalProtocolOptions on startup.
         services.AddHostedService<ProtocolSeedService>();

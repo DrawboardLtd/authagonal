@@ -34,8 +34,19 @@ public static class AuthagonalBffExtensions
 
         services.AddDataProtection();
         services.AddDistributedMemoryCache(); // TryAdd inside: a real IDistributedCache wins if registered
-        services.AddHttpClient("AuthagonalBff");
-        services.AddHttpClient("AuthagonalBffProxy");
+        // Redirects are not followed on either client.
+        //
+        // BffProxy composes the upstream URL and then refuses it if it left the configured upstream
+        // authority — a guard an automatic 302 walks straight past, carrying the session's bearer token
+        // to wherever the upstream pointed. Relaying the 3xx to the browser is also the correct proxy
+        // behaviour: the response is copied through verbatim, so the caller sees the redirect the
+        // upstream actually sent instead of a body fetched from somewhere else. The token client talks
+        // to the configured issuer, where a redirect would move the client_secret and the authorization
+        // code off it.
+        services.AddHttpClient("AuthagonalBff")
+            .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AllowAutoRedirect = false });
+        services.AddHttpClient("AuthagonalBffProxy")
+            .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AllowAutoRedirect = false });
 
         services.TryAddSingleton<BffOidcConfig>();
         services.TryAddSingleton<ICookieProtector, DataProtectionCookieProtector>();

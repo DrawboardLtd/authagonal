@@ -40,9 +40,14 @@ public static class SamlTestHelper
         SubjectConfirmationShape confirmationShape = SubjectConfirmationShape.Conforming,
         // Leaves the document unsigned, for callers that sign it themselves after transforming it —
         // see SignResponseAfterEncryption.
-        bool sign = true)
+        bool sign = true,
+        // Backdates the ASSERTION's IssueInstant only, leaving every NotBefore/NotOnOrAfter where it is:
+        // the shape of an IdP whose stated validity window is long relative to when it minted the
+        // assertion, which is what the absolute age cap exists to bound.
+        TimeSpan? assertionAge = null)
     {
         var now = DateTime.UtcNow;
+        var assertionIssueInstant = now - (assertionAge ?? TimeSpan.Zero);
         var notBefore = now.AddMinutes(-5);
         var notOnOrAfter = now.Add(validFor ?? TimeSpan.FromMinutes(10));
         var responseId = $"_response_{Guid.NewGuid():N}";
@@ -67,7 +72,7 @@ public static class SamlTestHelper
         sb.Append($@"<saml:Assertion xmlns:saml=""urn:oasis:names:tc:SAML:2.0:assertion""
             ID=""{assertionId}""
             Version=""2.0""
-            IssueInstant=""{now:O}"">");
+            IssueInstant=""{assertionIssueInstant:O}"">");
         sb.Append($@"<saml:Issuer>{issuer}</saml:Issuer>");
 
         // The bearer confirmation, in whichever shape the test asked for. Every non-conforming variant here

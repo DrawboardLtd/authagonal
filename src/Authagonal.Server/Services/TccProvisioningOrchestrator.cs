@@ -402,6 +402,7 @@ public sealed class TccProvisioningOrchestrator(
     {
         var client = httpClientFactory.CreateClient("Provisioning");
         var url = app.CallbackUrl.TrimEnd('/') + $"/users/{Uri.EscapeDataString(userId)}";
+        RefuseUnsafeCallback(url);
 
         using var request = new HttpRequestMessage(HttpMethod.Delete, url);
         if (!string.IsNullOrWhiteSpace(app.ApiKey))
@@ -428,6 +429,25 @@ public sealed class TccProvisioningOrchestrator(
     }
 
     // ── HTTP helpers ──────────────────────────────────────────────────
+
+    /// <summary>
+    /// Applies the SSRF guard to the URL this process is about to request, every time it requests one.
+    /// </summary>
+    /// <remarks>
+    /// The admin endpoint validates a callbackUrl on the way in, which covers only the values that
+    /// arrive that way. A restore, a storage migration, a hand-edited table row or a
+    /// <c>ProvisioningApps:*</c> configuration entry all reach <c>IProvisioningAppProvider</c> without
+    /// passing it — and these calls fire on the signup path with no operator watching, against
+    /// <c>/try</c>, <c>/confirm</c>, <c>/cancel</c> and deprovision alike. Validating where the request
+    /// is actually made is what makes the guard independent of how the value got here.
+    /// </remarks>
+    private static void RefuseUnsafeCallback(string url)
+    {
+        if (!OutboundUrl.IsSafe(url))
+            throw new HttpRequestException(
+                "Provisioning callback URL is not permitted: it is not an http(s) URL, or it names an " +
+                "internal address. Reconfigure the app's callbackUrl.");
+    }
 
     [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("Trimming", "IL2026", Justification = "Provisioning payloads are polymorphic external contracts")]
     private async Task<T?> PostAsync<T>(
@@ -461,6 +481,7 @@ public sealed class TccProvisioningOrchestrator(
     private async Task<HttpResponseMessage> SendPostAsync(
         AppConfig app, string url, object payload, TimeSpan timeout, CancellationToken ct)
     {
+        RefuseUnsafeCallback(url);
         var client = httpClientFactory.CreateClient("Provisioning");
         using var request = new HttpRequestMessage(HttpMethod.Post, url)
         {
