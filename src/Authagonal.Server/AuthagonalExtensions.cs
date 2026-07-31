@@ -324,7 +324,13 @@ public static class AuthagonalExtensions
         if (!services.Any(s => s.ServiceType == typeof(IAuthHook)))
             services.AddSingleton<IAuthHook, NullAuthHook>();
 
-        // Secret provider: defaults to plaintext; set SecretProvider:VaultUri to use Key Vault
+        // Secret provider: defaults to plaintext; set SecretProvider:VaultUri to use Key Vault.
+        // UseAuthagonal warns at startup when the plaintext default is what a non-Development host
+        // ends up with, because "documented in one line of installation.md" is not a diagnostic.
+        var secretProviderOptions = new SecretProviderOptions();
+        configuration.GetSection("SecretProvider").Bind(secretProviderOptions);
+        services.TryAddSingleton(secretProviderOptions);
+
         var vaultUri = configuration["SecretProvider:VaultUri"];
         if (!string.IsNullOrWhiteSpace(vaultUri))
         {
@@ -637,6 +643,92 @@ public static class AuthagonalExtensions
             // IEmailService is tenant-scoped and not resolvable at startup — skip the diagnostic.
         }
 
+        // The same trap one seam over, and until now without the warning. With no
+        // SecretProvider:VaultUri the plaintext provider is registered and every secret it is handed
+        // — upstream OIDC client secrets, SAML SP private keys, TOTP seeds, recovery codes — is
+        // stored verbatim, so it is in the store in cleartext and in every backup taken of it. A
+        // read-only storage credential or a leaked SAS is then enough to impersonate this tenant to
+        // its upstream IdPs. That is the right default for development and it is documented, but the
+        // operator who never read that line is exactly the one who needs telling.
+        var secretProviderOptions = app.Services.GetService<SecretProviderOptions>() ?? new SecretProviderOptions();
+        if (app.Services.GetService<ISecretProvider>() is PlaintextSecretProvider)
+        {
+            // Asking for vault references while the resolved provider has no vault behind it is not a
+            // stricter posture, it is a dead deployment: every reference the plaintext provider stores
+            // is unprefixed, so every resolve would throw at the first login that needed a secret.
+            // Say so at startup rather than at 3am.
+            if (secretProviderOptions.RequireVaultReferences)
+                throw new InvalidOperationException(
+                    "SecretProvider:RequireVaultReferences is set but the resolved ISecretProvider is " +
+                    "PlaintextSecretProvider, which stores no vault references at all — every secret " +
+                    "resolve would fail. Set SecretProvider:VaultUri (or register a vault-backed " +
+                    "ISecretProvider before AddAuthagonal), or clear RequireVaultReferences.");
+
+            if (!app.Environment.IsDevelopment())
+                app.Logger.LogWarning(
+                    "No secret provider is configured: secrets are stored in CLEARTEXT (the reference IS " +
+                    "the value). Upstream OIDC client secrets, SAML SP private keys, TOTP seeds and recovery " +
+                    "codes are readable by anyone who can read the store or a backup of it. Set " +
+                    "SecretProvider:VaultUri for Azure Key Vault, call AddSecretsManager for AWS Secrets " +
+                    "Manager, or register your own ISecretProvider before AddAuthagonal.");
+        }
+
+        // RFC 6749 §3.1 and §3.2: the authorization server MUST require TLS at the authorization and
+        // the token endpoint, and §10.3 / RFC 6750 §5.3 say the same of everything a token then rides
+        // in. Nothing in this pipeline enforced it. HSTS is emitted below but only on a request that
+        // already arrived over TLS — which is what RFC 6797 §7.2 requires, a browser ignores the header
+        // over plaintext — so it protects the NEXT request and does nothing for the one carrying the
+        // authorization code, the client secret in a Basic header, or the tokens coming back.
+        //
+        // In the intended deployment TLS terminates at an ingress and this is theoretical. It stops
+        // being theoretical for a self-hoster who exposes a compose-style deployment directly, or whose
+        // ingress also answers on :80: the whole code exchange completes in cleartext and the server
+        // neither refuses nor says anything.
+        //
+        // Two placement facts this depends on. It must run AFTER UseForwardedHeaders, because behind a
+        // terminating proxy the request reaches Kestrel as plain http and the only truthful answer to
+        // "was this encrypted" is the X-Forwarded-Proto that middleware has just applied. And it gates
+        // /connect/* specifically — authorize, token, par, revocation, introspect, userinfo,
+        // deviceauthorization, endsession, register — which is the protocol surface the RFCs name.
+        // /health and the internal endpoints stay open, because they are reached pod-to-pod over plain
+        // http before anything is in front of them and gating those trades a theoretical exposure for
+        // a real outage.
+        //
+        // Note what that inherits from the forwarded-headers block above: X-Forwarded-Proto is now only
+        // honoured from a trusted proxy (the configured KnownProxies/KnownNetworks, or the loopback and
+        // private defaults). So a terminating proxy that sits OUTSIDE those ranges and has not been
+        // declared no longer satisfies this gate — which is the correct direction, since an undeclared
+        // proxy's scheme claim is a claim any caller could have made, but it means the fix for a
+        // refused /connect/* request may be to pin ForwardedHeaders:KnownNetworks rather than to reach
+        // for the opt-in below.
+        //
+        // Auth:AllowInsecureHttp turns it off for the deployments that genuinely speak http: the
+        // docker-compose quickstart on http://localhost:8080, the custom-server demo, and the test
+        // harness's TestServer. All three set it explicitly. It is never a default and never inferred
+        // from the environment name — running plaintext is something an operator has to say out loud.
+        var allowInsecureHttp = app.Services.GetService<IOptions<AuthOptions>>()?.Value.AllowInsecureHttp ?? false;
+        if (allowInsecureHttp)
+        {
+            app.Logger.LogWarning(
+                "Auth:AllowInsecureHttp is set: the OAuth endpoints will answer plaintext http requests. " +
+                "Authorization codes, client secrets and access/refresh tokens are readable by anyone on " +
+                "the network path. This is a development setting — never set it in production.");
+        }
+        else
+        {
+            var issuer = app.Configuration["Issuer"];
+            if (Uri.TryCreate(issuer, UriKind.Absolute, out var issuerUri)
+                && string.Equals(issuerUri.Scheme, Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase))
+            {
+                app.Logger.LogWarning(
+                    "Issuer '{Issuer}' uses the http scheme and Auth:AllowInsecureHttp is not set, so every " +
+                    "plaintext request to /connect/* will be refused. Serve the issuer over https — terminating " +
+                    "TLS at a proxy that forwards X-Forwarded-Proto: https satisfies this — or set " +
+                    "Auth:AllowInsecureHttp if this deployment is deliberately plaintext.",
+                    issuer);
+            }
+        }
+
         // Forwarded-header trust is config-driven so X-Forwarded-For can't be spoofed to forge the
         // client IP that rate-limiting / lockout keys on. Defaults: ForwardLimit=1 (honour only the
         // single hop the ingress appends; ignore anything further left in the chain). For the
@@ -715,6 +807,29 @@ public static class AuthagonalExtensions
         app.UseForwardedHeaders(fhOptions);
 
         app.UseExceptionHandlingMiddleware();
+
+        // The TLS gate itself — see the RFC 6749 §3.1/§3.2 note above for why it exists and why it
+        // sits exactly here: forwarded headers have just run, so Request.IsHttps reflects the scheme
+        // the CLIENT used rather than the hop between the proxy and Kestrel.
+        if (!allowInsecureHttp)
+        {
+            app.Use(async (context, next) =>
+            {
+                if (!context.Request.IsHttps
+                    && context.Request.Path.StartsWithSegments("/connect", StringComparison.OrdinalIgnoreCase))
+                {
+                    context.Response.StatusCode = StatusCodes.Status400BadRequest;
+                    context.Response.ContentType = "application/json";
+                    await context.Response.WriteAsync(
+                        "{\"error\":\"invalid_request\",\"error_description\":\"TLS is required at the OAuth " +
+                        "endpoints (RFC 6749 sections 3.1 and 3.2). Use https, or set Auth:AllowInsecureHttp " +
+                        "for a development deployment.\"}");
+                    return;
+                }
+
+                await next();
+            });
+        }
 
         // Request localization
         var supportedCultures = new[] { "en", "zh-Hans", "de", "fr", "es", "vi", "pt" };

@@ -36,6 +36,8 @@ services:
     environment:
       - Storage__ConnectionString=DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;TableEndpoint=http://azurite:10002/devstoreaccount1;
       - Issuer=http://localhost:8080
+      # Local development only: the OAuth endpoints answer plain http. See below.
+      - Auth__AllowInsecureHttp=true
     depends_on:
       - azurite
 ```
@@ -43,6 +45,8 @@ services:
 ```bash
 docker compose up
 ```
+
+> ⚠️ **`Auth:AllowInsecureHttp` is a development setting.** RFC 6749 §3.1/§3.2 require TLS at the authorization and token endpoints, so Authagonal refuses non-https requests to `/connect/*` unless this is set. The scheme is read after forwarded-header processing, so a proxy that terminates TLS and forwards `X-Forwarded-Proto: https` satisfies the requirement with the setting left off — which is what every deployment reachable by anyone but you should do. With it on, an on-path observer reads the authorization code, the client secret in the `Authorization: Basic` header, and the access and refresh tokens. See [Configuration](configuration#authentication).
 
 ## Building from Source
 

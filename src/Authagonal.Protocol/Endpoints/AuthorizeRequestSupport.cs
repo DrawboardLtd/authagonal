@@ -255,8 +255,8 @@ internal static class AuthorizeRequestSupport
         if (invalidScopes.Length > 0)
             return BuildErrorRedirect(redirectUri, "invalid_scope", $"Scopes not allowed: {string.Join(", ", invalidScopes)}", state, issuer);
 
-        // RFC 8707: each resource must be an absolute URI without a fragment, and — when the client
-        // declares an audience allowlist — must appear in it.
+        // RFC 8707 §2: each resource must be an absolute URI without a fragment, and — when the
+        // client declares an audience allowlist — must appear in it. Anything else is invalid_target.
         //
         // An EMPTY Audiences list means "unset", not "deny everything". A dynamically registered
         // client cannot declare audiences (RFC 7591 has no field for them), so treating empty as
@@ -264,8 +264,25 @@ internal static class AuthorizeRequestSupport
         // the MCP authorization spec requires them to name the MCP server as the resource. The
         // restriction still applies wherever an operator has deliberately configured one.
         //
-        // Naming a resource is not access to it: the value only narrows `aud`, and the resource
-        // server still validates that `aud` addresses itself before honouring the token.
+        // Be exact about what that costs, because §2 also requires invalid_target for a resource the
+        // server does not RECOGNISE, and this cannot do that. A client with no Audiences may name any
+        // absolute URI and get back an access token whose `aud` is that string, signed by this
+        // tenant's key, carrying the requesting user's `sub` and whatever scopes the client is
+        // allowed. Naming a resource is not access to it — the value only narrows `aud` — but the
+        // remaining check then lives entirely at the resource server, which must authorize on
+        // `scope` (or its own model) and must not read a matching iss + aud + sub as permission.
+        //
+        // Recognising a resource would need a registry of them, and there is none: Scope carries no
+        // resource identifier and no IResourceStore exists, so a validation written today would pass
+        // whenever the set came back empty — a check that fails open on the exact deployments that
+        // never configured anything, which is worse than no check because it reads like one. Left as
+        // a stated resource-server obligation (docs/configuration.md, "Audiences and resource
+        // indicators") until there is something real to validate against.
+        //
+        // The convention is NOT uniform, and deliberately so: the RFC 8693 exchange path in
+        // ProtocolTokenService reads an empty Audiences as deny, because there the subject token's own
+        // `aud` is never consulted and an undeclared target would land verbatim in the minted token.
+        // Here the client still has to get a user through an interactive authorization first.
         foreach (var resource in request.Resources)
         {
             if (!Uri.TryCreate(resource, UriKind.Absolute, out var resourceUri) || !string.IsNullOrEmpty(resourceUri.Fragment))
