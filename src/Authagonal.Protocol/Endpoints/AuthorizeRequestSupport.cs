@@ -256,9 +256,19 @@ internal static class AuthorizeRequestSupport
             if (!Uri.TryCreate(registered, UriKind.Absolute, out var registeredUri))
                 continue;
 
+            // The port is compared EXCEPT on loopback.
+            //
+            // RFC 8252 §7.3: "the authorization server MUST allow any port to be specified at the
+            // time of the request for loopback IP redirect URIs" — a native app binds an ephemeral
+            // port at runtime and cannot know it at registration time. Requiring an exact match meant
+            // every native app either failed on a port it could not predict or had to register a
+            // fixed port, which is the thing §7.3 exists to avoid (a fixed port can be squatted by
+            // another local process). Non-loopback hosts still match exactly.
+            var bothLoopback = registeredUri.IsLoopback && requestedUri.IsLoopback;
+
             if (string.Equals(requestedUri.Scheme, registeredUri.Scheme, StringComparison.OrdinalIgnoreCase) &&
                 string.Equals(requestedUri.Host, registeredUri.Host, StringComparison.OrdinalIgnoreCase) &&
-                requestedUri.Port == registeredUri.Port &&
+                (bothLoopback || requestedUri.Port == registeredUri.Port) &&
                 string.Equals(requestedUri.AbsolutePath, registeredUri.AbsolutePath, StringComparison.Ordinal) &&
                 string.Equals(requestedUri.Query, registeredUri.Query, StringComparison.Ordinal))
             {

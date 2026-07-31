@@ -56,6 +56,22 @@ internal static class PushedAuthorizationEndpoint
                 parameters[field.Key] = field.Value.Where(v => v is not null).Cast<string>().ToArray();
             }
 
+            // Validated NOW, not only when the request_uri is later redeemed.
+            //
+            // RFC 9126 §2.1 step 3 requires the AS to validate a pushed request as it would the same
+            // parameters on the authorization endpoint. This stored whatever was posted, so a request
+            // with an unregistered redirect_uri, an unknown scope or a missing PKCE challenge was
+            // accepted with a 201 and a request_uri — and failed only at /connect/authorize, by which
+            // point the error surfaces to the END USER mid-flow instead of to the client that made
+            // the mistake. Validating here also means an invalid request never occupies a stored row.
+            var pushed = AuthorizeRequest.Read(new ParRequestParameters(parameters));
+            if (AuthorizeRequestSupport.Validate(client, pushed) is not null)
+            {
+                return JsonResults.OAuthError(
+                    "invalid_request",
+                    "the pushed authorization request is not valid for this client");
+            }
+
             var response = await parService.StoreAsync(clientId, parameters, ct);
 
             httpContext.Response.StatusCode = StatusCodes.Status201Created;
