@@ -636,6 +636,33 @@ public sealed class ProtocolTokenService(
         // jti expires with it — the token is never returned to any caller.
         var accessToken = await MintAccessTokenAsync(freshSubject, client, data.Scopes, tokenResources, ct: ct);
 
+        // ReUse clients keep their refresh token; only OneTime clients rotate.
+        //
+        // RefreshTokenUsage was persisted, seeded, migrated and documented — and read nowhere, so
+        // every client got OneTime regardless. For a client configured ReUse that is worse than
+        // ignoring a preference: its second, entirely normal refresh presents the same token again,
+        // which strict rotation reads as REPLAY and answers by revoking the user's whole grant
+        // family. An operator's explicit configuration therefore produced a sign-out.
+        if (client.RefreshTokenUsage == RefreshTokenUsage.ReUse)
+        {
+            logger.LogInformation(
+                "Refresh token reused (client is configured ReUse). Client: {ClientId}, Subject: {SubjectId}",
+                clientId, data.SubjectId);
+
+            string? reuseIdToken = null;
+            if (data.Scopes.Contains(StandardScopes.OpenId))
+                reuseIdToken = await CreateIdTokenAsync(freshSubject, client, data.Scopes, ct: ct);
+
+            return new TokenResponse
+            {
+                AccessToken = accessToken.Token,
+                ExpiresIn = accessToken.ExpiresInSeconds,
+                IdToken = reuseIdToken,
+                RefreshToken = refreshToken,
+                Scope = string.Join(' ', data.Scopes),
+            };
+        }
+
         // Rotation: issue successor, mark old consumed with successor key recorded.
         var originalCreatedAt = data.OriginalCreatedAt ?? data.CreatedAt;
         var newRefreshToken = await CreateRefreshTokenAsync(

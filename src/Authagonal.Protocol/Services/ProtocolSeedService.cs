@@ -52,6 +52,15 @@ internal sealed class ProtocolSeedService(
                 Required = descriptor.Required,
                 ShowInDiscoveryDocument = descriptor.ShowInDiscoveryDocument,
                 UserClaims = descriptor.UserClaims,
+
+                // Preserved from the stored scope, because the seed descriptor has no field for it.
+                //
+                // A fresh Scope defaults AllowedRoles to empty, and this seeder wrote that over the
+                // stored row on every restart — silently clearing the per-user entitlement gate an
+                // admin had configured through the scope API. An empty AllowedRoles means "ungated",
+                // so a restart turned a role-restricted scope into one every user could obtain, and
+                // nothing recorded that it had happened.
+                AllowedRoles = existing?.AllowedRoles ?? [],
             };
             if (existing is null)
                 await scopeStore.CreateAsync(scopeEntity, cancellationToken);
