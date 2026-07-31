@@ -2,6 +2,47 @@
 
 ## [Unreleased]
 
+### Breaking
+
+- **`/connect/*` now returns HTTP 400 `invalid_request` with `"TLS is required at the OAuth endpoints"`.**
+  If your deployment started answering that after upgrading, this is why, and there are two one-line fixes.
+
+  RFC 6749 §3.1 and §3.2 require TLS at the authorization and token endpoints. Nothing enforced it before:
+  a plaintext exchange handed anyone on the network path the authorization code, the client secret in the
+  `Authorization: Basic` header, and the access and refresh tokens that came back. `/connect/authorize`,
+  `/connect/token`, `/connect/userinfo`, `/connect/par`, `/connect/revocation`, `/connect/introspect`,
+  `/connect/endsession`, `/connect/deviceauthorization` and `/connect/register` now refuse a non-https
+  request. `/health`, the internal endpoints, the admin and SCIM APIs, discovery and JWKS are **not** gated.
+
+  The scheme is read *after* forwarded-header processing, so **the cause is almost always that the scheme
+  never reached the server**, not that TLS is missing:
+
+  - **You terminate TLS at a proxy or ingress but never call `UseForwardedHeaders`.** The request arrives at
+    Kestrel as plain http and there is nothing to correct it. `Authagonal.Server`'s `UseAuthagonal()` calls
+    it for you; a host that builds its own pipeline (including one embedding `Authagonal.Protocol` directly)
+    must call it itself, and needs it anyway for `Secure` cookies and correct absolute URLs.
+  - **Your proxy is outside the trusted set.** The forwarded trust set now defaults to loopback + RFC1918
+    (see the `/_internal/backchannel-logout` fix below — an empty set meant *every* caller was a trusted
+    proxy). A terminating proxy on a public address that has not been declared no longer has its
+    `X-Forwarded-Proto: https` believed. Pin `ForwardedHeaders:KnownNetworks` / `ForwardedHeaders:KnownProxies`
+    to it. This is the right fix: an undeclared proxy's scheme claim is a claim any caller could have made.
+  - **You genuinely serve the protocol surface over plain http** — a laptop, a demo, a test host. Set
+    `Auth:AllowInsecureHttp` (env `Auth__AllowInsecureHttp=true`). The server logs a warning at startup
+    whenever it is on. Never set it in production. For a host that embeds `Authagonal.Protocol` without
+    `Authagonal.Server`, the equivalent is `AuthagonalProtocolOptions.AllowInsecureHttp`; when you use
+    `AddAuthagonal()` the config key is propagated for you, so one switch governs the whole surface.
+
+  `Authagonal.Protocol` embedders are affected even though they compose their own pipeline. In
+  `Authagonal.Server` the gate is middleware over the whole `/connect/*` prefix; in `Authagonal.Protocol` it
+  is a filter on the four routes that package owns — `/connect/authorize`, `/connect/token`,
+  `/connect/userinfo`, `/connect/par` — attached where each route is declared, precisely so it cannot be
+  lost by a host that never had a middleware slot for it. Mapping an endpoint individually rather than
+  through `MapAuthagonalProtocolEndpoints` does not opt out of it.
+
+  The shipped `docker-compose.yml`, the demo compose file and the custom-server demo all serve http and all
+  set the opt-in explicitly. `dotnet run --project src/Authagonal.Server` now defaults to the `https` launch
+  profile; the `http` profile carries the opt-in.
+
 ### Security
 
 - **Any authenticated user could reach the full admin API by changing the case of a scope name.** Three
