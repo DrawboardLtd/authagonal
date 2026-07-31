@@ -51,12 +51,17 @@ Console.WriteLine();
 // clear permanently. A TOTP seed is a bearer credential; whoever reads one can generate that user's
 // second factor forever.
 Authagonal.Core.Services.ISecretProvider secretProvider;
+// Read from the same section the server binds, so a target that requires vault references gets a
+// migration that honours it rather than one quietly writing values the server will later refuse.
+var secretProviderOptions = new Authagonal.Core.Services.SecretProviderOptions();
+config.GetSection("SecretProvider").Bind(secretProviderOptions);
 var vaultUri = config["SecretProvider:VaultUri"];
 if (!string.IsNullOrWhiteSpace(vaultUri))
 {
     secretProvider = new KeyVaultSecretProvider(
         new Azure.Security.KeyVault.Secrets.SecretClient(
             new Uri(vaultUri), new Azure.Identity.DefaultAzureCredential()),
+        secretProviderOptions,
         Microsoft.Extensions.Logging.Abstractions.NullLogger<KeyVaultSecretProvider>.Instance);
     Console.WriteLine($"  Secrets: Key Vault ({vaultUri})");
 }

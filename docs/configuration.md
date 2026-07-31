@@ -32,6 +32,7 @@ Storage can be configured one of two ways, supply **either** `Storage:Connection
 |---|---|---|
 | `Authentication:CookieLifetimeHours` | `48` | Cookie session lifetime (sliding) |
 | `Authentication:AlwaysSecureCookie` | `false` | Force the session cookie's `Secure` flag unconditionally. The default (`SameAsRequest`) already yields a Secure cookie behind a TLS-terminating proxy that forwards `X-Forwarded-Proto: https`. |
+| `Auth:AllowInsecureHttp` | `false` | Let the OAuth endpoints (`/connect/*`) answer plain http requests. **Development only.** RFC 6749 §3.1/§3.2 require TLS at the authorization and token endpoints, so by default a non-https request to any of them is refused with `invalid_request`. The scheme is evaluated *after* forwarded-header processing, so a proxy that terminates TLS and forwards `X-Forwarded-Proto: https` passes the gate with this left off. Only a genuinely plaintext deployment (the shipped `docker-compose.yml`, the custom-server demo) needs it, and the server logs a warning at startup whenever it is on. |
 | `Auth:MaxFailedAttempts` | `5` | Failed login attempts before account lockout |
 | `Auth:LockoutDurationMinutes` | `10` | Account lockout duration after max failed attempts |
 | `Auth:MaxRegistrationsPerIp` | `5` | Maximum registrations per IP address within the window |
@@ -129,6 +130,7 @@ Clients are defined in the `Clients` array and seeded on startup. Each client ca
       "RedirectUris": ["https://app.example.com/callback"],
       "PostLogoutRedirectUris": ["https://app.example.com"],
       "AllowedScopes": ["openid", "profile", "email", "custom-scope"],
+      "Audiences": ["https://api.example.com"],
       "AllowedCorsOrigins": ["https://app.example.com"],
       "RequirePkce": true,
       "RequireClientSecret": false,
@@ -148,6 +150,30 @@ Clients are defined in the `Clients` array and seeded on startup. Each client ca
   ]
 }
 ```
+
+### Audiences and resource indicators (RFC 8707)
+
+`Audiences` is the client's allowlist for the `resource` parameter (RFC 8707) and the `audience` parameter of a token exchange (RFC 8693). Whatever survives that check becomes the `aud` claim of the issued access token; with no `resource` on the request, `aud` falls back to `Audiences`, and with neither it is the `client_id`.
+
+An empty `Audiences` list is read differently depending on the grant, and the difference is deliberate:
+
+| Path | Empty `Audiences` means |
+|---|---|
+| `/connect/authorize`, `client_credentials` | **"unset", not "deny everything"** — any absolute URI is accepted as `resource` |
+| Token exchange (RFC 8693) | **deny** — a client that has declared no audiences may not aim an exchanged token anywhere |
+
+The permissive reading exists because a dynamically registered client cannot declare audiences — RFC 7591 has no field for them — so treating empty as deny-all would make `resource` unusable for every DCR client, including every MCP client, since the MCP authorization spec requires them to name the MCP server as the resource. Token exchange is held to the stricter rule because the consequence there differs in kind: the subject token's own `aud` is never consulted, so an undeclared target would land verbatim in the minted token.
+
+The consequence on the permissive paths is worth stating plainly rather than burying:
+
+> A client with no configured `Audiences` may name **any** absolute URI as `resource` at the authorization endpoint or under `client_credentials`, and receive an access token whose `aud` is that value — signed by this tenant's key, carrying the requesting user's `sub` and whatever scopes the client is allowed.
+
+Naming a resource is not access to it. But it does mean the authorization server cannot be the only thing standing between a client and an API it was never meant to call, so:
+
+- **Resource servers MUST authorize on `scope`** (or their own model), not on `iss` + `aud` + `sub` alone. A token that names your API in `aud` proves the client asked for your API. It does not prove the client is allowed to call it, and this server cannot make it prove that.
+- **Resource servers MUST validate `aud` against their own identifier**, not merely against "some value is present".
+- **Set `Audiences` on every client that should be pinned to a fixed set of APIs.** With it configured, an unlisted `resource` is refused with `invalid_target` at the authorization endpoint and on `client_credentials`. This is the only place the restriction can be enforced.
+- **Leave `Auth:DynamicClientRegistrationEnabled` off** (the default) unless you accept that self-registered clients arrive with no audience restriction at all. See [Dynamic Client Registration](client-registration).
 
 ### Grant Types
 
@@ -325,8 +351,17 @@ Upstream OIDC client secrets and TOTP / MFA seeds can be stored in Azure Key Vau
 | Setting | Description |
 |---|---|
 | `SecretProvider:VaultUri` | Key Vault URI (e.g., `https://my-vault.vault.azure.net/`). If not set, the **plaintext** provider is used and secrets are stored as-is in Table Storage. |
+| `SecretProvider:RequireVaultReferences` | `false` by default. When `true`, a stored reference without a vault prefix (`kv:` for Key Vault, `sm:` for AWS Secrets Manager) is an **error** instead of being honoured as a plaintext value. Set it once a migration into the vault has finished. |
 
 When configured, secret values that look like Key Vault references are resolved at runtime. Uses `DefaultAzureCredential` for authentication.
+
+### Migrating into a vault, and closing the door afterwards
+
+Both vault-backed providers return an unprefixed reference verbatim, treating it as a plaintext value written before the deployment had a vault. That is what lets a running system be migrated a secret at a time rather than all at once — but left open it is a permanent downgrade path: anything that can write one configuration column (a half-finished migration, an admin path that stores a raw value where a reference belongs, an attacker with storage access but none to the vault) replaces a vault-protected secret with a value of its own choosing, and it verifies perfectly, because for an unprefixed reference the reference *is* the value.
+
+Set `SecretProvider:RequireVaultReferences` when the migration is done. Resolving an unprefixed reference then throws instead of quietly returning cleartext. Setting it while the resolved provider is the plaintext one is refused at startup, since that combination has no working state — every reference the plaintext provider writes is unprefixed.
+
+The server also logs a startup warning whenever the plaintext provider is what a non-Development host ends up with.
 
 > ⚠️ **Production: set `SecretProvider:VaultUri`.** The default secret provider is **plaintext**. When `SecretProvider:VaultUri` is unset, upstream OIDC client secrets and TOTP / MFA seeds are written to Azure Table Storage in cleartext, and therefore appear in cleartext in any [backup](backup-restore). For any production deployment, configure `SecretProvider:VaultUri` so these secrets are stored in Key Vault.
 
@@ -430,7 +465,7 @@ Authagonal keys rate limiting and account lockout on the client IP, and only emi
 }
 ```
 
-> ⚠️ **TLS-terminating proxy required.** Authagonal must run behind a TLS-terminating reverse proxy. The session cookie uses `SecurePolicy = SameAsRequest` and HSTS (`Strict-Transport-Security`) is only emitted on HTTPS requests, so the proxy must forward `X-Forwarded-Proto: https` for cookies to be marked `Secure` and HSTS to be sent. Configure `ForwardedHeaders:KnownNetworks` / `ForwardedHeaders:KnownProxies` to your trusted proxy so the scheme and client IP cannot be spoofed.
+> ⚠️ **TLS-terminating proxy required.** Authagonal must run behind a TLS-terminating reverse proxy. The session cookie uses `SecurePolicy = SameAsRequest`, HSTS (`Strict-Transport-Security`) is only emitted on HTTPS requests, and the OAuth endpoints refuse plaintext requests outright unless `Auth:AllowInsecureHttp` is set, so the proxy must forward `X-Forwarded-Proto: https` for cookies to be marked `Secure`, HSTS to be sent, and `/connect/*` to answer at all. Configure `ForwardedHeaders:KnownNetworks` / `ForwardedHeaders:KnownProxies` to your trusted proxy so the scheme and client IP cannot be spoofed.
 
 ## Rate Limiting
 

@@ -280,6 +280,11 @@ public sealed class AuthagonalTestFactory : IAsyncDisposable
             // minutes in PBKDF2 and measure nothing but the KDF. Tests that care about the cost
             // (format, recorded iterations, rehash-on-login) set it explicitly.
             o.Pbkdf2Iterations = 1_000;
+            // TestServer speaks plain http (its BaseAddress is http://localhost), so the TLS gate
+            // UseAuthagonal installs over /connect/* would refuse every protocol request here.
+            o.AllowInsecureHttp = true;
+            // Both set BEFORE the mutator, so a test can turn either back off — TransportSecurityTests
+            // does exactly that with AllowInsecureHttp.
             ConfigureAuthOptions?.Invoke(o);
         });
         services.Configure<CacheOptions>(_ => { });

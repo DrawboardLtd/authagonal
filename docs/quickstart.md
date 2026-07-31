@@ -15,6 +15,8 @@ docker compose up
 
 This starts Authagonal on `http://localhost:8080` with Azurite for storage.
 
+> The compose file sets `Auth__AllowInsecureHttp=true`, because RFC 6749 §3.1/§3.2 require TLS at the authorization and token endpoints and Authagonal otherwise refuses plaintext requests to `/connect/*`. That switch is for a laptop. Anything anyone else can reach goes behind a TLS-terminating proxy that forwards `X-Forwarded-Proto: https`, with the switch removed — see [Installation](installation).
+
 ## 2. Verify It's Running
 
 ```bash

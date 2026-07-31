@@ -6,6 +6,22 @@ namespace Authagonal.Server.Services;
 /// </summary>
 public sealed class AuthOptions
 {
+    /// <summary>
+    /// Allows the OAuth endpoints (<c>/connect/*</c>) to answer plaintext http requests. Default
+    /// false: a non-https request to those endpoints is refused with <c>invalid_request</c>.
+    /// </summary>
+    /// <remarks>
+    /// RFC 6749 §3.1 and §3.2 require TLS at the authorization and token endpoints, and the reason is
+    /// not ceremonial — a plaintext exchange hands anyone on the path the authorization code, the
+    /// client secret in the Basic header, and the access and refresh tokens that come back. The scheme
+    /// is read after forwarded-header processing, so terminating TLS at a proxy that sends
+    /// <c>X-Forwarded-Proto: https</c> satisfies the gate; only a genuinely plaintext deployment needs
+    /// this switch. It is deliberately explicit rather than inferred from the environment name: the
+    /// shipped docker-compose and the test harness both speak http and both set it, and an operator
+    /// who runs plaintext anywhere else has to say so.
+    /// </remarks>
+    public bool AllowInsecureHttp { get; set; }
+
     // --- Account lockout ---
     public int MaxFailedAttempts { get; set; } = 5;
     public int LockoutDurationMinutes { get; set; } = 10;

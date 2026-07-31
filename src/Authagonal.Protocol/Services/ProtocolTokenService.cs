@@ -844,7 +844,8 @@ public sealed class ProtocolTokenService(
             {
                 if (!Uri.TryCreate(r, UriKind.Absolute, out var u) || !string.IsNullOrEmpty(u.Fragment))
                     throw new InvalidOperationException($"Resource '{r}' is not a valid absolute URI");
-                // Empty Audiences means unset, not deny-all — see AuthorizeRequestSupport.
+                // Empty Audiences means unset, not deny-all — see AuthorizeRequestSupport for why,
+                // and for what the resource server is therefore obliged to check for itself.
                 if (client.Audiences.Count > 0 && !client.Audiences.Contains(r, StringComparer.Ordinal))
                     throw new InvalidOperationException($"Resource '{r}' is not registered for this client");
             }
