@@ -39,6 +39,26 @@ public interface IProtocolTokenService
         DateTimeOffset? originalCreatedAt = null,
         CancellationToken ct = default);
 
+    /// <summary>
+    /// Mints an access token and the refresh token that owns it, with the access token's <c>jti</c>
+    /// recorded on the refresh grant.
+    /// </summary>
+    /// <remarks>
+    /// Revoking a refresh token revokes the access tokens minted under it, which works by reading
+    /// the jti list off the grant. Minting the two separately through
+    /// <see cref="CreateAccessTokenAsync"/> and <see cref="CreateRefreshTokenAsync"/> writes a grant
+    /// with an EMPTY list, so revoking that refresh token revokes nothing and the access token stays
+    /// live for its full lifetime — which is exactly what the admin impersonation endpoint was doing
+    /// with the one token pair an operator is most likely to need to pull back. Every caller that
+    /// issues a pair should use this rather than pairing the two singles.
+    /// </remarks>
+    Task<(string AccessToken, string RefreshToken)> CreateTrackedTokenPairAsync(
+        OidcSubject subject,
+        OAuthClient client,
+        IEnumerable<string> scopes,
+        IEnumerable<string>? resources = null,
+        CancellationToken ct = default);
+
     Task<TokenResponse> HandleAuthorizationCodeAsync(
         string code,
         string clientId,

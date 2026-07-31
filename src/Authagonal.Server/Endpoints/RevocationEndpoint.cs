@@ -33,7 +33,7 @@ public static class RevocationEndpoint
             // compromised token's life was the one it could not reach.
             var (client, authError) = await Authagonal.Protocol.Endpoints.ClientAuthentication.AuthenticateAsync(
                 httpContext, form, clientStore, secretVerifier,
-                (err, description) => JsonResults.OAuthError(err, description, 401), ct);
+                (err, description) => JsonResults.UnauthorizedClient(err, description, realm: "revocation"), ct);
             if (authError is not null)
                 return authError;
 
@@ -45,6 +45,20 @@ public static class RevocationEndpoint
 
             var tokenTypeHint = form["token_type_hint"].FirstOrDefault();
 
+            // The cascade runs one way only, and that is a stated choice rather than an omission.
+            //
+            // RFC 7009 §2.1 makes revoking a refresh token's access tokens a SHOULD, and this server
+            // does it: the refresh grant records the jti of every access token minted under it
+            // (RefreshTokenData.AccessTokens) and RevokeRefreshTokenAsync writes them all to
+            // IRevokedTokenStore. The converse — revoking an access token also killing the refresh
+            // token that produced it — is a MAY, and it is not implemented, because an access token
+            // carries no pointer back to its grant: the only index is jti → revoked, never
+            // jti → refresh handle. Finding one would mean scanning the grant store, or minting the
+            // refresh handle into the access token (which would put a long-lived credential inside a
+            // short-lived one that gets handed to resource servers). So a client that wants the whole
+            // family gone revokes the refresh token, which is the direction that works and the one
+            // token_type_hint exists to disambiguate.
+            //
             // Try access_token first when hinted, otherwise try refresh_token first (historical default).
             if (tokenTypeHint == "access_token")
             {

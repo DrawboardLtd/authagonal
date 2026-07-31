@@ -43,46 +43,45 @@ public static class DeviceAuthorizationEndpoint
             IGrantStore grantStore,
             ITenantContext tenantContext,
             IClientSecretVerifier secretVerifier,
+            IRateLimiter rateLimiter,
             IConfiguration configuration,
             CancellationToken ct) =>
         {
             var form = await httpContext.Request.ReadFormAsync(ct);
-            var clientId = form["client_id"].FirstOrDefault();
-            var clientSecret = form["client_secret"].FirstOrDefault();
             var scope = form["scope"].FirstOrDefault() ?? "openid";
 
-            if (string.IsNullOrWhiteSpace(clientId))
-                return DeviceError("invalid_client", "client_id is required");
+            // Through the shared client-authentication path, like the token endpoint, PAR,
+            // introspection and revocation.
+            //
+            // This endpoint read client_id and client_secret out of the form and nowhere else, so a
+            // confidential client presenting HTTP Basic — the method discovery advertises first in
+            // token_endpoint_auth_methods_supported and the default for most OAuth libraries — or a
+            // private_key_jwt assertion was rejected with invalid_client at the one endpoint it could
+            // not work around. The earlier fix here replaced an inline PasswordHasher comparison with
+            // the injected IClientSecretVerifier but left the credential SOURCE alone, so the endpoint
+            // still understood exactly one of the three registered methods. The shared path also
+            // brings the client.Enabled refusal and the per-client throttle on secret verification.
+            var (client, authError) = await Authagonal.Protocol.Endpoints.ClientAuthentication.AuthenticateAsync(
+                httpContext, form, clientStore, secretVerifier,
+                (error, description) => DeviceError(error, description), ct);
+            if (authError is not null)
+                return authError;
 
-            var client = await clientStore.GetAsync(clientId, ct);
-            if (client is null)
-                return DeviceError("invalid_client", "Unknown client");
-
-            // Enforced here as at authorize, client authentication and introspection. This endpoint
-            // was the one client-facing path that never checked it, so a disabled client could still
-            // start a device flow — and the device grant is precisely the one whose tokens outlive
-            // the browser session an operator would otherwise be cutting off.
-            if (!client.Enabled)
-                return DeviceError("unauthorized_client", "Client is disabled");
+            var clientId = client!.ClientId;
 
             if (!client.AllowedGrantTypes.Contains("urn:ietf:params:oauth:grant-type:device_code", StringComparer.OrdinalIgnoreCase))
                 return DeviceError("unauthorized_client", "Device authorization grant not allowed for this client");
 
-            // Verify secret if required.
+            // Throttled per client, because this is an anonymous write.
             //
-            // Through the registered IClientSecretVerifier rather than re-implementing the hash
-            // comparison inline: a host that plugs in its own verifier (an HSM, a vault, a
-            // policy-bearing implementation) had that seam honoured everywhere except here and
-            // introspection, so those two endpoints silently used the default while the rest of the
-            // server used the host's.
-            if (client.RequireClientSecret)
-            {
-                if (string.IsNullOrWhiteSpace(clientSecret))
-                    return DeviceError("invalid_client", "client_secret is required");
-
-                if (!await secretVerifier.VerifyAsync(client, clientSecret, ct))
-                    return DeviceError("invalid_client", "Invalid client credentials");
-            }
+            // A device client may be public (RFC 8628's whole point is inputs-constrained devices that
+            // cannot hold a secret), so reaching here needs only a client_id, and every accepted
+            // request persists TWO grant rows — the device code and its user_code index. Unthrottled
+            // that is a storage-flood primitive against the grant store, and it also burns user codes
+            // out of a small alphabet. The budget is sized so a fleet of real devices provisioning at
+            // once is unaffected.
+            if (await rateLimiter.IsRateLimitedAsync($"device-auth|{clientId}", 120, TimeSpan.FromMinutes(1), ct))
+                return DeviceError("temporarily_unavailable", "Too many device authorization requests");
 
             // Generate codes
             var deviceCode = Convert.ToHexString(RandomNumberGenerator.GetBytes(32)).ToLowerInvariant();
@@ -366,8 +365,13 @@ public static class DeviceAuthorizationEndpoint
     }
 
     private static IResult DeviceError(string error, string description) =>
-        JsonResults.OAuthError(error, description,
-            statusCode: error == "invalid_client" ? 401 : 400);
+        // invalid_client is a 401, and RFC 6749 §5.2 requires a 401 from a client-authentication
+        // failure to name the scheme in WWW-Authenticate — otherwise a device that guessed wrong
+        // about how to authenticate has no way to learn what this server accepts.
+        error == "invalid_client"
+            ? JsonResults.UnauthorizedClient(error, description, realm: "deviceauthorization")
+            : JsonResults.OAuthError(error, description,
+                statusCode: error == "temporarily_unavailable" ? 429 : 400);
 }
 
 /// <summary>

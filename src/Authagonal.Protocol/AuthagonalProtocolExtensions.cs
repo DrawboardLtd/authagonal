@@ -75,6 +75,15 @@ public static class AuthagonalProtocolExtensions
         // their own ahead of this call.
         services.TryAddSingleton<IClientSecretVerifier, BCryptClientSecretVerifier>();
 
+        // Default rate limiter, for the same reason: this package's endpoints throttle through
+        // IRateLimiter — the per-client bound on secret verification, and the one on PAR, which is an
+        // anonymous write that persists a grant row per request and needs only a public client_id to
+        // reach. Both used to resolve the limiter optionally and simply not apply when a host
+        // registered none, so the bound existed only in hosts that happened to bring one. TryAdd, so a
+        // host with a distributed or tenant-scoped limiter (Authagonal.Server has both) still wins —
+        // which is why that host registers its own BEFORE calling this.
+        services.TryAddSingleton<IRateLimiter, InProcessRateLimiter>();
+
         // Token-exchange host seam — no-op unless the host registers its own transformer ahead
         // of this call (context-bound tokens: validate extra params, force binding claims).
         services.TryAddSingleton<ITokenExchangeSubjectTransformer, NullTokenExchangeSubjectTransformer>();

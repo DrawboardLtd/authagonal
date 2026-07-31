@@ -66,6 +66,7 @@ public static class ConsentEndpoint
             HttpContext httpContext,
             IClientStore clientStore,
             IGrantStore grantStore,
+            ITenantContext tenantContext,
             ConsentRequest request,
             CancellationToken ct) =>
         {
@@ -104,6 +105,15 @@ public static class ConsentEndpoint
                         errorParams["error_description"] = "User denied consent";
                         if (!string.IsNullOrEmpty(state))
                             errorParams["state"] = state;
+                        // RFC 9207 iss, as on every other authorization response. This is the one
+                        // authorization error the server hand-builds instead of going through
+                        // AuthorizeRequestSupport.BuildErrorRedirect, so it was the one that kept
+                        // omitting iss after that was fixed — and user-denied-consent is the most
+                        // common legitimate error an interactive OP emits. Discovery advertises
+                        // authorization_response_iss_parameter_supported unconditionally, so a client
+                        // strict enough to require iss (which is the point of asking for it) rejected
+                        // a perfectly genuine denial as a suspected mix-up.
+                        errorParams["iss"] = tenantContext.Issuer;
                         errorBuilder.Query = errorParams.ToString();
                         return TypedResults.Json(new RedirectResponse { Redirect = errorBuilder.ToString() }, AuthagonalJsonContext.Default.RedirectResponse);
                     }

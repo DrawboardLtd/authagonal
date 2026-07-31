@@ -139,12 +139,12 @@ internal static class TokenGrantHandlers
         catch (ApprovalPendingException pending)
         {
             // RFC 8628-style park: the body carries the approval handle and poll interval.
-            return TypedResults.Json(new ApprovalPendingResponse
+            return JsonResults.NoStore(TypedResults.Json(new ApprovalPendingResponse
             {
                 ErrorDescription = pending.Description,
                 ApprovalId = pending.ApprovalId,
                 Interval = pending.IntervalSeconds,
-            }, ProtocolJsonContext.Default.ApprovalPendingResponse, statusCode: 400);
+            }, ProtocolJsonContext.Default.ApprovalPendingResponse, statusCode: 400));
         }
         catch (ProtocolTokenException ex)
         {
@@ -193,22 +193,11 @@ internal static class TokenGrantHandlers
     public static IResult TokenError(string error, string description)
     {
         // RFC 6749 §5.2: a 401 invalid_client MUST carry a WWW-Authenticate challenge naming the
-        // scheme the server accepts. Without it a client cannot tell an authentication failure from
-        // any other 401, which is the one distinction the header exists to make.
+        // scheme the server accepts. Shared with PAR, introspection, revocation and the device
+        // endpoint — they authenticate clients through the same path and owe the same header.
         if (error == "invalid_client")
-            return new UnauthorizedClient(description);
+            return JsonResults.UnauthorizedClient(error, description, realm: "token");
 
         return JsonResults.OAuthError(error, description, statusCode: 400);
-    }
-
-    private sealed class UnauthorizedClient(string description) : IResult
-    {
-        public Task ExecuteAsync(HttpContext httpContext)
-        {
-            httpContext.Response.Headers.WWWAuthenticate =
-                "Basic realm=\"token\", error=\"invalid_client\"";
-            return JsonResults.OAuthError("invalid_client", description, statusCode: 401)
-                .ExecuteAsync(httpContext);
-        }
     }
 }

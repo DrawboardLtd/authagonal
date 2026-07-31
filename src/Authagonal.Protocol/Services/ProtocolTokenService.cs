@@ -377,6 +377,22 @@ public sealed class ProtocolTokenService(
         CancellationToken ct = default) =>
         CreateRefreshTokenAsync(subject, client, scopes, resources, originalCreatedAt, null, ct);
 
+    /// <inheritdoc />
+    public async Task<(string AccessToken, string RefreshToken)> CreateTrackedTokenPairAsync(
+        OidcSubject subject,
+        OAuthClient client,
+        IEnumerable<string> scopes,
+        IEnumerable<string>? resources = null,
+        CancellationToken ct = default)
+    {
+        var scopeList = scopes.ToList();
+        var accessToken = await MintAccessTokenAsync(subject, client, scopeList, resources, ct: ct);
+        var refreshToken = await CreateRefreshTokenAsync(
+            subject, client, scopeList, resources, originalCreatedAt: null,
+            [new IssuedAccessToken { Jti = accessToken.Jti, ExpiresAt = accessToken.ExpiresAt }], ct);
+        return (accessToken.Token, refreshToken);
+    }
+
     /// <summary>
     /// Issues a refresh grant, recording the access tokens that must die with it.
     /// </summary>

@@ -163,6 +163,12 @@ public sealed class DeviceAuthorizationTests : IAsyncLifetime
         var tokenResponse = await _client.PostAsync("/connect/token", tokenForm);
         Assert.Equal(HttpStatusCode.OK, tokenResponse.StatusCode);
 
+        // RFC 6749 §5.1's MUST. device_code is the one grant handled outside TokenGrantHandlers, so
+        // it was the one token set that left /connect/token with no caching headers at all — an
+        // intermediary is entitled to apply heuristic freshness to a 200 that says nothing.
+        Assert.True(tokenResponse.Headers.CacheControl!.NoStore);
+        Assert.Contains(tokenResponse.Headers.Pragma, p => p.Name == "no-cache");
+
         var tokens = await tokenResponse.Content.ReadFromJsonAsync<JsonElement>();
         Assert.NotNull(tokens.GetProperty("access_token").GetString());
     }

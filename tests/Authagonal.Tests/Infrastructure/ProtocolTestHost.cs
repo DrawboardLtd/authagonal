@@ -37,6 +37,13 @@ public sealed class ProtocolTestHost : IAsyncDisposable
     public InMemorySigningKeyStore SigningKeyStore { get; } = new();
 
     /// <summary>
+    /// Optional in the shipped package (a host that registers none simply has no kill switch), but
+    /// registered here so the endpoints that consult it are exercised in the configuration a real
+    /// consumer runs.
+    /// </summary>
+    public InMemoryRevokedTokenStore RevokedTokenStore { get; } = new();
+
+    /// <summary>
     /// Whether the embedded protocol endpoints accept plaintext http. Defaults to true because
     /// TestServer speaks http; set false before the first request to exercise the RFC 6749 §3.1/§3.2
     /// filter the way an embedding host that never set the switch would meet it.
@@ -73,6 +80,7 @@ public sealed class ProtocolTestHost : IAsyncDisposable
         services.AddSingleton<IGrantStore>(GrantStore);
         services.AddSingleton<IScopeStore>(ScopeStore);
         services.AddSingleton<ISigningKeyStore>(SigningKeyStore);
+        services.AddSingleton<IRevokedTokenStore>(RevokedTokenStore);
         services.AddSingleton<IOidcSubjectResolver, PrincipalSubjectResolver>();
 
         services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme)

@@ -22,12 +22,12 @@ public static class UserinfoEndpoint
             Authagonal.Core.Services.ITenantContext tenantContext,
             CancellationToken ct) =>
         {
-            // Extract Bearer token
-            var authHeader = httpContext.Request.Headers.Authorization.FirstOrDefault();
-            if (string.IsNullOrWhiteSpace(authHeader) || !authHeader.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
-                return UnauthorizedWithChallenge();
-
-            var token = authHeader["Bearer ".Length..].Trim();
+            // RFC 6750 §2 — Authorization header or form-encoded body, shared with the Protocol host's
+            // twin. Reading the header alone meant a client that POSTed `access_token` (the shape §2.2
+            // exists for) was answered as if it had presented no credential.
+            var (token, extractionError) = await Authagonal.Protocol.Endpoints.BearerToken.ReadAsync(httpContext, ct);
+            if (extractionError is not null)
+                return extractionError;
             if (string.IsNullOrWhiteSpace(token))
                 return UnauthorizedWithChallenge();
 
@@ -147,9 +147,13 @@ public static class UserinfoEndpoint
                 }
             }
 
-            return Results.Ok(claims);
+            // The body is the subject's PII. It gets the same no-store the token response gets —
+            // without it an intermediary may apply heuristic freshness to a 200 with no explicit
+            // expiry and hand one bearer's claims to the next caller of the same URL.
+            return Authagonal.Protocol.Endpoints.JsonResults.NoStore(Results.Ok(claims));
         })
         .AllowAnonymous()
+        .DisableAntiforgery()
         .WithTags("OAuth");
 
         return app;

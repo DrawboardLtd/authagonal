@@ -48,7 +48,7 @@ public static class IntrospectionEndpoint
         // methods the token endpoint accepts.
         var (client, authError) = await Authagonal.Protocol.Endpoints.ClientAuthentication.AuthenticateAsync(
             httpContext, form, clientStore, secretVerifier,
-            (err, _) => Results.Json(new { error = err }, statusCode: 401), ct,
+            (err, description) => JsonResults.UnauthorizedClient(err, description, realm: "introspect"), ct,
             requireAuthenticatedClient: true);
         if (authError is not null)
             return authError;
@@ -138,7 +138,7 @@ public static class IntrospectionEndpoint
 
             response["token_type"] = "Bearer";
 
-            return Results.Ok(response);
+            return JsonResults.NoStore(Results.Ok(response));
         }
         catch
         {
@@ -148,7 +148,7 @@ public static class IntrospectionEndpoint
                 grant.ExpiresAt > DateTimeOffset.UtcNow &&
                 string.Equals(grant.ClientId, clientId, StringComparison.Ordinal))
             {
-                return Results.Ok(new Dictionary<string, object>
+                return JsonResults.NoStore(Results.Ok(new Dictionary<string, object>
                 {
                     ["active"] = true,
                     ["sub"] = grant.SubjectId ?? "",
@@ -156,15 +156,19 @@ public static class IntrospectionEndpoint
                     ["token_type"] = "refresh_token",
                     ["exp"] = grant.ExpiresAt.ToUnixTimeSeconds(),
                     ["iat"] = grant.CreatedAt.ToUnixTimeSeconds(),
-                });
+                }));
             }
 
             return InactiveResponse();
         }
     }
 
+    // no-store on the inactive answer too: it is still the authorization server's statement about a
+    // specific token, and a cached "active: false" replayed to a later caller is a denial the AS
+    // never made.
     private static IResult InactiveResponse() =>
-        TypedResults.Json(new IntrospectionInactiveResponse(), AuthagonalJsonContext.Default.IntrospectionInactiveResponse);
+        JsonResults.NoStore(TypedResults.Json(
+            new IntrospectionInactiveResponse(), AuthagonalJsonContext.Default.IntrospectionInactiveResponse));
 
     /// <summary>The token's <c>aud</c>, which may be a single value or an array.</summary>
     private static List<string> ReadAudiences(IDictionary<string, object> claims)

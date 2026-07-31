@@ -278,6 +278,20 @@ public static class AuthagonalExtensions
         // protection is opt-in through IFieldCipher — so its absence is stated rather than assumed.
         services.AddSingleton<IHostedService, PlaintextSigningKeyWarning>();
 
+        // Rate limiting is in-process per node; the authoritative global limit is enforced at the edge.
+        // The concrete limiter, plus a decorator that scopes every key to the current tenant. Without the
+        // decorator all tenants share one budget per logical key, so one tenant can exhaust another's.
+        //
+        // Registered BEFORE AddAuthagonalProtocol, like IClientSecretVerifier above and for the same
+        // reason: the protocol package now TryAdds a plain InProcessRateLimiter so its own anonymous
+        // write endpoints (PAR) are throttled in a host that brings nothing, and a TryAdd that ran
+        // first would shadow this tenant-scoping decorator — turning a per-tenant budget back into a
+        // shared one without anything failing.
+        services.TryAddSingleton<InProcessRateLimiter>();
+        services.TryAddSingleton<IRateLimiter>(sp => new TenantScopedRateLimiter(
+            sp.GetRequiredService<InProcessRateLimiter>(),
+            sp.GetRequiredService<IHttpContextAccessor>()));
+
         // Auth:AllowInsecureHttp has to reach the protocol options too, not just the pipeline gate.
         // MapAuthagonalEndpoints maps Protocol's PAR endpoint directly, and that endpoint carries its own
         // RFC 6749 §3.1/§3.2 filter (Authagonal.Protocol cannot rely on middleware it does not own). Two
@@ -590,14 +604,6 @@ public static class AuthagonalExtensions
         // via configureClustering (UseAzureStorage / UseAzureStorageBus).
         // ---------------------------------------------------------------------------
         services.AddAuthagonalClustering(configuration, configureClustering);
-
-        // Rate limiting is in-process per node; the authoritative global limit is enforced at the edge.
-        // The concrete limiter, plus a decorator that scopes every key to the current tenant. Without the
-        // decorator all tenants share one budget per logical key, so one tenant can exhaust another's.
-        services.TryAddSingleton<InProcessRateLimiter>();
-        services.TryAddSingleton<IRateLimiter>(sp => new TenantScopedRateLimiter(
-            sp.GetRequiredService<InProcessRateLimiter>(),
-            sp.GetRequiredService<IHttpContextAccessor>()));
 
         return services;
     }
