@@ -277,6 +277,10 @@ public sealed class SamlResponseParser(ILogger<SamlResponseParser> logger)
         // F54: an EncryptedAssertion (ADFS default once the SP advertises an encryption cert) is
         // decrypted with the SP private key first; the decrypted element then goes through the
         // exact same signature/conditions pipeline as a plaintext assertion.
+        // Set when the assertion is encrypted: the Response-level signature verified against the
+        // document as the IdP signed it, BEFORE decryption rewrites it.
+        bool? preDecryptResponseSignatureValid = null;
+
         var assertionNode = responseElement.SelectSingleNode("saml:Assertion", nsManager);
         if (assertionNode is null)
         {
@@ -285,6 +289,34 @@ public sealed class SamlResponseParser(ILogger<SamlResponseParser> logger)
             {
                 if (context.DecryptionKey is null)
                     return Fail("SAML response carries an EncryptedAssertion but this connection has no SP decryption key. Disable assertion encryption at the IdP or recreate the connection.");
+
+                // Decryption calls EncryptedXml.ReplaceData, which mutates the loaded document in
+                // place — <xenc:EncryptedData> becomes the plaintext <saml:Assertion>. The Response
+                // signature was computed over the document CONTAINING the encrypted blob, so
+                // recomputing its reference digest afterwards can never match: responseSignatureValid
+                // was unconditionally false for every encrypted response, and only a signature applied
+                // to the assertion before encryption could ever succeed. An IdP that signs the
+                // Response and encrypts the assertion — a supported combination — could not federate
+                // at all, and the failure looked like a signature problem rather than an ordering one.
+                //
+                // Verified on a pristine copy so the working document is still free to be mutated.
+                try
+                {
+                    var pristine = LoadHardened(doc.OuterXml);
+                    if (pristine.DocumentElement is { } pristineResponse)
+                    {
+                        preDecryptResponseSignatureValid =
+                            ValidateElementSignature(pristineResponse, context.TrustedCertificates, logger);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    // A copy that will not reload cannot be verified; treat it as unsigned and let the
+                    // assertion-level signature decide, exactly as before.
+                    logger.LogWarning(ex, "Could not verify the Response signature before decryption");
+                    preDecryptResponseSignatureValid = false;
+                }
+
                 try
                 {
                     DecryptAssertion(encryptedElement, context.DecryptionKey, doc);
@@ -320,8 +352,9 @@ public sealed class SamlResponseParser(ILogger<SamlResponseParser> logger)
 
         var assertionId = assertionElement.Attributes?["ID"]?.Value;
 
-        var responseSignatureValid = ValidateElementSignature(
-            responseElement, context.TrustedCertificates, logger);
+        // For an encrypted assertion this was decided above, against the unmutated document.
+        var responseSignatureValid = preDecryptResponseSignatureValid
+            ?? ValidateElementSignature(responseElement, context.TrustedCertificates, logger);
         var assertionSignatureValid = ValidateElementSignature(
             assertionElement, context.TrustedCertificates, logger);
 
@@ -682,7 +715,21 @@ public sealed class SamlResponseParser(ILogger<SamlResponseParser> logger)
         }
 
         var signedXml = new SignedXml(element);
-        signedXml.LoadXml(signatureElement);
+        try
+        {
+            signedXml.LoadXml(signatureElement);
+        }
+        catch (System.Security.Cryptography.CryptographicException ex)
+        {
+            // LoadXml throws for shapes an unauthenticated caller can send: an empty or
+            // SignedInfo-less <ds:Signature/> ("Malformed element SignedInfo."), and a Transform whose
+            // Algorithm URI .NET does not recognise ("Unknown transform has been encountered.") — the
+            // latter reaching LoadXml BEFORE the transform allowlist below can refuse it. The exception
+            // propagated out of Parse, past the endpoint's graceful error redirect, and out as a bare
+            // 500 with a stack trace under Development. This method's contract is a bool; honour it.
+            logger.LogWarning(ex, "SAML signature element could not be loaded — treating as unsigned");
+            return false;
+        }
 
         // SECURITY: Verify the Reference URI matches the signed element's ID
         // This prevents signature wrapping attacks

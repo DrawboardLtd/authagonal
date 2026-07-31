@@ -218,8 +218,23 @@ public static class SamlEndpoints
             ExpectedIssuer: metadata.EntityId,
             DecryptionKey: spDecryptionKey);
 
-        // Parse and validate the response
-        var parseResult = responseParser.Parse(samlResponse, validationContext);
+        // Parse and validate the response.
+        //
+        // Wrapped, because Parse walks attacker-supplied XML through several BCL APIs and cannot be
+        // proved to convert every one of their failure modes into a result. Anything it does throw
+        // reaches the same generic saml_error the validation failures use — an unhandled exception
+        // here is a bare 500 (with a stack trace under Development) on an endpoint that already has a
+        // graceful failure path, and the message must stay generic because the input is hostile.
+        SamlParseResult parseResult;
+        try
+        {
+            parseResult = responseParser.Parse(samlResponse, validationContext);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "SAML response parsing threw for connection {ConnectionId}", connectionId);
+            return RedirectWithError(relayState, "saml_error", "The SAML response could not be processed.");
+        }
 
         // F52: a signature failure right after an IdP cert rollover means our cached metadata is
         // stale (the new cert was published after our last fetch). Evict, refetch once, and retry

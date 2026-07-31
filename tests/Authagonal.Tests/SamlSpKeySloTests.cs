@@ -89,6 +89,42 @@ public class SamlSpKeyTests
     }
 
     /// <summary>
+    /// F258 — an IdP that signs at the Response level AND encrypts the assertion.
+    /// </summary>
+    /// <remarks>
+    /// Decryption calls EncryptedXml.ReplaceData, which rewrites the loaded document in place, and the
+    /// Response signature was only verified afterwards — over a DOM that no longer matched what the
+    /// IdP signed. responseSignatureValid was therefore unconditionally false for every encrypted
+    /// response, so a supported and common combination could not federate at all, and the failure
+    /// presented as a signature problem rather than an ordering one.
+    /// </remarks>
+    [Fact]
+    public void Parser_EncryptedAssertion_WithResponseLevelSignature_Validates()
+    {
+        const string acs = "https://sp.test/saml/c1/acs";
+        const string audience = "https://sp.test/saml/c1";
+
+        using var spCert = SamlSpKey.Load(SamlSpKey.CreateCertificate(audience));
+        using var spKey = spCert.GetRSAPrivateKey()!;
+
+        // The Response signature is the ONLY signature here — sign: false leaves the assertion
+        // unsigned, so if the Response signature is not honoured nothing else can carry the document.
+        // Encryption happens first, so the signature covers the EncryptedAssertion, which is what an
+        // IdP signing at this level actually produces.
+        var unsigned = SamlTestHelper.BuildSignedResponse(acs, audience, "user@example.com",
+            email: "user@example.com", sign: false);
+        var encrypted = SamlTestHelper.EncryptAssertionInResponse(unsigned, spCert);
+        var signed = SamlTestHelper.SignResponseAfterEncryption(encrypted);
+
+        var parser = new SamlResponseParser(NullLogger<SamlResponseParser>.Instance);
+        var result = parser.Parse(signed, new SamlResponseValidationContext(
+            acs, audience, null, [SamlTestHelper.TestCertificate], DecryptionKey: spKey));
+
+        Assert.True(result.Success, result.Error);
+        Assert.Equal("user@example.com", result.NameId);
+    }
+
+    /// <summary>
     /// RSA-PKCS#1 v1.5 key transport is refused. XML Encryption 1.1 §5.5.1 deprecates it and the OASIS
     /// SAML encryption profile requires OAEP, because v1.5 unwrapping on an anonymous endpoint is a
     /// Bleichenbacher decryption oracle against the SP private key — and the SP keypair is minted for every

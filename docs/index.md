@@ -25,6 +25,11 @@ A single, self-contained deployment. The server and login UI ship as one Docker 
 - **OAuth Consent Screen**: per-client consent with scope-aware re-prompt and grant management
 - **Device Authorization Grant**: RFC 8628 flow for input-constrained devices (smart TVs, CLIs, IoT)
 - **Token Introspection**: RFC 7662 for resource servers to verify token validity
+- **Token signing**: ES256 only. Access tokens carry the RFC 9068 `typ: at+jwt` so a resource server
+  can tell them from id_tokens and logout tokens, but **RFC 9068 conformance is not claimed** — §2.1
+  requires RS256 among the supported algorithms, and this server neither issues nor accepts it. A
+  single algorithm is a deliberate posture: every additional accepted algorithm is another way for a
+  verifier to be talked into the wrong one.
 - **Back-Channel Logout**: OIDC Back-Channel Logout 1.0 notifications to relying parties
 - **GDPR Self-Service**: data export and scheduled account deletion from the hosted account page
 - **TCC Provisioning**: Try-Confirm-Cancel provisioning into downstream apps at authorize time

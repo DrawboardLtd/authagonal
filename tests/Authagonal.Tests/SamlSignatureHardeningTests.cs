@@ -114,6 +114,49 @@ public sealed class SamlSignatureHardeningTests
         Assert.True(result.Success, result.Error);
     }
 
+    // ── F248: malformed signature elements fail closed, they do not throw ────────────────────────
+
+    [Fact]
+    public void EmptySignatureElement_FailsClosedRatherThanThrowing()
+    {
+        // SignedXml.LoadXml throws CryptographicException ("Malformed element SignedInfo.") for this,
+        // and nothing caught it — so it propagated out of Parse, past the ACS endpoint's graceful
+        // error redirect, and out as a bare 500 with a stack trace under Development. Reachable
+        // unauthenticated, on both the ACS and the SLO POST binding.
+        using var cert = NewCert();
+        var doc = BuildResponseDocument();
+        var signature = doc.CreateElement("ds", "Signature", "http://www.w3.org/2000/09/xmldsig#");
+        Assertion(doc).AppendChild(signature);
+
+        var result = Parser.Parse(Encode(doc), Ctx(cert));
+
+        Assert.False(result.Success);
+        Assert.Equal(SamlResponseParser.SignatureFailure, result.Error);
+    }
+
+    [Fact]
+    public void UnknownTransformAlgorithm_FailsClosedRatherThanThrowing()
+    {
+        // "Unknown transform has been encountered." — and it is thrown by LoadXml, BEFORE the
+        // transform allowlist below can refuse it, so the allowlist was unreachable for genuinely
+        // unknown URIs and the request 500'd instead.
+        using var cert = NewCert();
+        var doc = BuildResponseDocument();
+        SignElement(doc, Assertion(doc), "_assertion-1", cert);
+
+        var nsm = new XmlNamespaceManager(doc.NameTable);
+        nsm.AddNamespace("ds", "http://www.w3.org/2000/09/xmldsig#");
+        var transforms = (XmlElement)doc.SelectSingleNode("//ds:Transforms", nsm)!;
+        var hostile = doc.CreateElement("ds", "Transform", "http://www.w3.org/2000/09/xmldsig#");
+        hostile.SetAttribute("Algorithm", "http://attacker.example/transform");
+        transforms.AppendChild(hostile);
+
+        var result = Parser.Parse(Encode(doc), Ctx(cert));
+
+        Assert.False(result.Success);
+        Assert.Equal(SamlResponseParser.SignatureFailure, result.Error);
+    }
+
     // ── Transform allowlist ──────────────────────────────────────────────────────────────────────
     // Both of these already failed before the allowlist existed: .NET refuses the XSLT and XPath chains
     // constructible here on its own. They are kept as policy tests, not as proof of a closed hole — they

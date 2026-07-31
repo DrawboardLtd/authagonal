@@ -15,6 +15,17 @@ namespace Authagonal.Core.Constants;
 public static class TokenTypes
 {
     /// <summary>RFC 9068 §2.1 — an OAuth 2.0 access token in JWT form.</summary>
+    /// <remarks>
+    /// The <c>typ</c> is adopted because it does real work — it is what lets a resource server tell an
+    /// access token from an id_token or a logout token by inspection — but full RFC 9068 conformance
+    /// is NOT claimed. §2.1 also requires RS256 among the supported signature algorithms, and this
+    /// server signs and validates exclusively with ES256: discovery advertises ES256 alone, the crypto
+    /// provider implements only ECDSA-SHA256, and every inbound validator pins ValidAlgorithms to it.
+    /// That is a deliberate single-algorithm posture, not an oversight — an RS256 key would have to be
+    /// generated, published, rotated and accepted everywhere ES256 is, and every added accepted
+    /// algorithm is another way for a verifier to be talked into the wrong one. Anything depending on
+    /// the RFC 9068 profile as a whole should treat this server as not conforming.
+    /// </remarks>
     public const string AccessTokenJwt = "at+jwt";
 
     /// <summary>OIDC Back-Channel Logout 1.0 §2.4 — a logout token. Never an access token.</summary>

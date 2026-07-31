@@ -275,6 +275,10 @@ public static class AuthagonalExtensions
         // which are precisely the ones the automatic upgrade cannot reach.
         services.AddSingleton<IHostedService, LegacySecretHashWarning>();
 
+        // The XML-crypto CVE fixes come from the shared framework, not from a package this library can
+        // pin — so the floor is asserted rather than assumed.
+        services.AddSingleton<IHostedService, RuntimeVersionFloor>();
+
         services.AddAuthagonalProtocol(_ => { });
 
         // Subject resolver — maps ClaimsPrincipal / OidcSubject back to AuthUser via the user store.

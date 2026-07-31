@@ -37,7 +37,10 @@ public static class SamlTestHelper
         string? extraAttributesXml = null,
         string? sessionIndex = null,
         bool signAssertion = false,
-        SubjectConfirmationShape confirmationShape = SubjectConfirmationShape.Conforming)
+        SubjectConfirmationShape confirmationShape = SubjectConfirmationShape.Conforming,
+        // Leaves the document unsigned, for callers that sign it themselves after transforming it —
+        // see SignResponseAfterEncryption.
+        bool sign = true)
     {
         var now = DateTime.UtcNow;
         var notBefore = now.AddMinutes(-5);
@@ -123,10 +126,17 @@ public static class SamlTestHelper
 
         xml.LoadXml(sb.ToString());
 
-        if (signAssertion)
+        if (!sign)
         {
-            // Sign the Assertion in place (the Entra/ADFS shape — required when the assertion will
-            // subsequently be encrypted, since a Response-level signature would break on replace).
+            // Left to the caller.
+        }
+        else if (signAssertion)
+        {
+            // Sign the Assertion in place (the Entra/ADFS shape). Note this must happen BEFORE
+            // encryption: encrypting an already-signed assertion is what ADFS does, and the signature
+            // travels inside the ciphertext. The other supported shape — sign the Response AFTER
+            // encrypting the assertion, so the signature covers the EncryptedAssertion — is built by
+            // SignResponseAfterEncryption below.
             var nsm = new XmlNamespaceManager(xml.NameTable);
             nsm.AddNamespace("saml", "urn:oasis:names:tc:SAML:2.0:assertion");
             var assertion = (XmlElement)xml.SelectSingleNode("//saml:Assertion", nsm)!;
@@ -251,6 +261,26 @@ public static class SamlTestHelper
     }
 
     /// <summary>Build a SAML Response with a failed status.</summary>
+    /// <summary>
+    /// Signs the Response of an already-encrypted document, producing the shape an IdP emits when it
+    /// signs at the Response level and encrypts the assertion.
+    /// </summary>
+    /// <remarks>
+    /// This combination could not previously validate at all: decryption calls
+    /// <c>EncryptedXml.ReplaceData</c>, which rewrites the loaded document in place, and the Response
+    /// signature was only checked afterwards — against a DOM that no longer matched what was signed.
+    /// So responseSignatureValid was unconditionally false for every encrypted response.
+    /// </remarks>
+    public static string SignResponseAfterEncryption(string base64Response)
+    {
+        var doc = new XmlDocument { PreserveWhitespace = true };
+        doc.LoadXml(Encoding.UTF8.GetString(Convert.FromBase64String(base64Response)));
+
+        var responseId = doc.DocumentElement!.GetAttribute("ID");
+        SignXmlElement(doc, responseId, TestCertificate);
+        return Convert.ToBase64String(Encoding.UTF8.GetBytes(doc.OuterXml));
+    }
+
     public static string BuildFailedResponse(string? inResponseTo = null)
     {
         var xml = $@"<samlp:Response xmlns:samlp=""urn:oasis:names:tc:SAML:2.0:protocol""
