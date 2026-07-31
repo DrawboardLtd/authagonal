@@ -261,6 +261,15 @@ internal static class ClientAuthentication
 
     /// <summary>Inline JWKS wins; a JwksUri is fetched through the host's HttpClient factory
     /// (or a shared fallback) and cached for <see cref="JwksCacheTtl"/>.</summary>
+    /// <summary>
+    /// How long a cached JWKS may still be served after the client's endpoint stops responding.
+    /// </summary>
+    /// <remarks>
+    /// Long enough to ride out an ordinary outage, short enough that a client which rotated away from
+    /// a compromised key and retired its old endpoint stops being accepted under that key.
+    /// </remarks>
+    private static readonly TimeSpan MaxJwksStaleness = TimeSpan.FromHours(24);
+
     private static async Task<JsonWebKeySet?> ResolveClientJwksAsync(
         HttpContext httpContext, OAuthClient client, CancellationToken ct)
     {
@@ -301,8 +310,20 @@ internal static class ClientAuthentication
         }
         catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or ArgumentException)
         {
-            // A stale cached set beats an outage-shaped auth failure.
-            return JwksCache.TryGetValue(client.JwksUri, out var stale) ? stale.Keys : null;
+            // A stale cached set beats an outage-shaped auth failure — but only for a bounded time.
+            //
+            // The fallback had no age limit, so an unreachable jwks_uri meant the last-seen keys were
+            // served forever. That inverts what key rotation is for: a client that rotates BECAUSE its
+            // key was compromised, then takes its old JWKS endpoint down, leaves this server accepting
+            // assertions signed by the compromised key indefinitely. Past the bound, authentication
+            // fails loudly instead, which is a diagnosable outage rather than a silent one.
+            if (JwksCache.TryGetValue(client.JwksUri, out var stale) &&
+                DateTimeOffset.UtcNow - stale.FetchedAt < MaxJwksStaleness)
+            {
+                return stale.Keys;
+            }
+
+            return null;
         }
     }
 }

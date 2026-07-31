@@ -3,6 +3,7 @@ using System.Text.Json;
 using Authagonal.Core.Models;
 using Authagonal.Core.Services;
 using Authagonal.Core.Stores;
+using Authagonal.Protocol.Services;
 using Authagonal.Server.Services;
 
 namespace Authagonal.Server.Endpoints;
@@ -17,7 +18,7 @@ public static class DeviceAuthorizationEndpoint
             IClientStore clientStore,
             IGrantStore grantStore,
             ITenantContext tenantContext,
-            PasswordHasher passwordHasher,
+            IClientSecretVerifier secretVerifier,
             IConfiguration configuration,
             CancellationToken ct) =>
         {
@@ -33,22 +34,29 @@ public static class DeviceAuthorizationEndpoint
             if (client is null)
                 return DeviceError("invalid_client", "Unknown client");
 
+            // Enforced here as at authorize, client authentication and introspection. This endpoint
+            // was the one client-facing path that never checked it, so a disabled client could still
+            // start a device flow — and the device grant is precisely the one whose tokens outlive
+            // the browser session an operator would otherwise be cutting off.
+            if (!client.Enabled)
+                return DeviceError("unauthorized_client", "Client is disabled");
+
             if (!client.AllowedGrantTypes.Contains("urn:ietf:params:oauth:grant-type:device_code", StringComparer.OrdinalIgnoreCase))
                 return DeviceError("unauthorized_client", "Device authorization grant not allowed for this client");
 
-            // Verify secret if required
+            // Verify secret if required.
+            //
+            // Through the registered IClientSecretVerifier rather than re-implementing the hash
+            // comparison inline: a host that plugs in its own verifier (an HSM, a vault, a
+            // policy-bearing implementation) had that seam honoured everywhere except here and
+            // introspection, so those two endpoints silently used the default while the rest of the
+            // server used the host's.
             if (client.RequireClientSecret)
             {
                 if (string.IsNullOrWhiteSpace(clientSecret))
                     return DeviceError("invalid_client", "client_secret is required");
 
-                var valid = client.ClientSecretHashes.Any(hash =>
-                {
-                    var result = passwordHasher.VerifyPassword(clientSecret, hash);
-                    return result is PasswordVerifyResult.Success or PasswordVerifyResult.SuccessRehashNeeded;
-                });
-
-                if (!valid)
+                if (!await secretVerifier.VerifyAsync(client, clientSecret, ct))
                     return DeviceError("invalid_client", "Invalid client credentials");
             }
 

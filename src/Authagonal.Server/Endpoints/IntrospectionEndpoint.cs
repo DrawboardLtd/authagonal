@@ -1,5 +1,6 @@
 using Authagonal.Core.Constants;
 using Authagonal.Core.Stores;
+using Authagonal.Protocol.Services;
 using Authagonal.Server.Services;
 using Microsoft.IdentityModel.JsonWebTokens;
 using Microsoft.IdentityModel.Tokens;
@@ -29,7 +30,7 @@ public static class IntrospectionEndpoint
         IRevokedTokenStore revokedTokenStore,
         Authagonal.Core.Services.IKeyManager keyManager,
         Authagonal.Core.Services.ITenantContext tenantContext,
-        PasswordHasher passwordHasher,
+        IClientSecretVerifier secretVerifier,
         CancellationToken ct)
     {
         var form = await httpContext.Request.ReadFormAsync(ct);
@@ -60,14 +61,17 @@ public static class IntrospectionEndpoint
             if (string.IsNullOrWhiteSpace(clientSecret))
                 return InactiveResponse();
 
-            var secretValid = client.ClientSecretHashes.Any(hash =>
+            // Through the host's registered verifier, like every other client-authentication path.
+            // Inlining the comparison here meant a host that plugged in its own verifier had it
+            // bypassed on this endpoint.
+            if (!await secretVerifier.VerifyAsync(client, clientSecret, ct))
             {
-                var result = passwordHasher.VerifyPassword(clientSecret, hash);
-                return result is PasswordVerifyResult.Success or PasswordVerifyResult.SuccessRehashNeeded;
-            });
-
-            if (!secretValid)
-                return InactiveResponse();
+                // RFC 7662 §2.3: invalid credentials are an authentication failure, answered as one.
+                // Answering 200 {"active": false} conflates "your credentials are wrong" with "that
+                // token is not active" — so a resource server with a stale secret silently treated
+                // every live token as inactive instead of reporting that it could not authenticate.
+                return Results.Json(new { error = "invalid_client" }, statusCode: 401);
+            }
         }
 
         var token = form["token"].FirstOrDefault();

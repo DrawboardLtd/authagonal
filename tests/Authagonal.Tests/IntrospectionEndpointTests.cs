@@ -92,8 +92,12 @@ public sealed class IntrospectionEndpointTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Introspect_WrongClientSecret_ReturnsInactive()
+    public async Task Introspect_WrongClientSecret_Returns401()
     {
+        // Previously asserted 200 {"active": false}. RFC 7662 §2.3 makes invalid client credentials
+        // an authentication failure, and conflating the two is actively misleading: a resource server
+        // whose secret had gone stale was told every live token was inactive, rather than that it
+        // could not authenticate — so the symptom pointed at the tokens instead of at its own config.
         var token = await _factory.GetAdminTokenAsync(_client);
 
         var form = new FormUrlEncodedContent(new Dictionary<string, string>
@@ -104,10 +108,7 @@ public sealed class IntrospectionEndpointTests : IAsyncLifetime
         request.Headers.Authorization = BasicAuth(AuthagonalTestFactory.AdminClientId, "wrong-secret");
 
         var response = await _client.SendAsync(request);
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-
-        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
-        Assert.False(json.GetProperty("active").GetBoolean());
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
     }
 
     [Fact]

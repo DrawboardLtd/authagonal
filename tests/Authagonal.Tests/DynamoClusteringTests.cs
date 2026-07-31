@@ -171,12 +171,12 @@ public class DynamoClusteringTests(DynamoFixture dynamo)
         await subscriber.StartAsync(CancellationToken.None);
         try
         {
-            await Task.Delay(TimeSpan.FromSeconds(1));
-            lock (received) Assert.Empty(received);
-
-            // Events published after the subscriber's start do arrive.
+            // The "fresh" event is published second, so its arrival proves the poller has advanced
+            // past the historic one. Asserting emptiness after a fixed one-second sleep instead only
+            // proved "not delivered YET", and went red whenever a loaded machine starved the 200ms
+            // poller — the same fragility as the Azure bus test.
             await publisher.PublishAsync("topic", System.Text.Encoding.UTF8.GetBytes("fresh"));
-            await WaitForAsync(() => { lock (received) return received.Contains("fresh"); }, TimeSpan.FromSeconds(15));
+            await WaitForAsync(() => { lock (received) return received.Contains("fresh"); }, TimeSpan.FromSeconds(30));
             lock (received) Assert.DoesNotContain("historic", received);
         }
         finally
