@@ -24,6 +24,15 @@ namespace Authagonal.Protocol;
 /// Calling <see cref="AddAuthagonalProtocol"/> registers the token service, key manager,
 /// client/scope seeder, and supporting services.
 /// </para>
+/// <para>
+/// <b>TLS.</b> <c>/connect/authorize</c>, <c>/connect/token</c>, <c>/connect/userinfo</c> and
+/// <c>/connect/par</c> refuse plaintext http, per RFC 6749 §3.1/§3.2. That is enforced by a filter on the
+/// endpoints themselves rather than by middleware, because this package is mapped into a pipeline it does
+/// not own — so it holds no matter how the host composes that pipeline. A host behind a TLS-terminating
+/// proxy needs <c>UseForwardedHeaders</c> (which it needs anyway, for Secure cookies and correct absolute
+/// URLs); a host that genuinely serves this surface over http sets
+/// <see cref="AuthagonalProtocolOptions.AllowInsecureHttp"/>.
+/// </para>
 /// </summary>
 public static class AuthagonalProtocolExtensions
 {
@@ -90,6 +99,16 @@ public static class AuthagonalProtocolExtensions
     /// <summary>
     /// Maps the five core OIDC endpoints: discovery, JWKS, authorize, token, userinfo.
     /// </summary>
+    /// <summary>
+    /// Maps the protocol surface: discovery, JWKS, authorize, token, userinfo and PAR.
+    /// </summary>
+    /// <remarks>
+    /// The four <c>/connect/*</c> endpoints carry an RFC 6749 §3.1/§3.2 TLS filter and will refuse
+    /// plaintext http unless <see cref="AuthagonalProtocolOptions.AllowInsecureHttp"/> is set. Mapping an
+    /// endpoint individually rather than through this method does not opt out of it — the filter is
+    /// attached where each route is declared. Discovery and JWKS are not gated: they are public metadata,
+    /// and a client that cannot read them cannot discover it needs https in the first place.
+    /// </remarks>
     public static IEndpointRouteBuilder MapAuthagonalProtocolEndpoints(this IEndpointRouteBuilder app)
     {
         app.MapProtocolDiscoveryEndpoint();

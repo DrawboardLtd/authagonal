@@ -34,6 +34,27 @@ builder.Services.AddAuthagonalCore(builder.Configuration);
 
 `IKeyManager` and store interfaces (`IClientStore`, `IScimTokenStore`, etc.) are resolved from `HttpContext.RequestServices` at request time, so scoped registrations work correctly for per-tenant isolation.
 
+### Embedding `Authagonal.Protocol` alone
+
+A host that wants only the OIDC protocol surface — its own authentication, its own pipeline, drop-in `/connect/*` endpoints — calls `AddAuthagonalProtocol()` + `MapAuthagonalProtocolEndpoints()` without any of `Authagonal.Server`.
+
+`/connect/authorize`, `/connect/token`, `/connect/userinfo` and `/connect/par` refuse plaintext http in that shape too, per RFC 6749 §3.1/§3.2. Because the package is mapped into a pipeline it does not own, the requirement rides on the endpoints as a filter rather than as middleware, so it holds however you compose your pipeline and whether you map the whole surface or one endpoint at a time. Two consequences worth knowing before you upgrade:
+
+- **Behind a TLS-terminating proxy, call `UseForwardedHeaders`.** The filter reads the scheme after routing, so a forwarded `X-Forwarded-Proto: https` satisfies it. Without that middleware your host sees plaintext — which also means your cookies are not being marked `Secure` and your generated absolute URLs are wrong, so this is worth fixing rather than working around.
+- **A host that genuinely serves the protocol surface over http sets the opt-in**, the same way the server does:
+
+```csharp
+builder.Services.AddAuthagonalProtocol(o =>
+{
+    o.AuthenticationScheme = CookieAuthenticationDefaults.AuthenticationScheme;
+    o.AllowInsecureHttp = builder.Environment.IsDevelopment();   // never in production
+});
+```
+
+Discovery and JWKS are deliberately not gated: they are public metadata, and a client that cannot read them cannot learn it needs https in the first place.
+
+When you use `AddAuthagonal()` (the full server) you do not set this separately — `Auth:AllowInsecureHttp` is propagated into the protocol options for you, so one switch governs the whole surface.
+
 ## Overriding Services
 
 Register your custom implementations **before** calling `AddAuthagonal()`. Authagonal uses `TryAdd` internally, so your registrations take precedence:

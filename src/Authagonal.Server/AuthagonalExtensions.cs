@@ -288,7 +288,13 @@ public static class AuthagonalExtensions
         // protection is opt-in through IFieldCipher — so its absence is stated rather than assumed.
         services.AddSingleton<IHostedService, PlaintextSigningKeyWarning>();
 
-        services.AddAuthagonalProtocol(_ => { });
+        // Auth:AllowInsecureHttp has to reach the protocol options too, not just the pipeline gate.
+        // MapAuthagonalEndpoints maps Protocol's PAR endpoint directly, and that endpoint carries its own
+        // RFC 6749 §3.1/§3.2 filter (Authagonal.Protocol cannot rely on middleware it does not own). Two
+        // switches for one decision would mean a plaintext dev host answering everything except /connect/par
+        // — so the server's switch is the one an operator sets, and it is propagated here.
+        var allowInsecureHttp = configuration.GetValue("Auth:AllowInsecureHttp", false);
+        services.AddAuthagonalProtocol(o => o.AllowInsecureHttp = allowInsecureHttp);
 
         // Subject resolver — maps ClaimsPrincipal / OidcSubject back to AuthUser via the user store.
         services.AddScoped<UserStoreOidcSubjectResolver>();

@@ -315,6 +315,11 @@ public sealed class AuthagonalTestFactory : IAsyncDisposable
                 o.SigningKeyCacheRefreshMinutes = auth.SigningKeyCacheRefreshMinutes;
                 o.RefreshTokenReuseGraceSeconds = auth.RefreshTokenReuseGraceSeconds;
                 o.AuthenticationScheme = CookieAuthenticationDefaults.AuthenticationScheme;
+                // Mirrors what AddAuthagonalCore does with Auth:AllowInsecureHttp. MapAuthagonalEndpoints
+                // maps Protocol's PAR endpoint, which carries its own TLS filter, so a test that turns the
+                // switch off has to turn it off for both or /connect/par would answer differently from the
+                // rest of the surface.
+                o.AllowInsecureHttp = auth.AllowInsecureHttp;
             });
         });
         services.AddSingleton<IClientSecretVerifier, PasswordHasherClientSecretVerifier>();

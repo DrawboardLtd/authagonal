@@ -36,6 +36,13 @@ public sealed class ProtocolTestHost : IAsyncDisposable
     public InMemoryScopeStore ScopeStore { get; } = new();
     public InMemorySigningKeyStore SigningKeyStore { get; } = new();
 
+    /// <summary>
+    /// Whether the embedded protocol endpoints accept plaintext http. Defaults to true because
+    /// TestServer speaks http; set false before the first request to exercise the RFC 6749 §3.1/§3.2
+    /// filter the way an embedding host that never set the switch would meet it.
+    /// </summary>
+    public bool AllowInsecureHttp { get; set; } = true;
+
     private WebApplication? _app;
     private bool _started;
 
@@ -72,7 +79,10 @@ public sealed class ProtocolTestHost : IAsyncDisposable
             .AddCookie(options => options.LoginPath = "/host-login");
 
         services.AddAuthagonalProtocol(o =>
-            o.AuthenticationScheme = CookieAuthenticationDefaults.AuthenticationScheme);
+        {
+            o.AuthenticationScheme = CookieAuthenticationDefaults.AuthenticationScheme;
+            o.AllowInsecureHttp = AllowInsecureHttp;
+        });
 
         _app = builder.Build();
         _app.UseAuthentication();

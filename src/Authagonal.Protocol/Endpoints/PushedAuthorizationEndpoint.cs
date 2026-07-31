@@ -93,6 +93,7 @@ internal static class PushedAuthorizationEndpoint
             return Results.Empty;
         })
         .AllowAnonymous()
+        .RequireTls()
         .WithTags("OAuth");
 
         return app;

@@ -231,6 +231,7 @@ internal static class AuthorizeEndpoint
                 authCodeService, parService, clientId, subject, request, requestUri, tenantContext.Issuer, ct);
         })
         .AllowAnonymous()
+        .RequireTls()
         .WithTags("OIDC");
 
         return app;
