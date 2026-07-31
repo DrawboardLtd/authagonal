@@ -777,6 +777,54 @@ public static class SamlEndpoints
             }
         }
 
+        // Freshness. A LogoutRequest carries no expiry of its own, so without a bound on IssueInstant
+        // a signed one captured off the wire logs the user out on demand, forever.
+        var issueInstantAttr = logoutRequest.Attributes?["IssueInstant"]?.Value;
+        if (issueInstantAttr is null
+            || !SamlResponseParser.TryParseSamlInstant(issueInstantAttr, out var issuedAt))
+        {
+            return Results.BadRequest(new { error = "saml_invalid", error_description = "LogoutRequest has no usable IssueInstant." });
+        }
+
+        if (DateTimeOffset.UtcNow - issuedAt > LogoutRequestMaxAge
+            || issuedAt - DateTimeOffset.UtcNow > LogoutRequestClockSkew)
+        {
+            logger.LogWarning("SAML SLO: LogoutRequest for {ConnectionId} is outside its freshness window", connectionId);
+            return Results.BadRequest(new { error = "saml_invalid", error_description = "LogoutRequest is outside the accepted freshness window." });
+        }
+
+        // Single-use, in the same per-connection namespace assertions use. Within the freshness
+        // window a captured request was otherwise replayable without limit.
+        if (!await replayCache.CheckAndStoreAssertionIdAsync(
+                $"{connectionId}|logout|{requestIdAttr}", DateTimeOffset.UtcNow.Add(LogoutRequestMaxAge), ct))
+        {
+            logger.LogWarning("SAML SLO: LogoutRequest replay detected for {ConnectionId}", connectionId);
+            return Results.BadRequest(new { error = "saml_replay", error_description = "LogoutRequest replay detected." });
+        }
+
+        // Bound to the browser's own session: the NameID being logged out must be the one this
+        // session was established with. Without it, a signed LogoutRequest naming ANY subject ended
+        // whichever session happened to be in the browser that fetched the URL — so an attacker who
+        // obtained one signed request could log out an arbitrary user by getting them to load it.
+        var sloAuth = await httpContext.AuthenticateAsync(CookieAuthenticationDefaults.AuthenticationScheme);
+        if (sloAuth.Succeeded)
+        {
+            var sessionNameId = sloAuth.Principal?.FindFirst("saml_name_id")?.Value;
+            var requestedNameId = logoutRequest
+                .GetElementsByTagName("NameID", SamlConstants.Saml2Assertion)
+                .Cast<System.Xml.XmlNode>()
+                .FirstOrDefault()?.InnerText?.Trim();
+
+            if (!string.IsNullOrEmpty(sessionNameId) && !string.IsNullOrEmpty(requestedNameId)
+                && !string.Equals(sessionNameId, requestedNameId, StringComparison.Ordinal))
+            {
+                logger.LogWarning(
+                    "SAML SLO: LogoutRequest names a different subject than this browser's session for {ConnectionId} — ignored",
+                    connectionId);
+                return Results.BadRequest(new { error = "saml_invalid", error_description = "LogoutRequest does not match this session." });
+            }
+        }
+
         await httpContext.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
         logger.LogInformation("SAML IdP-initiated logout for connection {ConnectionId}", connectionId);
 
@@ -793,6 +841,12 @@ public static class SamlEndpoints
         }
         return Results.Redirect(responseUrl);
     }
+
+    /// <summary>How old a LogoutRequest may be. It carries no expiry of its own.</summary>
+    private static readonly TimeSpan LogoutRequestMaxAge = TimeSpan.FromMinutes(5);
+
+    /// <summary>Tolerance for an IdP clock running ahead of ours.</summary>
+    private static readonly TimeSpan LogoutRequestClockSkew = TimeSpan.FromMinutes(2);
 
     /// <summary>Decode an SLO message: base64+deflate for the redirect binding, plain base64 for POST.</summary>
     private static System.Xml.XmlDocument? DecodeSloMessage(string value, bool isPost, ILogger logger)
