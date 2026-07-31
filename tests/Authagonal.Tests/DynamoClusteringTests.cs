@@ -132,18 +132,23 @@ public class DynamoClusteringTests(DynamoFixture dynamo)
         var poll = TimeSpan.FromMilliseconds(200);
         var bus = await NewBusAsync("clBusTopics", poll);
 
-        var hits = 0;
-        bus.Subscribe("wanted", (_, _) => { Interlocked.Increment(ref hits); return Task.CompletedTask; });
+        var wantedHits = 0;
+        var unwantedHits = 0;
+        bus.Subscribe("wanted", (_, _) => { Interlocked.Increment(ref wantedHits); return Task.CompletedTask; });
+        bus.Subscribe("also-unsubscribed-from", (_, _) => { Interlocked.Increment(ref unwantedHits); return Task.CompletedTask; });
 
         await bus.StartAsync(CancellationToken.None);
         try
         {
+            // Published FIRST, so the later "wanted" message arriving proves the poller has passed
+            // this one. Sleeping a fixed second and asserting emptiness only proved "not delivered
+            // YET", and went red whenever a loaded machine starved the 200ms poller — the same
+            // fragility already fixed in the Azure bus test and in this file's sibling.
             await bus.PublishAsync("unwanted", ReadOnlyMemory<byte>.Empty);
-            await Task.Delay(TimeSpan.FromSeconds(1));
-            Assert.Equal(0, Volatile.Read(ref hits));
-
             await bus.PublishAsync("wanted", ReadOnlyMemory<byte>.Empty);
-            await WaitForAsync(() => Volatile.Read(ref hits) == 1, TimeSpan.FromSeconds(15));
+
+            await WaitForAsync(() => Volatile.Read(ref wantedHits) == 1, TimeSpan.FromSeconds(30));
+            Assert.Equal(0, Volatile.Read(ref unwantedHits));
         }
         finally
         {
