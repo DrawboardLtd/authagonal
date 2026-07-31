@@ -33,7 +33,7 @@ O armazenamento pode ser configurado de uma de duas formas: forneça **ou** `Sto
 |---|---|---|
 | `Authentication:CookieLifetimeHours` | `48` | Tempo de vida da sessão do cookie (deslizante) |
 | `Authentication:AlwaysSecureCookie` | `false` | Força incondicionalmente a flag `Secure` do cookie de sessão. O padrão (`SameAsRequest`) já produz um cookie Secure atrás de um proxy com terminação TLS que encaminha `X-Forwarded-Proto: https`. |
-| `Auth:AllowInsecureHttp` | `false` | Deixa os endpoints OAuth (`/connect/*`) responder a pedidos http em claro. **Apenas para desenvolvimento.** A RFC 6749 §3.1/§3.2 exige TLS nos endpoints de autorização e de token, portanto por omissão um pedido não-https a qualquer um deles é recusado com `invalid_request`. O esquema é avaliado *depois* do processamento dos cabeçalhos encaminhados, pelo que um proxy que termina TLS e encaminha `X-Forwarded-Proto: https` passa a barreira com esta opção desligada. Só uma implantação genuinamente em texto simples (o `docker-compose.yml` fornecido, a demo de servidor personalizado) precisa dela, e o servidor regista um aviso no arranque sempre que estiver ligada. É propagada para `AuthagonalProtocolOptions.AllowInsecureHttp`, pelo que governa também os endpoints pertencentes a `Authagonal.Protocol` (consulte [Extensibilidade](extensibility#embedding-authagonalprotocol-alone)). |
+| `Auth:AllowInsecureHttp` | `false` | Deixa os endpoints OAuth (`/connect/*`) responder a pedidos http em claro. **Apenas para desenvolvimento.** A RFC 6749 §3.1/§3.2 exige TLS nos endpoints de autorização e de token, portanto por omissão um pedido não-https a qualquer um deles é recusado com `invalid_request`. O esquema é avaliado *depois* do processamento dos cabeçalhos encaminhados, pelo que um proxy que termina TLS e encaminha `X-Forwarded-Proto: https` passa a barreira com esta opção desligada — desde que esse proxy esteja declarado em `ForwardedHeaders:KnownNetworks` / `KnownProxies`; sem essa declaração o cabeçalho é ignorado. Só uma implantação genuinamente em texto simples (o `docker-compose.yml` fornecido, a demo de servidor personalizado) precisa dela, e o servidor regista um aviso no arranque sempre que estiver ligada. É propagada para `AuthagonalProtocolOptions.AllowInsecureHttp`, pelo que governa também os endpoints pertencentes a `Authagonal.Protocol` (consulte [Extensibilidade](extensibility#embedding-authagonalprotocol-alone)). |
 | `Auth:MaxFailedAttempts` | `5` | Tentativas de login falhadas antes do bloqueio da conta |
 | `Auth:LockoutDurationMinutes` | `10` | Duração do bloqueio da conta após o máximo de tentativas falhadas |
 | `Auth:MaxRegistrationsPerIp` | `5` | Máximo de registos por endereço IP dentro da janela |
@@ -430,7 +430,7 @@ O Authagonal indexa a limitação de taxa e o bloqueio de conta pelo IP do clien
 | Definição | Variável de Ambiente | Padrão | Descrição |
 |---|---|---|---|
 | `ForwardedHeaders:ForwardLimit` | `ForwardedHeaders__ForwardLimit` | `1` | Número de saltos de proxy a honrar a partir da direita da cadeia `X-Forwarded-For`. O padrão de `1` confia apenas no único salto que o seu ingress acrescenta e ignora qualquer coisa mais à esquerda na cadeia. |
-| `ForwardedHeaders:KnownNetworks` | `ForwardedHeaders__KnownNetworks__0` (array) | *(vazio)* | Faixas CIDR (array de strings, ex.: `"10.0.0.0/8"`) autorizadas a definir cabeçalhos encaminhados. **Garantia mais forte:** defina isto para o CIDR do seu ingress / pod para que apenas essa rede possa definir o IP do cliente. |
+| `ForwardedHeaders:KnownNetworks` | `ForwardedHeaders__KnownNetworks__0` (array) | *(vazio)* | Faixas CIDR (array de strings, ex.: `"10.0.0.0/8"`) autorizadas a definir cabeçalhos encaminhados. Defina isto para o CIDR do seu proxy / ingress / pod. É esta declaração que permite que `X-Forwarded-Proto` seja sequer considerado — ver abaixo. |
 | `ForwardedHeaders:KnownProxies` | `ForwardedHeaders__KnownProxies__0` (array) | *(vazio)* | Endereços IP de proxy individuais (array de strings) autorizados a definir cabeçalhos encaminhados. Use em conjunto com ou em vez de `KnownNetworks`. |
 
 ```json
@@ -443,7 +443,25 @@ O Authagonal indexa a limitação de taxa e o bloqueio de conta pelo IP do clien
 }
 ```
 
-> ⚠️ **Proxy com terminação TLS obrigatório.** O Authagonal deve ser executado atrás de um proxy reverso com terminação TLS. O cookie de sessão usa `SecurePolicy = SameAsRequest` e o HSTS (`Strict-Transport-Security`) só é emitido em pedidos HTTPS, portanto o proxy deve encaminhar `X-Forwarded-Proto: https` para que os cookies sejam marcados como `Secure` e o HSTS seja enviado. Configure `ForwardedHeaders:KnownNetworks` / `ForwardedHeaders:KnownProxies` para o seu proxy confiável de modo que o esquema e o IP do cliente não possam ser falsificados.
+### Os dois cabeçalhos não merecem confiança nos mesmos termos
+
+`X-Forwarded-For` ajusta o **IP do cliente**: a chave de que dependem a limitação de taxa, o bloqueio de contas e a guarda de `/_internal`. Sem nada declarado, o Authagonal aceita-o a partir do loopback e das faixas RFC1918, e regista um aviso. É um valor por omissão de melhor esforço, e é melhor do que o comportamento da framework com um conjunto de confiança vazio, que consiste em aceitar o cabeçalho de *qualquer* chamador.
+
+`X-Forwarded-Proto` altera o **esquema**, e o esquema decide se `/connect/*` sequer responde (RFC 6749 §3.1/§3.2), se os cookies são marcados como `Secure` e se os URLs absolutos gerados são https. Só é aceite **a partir de** um proxy que tenha declarado em `KnownNetworks` / `KnownProxies`. Um endereço privado não é uma declaração: o Authagonal é distribuído como biblioteca e não consegue ver a rede onde foi implantado, pelo que «o par tem um endereço privado» é um palpite sobre a topologia. Numa LAN plana, numa VPC partilhada ou numa bridge de contentores partilhada, todas as cargas de trabalho vizinhas estão dentro dessas faixas e poderiam afirmar `https` para um pedido que chegou em texto simples.
+
+**Se o seu proxy não tiver endereço fixo** — um ingress do Kubernetes, um balanceador rotativo, uma plataforma que não lhe dirá o CIDR do salto — declare todos os pares como proxy:
+
+```json
+{
+  "ForwardedHeaders": {
+    "KnownNetworks": ["0.0.0.0/0", "::/0"]
+  }
+}
+```
+
+Isto é seguro exatamente quando nada além do proxy consegue alcançar o processo, que é o pressuposto em que uma implantação dessas já se apoia. Escrevê-lo coloca-o onde pode ser revisto, em vez de deixar a biblioteca inferi-lo. Se outras cargas de trabalho *conseguirem* alcançar o Kestrel diretamente, com esta definição poderão falsificar o esquema e o IP do cliente — fixe então o CIDR real.
+
+> ⚠️ **Proxy com terminação TLS obrigatório, e tem de ser declarado.** O Authagonal deve ser executado atrás de um proxy reverso com terminação TLS (ou terminar o TLS ele próprio). O HSTS (`Strict-Transport-Security`) só é emitido em pedidos HTTPS, e os endpoints OAuth recusam liminarmente pedidos em texto simples a menos que `Auth:AllowInsecureHttp` esteja ligado — portanto o proxy deve encaminhar `X-Forwarded-Proto: https` **e** estar nomeado em `ForwardedHeaders:KnownNetworks` / `ForwardedHeaders:KnownProxies` para que o HSTS seja enviado e `/connect/*` sequer responda. Não declarar nada é a falha de atualização mais comum: o cabeçalho chega, nada está habilitado a aplicá-lo, e todos os pedidos a `/connect/*` respondem 400 numa implantação que está genuinamente em TLS. O registo de arranque di-lo, e o corpo da recusa também.
 
 ## Limitação de Taxa
 

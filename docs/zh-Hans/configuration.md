@@ -33,7 +33,7 @@ Authagonal 通过 `appsettings.json` 或环境变量进行配置。环境变量�
 |---|---|---|
 | `Authentication:CookieLifetimeHours` | `48` | Cookie 会话生命周期（滑动过期） |
 | `Authentication:AlwaysSecureCookie` | `false` | 无条件强制会话 Cookie 的 `Secure` 标志。默认值（`SameAsRequest`）在会转发 `X-Forwarded-Proto: https` 的 TLS 终止代理之后，已经会产生 Secure Cookie。 |
-| `Auth:AllowInsecureHttp` | `false` | 允许 OAuth 端点（`/connect/*`）响应明文 http 请求。**仅限开发环境。** RFC 6749 §3.1/§3.2 要求授权端点和令牌端点使用 TLS，因此默认情况下对其中任一端点的非 https 请求都会以 `invalid_request` 被拒绝。协议方案是在转发头处理*之后*才判定的，所以终止 TLS 并转发 `X-Forwarded-Proto: https` 的代理即使不开启此项也能通过该关卡。只有真正以明文运行的部署（随附的 `docker-compose.yml`、custom-server 演示）才需要它，而且只要它处于开启状态，服务器就会在启动时记录一条警告。该值会传播到 `AuthagonalProtocolOptions.AllowInsecureHttp`，因此也同样管辖由 `Authagonal.Protocol` 拥有的那些端点（参见[扩展性](extensibility#embedding-authagonalprotocol-alone)）。 |
+| `Auth:AllowInsecureHttp` | `false` | 允许 OAuth 端点（`/connect/*`）响应明文 http 请求。**仅限开发环境。** RFC 6749 §3.1/§3.2 要求授权端点和令牌端点使用 TLS，因此默认情况下对其中任一端点的非 https 请求都会以 `invalid_request` 被拒绝。协议方案是在转发头处理*之后*才判定的，所以终止 TLS 并转发 `X-Forwarded-Proto: https` 的代理即使不开启此项也能通过该关卡——前提是该代理已在 `ForwardedHeaders:KnownNetworks` / `KnownProxies` 中声明；没有这项声明，该头会被忽略。只有真正以明文运行的部署（随附的 `docker-compose.yml`、custom-server 演示）才需要它，而且只要它处于开启状态，服务器就会在启动时记录一条警告。该值会传播到 `AuthagonalProtocolOptions.AllowInsecureHttp`，因此也同样管辖由 `Authagonal.Protocol` 拥有的那些端点（参见[扩展性](extensibility#embedding-authagonalprotocol-alone)）。 |
 | `Auth:MaxFailedAttempts` | `5` | 账户锁定前允许的登录失败次数 |
 | `Auth:LockoutDurationMinutes` | `10` | 达到最大失败次数后的账户锁定时长 |
 | `Auth:MaxRegistrationsPerIp` | `5` | 时间窗口内每个 IP 地址的最大注册数 |
@@ -427,7 +427,7 @@ Authagonal 以客户端 IP 作为速率限制和账户锁定的键，并且仅�
 | 设置 | 环境变量 | 默认值 | 描述 |
 |---|---|---|---|
 | `ForwardedHeaders:ForwardLimit` | `ForwardedHeaders__ForwardLimit` | `1` | 从 `X-Forwarded-For` 链右侧起信任的代理跳点数量。默认值 `1` 仅信任您的入口追加的那一跳，忽略链中更靠左的任何内容。 |
-| `ForwardedHeaders:KnownNetworks` | `ForwardedHeaders__KnownNetworks__0`（数组） | *（空）* | 允许设置转发头的 CIDR 范围（字符串数组，例如 `"10.0.0.0/8"`）。**最强保证：** 将其设为您的入口 / Pod CIDR，使得只有该网络可以设置客户端 IP。 |
+| `ForwardedHeaders:KnownNetworks` | `ForwardedHeaders__KnownNetworks__0`（数组） | *（空）* | 允许设置转发头的 CIDR 范围（字符串数组，例如 `"10.0.0.0/8"`）。将其设为您的代理 / 入口 / Pod CIDR。正是这项声明才使 `X-Forwarded-Proto` 得以被采纳——参见下文。 |
 | `ForwardedHeaders:KnownProxies` | `ForwardedHeaders__KnownProxies__0`（数组） | *（空）* | 允许设置转发头的单个代理 IP 地址（字符串数组）。可与 `KnownNetworks` 一起使用或替代之。 |
 
 ```json
@@ -440,7 +440,25 @@ Authagonal 以客户端 IP 作为速率限制和账户锁定的键，并且仅�
 }
 ```
 
-> ⚠️ **需要 TLS 终止代理。** Authagonal 必须运行在 TLS 终止反向代理后面。会话 cookie 使用 `SecurePolicy = SameAsRequest`，且 HSTS（`Strict-Transport-Security`）仅在 HTTPS 请求上发出，因此代理必须转发 `X-Forwarded-Proto: https`，cookie 才会被标记为 `Secure` 并发送 HSTS。请将 `ForwardedHeaders:KnownNetworks` / `ForwardedHeaders:KnownProxies` 配置为您的受信任代理，使协议和客户端 IP 无法被伪造。
+### 这两个头并不按同样的条件被信任
+
+`X-Forwarded-For` 用于修正**客户端 IP**——限流、账户锁定以及 `/_internal` 守卫都以它为键。若什么都没有声明，Authagonal 仍会接受来自回环地址和 RFC1918 各段的该头，并记录一条警告。这是一个尽力而为的默认值，它优于框架在信任集合为空时的行为：那种情况下，*任何*调用方发来的该头都会被采纳。
+
+`X-Forwarded-Proto` 会改变**协议方案**，而协议方案决定了 `/connect/*` 是否会作出响应（RFC 6749 §3.1/§3.2）、cookie 是否被标记为 `Secure`，以及生成的绝对 URL 是否为 https。它**只**会从您在 `KnownNetworks` / `KnownProxies` 中声明过的代理处被采纳。私有地址并不构成声明：Authagonal 以库的形式分发，看不到自己被部署到什么网络上，因此"对端持有私有地址"只是对网络拓扑的一种猜测。在扁平局域网、共享 VPC 或共享容器网桥中，每一个相邻工作负载都落在这些网段内，都可以为一个实际以明文到达的请求声称 `https`。
+
+**如果您的代理没有固定地址**——Kubernetes 入口、轮换的负载均衡器、不会告诉您该跳 CIDR 的平台——那就把每个对端都声明为代理：
+
+```json
+{
+  "ForwardedHeaders": {
+    "KnownNetworks": ["0.0.0.0/0", "::/0"]
+  }
+}
+```
+
+这恰恰在"除代理之外没有任何东西能触达该进程"时是安全的，而这正是此类部署本就依赖的前提。把它写下来，就把这个前提放到了可供审阅之处，而不是留给库去推断。如果其他工作负载**确实**能直接触达 Kestrel，那么在此设置下它们就能伪造协议方案和客户端 IP——这时请改为固定真实的 CIDR。
+
+> ⚠️ **需要 TLS 终止代理，并且必须声明它。** Authagonal 必须运行在 TLS 终止反向代理后面（或自行终止 TLS）。HSTS（`Strict-Transport-Security`）仅在 HTTPS 请求上发出，且除非开启 `Auth:AllowInsecureHttp`，OAuth 端点会直接拒绝明文请求——因此代理必须转发 `X-Forwarded-Proto: https`，**并且**要在 `ForwardedHeaders:KnownNetworks` / `ForwardedHeaders:KnownProxies` 中被指名，HSTS 才会发送，`/connect/*` 才会作出响应。什么都不声明是最常见的升级故障：头确实到达了，却没有任何东西有权采纳它，于是在一个确实跑在 TLS 上的部署里，每个 `/connect/*` 请求都返回 400。启动日志会这么说，拒绝响应的正文也会。
 
 ## 速率限制
 

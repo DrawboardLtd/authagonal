@@ -40,7 +40,7 @@ A host that wants only the OIDC protocol surface — its own authentication, its
 
 `/connect/authorize`, `/connect/token`, `/connect/userinfo` and `/connect/par` refuse plaintext http in that shape too, per RFC 6749 §3.1/§3.2. Because the package is mapped into a pipeline it does not own, the requirement rides on the endpoints as a filter rather than as middleware, so it holds however you compose your pipeline and whether you map the whole surface or one endpoint at a time. Two consequences worth knowing before you upgrade:
 
-- **Behind a TLS-terminating proxy, call `UseForwardedHeaders`.** The filter reads the scheme after routing, so a forwarded `X-Forwarded-Proto: https` satisfies it. Without that middleware your host sees plaintext — which also means your cookies are not being marked `Secure` and your generated absolute URLs are wrong, so this is worth fixing rather than working around.
+- **Behind a TLS-terminating proxy, call `UseForwardedHeaders` with the proxy declared.** The filter reads the scheme after routing, so a forwarded `X-Forwarded-Proto: https` satisfies it. Without that middleware your host sees plaintext — which also means your cookies are not being marked `Secure` and your generated absolute URLs are wrong, so this is worth fixing rather than working around. Populate `KnownProxies` / `KnownNetworks` when you register it: ASP.NET Core reads an empty trust set as "every caller is a trusted proxy", which hands the scheme to anyone who can reach your host. If the refusal body mentions an unapplied `X-Forwarded-Proto`, this is the middleware it is asking for.
 - **A host that genuinely serves the protocol surface over http sets the opt-in**, the same way the server does:
 
 ```csharp

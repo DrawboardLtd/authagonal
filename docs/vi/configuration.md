@@ -33,7 +33,7 @@ Bộ lưu trữ có thể được cấu hình theo một trong hai cách: cung 
 |---|---|---|
 | `Authentication:CookieLifetimeHours` | `48` | Thời gian sống phiên cookie (trượt) |
 | `Authentication:AlwaysSecureCookie` | `false` | Buộc cờ `Secure` của cookie phiên một cách vô điều kiện. Giá trị mặc định (`SameAsRequest`) đã tạo ra cookie Secure khi chạy phía sau một proxy kết thúc TLS có chuyển tiếp `X-Forwarded-Proto: https`. |
-| `Auth:AllowInsecureHttp` | `false` | Cho phép các endpoint OAuth (`/connect/*`) trả lời các request http thuần. **Chỉ dùng cho phát triển.** RFC 6749 §3.1/§3.2 yêu cầu TLS tại endpoint authorization và token, nên theo mặc định một request không phải https tới bất kỳ endpoint nào trong số đó đều bị từ chối với `invalid_request`. Scheme được đánh giá *sau* khi xử lý các forwarded header, nên một proxy kết thúc TLS và chuyển tiếp `X-Forwarded-Proto: https` vẫn qua được cổng này dù để tắt tùy chọn. Chỉ một triển khai thực sự chạy văn bản thuần (tệp `docker-compose.yml` đi kèm, bản demo custom-server) mới cần đến nó, và máy chủ ghi một cảnh báo khi khởi động bất cứ khi nào nó đang bật. Được truyền sang `AuthagonalProtocolOptions.AllowInsecureHttp`, nên nó cũng chi phối các endpoint do `Authagonal.Protocol` sở hữu (xem [Khả năng mở rộng](extensibility#embedding-authagonalprotocol-alone)). |
+| `Auth:AllowInsecureHttp` | `false` | Cho phép các endpoint OAuth (`/connect/*`) trả lời các request http thuần. **Chỉ dùng cho phát triển.** RFC 6749 §3.1/§3.2 yêu cầu TLS tại endpoint authorization và token, nên theo mặc định một request không phải https tới bất kỳ endpoint nào trong số đó đều bị từ chối với `invalid_request`. Scheme được đánh giá *sau* khi xử lý các forwarded header, nên một proxy kết thúc TLS và chuyển tiếp `X-Forwarded-Proto: https` vẫn qua được cổng này dù để tắt tùy chọn — với điều kiện proxy đó đã được khai báo trong `ForwardedHeaders:KnownNetworks` / `KnownProxies`; không có khai báo đó thì header bị bỏ qua. Chỉ một triển khai thực sự chạy văn bản thuần (tệp `docker-compose.yml` đi kèm, bản demo custom-server) mới cần đến nó, và máy chủ ghi một cảnh báo khi khởi động bất cứ khi nào nó đang bật. Được truyền sang `AuthagonalProtocolOptions.AllowInsecureHttp`, nên nó cũng chi phối các endpoint do `Authagonal.Protocol` sở hữu (xem [Khả năng mở rộng](extensibility#embedding-authagonalprotocol-alone)). |
 | `Auth:MaxFailedAttempts` | `5` | Số lần đăng nhập thất bại trước khi khóa tài khoản |
 | `Auth:LockoutDurationMinutes` | `10` | Thời gian khóa tài khoản sau khi vượt quá số lần thất bại tối đa |
 | `Auth:MaxRegistrationsPerIp` | `5` | Số lượt đăng ký tối đa mỗi địa chỉ IP trong cửa sổ thời gian |
@@ -430,7 +430,7 @@ Authagonal lập khóa giới hạn tốc độ và khóa tài khoản dựa tr�
 | Cài đặt | Biến môi trường | Mặc định | Mô tả |
 |---|---|---|---|
 | `ForwardedHeaders:ForwardLimit` | `ForwardedHeaders__ForwardLimit` | `1` | Số hop proxy được tôn trọng tính từ bên phải của chuỗi `X-Forwarded-For`. Giá trị mặc định `1` chỉ tin cậy đúng một hop mà ingress của bạn nối thêm và bỏ qua mọi thứ xa hơn về bên trái trong chuỗi. |
-| `ForwardedHeaders:KnownNetworks` | `ForwardedHeaders__KnownNetworks__0` (mảng) | *(rỗng)* | Các dải CIDR (mảng chuỗi, ví dụ `"10.0.0.0/8"`) được phép đặt forwarded header. **Đảm bảo mạnh nhất:** đặt giá trị này thành CIDR của ingress / pod của bạn để chỉ mạng đó mới có thể đặt IP của client. |
+| `ForwardedHeaders:KnownNetworks` | `ForwardedHeaders__KnownNetworks__0` (mảng) | *(rỗng)* | Các dải CIDR (mảng chuỗi, ví dụ `"10.0.0.0/8"`) được phép đặt forwarded header. Đặt giá trị này thành CIDR của proxy / ingress / pod của bạn. Chính khai báo này mới cho phép `X-Forwarded-Proto` được xét đến — xem bên dưới. |
 | `ForwardedHeaders:KnownProxies` | `ForwardedHeaders__KnownProxies__0` (mảng) | *(rỗng)* | Các địa chỉ IP proxy riêng lẻ (mảng chuỗi) được phép đặt forwarded header. Dùng cùng với hoặc thay cho `KnownNetworks`. |
 
 ```json
@@ -443,7 +443,25 @@ Authagonal lập khóa giới hạn tốc độ và khóa tài khoản dựa tr�
 }
 ```
 
-> ⚠️ **Yêu cầu proxy kết thúc TLS.** Authagonal phải chạy phía sau một reverse proxy kết thúc TLS. Cookie phiên sử dụng `SecurePolicy = SameAsRequest` và HSTS (`Strict-Transport-Security`) chỉ được phát trên các yêu cầu HTTPS, nên proxy phải chuyển tiếp `X-Forwarded-Proto: https` để cookie được đánh dấu `Secure` và HSTS được gửi. Hãy cấu hình `ForwardedHeaders:KnownNetworks` / `ForwardedHeaders:KnownProxies` cho proxy tin cậy của bạn để scheme và IP của client không thể bị giả mạo.
+### Hai header này không được tin cậy theo cùng một điều kiện
+
+`X-Forwarded-For` điều chỉnh **IP của client** — khóa mà giới hạn tần suất, khóa tài khoản và bộ bảo vệ `/_internal` dựa vào. Khi chưa khai báo gì, Authagonal vẫn chấp nhận nó từ loopback và các dải RFC1918, đồng thời ghi một cảnh báo. Đó là mặc định theo kiểu nỗ lực tối đa, và nó tốt hơn hành vi của framework khi tập tin cậy rỗng: khi đó header được chấp nhận từ *bất kỳ* caller nào.
+
+`X-Forwarded-Proto` thay đổi **scheme**, và scheme quyết định `/connect/*` có trả lời hay không (RFC 6749 §3.1/§3.2), cookie có được đánh dấu `Secure` hay không, và các URL tuyệt đối sinh ra có phải https hay không. Nó **chỉ** được chấp nhận từ một proxy mà bạn đã khai báo trong `KnownNetworks` / `KnownProxies`. Một địa chỉ riêng (private) không phải là một khai báo: Authagonal được phát hành dưới dạng thư viện và không thể nhìn thấy mạng mà nó được triển khai lên, nên "peer có địa chỉ riêng" chỉ là một phỏng đoán về topology. Trên một mạng LAN phẳng, một VPC dùng chung hay một container bridge dùng chung, mọi workload lân cận đều nằm trong các dải đó và có thể khẳng định `https` cho một request thực ra đã đến ở dạng văn bản thuần.
+
+**Nếu proxy của bạn không có địa chỉ cố định** — một ingress Kubernetes, một load balancer luân phiên, một nền tảng không cho bạn biết CIDR của hop — hãy khai báo mọi peer đều là proxy:
+
+```json
+{
+  "ForwardedHeaders": {
+    "KnownNetworks": ["0.0.0.0/0", "::/0"]
+  }
+}
+```
+
+Cách này an toàn đúng khi không gì ngoài proxy có thể tiếp cận tiến trình, và đó chính là giả định mà một triển khai như vậy vốn đã dựa vào. Viết nó ra sẽ đặt giả định vào chỗ có thể rà soát được, thay vì để thư viện tự suy đoán. Nếu các workload khác *có thể* tiếp cận Kestrel trực tiếp thì với thiết lập này chúng có thể giả mạo scheme và IP của client — khi đó hãy ghim CIDR thật.
+
+> ⚠️ **Yêu cầu proxy kết thúc TLS, và nó phải được khai báo.** Authagonal phải chạy phía sau một reverse proxy kết thúc TLS (hoặc tự kết thúc TLS). HSTS (`Strict-Transport-Security`) chỉ được phát trên các yêu cầu HTTPS, và các endpoint OAuth từ chối thẳng các request văn bản thuần trừ khi bật `Auth:AllowInsecureHttp` — nên proxy phải chuyển tiếp `X-Forwarded-Proto: https` **và** được nêu tên trong `ForwardedHeaders:KnownNetworks` / `ForwardedHeaders:KnownProxies` thì HSTS mới được gửi và `/connect/*` mới trả lời. Không khai báo gì là lỗi nâng cấp thường gặp nhất: header vẫn đến, nhưng không có gì được phép áp dụng nó, và mọi request `/connect/*` đều trả về 400 trên một triển khai thực sự đang chạy TLS. Log khởi động nói điều đó, và phần thân của phản hồi từ chối cũng vậy.
 
 ## Giới hạn tốc độ
 

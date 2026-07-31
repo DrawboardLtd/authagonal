@@ -26,6 +26,15 @@ namespace Authagonal.Protocol.Endpoints;
 /// registers no forwarded-header handling will see plaintext and be refused, which is the correct answer:
 /// its cookies are not being marked Secure and its generated absolute URLs are wrong for the same reason.
 /// </para>
+/// <para>
+/// That refusal is also the one an embedder is most likely to meet on upgrade, and the least likely to
+/// diagnose from a bare <c>invalid_request</c>, because the deployment genuinely is on TLS — a proxy in
+/// front of it terminated the connection and said so in a header nothing was listening for. So when the
+/// request carries <c>X-Forwarded-Proto: https</c> and the scheme is still http, the refusal names that
+/// specifically. The remedy belongs to the host: register <c>UseForwardedHeaders</c> with the terminating
+/// proxy in <c>KnownProxies</c>/<c>KnownNetworks</c>. An empty trust set is not the remedy — the framework
+/// reads it as "every caller is a trusted proxy", which hands the scheme to whoever asks for it.
+/// </para>
 /// </remarks>
 internal static class TransportSecurity
 {
@@ -39,10 +48,21 @@ internal static class TransportSecurity
 
                 if (!options.AllowInsecureHttp)
                 {
+                    var claimedHttps = context.HttpContext.Request.Headers["X-Forwarded-Proto"]
+                        .Any(v => string.Equals(v, "https", StringComparison.OrdinalIgnoreCase));
+
                     return JsonResults.OAuthError(
                         "invalid_request",
-                        "TLS is required at the OAuth endpoints (RFC 6749 sections 3.1 and 3.2). Use https, " +
-                        "or set AllowInsecureHttp on AuthagonalProtocolOptions for a development host.");
+                        claimedHttps
+                            ? "TLS is required at the OAuth endpoints (RFC 6749 sections 3.1 and 3.2). This " +
+                              "request carried X-Forwarded-Proto: https, but the host pipeline did not apply " +
+                              "it — register UseForwardedHeaders with the terminating proxy in KnownProxies " +
+                              "or KnownNetworks (an empty trust set honours the header from any caller and is " +
+                              "not a safe substitute), or set AllowInsecureHttp on AuthagonalProtocolOptions " +
+                              "for a development host."
+                            : "TLS is required at the OAuth endpoints (RFC 6749 sections 3.1 and 3.2). Use " +
+                              "https, or set AllowInsecureHttp on AuthagonalProtocolOptions for a development " +
+                              "host.");
                 }
             }
 

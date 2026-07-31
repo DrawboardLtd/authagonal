@@ -21,11 +21,22 @@
     Kestrel as plain http and there is nothing to correct it. `Authagonal.Server`'s `UseAuthagonal()` calls
     it for you; a host that builds its own pipeline (including one embedding `Authagonal.Protocol` directly)
     must call it itself, and needs it anyway for `Secure` cookies and correct absolute URLs.
-  - **Your proxy is outside the trusted set.** The forwarded trust set now defaults to loopback + RFC1918
-    (see the `/_internal/backchannel-logout` fix below — an empty set meant *every* caller was a trusted
-    proxy). A terminating proxy on a public address that has not been declared no longer has its
-    `X-Forwarded-Proto: https` believed. Pin `ForwardedHeaders:KnownNetworks` / `ForwardedHeaders:KnownProxies`
-    to it. This is the right fix: an undeclared proxy's scheme claim is a claim any caller could have made.
+  - **Your proxy has not been declared.** `X-Forwarded-Proto` is honoured only from a proxy named in
+    `ForwardedHeaders:KnownProxies` / `ForwardedHeaders:KnownNetworks`. Declaring it is the fix, and an
+    undeclared proxy's scheme claim is a claim any caller could have made.
+
+    A private address is **not** a declaration. The fallback trust set (loopback + RFC1918, see the
+    `/_internal/backchannel-logout` fix below) adjusts the **client IP** only — it is a guess about
+    topology, and this library ships on nuget.org and cannot see the network it was deployed onto. On a
+    flat LAN, a shared VPC or a shared container bridge, every neighbouring workload holds a private
+    address and could assert `https` over a request that arrived in cleartext. A best-effort client IP
+    still beats the framework's empty-set behaviour of believing every caller; a best-effort *scheme*
+    would be a security gate resting on an inference, so it is not offered.
+
+    If your proxy has no fixed address — a Kubernetes ingress, a rotating load balancer, a platform that
+    will not tell you the hop's CIDR — declare `ForwardedHeaders:KnownNetworks: ["0.0.0.0/0", "::/0"]`.
+    That states the assumption you are already relying on (nothing but the proxy can reach this process)
+    somewhere it can be reviewed, instead of leaving the library to infer it from an address range.
   - **You genuinely serve the protocol surface over plain http** — a laptop, a demo, a test host. Set
     `Auth:AllowInsecureHttp` (env `Auth__AllowInsecureHttp=true`). The server logs a warning at startup
     whenever it is on. Never set it in production. For a host that embeds `Authagonal.Protocol` without
@@ -79,7 +90,9 @@
   is a trusted proxy, so any internet client could claim `10.0.0.1` and revoke every grant for an arbitrary
   subject. The guard now reads the raw peer captured before forwarded headers are applied, accepts loopback
   only (a private-range address is not a credential), and the trust set defaults to the loopback/RFC1918
-  ranges with a startup warning to pin the real CIDR.
+  ranges with a startup warning to pin the real CIDR. That default governs `X-Forwarded-For` alone —
+  `X-Forwarded-Proto` is honoured only from a proxy the operator declared, because the scheme decides
+  whether `/connect/*` answers at all and "the peer looks private" is a guess a library cannot verify.
 
 - **The SAML EncryptedAssertion path was a decryption oracle against the SP private key.** RSA-PKCS#1 v1.5
   was accepted, `Pkcs1` sat in a catch-all fallback that tried paddings in turn rather than honouring the

@@ -58,22 +58,24 @@ public sealed class TransportSecurityTests
     }
 
     /// <summary>
-    /// The gate reads the scheme after forwarded-header processing, which is the whole point: in the
-    /// deployment it is written for, TLS terminates at an ingress and the request reaches Kestrel as
-    /// plain http, so X-Forwarded-Proto is the only truthful answer to "was this encrypted".
+    /// The gate reads the scheme after forwarded-header processing, which is the whole point: where TLS
+    /// terminates at a proxy the request reaches Kestrel as plain http, so X-Forwarded-Proto is the only
+    /// truthful answer to "was this encrypted" — but only once the operator has declared which proxy is
+    /// entitled to answer it, which is what the KnownNetworks entry here does.
     /// <para>
-    /// The peer address is set explicitly to one inside the default trusted range. An earlier version of
+    /// The peer address is set explicitly to one inside that declared range. An earlier version of
     /// this test left it unset, and TestServer leaves RemoteIpAddress null — which ForwardedHeadersMiddleware
     /// treats as "a server that cannot report a peer" and honours the header unconditionally. It passed
     /// without ever exercising the trust check it was supposed to be demonstrating.
     /// </para>
     /// </summary>
     [Fact]
-    public async Task Token_OverPlainHttp_IsAllowed_WhenTrustedProxyForwardsHttpsScheme()
+    public async Task Token_OverPlainHttp_IsAllowed_WhenDeclaredProxyForwardsHttpsScheme()
     {
         await using var factory = new AuthagonalTestFactory
         {
             ConfigureAuthOptions = o => o.AllowInsecureHttp = false,
+            Configuration = { ["ForwardedHeaders:KnownNetworks:0"] = "10.0.0.0/8" },
         };
         await factory.SeedTestDataAsync();
 
@@ -97,10 +99,12 @@ public sealed class TransportSecurityTests
     }
 
     // -----------------------------------------------------------------------
-    // The security property: X-Forwarded-Proto is a claim, and a claim is only worth the peer that
-    // made it. #46's fix defaults the trusted set to loopback + RFC1918, so a forged https claim from
-    // anywhere else must not satisfy the gate. These drive TestServer's context directly because that
-    // is the only way to control the peer address, which is the whole variable under test.
+    // The security property: X-Forwarded-Proto is a claim, and a claim is only worth the peer that made
+    // it — so the gate may only be satisfied second-hand by a proxy the OPERATOR DECLARED. A private
+    // address is not a declaration: this library cannot see the network it was deployed onto, and on a
+    // flat one every neighbour holds a private address. So the fallback trust set adjusts the client IP
+    // and nothing else. These drive TestServer's context directly because that is the only way to
+    // control the peer address, which is the whole variable under test.
     // -----------------------------------------------------------------------
 
     [Theory]
@@ -132,15 +136,17 @@ public sealed class TransportSecurityTests
     }
 
     /// <summary>
-    /// The control for the case above: same request, same headers, only the peer differs. Without this
-    /// the refusal above would be consistent with the gate simply refusing everything.
+    /// The control for the case above: same request, same headers, only the peer and the declaration
+    /// differ. Without this the refusal above would be consistent with the gate simply refusing
+    /// everything.
     /// </summary>
     [Fact]
-    public async Task Gate_AcceptsHttpsClaim_FromTrustedPeer()
+    public async Task Gate_AcceptsHttpsClaim_FromDeclaredProxy()
     {
         await using var factory = new AuthagonalTestFactory
         {
             ConfigureAuthOptions = o => o.AllowInsecureHttp = false,
+            Configuration = { ["ForwardedHeaders:KnownNetworks:0"] = "10.0.0.0/8" },
         };
         await factory.SeedTestDataAsync();
 
@@ -157,6 +163,124 @@ public sealed class TransportSecurityTests
         Assert.Equal(StatusCodes.Status401Unauthorized, context.Response.StatusCode);
         Assert.Equal("https", context.Request.Scheme);
         Assert.DoesNotContain("TLS is required", await ReadBodyAsync(context));
+    }
+
+    /// <summary>
+    /// The rule that replaced "the peer looks private, so believe its scheme". A private peer is exactly
+    /// the case the old fallback covered, and the case that cannot be distinguished from a hostile
+    /// neighbour on a flat network — so with nothing declared, the https claim buys nothing.
+    /// </summary>
+    [Fact]
+    public async Task Gate_RefusesHttpsClaim_FromPrivatePeer_WhenNoProxyTrustIsDeclared()
+    {
+        await using var factory = new AuthagonalTestFactory
+        {
+            ConfigureAuthOptions = o => o.AllowInsecureHttp = false,
+        };
+        await factory.SeedTestDataAsync();
+
+        var context = await SendAsync(factory, c =>
+        {
+            c.Request.Method = "GET";
+            c.Request.Path = "/connect/userinfo";
+            c.Connection.RemoteIpAddress = TrustedProxy;
+            c.Request.Headers["X-Forwarded-Proto"] = "https";
+        });
+
+        Assert.Equal(StatusCodes.Status400BadRequest, context.Response.StatusCode);
+        Assert.Equal("http", context.Request.Scheme);
+        // And the refusal names the actual cause, rather than sending the operator hunting for TLS they
+        // have already terminated.
+        var body = await ReadBodyAsync(context);
+        Assert.Contains("no proxy is declared as trusted", body);
+        Assert.Contains("ForwardedHeaders:KnownNetworks", body);
+    }
+
+    /// <summary>
+    /// Declaring a proxy is not declaring every proxy: the peer still has to be the one named. Without
+    /// this, a deployment that declared its ingress would be indistinguishable from one that opted out
+    /// of the check entirely.
+    /// </summary>
+    [Fact]
+    public async Task Gate_RefusesHttpsClaim_FromPeerOutsideTheDeclaredNetwork()
+    {
+        await using var factory = new AuthagonalTestFactory
+        {
+            ConfigureAuthOptions = o => o.AllowInsecureHttp = false,
+            Configuration = { ["ForwardedHeaders:KnownNetworks:0"] = "10.0.0.0/8" },
+        };
+        await factory.SeedTestDataAsync();
+
+        var context = await SendAsync(factory, c =>
+        {
+            c.Request.Method = "GET";
+            c.Request.Path = "/connect/userinfo";
+            c.Connection.RemoteIpAddress = UntrustedPeer;
+            c.Request.Headers["X-Forwarded-Proto"] = "https";
+        });
+
+        Assert.Equal(StatusCodes.Status400BadRequest, context.Response.StatusCode);
+        Assert.Equal("http", context.Request.Scheme);
+    }
+
+    /// <summary>
+    /// The exit for a deployment whose proxy has no fixed address — a Kubernetes ingress, a rotating
+    /// load balancer, a platform that will not tell you the hop's CIDR. "0.0.0.0/0" asserts the thing
+    /// that is actually true of such a deployment, that nothing but the proxy can reach this process,
+    /// and it is a statement in the operator's config rather than an inference in the library's code.
+    /// </summary>
+    [Fact]
+    public async Task Gate_AcceptsHttpsClaim_FromAnyPeer_WhenTheOperatorDeclaresEveryPeerAProxy()
+    {
+        await using var factory = new AuthagonalTestFactory
+        {
+            ConfigureAuthOptions = o => o.AllowInsecureHttp = false,
+            Configuration =
+            {
+                ["ForwardedHeaders:KnownNetworks:0"] = "0.0.0.0/0",
+                ["ForwardedHeaders:KnownNetworks:1"] = "::/0",
+            },
+        };
+        await factory.SeedTestDataAsync();
+
+        var context = await SendAsync(factory, c =>
+        {
+            c.Request.Method = "GET";
+            c.Request.Path = "/connect/userinfo";
+            c.Connection.RemoteIpAddress = UntrustedPeer;
+            c.Request.Headers["X-Forwarded-Proto"] = "https";
+        });
+
+        Assert.Equal(StatusCodes.Status401Unauthorized, context.Response.StatusCode);
+        Assert.Equal("https", context.Request.Scheme);
+    }
+
+    /// <summary>
+    /// The other half of the split, and the reason this is not simply "forwarded headers off by
+    /// default": with nothing declared, X-Forwarded-For from a private peer STILL sets the client IP,
+    /// because a best-effort client IP beats the framework's empty-trust-set behaviour of honouring the
+    /// header from every caller alive. Only the scheme requires a declaration.
+    /// </summary>
+    [Fact]
+    public async Task ClientIp_IsStillTakenFromAPrivatePeer_WhenNoProxyTrustIsDeclared()
+    {
+        await using var factory = new AuthagonalTestFactory
+        {
+            ConfigureAuthOptions = o => o.AllowInsecureHttp = false,
+        };
+        await factory.SeedTestDataAsync();
+
+        var context = await SendAsync(factory, c =>
+        {
+            c.Request.Method = "GET";
+            c.Request.Path = "/health";
+            c.Connection.RemoteIpAddress = TrustedProxy;
+            c.Request.Headers["X-Forwarded-For"] = "198.51.100.7";
+            c.Request.Headers["X-Forwarded-Proto"] = "https";
+        });
+
+        Assert.Equal(IPAddress.Parse("198.51.100.7"), context.Connection.RemoteIpAddress);
+        Assert.Equal("http", context.Request.Scheme);
     }
 
     [Fact]
@@ -289,6 +413,37 @@ public sealed class ProtocolEmbedderTransportSecurityTests
 
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
         Assert.Contains("TLS is required", await response.Content.ReadAsStringAsync());
+    }
+
+    /// <summary>
+    /// The refusal an embedder actually meets on upgrade: TLS terminated at a proxy, X-Forwarded-Proto
+    /// sent, and nothing in the host's pipeline applying it. "Use https" is unactionable advice on a
+    /// deployment that already is on https, so the filter names the unapplied header instead.
+    /// </summary>
+    [Fact]
+    public async Task ProtocolToken_RefusalNamesTheUnappliedForwardedProto()
+    {
+        await using var host = new ProtocolTestHost { AllowInsecureHttp = false };
+        var client = host.CreateClient();
+
+        var request = new HttpRequestMessage(HttpMethod.Post, "/connect/token")
+        {
+            Content = new FormUrlEncodedContent(new Dictionary<string, string>
+            {
+                ["grant_type"] = "client_credentials",
+                ["client_id"] = ProtocolTestHost.MachineClientId,
+                ["client_secret"] = ProtocolTestHost.MachineClientSecret,
+                ["scope"] = "machine-api",
+            }),
+        };
+        request.Headers.Add("X-Forwarded-Proto", "https");
+
+        var response = await client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        var body = await response.Content.ReadAsStringAsync();
+        Assert.Contains("X-Forwarded-Proto: https", body);
+        Assert.Contains("UseForwardedHeaders", body);
     }
 
     /// <summary>

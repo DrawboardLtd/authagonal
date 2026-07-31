@@ -78,6 +78,13 @@ public sealed class AuthagonalTestFactory : IAsyncDisposable
     /// <summary>Optional mutator applied to AuthOptions at DI configuration time.</summary>
     public Action<AuthOptions>? ConfigureAuthOptions { get; set; }
 
+    /// <summary>
+    /// Configuration keys applied to the host before it starts, for settings read straight from
+    /// <c>IConfiguration</c> rather than from an options class — <c>ForwardedHeaders:*</c>, for one,
+    /// which <c>UseAuthagonal</c> reads at pipeline-composition time.
+    /// </summary>
+    public Dictionary<string, string?> Configuration { get; } = [];
+
     private WebApplication? _app;
     private bool _started;
 
@@ -236,6 +243,9 @@ public sealed class AuthagonalTestFactory : IAsyncDisposable
         builder.Configuration["Oidc:Issuer"] = TestIssuer;
         builder.Configuration["AdminApi:Enabled"] = "true";
         builder.Configuration["Cluster:Enabled"] = "false";
+
+        foreach (var (key, value) in Configuration)
+            builder.Configuration[key] = value;
 
         var services = builder.Services;
 

@@ -33,7 +33,7 @@ Der Speicher kann auf zwei Arten konfiguriert werden: geben Sie **entweder** `St
 |---|---|---|
 | `Authentication:CookieLifetimeHours` | `48` | Cookie-Sitzungsdauer (gleitend) |
 | `Authentication:AlwaysSecureCookie` | `false` | Erzwingt das `Secure`-Flag des Sitzungs-Cookies bedingungslos. Der Standard (`SameAsRequest`) liefert bereits ein sicheres Cookie hinter einem TLS-terminierenden Proxy, der `X-Forwarded-Proto: https` weiterleitet. |
-| `Auth:AllowInsecureHttp` | `false` | Lässt die OAuth-Endpunkte (`/connect/*`) auf einfache http-Anfragen antworten. **Nur für die Entwicklung.** RFC 6749 §3.1/§3.2 verlangen TLS am Autorisierungs- und am Token-Endpunkt, daher wird eine Nicht-https-Anfrage an einen von ihnen standardmäßig mit `invalid_request` abgelehnt. Das Schema wird *nach* der Verarbeitung der weitergeleiteten Header ausgewertet, sodass ein Proxy, der TLS terminiert und `X-Forwarded-Proto: https` weiterleitet, die Schranke auch ohne diese Einstellung passiert. Nur ein tatsächlich unverschlüsseltes Deployment (die mitgelieferte `docker-compose.yml`, die Custom-Server-Demo) braucht sie, und der Server protokolliert beim Start eine Warnung, solange sie aktiv ist. Wird an `AuthagonalProtocolOptions.AllowInsecureHttp` weitergereicht und gilt damit auch für die Endpunkte, die `Authagonal.Protocol` besitzt (siehe [Erweiterbarkeit](extensibility#embedding-authagonalprotocol-alone)). |
+| `Auth:AllowInsecureHttp` | `false` | Lässt die OAuth-Endpunkte (`/connect/*`) auf einfache http-Anfragen antworten. **Nur für die Entwicklung.** RFC 6749 §3.1/§3.2 verlangen TLS am Autorisierungs- und am Token-Endpunkt, daher wird eine Nicht-https-Anfrage an einen von ihnen standardmäßig mit `invalid_request` abgelehnt. Das Schema wird *nach* der Verarbeitung der weitergeleiteten Header ausgewertet, sodass ein Proxy, der TLS terminiert und `X-Forwarded-Proto: https` weiterleitet, die Schranke auch ohne diese Einstellung passiert — vorausgesetzt, dieser Proxy ist in `ForwardedHeaders:KnownNetworks` / `KnownProxies` deklariert; ohne diese Deklaration wird der Header ignoriert. Nur ein tatsächlich unverschlüsseltes Deployment (die mitgelieferte `docker-compose.yml`, die Custom-Server-Demo) braucht sie, und der Server protokolliert beim Start eine Warnung, solange sie aktiv ist. Wird an `AuthagonalProtocolOptions.AllowInsecureHttp` weitergereicht und gilt damit auch für die Endpunkte, die `Authagonal.Protocol` besitzt (siehe [Erweiterbarkeit](extensibility#embedding-authagonalprotocol-alone)). |
 | `Auth:MaxFailedAttempts` | `5` | Fehlgeschlagene Anmeldeversuche vor Kontosperre |
 | `Auth:LockoutDurationMinutes` | `10` | Kontosperrdauer nach maximalen Fehlversuchen |
 | `Auth:MaxRegistrationsPerIp` | `5` | Maximale Registrierungen pro IP-Adresse innerhalb des Zeitfensters |
@@ -429,7 +429,7 @@ Authagonal bindet Ratenbegrenzung und Kontosperre an die Client-IP und sendet HS
 | Einstellung | Umgebungsvariable | Standard | Beschreibung |
 |---|---|---|---|
 | `ForwardedHeaders:ForwardLimit` | `ForwardedHeaders__ForwardLimit` | `1` | Anzahl der Proxy-Hops, die von rechts in der `X-Forwarded-For`-Kette berücksichtigt werden. Der Standardwert `1` vertraut nur dem einzelnen Hop, den Ihr Ingress anhängt, und ignoriert alles weiter links in der Kette. |
-| `ForwardedHeaders:KnownNetworks` | `ForwardedHeaders__KnownNetworks__0` (Array) | *(leer)* | CIDR-Bereiche (String-Array, z.B. `"10.0.0.0/8"`), die weitergeleitete Header setzen dürfen. **Stärkste Garantie:** Setzen Sie dies auf Ihr Ingress- / Pod-CIDR, sodass nur dieses Netzwerk die Client-IP setzen darf. |
+| `ForwardedHeaders:KnownNetworks` | `ForwardedHeaders__KnownNetworks__0` (Array) | *(leer)* | CIDR-Bereiche (String-Array, z.B. `"10.0.0.0/8"`), die weitergeleitete Header setzen dürfen. Setzen Sie dies auf das CIDR Ihres Proxys / Ingress / Pods. Erst diese Deklaration erlaubt es überhaupt, `X-Forwarded-Proto` zu berücksichtigen — siehe unten. |
 | `ForwardedHeaders:KnownProxies` | `ForwardedHeaders__KnownProxies__0` (Array) | *(leer)* | Einzelne Proxy-IP-Adressen (String-Array), die weitergeleitete Header setzen dürfen. Verwenden Sie dies zusammen mit oder anstelle von `KnownNetworks`. |
 
 ```json
@@ -442,7 +442,25 @@ Authagonal bindet Ratenbegrenzung und Kontosperre an die Client-IP und sendet HS
 }
 ```
 
-> ⚠️ **TLS-terminierender Proxy erforderlich.** Authagonal muss hinter einem TLS-terminierenden Reverse-Proxy laufen. Das Sitzungs-Cookie verwendet `SecurePolicy = SameAsRequest`, und HSTS (`Strict-Transport-Security`) wird nur bei HTTPS-Anfragen gesendet, sodass der Proxy `X-Forwarded-Proto: https` weiterleiten muss, damit Cookies als `Secure` markiert werden und HSTS gesendet wird. Konfigurieren Sie `ForwardedHeaders:KnownNetworks` / `ForwardedHeaders:KnownProxies` auf Ihren vertrauenswürdigen Proxy, damit Schema und Client-IP nicht gefälscht werden können.
+### Den beiden Headern wird nicht auf gleicher Grundlage vertraut
+
+`X-Forwarded-For` bestimmt die **Client-IP** — den Schlüssel, an dem Rate-Limiting, Kontosperren und der `/_internal`-Guard hängen. Ist nichts deklariert, übernimmt Authagonal ihn von Loopback- und RFC1918-Adressen und protokolliert eine Warnung. Das ist eine Best-Effort-Voreinstellung, und sie ist besser als das Verhalten des Frameworks bei leerer Vertrauensliste: Dann wird der Header von *jedem* beliebigen Aufrufer übernommen.
+
+`X-Forwarded-Proto` ändert das **Schema**, und das Schema entscheidet, ob `/connect/*` überhaupt antwortet (RFC 6749 §3.1/§3.2), ob Cookies als `Secure` markiert werden und ob erzeugte absolute URLs https sind. Er wird **ausschließlich** von einem Proxy übernommen, den Sie in `KnownNetworks` / `KnownProxies` deklariert haben. Eine private Adresse ist keine Deklaration: Authagonal wird als Bibliothek ausgeliefert und kann das Netzwerk, in dem es betrieben wird, nicht einsehen — „die Gegenstelle hat eine private Adresse" ist also eine Vermutung über die Topologie. In einem flachen LAN, einer geteilten VPC oder einem geteilten Container-Bridge-Netz liegt jede benachbarte Workload in diesen Bereichen und könnte `https` für eine Anfrage behaupten, die im Klartext eingetroffen ist.
+
+**Wenn Ihr Proxy keine feste Adresse hat** — ein Kubernetes-Ingress, ein wechselnder Load Balancer, eine Plattform, die Ihnen das CIDR des Hops nicht nennt — deklarieren Sie jede Gegenstelle als Proxy:
+
+```json
+{
+  "ForwardedHeaders": {
+    "KnownNetworks": ["0.0.0.0/0", "::/0"]
+  }
+}
+```
+
+Das ist genau dann sicher, wenn ausschließlich der Proxy den Prozess erreichen kann — die Annahme, auf die sich ein solches Deployment ohnehin schon stützt. Sie aufzuschreiben bringt sie an eine Stelle, an der sie überprüfbar ist, statt sie der Bibliothek zum Erraten zu überlassen. Können andere Workloads Kestrel direkt erreichen, können sie unter dieser Einstellung Schema und Client-IP fälschen — pinnen Sie dann das tatsächliche CIDR.
+
+> ⚠️ **TLS-terminierender Proxy erforderlich — und er muss deklariert sein.** Authagonal muss hinter einem TLS-terminierenden Reverse-Proxy laufen (oder TLS selbst terminieren). HSTS (`Strict-Transport-Security`) wird nur bei HTTPS-Anfragen gesendet, und die OAuth-Endpunkte lehnen Klartext-Anfragen rundweg ab, sofern `Auth:AllowInsecureHttp` nicht gesetzt ist — der Proxy muss also `X-Forwarded-Proto: https` weiterleiten **und** in `ForwardedHeaders:KnownNetworks` / `ForwardedHeaders:KnownProxies` benannt sein, damit HSTS gesendet wird und `/connect/*` überhaupt antwortet. Nichts zu deklarieren ist der häufigste Fehler beim Upgrade: Der Header kommt an, niemand ist berechtigt, ihn anzuwenden, und jede `/connect/*`-Anfrage antwortet mit 400 — auf einem Deployment, das tatsächlich über TLS läuft. Das Startprotokoll sagt das, und der Ablehnungstext ebenfalls.
 
 ## Ratenbegrenzung
 

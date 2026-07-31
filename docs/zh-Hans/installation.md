@@ -166,7 +166,7 @@ npm install @authagonal/login
 
 在将 Authagonal 暴露给真实流量之前，请确认以下各项。每一项都在[配置](configuration)页面中详细说明。
 
-- **运行在 TLS 终止代理后面。** Authagonal 必须位于终止 TLS 的反向代理 / 入口（ingress）后面。会话 cookie 使用 `SecurePolicy = SameAsRequest`，且 HSTS 仅在 HTTPS 上发出，因此代理必须转发 `X-Forwarded-Proto: https`。将 `ForwardedHeaders:KnownNetworks`（或 `KnownProxies`）设为您的入口 / Pod CIDR，使客户端 IP 和协议无法被伪造；`ForwardedHeaders:ForwardLimit` 默认为 `1`（仅信任最后一跳）。
+- **运行在 TLS 终止代理后面，并声明该代理。** Authagonal 必须位于终止 TLS 的反向代理 / 入口（ingress）后面（或自行终止 TLS）。HSTS 仅在 HTTPS 上发出，且 `/connect/*` 会拒绝明文，因此代理必须转发 `X-Forwarded-Proto: https`——而只要您没有把 `ForwardedHeaders:KnownNetworks`（或 `KnownProxies`）设为该代理的 CIDR 或地址，这个头就会被忽略。若代理没有固定地址且没有别的东西能触达该进程，请使用 `["0.0.0.0/0", "::/0"]`。`ForwardedHeaders:ForwardLimit` 默认为 `1`（仅信任最后一跳）。
 - **设置 `SecretProvider:VaultUri`。** 默认密钥提供者为**纯文本**——若无 Key Vault，上游 OIDC 客户端密钥和 TOTP / MFA 种子会以明文存储在 Table Storage（以及备份）中。对于任何生产部署，请配置 Key Vault。
 - **锁定管理 API。** `AdminApi:Enabled` 默认为 **true**。管理作用域（`AdminApi:Scope`，默认 `authagonal-admin`）授予完整的管理权限和用户模拟能力。请对 `/api/v1/*` 管理路由进行网络限制，并严格控制谁能被签发管理作用域；如果未使用，请设置 `AdminApi:Enabled = false`。
 - **保护内部端点。** 设置 `Cluster:Secret`，使内部的 `/_internal/backchannel-logout` 端点要求 `X-Cluster-Secret` 请求头（以恒定时间比较）。未设置时，它只接受回环 / 私有（RFC 1918 / 链路本地 / ULA）源 IP——请确保已配置您的 forwarded-headers 信任，使外部调用者无法伪装成内部调用者。

@@ -27,9 +27,12 @@ public sealed class AuthagonalProtocolOptions
     /// those four routes, so it holds however the host composes its middleware and whether it maps the
     /// whole surface or one endpoint at a time.
     /// <para>
-    /// The scheme is read after routing, so a host that terminates TLS at a proxy and calls
-    /// <c>UseForwardedHeaders</c> passes with this left alone. Set it only for a host that genuinely
-    /// serves the protocol surface over http — a local development host, or a test server.
+    /// The scheme is read after routing, so a host that terminates TLS at a proxy passes with this left
+    /// alone provided it calls <c>UseForwardedHeaders</c> AND names that proxy in
+    /// <c>KnownProxies</c>/<c>KnownNetworks</c> — an empty trust set means the framework honours
+    /// <c>X-Forwarded-Proto</c> from every caller, which makes the scheme, and therefore this
+    /// requirement, settable by anyone who can reach the host. Set this option only for a host that
+    /// genuinely serves the protocol surface over http — a local development host, or a test server.
     /// </para>
     /// </remarks>
     public bool AllowInsecureHttp { get; set; }

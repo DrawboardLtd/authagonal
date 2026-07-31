@@ -30,7 +30,8 @@ namespace Authagonal.Protocol;
 /// endpoints themselves rather than by middleware, because this package is mapped into a pipeline it does
 /// not own — so it holds no matter how the host composes that pipeline. A host behind a TLS-terminating
 /// proxy needs <c>UseForwardedHeaders</c> (which it needs anyway, for Secure cookies and correct absolute
-/// URLs); a host that genuinely serves this surface over http sets
+/// URLs) with that proxy declared in <c>KnownProxies</c>/<c>KnownNetworks</c>, since an empty trust set
+/// lets any caller set the scheme; a host that genuinely serves this surface over http sets
 /// <see cref="AuthagonalProtocolOptions.AllowInsecureHttp"/>.
 /// </para>
 /// </summary>

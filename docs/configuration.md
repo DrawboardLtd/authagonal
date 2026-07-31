@@ -32,7 +32,7 @@ Storage can be configured one of two ways, supply **either** `Storage:Connection
 |---|---|---|
 | `Authentication:CookieLifetimeHours` | `48` | Cookie session lifetime (sliding) |
 | `Authentication:AlwaysSecureCookie` | `false` | Force the session cookie's `Secure` flag unconditionally. The default (`SameAsRequest`) already yields a Secure cookie behind a TLS-terminating proxy that forwards `X-Forwarded-Proto: https`. |
-| `Auth:AllowInsecureHttp` | `false` | Let the OAuth endpoints (`/connect/*`) answer plain http requests. **Development only.** RFC 6749 §3.1/§3.2 require TLS at the authorization and token endpoints, so by default a non-https request to any of them is refused with `invalid_request`. The scheme is evaluated *after* forwarded-header processing, so a proxy that terminates TLS and forwards `X-Forwarded-Proto: https` passes the gate with this left off. Only a genuinely plaintext deployment (the shipped `docker-compose.yml`, the custom-server demo) needs it, and the server logs a warning at startup whenever it is on. Propagated to `AuthagonalProtocolOptions.AllowInsecureHttp`, so it also governs the endpoints owned by `Authagonal.Protocol` (see [Extensibility](extensibility#embedding-authagonalprotocol-alone)). |
+| `Auth:AllowInsecureHttp` | `false` | Let the OAuth endpoints (`/connect/*`) answer plain http requests. **Development only.** RFC 6749 §3.1/§3.2 require TLS at the authorization and token endpoints, so by default a non-https request to any of them is refused with `invalid_request`. The scheme is evaluated *after* forwarded-header processing, so a proxy that terminates TLS and forwards `X-Forwarded-Proto: https` passes the gate with this left off — provided that proxy is declared in [`ForwardedHeaders:KnownNetworks` / `KnownProxies`](#the-two-headers-are-not-trusted-on-the-same-terms), without which the header is ignored. Only a genuinely plaintext deployment (the shipped `docker-compose.yml`, the custom-server demo) needs it, and the server logs a warning at startup whenever it is on. Propagated to `AuthagonalProtocolOptions.AllowInsecureHttp`, so it also governs the endpoints owned by `Authagonal.Protocol` (see [Extensibility](extensibility#embedding-authagonalprotocol-alone)). |
 | `Auth:MaxFailedAttempts` | `5` | Failed login attempts before account lockout |
 | `Auth:LockoutDurationMinutes` | `10` | Account lockout duration after max failed attempts |
 | `Auth:MaxRegistrationsPerIp` | `5` | Maximum registrations per IP address within the window |
@@ -463,7 +463,7 @@ Authagonal keys rate limiting and account lockout on the client IP, and only emi
 | Setting | Env Variable | Default | Description |
 |---|---|---|---|
 | `ForwardedHeaders:ForwardLimit` | `ForwardedHeaders__ForwardLimit` | `1` | Number of proxy hops to honour from the right of the `X-Forwarded-For` chain. The default of `1` trusts only the single hop your ingress appends and ignores anything further left in the chain. |
-| `ForwardedHeaders:KnownNetworks` | `ForwardedHeaders__KnownNetworks__0` (array) | *(empty)* | CIDR ranges (string array, e.g. `"10.0.0.0/8"`) permitted to set forwarded headers. **Strongest guarantee:** set this to your ingress / pod CIDR so only that network may set the client IP. |
+| `ForwardedHeaders:KnownNetworks` | `ForwardedHeaders__KnownNetworks__0` (array) | *(empty)* | CIDR ranges (string array, e.g. `"10.0.0.0/8"`) permitted to set forwarded headers. Set this to your proxy / ingress / pod CIDR. Declaring it is what allows `X-Forwarded-Proto` to be honoured at all — see below. |
 | `ForwardedHeaders:KnownProxies` | `ForwardedHeaders__KnownProxies__0` (array) | *(empty)* | Individual proxy IP addresses (string array) permitted to set forwarded headers. Use alongside or instead of `KnownNetworks`. |
 
 ```json
@@ -476,7 +476,25 @@ Authagonal keys rate limiting and account lockout on the client IP, and only emi
 }
 ```
 
-> ⚠️ **TLS-terminating proxy required.** Authagonal must run behind a TLS-terminating reverse proxy. The session cookie uses `SecurePolicy = SameAsRequest`, HSTS (`Strict-Transport-Security`) is only emitted on HTTPS requests, and the OAuth endpoints refuse plaintext requests outright unless `Auth:AllowInsecureHttp` is set, so the proxy must forward `X-Forwarded-Proto: https` for cookies to be marked `Secure`, HSTS to be sent, and `/connect/*` to answer at all. Configure `ForwardedHeaders:KnownNetworks` / `ForwardedHeaders:KnownProxies` to your trusted proxy so the scheme and client IP cannot be spoofed.
+### The two headers are not trusted on the same terms
+
+`X-Forwarded-For` adjusts the **client IP** — the key rate limiting, lockout and the `/_internal` guard hang off. With nothing declared, Authagonal honours it from the loopback and RFC1918 ranges and logs a warning. That is a best-effort default, and it beats the framework's behaviour with an empty trust set, which is to honour the header from *any* caller alive.
+
+`X-Forwarded-Proto` changes the **scheme**, and the scheme decides whether `/connect/*` answers at all (RFC 6749 §3.1/§3.2), whether cookies are marked `Secure`, and whether generated absolute URLs are https. It is honoured **only** from a proxy you have declared in `KnownNetworks` / `KnownProxies`. A private address is not a declaration: Authagonal ships as a library and cannot see the network it was deployed onto, so "the peer holds a private address" is a guess about topology. On a flat LAN, a shared VPC or a shared container bridge, every neighbouring workload is inside those ranges and could assert `https` over a request that arrived in cleartext.
+
+**If your proxy has no fixed address** — a Kubernetes ingress, a rotating load balancer, a platform that will not tell you the hop's CIDR — declare every peer a proxy:
+
+```json
+{
+  "ForwardedHeaders": {
+    "KnownNetworks": ["0.0.0.0/0", "::/0"]
+  }
+}
+```
+
+That is safe exactly when nothing but the proxy can reach the process, which is the assumption such a deployment is already relying on. Writing it down puts it somewhere it can be reviewed, rather than leaving the library to infer it. If other workloads *can* reach Kestrel directly, they can spoof the scheme and the client IP under this setting — pin the real CIDR instead.
+
+> ⚠️ **TLS-terminating proxy required, and it must be declared.** Authagonal must run behind a TLS-terminating reverse proxy (or terminate TLS itself). HSTS (`Strict-Transport-Security`) is only emitted on HTTPS requests, and the OAuth endpoints refuse plaintext requests outright unless `Auth:AllowInsecureHttp` is set — so the proxy must forward `X-Forwarded-Proto: https` **and** be named in `ForwardedHeaders:KnownNetworks` / `ForwardedHeaders:KnownProxies` for HSTS to be sent and `/connect/*` to answer at all. Declaring nothing is the common upgrade failure: the header arrives, nothing is entitled to act on it, and every `/connect/*` request answers 400 on a deployment that genuinely is on TLS. The startup log says so, and so does the refusal body.
 
 ## Rate Limiting
 

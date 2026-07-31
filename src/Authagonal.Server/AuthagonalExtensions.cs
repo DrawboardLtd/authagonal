@@ -600,11 +600,17 @@ public static class AuthagonalExtensions
     /// Call this before <see cref="MapAuthagonalEndpoints"/>.
     /// </summary>
     /// <summary>
-    /// Fallback trusted-proxy ranges used when <c>ForwardedHeaders:KnownProxies</c> and
-    /// <c>:KnownNetworks</c> are both unset. Loopback plus the RFC1918 / link-local / ULA ranges an
-    /// in-cluster ingress occupies — enough that a public client cannot forge X-Forwarded-*, while still
-    /// honouring headers from a real sidecar or ingress. Operators should pin their actual CIDR.
+    /// Fallback trusted-proxy ranges used for <c>X-Forwarded-For</c> only, when
+    /// <c>ForwardedHeaders:KnownProxies</c> and <c>:KnownNetworks</c> are both unset.
     /// </summary>
+    /// <remarks>
+    /// Loopback plus the RFC1918 / link-local / ULA ranges a co-located proxy usually occupies. This is a
+    /// guess about topology, and it is deliberately confined to the client IP: it beats the framework's
+    /// empty-set behaviour (which honours the header from any caller at all) without ever being load
+    /// bearing for a security decision. <c>X-Forwarded-Proto</c> is NOT honoured on the strength of it —
+    /// see <c>UseAuthagonal</c> — because the scheme gates the OAuth endpoints, and on a flat network
+    /// every neighbour is inside these ranges. Operators should declare their actual proxy.
+    /// </remarks>
     private static readonly string[] DefaultTrustedProxyNetworks =
     [
         "127.0.0.0/8",     // loopback
@@ -669,6 +675,111 @@ public static class AuthagonalExtensions
                     "Manager, or register your own ISecretProvider before AddAuthagonal.");
         }
 
+        // Forwarded-header trust. Two different questions ride on these headers, and they do not
+        // deserve the same answer.
+        //
+        // X-Forwarded-For adjusts the CLIENT IP: the key that rate limiting, lockout and the /_internal
+        // guard hang off. Taking it from something that turns out not to be a proxy degrades those
+        // controls — but taking it from nobody degrades them too, and the framework's behaviour with an
+        // empty trust set is worse than either, because an empty set means every caller is a trusted
+        // proxy. A best-effort default earns its place on this header.
+        //
+        // X-Forwarded-Proto changes the SCHEME, and the scheme is what the RFC 6749 §3.1/§3.2 TLS gate
+        // below rests on. A security control must not rest on an inference. This package ships on
+        // nuget.org and cannot see the network it was deployed onto, so "the peer holds a private
+        // address" is a guess about topology rather than knowledge of one: on a flat corporate LAN, a
+        // shared VPC, or a shared container bridge, every neighbouring workload sits inside those ranges
+        // and could assert https over a request that arrived in cleartext.
+        //
+        // Hence the split below. The fallback ranges may adjust the client IP, but only a trust set the
+        // operator has DECLARED may change the scheme. A deployment whose proxy has no fixed address
+        // declares ForwardedHeaders:KnownNetworks: ["0.0.0.0/0", "::/0"], which asserts the thing that
+        // is actually true of it — nothing but the proxy can reach this process — rather than leaving
+        // the library to infer that from an address range it cannot verify. That declaration is one
+        // line, it is auditable in review, and it reads the same whatever the deployment stands on.
+        var declaredProxies = new List<System.Net.IPAddress>();
+        var declaredNetworks = new List<(System.Net.IPAddress Prefix, int Length)>();
+
+        foreach (var proxy in app.Configuration.GetSection("ForwardedHeaders:KnownProxies").Get<string[]>() ?? [])
+        {
+            if (System.Net.IPAddress.TryParse(proxy, out var ip))
+                declaredProxies.Add(ip);
+        }
+        foreach (var network in app.Configuration.GetSection("ForwardedHeaders:KnownNetworks").Get<string[]>() ?? [])
+        {
+            var parts = network.Split('/');
+            if (parts.Length == 2 && System.Net.IPAddress.TryParse(parts[0], out var prefix) &&
+                int.TryParse(parts[1], out var prefixLength))
+                declaredNetworks.Add((prefix, prefixLength));
+        }
+
+        var proxyTrustDeclared = declaredProxies.Count > 0 || declaredNetworks.Count > 0;
+
+        var fhOptions = new ForwardedHeadersOptions
+        {
+            // The scheme is only ever taken from a proxy the operator named. With nothing declared this
+            // reduces to XForwardedFor, and Request.Scheme is then whatever the connection actually was.
+            ForwardedHeaders = proxyTrustDeclared
+                ? Microsoft.AspNetCore.HttpOverrides.ForwardedHeaders.XForwardedFor
+                  | Microsoft.AspNetCore.HttpOverrides.ForwardedHeaders.XForwardedProto
+                : Microsoft.AspNetCore.HttpOverrides.ForwardedHeaders.XForwardedFor,
+            // Honour only the single hop the nearest proxy appends; ignore anything further left in the
+            // chain, which the client controls.
+            ForwardLimit = app.Configuration.GetValue("ForwardedHeaders:ForwardLimit", 1),
+        };
+
+        // Start from an empty trust set — the framework default of loopback-only would ignore forwarded
+        // headers entirely behind a non-loopback ingress — and then populate it. Never leave it empty.
+        fhOptions.KnownProxies.Clear();
+#if NET10_0_OR_GREATER
+        fhOptions.KnownIPNetworks.Clear();
+#else
+        fhOptions.KnownNetworks.Clear();
+#endif
+
+        void TrustNetwork(System.Net.IPAddress prefix, int length)
+        {
+#if NET10_0_OR_GREATER
+            fhOptions.KnownIPNetworks.Add(new System.Net.IPNetwork(prefix, length));
+#else
+            fhOptions.KnownNetworks.Add(new Microsoft.AspNetCore.HttpOverrides.IPNetwork(prefix, length));
+#endif
+        }
+
+        if (proxyTrustDeclared)
+        {
+            foreach (var ip in declaredProxies)
+                fhOptions.KnownProxies.Add(ip);
+            foreach (var (prefix, length) in declaredNetworks)
+                TrustNetwork(prefix, length);
+        }
+        else
+        {
+            foreach (var cidr in DefaultTrustedProxyNetworks)
+            {
+                var parts = cidr.Split('/');
+                TrustNetwork(System.Net.IPAddress.Parse(parts[0]), int.Parse(parts[1]));
+            }
+
+            app.Services.GetRequiredService<ILoggerFactory>()
+                .CreateLogger("Authagonal.ForwardedHeaders")
+                .LogWarning(
+                    "ForwardedHeaders:KnownProxies/KnownNetworks is not configured. X-Forwarded-For will be " +
+                    "honoured from the loopback and private ranges ({Networks}) so a public caller cannot forge " +
+                    "the client IP — but X-Forwarded-Proto will be honoured from NOBODY, because the scheme " +
+                    "decides whether /connect/* answers at all (RFC 6749 §3.1/§3.2), whether cookies are marked " +
+                    "Secure, and whether the absolute URLs this server generates are https. Declare the proxy " +
+                    "that terminates TLS in ForwardedHeaders:KnownNetworks (its CIDR) or " +
+                    "ForwardedHeaders:KnownProxies (its address) — or [\"0.0.0.0/0\", \"::/0\"] if nothing but " +
+                    "that proxy can reach this process, which states the assumption instead of inferring it.",
+                    string.Join(", ", DefaultTrustedProxyNetworks));
+        }
+
+        // Record the untampered peer address BEFORE forwarded headers can overwrite it, so an
+        // authorization decision can be made on the real peer rather than a client-supplied header.
+        app.UseRawPeerAddressCapture();
+        app.UseForwardedHeaders(fhOptions);
+
         // RFC 6749 §3.1 and §3.2: the authorization server MUST require TLS at the authorization and
         // the token endpoint, and §10.3 / RFC 6750 §5.3 say the same of everything a token then rides
         // in. Nothing in this pipeline enforced it. HSTS is emitted below but only on a request that
@@ -676,27 +787,19 @@ public static class AuthagonalExtensions
         // over plaintext — so it protects the NEXT request and does nothing for the one carrying the
         // authorization code, the client secret in a Basic header, or the tokens coming back.
         //
-        // In the intended deployment TLS terminates at an ingress and this is theoretical. It stops
-        // being theoretical for a self-hoster who exposes a compose-style deployment directly, or whose
-        // ingress also answers on :80: the whole code exchange completes in cleartext and the server
-        // neither refuses nor says anything.
+        // It stops being theoretical for a self-hoster who exposes a compose-style deployment directly,
+        // or whose proxy also answers on :80: the whole code exchange completes in cleartext and the
+        // server neither refuses nor says anything.
         //
-        // Two placement facts this depends on. It must run AFTER UseForwardedHeaders, because behind a
-        // terminating proxy the request reaches Kestrel as plain http and the only truthful answer to
-        // "was this encrypted" is the X-Forwarded-Proto that middleware has just applied. And it gates
-        // /connect/* specifically — authorize, token, par, revocation, introspect, userinfo,
-        // deviceauthorization, endsession, register — which is the protocol surface the RFCs name.
-        // /health and the internal endpoints stay open, because they are reached pod-to-pod over plain
-        // http before anything is in front of them and gating those trades a theoretical exposure for
-        // a real outage.
-        //
-        // Note what that inherits from the forwarded-headers block above: X-Forwarded-Proto is now only
-        // honoured from a trusted proxy (the configured KnownProxies/KnownNetworks, or the loopback and
-        // private defaults). So a terminating proxy that sits OUTSIDE those ranges and has not been
-        // declared no longer satisfies this gate — which is the correct direction, since an undeclared
-        // proxy's scheme claim is a claim any caller could have made, but it means the fix for a
-        // refused /connect/* request may be to pin ForwardedHeaders:KnownNetworks rather than to reach
-        // for the opt-in below.
+        // Two placement facts this depends on. It runs AFTER the forwarded-headers registration above,
+        // so Request.IsHttps is true in exactly two cases and no others: the connection to this process
+        // was itself TLS, or a proxy the operator declared said the client's was. Those are the only two
+        // ways a server can know, and the block above is what makes the second one a statement rather
+        // than a guess. And it gates /connect/* specifically — authorize, token, par, revocation,
+        // introspect, userinfo, deviceauthorization, endsession, register — which is the protocol
+        // surface the RFCs name. /health and the internal endpoints stay open, because they are reached
+        // over plain http by a load balancer or a sibling process before anything is in front of them,
+        // and gating those trades a theoretical exposure for a real outage.
         //
         // Auth:AllowInsecureHttp turns it off for the deployments that genuinely speak http: the
         // docker-compose quickstart on http://localhost:8080, the custom-server demo, and the test
@@ -719,9 +822,22 @@ public static class AuthagonalExtensions
                 app.Logger.LogWarning(
                     "Issuer '{Issuer}' uses the http scheme and Auth:AllowInsecureHttp is not set, so every " +
                     "plaintext request to /connect/* will be refused. Serve the issuer over https — terminating " +
-                    "TLS at a proxy that forwards X-Forwarded-Proto: https satisfies this — or set " +
-                    "Auth:AllowInsecureHttp if this deployment is deliberately plaintext.",
+                    "TLS at a proxy declared in ForwardedHeaders:KnownNetworks/KnownProxies satisfies this — or " +
+                    "set Auth:AllowInsecureHttp if this deployment is deliberately plaintext.",
                     issuer);
+            }
+            else if (!proxyTrustDeclared)
+            {
+                // The shape that bites hardest on upgrade: TLS terminates at a proxy, the proxy sends
+                // X-Forwarded-Proto: https, and nothing has declared that proxy — so the scheme stays
+                // http and every /connect/* request is refused with a message about TLS on a deployment
+                // the operator believes is already on TLS. Name the cause at startup rather than leaving
+                // it to be inferred from a 400.
+                app.Logger.LogWarning(
+                    "No forwarded-proxy trust is declared, so X-Forwarded-Proto is ignored and /connect/* will " +
+                    "answer 400 for any request that did not reach this process over TLS directly. If TLS " +
+                    "terminates at a proxy in front of this server, declare it in " +
+                    "ForwardedHeaders:KnownNetworks / ForwardedHeaders:KnownProxies.");
             }
             else if (app.Environment.IsDevelopment())
             {
@@ -738,83 +854,6 @@ public static class AuthagonalExtensions
             }
         }
 
-        // Forwarded-header trust is config-driven so X-Forwarded-For can't be spoofed to forge the
-        // client IP that rate-limiting / lockout keys on. Defaults: ForwardLimit=1 (honour only the
-        // single hop the ingress appends; ignore anything further left in the chain). For the
-        // strongest guarantee set ForwardedHeaders:KnownNetworks to the ingress/pod CIDR (and/or
-        // ForwardedHeaders:KnownProxies) so only that proxy may set the client IP.
-        var fhOptions = new ForwardedHeadersOptions
-        {
-            ForwardedHeaders = Microsoft.AspNetCore.HttpOverrides.ForwardedHeaders.XForwardedFor
-                             | Microsoft.AspNetCore.HttpOverrides.ForwardedHeaders.XForwardedProto,
-            ForwardLimit = app.Configuration.GetValue("ForwardedHeaders:ForwardLimit", 1),
-        };
-        // Start from an empty trust set (the framework default of loopback-only would ignore XFF
-        // entirely behind a non-loopback ingress) and then populate it — see the fallback below, which
-        // matters because an empty set means "every caller is a trusted proxy".
-        fhOptions.KnownProxies.Clear();
-#if NET10_0_OR_GREATER
-        fhOptions.KnownIPNetworks.Clear();
-#else
-        fhOptions.KnownNetworks.Clear();
-#endif
-        var configuredProxies = 0;
-        foreach (var proxy in app.Configuration.GetSection("ForwardedHeaders:KnownProxies").Get<string[]>() ?? [])
-        {
-            if (System.Net.IPAddress.TryParse(proxy, out var ip))
-            {
-                fhOptions.KnownProxies.Add(ip);
-                configuredProxies++;
-            }
-        }
-        foreach (var network in app.Configuration.GetSection("ForwardedHeaders:KnownNetworks").Get<string[]>() ?? [])
-        {
-            var parts = network.Split('/');
-            if (parts.Length == 2 && System.Net.IPAddress.TryParse(parts[0], out var prefix) &&
-                int.TryParse(parts[1], out var prefixLength))
-            {
-#if NET10_0_OR_GREATER
-                fhOptions.KnownIPNetworks.Add(new System.Net.IPNetwork(prefix, prefixLength));
-#else
-                fhOptions.KnownNetworks.Add(new Microsoft.AspNetCore.HttpOverrides.IPNetwork(prefix, prefixLength));
-#endif
-                configuredProxies++;
-            }
-        }
-
-        // Nothing configured. An EMPTY trust set does not mean "trust nobody" — it means the middleware
-        // accepts X-Forwarded-* from ANY caller, so a direct internet client could set its own client IP
-        // and scheme. That poisons every IP-keyed decision (rate limits, the /_internal guard) and every
-        // generated absolute URL (password-reset links, redirects). Default to the private ranges a real
-        // ingress lives in, so a public peer cannot forge, and tell the operator to pin it properly.
-        if (configuredProxies == 0)
-        {
-            foreach (var cidr in DefaultTrustedProxyNetworks)
-            {
-                var parts = cidr.Split('/');
-                var prefix = System.Net.IPAddress.Parse(parts[0]);
-                var length = int.Parse(parts[1]);
-#if NET10_0_OR_GREATER
-                fhOptions.KnownIPNetworks.Add(new System.Net.IPNetwork(prefix, length));
-#else
-                fhOptions.KnownNetworks.Add(new Microsoft.AspNetCore.HttpOverrides.IPNetwork(prefix, length));
-#endif
-            }
-
-            app.Services.GetRequiredService<ILoggerFactory>()
-                .CreateLogger("Authagonal.ForwardedHeaders")
-                .LogWarning(
-                    "ForwardedHeaders:KnownProxies/KnownNetworks is not configured. Defaulting to the loopback " +
-                    "and private ranges ({Networks}). Set these to your ingress/pod CIDR so only that proxy may " +
-                    "set the client IP and scheme.",
-                    string.Join(", ", DefaultTrustedProxyNetworks));
-        }
-
-        // Record the untampered peer address BEFORE forwarded headers can overwrite it, so an
-        // authorization decision can be made on the real peer rather than a client-supplied header.
-        app.UseRawPeerAddressCapture();
-        app.UseForwardedHeaders(fhOptions);
-
         app.UseExceptionHandlingMiddleware();
 
         // The TLS gate itself — see the RFC 6749 §3.1/§3.2 note above for why it exists and why it
@@ -829,10 +868,25 @@ public static class AuthagonalExtensions
                 {
                     context.Response.StatusCode = StatusCodes.Status400BadRequest;
                     context.Response.ContentType = "application/json";
-                    await context.Response.WriteAsync(
-                        "{\"error\":\"invalid_request\",\"error_description\":\"TLS is required at the OAuth " +
-                        "endpoints (RFC 6749 sections 3.1 and 3.2). Use https, or set Auth:AllowInsecureHttp " +
-                        "for a development deployment.\"}");
+
+                    // A request that arrived in cleartext but carries X-Forwarded-Proto: https is the
+                    // deployment saying "there IS a proxy in front of me and it did terminate TLS" while
+                    // this server has no declaration that would let it believe that. Say so, because the
+                    // remedy is a config line and the generic message sends the operator hunting for TLS
+                    // they have already configured.
+                    var claimedHttps = context.Request.Headers["X-Forwarded-Proto"]
+                        .Any(v => string.Equals(v, "https", StringComparison.OrdinalIgnoreCase));
+
+                    await context.Response.WriteAsync(claimedHttps
+                        ? "{\"error\":\"invalid_request\",\"error_description\":\"TLS is required at the OAuth " +
+                          "endpoints (RFC 6749 sections 3.1 and 3.2). This request carried X-Forwarded-Proto: " +
+                          "https, but no proxy is declared as trusted to set it, so the claim was ignored. " +
+                          "Declare the terminating proxy in ForwardedHeaders:KnownNetworks or " +
+                          "ForwardedHeaders:KnownProxies, or set Auth:AllowInsecureHttp for a development " +
+                          "deployment.\"}"
+                        : "{\"error\":\"invalid_request\",\"error_description\":\"TLS is required at the OAuth " +
+                          "endpoints (RFC 6749 sections 3.1 and 3.2). Use https, or set Auth:AllowInsecureHttp " +
+                          "for a development deployment.\"}");
                     return;
                 }
 
