@@ -86,7 +86,7 @@ Tham chiếu các gói Authagonal trong dự án ASP.NET Core của bạn:
 <PackageReference Include="Authagonal.AzureProvider" Version="x.y.z" />
 ```
 
-Gói nhà cung cấp lưu trữ có thể thay thế: `Authagonal.AzureProvider` cho Azure Table Storage (thiết lập `AddAuthagonal()` mặc định), hoặc `Authagonal.AwsProvider` cho DynamoDB / S3 / Secrets Manager, xem [backend AWS](#aws-backend) bên dưới.
+Gói nhà cung cấp lưu trữ có thể thay thế: `Authagonal.AzureProvider` cho Azure Table Storage (thiết lập `AddAuthagonal()` mặc định), `Authagonal.SqlProvider` cho PostgreSQL hoặc SQLite tự vận hành (xem [SQL backend](#sql-backend)), hoặc `Authagonal.AwsProvider` cho DynamoDB / S3 / Secrets Manager (xem [AWS backend](#aws-backend)).
 
 Sau đó tích hợp vào `Program.cs` của bạn:
 
@@ -107,6 +107,31 @@ Xem [Khả năng mở rộng](extensibility) để biết tất cả các điể
 ### Email
 
 Trình gửi [Resend](https://resend.com) tích hợp sẵn sẽ tự động kích hoạt khi `Email:ResendApiKey` và `Email:SenderEmail` được cấu hình, không cần đăng ký dịch vụ. Nếu không có `IEmailService` nào, các email xác minh và đặt lại mật khẩu sẽ bị **âm thầm loại bỏ**, và vì đăng nhập mặc định yêu cầu email đã được xác nhận, người dùng tự đăng ký sẽ không bao giờ đăng nhập được (`UseAuthagonal` ghi một cảnh báo khi khởi động). Hãy hoặc đặt các khóa `Email:*`, đăng ký `IEmailService` của riêng bạn trước `AddAuthagonal()`, hoặc liệt kê các tên miền của bạn trong `Auth:AutoConfirmEmailDomains` để bỏ qua xác minh (chỉ dành cho dev/test). Xem [Cấu hình → Email](configuration#email).
+
+## SQL backend
+
+Để chạy trên cơ sở dữ liệu của riêng bạn thay vì một dịch vụ đám mây, hãy tham chiếu `Authagonal.SqlProvider` và đăng ký nó **trước** `AddAuthagonal()`: chính các đăng ký đó khiến `AddAuthagonal()` bỏ qua phần thiết lập Azure Table Storage của nó:
+
+```csharp
+using Authagonal.SqlProvider;
+
+// PostgreSQL — the production self-hosted backend
+builder.Services.AddAuthagonalPostgres(
+    "Host=db;Database=authagonal;Username=auth;Password=…;SSL Mode=VerifyFull;Root Certificate=/etc/ssl/certs/db-ca.pem");
+
+// or SQLite — one file, no server. Suits embedded hosts, CI and small single-node deployments
+builder.Services.AddAuthagonalSqlite("Data Source=authagonal.db");
+
+builder.Services.AddAuthagonal(builder.Configuration);
+```
+
+Các bảng phản chiếu bố cục Azure và DynamoDB một-đối-một và được tạo khi khởi động nếu chưa có (mọi câu lệnh đều là `IF NOT EXISTS`, nên nhiều pod cùng tạo là an toàn và không làm gì với một lược đồ bạn đã tự cấp phát). Không cần cấu hình `Storage:*` nào. Vòng khóa Data Protection được lưu vào cùng cơ sở dữ liệu, nên cookie và token chống giả mạo (antiforgery) sống sót qua các lần khởi động lại và hoạt động giữa các pod mà không cần dịch vụ bổ sung nào.
+
+SQLite tuần tự hóa các tiến trình ghi, nên nó là backend một node: lease trong tiến trình và bus sự kiện cụm được đăng ký mặc định chính là cặp phù hợp ở đó. Một triển khai PostgreSQL nhiều pod sẽ cần `clustering.UseSql(dataSource)` cho bầu chọn leader.
+
+> **Collation (thứ tự đối chiếu).** Trên PostgreSQL, các cột khóa được ghim vào `COLLATE "C"`. Lược đồ khóa là thứ tự byte xuyên suốt (biên tiền tố, dải phân vùng theo môi trường, quét hết hạn của các grant, phân trang keyset), và một cơ sở dữ liệu được tạo với collation ngôn ngữ -- `en_US.UTF-8` và các locale ICU là mặc định phổ biến -- sẽ sắp xếp dấu câu và chữ hoa/thường khác đi và âm thầm trả về sai hàng. Việc ghim làm cho bố cục độc lập với cách cơ sở dữ liệu được tạo; bạn không cần tạo nó theo bất kỳ cách cụ thể nào.
+
+Xem [README của gói](https://github.com/authagonal/authagonal/tree/master/src/Authagonal.SqlProvider) để biết bố cục bảng, các nguyên thủy đồng thời đứng sau từng bảo đảm dùng-một-lần, và cách thêm một phương ngữ cho engine khác.
 
 ## AWS backend
 

@@ -396,6 +396,8 @@ Content-Type: application/json
 
 Requer autenticação por cookie. Aprova o código de dispositivo para o utilizador atual. O dispositivo pode então trocar o código de dispositivo por tokens via o endpoint de token usando o tipo de concessão `urn:ietf:params:oauth:grant-type:device_code`.
 
+O código submetido é normalizado conforme a RFC 8628 §6.1 antes da procura: é passado a maiúsculas e todo o carácter fora do alfabeto de 31 caracteres do código é descartado. `ABCD-EFGH`, `abcd-efgh`, `ABCDEFGH`, `ABCD EFGH` e uma colagem que transformou o hífen num travessão são todos o mesmo código. O hífen existe apenas para tornar o código mais fácil de ler em voz alta. A introdução está limitada a dez tentativas por minuto e por sujeito (RFC 8628 §5.1); a décima primeira devolve `429`. Esse contador é por nó com o limitador em processo predefinido, portanto uma implantação com várias réplicas deve também impor o limite na borda.
+
 ## Introspeção de Token (RFC 7662)
 
 ```

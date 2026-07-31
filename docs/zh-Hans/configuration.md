@@ -33,6 +33,7 @@ Authagonal 通过 `appsettings.json` 或环境变量进行配置。环境变量�
 |---|---|---|
 | `Authentication:CookieLifetimeHours` | `48` | Cookie 会话生命周期（滑动过期） |
 | `Authentication:AlwaysSecureCookie` | `false` | 无条件强制会话 Cookie 的 `Secure` 标志。默认值（`SameAsRequest`）在会转发 `X-Forwarded-Proto: https` 的 TLS 终止代理之后，已经会产生 Secure Cookie。 |
+| `Auth:AllowInsecureHttp` | `false` | 允许 OAuth 端点（`/connect/*`）响应明文 http 请求。**仅限开发环境。** RFC 6749 §3.1/§3.2 要求授权端点和令牌端点使用 TLS，因此默认情况下对其中任一端点的非 https 请求都会以 `invalid_request` 被拒绝。协议方案是在转发头处理*之后*才判定的，所以终止 TLS 并转发 `X-Forwarded-Proto: https` 的代理即使不开启此项也能通过该关卡。只有真正以明文运行的部署（随附的 `docker-compose.yml`、custom-server 演示）才需要它，而且只要它处于开启状态，服务器就会在启动时记录一条警告。该值会传播到 `AuthagonalProtocolOptions.AllowInsecureHttp`，因此也同样管辖由 `Authagonal.Protocol` 拥有的那些端点（参见[扩展性](extensibility#embedding-authagonalprotocol-alone)）。 |
 | `Auth:MaxFailedAttempts` | `5` | 账户锁定前允许的登录失败次数 |
 | `Auth:LockoutDurationMinutes` | `10` | 达到最大失败次数后的账户锁定时长 |
 | `Auth:MaxRegistrationsPerIp` | `5` | 时间窗口内每个 IP 地址的最大注册数 |
@@ -45,6 +46,7 @@ Authagonal 通过 `appsettings.json` 或环境变量进行配置。环境变量�
 | `Auth:MfaChallengeExpiryMinutes` | `5` | MFA 验证令牌有效期 |
 | `Auth:MfaSetupTokenExpiryMinutes` | `15` | MFA 设置令牌有效期（用于强制注册） |
 | `Auth:Pbkdf2Iterations` | `100000` | 密码哈希的 PBKDF2 迭代次数 |
+| `Auth:FailedLoginMinimumMilliseconds` | `250` | 失败登录在返回 `invalid_credentials` 之前被保持的挂钟时间下限，从请求开始处计时。用于关闭用户枚举的时间旁道：不存在的账户会针对原生 PBKDF2 格式的哑元哈希进行校验，但真实账户可能仍持有成本不同的、导入的 bcrypt 或 ASP.NET Identity V3 哈希——因此让计算量相等是不可能的，被强制相等的是耗时。请把它调到高于该部署所持有的最慢哈希，例如您导入了成本高于 11 的 bcrypt，或把 `Pbkdf2Iterations` 提到远超默认值——首次有失败登录超出该下限时会记录一条一次性警告。设为 `0` 将禁用填充并重新打开该旁道。 |
 | `Auth:RefreshTokenReuseGraceSeconds` | `0` | 并发刷新令牌重用的可选宽限窗口（秒）。`0`（默认）保持严格姿态：对已消费刷新令牌的任何重用都会撤销该用户+客户端的所有令牌。设为 `> 0` 则将窗口内的重用视为幂等重试（重新下发后继令牌）——对于网络连接不稳定的移动客户端很有用。 |
 | `Auth:DynamicClientRegistrationEnabled` | `false` | 启用 `POST /connect/register` 动态客户端注册端点（RFC 7591）。默认关闭，因为在多租户部署中开放注册可能被滥用。参见[动态客户端注册](client-registration)。 |
 | `Auth:SigningKeyLifetimeDays` | `90` | RSA 签名密钥在自动轮换前的有效期 |
@@ -84,6 +86,33 @@ ASP.NET Core Data Protection 密钥（用于加密会话 Cookie）必须在各�
 | `BackgroundServices:TokenCleanupIntervalMinutes` | `60` | 过期令牌清理间隔 |
 | `BackgroundServices:GrantReconciliationDelayMinutes` | `10` | 首次授权协调前的初始延迟 |
 | `BackgroundServices:GrantReconciliationIntervalMinutes` | `30` | 授权协调间隔 |
+
+## 角色
+
+角色在 `Roles` 数组中定义，并与客户端、scope 和提供者一同在启动时播种。当某个 scope 用
+[`AllowedRoles`](scopes#role-gated-scopes) 加以限制时，播种最为要紧：一个被限制到无人创建的角色上的
+scope，对所有人都是被限制的——包括配置它的运维人员本人——而且它会静默失败：该 scope 根本不会被授予。
+
+```json
+{
+  "Roles": [
+    {
+      "Name": "staff-admin",
+      "Description": "Internal staff console",
+      "Members": [ "ada@example.com", "grace@example.com" ]
+    }
+  ]
+}
+```
+
+| 字段 | 说明 |
+|---|---|
+| `Name` | 角色名称，用于 `Scope.AllowedRoles` 以及令牌的 `roles` claim |
+| `Description` | 供人阅读；当播种数据给出该字段时，会在后续启动时更新 |
+| `Members` | 每次启动时被放入该角色的邮箱地址。尚无对应用户的地址会被跳过并记录警告，下次启动时重试——启动过程绝不依赖于某个尚未被创建的账户 |
+
+播种是**增量且幂等**的。它绝不会删除角色或撤销成员资格：配置并不是「谁拥有什么」的权威来源，因此通过管理
+API 授予的角色能够在下次重启后继续存在。
 
 ## 客户端
 
@@ -297,7 +326,17 @@ public Task<MfaPolicy> ResolveMfaPolicyAsync(
 |---|---|
 | `SecretProvider:VaultUri` | Key Vault URI（例如 `https://my-vault.vault.azure.net/`）。如未设置，将使用**纯文本**提供者，密钥会原样存储在 Table Storage 中。 |
 
+| `SecretProvider:RequireVaultReferences` | 默认为 `false`。设为 `true` 时，已存储的、不带 vault 前缀（Key Vault 用 `kv:`，AWS Secrets Manager 用 `sm:`）的引用会被视为**错误**，而不是当作纯文本值接受。迁移进 vault 完成之后即可开启。 |
+
 配置后，看起来像 Key Vault 引用的密钥值会在运行时解析。使用 `DefaultAzureCredential` 进行认证。
+
+### 迁移进 vault，以及事后把门关上
+
+两种基于 vault 的提供者都会原样返回不带前缀的引用，把它当作在该部署还没有 vault 之前写入的纯文本值。正是这一点让一个正在运行的系统可以逐个密钥地迁移，而不必一次性全部迁移——但若一直敞着，它就是一条永久的降级通道：任何能写入一列配置的东西（一次做了一半的迁移、一条把原始值写进本该是引用的位置的管理路径、一个能访问存储却访问不到 vault 的攻击者）都可以把受 vault 保护的密钥替换成自己挑选的值，而且它能完美通过校验，因为对于不带前缀的引用来说，引用*就是*值本身。
+
+迁移完成后请设置 `SecretProvider:RequireVaultReferences`。此后解析不带前缀的引用会抛出异常，而不是悄悄返回明文。如果解析出来的提供者是纯文本提供者却又设置了该项，启动时会被拒绝，因为这个组合没有任何可用状态——纯文本提供者写出的每一个引用都是不带前缀的。
+
+此外，只要非 Development 主机最终使用的是纯文本提供者，服务器就会在启动时记录一条警告。
 
 > ⚠️ **生产环境：请设置 `SecretProvider:VaultUri`。** 默认密钥提供者为**纯文本**。当 `SecretProvider:VaultUri` 未设置时，上游 OIDC 客户端密钥和 TOTP / MFA 种子会以明文写入 Azure Table Storage——因此也会以明文出现在任何[备份](backup-restore)中。对于任何生产部署，请配置 `SecretProvider:VaultUri`，以便这些密钥存储在 Key Vault 中。
 
@@ -371,9 +410,13 @@ builder.Services.AddAuthagonal(builder.Configuration,
 // AWS equivalent (Authagonal.AwsProvider)
 builder.Services.AddAuthagonal(builder.Configuration,
     cluster => cluster.UseAwsDynamo(dynamoDb));
+
+// Self-hosted PostgreSQL (Authagonal.SqlProvider)
+builder.Services.AddAuthagonal(builder.Configuration,
+    cluster => cluster.UseSql(sqlDataSource));
 ```
 
-`UseAzureStorageBus` / `UseAwsDynamoBus` 仅注册事件总线，保留进程内租约——适用于必须接收集群事件、但绝不能争夺领导权的节点。
+`UseAzureStorageBus` / `UseAwsDynamoBus` / `UseSqlBus` 仅注册事件总线，保留进程内租约——适用于必须接收集群事件、但绝不能争夺领导权的节点。
 
 详情请参阅[扩展](scaling)了解领导权和事件总线在各实例间的行为。
 

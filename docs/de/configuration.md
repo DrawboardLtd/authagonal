@@ -33,6 +33,7 @@ Der Speicher kann auf zwei Arten konfiguriert werden: geben Sie **entweder** `St
 |---|---|---|
 | `Authentication:CookieLifetimeHours` | `48` | Cookie-Sitzungsdauer (gleitend) |
 | `Authentication:AlwaysSecureCookie` | `false` | Erzwingt das `Secure`-Flag des Sitzungs-Cookies bedingungslos. Der Standard (`SameAsRequest`) liefert bereits ein sicheres Cookie hinter einem TLS-terminierenden Proxy, der `X-Forwarded-Proto: https` weiterleitet. |
+| `Auth:AllowInsecureHttp` | `false` | Lässt die OAuth-Endpunkte (`/connect/*`) auf einfache http-Anfragen antworten. **Nur für die Entwicklung.** RFC 6749 §3.1/§3.2 verlangen TLS am Autorisierungs- und am Token-Endpunkt, daher wird eine Nicht-https-Anfrage an einen von ihnen standardmäßig mit `invalid_request` abgelehnt. Das Schema wird *nach* der Verarbeitung der weitergeleiteten Header ausgewertet, sodass ein Proxy, der TLS terminiert und `X-Forwarded-Proto: https` weiterleitet, die Schranke auch ohne diese Einstellung passiert. Nur ein tatsächlich unverschlüsseltes Deployment (die mitgelieferte `docker-compose.yml`, die Custom-Server-Demo) braucht sie, und der Server protokolliert beim Start eine Warnung, solange sie aktiv ist. Wird an `AuthagonalProtocolOptions.AllowInsecureHttp` weitergereicht und gilt damit auch für die Endpunkte, die `Authagonal.Protocol` besitzt (siehe [Erweiterbarkeit](extensibility#embedding-authagonalprotocol-alone)). |
 | `Auth:MaxFailedAttempts` | `5` | Fehlgeschlagene Anmeldeversuche vor Kontosperre |
 | `Auth:LockoutDurationMinutes` | `10` | Kontosperrdauer nach maximalen Fehlversuchen |
 | `Auth:MaxRegistrationsPerIp` | `5` | Maximale Registrierungen pro IP-Adresse innerhalb des Zeitfensters |
@@ -45,6 +46,7 @@ Der Speicher kann auf zwei Arten konfiguriert werden: geben Sie **entweder** `St
 | `Auth:MfaChallengeExpiryMinutes` | `5` | Gültigkeitsdauer des MFA-Abfrage-Tokens |
 | `Auth:MfaSetupTokenExpiryMinutes` | `15` | Gültigkeitsdauer des MFA-Setup-Tokens (für erzwungene Registrierung) |
 | `Auth:Pbkdf2Iterations` | `100000` | PBKDF2-Iterationsanzahl für Passwort-Hashing |
+| `Auth:FailedLoginMinimumMilliseconds` | `250` | Untergrenze der Wanduhrzeit, auf die eine fehlgeschlagene Anmeldung gehalten wird, bevor `invalid_credentials` zurückgegeben wird, gemessen ab Beginn der Anfrage. Schließt das Zeit-Orakel zur Benutzer-Enumeration: Ein nicht vorhandenes Konto wird gegen einen Dummy-Hash im nativen PBKDF2-Format geprüft, ein echtes Konto kann aber weiterhin einen importierten bcrypt- oder ASP.NET-Identity-V3-Hash mit anderen Kosten tragen -- gleicher Aufwand ist also unmöglich, erzwungen wird stattdessen gleiche verstrichene Zeit. Setzen Sie den Wert über den langsamsten Hash Ihres Deployments, z. B. wenn Sie bcrypt oberhalb von Kostenfaktor 11 importiert oder `Pbkdf2Iterations` deutlich über den Standard angehoben haben -- beim ersten Überschreiten wird einmalig eine Warnung protokolliert. `0` deaktiviert die Auffüllung und öffnet das Orakel wieder. |
 | `Auth:RefreshTokenReuseGraceSeconds` | `0` | Optionales Toleranzfenster (in Sekunden) für die gleichzeitige Wiederverwendung von Refresh-Tokens. `0` (Standard) behält die strenge Haltung bei: Jede Wiederverwendung eines bereits eingelösten Refresh-Tokens widerruft alle Token für diesen Benutzer+Client. Setzen Sie einen Wert `> 0`, um eine Wiederverwendung innerhalb des Fensters als idempotenten Wiederholungsversuch zu behandeln (die Nachfolger-Token werden erneut ausgeliefert), nützlich für mobile Clients mit instabiler Verbindung. |
 | `Auth:DynamicClientRegistrationEnabled` | `false` | Aktiviert den Endpunkt `POST /connect/register` für die dynamische Client-Registrierung (RFC 7591). Standardmäßig deaktiviert, da offene Registrierung in Multi-Mandanten-Deployments missbraucht werden kann. Siehe [Dynamische Client-Registrierung](client-registration). |
 | `Auth:SigningKeyLifetimeDays` | `90` | RSA-Signaturschlüssel-Lebensdauer vor automatischer Rotation |
@@ -84,6 +86,36 @@ Die Schlüssel von ASP.NET Core Data Protection (die das Sitzungs-Cookie verschl
 | `BackgroundServices:TokenCleanupIntervalMinutes` | `60` | Intervall für die Bereinigung abgelaufener Token |
 | `BackgroundServices:GrantReconciliationDelayMinutes` | `10` | Anfangsverzögerung vor der ersten Grant-Abstimmung |
 | `BackgroundServices:GrantReconciliationIntervalMinutes` | `30` | Intervall für die Grant-Abstimmung |
+
+## Rollen
+
+Rollen werden im `Roles`-Array definiert und beim Start initialisiert, zusammen mit Clients, Scopes
+und Anbietern. Am wichtigsten ist das Initialisieren, wenn ein Scope mit
+[`AllowedRoles`](scopes#role-gated-scopes) gebunden ist: Ein Scope, der an eine Rolle gebunden ist,
+die niemand anlegt, ist für alle gesperrt -- auch für den Betreiber, der ihn konfiguriert hat -- und
+das schlägt stillschweigend fehl: der Scope wird schlicht nie gewährt.
+
+```json
+{
+  "Roles": [
+    {
+      "Name": "staff-admin",
+      "Description": "Internal staff console",
+      "Members": [ "ada@example.com", "grace@example.com" ]
+    }
+  ]
+}
+```
+
+| Feld | Beschreibung |
+|---|---|
+| `Name` | Der Rollenname, wie er in `Scope.AllowedRoles` und im `roles`-Token-Claim verwendet wird |
+| `Description` | Menschenlesbar; wird bei späteren Starts aktualisiert, wenn die Initialisierung eine angibt |
+| `Members` | E-Mail-Adressen, die bei jedem Start in die Rolle aufgenommen werden. Eine Adresse ohne zugehörigen Benutzer wird mit einer Warnung übersprungen und beim nächsten Start erneut versucht -- der Start hängt niemals von einem Konto ab, das noch niemand angelegt hat |
+
+Das Initialisieren ist **additiv und idempotent**. Es entfernt niemals eine Rolle und widerruft nie
+eine Mitgliedschaft: Die Konfiguration ist nicht die maßgebliche Quelle dafür, wer was besitzt, und
+eine über die Admin-API gewährte Rolle übersteht daher den nächsten Neustart.
 
 ## Clients
 
@@ -296,8 +328,17 @@ Geheimnisse von vorgelagerten OIDC-Clients sowie TOTP-/MFA-Seeds können statt i
 | Einstellung | Beschreibung |
 |---|---|
 | `SecretProvider:VaultUri` | Key-Vault-URI (z.B. `https://my-vault.vault.azure.net/`). Wenn nicht gesetzt, wird der **Klartext**-Anbieter verwendet und Geheimnisse werden unverändert in Table Storage gespeichert. |
+| `SecretProvider:RequireVaultReferences` | Standardmäßig `false`. Bei `true` ist eine gespeicherte Referenz ohne Vault-Präfix (`kv:` für Key Vault, `sm:` für AWS Secrets Manager) ein **Fehler**, statt als Klartextwert akzeptiert zu werden. Setzen Sie es, sobald eine Migration in den Vault abgeschlossen ist. |
 
 Bei Konfiguration werden Geheimniswerte, die wie Key-Vault-Referenzen aussehen, zur Laufzeit aufgelöst. Verwendet `DefaultAzureCredential` zur Authentifizierung.
+
+### Migration in einen Vault, und die Tür danach schließen
+
+Beide vault-gestützten Anbieter geben eine Referenz ohne Präfix unverändert zurück und behandeln sie als Klartextwert, der geschrieben wurde, bevor das Deployment einen Vault hatte. Genau das erlaubt es, ein laufendes System Geheimnis für Geheimnis zu migrieren statt alles auf einmal -- offen gelassen ist es jedoch ein dauerhafter Abwertungspfad: Alles, was eine einzige Konfigurationsspalte schreiben kann (eine halbfertige Migration, ein Admin-Pfad, der einen Rohwert dort ablegt, wo eine Referenz hingehört, ein Angreifer mit Speicherzugriff, aber ohne Vault-Zugriff), ersetzt ein vault-geschütztes Geheimnis durch einen selbst gewählten Wert -- und das verifiziert einwandfrei, denn bei einer Referenz ohne Präfix *ist* die Referenz der Wert.
+
+Setzen Sie `SecretProvider:RequireVaultReferences`, wenn die Migration abgeschlossen ist. Das Auflösen einer Referenz ohne Präfix wirft dann eine Ausnahme, statt stillschweigend Klartext zurückzugeben. Das Setzen bei aufgelöstem Klartext-Anbieter wird beim Start abgelehnt, da diese Kombination keinen funktionierenden Zustand hat -- jede Referenz, die der Klartext-Anbieter schreibt, ist ohne Präfix.
+
+Der Server protokolliert außerdem beim Start eine Warnung, wenn ein Host außerhalb der Entwicklung beim Klartext-Anbieter landet.
 
 > ⚠️ **Produktion: `SecretProvider:VaultUri` setzen.** Der Standard-Geheimnis-Anbieter speichert im **Klartext**. Wenn `SecretProvider:VaultUri` nicht gesetzt ist, werden Geheimnisse von vorgelagerten OIDC-Clients sowie TOTP-/MFA-Seeds im Klartext in Azure Table Storage geschrieben und erscheinen daher auch im Klartext in jeder [Sicherung](backup-restore). Konfigurieren Sie für jedes Produktions-Deployment `SecretProvider:VaultUri`, damit diese Geheimnisse in Key Vault gespeichert werden.
 
@@ -371,9 +412,13 @@ builder.Services.AddAuthagonal(builder.Configuration,
 // AWS-Äquivalent (Authagonal.AwsProvider)
 builder.Services.AddAuthagonal(builder.Configuration,
     cluster => cluster.UseAwsDynamo(dynamoDb));
+
+// Selbst betriebenes PostgreSQL (Authagonal.SqlProvider)
+builder.Services.AddAuthagonal(builder.Configuration,
+    cluster => cluster.UseSql(sqlDataSource));
 ```
 
-`UseAzureStorageBus` / `UseAwsDynamoBus` registrieren nur den Event-Bus und behalten die In-Prozess-Lease bei: für Knoten, die Cluster-Ereignisse empfangen müssen, aber niemals um die Leadership konkurrieren dürfen.
+`UseAzureStorageBus` / `UseAwsDynamoBus` / `UseSqlBus` registrieren nur den Event-Bus und behalten die In-Prozess-Lease bei: für Knoten, die Cluster-Ereignisse empfangen müssen, aber niemals um die Leadership konkurrieren dürfen.
 
 Wie sich Leadership und Event-Bus über Instanzen hinweg verhalten, erfahren Sie unter [Skalierung](scaling).
 

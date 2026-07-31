@@ -33,6 +33,7 @@ Le stockage peut être configuré de deux manières : fournissez **soit** `Stora
 |---|---|---|
 | `Authentication:CookieLifetimeHours` | `48` | Durée de vie de la session par cookie (glissante) |
 | `Authentication:AlwaysSecureCookie` | `false` | Force inconditionnellement l'indicateur `Secure` du cookie de session. La valeur par défaut (`SameAsRequest`) produit déjà un cookie Secure derrière un proxy qui termine le TLS et transfère `X-Forwarded-Proto: https`. |
+| `Auth:AllowInsecureHttp` | `false` | Laisse les points d'accès OAuth (`/connect/*`) répondre à des requêtes http en clair. **Développement uniquement.** La RFC 6749 §3.1/§3.2 exige TLS aux points d'accès d'autorisation et de token : par défaut, une requête non-https vers l'un d'eux est refusée avec `invalid_request`. Le schéma est évalué *après* le traitement des en-têtes transférés, si bien qu'un proxy qui termine le TLS et transfère `X-Forwarded-Proto: https` franchit la barrière sans activer cette option. Seul un déploiement réellement en clair (le `docker-compose.yml` fourni, la démo de serveur personnalisé) en a besoin, et le serveur journalise un avertissement au démarrage tant qu'elle est active. Propagée à `AuthagonalProtocolOptions.AllowInsecureHttp`, elle régit donc aussi les points d'accès appartenant à `Authagonal.Protocol` (voir [Extensibilité](extensibility#embedding-authagonalprotocol-alone)). |
 | `Auth:MaxFailedAttempts` | `5` | Tentatives de connexion échouées avant le verrouillage du compte |
 | `Auth:LockoutDurationMinutes` | `10` | Durée du verrouillage du compte après le nombre maximal de tentatives échouées |
 | `Auth:MaxRegistrationsPerIp` | `5` | Nombre maximal d'inscriptions par adresse IP dans la fenêtre |
@@ -45,6 +46,7 @@ Le stockage peut être configuré de deux manières : fournissez **soit** `Stora
 | `Auth:MfaChallengeExpiryMinutes` | `5` | Durée de vie du jeton de vérification MFA |
 | `Auth:MfaSetupTokenExpiryMinutes` | `15` | Durée de vie du jeton de configuration MFA (pour l'inscription forcée) |
 | `Auth:Pbkdf2Iterations` | `100000` | Nombre d'itérations PBKDF2 pour le hachage du mot de passe |
+| `Auth:FailedLoginMinimumMilliseconds` | `250` | Plancher de temps horloge auquel une connexion échouée est maintenue avant de renvoyer `invalid_credentials`, mesuré depuis le début de la requête. Ferme l'oracle temporel d'énumération d'utilisateurs : un compte inexistant est vérifié contre un hachage factice au format PBKDF2 natif, mais un compte réel peut encore porter un hachage bcrypt ou ASP.NET Identity V3 importé à un coût différent ; égaliser le travail est donc impossible et c'est le temps écoulé qui est imposé. Relevez-le au-dessus du hachage le plus lent que détient le déploiement, par exemple si vous avez importé du bcrypt au-delà du coût 11 ou augmenté `Pbkdf2Iterations` bien au-delà de la valeur par défaut : un avertissement unique est journalisé la première fois qu'une connexion échouée dépasse le plancher. `0` désactive le remplissage et rouvre l'oracle. |
 | `Auth:RefreshTokenReuseGraceSeconds` | `0` | Fenêtre de grâce optionnelle (en secondes) pour la réutilisation concurrente du jeton de rafraîchissement. `0` (par défaut) maintient la posture stricte : toute réutilisation d'un jeton de rafraîchissement déjà consommé révoque tous les jetons de cet utilisateur+client. Définissez `> 0` pour traiter une réutilisation dans la fenêtre comme une nouvelle tentative idempotente (re-livre les jetons successeurs), utile pour les clients mobiles avec des coupures de connectivité. |
 | `Auth:DynamicClientRegistrationEnabled` | `false` | Active le point d'accès d'enregistrement dynamique de client `POST /connect/register` (RFC 7591). Désactivé par défaut car l'enregistrement ouvert peut être abusé dans les déploiements multi-tenant. Voir [Enregistrement dynamique de client](client-registration). |
 | `Auth:SigningKeyLifetimeDays` | `90` | Durée de vie de la clé de signature RSA avant rotation automatique |
@@ -84,6 +86,36 @@ Sur le backend AWS, passez un client S3 + un bucket à `AddAuthagonalAwsStorage`
 | `BackgroundServices:TokenCleanupIntervalMinutes` | `60` | Intervalle de nettoyage des jetons expirés |
 | `BackgroundServices:GrantReconciliationDelayMinutes` | `10` | Délai initial avant la première réconciliation des autorisations |
 | `BackgroundServices:GrantReconciliationIntervalMinutes` | `30` | Intervalle de réconciliation des autorisations |
+
+## Rôles
+
+Les rôles sont définis dans le tableau `Roles` et injectés au démarrage, au même titre que les
+clients, les scopes et les fournisseurs. Les injecter compte surtout lorsqu'un scope est restreint
+par [`AllowedRoles`](scopes#role-gated-scopes) : un scope restreint à un rôle que rien ne crée est
+restreint pour tout le monde, y compris l'opérateur qui l'a configuré, et il échoue en silence : le
+scope n'est tout simplement jamais accordé.
+
+```json
+{
+  "Roles": [
+    {
+      "Name": "staff-admin",
+      "Description": "Internal staff console",
+      "Members": [ "ada@example.com", "grace@example.com" ]
+    }
+  ]
+}
+```
+
+| Champ | Description |
+|---|---|
+| `Name` | Le nom du rôle, tel qu'utilisé dans `Scope.AllowedRoles` et dans le claim `roles` du jeton |
+| `Description` | Lisible par un humain ; mise à jour aux démarrages suivants lorsque l'injection en indique une |
+| `Members` | Emails placés dans le rôle à chaque démarrage. Une adresse sans utilisateur existant est ignorée avec un avertissement et réessayée au démarrage suivant : le démarrage ne dépend jamais d'un compte que personne n'a créé |
+
+L'injection est **additive et idempotente**. Elle ne supprime jamais un rôle ni ne révoque une
+appartenance : la configuration n'est pas la source de vérité de qui détient quoi, de sorte qu'un
+rôle accordé via l'API d'administration survit au redémarrage suivant.
 
 ## Clients
 
@@ -297,7 +329,17 @@ Les secrets des clients OIDC en amont et les graines TOTP / MFA peuvent être st
 |---|---|
 | `SecretProvider:VaultUri` | URI du Key Vault (par exemple, `https://my-vault.vault.azure.net/`). Si non défini, le fournisseur **en texte brut** est utilisé et les secrets sont stockés tels quels dans Table Storage. |
 
+| `SecretProvider:RequireVaultReferences` | `false` par défaut. Lorsqu'il vaut `true`, une référence stockée sans préfixe de vault (`kv:` pour Key Vault, `sm:` pour AWS Secrets Manager) est une **erreur** au lieu d'être honorée comme une valeur en texte brut. Activez-le une fois la migration vers le vault terminée. |
+
 Lorsqu'il est configuré, les valeurs de secrets qui ressemblent à des références Key Vault sont résolues à l'exécution. Utilise `DefaultAzureCredential` pour l'authentification.
+
+### Migrer vers un vault, et refermer la porte ensuite
+
+Les deux fournisseurs adossés à un vault renvoient telle quelle une référence sans préfixe, la traitant comme une valeur en texte brut écrite avant que le déploiement ne dispose d'un vault. C'est ce qui permet de migrer un système en fonctionnement secret par secret plutôt que d'un seul coup, mais laissée ouverte, cette voie est un chemin de dégradation permanent : tout ce qui peut écrire une seule colonne de configuration (une migration à moitié faite, un chemin d'administration qui stocke une valeur brute là où une référence est attendue, un attaquant ayant accès au stockage mais pas au vault) remplace un secret protégé par le vault par une valeur de son choix, et cela se vérifie parfaitement, car pour une référence sans préfixe la référence *est* la valeur.
+
+Activez `SecretProvider:RequireVaultReferences` une fois la migration terminée. Résoudre une référence sans préfixe lève alors une exception au lieu de renvoyer discrètement du texte clair. L'activer alors que le fournisseur résolu est celui en texte brut est refusé au démarrage, car cette combinaison n'a aucun état fonctionnel : toute référence écrite par le fournisseur en texte brut est sans préfixe.
+
+Le serveur journalise également un avertissement au démarrage chaque fois qu'un hôte hors développement se retrouve avec le fournisseur en texte brut.
 
 > ⚠️ **Production : définissez `SecretProvider:VaultUri`.** Le fournisseur de secrets par défaut est **en texte brut**. Lorsque `SecretProvider:VaultUri` n'est pas défini, les secrets des clients OIDC en amont et les graines TOTP / MFA sont écrits en clair dans Azure Table Storage, et apparaissent donc en clair dans toute [sauvegarde](backup-restore). Pour tout déploiement en production, configurez `SecretProvider:VaultUri` afin que ces secrets soient stockés dans Key Vault.
 
@@ -371,9 +413,13 @@ builder.Services.AddAuthagonal(builder.Configuration,
 // AWS equivalent (Authagonal.AwsProvider)
 builder.Services.AddAuthagonal(builder.Configuration,
     cluster => cluster.UseAwsDynamo(dynamoDb));
+
+// Self-hosted PostgreSQL (Authagonal.SqlProvider)
+builder.Services.AddAuthagonal(builder.Configuration,
+    cluster => cluster.UseSql(sqlDataSource));
 ```
 
-`UseAzureStorageBus` / `UseAwsDynamoBus` enregistrent uniquement le bus d'événements, en conservant le bail en-processus, pour les nœuds qui doivent recevoir les événements du cluster mais ne doivent jamais se disputer le leadership.
+`UseAzureStorageBus` / `UseAwsDynamoBus` / `UseSqlBus` enregistrent uniquement le bus d'événements, en conservant le bail en-processus, pour les nœuds qui doivent recevoir les événements du cluster mais ne doivent jamais se disputer le leadership.
 
 Voir [Mise à l'échelle](scaling) pour le comportement du leadership et du bus d'événements entre les instances.
 

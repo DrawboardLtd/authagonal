@@ -224,6 +224,30 @@ Zwei Vertragspunkte sind entscheidend. `ProtectAsync` muss ein selbstbeschreiben
 
 `IIndexTokenizer` hält verschlüsselte Felder durchsuchbar. Er wandelt einen normalisierten Klartextwert in ein deterministisches, tabellenschlüsselsicheres Blind-Index-Token um, typischerweise einen keyed HMAC, dessen Schlüssel außerhalb der Datenbank liegt. Determinismus bedeutet, dass eine Gleichheitsabfrage weiterhin funktioniert ("email = x" wird zu "token = HMAC(x)"), während ein Datenbank-Dump ein Token weder neu berechnen noch umkehren kann. Die Präfixsuche wird darübergelegt, indem jedes Präfix eines Werts separat tokenisiert wird, da ein keyed HMAC Reihenfolge und Bereichsabfragen zerstört.
 
+> **Was ein Dump dennoch verrät.** "Weder neu berechnen noch umkehren" gilt für ein einzelnes Token,
+> nicht für den Index als Ganzes. Drei Reste bleiben bestehen, und man sollte sie kennen, bevor man
+> sich darauf verlässt:
+>
+>   *(Behoben.)* ~~**Struktur.** Der Präfixindex schreibt eine Zeile pro Präfix, sodass die
+>   Zeilenanzahl eines Datensatzes der Länge des indizierten Felds entspricht.~~ Jeder indizierte
+>   Wert schreibt jetzt eine feste Anzahl Zeilen, aufgefüllt mit Attrappen, die keine Abfrage
+>   erzeugen kann und die ein Dump nicht von echten Präfixen unterscheiden kann.
+> - **Gleichheit und Häufigkeit.** Token sind konstruktionsbedingt deterministisch -- genau das lässt
+>   die Suche funktionieren --, ein Dump zeigt also, welche Datensätze denselben Wert teilen und wie
+>   häufig jeder Wert ist. Der Domain-Index gruppiert Ihre Population nach Arbeitgeber, was Personen
+>   oft identifiziert, ohne eine Adresse wiederherzustellen.
+> - **Gewählter Klartext.** Wer den Speicher lesen *und* zugleich Werte indizieren lassen kann (ein
+>   Konto registrieren, per SCIM bereitgestellt werden), kann einen Kandidaten einreichen und nach
+>   dessen Token suchen. Das rekonstruiert jeden erratbaren Wert -- verbreitete Domains, verbreitete
+>   Vornamen --, gleichgültig wo der Schlüssel liegt, denn das Orakel ist der Schreibpfad, nicht die
+>   Chiffre.
+>
+> Die Tokenisierung schützt gegen den Fall, für den sie gebaut wurde: jemand hat einen Dump und sonst
+> nichts und will Adressen lesen. Die beiden verbleibenden Reste sind genau das, was ein
+> Registrierungs-Orakel ohnehin preisgibt. Sind sie nicht hinnehmbar, lassen Sie die Tabellen für
+> Präfix- und Domain-Index unkonfiguriert -- die Suche auf exakte Übereinstimmung trägt beides nicht
+> -- statt anzunehmen, der HMAC decke sie ab.
+
 ```csharp
 public interface IIndexTokenizer
 {
@@ -237,7 +261,7 @@ Wie `IFieldCipher` ist er ein optionaler Store-Konstruktorparameter mit einem Pa
 
 ## Änderungsprotokoll-Erfassung: IChangeWriter
 
-`IChangeWriter` (in 0.6.0 umbenannt von `ITombstoneWriter`) zeichnet den Schlüssel jeder geänderten Zeile in einer eigenen Änderungsprotokoll-Tabelle auf, sodass inkrementelle Sicherungen erkennen können, was sich geändert hat, ohne die nicht indizierte `Timestamp`-Spalte der Live-Tabellen zu durchsuchen. Löschungen werden für jede Tabelle erfasst (ein Scan der Live-Zeilen kann eine bereits gelöschte Zeile nicht sehen); Upserts werden für die Tabellen erfasst, bei denen die Sicherung aus dem Protokoll statt per Scan liest. Integrierte Implementierungen: `TableChangeWriter` (Azure Table Storage) und `DynamoChangeWriter` (DynamoDB).
+`IChangeWriter` (in 0.6.0 umbenannt von `ITombstoneWriter`) zeichnet den Schlüssel jeder geänderten Zeile in einer eigenen Änderungsprotokoll-Tabelle auf, sodass inkrementelle Sicherungen erkennen können, was sich geändert hat, ohne die nicht indizierte `Timestamp`-Spalte der Live-Tabellen zu durchsuchen. Löschungen werden für jede Tabelle erfasst (ein Scan der Live-Zeilen kann eine bereits gelöschte Zeile nicht sehen); Upserts werden für die Tabellen erfasst, bei denen die Sicherung aus dem Protokoll statt per Scan liest. Integrierte Implementierungen: `TableChangeWriter` (Azure Table Storage), `DynamoChangeWriter` (DynamoDB) und `SqlChangeWriter` (PostgreSQL / SQLite).
 
 ```csharp
 public interface IChangeWriter

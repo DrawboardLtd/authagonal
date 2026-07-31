@@ -10,7 +10,7 @@ locale: pt
 
 # Authagonal
 
-Servidor de autenticação OAuth 2.0 / OpenID Connect / SAML 2.0 para .NET, com armazenamento em nuvem plugável: Azure Table Storage ou AWS (DynamoDB / S3 / Secrets Manager).
+Servidor de autenticação OAuth 2.0 / OpenID Connect / SAML 2.0 para .NET, com armazenamento plugável: o seu próprio PostgreSQL ou SQLite, Azure Table Storage, ou AWS (DynamoDB / S3 / Secrets Manager).
 
 Uma implantação única e autossuficiente. O servidor e a interface de login são entregues como uma única imagem Docker: o SPA é servido a partir da mesma origem que a API, portanto autenticação por cookie, redirecionamentos e CSP funcionam sem complexidade de origens cruzadas.
 
@@ -26,6 +26,11 @@ Uma implantação única e autossuficiente. O servidor e a interface de login s�
 - **Ecrã de Consentimento OAuth**: consentimento por cliente com re-prompt sensível a scopes e gestão de concessões
 - **Device Authorization Grant**: fluxo RFC 8628 para dispositivos com entrada limitada (smart TVs, CLIs, IoT)
 - **Introspeção de Token**: RFC 7662 para servidores de recursos verificarem a validade dos tokens
+- **Assinatura de tokens**: apenas ES256. Os access tokens transportam o `typ: at+jwt` da RFC 9068
+  para que um servidor de recursos os consiga distinguir de id_tokens e de logout tokens, mas **não
+  se reclama conformidade com a RFC 9068**: a §2.1 exige RS256 entre os algoritmos suportados, e
+  este servidor não o emite nem o aceita. Um único algoritmo é uma postura deliberada: cada
+  algoritmo adicional aceite é mais uma forma de convencer um verificador a usar o errado.
 - **Back-Channel Logout**: notificações OIDC Back-Channel Logout 1.0 para as relying parties
 - **Autosserviço RGPD**: exportação de dados e eliminação agendada de conta a partir da página de conta alojada
 - **Provisionamento TCC**: provisionamento Try-Confirm-Cancel em aplicações downstream no momento da autorização
@@ -35,9 +40,20 @@ Uma implantação única e autossuficiente. O servidor e a interface de login s�
 - **HashiCorp Vault Transit**: assinatura remota de JWT sem acesso local à chave privada
 - **Biblioteca Composável**: `AddAuthagonal()` / `UseAuthagonal()` para hospedar no seu próprio projeto com substituições de serviço personalizadas
 - **Pronto para Native AOT**: IL trimming e serialização JSON gerada na compilação para arranque rápido
-- **Armazenamento em nuvem plugável**: Azure Table Storage ou AWS (DynamoDB / S3 / Secrets Manager); backends de baixo custo e compatíveis com serverless
+- **Armazenamento plugável**: PostgreSQL ou SQLite auto-hospedados (sem conta na nuvem), ou Azure Table Storage / AWS (DynamoDB / S3 / Secrets Manager) como backends de baixo custo e compatíveis com serverless
 - **Cópias de Segurança e Restauro**: cópias de segurança incrementais (baseadas em registo de alterações com um backstop de varrimento completo), verificação de integridade, rastreio de eliminações baseado em tombstones
 - **APIs de Administração**: CRUD de utilizadores, gestão de provedores SAML/OIDC, roteamento de domínios SSO, impersonação de tokens
+
+## Integrações comuns
+
+Guias orientados a tarefas para os fluxos que as equipas constroem com mais frequência. Estas
+páginas estão, por agora, disponíveis apenas em inglês:
+
+- **[Promover um utilizador](../user-upgrade)**: transformar uma conta de convidado / SSO / convite numa conta com credenciais através da reivindicação de conta sem palavra-passe, e executar a promoção de convidado para membro padrão na confirmação.
+- **[SSO self-service](../self-service-sso)**: aprovisionamento JIT para ligações empresariais: onboarding apenas por convite face a self-service, como evitar que IdPs externos se tornem armadilhas, e interstícios antes da federação.
+- **[Sessões federadas](../federated-sessions)**: revogar a sessão local quando o IdP a montante o faz (`RevalidateOnRefresh`).
+- **[Autenticação WebSocket](../websocket-auth)**: autenticar WebSockets do navegador através do BFF sem expor um token.
+- **[Autenticação agêntica](../agentic-auth)**: delegar a autoridade de um utilizador a agentes de IA: agentes registados, autoridade granular RFC 9396, tokens de delegação compostos (`act` da RFC 8693), consentimento permanente, aprovações just-in-time, bilhetes de capacidade.
 
 ## Arquitetura
 

@@ -396,6 +396,8 @@ Content-Type: application/json
 
 Yêu cầu xác thực cookie. Phê duyệt mã thiết bị cho người dùng hiện tại. Sau đó thiết bị có thể đổi mã thiết bị lấy token qua endpoint token bằng loại cấp quyền `urn:ietf:params:oauth:grant-type:device_code`.
 
+Mã được gửi lên sẽ được chuẩn hóa theo RFC 8628 §6.1 trước khi tra cứu: nó được chuyển thành chữ hoa và mọi ký tự nằm ngoài bảng chữ cái 31 ký tự của mã đều bị loại bỏ. `ABCD-EFGH`, `abcd-efgh`, `ABCDEFGH`, `ABCD EFGH` và một lần dán khiến dấu gạch nối biến thành gạch ngang dài đều là cùng một mã. Dấu gạch nối tồn tại chỉ để mã dễ đọc thành tiếng hơn. Việc nhập mã bị giới hạn mười lần thử mỗi phút cho mỗi subject (RFC 8628 §5.1); lần thứ mười một trả về `429`. Bộ đếm đó là theo từng node với rate limiter in-process mặc định, nên một triển khai nhiều replica cũng nên áp đặt giới hạn ở edge.
+
 ## Nội soi token (RFC 7662)
 
 ```

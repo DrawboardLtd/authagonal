@@ -10,7 +10,7 @@ locale: fr
 
 # Authagonal
 
-Serveur d'authentification OAuth 2.0 / OpenID Connect / SAML 2.0 pour .NET, adossé à un stockage cloud interchangeable : Azure Table Storage ou AWS (DynamoDB / S3 / Secrets Manager).
+Serveur d'authentification OAuth 2.0 / OpenID Connect / SAML 2.0 pour .NET, adossé à un stockage interchangeable : votre propre PostgreSQL ou SQLite, Azure Table Storage, ou AWS (DynamoDB / S3 / Secrets Manager).
 
 Un déploiement unique et autonome. Le serveur et l'interface de connexion sont livrés sous forme d'une seule image Docker : la SPA est servie depuis la même origine que l'API, de sorte que l'authentification par cookie, les redirections et la CSP fonctionnent sans complexité inter-origines.
 
@@ -26,6 +26,12 @@ Un déploiement unique et autonome. Le serveur et l'interface de connexion sont 
 - **Écran de consentement OAuth** : consentement par client avec nouvelle demande selon les scopes et gestion des grants
 - **Device Authorization Grant** : flux RFC 8628 pour les appareils à saisie limitée (téléviseurs connectés, CLI, IoT)
 - **Introspection de Token** : RFC 7662 pour que les serveurs de ressources vérifient la validité d'un token
+- **Signature des tokens** : ES256 uniquement. Les access tokens portent le `typ: at+jwt` de la RFC
+  9068 afin qu'un serveur de ressources puisse les distinguer des id_tokens et des logout tokens,
+  mais **la conformité à la RFC 9068 n'est pas revendiquée** : la §2.1 exige RS256 parmi les
+  algorithmes pris en charge, et ce serveur ne l'émet ni ne l'accepte. Un algorithme unique est une
+  posture délibérée : chaque algorithme accepté de plus est un moyen supplémentaire d'amener un
+  vérificateur à utiliser le mauvais.
 - **Déconnexion Back-Channel** : notifications OIDC Back-Channel Logout 1.0 aux parties de confiance
 - **Libre-service RGPD** : export des données et suppression de compte planifiée depuis la page de compte hébergée
 - **Provisionnement TCC** : provisionnement Try-Confirm-Cancel dans les applications en aval au moment de l'autorisation
@@ -35,9 +41,20 @@ Un déploiement unique et autonome. Le serveur et l'interface de connexion sont 
 - **HashiCorp Vault Transit** : signature JWT distante sans accès local à la clé privée
 - **Bibliothèque composable** : `AddAuthagonal()` / `UseAuthagonal()` pour héberger dans votre propre projet avec des substitutions de services personnalisées
 - **Prêt pour Native AOT** : trimming IL et sérialisation JSON générée à la source pour un démarrage rapide
-- **Stockage cloud interchangeable** : Azure Table Storage ou AWS (DynamoDB / S3 / Secrets Manager) ; backends à faible coût, compatibles serverless
+- **Stockage interchangeable** : PostgreSQL ou SQLite auto-hébergés (sans compte cloud), ou Azure Table Storage / AWS (DynamoDB / S3 / Secrets Manager) comme backends à faible coût, compatibles serverless
 - **Sauvegarde et restauration** : sauvegardes incrémentales (pilotées par journal des modifications avec un filet de sécurité par analyse complète), vérification d'intégrité, suivi des suppressions par tombstones
 - **API d'administration** : CRUD utilisateurs, gestion des fournisseurs SAML/OIDC, routage de domaines SSO, usurpation de jetons
+
+## Intégrations courantes
+
+Guides orientés tâches pour les flux que les équipes construisent le plus souvent. Ces pages ne sont
+pour l'instant disponibles qu'en anglais :
+
+- **[Faire évoluer un utilisateur](../user-upgrade)** : transformer un compte invité / SSO / sur invitation en un compte avec identifiants via la revendication de compte sans mot de passe, et exécuter la promotion invité → membre standard à la confirmation.
+- **[SSO en libre-service](../self-service-sso)** : provisionnement JIT pour les connexions d'entreprise : intégration sur invitation seule ou en libre-service, comment éviter que les IdP externes ne deviennent des pièges, et interstitiels avant fédération.
+- **[Sessions fédérées](../federated-sessions)** : révoquer la session locale quand l'IdP en amont le fait (`RevalidateOnRefresh`).
+- **[Authentification WebSocket](../websocket-auth)** : authentifier les WebSockets du navigateur via le BFF sans exposer de token.
+- **[Authentification agentique](../agentic-auth)** : déléguer l'autorité d'un utilisateur à des agents IA : agents enregistrés, autorité fine RFC 9396, tokens de délégation composites (`act` de la RFC 8693), consentement permanent, approbations à la demande, tickets de capacité.
 
 ## Architecture
 

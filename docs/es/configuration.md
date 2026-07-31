@@ -33,6 +33,7 @@ El almacenamiento puede configurarse de dos maneras: proporcione **o bien** `Sto
 |---|---|---|
 | `Authentication:CookieLifetimeHours` | `48` | Duración de la sesión por cookie (deslizante) |
 | `Authentication:AlwaysSecureCookie` | `false` | Fuerza incondicionalmente el atributo `Secure` del cookie de sesión. El valor predeterminado (`SameAsRequest`) ya produce un cookie Secure detrás de un proxy que termina TLS y reenvía `X-Forwarded-Proto: https`. |
+| `Auth:AllowInsecureHttp` | `false` | Permite que los endpoints OAuth (`/connect/*`) respondan a peticiones http en claro. **Solo para desarrollo.** RFC 6749 §3.1/§3.2 exigen TLS en los endpoints de autorización y de token, así que por defecto una petición que no sea https a cualquiera de ellos se rechaza con `invalid_request`. El esquema se evalúa *después* del procesamiento de las cabeceras reenviadas, de modo que un proxy que termina TLS y reenvía `X-Forwarded-Proto: https` pasa la barrera con esta opción desactivada. Solo un despliegue genuinamente en texto claro (el `docker-compose.yml` incluido, la demo de servidor personalizado) la necesita, y el servidor registra una advertencia en el arranque siempre que esté activada. Se propaga a `AuthagonalProtocolOptions.AllowInsecureHttp`, por lo que también gobierna los endpoints que pertenecen a `Authagonal.Protocol` (ver [Extensibilidad](extensibility#embedding-authagonalprotocol-alone)). |
 | `Auth:MaxFailedAttempts` | `5` | Intentos de inicio de sesión fallidos antes del bloqueo de cuenta |
 | `Auth:LockoutDurationMinutes` | `10` | Duración del bloqueo de cuenta después del máximo de intentos fallidos |
 | `Auth:MaxRegistrationsPerIp` | `5` | Registros máximos por dirección IP dentro de la ventana |
@@ -45,6 +46,7 @@ El almacenamiento puede configurarse de dos maneras: proporcione **o bien** `Sto
 | `Auth:MfaChallengeExpiryMinutes` | `5` | Tiempo de vida del token de verificación MFA |
 | `Auth:MfaSetupTokenExpiryMinutes` | `15` | Tiempo de vida del token de configuración MFA (para inscripción forzada) |
 | `Auth:Pbkdf2Iterations` | `100000` | Número de iteraciones PBKDF2 para el hashing de contraseñas |
+| `Auth:FailedLoginMinimumMilliseconds` | `250` | Suelo de tiempo de reloj al que se retiene un inicio de sesión fallido antes de devolver `invalid_credentials`, medido desde el comienzo de la petición. Cierra el oráculo temporal de enumeración de usuarios: una cuenta inexistente se verifica contra un hash ficticio en el formato PBKDF2 nativo, pero una cuenta real puede seguir teniendo un hash bcrypt o ASP.NET Identity V3 importado con un coste distinto, así que igualar el trabajo es imposible y lo que se impone es igualar el tiempo transcurrido. Súbalo por encima del hash más lento que tenga el despliegue, por ejemplo si importó bcrypt con coste superior a 11 o elevó `Pbkdf2Iterations` muy por encima del valor predeterminado: se registra una única advertencia la primera vez que un inicio de sesión fallido lo excede. `0` desactiva el relleno y vuelve a abrir el oráculo. |
 | `Auth:RefreshTokenReuseGraceSeconds` | `0` | Ventana de gracia opcional (en segundos) para la reutilización concurrente del token de actualización. `0` (predeterminado) mantiene la postura estricta: cualquier reutilización de un token de actualización ya consumido revoca todos los tokens de ese usuario+cliente. Establezca `> 0` para tratar una reutilización dentro de la ventana como un reintento idempotente (vuelve a entregar los tokens sucesores), útil para clientes móviles con cortes de conectividad. |
 | `Auth:DynamicClientRegistrationEnabled` | `false` | Habilita el endpoint de registro dinámico de clientes `POST /connect/register` (RFC 7591). Deshabilitado por defecto porque el registro abierto puede ser objeto de abuso en despliegues multi-tenant. Ver [Registro dinámico de clientes](client-registration). |
 | `Auth:SigningKeyLifetimeDays` | `90` | Tiempo de vida de la clave de firma RSA antes de la rotación automática |
@@ -327,7 +329,17 @@ Los secretos de clientes OIDC upstream y las semillas TOTP / MFA pueden almacena
 |---|---|
 | `SecretProvider:VaultUri` | URI del Key Vault (por ejemplo, `https://my-vault.vault.azure.net/`). Si no se establece, se usa el proveedor de **texto plano** y los secretos se almacenan tal cual en Table Storage. |
 
+| `SecretProvider:RequireVaultReferences` | `false` de forma predeterminada. Cuando es `true`, una referencia almacenada sin prefijo de vault (`kv:` para Key Vault, `sm:` para AWS Secrets Manager) es un **error** en lugar de aceptarse como valor en texto plano. Actívelo una vez terminada la migración al vault. |
+
 Cuando está configurado, los valores de secretos que parecen referencias de Key Vault se resuelven en tiempo de ejecución. Usa `DefaultAzureCredential` para la autenticación.
+
+### Migrar a un vault, y cerrar la puerta después
+
+Ambos proveedores respaldados por vault devuelven una referencia sin prefijo tal cual, tratándola como un valor en texto plano escrito antes de que el despliegue tuviera un vault. Eso es lo que permite migrar un sistema en marcha secreto a secreto en lugar de todo a la vez, pero dejado abierto es una vía de degradación permanente: cualquier cosa capaz de escribir una sola columna de configuración (una migración a medias, una ruta de administración que guarda un valor crudo donde corresponde una referencia, un atacante con acceso al almacenamiento pero no al vault) sustituye un secreto protegido por el vault por un valor de su elección, y verifica perfectamente, porque para una referencia sin prefijo la referencia *es* el valor.
+
+Establezca `SecretProvider:RequireVaultReferences` cuando la migración haya terminado. Resolver una referencia sin prefijo lanzará entonces una excepción en lugar de devolver texto claro en silencio. Establecerlo mientras el proveedor resuelto es el de texto plano se rechaza en el arranque, ya que esa combinación no tiene ningún estado funcional: toda referencia que escribe el proveedor de texto plano carece de prefijo.
+
+El servidor además registra una advertencia en el arranque siempre que un host que no es de desarrollo acaba con el proveedor de texto plano.
 
 > ⚠️ **Producción: establezca `SecretProvider:VaultUri`.** El proveedor de secretos predeterminado es **texto plano**. Cuando `SecretProvider:VaultUri` no está establecido, los secretos de clientes OIDC upstream y las semillas TOTP / MFA se escriben en Azure Table Storage en texto claro, y por lo tanto aparecen en texto claro en cualquier [copia de seguridad](backup-restore). Para cualquier despliegue de producción, configure `SecretProvider:VaultUri` para que estos secretos se almacenen en Key Vault.
 
@@ -401,9 +413,13 @@ builder.Services.AddAuthagonal(builder.Configuration,
 // AWS equivalent (Authagonal.AwsProvider)
 builder.Services.AddAuthagonal(builder.Configuration,
     cluster => cluster.UseAwsDynamo(dynamoDb));
+
+// Self-hosted PostgreSQL (Authagonal.SqlProvider)
+builder.Services.AddAuthagonal(builder.Configuration,
+    cluster => cluster.UseSql(sqlDataSource));
 ```
 
-`UseAzureStorageBus` / `UseAwsDynamoBus` registran solo el bus de eventos, manteniendo la concesión en proceso, para nodos que deben recibir eventos del cluster pero nunca deben competir por el liderazgo.
+`UseAzureStorageBus` / `UseAwsDynamoBus` / `UseSqlBus` registran solo el bus de eventos, manteniendo la concesión en proceso, para nodos que deben recibir eventos del cluster pero nunca deben competir por el liderazgo.
 
 Ver [Escalabilidad](scaling) para conocer cómo se comportan el liderazgo y el bus de eventos entre instancias.
 

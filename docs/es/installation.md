@@ -86,7 +86,7 @@ Referencie los paquetes de Authagonal en su propio proyecto ASP.NET Core:
 <PackageReference Include="Authagonal.AzureProvider" Version="x.y.z" />
 ```
 
-El paquete del proveedor de almacenamiento es intercambiable: `Authagonal.AzureProvider` para Azure Table Storage (la integración predeterminada de `AddAuthagonal()`), o `Authagonal.AwsProvider` para DynamoDB / S3 / Secrets Manager, ver [Backend AWS](#aws-backend) más abajo.
+El paquete del proveedor de almacenamiento es intercambiable: `Authagonal.AzureProvider` para Azure Table Storage (la integración predeterminada de `AddAuthagonal()`), `Authagonal.SqlProvider` para PostgreSQL o SQLite autoalojados (ver [Backend SQL](#sql-backend)), o `Authagonal.AwsProvider` para DynamoDB / S3 / Secrets Manager (ver [Backend AWS](#aws-backend)).
 
 Luego intégrelo en su `Program.cs`:
 
@@ -107,6 +107,31 @@ Consulte [Extensibilidad](extensibility) para todos los puntos de sustitución y
 ### Email
 
 El remitente integrado de [Resend](https://resend.com) se activa automáticamente cuando `Email:ResendApiKey` y `Email:SenderEmail` están configurados: no requiere registro de servicio. Sin ningún `IEmailService`, los correos de verificación y de restablecimiento de contraseña se **descartan en silencio**, y como el inicio de sesión requiere un correo confirmado de forma predeterminada, los usuarios autoregistrados nunca podrán iniciar sesión (`UseAuthagonal` registra una advertencia en el arranque). Configure las claves `Email:*`, registre su propio `IEmailService` antes de `AddAuthagonal()`, o incluya sus dominios en `Auth:AutoConfirmEmailDomains` para omitir la verificación (solo desarrollo/pruebas). Ver [Configuración → Email](configuration#email).
+
+## SQL backend
+
+Para ejecutar sobre su propia base de datos en lugar de un servicio en la nube, referencie `Authagonal.SqlProvider` y regístrelo **antes** de `AddAuthagonal()`: esos registros son los que hacen que `AddAuthagonal()` omita su integración de Azure Table Storage:
+
+```csharp
+using Authagonal.SqlProvider;
+
+// PostgreSQL — the production self-hosted backend
+builder.Services.AddAuthagonalPostgres(
+    "Host=db;Database=authagonal;Username=auth;Password=…;SSL Mode=VerifyFull;Root Certificate=/etc/ssl/certs/db-ca.pem");
+
+// or SQLite — one file, no server. Suits embedded hosts, CI and small single-node deployments
+builder.Services.AddAuthagonalSqlite("Data Source=authagonal.db");
+
+builder.Services.AddAuthagonal(builder.Configuration);
+```
+
+Las tablas replican uno a uno los diseños de Azure y DynamoDB, y se crean en el arranque si no existen (cada sentencia es un `IF NOT EXISTS`, por lo que es seguro que varios pods compitan por crearlas y no hace nada contra un esquema que usted mismo haya aprovisionado). No se necesita configuración `Storage:*`. El conjunto de claves de Data Protection se persiste en la misma base de datos, así que las cookies y los tokens antiforgery sobreviven a los reinicios y funcionan entre pods sin ningún servicio adicional.
+
+SQLite serializa los escritores, por lo que es un backend de un solo nodo: el lease en proceso y el bus de eventos de clúster registrados de forma predeterminada son la combinación correcta ahí. Un despliegue de PostgreSQL con varios pods querrá `clustering.UseSql(dataSource)` para la elección de líder.
+
+> **Intercalación (collation).** En PostgreSQL las columnas de clave se fijan a `COLLATE "C"`. El esquema de claves es ordinal por bytes en todo momento (límites de prefijo, rangos de partición por entorno, el barrido de expiración de concesiones, la paginación por keyset), y una base de datos creada con una intercalación lingüística -- `en_US.UTF-8` y las locales ICU son los valores predeterminados habituales -- ordenaría la puntuación y las mayúsculas de otra forma y devolvería en silencio las filas equivocadas. La fijación hace que el diseño sea independiente de cómo se creó la base de datos; no necesita crearla de ninguna manera concreta.
+
+Consulte el [README del paquete](https://github.com/authagonal/authagonal/tree/master/src/Authagonal.SqlProvider) para el diseño de las tablas, las primitivas de concurrencia detrás de cada garantía de un solo uso, y cómo añadir un dialecto para otro motor.
 
 ## AWS backend
 

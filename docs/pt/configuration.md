@@ -33,6 +33,7 @@ O armazenamento pode ser configurado de uma de duas formas: forneça **ou** `Sto
 |---|---|---|
 | `Authentication:CookieLifetimeHours` | `48` | Tempo de vida da sessão do cookie (deslizante) |
 | `Authentication:AlwaysSecureCookie` | `false` | Força incondicionalmente a flag `Secure` do cookie de sessão. O padrão (`SameAsRequest`) já produz um cookie Secure atrás de um proxy com terminação TLS que encaminha `X-Forwarded-Proto: https`. |
+| `Auth:AllowInsecureHttp` | `false` | Deixa os endpoints OAuth (`/connect/*`) responder a pedidos http em claro. **Apenas para desenvolvimento.** A RFC 6749 §3.1/§3.2 exige TLS nos endpoints de autorização e de token, portanto por omissão um pedido não-https a qualquer um deles é recusado com `invalid_request`. O esquema é avaliado *depois* do processamento dos cabeçalhos encaminhados, pelo que um proxy que termina TLS e encaminha `X-Forwarded-Proto: https` passa a barreira com esta opção desligada. Só uma implantação genuinamente em texto simples (o `docker-compose.yml` fornecido, a demo de servidor personalizado) precisa dela, e o servidor regista um aviso no arranque sempre que estiver ligada. É propagada para `AuthagonalProtocolOptions.AllowInsecureHttp`, pelo que governa também os endpoints pertencentes a `Authagonal.Protocol` (consulte [Extensibilidade](extensibility#embedding-authagonalprotocol-alone)). |
 | `Auth:MaxFailedAttempts` | `5` | Tentativas de login falhadas antes do bloqueio da conta |
 | `Auth:LockoutDurationMinutes` | `10` | Duração do bloqueio da conta após o máximo de tentativas falhadas |
 | `Auth:MaxRegistrationsPerIp` | `5` | Máximo de registos por endereço IP dentro da janela |
@@ -45,6 +46,7 @@ O armazenamento pode ser configurado de uma de duas formas: forneça **ou** `Sto
 | `Auth:MfaChallengeExpiryMinutes` | `5` | Tempo de vida do token de verificação MFA |
 | `Auth:MfaSetupTokenExpiryMinutes` | `15` | Tempo de vida do token de configuração MFA (para inscrição forçada) |
 | `Auth:Pbkdf2Iterations` | `100000` | Contagem de iterações PBKDF2 para hashing de senhas |
+| `Auth:FailedLoginMinimumMilliseconds` | `250` | Piso de tempo de relógio ao qual um login falho é mantido antes de devolver `invalid_credentials`, medido a partir do início da requisição. Fecha o oráculo temporal de enumeração de utilizadores: uma conta inexistente é verificada contra um hash fictício no formato PBKDF2 nativo, mas uma conta real pode ainda ter um hash bcrypt ou ASP.NET Identity V3 importado com um custo diferente, portanto igualar o trabalho é impossível e o que se impõe é igualar o tempo decorrido. Eleve-o acima do hash mais lento que a implantação detém, por exemplo se importou bcrypt acima do custo 11 ou aumentou `Pbkdf2Iterations` muito além do padrão: um único aviso é registado na primeira vez que um login falho ultrapassa o piso. `0` desativa o preenchimento e reabre o oráculo. |
 | `Auth:RefreshTokenReuseGraceSeconds` | `0` | Janela de tolerância opcional (segundos) para reutilização concorrente de refresh token. `0` (padrão) mantém a postura estrita: qualquer reutilização de um refresh token consumido revoga todos os tokens para aquele utilizador+cliente. Defina `> 0` para tratar uma reutilização dentro da janela como uma repetição idempotente (reentrega os tokens sucessores), útil para clientes móveis com falhas de conectividade. |
 | `Auth:DynamicClientRegistrationEnabled` | `false` | Habilita o endpoint de registo dinâmico de clientes `POST /connect/register` (RFC 7591). Desabilitado por padrão porque o registo aberto pode ser abusado em implantações multi-tenant. Consulte [Registo Dinâmico de Clientes](client-registration). |
 | `Auth:SigningKeyLifetimeDays` | `90` | Tempo de vida da chave de assinatura RSA antes da rotação automática |
@@ -84,6 +86,36 @@ No backend AWS, passe um cliente S3 + bucket a `AddAuthagonalAwsStorage` para pe
 | `BackgroundServices:TokenCleanupIntervalMinutes` | `60` | Intervalo de limpeza de tokens expirados |
 | `BackgroundServices:GrantReconciliationDelayMinutes` | `10` | Atraso inicial antes da primeira reconciliação de concessões |
 | `BackgroundServices:GrantReconciliationIntervalMinutes` | `30` | Intervalo de reconciliação de concessões |
+
+## Papéis
+
+Os papéis são definidos no array `Roles` e semeados na inicialização, junto com clientes, scopes e
+provedores. Semeá-los importa sobretudo quando um scope é restringido com
+[`AllowedRoles`](scopes#role-gated-scopes): um scope restringido a um papel que nada cria fica
+restringido para toda a gente, incluindo o operador que o configurou, e falha em silêncio -- o scope
+simplesmente nunca é concedido.
+
+```json
+{
+  "Roles": [
+    {
+      "Name": "staff-admin",
+      "Description": "Internal staff console",
+      "Members": [ "ada@example.com", "grace@example.com" ]
+    }
+  ]
+}
+```
+
+| Campo | Descrição |
+|---|---|
+| `Name` | O nome do papel, tal como usado em `Scope.AllowedRoles` e no claim `roles` do token |
+| `Description` | Legível por humanos; atualizada em arranques posteriores quando a semente indica uma |
+| `Members` | Emails colocados no papel a cada arranque. Um endereço ainda sem utilizador é ignorado com um aviso e tentado de novo no arranque seguinte -- o arranque nunca depende de uma conta que ninguém criou |
+
+A semeadura é **aditiva e idempotente**. Nunca remove um papel nem revoga uma pertença: a
+configuração não é a fonte da verdade sobre quem detém o quê, portanto um papel concedido através da
+API de administração sobrevive ao reinício seguinte.
 
 ## Clientes
 
@@ -297,7 +329,17 @@ Os segredos de clientes OIDC upstream e as sementes TOTP / MFA podem ser armazen
 |---|---|
 | `SecretProvider:VaultUri` | URI do Key Vault (ex.: `https://my-vault.vault.azure.net/`). Se não definido, é usado o provedor de **texto simples** e os segredos são armazenados como estão no Table Storage. |
 
+| `SecretProvider:RequireVaultReferences` | `false` por omissão. Quando `true`, uma referência armazenada sem prefixo de vault (`kv:` para Key Vault, `sm:` para AWS Secrets Manager) é um **erro** em vez de ser honrada como um valor em texto simples. Ative-o assim que a migração para o vault estiver concluída. |
+
 Quando configurado, os valores de segredo que se assemelham a referências do Key Vault são resolvidos em tempo de execução. Usa `DefaultAzureCredential` para autenticação.
+
+### Migrar para um vault, e fechar a porta depois
+
+Ambos os provedores apoiados em vault devolvem uma referência sem prefixo tal como está, tratando-a como um valor em texto simples escrito antes de a implantação ter um vault. É isso que permite migrar um sistema em funcionamento segredo a segredo em vez de tudo de uma vez -- mas deixada aberta, é uma via de degradação permanente: tudo o que consiga escrever uma única coluna de configuração (uma migração a meio, um caminho de administração que guarda um valor bruto onde devia estar uma referência, um atacante com acesso ao armazenamento mas não ao vault) substitui um segredo protegido pelo vault por um valor à sua escolha, e verifica na perfeição, porque para uma referência sem prefixo a referência *é* o valor.
+
+Ative `SecretProvider:RequireVaultReferences` quando a migração terminar. Resolver uma referência sem prefixo passa então a lançar uma exceção em vez de devolver texto em claro silenciosamente. Ativá-lo enquanto o provedor resolvido é o de texto simples é recusado no arranque, já que essa combinação não tem qualquer estado funcional -- todas as referências que o provedor de texto simples escreve são sem prefixo.
+
+O servidor regista ainda um aviso no arranque sempre que um host fora de desenvolvimento acaba com o provedor de texto simples.
 
 > ⚠️ **Produção: defina `SecretProvider:VaultUri`.** O provedor de segredos padrão é **texto simples**. Quando `SecretProvider:VaultUri` não está definido, os segredos de clientes OIDC upstream e as sementes TOTP / MFA são escritos no Azure Table Storage em texto claro e, portanto, aparecem em texto claro em qualquer [backup](backup-restore). Para qualquer implantação em produção, configure `SecretProvider:VaultUri` para que esses segredos sejam armazenados no Key Vault.
 
@@ -371,9 +413,13 @@ builder.Services.AddAuthagonal(builder.Configuration,
 // AWS equivalent (Authagonal.AwsProvider)
 builder.Services.AddAuthagonal(builder.Configuration,
     cluster => cluster.UseAwsDynamo(dynamoDb));
+
+// Self-hosted PostgreSQL (Authagonal.SqlProvider)
+builder.Services.AddAuthagonal(builder.Configuration,
+    cluster => cluster.UseSql(sqlDataSource));
 ```
 
-`UseAzureStorageBus` / `UseAwsDynamoBus` registam apenas o barramento de eventos, mantendo a concessão em processo, para nós que devem receber eventos do cluster mas nunca devem disputar a liderança.
+`UseAzureStorageBus` / `UseAwsDynamoBus` / `UseSqlBus` registam apenas o barramento de eventos, mantendo a concessão em processo, para nós que devem receber eventos do cluster mas nunca devem disputar a liderança.
 
 Consulte [Escalabilidade](scaling) para saber como a liderança e o barramento de eventos se comportam entre instâncias.
 

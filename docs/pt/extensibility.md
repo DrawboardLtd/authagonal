@@ -224,6 +224,29 @@ Dois pontos do contrato importam. `ProtectAsync` deve retornar um token de texto
 
 O `IIndexTokenizer` mantém os campos encriptados pesquisáveis. Transforma um valor de texto simples normalizado num token de índice cego determinístico e seguro como chave de tabela, tipicamente um HMAC com chave em que a chave vive fora da base de dados. O determinismo significa que uma pesquisa por igualdade ainda funciona ("email = x" torna-se "token = HMAC(x)"), enquanto um dump da base de dados não consegue recalcular nem reverter um token. A pesquisa por prefixo é sobreposta ao tokenizar cada prefixo de um valor separadamente, uma vez que um HMAC com chave destrói a ordenação e as varreduras de intervalo.
 
+> **O que um dump ainda revela.** "Nem recalcular nem reverter" é verdade para um token isolado, não
+> para o índice no seu conjunto. Sobrevivem três resíduos, e vale a pena conhecê-los antes de confiar
+> nisto:
+>
+>   *(Corrigido.)* ~~**Estrutura.** O índice de prefixos escreve uma linha por prefixo, pelo que a
+>   contagem de linhas de um registo equivale ao comprimento do campo indexado.~~ Cada valor indexado
+>   escreve agora um número fixo de linhas, preenchido com engodos que nenhuma consulta consegue
+>   produzir e que um dump não consegue distinguir de prefixos reais.
+> - **Igualdade e frequência.** Os tokens são determinísticos por construção, que é o que faz a
+>   pesquisa funcionar, portanto um dump mostra que registos partilham um valor e quão comum é cada
+>   valor. O índice de domínios agrupa a sua população por empregador, o que muitas vezes identifica
+>   pessoas sem recuperar um endereço.
+> - **Texto simples escolhido.** Quem consiga ler o armazenamento *e* provocar a indexação de valores
+>   (registar uma conta, ser aprovisionado por SCIM) pode submeter um candidato e procurar o seu
+>   token. Isso recupera qualquer valor adivinhável -- domínios comuns, nomes próprios comuns --
+>   independentemente de onde a chave viva, porque o oráculo é o caminho de escrita e não a cifra.
+>
+> A tokenização defende o caso para o qual foi construída: alguém que tem um dump e mais nada, a
+> tentar ler endereços. Os dois resíduos que restam são exatamente aquilo que um oráculo de registo
+> entrega de qualquer forma. Se forem inaceitáveis, deixe as tabelas de índice de prefixo e de
+> domínio por configurar -- a pesquisa por correspondência exata não acarreta nenhum deles -- em vez
+> de assumir que o HMAC as cobre.
+
 ```csharp
 public interface IIndexTokenizer
 {
@@ -237,7 +260,7 @@ Tal como o `IFieldCipher`, é um parâmetro de construtor de store opcional com 
 
 ## Captura de Registo de Alterações: IChangeWriter
 
-O `IChangeWriter` (renomeado de `ITombstoneWriter` na 0.6.0) regista a chave de cada linha alterada numa tabela de registo de alterações dedicada, para que os backups incrementais possam encontrar o que mudou sem varrer a coluna `Timestamp` não indexada das tabelas ativas. As exclusões são capturadas para cada tabela (uma varredura de linhas ativas não consegue ver uma linha que já não existe); os upserts são capturados para as tabelas que o backup lê a partir do registo em vez de varrer. Implementações integradas: `TableChangeWriter` (Azure Table Storage) e `DynamoChangeWriter` (DynamoDB).
+O `IChangeWriter` (renomeado de `ITombstoneWriter` na 0.6.0) regista a chave de cada linha alterada numa tabela de registo de alterações dedicada, para que os backups incrementais possam encontrar o que mudou sem varrer a coluna `Timestamp` não indexada das tabelas ativas. As exclusões são capturadas para cada tabela (uma varredura de linhas ativas não consegue ver uma linha que já não existe); os upserts são capturados para as tabelas que o backup lê a partir do registo em vez de varrer. Implementações integradas: `TableChangeWriter` (Azure Table Storage), `DynamoChangeWriter` (DynamoDB) e `SqlChangeWriter` (PostgreSQL / SQLite).
 
 ```csharp
 public interface IChangeWriter

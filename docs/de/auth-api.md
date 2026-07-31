@@ -396,6 +396,8 @@ Content-Type: application/json
 
 Erfordert Cookie-Authentifizierung. Genehmigt den Gerätecode für den aktuellen Benutzer. Das Gerät kann den Gerätecode dann über den Token-Endpunkt mit dem Grant-Typ `urn:ietf:params:oauth:grant-type:device_code` gegen Token eintauschen.
 
+Der übermittelte Code wird vor der Suche gemäß RFC 8628 §6.1 normalisiert: Er wird in Großbuchstaben umgewandelt, und jedes Zeichen außerhalb des 31-stelligen Code-Alphabets wird verworfen. `ABCD-EFGH`, `abcd-efgh`, `ABCDEFGH`, `ABCD EFGH` und ein Einfügen, bei dem aus dem Bindestrich ein Geviertstrich geworden ist, sind alle derselbe Code. Der Bindestrich existiert nur, damit sich der Code leichter vorlesen lässt. Die Eingabe ist auf zehn Versuche pro Minute und Subjekt begrenzt (RFC 8628 §5.1); der elfte gibt `429` zurück. Dieser Zähler gilt beim standardmäßigen In-Prozess-Rate-Limiter pro Knoten, ein Deployment mit mehreren Repliken sollte die Begrenzung daher zusätzlich am Edge durchsetzen.
+
 ## Token-Introspektion (RFC 7662)
 
 ```
