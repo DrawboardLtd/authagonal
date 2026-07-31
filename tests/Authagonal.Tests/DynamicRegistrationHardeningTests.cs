@@ -78,6 +78,60 @@ public sealed class DynamicRegistrationHardeningTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
     }
 
+    /// <summary>
+    /// An anonymous registrant cannot name an internal address as a logout URI.
+    /// </summary>
+    /// <remarks>
+    /// Both are dereferenced by the SERVER — back-channel is an outbound POST from the logout path,
+    /// front-channel is framed into the logged-out user's browser — and this is the one client-mutation
+    /// path with no caller at all, so registering
+    /// <c>backchannel_logout_uri=http://169.254.169.254/…</c> was unauthenticated SSRF with an
+    /// attacker-chosen target. The check existed but nothing pinned it.
+    /// </remarks>
+    [Theory]
+    [InlineData("backchannel_logout_uri", "http://169.254.169.254/latest/meta-data/")]
+    [InlineData("backchannel_logout_uri", "http://127.0.0.1:9200/_shutdown")]
+    [InlineData("backchannel_logout_uri", "http://10.1.2.3/logout")]
+    [InlineData("backchannel_logout_uri", "http://admin.internal/logout")]
+    [InlineData("frontchannel_logout_uri", "http://169.254.169.254/latest/meta-data/")]
+    [InlineData("frontchannel_logout_uri", "http://localhost/logout")]
+    public async Task InternalLogoutUri_IsRefused(string field, string uri)
+    {
+        var body = new Dictionary<string, object>
+        {
+            ["client_name"] = "Test App",
+            ["redirect_uris"] = new[] { "https://app.example/cb" },
+            ["grant_types"] = new[] { "authorization_code" },
+            ["token_endpoint_auth_method"] = "none",
+            ["scope"] = "openid",
+            [field] = uri,
+        };
+
+        var response = await _client.PostAsJsonAsync("/connect/register", body);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("invalid_client_metadata", json.GetProperty("error").GetString());
+    }
+
+    [Fact]
+    public async Task ExternalLogoutUri_IsAccepted()
+    {
+        var body = new Dictionary<string, object>
+        {
+            ["client_name"] = "Test App",
+            ["redirect_uris"] = new[] { "https://app.example/cb" },
+            ["grant_types"] = new[] { "authorization_code" },
+            ["token_endpoint_auth_method"] = "none",
+            ["scope"] = "openid",
+            ["backchannel_logout_uri"] = "https://app.example/backchannel-logout",
+        };
+
+        var response = await _client.PostAsJsonAsync("/connect/register", body);
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+    }
+
     private Task<HttpResponseMessage> RegisterAsync(string redirectUri, string scope = "openid") =>
         _client.PostAsJsonAsync("/connect/register", new
         {

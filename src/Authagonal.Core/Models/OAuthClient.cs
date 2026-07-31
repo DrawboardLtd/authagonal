@@ -55,6 +55,27 @@ public sealed record OAuthClient
     /// <summary>URL the client's JWKS is fetched from (cached ~10 minutes). Alternative to
     /// <see cref="JwksJson"/> for clients that rotate keys; ignored when JwksJson is set.</summary>
     public string? JwksUri { get; set; }
+
+    /// <summary>
+    /// True when this registration forces the client to prove who it is: it must present a credential,
+    /// and one is registered for it to present.
+    /// </summary>
+    /// <remarks>
+    /// Both halves are load-bearing, which is why this is not just <see cref="RequireClientSecret"/>.
+    /// Without the flag, client authentication accepts a bare client_id — the assertion path only runs
+    /// when the caller volunteers a <c>client_assertion</c>, so a JWKS alone constrains nobody. Without a
+    /// registered secret hash or JWKS there is nothing to verify against, so the flag alone would refuse
+    /// every caller rather than authenticate one. Used where an identity assertion about the CLIENT is
+    /// what is at stake (the RFC 8693 <c>act</c> chain), not merely its authorization.
+    /// </remarks>
+    // Derived, never stored: the SQL provider persists this model as a JSON document, and a
+    // get-only property would otherwise be written into it as a field that nothing reads back.
+    [System.Text.Json.Serialization.JsonIgnore]
+    public bool IsConfidential =>
+        RequireClientSecret
+        && (ClientSecretHashes.Count > 0
+            || !string.IsNullOrWhiteSpace(JwksJson)
+            || !string.IsNullOrWhiteSpace(JwksUri));
 }
 
 public enum RefreshTokenUsage

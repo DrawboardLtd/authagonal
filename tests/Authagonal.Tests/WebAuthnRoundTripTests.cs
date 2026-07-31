@@ -29,10 +29,14 @@ public sealed class WebAuthnRoundTripTests
     // exactly what the VirtualAuthenticator signs over. The store backs the credential-id uniqueness
     // callback, so a test that wants an id to look already-registered seeds it there.
     private static WebAuthnService NewService(IMfaStore? store = null, params string[] allowedHosts)
+        => NewServiceAt(RpId, store, allowedHosts);
+
+    /// <summary>The same service answering a request for <paramref name="host"/>.</summary>
+    private static WebAuthnService NewServiceAt(string host, IMfaStore? store = null, params string[] allowedHosts)
     {
         var ctx = new DefaultHttpContext();
         ctx.Request.Scheme = "https";
-        ctx.Request.Host = new HostString(RpId);
+        ctx.Request.Host = new HostString(host);
         return new WebAuthnService(
             new StubHttpContextAccessor { HttpContext = ctx },
             store ?? new InMemoryMfaStore(),
@@ -67,6 +71,94 @@ public sealed class WebAuthnRoundTripTests
 
         Assert.Throws<InvalidOperationException>(() =>
             service.CreateAttestationOptions(new AuthUser { Id = "u1", Email = "u@example.com", NormalizedEmail = "U@EXAMPLE.COM" }, []));
+    }
+
+    /// <summary>
+    /// A credential enrolled at one host cannot be asserted at another, even with material that verifies.
+    /// </summary>
+    /// <remarks>
+    /// This is the residual the allowlist does not cover, because the allowlist is empty by default and a
+    /// multi-tenant deployment legitimately serves many hosts. Both ceremonies build their expectations
+    /// from the request's own Host header, so §7.2 steps 13/14 compared a request against itself and the
+    /// server contributed nothing: an on-path host that forwards <c>Host: proxy.example</c> gets an
+    /// expectation of proxy.example, and the origin binding that makes a passkey phishing-resistant
+    /// verifies the phishing host rather than preventing it. The authenticator below signs for the second
+    /// host with the SAME key, so every check the library performs passes — which is precisely why the
+    /// answer has to come from what was recorded at enrolment, the one input the request cannot supply.
+    /// </remarks>
+    [Fact]
+    public async Task ACredentialEnrolledAtOneHost_IsRefusedAtAnother()
+    {
+        const string OtherRpId = "proxy.example";
+        const string OtherOrigin = "https://proxy.example";
+        var store = new InMemoryMfaStore();
+        var user = TestUser();
+
+        var enrol = NewServiceAt(RpId, store, RpId, OtherRpId);
+        var auth = new VirtualAuthenticator(RpId, Origin);
+        var (opts, _) = enrol.CreateAttestationOptions(user, []);
+        var cred = await enrol.CompleteAttestationAsync(user.Id, opts, auth.Attestation(opts.Challenge));
+
+        var stored = JsonSerializer.Deserialize(cred.PublicKeyJson!, AuthagonalJsonContext.Default.WebAuthnCredentialData)!;
+        Assert.Equal(RpId, stored.RpId);
+
+        // Same key, signing for the other host: internally consistent, verifies against the enrolled
+        // public key, and matches everything that host's request would lead the library to expect.
+        var elsewhere = NewServiceAt(OtherRpId, store, RpId, OtherRpId);
+        var assertOpts = elsewhere.CreateAssertionOptions([cred]);
+        var (success, _, _) = await elsewhere.CompleteAssertionAsync(
+            assertOpts,
+            auth.Assertion(assertOpts.Challenge, signCount: 1, userHandle: Handle(user.Id),
+                asRpId: OtherRpId, asOrigin: OtherOrigin),
+            StoredPublicKey(cred), storedSignCount: 0, expectedUserId: user.Id,
+            registeredRpId: stored.RpId);
+
+        Assert.False(success);
+    }
+
+    /// <summary>
+    /// The same credential at its own host still works — the binding must not break normal use.
+    /// </summary>
+    [Fact]
+    public async Task ACredentialEnrolledAtOneHost_StillAssertsThere()
+    {
+        var store = new InMemoryMfaStore();
+        var user = TestUser();
+        var svc = NewServiceAt(RpId, store, RpId);
+        var auth = new VirtualAuthenticator(RpId, Origin);
+
+        var (opts, _) = svc.CreateAttestationOptions(user, []);
+        var cred = await svc.CompleteAttestationAsync(user.Id, opts, auth.Attestation(opts.Challenge));
+        var stored = JsonSerializer.Deserialize(cred.PublicKeyJson!, AuthagonalJsonContext.Default.WebAuthnCredentialData)!;
+
+        var assertOpts = svc.CreateAssertionOptions([cred]);
+        var (success, _, _) = await svc.CompleteAssertionAsync(
+            assertOpts, auth.Assertion(assertOpts.Challenge, signCount: 1, userHandle: Handle(user.Id)),
+            StoredPublicKey(cred), storedSignCount: 0, expectedUserId: user.Id, registeredRpId: stored.RpId);
+
+        Assert.True(success);
+    }
+
+    /// <summary>
+    /// A credential enrolled before the RP ID was recorded is grandfathered, not bricked.
+    /// </summary>
+    [Fact]
+    public async Task ACredentialWithNoRecordedRpId_StillAsserts()
+    {
+        var store = new InMemoryMfaStore();
+        var user = TestUser();
+        var svc = NewServiceAt(RpId, store, RpId);
+        var auth = new VirtualAuthenticator(RpId, Origin);
+
+        var (opts, _) = svc.CreateAttestationOptions(user, []);
+        var cred = await svc.CompleteAttestationAsync(user.Id, opts, auth.Attestation(opts.Challenge));
+
+        var assertOpts = svc.CreateAssertionOptions([cred]);
+        var (success, _, _) = await svc.CompleteAssertionAsync(
+            assertOpts, auth.Assertion(assertOpts.Challenge, signCount: 1, userHandle: Handle(user.Id)),
+            StoredPublicKey(cred), storedSignCount: 0, expectedUserId: user.Id, registeredRpId: null);
+
+        Assert.True(success);
     }
 
     private sealed class StubHttpContextAccessor : IHttpContextAccessor

@@ -11,8 +11,48 @@ namespace Authagonal.Server.Services;
 public sealed class WebAuthnService(
     IHttpContextAccessor httpContextAccessor,
     IMfaStore mfaStore,
-    Microsoft.Extensions.Options.IOptions<AuthOptions> authOptions)
+    Microsoft.Extensions.Options.IOptions<AuthOptions> authOptions,
+    Microsoft.Extensions.Logging.ILogger<WebAuthnService>? logger = null)
 {
+    /// <summary>
+    /// Process-wide latch so the unset-allowlist warning is emitted once, not per ceremony.
+    /// </summary>
+    private static int _gapWarned;
+
+    /// <summary>
+    /// The relying-party ID this request would act as: the request host, once it has been checked
+    /// against the allowlist.
+    /// </summary>
+    private string ResolveRpId()
+    {
+        var req = httpContextAccessor.HttpContext?.Request
+            ?? throw new InvalidOperationException("WebAuthn requires an active HTTP request.");
+
+        var allowed = authOptions.Value.WebAuthnAllowedHosts;
+        if (allowed.Count == 0)
+        {
+            // The gap this class's remarks promise to log. It said "it is logged as a gap instead" and
+            // docs/mfa.md repeats the claim, but nothing logged anything — so the one signal an operator
+            // had that the RP ID is unconstrained was a sentence in a source comment. A silent fail-open
+            // that documents itself as noisy is worse than either honest option.
+            if (System.Threading.Interlocked.Exchange(ref _gapWarned, 1) == 0)
+                logger?.LogWarning(
+                    "Auth:WebAuthnAllowedHosts is empty, so any Host header this server answers becomes " +
+                    "the WebAuthn relying-party ID and expected origin — both ceremonies then check the " +
+                    "request against itself. Set it to the hostnames you serve (and set AllowedHosts in " +
+                    "configuration so host filtering rejects the rest before any handler runs).");
+        }
+        else if (!allowed.Contains(req.Host.Host, StringComparer.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException(
+                $"Host '{req.Host.Host}' is not in Auth:WebAuthnAllowedHosts, so it cannot act as a " +
+                "WebAuthn relying party. A credential registered under one RP ID must never be usable " +
+                "under another.");
+        }
+
+        return req.Host.Host;
+    }
+
     // Build the FIDO2 relying-party config from the ACTUAL request host, not a fixed startup value.
     // WebAuthn requires the RP ID to be the origin's registrable host and the origin to match exactly,
     // so on a multi-tenant server (each tenant on its own host, e.g. {slug}-admin.authagonal.io) the RP
@@ -37,22 +77,12 @@ public sealed class WebAuthnService(
     /// </remarks>
     private IFido2 ResolveFido2()
     {
-        var req = httpContextAccessor.HttpContext?.Request
-            ?? throw new InvalidOperationException("WebAuthn requires an active HTTP request.");
-
-        var allowed = authOptions.Value.WebAuthnAllowedHosts;
-        if (allowed.Count > 0 && !allowed.Contains(req.Host.Host, StringComparer.OrdinalIgnoreCase))
-        {
-            throw new InvalidOperationException(
-                $"Host '{req.Host.Host}' is not in Auth:WebAuthnAllowedHosts, so it cannot act as a " +
-                "WebAuthn relying party. A credential registered under one RP ID must never be usable " +
-                "under another.");
-        }
-
+        var rpId = ResolveRpId();
+        var req = httpContextAccessor.HttpContext!.Request;
         var origin = $"{req.Scheme}://{req.Host.Value}";
         return new Fido2(new Fido2Configuration
         {
-            ServerDomain = req.Host.Host,
+            ServerDomain = rpId,
             ServerName = "Authagonal",
             Origins = new HashSet<string> { origin },
         });
@@ -123,6 +153,12 @@ public sealed class WebAuthnService(
             PublicKey = Convert.ToBase64String(result.PublicKey),
             CredType = result.Type.ToString(),
             Aaguid = result.AaGuid.ToString(),
+            // Record WHICH relying party this credential was created for. Nothing was recorded before,
+            // so at assertion the expected RP ID could only be recomputed from the request being
+            // verified — the check compared a request against itself and the server contributed no
+            // independent assurance about where the ceremony happened. Stored here, it becomes the one
+            // input to the comparison the caller cannot influence.
+            RpId = ResolveRpId(),
         };
 
         return new MfaCredential
@@ -183,14 +219,42 @@ public sealed class WebAuthnService(
     /// The account this assertion must belong to — the challenged user for second-factor verification,
     /// the credential's indexed owner for discoverable (passwordless) login.
     /// </param>
+    /// <param name="registeredRpId">
+    /// The relying party the credential was registered under, as recorded at attestation. When present it
+    /// must equal the RP ID this request resolves to.
+    /// </param>
+    /// <remarks>
+    /// This is the check the request cannot answer for itself. §7.2 step 13 compares the assertion's
+    /// rpIdHash against an expectation built from the request's own Host header, so with
+    /// <c>AllowedHosts</c> "*" a man-in-the-middle that forwards <c>Host: proxy.example</c> gets an
+    /// expectation of proxy.example, and WebAuthn's origin binding — the property that makes a passkey
+    /// phishing-resistant — verifies the phishing site instead of preventing it. A credential enrolled
+    /// at the real host carries that host, so the mismatch is caught from storage.
+    /// <para>
+    /// Null for credentials enrolled before the RP ID was recorded: those are grandfathered rather than
+    /// bricked, and gain the binding when they are re-enrolled.
+    /// </para>
+    /// </remarks>
     public async Task<(bool Success, byte[] CredentialId, uint NewSignCount)> CompleteAssertionAsync(
         AssertionOptions originalOptions,
         AuthenticatorAssertionRawResponse assertionResponse,
         byte[] storedPublicKey,
         uint storedSignCount,
         string expectedUserId,
+        string? registeredRpId = null,
         CancellationToken ct = default)
     {
+        // Reported as a failed assertion rather than an exception: it is the same class of failure as the
+        // library's own rpIdHash check (§7.2 step 13), and both callers already map a false result to 401.
+        if (!string.IsNullOrEmpty(registeredRpId)
+            && !string.Equals(registeredRpId, ResolveRpId(), StringComparison.OrdinalIgnoreCase))
+        {
+            logger?.LogWarning(
+                "Refusing a passkey assertion: the credential was registered for relying party " +
+                "{RegisteredRpId}, but this request resolves to a different one", registeredRpId);
+            return (false, [], 0);
+        }
+
         // §7.2 step 6 — the user handle the authenticator returned must belong to the account being
         // signed in. This was hardcoded to true, so the check the library offered was answered without
         // being performed. The handle is UTF-8 of the user id (see CreateAttestationOptions), so the
@@ -221,4 +285,11 @@ public sealed class WebAuthnCredentialData
     public required string PublicKey { get; set; }
     public required string CredType { get; set; }
     public required string Aaguid { get; set; }
+
+    /// <summary>
+    /// Relying-party ID (the host) the credential was enrolled under. Null on credentials stored before
+    /// this was recorded — see <see cref="WebAuthnService.CompleteAssertionAsync"/> for why those are
+    /// grandfathered rather than refused.
+    /// </summary>
+    public string? RpId { get; set; }
 }

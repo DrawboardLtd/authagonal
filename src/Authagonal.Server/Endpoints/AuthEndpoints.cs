@@ -1041,6 +1041,26 @@ public static class AuthEndpoints
         ILogger<Program> logger,
         CancellationToken ct)
     {
+        // Per-SOURCE cap, first thing and before any store read.
+        //
+        // The per-email cap further down bounds how much mail one victim receives, and that was the only
+        // bound here: a single caller could walk an address list and have this server deliver one mail per
+        // address — from the tenant's own verified sending domain — plus one anonymous user-store lookup
+        // per attempt, whether or not the account exists. Turnstile is opt-in and off by default, so it is
+        // not the missing bound either; it is also an outbound HTTP call per request, which is itself
+        // worth throttling in front of. Register has always had this cap; forgot-password is the same
+        // primitive without even needing an account.
+        var sourceIp = httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+        var resetOpts = authOptions.Value;
+        if (await rateLimiter.IsRateLimitedAsync(
+                $"pwreset|from|{sourceIp}", resetOpts.MaxPasswordResetsPerIp,
+                TimeSpan.FromMinutes(resetOpts.PasswordResetWindowMinutes), ct))
+        {
+            // A source-keyed cap says nothing about any account, so a real 429 here leaks nothing the
+            // enumeration-neutral success response is protecting.
+            return JsonResults.Error("rate_limited", "Too many password reset requests. Please try again later.", 429);
+        }
+
         // Cloudflare Turnstile (opt-in): reject bots before issuing reset tokens / sending mail.
         // A captcha result is independent of account existence, so this leaks no enumeration signal.
         if (turnstile.Enabled && !await turnstile.VerifyAsync(request.TurnstileToken, httpContext.Connection.RemoteIpAddress?.ToString(), ct))

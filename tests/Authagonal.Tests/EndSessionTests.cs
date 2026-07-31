@@ -12,10 +12,12 @@ namespace Authagonal.Tests;
 public sealed class EndSessionTests : IAsyncLifetime
 {
     private readonly AuthagonalTestFactory _factory = new();
+    private readonly BackChannelLogoutRecorder _fanOut = new();
     private HttpClient _client = null!;
 
     public async Task InitializeAsync()
     {
+        _factory.BackChannelLogoutHttpHandler = _fanOut;
         _client = _factory.CreateClient(new() { AllowAutoRedirect = false });
         await _factory.SeedTestDataAsync();
     }
@@ -97,6 +99,64 @@ public sealed class EndSessionTests : IAsyncLifetime
 
         Assert.Equal("text/html", response.Content.Headers.ContentType?.MediaType);
         Assert.Equal(HttpStatusCode.OK, (await _client.GetAsync("/api/auth/session")).StatusCode);
+    }
+
+    /// <summary>
+    /// RP-initiated logout notifies the RPs that registered a back-channel URI — and refuses the ones
+    /// pointing into the deployment's own network.
+    /// </summary>
+    /// <remarks>
+    /// This is the second sender of the same notification, and it had the same gap: dynamic registration
+    /// validated the URI at write time, but seeded, migrated and admin-written clients never went through
+    /// that path, so an anonymous /connect/endsession would make the server POST a signed token at
+    /// 169.254.169.254. Two clients are notified in one logout so the good one's arrival marks the loop as
+    /// having run — otherwise "no request was made" would pass on a loop that simply had not started.
+    /// </remarks>
+    [Fact]
+    public async Task EndSession_DoesNotNotifyAnInternalBackChannelUri()
+    {
+        var user = await _factory.SeedTestUserAsync();
+        await SeedBackChannelClientAsync("es-bcl-external", "https://rp.example/logout", user.Id);
+        await SeedBackChannelClientAsync("es-bcl-internal", "http://169.254.169.254/latest/meta-data/", user.Id);
+
+        await _client.PostAsJsonAsync("/api/auth/login", new { email = user.Email, password = "Test1234!" });
+        var token = ConfirmationTokenFrom(await (await _client.GetAsync("/connect/endsession")).Content.ReadAsStringAsync());
+
+        var response = await _client.PostAsync("/connect/endsession", new FormUrlEncodedContent(
+            new Dictionary<string, string> { ["logout_confirm"] = token }));
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        // The POSTs run on a background task, so wait for the one that is supposed to happen.
+        var deadline = DateTime.UtcNow.AddSeconds(10);
+        while (_fanOut.Requests.Count == 0 && DateTime.UtcNow < deadline)
+            await Task.Delay(25);
+
+        var sent = Assert.Single(_fanOut.Requests);
+        Assert.Equal("https://rp.example/logout", sent.Uri);
+    }
+
+    private async Task SeedBackChannelClientAsync(string clientId, string backChannelUri, string subjectId)
+    {
+        await _factory.ClientStore.UpsertAsync(new Authagonal.Core.Models.OAuthClient
+        {
+            ClientId = clientId,
+            ClientName = clientId,
+            RequireClientSecret = false,
+            AllowedGrantTypes = ["authorization_code"],
+            RedirectUris = ["https://rp.example/callback"],
+            AllowedScopes = ["openid"],
+            BackChannelLogoutUri = backChannelUri,
+        });
+        await _factory.GrantStore.StoreAsync(new Authagonal.Core.Models.PersistedGrant
+        {
+            Key = Guid.NewGuid().ToString("N"),
+            Type = "refresh_token",
+            SubjectId = subjectId,
+            ClientId = clientId,
+            Data = "{}",
+            CreatedAt = DateTimeOffset.UtcNow,
+            ExpiresAt = DateTimeOffset.UtcNow.AddHours(1),
+        });
     }
 
     /// <summary>Pulls the hidden <c>logout_confirm</c> value out of the interstitial's form.</summary>

@@ -72,6 +72,19 @@ public sealed class AuthOptions
     public int PasswordResetWindowMinutes { get; set; } = 60;
 
     /// <summary>
+    /// Forgot-password requests one source IP may make per <see cref="PasswordResetWindowMinutes"/>.
+    /// </summary>
+    /// <remarks>
+    /// The per-email cap bounds mail to ONE victim; it does nothing about a caller working through an
+    /// address list, which is unbounded anonymous mail delivery from the tenant's verified sending domain
+    /// plus one user-store read per address (an unauthenticated enumeration and load primitive). Register
+    /// has carried a per-IP cap all along; this is the same bound on the other mail-sending endpoint.
+    /// Larger than <see cref="MaxRegistrationsPerIp"/> because a shared NAT egress legitimately produces
+    /// several resets an hour, and unlike register the request is idempotent for the caller.
+    /// </remarks>
+    public int MaxPasswordResetsPerIp { get; set; } = 15;
+
+    /// <summary>
     /// Email domains whose self-service registrations are auto-confirmed (skip the verification
     /// email). Empty by default — every registration must verify its email. Intended only for
     /// dev/test (e.g. <c>["example.com"]</c>); never list a domain that can receive real mail.

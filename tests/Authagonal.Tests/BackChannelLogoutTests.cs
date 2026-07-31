@@ -1,5 +1,4 @@
 using System.Net;
-using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
 using Authagonal.Core.Models;
@@ -25,10 +24,15 @@ public sealed class BackChannelLogoutTests : IAsyncLifetime
     private const string BclClientId = "bcl-client";
 
     private readonly AuthagonalTestFactory _factory = new();
+    private readonly BackChannelLogoutRecorder _fanOut = new();
     private HttpClient _client = null!;
 
     public async Task InitializeAsync()
     {
+        // Set before the host starts: the sender now runs every registered URI through the outbound SSRF
+        // guard, so the loopback listener this suite used to observe the fan-out with is refused before a
+        // socket is opened. The stub takes its place and additionally records what was NOT sent.
+        _factory.BackChannelLogoutHttpHandler = _fanOut;
         _client = _factory.CreateClient(new() { AllowAutoRedirect = false });
         await _factory.SeedTestDataAsync();
 
@@ -95,10 +99,8 @@ public sealed class BackChannelLogoutTests : IAsyncLifetime
         // Regression guard: the events member's value used to be an anonymous object (`new { }`),
         // which JsonWebTokenHandler.CreateToken cannot serialize (IDX11025) — the per-client
         // try/catch swallowed it, so every RP silently counted as `failed` and no HTTP request
-        // was ever sent. The mint now uses a serializable empty dictionary; this test observes
-        // the real fan-out via a loopback listener and validates the logout_token shape.
-        await using var capture = new CaptureServer();
-
+        // was ever sent. The mint now uses a serializable empty dictionary; this test observes the
+        // fan-out through the named client's handler and validates the logout_token shape.
         await _factory.ClientStore.UpsertAsync(new OAuthClient
         {
             ClientId = BclClientId,
@@ -107,7 +109,7 @@ public sealed class BackChannelLogoutTests : IAsyncLifetime
             AllowedGrantTypes = ["authorization_code"],
             RedirectUris = ["https://bcl.test/callback"],
             AllowedScopes = ["openid"],
-            BackChannelLogoutUri = $"http://127.0.0.1:{capture.Port}/logout",
+            BackChannelLogoutUri = "https://rp.example/logout",
         });
 
         var subjectId = Guid.NewGuid().ToString("N");
@@ -123,8 +125,9 @@ public sealed class BackChannelLogoutTests : IAsyncLifetime
         Assert.Equal(0, json.GetProperty("failed").GetInt32());
         Assert.Equal(2, json.GetProperty("grantsRevoked").GetInt32());
 
-        // The listener saw the real POST: application/x-www-form-urlencoded logout_token=...
-        var body = await capture.Body.WaitAsync(TimeSpan.FromSeconds(10));
+        // The handler saw the POST: application/x-www-form-urlencoded logout_token=...
+        var (uri, body) = Assert.Single(_fanOut.Requests);
+        Assert.Equal("https://rp.example/logout", uri);
         var logoutToken = System.Net.WebUtility.UrlDecode(
             Assert.Single(body.Split('&'), p => p.StartsWith("logout_token=", StringComparison.Ordinal))
                 ["logout_token=".Length..]);
@@ -177,8 +180,8 @@ public sealed class BackChannelLogoutTests : IAsyncLifetime
             AllowedGrantTypes = ["authorization_code"],
             RedirectUris = ["https://bcl.test/callback"],
             AllowedScopes = ["openid"],
-            // A loopback port nothing listens on — connection refused, not a mint failure.
-            BackChannelLogoutUri = "http://127.0.0.1:1/logout",
+            // Transport failure, not a mint failure and not a refusal — the handler refuses to connect.
+            BackChannelLogoutUri = "https://unreachable.example/logout",
         });
         var subjectId = await SeedGrantAsync(clientId);
 
@@ -189,6 +192,49 @@ public sealed class BackChannelLogoutTests : IAsyncLifetime
         Assert.Equal(0, json.GetProperty("notified").GetInt32());
         Assert.Equal(1, json.GetProperty("failed").GetInt32());
         Assert.Empty(await _factory.GrantStore.GetBySubjectAsync(subjectId)); // revocation unaffected
+    }
+
+    /// <summary>
+    /// A logout URI pointing into the deployment's own network is not POSTed at all.
+    /// </summary>
+    /// <remarks>
+    /// Dynamic registration validates this URI where it is written, which does nothing for the URIs that
+    /// never went through it: seeded clients, the Duende migration, admin writes, and anything registered
+    /// before that check existed. The sink is a server-initiated POST to a stored, caller-chosen target
+    /// whose response never comes back to the caller — a blind SSRF primitive aimed at the cloud metadata
+    /// service or an unauthenticated internal admin API. The assertion that matters is
+    /// <c>Assert.Empty(_fanOut.Requests)</c>: nothing left the process.
+    /// </remarks>
+    [Theory]
+    [InlineData("http://169.254.169.254/latest/meta-data/")]
+    [InlineData("http://127.0.0.1:9200/_shutdown")]
+    [InlineData("http://10.0.0.7/internal/logout")]
+    [InlineData("http://es.internal:9200/_shutdown")]
+    public async Task WithSecret_InternalBackChannelUri_IsRefusedAtSendTime(string uri)
+    {
+        var clientId = $"bcl-internal-{Guid.NewGuid():N}";
+        await _factory.ClientStore.UpsertAsync(new OAuthClient
+        {
+            ClientId = clientId,
+            ClientName = "Internally-Pointed Client",
+            RequireClientSecret = false,
+            AllowedGrantTypes = ["authorization_code"],
+            RedirectUris = ["https://bcl.test/callback"],
+            AllowedScopes = ["openid"],
+            BackChannelLogoutUri = uri,
+        });
+        var subjectId = await SeedGrantAsync(clientId);
+
+        var response = await _client.SendAsync(BuildLogoutRequest(subjectId, ClusterSecret));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(0, json.GetProperty("notified").GetInt32());
+        Assert.Equal(1, json.GetProperty("failed").GetInt32());
+        Assert.Empty(_fanOut.Requests);
+        // The user is still logged out — the refusal is about where the notification goes, not whether
+        // the session ends.
+        Assert.Empty(await _factory.GrantStore.GetBySubjectAsync(subjectId));
     }
 
     // -----------------------------------------------------------------------
@@ -221,95 +267,6 @@ public sealed class BackChannelLogoutTests : IAsyncLifetime
         if (secret is not null)
             request.Headers.Add(InternalEndpointGuard.SecretHeader, secret);
         return request;
-    }
-
-    /// <summary>
-    /// Minimal single-request loopback HTTP server: captures the request body of one POST
-    /// and answers 200. Used to observe the endpoint's real logout_token fan-out, because
-    /// the "BackChannelLogout" named client has no test-host handler substitution seam.
-    /// </summary>
-    private sealed class CaptureServer : IAsyncDisposable
-    {
-        private readonly TcpListener _listener;
-        private readonly Task _serve;
-        private readonly TaskCompletionSource<string> _body =
-            new(TaskCreationOptions.RunContinuationsAsynchronously);
-
-        public int Port { get; }
-        public Task<string> Body => _body.Task;
-
-        public CaptureServer()
-        {
-            _listener = new TcpListener(IPAddress.Loopback, 0);
-            _listener.Start();
-            Port = ((IPEndPoint)_listener.LocalEndpoint).Port;
-            _serve = ServeOneAsync();
-        }
-
-        private async Task ServeOneAsync()
-        {
-            try
-            {
-                using var client = await _listener.AcceptTcpClientAsync();
-                using var stream = client.GetStream();
-
-                var buffer = new byte[64 * 1024];
-                var total = 0;
-                int headerEnd;
-                while ((headerEnd = FindHeaderEnd(buffer, total)) < 0)
-                {
-                    var read = await stream.ReadAsync(buffer.AsMemory(total));
-                    if (read == 0) throw new IOException("Connection closed before headers completed");
-                    total += read;
-                }
-
-                var headers = Encoding.ASCII.GetString(buffer, 0, headerEnd);
-                var contentLength = 0;
-                foreach (var line in headers.Split("\r\n"))
-                {
-                    if (line.StartsWith("Content-Length:", StringComparison.OrdinalIgnoreCase))
-                        contentLength = int.Parse(line["Content-Length:".Length..].Trim());
-                }
-
-                var bodyStart = headerEnd + 4;
-                while (total - bodyStart < contentLength)
-                {
-                    var read = await stream.ReadAsync(buffer.AsMemory(total));
-                    if (read == 0) break;
-                    total += read;
-                }
-
-                var body = Encoding.UTF8.GetString(
-                    buffer, bodyStart, Math.Min(contentLength, total - bodyStart));
-
-                var response = Encoding.ASCII.GetBytes(
-                    "HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
-                await stream.WriteAsync(response);
-
-                _body.TrySetResult(body);
-            }
-            catch (Exception ex)
-            {
-                _body.TrySetException(ex);
-            }
-        }
-
-        private static int FindHeaderEnd(byte[] buffer, int length)
-        {
-            for (var i = 3; i < length; i++)
-            {
-                if (buffer[i - 3] == '\r' && buffer[i - 2] == '\n' &&
-                    buffer[i - 1] == '\r' && buffer[i] == '\n')
-                    return i - 3;
-            }
-            return -1;
-        }
-
-        public async ValueTask DisposeAsync()
-        {
-            _listener.Stop();
-            try { await _serve; } catch { /* listener torn down */ }
-        }
     }
 }
 

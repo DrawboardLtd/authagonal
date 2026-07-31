@@ -389,6 +389,85 @@ public sealed class AgenticDelegationTests : IAsyncLifetime
             (await second.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("error_description").GetString());
     }
 
+    /// <summary>
+    /// An agent client that is flipped to public after its profile was attached can no longer exchange.
+    /// </summary>
+    /// <remarks>
+    /// The admin endpoint refuses to attach a profile to a public client, because the agent's client_id
+    /// is asserted as the <c>act</c> chain's actor and a public client proves nothing by naming itself.
+    /// Nothing preserved that afterwards: clearing RequireClientSecret (or the last secret hash, or
+    /// seeding the client public) left the profile attached to an identity anyone who knows the
+    /// client_id can present, and token exchange deliberately does not require a confidential client in
+    /// general — so the whole delegation chain, its audit trail and its approvals named an actor that
+    /// had authenticated as nobody. The invariant is therefore re-checked at mint.
+    /// </remarks>
+    [Fact]
+    public async Task Exchange_ByAnAgentClientFlippedToPublic_IsRefused()
+    {
+        var primary = await GetPrimaryAccessTokenAsync();
+        await GrantConsentAsync(AgentClientId);
+
+        var flipped = (await _factory.ClientStore.GetAsync(AgentClientId))!;
+        flipped.RequireClientSecret = false;
+        flipped.ClientSecretHashes = [];
+        await _factory.ClientStore.UpsertAsync(flipped);
+
+        // No secret to send — that is the point: the client_id alone now authenticates it.
+        var response = await ExchangeAsync(AgentClientId, clientSecret: "", primary,
+            authorizationDetails: """[{"type":"email","actions":["read"]}]""");
+
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("invalid_client", body.GetProperty("error").GetString());
+    }
+
+    /// <summary>
+    /// Deleting the last secret hash is the same flip by another route.
+    /// </summary>
+    [Fact]
+    public async Task Exchange_ByAnAgentClientWithNoRegisteredCredential_IsRefused()
+    {
+        var primary = await GetPrimaryAccessTokenAsync();
+        await GrantConsentAsync(AgentClientId);
+
+        var stripped = (await _factory.ClientStore.GetAsync(AgentClientId))!;
+        stripped.ClientSecretHashes = [];   // RequireClientSecret stays true, but nothing backs it
+        await _factory.ClientStore.UpsertAsync(stripped);
+
+        var response = await ExchangeAsync(AgentClientId, AgentClientSecret, primary,
+            authorizationDetails: """[{"type":"email","actions":["read"]}]""");
+
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
+    /// <summary>
+    /// A private_key_jwt client — no secret hash, a registered JWKS — is confidential and still exchanges.
+    /// </summary>
+    /// <remarks>
+    /// Pins the other side of the predicate: the check is "must present a registered credential", not
+    /// "must hold a shared secret". The admin gate used to demand a secret hash specifically, which
+    /// refused the strongest credential of the two while its own error text recommended it.
+    /// </remarks>
+    [Fact]
+    public async Task Exchange_ByAnAgentClientHoldingOnlyAJwks_IsNotRefusedForBeingPublic()
+    {
+        var primary = await GetPrimaryAccessTokenAsync();
+        await GrantConsentAsync(AgentClientId);
+
+        var jwksOnly = (await _factory.ClientStore.GetAsync(AgentClientId))!;
+        jwksOnly.ClientSecretHashes = [];
+        jwksOnly.JwksUri = "https://agent.example/.well-known/jwks.json";
+        await _factory.ClientStore.UpsertAsync(jwksOnly);
+
+        var response = await ExchangeAsync(AgentClientId, AgentClientSecret, primary,
+            authorizationDetails: """[{"type":"email","actions":["read"]}]""");
+
+        // Still 401 — it presented a secret it has no hash for — but for failing authentication, not for
+        // being a public client carrying an agent profile.
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.DoesNotContain("agent profile", body.GetProperty("error_description").GetString()!, StringComparison.Ordinal);
+    }
+
     // -----------------------------------------------------------------------
 
     private async Task GrantConsentAsync(string agentClientId, AuthoritySet? floor = null)

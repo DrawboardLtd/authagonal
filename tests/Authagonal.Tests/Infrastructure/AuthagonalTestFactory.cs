@@ -72,6 +72,13 @@ public sealed class AuthagonalTestFactory : IAsyncDisposable
     public HttpMessageHandler? OidcHttpHandler { get; set; }
     public HttpMessageHandler? SamlHttpHandler { get; set; }
 
+    /// <summary>
+    /// Set before starting the factory to intercept the logout-token fan-out instead of doing real
+    /// socket I/O. Needed because the sender now applies the outbound SSRF guard, so a loopback capture
+    /// listener — the only address a test can bind — is refused before any request is made.
+    /// </summary>
+    public HttpMessageHandler? BackChannelLogoutHttpHandler { get; set; }
+
     /// <summary>Set to an Azurite connection string to enable SAML/OIDC state storage.</summary>
     public string? AzuriteConnectionString { get; set; }
 
@@ -354,6 +361,9 @@ public sealed class AuthagonalTestFactory : IAsyncDisposable
             services.AddHttpClient("OidcDiscovery").ConfigurePrimaryHttpMessageHandler(() => OidcHttpHandler);
         else
             services.AddHttpClient("OidcDiscovery");
+        if (BackChannelLogoutHttpHandler is not null)
+            services.AddHttpClient("BackChannelLogout")
+                .ConfigurePrimaryHttpMessageHandler(() => BackChannelLogoutHttpHandler);
         services.AddMemoryCache();
 
         // SAML/OIDC services (state stores need real table storage for SSO tests)

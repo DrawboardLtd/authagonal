@@ -142,6 +142,18 @@ public static class EndSessionEndpoint
                 {
                     var c = await clientStore.GetAsync(clientIdGrant, ct);
                     if (c?.BackChannelLogoutUri is null) continue;
+                    // Same sink guard as /_internal/backchannel-logout: dynamic registration validates
+                    // this URI when it is written, but seeded, migrated and admin-written clients never
+                    // pass through that check, so a stored http://169.254.169.254/... would be POSTed by
+                    // the server from an anonymous, unauthenticated logout request. Validating where the
+                    // POST is built covers every way the URI got into the store.
+                    if (!Authagonal.Core.Services.OutboundUrl.IsSafe(c.BackChannelLogoutUri))
+                    {
+                        logger.LogWarning(
+                            "Back-channel logout for client {ClientId} refused: the registered URI is not " +
+                            "a permitted outbound target", clientIdGrant);
+                        continue;
+                    }
                     var tokenSid = c.BackChannelLogoutSessionRequired ? sessionId : null;
                     notifications.Add((c.BackChannelLogoutUri,
                         CreateBackChannelLogoutToken(tenantContext.Issuer, clientIdGrant, subjectId, tokenSid, keyManager)));
