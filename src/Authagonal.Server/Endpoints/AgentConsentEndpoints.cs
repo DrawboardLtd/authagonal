@@ -83,6 +83,13 @@ public static class AgentConsentEndpoints
             IEnumerable<IAuthHook> authHooks,
             CancellationToken ct) =>
         {
+            // Granting standing consent with `authority` omitted grants the agent's FULL ceiling, on
+            // nothing but the ambient session cookie. SameSite=Lax blocks a cross-SITE request but not
+            // a cross-ORIGIN one from a sibling host, and idp.acme.com beside app.acme.com is the
+            // normal shape — so script on any same-site origin could do this to a visiting user.
+            if (Services.InteractiveOriginGuard.Check(httpContext) is { } originError)
+                return originError;
+
             var subjectId = SubjectId(httpContext);
             if (subjectId is null)
                 return Results.Unauthorized();

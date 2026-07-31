@@ -141,7 +141,10 @@ public static class ServiceCollectionExtensions
         services.TryAddSingleton<IClientStore>(new TableClientStore(clients, live));
         services.TryAddSingleton<IGrantStore>(sp =>
             new TableGrantStore(grants, grantsBySubject, grantsByExpiry, live, sp.GetRequiredService<ILoggerFactory>().CreateLogger<TableGrantStore>()));
-        services.TryAddSingleton<ISigningKeyStore>(new TableSigningKeyStore(signingKeys, live));
+        // Resolved from the container, like the user and grant stores: a host that registers an
+        // IFieldCipher expects the PRIVATE SIGNING KEY to be covered by it above all else.
+        services.TryAddSingleton<ISigningKeyStore>(sp =>
+            new TableSigningKeyStore(signingKeys, live, null, sp.GetService<IFieldCipher>()));
         services.TryAddSingleton<ISsoDomainStore>(new TableSsoDomainStore(ssoDomains, live));
         services.TryAddSingleton<ISamlProviderStore>(new TableSamlProviderStore(samlProviders, live));
         services.TryAddSingleton<IOidcProviderStore>(new TableOidcProviderStore(oidcProviders, live));

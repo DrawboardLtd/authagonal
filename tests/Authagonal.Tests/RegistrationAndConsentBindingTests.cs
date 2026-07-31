@@ -87,6 +87,92 @@ public sealed class RegistrationAndConsentBindingTests : IAsyncLifetime
     }
 
     // -----------------------------------------------------------------------
+    // F232 — granting agent authority requires coming from the IdP's own pages
+    // -----------------------------------------------------------------------
+
+    /// <remarks>
+    /// Granting standing agent consent with `authority` omitted grants the agent's FULL ceiling, and
+    /// the only credential either this or the approval POST required was the ambient session cookie —
+    /// no confirmation, no re-authentication, no antiforgery token, no binding to a pending request.
+    /// SameSite=Lax withholds the cookie from a genuinely cross-SITE request but not from a sibling
+    /// origin, and idp.acme.com beside app.acme.com is the normal shape: script on any same-site
+    /// origin could grant an agent full authority over a visiting user, silently.
+    /// </remarks>
+    [Theory]
+    [InlineData("https://evil.example")]
+    [InlineData("https://app.test")]
+    public async Task ConsentPost_FromAnotherOrigin_IsRefused(string origin)
+    {
+        await _factory.SeedTestUserAsync();
+        await _client.PostAsJsonAsync("/api/auth/login", new { email = "test@example.com", password = "Test1234!" });
+
+        var request = new HttpRequestMessage(HttpMethod.Post, "/consent/agents")
+        {
+            Content = JsonContent.Create(new { clientId = "some-agent" }),
+        };
+        request.Headers.Add("Origin", origin);
+
+        var response = await _client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task ConsentPost_WithACrossSiteFetchMetadataHeader_IsRefused()
+    {
+        // Sec-Fetch-Site is set by the browser and cannot be forged by script, so when it says the
+        // request came from elsewhere that settles it before any string comparison.
+        await _factory.SeedTestUserAsync();
+        await _client.PostAsJsonAsync("/api/auth/login", new { email = "test@example.com", password = "Test1234!" });
+
+        var request = new HttpRequestMessage(HttpMethod.Post, "/consent/agents")
+        {
+            Content = JsonContent.Create(new { clientId = "some-agent" }),
+        };
+        request.Headers.Add("Sec-Fetch-Site", "same-site");
+
+        Assert.Equal(HttpStatusCode.Forbidden, (await _client.SendAsync(request)).StatusCode);
+    }
+
+    [Fact]
+    public async Task ApprovalPost_FromAnotherOrigin_IsRefused()
+    {
+        // The requesting agent already knows the approval id — the token endpoint returned it — so
+        // the cookie was the only thing between a cross-origin POST and a resolved approval.
+        await _factory.SeedTestUserAsync();
+        await _client.PostAsJsonAsync("/api/auth/login", new { email = "test@example.com", password = "Test1234!" });
+
+        var request = new HttpRequestMessage(HttpMethod.Post, "/approvals/some-approval")
+        {
+            Content = JsonContent.Create(new { decision = "approve" }),
+        };
+        request.Headers.Add("Origin", "https://app.test");
+
+        Assert.Equal(HttpStatusCode.Forbidden, (await _client.SendAsync(request)).StatusCode);
+    }
+
+    [Fact]
+    public async Task ConsentPost_FromTheIdpsOwnPages_IsNotRefusedByTheOriginCheck()
+    {
+        // The guard must not break the login app. A request carrying the server's own origin gets
+        // past it and fails (or succeeds) on its own merits — here, an unknown agent id.
+        await _factory.SeedTestUserAsync();
+        await _client.PostAsJsonAsync("/api/auth/login", new { email = "test@example.com", password = "Test1234!" });
+
+        var request = new HttpRequestMessage(HttpMethod.Post, "/consent/agents")
+        {
+            Content = JsonContent.Create(new { clientId = "no-such-agent" }),
+        };
+        request.Headers.Add("Origin", AuthagonalTestFactory.TestIssuer);
+        request.Headers.Add("Sec-Fetch-Site", "same-origin");
+
+        var response = await _client.SendAsync(request);
+
+        Assert.NotEqual(HttpStatusCode.Forbidden, response.StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+    }
+
+    // -----------------------------------------------------------------------
     // F67 — the advertised device verification_uri resolves
     // -----------------------------------------------------------------------
 

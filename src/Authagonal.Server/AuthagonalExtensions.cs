@@ -284,6 +284,10 @@ public static class AuthagonalExtensions
         // pin — so the floor is asserted rather than assumed.
         services.AddSingleton<IHostedService, RuntimeVersionFloor>();
 
+        // The private signing key is the one secret whose exposure is total, and its at-rest
+        // protection is opt-in through IFieldCipher — so its absence is stated rather than assumed.
+        services.AddSingleton<IHostedService, PlaintextSigningKeyWarning>();
+
         services.AddAuthagonalProtocol(_ => { });
 
         // Subject resolver — maps ClaimsPrincipal / OidcSubject back to AuthUser via the user store.

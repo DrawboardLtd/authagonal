@@ -102,7 +102,8 @@ public static class ServiceCollectionExtensions
         services.TryAddSingleton<IChangeWriter>(tombstones);
 
         services.TryAddSingleton<IClientStore>(new SqlClientStore(T(ClientsTable), live, tombstones));
-        services.TryAddSingleton<ISigningKeyStore>(new SqlSigningKeyStore(T(SigningKeysTable), live, tombstones));
+        services.TryAddSingleton<ISigningKeyStore>(sp =>
+            new SqlSigningKeyStore(T(SigningKeysTable), live, tombstones, sp.GetService<IFieldCipher>()));
         // The crypto seams (IFieldCipher / IIndexTokenizer) resolve lazily from the container so a host
         // that registers them BEFORE AddSqlStorage gets PII encryption + blind-index keys — the Null
         // passthroughs apply otherwise (plaintext, the default layout).

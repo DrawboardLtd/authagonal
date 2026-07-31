@@ -63,6 +63,13 @@ public static class ApprovalEndpoints
             IEnumerable<IAuthHook> authHooks,
             CancellationToken ct) =>
         {
+            // The requesting agent already knows this approval id — the token endpoint handed it back
+            // — so the only thing standing between a same-site cross-origin POST and a resolved
+            // approval was the ambient session cookie, which SameSite=Lax does not withhold from a
+            // sibling origin.
+            if (Services.InteractiveOriginGuard.Check(httpContext) is { } originError)
+                return originError;
+
             var subjectId = SubjectId(httpContext);
             if (subjectId is null)
                 return Results.Unauthorized();

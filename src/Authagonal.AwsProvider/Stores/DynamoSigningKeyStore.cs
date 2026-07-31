@@ -12,9 +12,23 @@ namespace Authagonal.AwsProvider.Stores;
 /// cheap server-side filter on the <c>active</c> attribute. This is the store the federated cross-cloud
 /// JWKS reads from: every key here is published, so a peer cloud's public keys validate after failover.
 /// </summary>
-public sealed class DynamoSigningKeyStore(DynamoTable table, EnvPartitioner partitioner, IChangeWriter? tombstones = null) : ISigningKeyStore
+public sealed class DynamoSigningKeyStore(
+    DynamoTable table, EnvPartitioner partitioner, IChangeWriter? tombstones = null,
+    IFieldCipher? fieldCipher = null) : ISigningKeyStore
 {
     private const string Partition = "signing";
+
+    /// <summary>
+    /// At-rest protection for the private key material, through the same seam the user and grant
+    /// stores use. Passthrough when the host registers no cipher, which is the historical layout.
+    /// </summary>
+    /// <remarks>
+    /// KeyMaterialJson holds the full JWK, private scalar included. Written in the clear, anyone who
+    /// could read the primary data store could mint a token this server would sign for — every
+    /// session, every scope, every user. Complete impersonation of the issuer, from read access to
+    /// the same table the data it protects lives in.
+    /// </remarks>
+    private readonly IFieldCipher _cipher = fieldCipher ?? NullFieldCipher.Instance;
 
     public async Task<SigningKeyInfo?> GetActiveKeyAsync(CancellationToken ct = default)
     {
@@ -25,7 +39,7 @@ public sealed class DynamoSigningKeyStore(DynamoTable table, EnvPartitioner part
             consistentRead: true,
             ct: ct).ConfigureAwait(false))
         {
-            return Read(item);
+            return await ReadAsync(item, ct).ConfigureAwait(false);
         }
 
         return null;
@@ -35,7 +49,7 @@ public sealed class DynamoSigningKeyStore(DynamoTable table, EnvPartitioner part
     {
         var results = new List<SigningKeyInfo>();
         await foreach (var item in table.QueryAsync(partitioner.PK(Partition), consistentRead: true, ct: ct).ConfigureAwait(false))
-            results.Add(Read(item));
+            results.Add(await ReadAsync(item, ct).ConfigureAwait(false));
         return results;
     }
 
@@ -46,7 +60,7 @@ public sealed class DynamoSigningKeyStore(DynamoTable table, EnvPartitioner part
         var item = await table.GetAsync(partitioner.PK(Partition), keyId, ct).ConfigureAwait(false);
         if (item is null) return;
 
-        var key = Read(item);
+        var key = await ReadAsync(item, ct).ConfigureAwait(false);
         key.IsActive = false;
         await Write(key, ct).ConfigureAwait(false);
     }
@@ -59,22 +73,24 @@ public sealed class DynamoSigningKeyStore(DynamoTable table, EnvPartitioner part
             await tombstones.WriteAsync("SigningKeys", pk, keyId, ct).ConfigureAwait(false);
     }
 
-    private Task Write(SigningKeyInfo key, CancellationToken ct)
+    private async Task Write(SigningKeyInfo key, CancellationToken ct)
     {
         var item = Dyn.Item(partitioner.PK(Partition), key.KeyId);
         item.PutS("algorithm", key.Algorithm);
-        item.PutS("keyMaterialJson", key.KeyMaterialJson);
+        item.PutS("keyMaterialJson", await _cipher.ProtectAsync(key.KeyMaterialJson, ct).ConfigureAwait(false));
         item.PutBool("active", key.IsActive);
         item.PutDate("createdAt", key.CreatedAt);
         item.PutDate("expiresAt", key.ExpiresAt);
-        return table.PutAsync(item, ct);
+        await table.PutAsync(item, ct).ConfigureAwait(false);
     }
 
-    private static SigningKeyInfo Read(Dictionary<string, AttributeValue> item) => new()
+    private async Task<SigningKeyInfo> ReadAsync(Dictionary<string, AttributeValue> item, CancellationToken ct) => new()
     {
         KeyId = item.GetStr(Dyn.Sk),
         Algorithm = item.GetStr("algorithm"),
-        KeyMaterialJson = item.GetStr("keyMaterialJson"),
+        // ResolveAsync passes legacy plaintext through unchanged, so keys written before the cipher
+        // was configured keep loading.
+        KeyMaterialJson = await _cipher.ResolveAsync(item.GetStr("keyMaterialJson") ?? "", ct).ConfigureAwait(false),
         IsActive = item.GetBool("active"),
         CreatedAt = item.GetDate("createdAt"),
         ExpiresAt = item.GetDate("expiresAt"),

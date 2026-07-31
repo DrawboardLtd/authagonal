@@ -223,6 +223,23 @@ Two contract points matter. `ProtectAsync` must return a self-describing ciphert
 
 `IIndexTokenizer` keeps encrypted fields searchable. It turns a normalized plaintext value into a deterministic, table-key-safe blind-index token, typically a keyed HMAC where the key lives outside the database. Determinism means an equality lookup still works ("email = x" becomes "token = HMAC(x)"), while a database dump can neither recompute nor reverse a token. Prefix search is layered on top by tokenizing each prefix of a value separately, since a keyed HMAC destroys ordering and range scans.
 
+> **What a dump still reveals.** "Neither recompute nor reverse" is true of a single token and not of
+> the index as a whole. Three residues survive, and they are worth knowing before you rely on this:
+>
+> - **Structure.** The prefix index writes one row per prefix, so a record's row count equals the
+>   length of the indexed field — a dump leaks how long every email local-part and every name is.
+> - **Equality and frequency.** Tokens are deterministic by construction, which is what makes lookup
+>   work, so a dump shows which records share a value and how common each value is. The domain index
+>   buckets your population by employer, which often identifies people without recovering an address.
+> - **Chosen plaintext.** An attacker who can both read the store *and* cause values to be indexed
+>   (register an account, be provisioned over SCIM) can submit a candidate and look for its token.
+>   That recovers any guessable value — common domains, common first names — no matter where the key
+>   lives, because the oracle is the write path rather than the cipher.
+>
+> Tokenization defends against the case it was built for: someone holding a dump and nothing else,
+> trying to read addresses. If that residue is unacceptable, leave the prefix and domain indexes off
+> — exact-match lookup carries none of it — rather than assuming the HMAC covers them.
+
 ```csharp
 public interface IIndexTokenizer
 {
