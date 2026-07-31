@@ -1118,9 +1118,17 @@ public sealed class ProtocolTokenService(
             // The floor: no standing consent, no delegation — the ceiling alone grants nothing.
             var consentGrant = await grantStore.GetAsync(AgentConsent.Key(sub, clientId), ct);
             AuthoritySet floor = AuthoritySet.Empty;
+            // SubjectId and ClientId are re-checked on the retrieved record, not inferred from the key
+            // that found it. Trusting the key alone makes consent only as strong as key construction:
+            // any future change to the format, or a subject id containing the separator, could make one
+            // user's standing consent answer for another's — and standing agent consent is what lets an
+            // agent mint delegated tokens without further interaction. The approval path already
+            // re-checks both; this one did not.
             var hasConsent = consentGrant is not null
                 && consentGrant.Type == AgentConsent.GrantType
                 && consentGrant.ExpiresAt > DateTimeOffset.UtcNow
+                && string.Equals(consentGrant.SubjectId, sub, StringComparison.Ordinal)
+                && string.Equals(consentGrant.ClientId, clientId, StringComparison.Ordinal)
                 && AgentConsent.TryParse(consentGrant.Data, out floor, out _);
             if (!hasConsent)
                 throw new ProtocolTokenException("invalid_grant",
@@ -1524,12 +1532,29 @@ public sealed class ProtocolTokenService(
                     now - lastPolled < TimeSpan.FromSeconds(Approval.PollIntervalSeconds))
                     throw new ProtocolTokenException("slow_down",
                         "Polling too frequently. Increase your interval and try again.");
-                // Best-effort poll marker, mirroring the device flow — a lost update just
-                // means one un-throttled poll.
-                data.LastPolledAt = now;
-                grant.Key = key;
-                grant.Data = Approval.Serialize(data);
-                await grantStore.StoreAsync(grant, ct);
+                // The poll marker is written ONLY if the row is still pending when the write lands.
+                //
+                // This was an unconditional StoreAsync of the whole payload, read moments earlier. A
+                // poll racing the user's decision therefore wrote back the stale `Pending` status and
+                // silently reverted an approve or a DENY — the agent's own polling undoing the user's
+                // answer. Re-reading and re-checking before the write closes the window to the point
+                // where a lost update costs one un-throttled poll, which is what the comment always
+                // claimed the cost was.
+                var current = await grantStore.GetAsync(key, ct);
+                if (current is null || Approval.Parse(current.Data) is not { } currentData)
+                    throw new ApprovalPendingException(approvalId, Approval.PollIntervalSeconds);
+
+                if (currentData.Status != ApprovalStatus.Pending)
+                {
+                    // The user answered between our read and now. Re-evaluate against their answer
+                    // rather than overwriting it.
+                    return await RedeemApprovalAsync(approvalId, clientId, subjectId, requestHash, ct);
+                }
+
+                currentData.LastPolledAt = now;
+                current.Key = key;
+                current.Data = Approval.Serialize(currentData);
+                await grantStore.StoreAsync(current, ct);
                 throw new ApprovalPendingException(approvalId, Approval.PollIntervalSeconds);
 
             default:

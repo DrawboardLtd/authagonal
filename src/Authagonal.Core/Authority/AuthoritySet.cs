@@ -109,8 +109,22 @@ public sealed class AuthoritySet
         foreach (var action in actions)
         {
             var policy = (ActionPolicy)Math.Max((int)a.PolicyFor(action), (int)b.PolicyFor(action));
-            if (policy != ActionPolicy.Auto)
+
+            // An explicitly-stated `auto` is recorded, not dropped as if it were absent.
+            //
+            // Auto is the enum's zero, so `if (policy != Auto)` discarded it — which made an explicit
+            // auto indistinguishable from "nothing was said about this action". That distinction is
+            // load-bearing: the documented rule is that an explicit auto beats the profile's
+            // HighRiskDefault, and downstream code reads absence as "apply the default". So an admin
+            // who deliberately marked a high-risk action auto had that decision erased by any Intersect
+            // and the action fell back to ask (or deny) anyway — the one behaviour the explicit setting
+            // exists to override.
+            if (policy != ActionPolicy.Auto
+                || a.ActionPolicies.ContainsKey(action)
+                || b.ActionPolicies.ContainsKey(action))
+            {
                 policies[action] = policy;
+            }
         }
 
         return new AuthorityGrant

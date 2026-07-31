@@ -77,7 +77,14 @@ public static class AgentEndpoints
             !client.AllowedGrantTypes.Contains(GrantTypes.ClientCredentials, StringComparer.OrdinalIgnoreCase))
             return BadRequest($"service mode requires the client to allow the '{GrantTypes.ClientCredentials}' grant type");
 
-        var ceiling = AuthoritySet.Empty;
+        // An omitted ceiling PRESERVES the stored one, as every other field on this endpoint does.
+        //
+        // It defaulted to AuthoritySet.Empty instead, and empty is deny-all — so a PUT that updated,
+        // say, maxTokenLifetimeSeconds and said nothing about the ceiling silently revoked the agent's
+        // entire authority. Every other field on the same request merges, so the asymmetry was the
+        // bug: a partial update is the normal way to use this endpoint.
+        var existingProfile = await store.GetAsync(clientId, ct);
+        var ceiling = existingProfile?.Ceiling ?? AuthoritySet.Empty;
         if (request.Ceiling is { } ceilingElement &&
             !AuthorityJson.TryParse(ceilingElement.GetRawText(), out ceiling))
             return BadRequest("ceiling must be an RFC 9396 authorization_details array");
@@ -90,7 +97,7 @@ public static class AgentEndpoints
         if (request.MaxTokenLifetimeSeconds is < 30 or > 86400)
             return BadRequest("maxTokenLifetimeSeconds must be between 30 and 86400");
 
-        var existing = await store.GetAsync(clientId, ct);
+        var existing = existingProfile;
         var now = DateTimeOffset.UtcNow;
         var profile = new AgentProfile
         {
