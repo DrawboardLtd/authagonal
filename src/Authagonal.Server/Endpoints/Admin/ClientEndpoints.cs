@@ -110,8 +110,19 @@ public static class ClientEndpoints
         // Only block escalation on scopes newly added by this update — leaving
         // existing scopes alone is safe even if the caller couldn't grant them today.
         var newlyAdded = client.AllowedScopes.Except(existing.AllowedScopes);
-        if (scopeGuard.FindUngrantableScope(http.User, newlyAdded) is not null)
-            return Results.Forbid();
+        // Same 403-with-a-reason as CreateClient, and for the same reason: Results.Forbid() answers a
+        // JSON API caller with the cookie scheme's 302 to /login. This path kept the Forbid() when the
+        // create path was fixed, and nothing caught it because the shipped AllowAll guard never
+        // reaches either branch — see ClientScopeGuardDenialTests.
+        if (scopeGuard.FindUngrantableScope(http.User, newlyAdded) is { } ungrantable)
+            return TypedResults.Json(
+                new ErrorInfoResponse
+                {
+                    Error = "forbidden_scope",
+                    ErrorDescription = $"You may not grant the scope '{ungrantable}' to a client.",
+                },
+                AuthagonalJsonContext.Default.ErrorInfoResponse,
+                statusCode: 403);
 
         // Reserve the admin scope: a client may never hold it.
         if (IsAdminScopeRequested(client.AllowedScopes, configuration))

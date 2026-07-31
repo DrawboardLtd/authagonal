@@ -46,6 +46,13 @@ internal sealed class AdminSurfaceHost : IAsyncDisposable
     /// <summary>Set before the first CreateClient() to cap provisioning-app creation.</summary>
     public int? MaxProvisioningApps { get; set; }
 
+    /// <summary>
+    /// Set before the first CreateClient() to substitute the privilege gate. Defaults to the shipped
+    /// single-role implementation, which grants everything — so the endpoints' denial branches are
+    /// unreachable unless a test supplies a guard that actually refuses something.
+    /// </summary>
+    public IClientScopeGuard ScopeGuard { get; set; } = new AllowAllClientScopeGuard();
+
     private WebApplication? _app;
 
     public HttpClient CreateClient(bool authenticated = true)
@@ -81,7 +88,7 @@ internal sealed class AdminSurfaceHost : IAsyncDisposable
         services.AddSingleton<IProvisioningAppStore>(ProvisioningAppStore);
         // Production defaults (registered by AddAuthagonal via TryAdd):
         services.AddSingleton<IAuditLogger, NullAuditLogger>();
-        services.AddSingleton<IClientScopeGuard, AllowAllClientScopeGuard>();
+        services.AddSingleton<IClientScopeGuard>(ScopeGuard);
         services.AddSingleton<IProvisioningAppQuota>(new FixedProvisioningAppQuota(MaxProvisioningApps));
 
         if (ProvisioningHttpHandler is not null)

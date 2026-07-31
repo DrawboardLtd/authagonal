@@ -19,8 +19,10 @@ public static class TokenTypes
     /// The <c>typ</c> is adopted because it does real work — it is what lets a resource server tell an
     /// access token from an id_token or a logout token by inspection — but full RFC 9068 conformance
     /// is NOT claimed. §2.1 also requires RS256 among the supported signature algorithms, and this
-    /// server signs and validates exclusively with ES256: discovery advertises ES256 alone, the crypto
-    /// provider implements only ECDSA-SHA256, and every inbound validator pins ValidAlgorithms to it.
+    /// server issues ES256 alone: discovery advertises ES256 and nothing else, and the crypto provider
+    /// implements only ECDSA-SHA256. Validators pin ValidAlgorithms to the EC family; the one place
+    /// RSA is accepted is the upstream-federation path, which consumes id_tokens minted by external
+    /// IdPs that sign with RS256, and says nothing about what this server issues.
     /// That is a deliberate single-algorithm posture, not an oversight — an RS256 key would have to be
     /// generated, published, rotated and accepted everywhere ES256 is, and every added accepted
     /// algorithm is another way for a verifier to be talked into the wrong one. Anything depending on

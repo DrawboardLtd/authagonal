@@ -374,14 +374,16 @@ public sealed class AuthagonalTestFactory : IAsyncDisposable
             options.SlidingExpiration = true;
             options.Cookie.HttpOnly = true;
             options.Cookie.SameSite = SameSiteMode.Lax;
-            // Diverges from production on purpose, and this is the only place that says so.
+            // Diverges from production on purpose.
             //
-            // AddAuthagonal now defaults to CookieSecurePolicy.Always plus a __Host- cookie name.
+            // AddAuthagonalCore defaults to CookieSecurePolicy.Always plus a __Host- cookie name.
             // TestServer speaks HTTP and CookieContainer refuses to send a Secure cookie over it, so
-            // mirroring production here would break every cookie-dependent test in the suite. The
-            // consequence to keep in mind: this factory duplicates the production cookie wiring
-            // rather than calling into it, so a change to that wiring is NOT exercised by these
-            // tests. Verify cookie-attribute changes against a real host over TLS.
+            // mirroring production here would break every cookie-dependent test in the suite.
+            //
+            // This factory therefore duplicates the production cookie wiring rather than calling into
+            // it, and nothing about that wiring is exercised by a request made through this client.
+            // The attributes themselves are asserted directly against AddAuthagonalCore, without any
+            // HTTP, in CookiePolicyConfigurationTests — change them there too.
             options.Cookie.SecurePolicy = CookieSecurePolicy.SameAsRequest;
 
             options.Events.OnValidatePrincipal = async context =>

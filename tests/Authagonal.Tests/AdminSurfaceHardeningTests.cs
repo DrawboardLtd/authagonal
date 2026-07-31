@@ -50,12 +50,12 @@ public sealed class AdminSurfaceHardeningTests : IAsyncLifetime
     // F334 — an authorization failure is not a login challenge
     // -----------------------------------------------------------------------
     //
-    // Not asserted here: the shipped IClientScopeGuard grants every scope to any authenticated admin
-    // (it is the single-role default), so there is no request that reaches the denial branch in this
-    // harness. The fix — a JSON 403 naming the scope, instead of Results.Forbid() running the cookie
-    // scheme's forbid handler and answering a 302 to /login — is exercised only by a host that
-    // registers a real scope hierarchy. Recorded rather than covered by a test that would have to
-    // stub the guard and would then be testing the stub.
+    // Covered in ClientScopeGuardDenialTests (behavioural, via a guard that actually refuses a scope)
+    // and ApiForbidConventionTests (structural, no Results.Forbid() anywhere in src). It was recorded
+    // here as untestable on the grounds that substituting the guard would only test the substitute —
+    // which was wrong twice over: the assertion is on the endpoint's rendering of a denial, not on
+    // the guard, and while the branch went unreachable the update path silently kept the
+    // Results.Forbid() the create path had been fixed to drop.
 
     private Task<HttpResponseMessage> Send(HttpMethod method, string url, object? body = null)
     {

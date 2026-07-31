@@ -48,7 +48,9 @@ public sealed class BrowserHardeningTests : IAsyncLifetime
     // cookie over it, so every cookie-dependent test in the suite would break. The factory therefore
     // pins SameAsRequest on purpose (see the note there).
     //
-    // The production change — CookieSecurePolicy.Always by default, plus the __Host- prefix — is
-    // verifiable only against a real host over TLS. Flagged rather than asserted, because a test that
-    // passed here would be testing the harness's copy of the wiring, not the shipped default.
+    // The production change — CookieSecurePolicy.Always by default, plus the __Host- prefix — was
+    // recorded here as verifiable only against a real host over TLS. That was too pessimistic: the
+    // attributes are set at configuration time, so they can be asserted by resolving the real
+    // AddAuthagonalCore options without making a request at all. CookiePolicyConfigurationTests does
+    // exactly that, and reads the shipped default rather than the harness's copy of it.
 }

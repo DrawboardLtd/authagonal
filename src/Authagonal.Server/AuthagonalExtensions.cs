@@ -403,21 +403,40 @@ public static class AuthagonalExtensions
             // then rides any plaintext request to the same host. The failure is silent and the cookie
             // is the whole session. Hosts that genuinely serve over HTTP — local development — set
             // Authentication:AllowInsecureCookie.
-            options.Cookie.SecurePolicy = configuration.GetValue("Authentication:AllowInsecureCookie", false)
+            var allowInsecureCookie = configuration.GetValue("Authentication:AllowInsecureCookie", false);
+            var cookieDomain = configuration["Authentication:CookieDomain"];
+
+            options.Cookie.SecurePolicy = allowInsecureCookie
                 ? CookieSecurePolicy.SameAsRequest
                 : CookieSecurePolicy.Always;
+
+            // Authentication:CookieDomain was previously read only to suppress the __Host- prefix and
+            // was never applied, so setting it cost the operator origin binding and bought them the
+            // domain-scoped cookie they had asked for — strictly worse than leaving it unset.
+            if (!string.IsNullOrEmpty(cookieDomain))
+                options.Cookie.Domain = cookieDomain;
 
             // __Host- binds the cookie to this exact origin: the browser refuses it unless it is
             // Secure, Path=/ and has no Domain attribute, which means a sibling subdomain — or anything
             // that manages to set cookies for the registrable domain — cannot overwrite the session
             // cookie. Without the prefix that overwrite is a session-fixation primitive the server
-            // cannot detect. Skipped when the operator has opted into insecure cookies, since the
+            // cannot detect. Skipped when the operator has opted into insecure cookies, since every
             // prefix requires Secure and the browser would otherwise reject the cookie outright.
-            if (!configuration.GetValue("Authentication:AllowInsecureCookie", false)
-                && string.IsNullOrEmpty(configuration["Authentication:CookieDomain"]))
+            if (!allowInsecureCookie)
             {
-                options.Cookie.Name = "__Host-" + options.Cookie.Name;
-                options.Cookie.Path = "/";
+                if (string.IsNullOrEmpty(cookieDomain))
+                {
+                    options.Cookie.Name = "__Host-" + options.Cookie.Name;
+                    options.Cookie.Path = "/";
+                }
+                else
+                {
+                    // A cookie domain rules out __Host-, which forbids Domain outright. __Secure- is
+                    // the strongest prefix left: it drops the origin binding but still guarantees the
+                    // cookie was set over HTTPS, which is what stops a sibling subdomain reached over
+                    // plain HTTP from overwriting the session cookie.
+                    options.Cookie.Name = "__Secure-" + options.Cookie.Name;
+                }
             }
 
             options.Events.OnValidatePrincipal = async context =>
