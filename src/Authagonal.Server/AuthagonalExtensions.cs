@@ -723,6 +723,19 @@ public static class AuthagonalExtensions
                     "Auth:AllowInsecureHttp if this deployment is deliberately plaintext.",
                     issuer);
             }
+            else if (app.Environment.IsDevelopment())
+            {
+                // The http-Issuer warning above catches a deployment configured for plaintext. It does NOT
+                // catch the shape that actually bites a developer: an https Issuer (the shipped default is
+                // https://localhost:5001) while the process is listening on a plain http port, because
+                // `dotnet run` picks whichever launch profile comes first. Everything then looks correct and
+                // /connect/* answers 400 with nothing in the log to connect it to. Say it here — Development
+                // only, so it costs a production host nothing.
+                app.Logger.LogInformation(
+                    "TLS is required at /connect/* (RFC 6749 §3.1/§3.2). If you are serving this host over " +
+                    "plain http locally, those endpoints will answer 400 — run the https launch profile, or " +
+                    "set Auth:AllowInsecureHttp for local development.");
+            }
         }
 
         // Forwarded-header trust is config-driven so X-Forwarded-For can't be spoofed to forge the
