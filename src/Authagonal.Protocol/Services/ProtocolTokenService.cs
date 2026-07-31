@@ -1223,13 +1223,17 @@ public sealed class ProtocolTokenService(
                     .Where(p => effective.PolicyFor(p.Type, p.Action) == ActionPolicy.Deny)
                     .Select(p => $"{p.Type}:{p.Action}")
                     .ToList();
+                // RFC 9396 §5 defines invalid_authorization_details for authorization_details the AS
+                // will not grant. invalid_target is RFC 8707's code for an unacceptable `resource` —
+                // a different parameter — so a client that handled the two separately (retry with a
+                // narrower resource vs. re-request the authority) was told to do the wrong thing.
                 if (denied.Count > 0)
-                    throw new ProtocolTokenException("invalid_target",
+                    throw new ProtocolTokenException("invalid_authorization_details",
                         $"requested authority is not grantable: {string.Join(", ", denied)}");
             }
 
             if (effective.Grants.Count == 0)
-                throw new ProtocolTokenException("invalid_target",
+                throw new ProtocolTokenException("invalid_authorization_details",
                     "the intersection of ceiling, consent and request grants no authority");
 
             // Ask-gate: any ask-policy action in the slice parks the exchange on a pending
@@ -1294,7 +1298,7 @@ public sealed class ProtocolTokenService(
 
             effective = subjectAuthority.Intersect(requestedAuthority);
             if (effective.Grants.Count == 0)
-                throw new ProtocolTokenException("invalid_target",
+                throw new ProtocolTokenException("invalid_authorization_details",
                     "the requested authorization_details are not within the subject token's authority");
         }
 

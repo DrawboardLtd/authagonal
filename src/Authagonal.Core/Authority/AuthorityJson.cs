@@ -29,9 +29,33 @@ public static class AuthorityJson
         var array = new JsonArray();
         foreach (var grant in set.Grants)
         {
+            // Deny-policy actions are stripped, and a grant left with none is dropped entirely.
+            //
+            // RFC 9396 authorization_details is a statement of what IS granted. Emitting a denied
+            // action inside `actions` and recording the denial only in the non-standard
+            // `action_policies` member means any consumer reading the standard field — which is what
+            // a spec-conforming resource server reads, and all it is required to read — sees the
+            // action as PERMITTED. The denial was visible only to a reader that knew about this
+            // product's extension.
+            var grantedActions = grant.Actions
+                .Where(a => grant.PolicyFor(a) != ActionPolicy.Deny)
+                .ToList();
+
+            if (grantedActions.Count == 0)
+                continue;
+
+            // A constraint that intersected to Nothing can never be satisfied, so the grant permits
+            // nothing regardless of its actions. Emitting it as a positive grant carrying a
+            // non-standard marker had the same problem in sharper form.
+            if (grant.Constraints.Values.Any(v => v is ConstraintValue.NothingValue)
+                || grant.Constraints.Values.Any(v => v is ConstraintValue.StringSet { Values.Count: 0 }))
+            {
+                continue;
+            }
+
             var node = new JsonObject { ["type"] = grant.Type };
 
-            node["actions"] = StringArray(grant.Actions);
+            node["actions"] = StringArray(grantedActions);
 
             if (grant.Locations.Count > 0)
                 node["locations"] = StringArray(grant.Locations);

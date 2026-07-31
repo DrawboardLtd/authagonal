@@ -133,7 +133,7 @@ public sealed class AgenticDelegationTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Exchange_RequestBeyondCeiling_IsInvalidTarget()
+    public async Task Exchange_RequestBeyondCeiling_IsInvalidAuthorizationDetails()
     {
         var primary = await GetPrimaryAccessTokenAsync();
         await GrantConsentAsync(AgentClientId);
@@ -143,7 +143,10 @@ public sealed class AgenticDelegationTests : IAsyncLifetime
 
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
         var body = await response.Content.ReadFromJsonAsync<JsonElement>();
-        Assert.Equal("invalid_target", body.GetProperty("error").GetString());
+        // RFC 9396 §5 defines invalid_authorization_details for authorization_details the AS will not
+        // grant. invalid_target is RFC 8707's code for an unacceptable `resource` — a different
+        // parameter — so a client handling the two separately was told to do the wrong thing.
+        Assert.Equal("invalid_authorization_details", body.GetProperty("error").GetString());
     }
 
     [Fact]
@@ -157,7 +160,7 @@ public sealed class AgenticDelegationTests : IAsyncLifetime
         var denied = await ExchangeAsync(AgentClientId, AgentClientSecret, primary,
             authorizationDetails: """[{"type":"email","actions":["read"]}]""");
         Assert.Equal(HttpStatusCode.BadRequest, denied.StatusCode);
-        Assert.Equal("invalid_target",
+        Assert.Equal("invalid_authorization_details",
             (await denied.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("error").GetString());
 
         var allowed = await ExchangeAsync(AgentClientId, AgentClientSecret, primary,
@@ -287,7 +290,7 @@ public sealed class AgenticDelegationTests : IAsyncLifetime
         var refused = await ExchangeAsync(SubAgentClientId, SubAgentClientSecret, delegated,
             authorizationDetails: """[{"type":"email","actions":["read"]}]""");
         Assert.Equal(HttpStatusCode.BadRequest, refused.StatusCode);
-        Assert.Equal("invalid_target",
+        Assert.Equal("invalid_authorization_details",
             (await refused.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("error").GetString());
     }
 
