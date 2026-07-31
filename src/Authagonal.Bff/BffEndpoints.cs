@@ -207,6 +207,16 @@ internal static class BffEndpoints
         CancellationToken ct)
     {
         var o = options.Value;
+
+        // no-store, as /bff/ws-ticket already sets. Every response here reports authentication state, and
+        // the authenticated one carries the user's identity claims — keyed by nothing but the session
+        // cookie. A shared cache, or a browser applying heuristic freshness to a 200 with no validators,
+        // could otherwise serve one user's claims to the next request on the same connection, and the SPA
+        // polls this endpoint. Set before the branches so the anonymous answers are uncacheable too: a
+        // stale "isAuthenticated: false" keeps a signed-in user looking signed out.
+        ctx.Response.Headers.CacheControl = "no-store";
+        ctx.Response.Headers.Vary = "Cookie";
+
         if (!HasAntiForgeryHeader(ctx, o))
             return Results.StatusCode(StatusCodes.Status401Unauthorized);
 
@@ -226,11 +236,6 @@ internal static class BffEndpoints
             ctx.Response.Cookies.Delete(o.CookieName, SessionCookieOptions(ctx, o));
             return Anonymous();
         }
-
-        // no-store, as /bff/ws-ticket already sets. This body carries the signed-in user's identity
-        // claims, so a shared cache or a browser applying heuristic freshness could serve one user's
-        // claims to the next request on the same connection — and the SPA polls this endpoint.
-        ctx.Response.Headers.CacheControl = "no-store";
 
         return Results.Json(new UserResponse
         {

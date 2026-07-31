@@ -54,7 +54,8 @@ export interface AuthagonalBffOptions {
 }
 
 /** An upstream API the BFF proxy forwards to. The path after `{basePath}/api` is matched against
- * {@link prefix} to select the upstream, then appended to {@link targetBaseUrl}. */
+ * {@link prefix} — on a segment boundary, so `/user` never captures `/userdata/...` — to select the
+ * upstream, then appended to {@link targetBaseUrl}. */
 export interface BffUpstream {
   /** Path prefix (after `{basePath}/api`) this upstream handles, e.g. `/orders`. */
   prefix: string;
