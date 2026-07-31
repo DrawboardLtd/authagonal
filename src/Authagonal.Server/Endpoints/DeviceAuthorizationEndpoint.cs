@@ -12,6 +12,30 @@ public static class DeviceAuthorizationEndpoint
 {
     public static IEndpointRouteBuilder MapDeviceAuthorizationEndpoints(this IEndpointRouteBuilder app)
     {
+        // The URL the device tells the user to type. RFC 8628 §3.2 wants it short and typeable, so it
+        // stays at the issuer root and redirects to wherever the login app actually lives.
+        //
+        // It previously resolved to nothing. The advertised verification_uri was hard-coded to
+        // "{issuer}/device" while every other login-app URL in the server is built from
+        // configuration["LoginAppUrl"], and the packaged app mounts BrowserRouter with
+        // basename="/login" — so the code-entry page is at /login/device. There was no server route
+        // for /device either, so the SPA fallback served the shell and a BrowserRouter whose basename
+        // does not prefix the pathname rendered nothing at all. A user who typed the URL exactly as
+        // instructed got a blank page, with no way to enter the code they were shown.
+        app.MapGet("/device", (HttpContext httpContext, IConfiguration configuration) =>
+        {
+            var loginApp = (configuration["LoginAppUrl"] ?? "/login").TrimEnd('/');
+            var userCode = httpContext.Request.Query["user_code"].FirstOrDefault();
+
+            var target = $"{loginApp}/device";
+            if (!string.IsNullOrWhiteSpace(userCode))
+                target += $"?user_code={Uri.EscapeDataString(userCode)}";
+
+            return Results.Redirect(target);
+        })
+        .AllowAnonymous()
+        .WithTags("OAuth");
+
         // RFC 8628 §3.1 — Device Authorization Request
         app.MapPost("/connect/deviceauthorization", async (
             HttpContext httpContext,

@@ -284,13 +284,35 @@ public static class AuthorizeEndpoint
                 var consentKey = $"consent:{subjectId}:{clientId}";
 
                 // Built identically at every exit below, so it is written once.
-                IResult RedirectToConsent()
+                async Task<IResult> RedirectToConsentAsync()
                 {
                     if (request.NoInteractionAllowed)
                         return AuthorizeRequestSupport.BuildErrorRedirect(
                             redirectUri, "consent_required",
                             "Consent is required and prompt=none forbids interaction",
                             state, tenantContext.Issuer);
+
+                    // Record what is being OFFERED, server-side, before the user-agent is sent
+                    // anywhere. The consent POST used to derive this from its own returnUrl field —
+                    // caller-supplied, and a DIFFERENT parameter from the `scope` that drove what the
+                    // screen actually rendered, so the displayed set and the recorded offered set
+                    // could be made to diverge by construction. That matters because the authorize
+                    // endpoint reads OfferedScopes as "already asked about" and SUPPRESSES the prompt
+                    // for anything inside it: a wide offered set is a way to never be asked again.
+                    // This is the only point at which the true offered set is known and not asserted
+                    // by the caller.
+                    await grantStore.StoreAsync(new Authagonal.Core.Models.PersistedGrant
+                    {
+                        Key = $"consent_offer:{subjectId}:{clientId}",
+                        Type = "consent_offer",
+                        ClientId = clientId,
+                        SubjectId = subjectId,
+                        Data = string.Join(" ", requestedScopes),
+                        CreatedAt = DateTimeOffset.UtcNow,
+                        // Long enough for a user to read the screen and decide; short enough that it
+                        // cannot be harvested and replayed against a later, narrower request.
+                        ExpiresAt = DateTimeOffset.UtcNow.AddMinutes(15),
+                    }, ct);
 
                     var consentAppUrl = configuration["LoginAppUrl"] ?? "/login";
                     var authorizeUrl = $"{httpContext.Request.Path}{httpContext.Request.QueryString}";
@@ -302,11 +324,11 @@ public static class AuthorizeEndpoint
                 // with none it is already refused as invalid_request, so this cannot reach the UI on a
                 // no-interaction request.
                 if (request.DemandsConsent)
-                    return RedirectToConsent();
+                    return await RedirectToConsentAsync();
 
                 var existingConsent = await grantStore.GetAsync(consentKey, ct);
                 if (existingConsent is null)
-                    return RedirectToConsent();
+                    return await RedirectToConsentAsync();
 
                 ConsentData? consentData;
                 try
@@ -318,7 +340,7 @@ public static class AuthorizeEndpoint
                     // Consent data malformed — treat as not consented (require re-consent)
                     logger.LogWarning(ex, "Malformed consent data for key {ConsentKey}, requiring re-consent", consentKey);
                     await grantStore.RemoveAsync(consentKey, ct);
-                    return RedirectToConsent();
+                    return await RedirectToConsentAsync();
                 }
 
                 var consentedScopes = new HashSet<string>(consentData?.Scopes ?? [], StringComparer.Ordinal);
@@ -336,7 +358,7 @@ public static class AuthorizeEndpoint
                 {
                     // A scope the user has never been asked about. Ask.
                     await grantStore.RemoveAsync(consentKey, ct);
-                    return RedirectToConsent();
+                    return await RedirectToConsentAsync();
                 }
 
                 // Everything requested has already been put to this user, so honour the answer they

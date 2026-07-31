@@ -119,15 +119,34 @@ public static class ConsentEndpoint
                 .Where(s => client.AllowedScopes.Contains(s, StringComparer.OrdinalIgnoreCase))
                 .ToList();
 
-            // What the user was OFFERED, read out of the authorize URL we are about to return to
-            // rather than taken from the request body. The body's job is to say what was approved; a
-            // wider offered set suppresses future prompts, so it is not the caller's to assert.
-            // Unioned with the granted set so a PAR authorize URL — which carries no `scope` — still
-            // records at least what was approved.
-            var offeredScopes = OfferedScopesFromReturnUrl(request.ReturnUrl)
+            // What the user was OFFERED, read from the record the AUTHORIZE endpoint wrote before it
+            // sent the user-agent here.
+            //
+            // It used to be derived from request.ReturnUrl, described as safer than the request body
+            // because it "is not the caller's to assert" — but returnUrl is just another field of the
+            // same caller-supplied POST, populated from a query parameter on a public SPA route. It is
+            // also a DIFFERENT parameter from the `scope` that drove what the screen rendered, so the
+            // displayed set and the recorded offered set could be made to diverge by construction.
+            // That is worth something to an attacker: AuthorizeEndpoint treats OfferedScopes as
+            // "already asked about" and suppresses the consent prompt for anything inside it, so a
+            // wide offered set is a way to never be asked about those scopes again.
+            //
+            // Unioned with the granted set so a flow whose offer record has lapsed still records at
+            // least what was approved, and intersected with AllowedScopes so a stale record cannot
+            // outlive a narrowing of the client's registration.
+            var offerRecord = await grantStore.GetAsync($"consent_offer:{subjectId}:{request.ClientId}", ct);
+            var offeredFromServer = offerRecord is not null && offerRecord.ExpiresAt > DateTimeOffset.UtcNow
+                ? offerRecord.Data.Split(' ', StringSplitOptions.RemoveEmptyEntries)
+                : [];
+
+            var offeredScopes = offeredFromServer
                 .Where(s => client.AllowedScopes.Contains(s, StringComparer.OrdinalIgnoreCase))
                 .Union(grantedScopes, StringComparer.Ordinal)
                 .ToList();
+
+            // Single-use: the offer belongs to the authorize request that created it.
+            if (offerRecord is not null)
+                await grantStore.RemoveAsync($"consent_offer:{subjectId}:{request.ClientId}", ct);
 
             var consentData = new AuthorizeEndpoint.ConsentData
             {
@@ -239,20 +258,6 @@ public static class ConsentEndpoint
     /// Reads the <c>scope</c> parameter out of the authorize URL the consent screen returns to, which
     /// is the set the screen displayed.
     /// </summary>
-    private static IEnumerable<string> OfferedScopesFromReturnUrl(string? returnUrl)
-    {
-        if (string.IsNullOrEmpty(returnUrl))
-            return [];
-
-        // returnUrl is a path+query, so it needs a base to parse against. The host is discarded —
-        // only the query is read.
-        if (!Uri.TryCreate(new Uri("https://placeholder"), returnUrl, out var uri))
-            return [];
-
-        return (System.Web.HttpUtility.ParseQueryString(uri.Query)["scope"] ?? "")
-            .Split(' ', StringSplitOptions.RemoveEmptyEntries);
-    }
-
     internal sealed class ConsentRequest
     {
         public string ClientId { get; set; } = "";

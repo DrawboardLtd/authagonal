@@ -203,6 +203,67 @@ public sealed class AdminClientEndpointTests : IAsyncLifetime
     // POST /api/v1/clients — CreateClient
     // -------------------------------------------------------------------------
 
+    // -----------------------------------------------------------------------
+    // F328 — the admin client API applies the same redirect-URI rules as DCR
+    // -----------------------------------------------------------------------
+
+    [Theory]
+    [InlineData("javascript:alert(1)")]
+    [InlineData("data:text/html,<script>1</script>")]
+    [InlineData("https://app.test/cb#fragment")]
+    [InlineData("http://not-loopback.test/cb")]
+    [InlineData("/relative/path")]
+    public async Task AdminCreate_RefusesRedirectUrisTheDcrEndpointWouldRefuse(string redirectUri)
+    {
+        // The two registration paths disagreed about what a valid redirect URI is, and the PRIVILEGED
+        // one was the permissive one: DCR required an absolute URI, no fragment, https outside
+        // loopback and no script pseudo-scheme, while the admin API wrote whatever it was given.
+        var response = await CreateAsync(new
+        {
+            clientId = $"c{Guid.NewGuid():N}",
+            clientName = "Test",
+            redirectUris = new[] { redirectUri },
+            allowedScopes = new[] { "openid" },
+            allowedGrantTypes = new[] { "authorization_code" },
+        });
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task AdminCreate_StillAcceptsALegitimateRedirectUri()
+    {
+        // Native custom schemes (mobile deep links) and loopback http must keep working — RFC 8252
+        // §7.3 requires the latter.
+        var response = await CreateAsync(new
+        {
+            clientId = $"c{Guid.NewGuid():N}",
+            clientName = "Test",
+            redirectUris = new[] { "https://app.test/cb", "com.example.app:/oauth", "http://127.0.0.1:7890/cb" },
+            allowedScopes = new[] { "openid" },
+            allowedGrantTypes = new[] { "authorization_code" },
+        });
+
+        Assert.True(response.StatusCode == HttpStatusCode.Created,
+            $"{(int)response.StatusCode}: {await response.Content.ReadAsStringAsync()}");
+    }
+
+    [Fact]
+    public async Task AdminCreate_ChecksPostLogoutRedirectUrisToo()
+    {
+        var response = await CreateAsync(new
+        {
+            clientId = $"c{Guid.NewGuid():N}",
+            clientName = "Test",
+            redirectUris = new[] { "https://app.test/cb" },
+            postLogoutRedirectUris = new[] { "javascript:alert(1)" },
+            allowedScopes = new[] { "openid" },
+            allowedGrantTypes = new[] { "authorization_code" },
+        });
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
     [Fact]
     public async Task CreateClient_Valid_Returns201WithLocation()
     {

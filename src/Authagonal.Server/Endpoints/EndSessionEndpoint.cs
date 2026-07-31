@@ -118,6 +118,11 @@ public static class EndSessionEndpoint
             catch { /* fall through */ }
         }
 
+        // The upstream IdP's refresh token for this federated session is a live credential for
+        // another provider, and nothing removed it — read the key off the principal before the cookie
+        // that carries it is dropped.
+        await Services.UpstreamSessionCleanup.RemoveForPrincipalAsync(httpContext, ct);
+
         await httpContext.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
 
         // Back-channel logout. Resolve everything that needs the request's tenant scope NOW — grants,

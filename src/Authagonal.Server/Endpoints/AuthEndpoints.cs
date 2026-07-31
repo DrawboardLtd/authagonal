@@ -920,6 +920,8 @@ public static class AuthEndpoints
 
     private static async Task<IResult> LogoutAsync(HttpContext httpContext, CancellationToken ct)
     {
+        // Before the cookie goes: the principal is where the (user, connection, sid) key lives.
+        await UpstreamSessionCleanup.RemoveForPrincipalAsync(httpContext, ct);
         await httpContext.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
         return TypedResults.Json(new SuccessResponse(), AuthagonalJsonContext.Default.SuccessResponse);
     }

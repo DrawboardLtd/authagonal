@@ -82,6 +82,8 @@ public static class ClientEndpoints
         if (existing is not null)
             return TypedResults.Json(new ErrorInfoResponse { Error = "client_exists", ErrorDescription = $"Client '{client.ClientId}' already exists" }, AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 409);
 
+        if (InvalidRedirectUris(client) is { } redirectError)
+            return TypedResults.Json(new ErrorInfoResponse { Error = "invalid_request", ErrorDescription = redirectError }, AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 400);
         if (InvalidHomeUri(client) is { } uriError)
             return TypedResults.Json(new ErrorInfoResponse { Error = "invalid_request", ErrorDescription = uriError }, AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 400);
 
@@ -123,6 +125,8 @@ public static class ClientEndpoints
         // that explicitly supplies new hashes is still honoured.)
         if (client.ClientSecretHashes is not { Count: > 0 })
             client.ClientSecretHashes = existing.ClientSecretHashes;
+        if (InvalidRedirectUris(client) is { } redirectError)
+            return TypedResults.Json(new ErrorInfoResponse { Error = "invalid_request", ErrorDescription = redirectError }, AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 400);
         if (InvalidHomeUri(client) is { } uriError)
             return TypedResults.Json(new ErrorInfoResponse { Error = "invalid_request", ErrorDescription = uriError }, AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 400);
         if (client.IsDefaultApplication && !existing.IsDefaultApplication)
@@ -204,6 +208,20 @@ public static class ClientEndpoints
 
     // Copy of a client with secret hashes stripped, for safe return to admins. Never mutate the
     // passed-in instance — stores may hand back (and retain) the cached object.
+    /// <summary>
+    /// The same redirect-URI rules the dynamic-registration endpoint applies.
+    /// </summary>
+    /// <remarks>
+    /// This path validated only ClientUri and InitiateLoginUri; RedirectUris and
+    /// PostLogoutRedirectUris went to the store untouched. So the two registration surfaces disagreed
+    /// about what a valid redirect URI is, and it was the privileged one that would accept
+    /// `javascript:`, a fragment, or cleartext http to an arbitrary host — the last of which puts an
+    /// authorization code on a link any on-path party can read.
+    /// </remarks>
+    private static string? InvalidRedirectUris(OAuthClient client) =>
+        RedirectUriRules.Validate(client.RedirectUris, "redirect_uris", requireHttps: true)
+        ?? RedirectUriRules.Validate(client.PostLogoutRedirectUris, "post_logout_redirect_uris", requireHttps: false);
+
     private static OAuthClient Redacted(OAuthClient c) => c with { ClientSecretHashes = [] };
 
     private static async Task<IResult> DeleteClient(
