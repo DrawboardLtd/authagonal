@@ -55,7 +55,7 @@ public static class EndSessionEndpoint
         // Validate id_token_hint ONCE, up front, for both of the things it decides: which client is asking
         // (so post_logout_redirect_uri can be checked against it) and whether the request provably came
         // from an RP that holds a token for THIS session.
-        var hint = ValidateIdTokenHint(idTokenHint, keyManager, tenantContext.Issuer);
+        var hint = await ValidateIdTokenHintAsync(idTokenHint, keyManager, tenantContext.Issuer);
 
         // When both identifiers are present they must name the same client. Otherwise an RP could
         // pair its own client_id with another RP's ID Token so that its post_logout_redirect_uri was
@@ -247,7 +247,7 @@ public static class EndSessionEndpoint
     /// not validated (the user is logging out, so an expired ID token is the normal case), which is exactly
     /// why the signature and issuer checks have to carry the weight.
     /// </remarks>
-    private static IdTokenHint? ValidateIdTokenHint(
+    private static async Task<IdTokenHint?> ValidateIdTokenHintAsync(
         string? idToken, Authagonal.Core.Services.IKeyManager keyManager, string issuer)
     {
         if (string.IsNullOrWhiteSpace(idToken)) return null;
@@ -257,7 +257,11 @@ public static class EndSessionEndpoint
             var handler = new JsonWebTokenHandler();
             var keys = keyManager.GetSecurityKeys().Select(Authagonal.Protocol.Services.ProtocolSigningKeyOps.JwkToSecurityKey).ToList();
 
-            var result = handler.ValidateTokenAsync(idToken, new TokenValidationParameters
+            // Awaited rather than blocked on. This endpoint is anonymous and unthrottled, so
+            // .GetAwaiter().GetResult() pinned a thread-pool thread for the duration of every call —
+            // and validation performs key resolution. Enough concurrent requests starve the pool,
+            // which takes down every endpoint on the host, not just this one.
+            var result = await handler.ValidateTokenAsync(idToken, new TokenValidationParameters
             {
                 ValidIssuer = issuer,
                 ValidateIssuer = true,
@@ -266,7 +270,7 @@ public static class EndSessionEndpoint
                 ValidAlgorithms = ["ES256"],
                 IssuerSigningKeys = keys,
                 ValidateIssuerSigningKey = true
-            }).GetAwaiter().GetResult();
+            });
 
             if (!result.IsValid)
                 return null;
