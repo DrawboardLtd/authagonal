@@ -184,6 +184,50 @@ public sealed class RevocationCascadeTests : IAsyncLifetime
     }
 
     // -----------------------------------------------------------------------
+    // F201 — a replayed authorization code revokes what the first redemption issued
+    // -----------------------------------------------------------------------
+
+    [Fact]
+    public async Task ReplayedAuthorizationCode_RevokesTheTokensItAlreadyIssued()
+    {
+        await _factory.SeedTestUserAsync();
+        await _client.PostAsJsonAsync("/api/auth/login", new { email = "test@example.com", password = "Test1234!" });
+
+        var (verifier, challenge) = GeneratePkce();
+        var authResponse = await _client.GetAsync(
+            $"/connect/authorize?client_id={AuthagonalTestFactory.TestClientId}" +
+            $"&redirect_uri={Uri.EscapeDataString("https://app.test/callback")}" +
+            "&response_type=code&scope=openid+offline_access&state=t" +
+            $"&code_challenge={challenge}&code_challenge_method=S256");
+        var code = HttpUtility.ParseQueryString(authResponse.Headers.Location!.Query)["code"]!;
+
+        var form = new Dictionary<string, string>
+        {
+            ["grant_type"] = "authorization_code",
+            ["code"] = code,
+            ["redirect_uri"] = "https://app.test/callback",
+            ["code_verifier"] = verifier,
+            ["client_id"] = AuthagonalTestFactory.TestClientId,
+        };
+
+        var first = await _client.PostAsync("/connect/token", new FormUrlEncodedContent(form));
+        first.EnsureSuccessStatusCode();
+        var tokens = await first.Content.ReadFromJsonAsync<JsonElement>();
+        var accessToken = tokens.GetProperty("access_token").GetString()!;
+
+        Assert.Equal(HttpStatusCode.OK, (await CallUserinfoAsync(accessToken)).StatusCode);
+
+        // RFC 6749 §4.1.2: deny AND revoke. The denial was there; the revocation was not, so a
+        // server with positive evidence that a code had been intercepted left the legitimate
+        // redemption's tokens live and did nothing with the evidence.
+        var replay = await _client.PostAsync("/connect/token", new FormUrlEncodedContent(form));
+        Assert.Equal(HttpStatusCode.BadRequest, replay.StatusCode);
+
+        Assert.True(await _factory.RevokedTokenStore.IsRevokedAsync(JtiOf(accessToken)));
+        Assert.Equal(HttpStatusCode.Unauthorized, (await CallUserinfoAsync(accessToken)).StatusCode);
+    }
+
+    // -----------------------------------------------------------------------
     // Helpers
     // -----------------------------------------------------------------------
 

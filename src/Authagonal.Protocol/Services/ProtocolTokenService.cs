@@ -449,10 +449,43 @@ public sealed class ProtocolTokenService(
         if (grant is null || grant.Type != "authorization_code")
             throw new InvalidOperationException("Invalid authorization code");
 
-        // Atomic single-use: only the request that wins the conditional delete may redeem the code,
-        // so two concurrent token requests with the same code can't both succeed.
-        if (!await grantStore.TryConsumeAsync(code, ct))
+        // Single-use, with the row KEPT and marked consumed rather than deleted.
+        //
+        // TryConsumeAsync deleted it, which made a sequential replay indistinguishable from a bogus
+        // code: the second request found nothing and answered "invalid", so the server never learned
+        // that a code it had issued was being presented twice. That is the one signal RFC 6749 §4.1.2
+        // asks it to act on — "deny the request and SHOULD revoke ... all tokens previously issued
+        // based on that authorization code" — and it was being thrown away. Refresh tokens have kept
+        // a consumed marker for exactly this reason; codes now do too, and the row expires on its own
+        // schedule as before.
+        async Task RevokeForReplayAsync()
+        {
+            if (grant.SubjectId is null) return;
+
+            logger.LogError(
+                "Authorization code replay detected. Revoking tokens for the pair. Client: {ClientId}, Subject: {SubjectId}",
+                grant.ClientId, grant.SubjectId);
+
+            await GrantRevocation.RevokeClientGrantsAsync(
+                grantStore, revokedTokenStore, grant.SubjectId, grant.ClientId,
+                PersistedGrantTypes.SessionBound, logger, ct);
+        }
+
+        if (grant.ConsumedAt is not null)
+        {
+            await RevokeForReplayAsync();
             throw new InvalidOperationException("Authorization code has already been used");
+        }
+
+        grant.Key = code;
+        grant.ConsumedAt = DateTimeOffset.UtcNow;
+
+        // Conditional, so two concurrent redemptions cannot both win — the loser is a replay too.
+        if (!await grantStore.TryMarkConsumedAsync(grant, ct))
+        {
+            await RevokeForReplayAsync();
+            throw new InvalidOperationException("Authorization code has already been used");
+        }
 
         if (grant.ExpiresAt <= DateTimeOffset.UtcNow)
             throw new InvalidOperationException("Authorization code has expired");

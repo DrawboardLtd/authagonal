@@ -186,6 +186,22 @@ internal static class AuthorizeEndpoint
 
             var subject = ((OidcSubjectResult.Allowed)resolved).Subject;
 
+            // Role-gated scopes are filtered here, as the Server host has always done.
+            //
+            // IScopeRoleGate's contract says it applies on every path that mints a token for a human,
+            // and this endpoint skipped it — so a user holding none of a scope's AllowedRoles was
+            // issued a code for it anyway, and the resulting access token carried the scope until the
+            // first refresh (which does gate) quietly dropped it. Built over the scope store rather
+            // than resolved from DI, matching ProtocolTokenService, so hosts that construct this by
+            // hand keep working.
+            var scopeStore = httpContext.RequestServices.GetService<IScopeStore>();
+            if (scopeStore is not null)
+            {
+                var gate = new ScopeRoleGate(scopeStore);
+                var permitted = await gate.FilterAsync(request.RequestedScopes, subject.Roles, ct);
+                request.RequestedScopes = [.. permitted];
+            }
+
             return await AuthorizeRequestSupport.IssueCodeAndRedirectAsync(
                 authCodeService, parService, clientId, subject, request, requestUri, tenantContext.Issuer, ct);
         })
