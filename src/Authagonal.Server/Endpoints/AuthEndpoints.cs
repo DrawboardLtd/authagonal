@@ -916,7 +916,14 @@ public static class AuthEndpoints
         var user = await userStore.FindByEmailAsync(request.Email, ct);
         if (user is null)
         {
-            logger.LogInformation("Password reset requested for non-existent email: {Email}", request.Email);
+            // The address is neither logged nor validated before logging, and this endpoint is
+            // anonymous — so the log took arbitrary caller-controlled text (CR/LF for forged entries
+            // in a line-oriented sink, control characters, unbounded length) and, for a real address,
+            // recorded PII about someone who never used the service. Only the domain is kept, which
+            // is what the line is actually diagnostic for.
+            logger.LogInformation(
+                "Password reset requested for a non-existent account in domain {Domain}",
+                Authagonal.Core.Services.EmailDomain.Of(request.Email) ?? "(none)");
             // Artificial delay to prevent timing-based email enumeration
             await Task.Delay(TimeSpan.FromMilliseconds(100 + RandomNumberGenerator.GetInt32(200)), ct);
             return TypedResults.Json(new SuccessResponse(), AuthagonalJsonContext.Default.SuccessResponse);

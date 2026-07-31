@@ -180,7 +180,11 @@ public static class SamlEndpoints
             var requestState = await replayCache.ValidateAndConsumeRequestAsync(expectedInResponseTo, ct);
             if (requestState is null)
             {
-                logger.LogWarning("SAML replay detected or unknown request ID: InResponseTo={InResponseTo}", expectedInResponseTo);
+                // InResponseTo comes off an unauthenticated POST body, so it is logged as a hash
+                // rather than verbatim: the raw value can carry CR/LF and forge log entries in any
+                // line-oriented sink, and it correlates just as well hashed.
+                logger.LogWarning("SAML replay detected or unknown request ID: InResponseTo(sha256)={Digest}",
+                    LogSafeDigest(expectedInResponseTo));
                 return Results.BadRequest(new { error = "saml_replay", error_description = "SAML response replay detected or unknown request ID." });
             }
             else if (!string.Equals(requestState.ConnectionId, connectionId, StringComparison.OrdinalIgnoreCase))
@@ -822,6 +826,16 @@ public static class SamlEndpoints
     /// one shared implementation — the four local copies had already drifted, and none of them rejected the
     /// ASCII tab that the URL parser strips and Kestrel forwards verbatim, which defeated all of them.
     /// </summary>
+    /// <summary>
+    /// A short digest, for correlating an attacker-supplied identifier in logs without writing it.
+    /// </summary>
+    private static string LogSafeDigest(string? value)
+    {
+        if (string.IsNullOrEmpty(value)) return "(none)";
+        var hash = System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(value));
+        return Convert.ToHexString(hash)[..16].ToLowerInvariant();
+    }
+
     private static string SanitizeReturnUrl(string? url) => Authagonal.Core.Services.LocalRedirect.Sanitize(url);
 
     // F48c: append the error to relayState with the correct separator (relayState is the original

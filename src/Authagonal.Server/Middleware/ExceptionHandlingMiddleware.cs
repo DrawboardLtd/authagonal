@@ -20,6 +20,20 @@ public sealed class ExceptionHandlingMiddleware(
         {
             var correlationId = Activity.Current?.Id ?? context.TraceIdentifier;
 
+            // Nothing can be written once the response has started — the status line and headers are
+            // already on the wire, so setting StatusCode throws and the original exception is lost
+            // behind a second one. Let the server abort the connection instead, which is what a
+            // truncated response should look like to the client.
+            if (context.Response.HasStarted)
+            {
+                logger.LogError(
+                    ex,
+                    "Unhandled exception AFTER the response started; connection will be aborted. " +
+                    "CorrelationId: {CorrelationId}, Path: {Path}, Method: {Method}",
+                    correlationId, context.Request.Path, context.Request.Method);
+                throw;
+            }
+
             logger.LogError(
                 ex,
                 "Unhandled exception occurred. CorrelationId: {CorrelationId}, Path: {Path}, Method: {Method}",
@@ -27,24 +41,17 @@ public sealed class ExceptionHandlingMiddleware(
                 context.Request.Path,
                 context.Request.Method);
 
-            context.Response.StatusCode = ex switch
-            {
-                ArgumentException => StatusCodes.Status400BadRequest,
-                UnauthorizedAccessException => StatusCodes.Status401Unauthorized,
-                KeyNotFoundException => StatusCodes.Status404NotFound,
-                InvalidOperationException => StatusCodes.Status400BadRequest,
-                _ => StatusCodes.Status500InternalServerError
-            };
+            // An UNHANDLED exception is a server fault, and answering 4xx says the opposite: it tells
+            // the caller their request was wrong and tells operators nothing is broken. Both
+            // ArgumentException and InvalidOperationException are overwhelmingly internal invariant
+            // failures — an endpoint that means "bad request" returns one deliberately rather than
+            // throwing — so mapping them to 400 turned real faults into silent client errors that no
+            // 5xx alert ever fired on.
+            context.Response.StatusCode = StatusCodes.Status500InternalServerError;
 
             context.Response.ContentType = "application/json";
 
-            var errorDescription = context.Response.StatusCode switch
-            {
-                StatusCodes.Status400BadRequest => localizer["Error_BadRequest"].Value,
-                StatusCodes.Status401Unauthorized => localizer["Error_Unauthorized"].Value,
-                StatusCodes.Status404NotFound => localizer["Error_NotFound"].Value,
-                _ => localizer["Error_ServerError"].Value
-            };
+            var errorDescription = localizer["Error_ServerError"].Value;
 
             var errorResponse = new ErrorResponse
             {
