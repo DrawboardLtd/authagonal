@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
@@ -159,6 +160,35 @@ public sealed class AuthEndpointTests : IAsyncLifetime
         Assert.Equal(
             await real.Content.ReadAsStringAsync(),
             await unknown.Content.ReadAsStringAsync());
+    }
+
+    [Fact]
+    public async Task Login_FailedAttempts_AreHeldToTheSameWallClockFloor()
+    {
+        // The no-such-user path verifies against a dummy hash so it isn't free, but the dummy is
+        // always the native PBKDF2 format at the configured cost while a real account may hold a
+        // bcrypt or ASP.NET Identity V3 hash at a different one — which turns response latency into
+        // an account-existence oracle. Both failures must instead leave at the same fixed deadline.
+        await _factory.SeedTestUserAsync();
+
+        async Task<TimeSpan> TimeFailedLoginAsync(string email)
+        {
+            var started = Stopwatch.StartNew();
+            var response = await _client.PostAsJsonAsync("/api/auth/login", new { email, password = "WrongPassword1!" });
+            started.Stop();
+            Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+            return started.Elapsed;
+        }
+
+        // The floor is a lower bound the handler waits out, so this can be slow but never fast; the
+        // tolerance covers timer granularity only.
+        var floor = TimeSpan.FromMilliseconds(new Authagonal.Server.Services.AuthOptions().FailedLoginMinimumMilliseconds - 40);
+
+        var existing = await TimeFailedLoginAsync("test@example.com");
+        var nonexistent = await TimeFailedLoginAsync("nobody@example.com");
+
+        Assert.True(existing >= floor, $"Wrong password on an existing account returned in {existing.TotalMilliseconds:F0}ms, under the {floor.TotalMilliseconds:F0}ms floor");
+        Assert.True(nonexistent >= floor, $"Login for a nonexistent account returned in {nonexistent.TotalMilliseconds:F0}ms, under the {floor.TotalMilliseconds:F0}ms floor");
     }
 
     [Fact]

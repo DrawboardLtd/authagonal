@@ -227,6 +227,83 @@ public sealed class DeviceAuthorizationTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
     }
 
+    [Fact]
+    public async Task DeviceApproval_ElevenWrongCodes_Returns429()
+    {
+        // The user_code brute-force limiter (RFC 8628 §5.1) is a documented security claim with
+        // nothing pinning it, so a refactor of this endpoint could drop it and CI would stay green.
+        // Ten wrong codes are allowed in a minute; the eleventh must be refused outright.
+        await _factory.SeedTestUserAsync();
+        await _client.PostAsJsonAsync("/api/auth/login", new { email = "test@example.com", password = "Test1234!" });
+
+        for (var attempt = 0; attempt < 10; attempt++)
+        {
+            var response = await _client.PostAsync("/api/auth/device/approve", WrongCodeForm(attempt));
+            Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        }
+
+        var eleventh = await _client.PostAsync("/api/auth/device/approve", WrongCodeForm(10));
+        Assert.Equal(HttpStatusCode.TooManyRequests, eleventh.StatusCode);
+
+        // The limiter must gate the endpoint, not just the wrong-code path: a VALID code presented
+        // once the budget is spent is refused too, otherwise an attacker who found one still wins.
+        var codes = await RequestDeviceCodes();
+        var withValidCode = await _client.PostAsync("/api/auth/device/approve", new FormUrlEncodedContent(
+            new Dictionary<string, string> { ["user_code"] = codes.UserCode }));
+        Assert.Equal(HttpStatusCode.TooManyRequests, withValidCode.StatusCode);
+    }
+
+    // -----------------------------------------------------------------------
+    // user_code normalisation (RFC 8628 §6.1)
+    // -----------------------------------------------------------------------
+
+    [Theory]
+    [InlineData("as-is")]         // WDJB-MJHT — the form we printed
+    [InlineData("lowercase")]     // wdjb-mjht
+    [InlineData("no-separator")]  // WDJBMJHT — the dash dropped
+    [InlineData("space")]         // WDJB MJHT
+    [InlineData("em-dash")]       // WDJB–MJHT, courtesy of smart punctuation
+    [InlineData("padded")]        // "  wdjb mjht  "
+    public async Task DeviceApproval_PunctuationVariantsOfTheSameCode_AllApprove(string variant)
+    {
+        await _factory.SeedTestUserAsync();
+        await _client.PostAsJsonAsync("/api/auth/login", new { email = "test@example.com", password = "Test1234!" });
+
+        var codes = await RequestDeviceCodes();
+        var bare = codes.UserCode.Replace("-", "");
+        var submitted = variant switch
+        {
+            "as-is" => codes.UserCode,
+            "lowercase" => codes.UserCode.ToLowerInvariant(),
+            "no-separator" => bare,
+            "space" => $"{bare[..4]} {bare[4..]}",
+            "em-dash" => $"{bare[..4]}–{bare[4..]}",
+            "padded" => $"  {bare[..4].ToLowerInvariant()} {bare[4..].ToLowerInvariant()}  ",
+            _ => throw new ArgumentOutOfRangeException(nameof(variant)),
+        };
+
+        var response = await _client.PostAsync("/api/auth/device/approve", new FormUrlEncodedContent(
+            new Dictionary<string, string> { ["user_code"] = submitted }));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task DeviceApproval_CodeWithNoAlphabetCharacters_Returns400()
+    {
+        // Normalisation is lenient, not blind: a submission that reduces to nothing is still a bad
+        // code and must not reach the store as the "device_user:" prefix on its own.
+        await _factory.SeedTestUserAsync();
+        await _client.PostAsJsonAsync("/api/auth/login", new { email = "test@example.com", password = "Test1234!" });
+
+        var response = await _client.PostAsync("/api/auth/device/approve", new FormUrlEncodedContent(
+            new Dictionary<string, string> { ["user_code"] = "---- ----" }));
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("invalid_user_code", json.GetProperty("error").GetString());
+    }
+
     // -----------------------------------------------------------------------
     // Helpers
     // -----------------------------------------------------------------------
@@ -346,6 +423,11 @@ public sealed class DeviceAuthorizationTests : IAsyncLifetime
         Assert.NotNull(after);
         Assert.Equal(before!.Data, after!.Data);
     }
+    // Wrong but well-formed: eight distinct characters drawn from the user_code alphabet (which has
+    // no 0/1/I/L), so normalisation can't reject an attempt early and every one of them reaches the
+    // store lookup the limiter is protecting.
+    private static FormUrlEncodedContent WrongCodeForm(int attempt) =>
+        new(new Dictionary<string, string> { ["user_code"] = $"ZZZZ-ZZZ{"ABCDEFGHJKM"[attempt]}" });
 
     private async Task<DeviceCodes> RequestDeviceCodes()
     {

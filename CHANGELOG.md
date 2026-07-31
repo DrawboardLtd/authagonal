@@ -178,6 +178,37 @@
   hash, roles, MFA flag and email. Both are insert-only now (`PutIfAbsentAsync` /
   `attribute_not_exists(pk)`). The one call site that does not generate its own id is OIDC JIT federation
   with `UseUpstreamSubjectAsUserId`, where the id is the upstream `sub`.
+- **Failed logins are held to a fixed wall-clock floor (default 250ms), closing a user-enumeration
+  timing oracle.** The no-such-user path already verified against a dummy hash so it wouldn't return
+  instantly, but the dummy is always the native PBKDF2 format at the configured cost while a real
+  account holds whatever format it arrived in: a Duende-migrated deployment stores ASP.NET Identity V3
+  blobs verified at the iteration count embedded in the blob (10,000 for older ASP.NET Identity,
+  210,000 for .NET 8), and a bcrypt import costs whatever its cost factor was. Neither equals the
+  dummy, and the upgrade to the native format only happens after a *successful* login, so unrehashed
+  accounts keep their foreign cost indefinitely. Against a 10,000-iteration migration a wrong password
+  on an existing account came back an order of magnitude faster than one on an address that doesn't
+  exist, which reads account existence straight off the latency and defeats the uniform
+  `invalid_credentials` response. Matching the cost is unachievable when the verifier dispatches on the
+  stored hash; matching the clock is, and it stays correct as formats change. Configurable via
+  `Auth:FailedLoginMinimumMilliseconds` (`0` disables); raise it if you hold hashes more expensive than
+  the floor, which a one-time warning now tells you about.
+
+### Fixed
+
+- **Device flow: a `user_code` typed without the dash is now accepted (RFC 8628 §6.1).** Codes are
+  displayed as `WDJB-MJHT` and the grant was keyed on exactly that, while entry only uppercased and
+  trimmed. So `WDJBMJHT`, `WDJB MJHT` and `WDJB–MJHT` (the em dash a mobile keyboard's smart
+  punctuation produces) were all rejected as invalid codes. Entry now strips everything outside the
+  31-character alphabet before lookup and the grant is keyed on that same separator-free form; the dash
+  survives only in the displayed `user_code` and in `verification_uri_complete`. The login app's code
+  field formats as you type, so it submits the canonical form either way. No security impact, but each
+  rejected variant spent one of the ten attempts per minute the brute-force limiter allows, so a user
+  hunting for the right punctuation could lock themselves out of an approval that was valid all along.
+- The `user_code` brute-force limiter (ten attempts per minute per subject) has a regression test:
+  eleven wrong codes in one authenticated session, `429` on the eleventh, and a valid code presented
+  after the budget is spent refused too. The guard was correct but unpinned behind a documented
+  security claim. Both the endpoint and the docs now record that the default `InProcessRateLimiter`
+  counts per node, so a multi-replica deployment needs the global limit enforced at the edge.
 
 ## [0.21.0], 2026-07-30
 
@@ -237,7 +268,7 @@ test that fails against the previous release.
   and `CheckSignature`'s own resolution could select different elements, which is the precondition for
   every classic wrapping attack. Both refused now.
 - **Device flow (RFC 8628).** `user_code` was drawn with `byte % 31`, which is biased; generation is
-  unbiased now. Code entry is rate-limited per §5.2 (ten attempts per minute per subject).
+  unbiased now. Code entry is rate-limited per §5.1 (ten attempts per minute per subject).
 - **Algorithm pinning** across every inbound-token path — SAML signature and digest methods, client
   assertions (RFC 7523), upstream `id_token`s, BFF back-channel logout tokens, and token exchange.
   Measured honestly: .NET already refused the specific hostile inputs we could construct, so these are

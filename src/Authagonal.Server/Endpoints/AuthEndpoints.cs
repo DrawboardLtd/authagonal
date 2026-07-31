@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Security.Claims;
 using System.Security.Cryptography;
 using System.Text;
@@ -67,6 +68,11 @@ public static class AuthEndpoints
         ILogger<Program> logger,
         CancellationToken ct)
     {
+        // Everything on the invalid_credentials path is padded to a fixed wall-clock floor measured
+        // from here — see PadFailedLoginAsync. Taken before the first store touch so the pad covers
+        // the email lookup and the lockout write, not just the hash.
+        var startedAt = Stopwatch.GetTimestamp();
+
         if (string.IsNullOrWhiteSpace(request.Email))
             return JsonResults.Error("email_required");
 
@@ -154,10 +160,20 @@ public static class AuthEndpoints
         }
 
         // Verify the password. For a non-existent user, verify against a fixed dummy hash so the
-        // response timing matches a real account (no user-enumeration via the bcrypt/PBKDF2 cost).
+        // no-such-user path still spends hashing work rather than returning instantly.
         // Passwordless accounts (federated/JIT-provisioned — no local credential) verify against
         // the dummy hash too: uniform invalid_credentials instead of a 500, and no enumeration of
         // which accounts are federated.
+        //
+        // The dummy alone is NOT enough to close the enumeration oracle, which is why the failure
+        // path below also pads to a fixed deadline. The dummy is always the native PBKDF2v1$ format
+        // at the configured iteration count, but real accounts hold whatever format they arrived in:
+        // a Duende-migrated deployment stores ASP.NET Identity V3 blobs verified at the iteration
+        // count embedded in the blob (10,000 for old ASP.NET Identity, 210,000 for .NET 8), and a
+        // bcrypt import costs whatever its cost factor was. Those are not the dummy's cost, and the
+        // upgrade to the native format only happens after a SUCCESSFUL login, so an unrehashed
+        // account keeps its foreign cost indefinitely. Matching the cost by construction is
+        // unachievable; matching the wall clock is.
         var verifyResult = user is { PasswordHash: not null and not "" }
             ? passwordHasher.VerifyPassword(request.Password, user.PasswordHash)
             : passwordHasher.VerifyPassword(request.Password, DummyPasswordHash(passwordHasher));
@@ -180,6 +196,11 @@ public static class AuthEndpoints
             // The audit-hook reason stays granular (internal only — never reaches the caller); the
             // HTTP response is a uniform invalid_credentials so the client can't distinguish them.
             await authHooks.RunOnLoginFailedAsync(request.Email!, user is null ? "user_not_found" : "invalid_password", ct);
+
+            // Uniform body, uniform clock. Everything that distinguishes the two cases — the hash
+            // format and cost, the lockout write that only happens when the user exists, the audit
+            // hook — has run by now, and all of it is inside the padded window.
+            await PadFailedLoginAsync(startedAt, authOptions.Value.FailedLoginMinimumMilliseconds, logger, ct);
 
             return JsonResults.Error("invalid_credentials", 401);
         }
@@ -331,12 +352,54 @@ public static class AuthEndpoints
         return TypedResults.Json(new LoginSuccessResponse { UserId = user.Id, Email = user.Email, Name = name, MfaAvailable = mfaAvailable, ClientId = mfaAvailable ? clientId : null }, AuthagonalJsonContext.Default.LoginSuccessResponse);
     }
 
-    // A process-wide dummy password hash, used to spend the same hashing cost on the no-such-user
-    // path as on a real verification so login timing can't distinguish whether an email exists.
-    // Computed once (lazily) in the configured hash format; no real password ever matches it.
+    // A process-wide dummy password hash, used to spend hashing work on the no-such-user path
+    // rather than returning instantly. Computed once (lazily) in the configured hash format; no
+    // real password ever matches it. It is the first half of the enumeration guard — the second
+    // half is PadFailedLoginAsync, which is what actually makes the two cases indistinguishable.
     private static string? _dummyPasswordHash;
     private static string DummyPasswordHash(PasswordHasher hasher) =>
         _dummyPasswordHash ??= hasher.HashPassword("\0unmatchable-enumeration-guard-dummy\0");
+
+    // Set once, the first time a failed login overruns the floor, so the operator hears about a
+    // mis-set floor without every wrong password writing a log line.
+    private static int _failedLoginFloorOverrunLogged;
+
+    /// <summary>
+    /// Holds a failed login open until a fixed wall-clock deadline measured from the start of the
+    /// handler, so the response time carries no information about which failure occurred.
+    /// </summary>
+    /// <remarks>
+    /// Padding to a deadline rather than adding a delay is the point. A random or additive delay
+    /// still leaves the underlying cost difference in the mean, and matching costs by construction
+    /// cannot work here: the verifier dispatches on the stored hash, so the population's cost is
+    /// whatever mix of formats the deployment happens to hold and it changes as accounts rehash.
+    /// A deadline is indifferent to all of that as long as the floor sits above the slowest hash
+    /// in the deployment — which is what the overrun warning is watching for.
+    /// </remarks>
+    private static async Task PadFailedLoginAsync(long startedAt, int floorMilliseconds, ILogger logger, CancellationToken ct)
+    {
+        if (floorMilliseconds <= 0)
+            return;
+
+        var elapsed = Stopwatch.GetElapsedTime(startedAt);
+        var remaining = TimeSpan.FromMilliseconds(floorMilliseconds) - elapsed;
+
+        if (remaining <= TimeSpan.Zero)
+        {
+            // Overrunning the floor means the pad did nothing and the timing oracle is back: this
+            // request's real cost is now observable. Almost always a deployment holding hashes more
+            // expensive than the floor allows for (a high-cost bcrypt import, or PBKDF2 iterations
+            // raised without raising the floor).
+            if (Interlocked.Exchange(ref _failedLoginFloorOverrunLogged, 1) == 0)
+                logger.LogWarning(
+                    "Failed login took {ElapsedMs}ms, over the {FloorMs}ms Auth:FailedLoginMinimumMilliseconds floor. " +
+                    "Response timing can distinguish account existence until the floor is raised above the slowest password hash in use.",
+                    (int)elapsed.TotalMilliseconds, floorMilliseconds);
+            return;
+        }
+
+        await Task.Delay(remaining, ct);
+    }
 
     internal static string? ExtractClientIdFromReturnUrl(string? returnUrl)
     {

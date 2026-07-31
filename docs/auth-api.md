@@ -395,6 +395,8 @@ Content-Type: application/json
 
 Requires cookie authentication. Approves the device code for the current user. The device can then exchange the device code for tokens via the token endpoint using grant type `urn:ietf:params:oauth:grant-type:device_code`.
 
+The submitted code is normalised per RFC 8628 §6.1 before lookup: it is uppercased and every character outside the 31-character code alphabet is dropped. `ABCD-EFGH`, `abcd-efgh`, `ABCDEFGH`, `ABCD EFGH` and a copy-paste that turned the dash into an em dash are all the same code. The dash exists only so the code is easier to read aloud. Entry is rate limited to ten attempts per minute per subject (RFC 8628 §5.1); the eleventh returns `429`. That counter is per node under the default in-process rate limiter, so a multi-replica deployment should also enforce the limit at the edge.
+
 ## Token Introspection (RFC 7662)
 
 ```

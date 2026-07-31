@@ -117,10 +117,15 @@ public static class DeviceAuthorizationEndpoint
                 ExpiresAt = DateTimeOffset.UtcNow.AddSeconds(expiresIn),
             }, ct);
 
-            // Also index by user_code for the approval page
+            // Also index by user_code for the approval page. The key is the CANONICAL form — alphabet
+            // characters only, no separator — because that is the only form both sides can agree on
+            // once the user has retyped the code by hand (see NormalizeUserCode). The dash survives
+            // only in what we hand back for display. Grants written under the older dashed key are
+            // unreachable after this change; device codes expire in five minutes, so the window
+            // closes on its own.
             await grantStore.StoreAsync(new PersistedGrant
             {
-                Key = $"device_user:{userCode}",
+                Key = $"device_user:{NormalizeUserCode(userCode)}",
                 Type = "device_user_code",
                 ClientId = clientId,
                 Data = deviceCode, // points back to the device code
@@ -169,7 +174,10 @@ public static class DeviceAuthorizationEndpoint
             if (await rateLimiter.IsRateLimitedAsync($"device-approve|{subject}", 10, TimeSpan.FromMinutes(1), ct))
                 return JsonResults.Error("too_many_requests", 429);
 
-            var userCode = httpContext.Request.Query["user_code"].FirstOrDefault()?.Trim().ToUpperInvariant();
+            // Normalised the same way as the approve path — the grant key is stored separator-free,
+            // so looking it up with the displayed XXXX-XXXX form finds nothing. This endpoint post-dates
+            // the normalisation work and was missed by it.
+            var userCode = NormalizeUserCode(httpContext.Request.Query["user_code"].FirstOrDefault());
             if (string.IsNullOrWhiteSpace(userCode))
                 return TypedResults.Json(new ErrorInfoResponse { Error = "user_code_required" },
                     AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 400);
@@ -218,19 +226,30 @@ public static class DeviceAuthorizationEndpoint
             if (httpContext.User.Identity?.IsAuthenticated != true)
                 return JsonResults.Error("not_authenticated", 401);
 
-            // RFC 8628 §5.2: rate-limit user_code entry. A user_code is ~39 bits and this endpoint
+            // RFC 8628 §5.1: rate-limit user_code entry. A user_code is ~39 bits and this endpoint
             // already demands an authenticated session, so guessing is impractical rather than merely
             // slow — but an authenticated attacker grinding codes would otherwise be unbounded, and the
             // prize is a device approved in someone else's name.
+            //
+            // The default IRateLimiter is InProcessRateLimiter, which counts PER NODE: across N
+            // replicas the real budget is 10/min x N, and the global limit is expected to come from an
+            // edge rule outside this process. Pinned by DeviceApproval_ElevenWrongCodes_Returns429 —
+            // this guard backs a documented security claim and must not be refactored away silently.
             var approverSubject = httpContext.User.FindFirst("sub")?.Value ?? "anonymous";
             if (await rateLimiter.IsRateLimitedAsync($"device-approve|{approverSubject}", 10, TimeSpan.FromMinutes(1), ct))
                 return JsonResults.Error("too_many_requests", 429);
 
             var form = await httpContext.Request.ReadFormAsync(ct);
-            var userCode = form["user_code"].FirstOrDefault()?.Trim().ToUpperInvariant();
+            var submittedUserCode = form["user_code"].FirstOrDefault();
 
-            if (string.IsNullOrWhiteSpace(userCode))
+            if (string.IsNullOrWhiteSpace(submittedUserCode))
                 return TypedResults.Json(new ErrorInfoResponse { Error = "user_code_required" }, AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 400);
+
+            // A submission that survives normalisation with nothing left held no code characters at
+            // all — that's a bad code, not a missing field.
+            var userCode = NormalizeUserCode(submittedUserCode);
+            if (userCode.Length == 0)
+                return TypedResults.Json(new ErrorInfoResponse { Error = "invalid_user_code", Message = "Code is invalid or expired" }, AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 400);
 
             // Look up the user code
             var userCodeGrant = await grantStore.GetAsync($"device_user:{userCode}", ct);
@@ -295,17 +314,55 @@ public static class DeviceAuthorizationEndpoint
         return app;
     }
 
+    /// <summary>
+    /// The user_code alphabet — 8 characters drawn from these 31, so no ambiguous glyphs (0/O, 1/I/L)
+    /// can survive being read off a TV screen and retyped on a phone.
+    /// </summary>
+    private const string UserCodeAlphabet = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
+
     private static string GenerateUserCode()
     {
-        // 8-character alphanumeric (no ambiguous chars: 0/O, 1/I/L)
-        const string chars = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
         // GetInt32, not (byte % 31): 256 is not a multiple of 31, so the modulo drew the first eight
         // letters from nine byte values each and the rest from eight. A small bias, but it costs nothing
         // to not have one in the value standing between a stranger and an approved device.
         var code = new char[8];
         for (var i = 0; i < 8; i++)
-            code[i] = chars[RandomNumberGenerator.GetInt32(chars.Length)];
+            code[i] = UserCodeAlphabet[RandomNumberGenerator.GetInt32(UserCodeAlphabet.Length)];
+
+        // Displayed with a separator (RFC 8628 §6.1 recommends chunking a code this long so it can be
+        // read aloud and transcribed); the store key drops it again via NormalizeUserCode.
         return $"{new string(code, 0, 4)}-{new string(code, 4, 4)}";
+    }
+
+    /// <summary>
+    /// Reduces a submitted user_code to the canonical form the grant store is keyed by: uppercase,
+    /// alphabet characters only.
+    /// </summary>
+    /// <remarks>
+    /// RFC 8628 §6.1 asks the server to strip punctuation, uppercase, and ignore characters outside
+    /// the defined set. Only the uppercasing used to happen, so the dash we print was load-bearing:
+    /// "WDJB-MJHT" worked while "WDJBMJHT", "WDJB MJHT" and "WDJB–MJHT" (an em dash, which is what a
+    /// mobile keyboard's smart punctuation or a copy-paste out of a styled terminal produces) were
+    /// all rejected as invalid codes. That is a user typing a perfectly good code and being told it
+    /// is wrong — and worse, each variant they try spends one of the ten attempts per minute the
+    /// brute-force limiter allows, so a user hunting for the format can lock themselves out of an
+    /// approval that was valid the whole time.
+    /// </remarks>
+    private static string NormalizeUserCode(string? input)
+    {
+        if (string.IsNullOrEmpty(input))
+            return string.Empty;
+
+        var buffer = new char[input.Length];
+        var length = 0;
+        foreach (var ch in input)
+        {
+            var upper = char.ToUpperInvariant(ch);
+            if (UserCodeAlphabet.Contains(upper))
+                buffer[length++] = upper;
+        }
+
+        return new string(buffer, 0, length);
     }
 
     private static IResult DeviceError(string error, string description) =>

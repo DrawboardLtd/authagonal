@@ -16,11 +16,29 @@ type DeviceInfo = {
   logoUri?: string | null;
   scopes: string[];
 };
+// The 31-character user_code alphabet (no 0/O, no 1/I/L). Anything else is punctuation, whitespace
+// or a lookalike the user did not mean to type.
+const NOT_IN_ALPHABET = /[^ABCDEFGHJKMNPQRSTUVWXYZ23456789]/g;
+
+/**
+ * Reduces whatever the user typed or pasted to the canonical code, then re-inserts the display dash.
+ *
+ * The server prints the code as XXXX-XXXX, but people retype it without the dash, with a space, or
+ * with an em dash substituted by a mobile keyboard's smart punctuation. All of those are the same
+ * code; formatting the field as it's typed means the value submitted is always the canonical one and
+ * the user never spends a brute-force attempt discovering which punctuation we wanted. The server
+ * normalises identically (DeviceAuthorizationEndpoint.NormalizeUserCode) — this is convenience, not
+ * the enforcement point.
+ */
+function formatUserCode(raw: string): string {
+  const chars = raw.toUpperCase().replace(NOT_IN_ALPHABET, '').slice(0, 8);
+  return chars.length > 4 ? `${chars.slice(0, 4)}-${chars.slice(4)}` : chars;
+}
 
 export default function DevicePage() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const [userCode, setUserCode] = useState(searchParams.get('user_code') || '');
+  const [userCode, setUserCode] = useState(formatUserCode(searchParams.get('user_code') || ''));
   const [loading, setLoading] = useState(false);
   const [checking, setChecking] = useState(true);
   const [authenticated, setAuthenticated] = useState(false);
@@ -81,7 +99,7 @@ export default function DevicePage() {
     setLoading(true);
     setError('');
 
-    const code = userCode.trim().toUpperCase();
+    const code = formatUserCode(userCode);
     if (!code) {
       setError('Please enter the code shown on your device.');
       setLoading(false);
@@ -176,7 +194,7 @@ export default function DevicePage() {
               id="user_code"
               type="text"
               value={userCode}
-              onChange={(e) => setUserCode(e.target.value.toUpperCase())}
+              onChange={(e) => setUserCode(formatUserCode(e.target.value))}
               placeholder="ABCD-1234"
               className="text-center text-2xl font-mono tracking-widest"
               maxLength={9}

@@ -100,6 +100,19 @@ public sealed class AuthOptions
     /// </summary>
     public const int MinimumPbkdf2Iterations = 100_000;
 
+    /// <summary>
+    /// Wall-clock floor, in milliseconds, that a failed login is held to before the uniform
+    /// <c>invalid_credentials</c> response is written, measured from the start of the request.
+    /// Closes the user-enumeration timing oracle: the no-such-user path verifies against a dummy
+    /// hash in the native PBKDF2 format, but a real account may hold a bcrypt or ASP.NET Identity V3
+    /// hash at a completely different cost, so equal work is not achievable and equal elapsed time
+    /// is. Must sit above the slowest password hash the deployment holds or the pad is a no-op —
+    /// raise it if you imported bcrypt hashes above cost 11 or raised <see cref="Pbkdf2Iterations"/>
+    /// well past the default. A single warning is logged the first time a failed login overruns it.
+    /// Set to 0 to disable the pad entirely (re-opens the oracle; intended only for load testing).
+    /// </summary>
+    public int FailedLoginMinimumMilliseconds { get; set; } = 250;
+
     // --- Refresh tokens ---
     /// <summary>
     /// Opt-in retry-race tolerance for refresh token rotation. When > 0, a consumed
