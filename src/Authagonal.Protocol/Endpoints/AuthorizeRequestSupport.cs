@@ -76,11 +76,36 @@ internal sealed class AuthorizeRequest
     /// <summary>Set by <see cref="AuthorizeRequestSupport.Validate"/>.</summary>
     public string[] RequestedScopes { get; set; } = [];
 
+    /// <summary>
+    /// The first single-valued parameter that appeared more than once, or null. OIDC Core §3.1.2.1:
+    /// "Request parameters ... MUST NOT be included more than once."
+    /// </summary>
+    /// <remarks>
+    /// Every read took <c>FirstOrDefault()</c>, so <c>?redirect_uri=A&amp;redirect_uri=B</c> resolved
+    /// to A and the duplicate was neither rejected nor logged. That was at least self-consistent here
+    /// — the URI validated is the one the code is bound to and redirected to — but it leaves the
+    /// server's reading of a request differing from what any proxy, log or WAF in front of it parsed,
+    /// and the spec's answer is to refuse rather than to pick.
+    /// </remarks>
+    public string? DuplicatedParameter { get; init; }
+
+    /// <summary>
+    /// Single-valued per OIDC Core §3.1.2.1. <c>resource</c> is deliberately absent: RFC 8707 §2
+    /// defines it as legitimately repeatable.
+    /// </summary>
+    private static readonly string[] SingleValuedParameters =
+    [
+        "client_id", "redirect_uri", "response_type", "scope", "state", "nonce",
+        "code_challenge", "code_challenge_method", "prompt", "max_age", "request_uri",
+        "authorization_details",
+    ];
+
     public static AuthorizeRequest Read(IReadableRequestParameters source)
     {
         var rawMaxAge = source.Get("max_age");
         return new AuthorizeRequest
         {
+            DuplicatedParameter = SingleValuedParameters.FirstOrDefault(p => source.GetAll(p).Count() > 1),
             RedirectUri = source.Get("redirect_uri"),
             ResponseType = source.Get("response_type"),
             Scope = source.Get("scope"),
@@ -158,6 +183,21 @@ internal static class AuthorizeRequestSupport
     public static IResult? Validate(OAuthClient client, AuthorizeRequest request, string? issuer = null)
     {
         var (redirectUri, state) = (request.RedirectUri, request.State);
+
+        // OIDC Core §3.1.2.1: "Request parameters ... MUST NOT be included more than once." Checked
+        // before anything is acted on, because past this point every read has already silently picked
+        // the first occurrence.
+        if (request.DuplicatedParameter is { } duplicated)
+        {
+            // A duplicated redirect_uri or client_id makes the reflection target itself ambiguous, so
+            // the error is delivered directly rather than sent to whichever copy happened to win.
+            var reflectTo = duplicated is "redirect_uri" or "client_id" ? null
+                : !string.IsNullOrWhiteSpace(redirectUri) && IsRedirectUriRegistered(redirectUri, client.RedirectUris)
+                    ? redirectUri
+                    : null;
+            return BuildErrorRedirect(reflectTo, "invalid_request",
+                $"{duplicated} must not be provided more than once", state, issuer);
+        }
 
         if (string.IsNullOrWhiteSpace(redirectUri))
             return BuildErrorRedirect(null, "invalid_request", "redirect_uri is required", state, issuer);
@@ -311,11 +351,28 @@ internal static class AuthorizeRequestSupport
     /// </summary>
     public static bool IsRedirectUriRegistered(string redirectUri, IReadOnlyList<string> registeredUris)
     {
+        // Control characters and whitespace are refused on the RAW string, before Uri sees it. Uri
+        // silently trims a trailing TAB or LF, so without this the value compared here is not the
+        // value a downstream parser (a proxy, a log, the browser) reads out of the same request.
+        foreach (var c in redirectUri)
+        {
+            if (char.IsControl(c) || char.IsWhiteSpace(c))
+                return false;
+        }
+
         if (!Uri.TryCreate(redirectUri, UriKind.Absolute, out var requestedUri))
             return false;
 
         // Reject URIs with fragments (per OAuth spec)
         if (!string.IsNullOrEmpty(requestedUri.Fragment))
+            return false;
+
+        // Userinfo has no legitimate role in an OAuth callback, and it was not part of the
+        // component-wise comparison below — so https://evil.com@app.example.com/cb matched a
+        // registered https://app.example.com/cb, and the redirect was then rebuilt WITH the userinfo
+        // intact. Browsers render that host as app.example.com while some clients and log pipelines
+        // read the userinfo half as the authority.
+        if (!string.IsNullOrEmpty(requestedUri.UserInfo))
             return false;
 
         foreach (var registered in registeredUris)

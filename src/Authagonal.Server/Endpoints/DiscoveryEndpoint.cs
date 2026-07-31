@@ -63,6 +63,11 @@ public static class DiscoveryEndpoint
                 TokenEndpointAuthMethodsSupported = ["client_secret_basic", "client_secret_post", "private_key_jwt", "none"],
                 CodeChallengeMethodsSupported = ["S256"],
                 AuthorizationResponseIssParameterSupported = true,
+                // Stated rather than defaulted — see the members' own docs. Omitting these claimed
+                // JAR-by-reference support and a fragment response mode, neither of which exists.
+                RequestParameterSupported = false,
+                RequestUriParameterSupported = false,
+                ResponseModesSupported = ["query"],
                 BackchannelLogoutSupported = true,
                 // The OP puts `sid` in every ID token and in every Logout Token, which IS
                 // session-based back-channel logout — advertising false told relying parties not to

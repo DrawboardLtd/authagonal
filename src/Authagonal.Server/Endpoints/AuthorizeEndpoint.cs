@@ -66,6 +66,20 @@ public static class AuthorizeEndpoint
                 return AuthorizeRequestSupport.BuildErrorRedirect(safeRedirect, "unauthorized_client", "Client is disabled", initialState, tenantContext.Issuer);
             }
 
+            // OIDC Core §3.1.2.6 — refuse, don't ignore. RFC 9101 request objects are not implemented:
+            // nothing reads `request`, and the only `request_uri` values honoured are the opaque URNs
+            // this server's own PAR endpoint issued. Dropping either silently downgraded a JAR client
+            // to its unsigned query string, which is the substitution the request object exists to
+            // prevent. The prefix test keeps an expired pushed request reporting as expired.
+            if (!string.IsNullOrWhiteSpace(httpContext.Request.Query["request"].FirstOrDefault()))
+                return AuthorizeRequestSupport.BuildErrorRedirect(null, "request_not_supported",
+                    "Request objects (RFC 9101) are not supported", initialState, tenantContext.Issuer);
+
+            if (!string.IsNullOrWhiteSpace(requestUri) &&
+                !requestUri.StartsWith(Authagonal.Protocol.Services.ProtocolPushedAuthorizationService.RequestUriPrefix, StringComparison.Ordinal))
+                return AuthorizeRequestSupport.BuildErrorRedirect(null, "request_uri_not_supported",
+                    "request_uri is supported only for pushed authorization requests", initialState, tenantContext.Issuer);
+
             IReadableRequestParameters source;
             DateTimeOffset? parCreatedAt = null;
             if (!string.IsNullOrWhiteSpace(requestUri))

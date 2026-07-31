@@ -162,6 +162,13 @@ internal static class BffEndpoints
             ValidAudience = tenant.ClientId,
             IssuerSigningKeys = config.SigningKeys,
             ValidateLifetime = true,
+            // The 0.20.0 sweep pinned every inbound-token path — SAML, client assertions, upstream
+            // id_tokens, the logout consumer below, token exchange — and missed this one, which is
+            // the same class of token. OIDC Core §3.1.3.7 step 7 expects the client to know the
+            // algorithm it registered for rather than take it from the token header.
+            ValidAlgorithms = AsymmetricSigningAlgorithms,
+            RequireSignedTokens = true,
+            ValidateIssuerSigningKey = true,
         });
         if (!validation.IsValid)
         {
@@ -446,15 +453,7 @@ internal static class BffEndpoints
             IssuerSigningKeys = config.SigningKeys,
             ValidateLifetime = false,      // a logout token carries no exp
             RequireExpirationTime = false,
-            // Pin the algorithms rather than verifying whatever the header names. Keys come from the
-            // IdP's published JWKS so one cannot be injected, but this keeps that a property of our
-            // code rather than of a library default.
-            ValidAlgorithms =
-            [
-                SecurityAlgorithms.RsaSha256, SecurityAlgorithms.RsaSha384, SecurityAlgorithms.RsaSha512,
-                SecurityAlgorithms.RsaSsaPssSha256, SecurityAlgorithms.RsaSsaPssSha384, SecurityAlgorithms.RsaSsaPssSha512,
-                SecurityAlgorithms.EcdsaSha256, SecurityAlgorithms.EcdsaSha384, SecurityAlgorithms.EcdsaSha512,
-            ],
+            ValidAlgorithms = AsymmetricSigningAlgorithms,
         });
         if (!validation.IsValid)
         {
@@ -563,6 +562,22 @@ internal static class BffEndpoints
     }
 
     private static string Base64Url(byte[] bytes) => WebEncoders.Base64UrlEncode(bytes);
+
+    /// <summary>
+    /// The signature algorithms this BFF will accept on any token it consumes from the IdP.
+    /// </summary>
+    /// <remarks>
+    /// Shared by the callback id_token and the back-channel logout token so the two cannot drift —
+    /// they already had, which is what F266/F277 recorded. Keys come from the IdP's published JWKS so
+    /// one cannot be injected, but pinning keeps the accepted set a property of this code rather than
+    /// of a library default, and excludes the symmetric algorithms that make key confusion possible.
+    /// </remarks>
+    private static readonly string[] AsymmetricSigningAlgorithms =
+    [
+        SecurityAlgorithms.RsaSha256, SecurityAlgorithms.RsaSha384, SecurityAlgorithms.RsaSha512,
+        SecurityAlgorithms.RsaSsaPssSha256, SecurityAlgorithms.RsaSsaPssSha384, SecurityAlgorithms.RsaSsaPssSha512,
+        SecurityAlgorithms.EcdsaSha256, SecurityAlgorithms.EcdsaSha384, SecurityAlgorithms.EcdsaSha512,
+    ];
 
     private static bool FixedTimeEquals(string a, string b)
         => CryptographicOperations.FixedTimeEquals(Encoding.UTF8.GetBytes(a), Encoding.UTF8.GetBytes(b));

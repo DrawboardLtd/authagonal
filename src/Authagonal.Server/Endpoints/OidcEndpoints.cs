@@ -288,6 +288,34 @@ public static class OidcEndpoints
             return RedirectWithError(returnUrl, "oidc_error", "ID token validation failed");
         }
 
+        // OIDC Core §3.1.3.7 steps 4-5 — the multi-audience case.
+        //
+        // ValidAudience = config.ClientId is satisfied by IdentityModel when ANY entry of a
+        // multi-valued aud matches, so an id_token minted for this client AND others passed with no
+        // further questions. The spec's answer is azp: when aud has more than one value azp MUST be
+        // present, and wherever azp appears it MUST be this client. Without it, a token the upstream
+        // IdP issued for a different relying party — one that merely also lists us — is accepted as
+        // if it were issued to us.
+        var audiences = validationResult.Claims.TryGetValue("aud", out var audClaim) switch
+        {
+            true when audClaim is IEnumerable<string> many => many.Count(),
+            true when audClaim is not null => 1,
+            _ => 0,
+        };
+        var azp = Claim(validationResult.Claims, "azp");
+        if (audiences > 1 && string.IsNullOrEmpty(azp))
+        {
+            logger.LogWarning("OIDC id_token has {Count} audiences but no azp for connection {ConnectionId}",
+                audiences, stateData.ConnectionId);
+            return RedirectWithError(returnUrl, "oidc_error", "ID token validation failed");
+        }
+        if (!string.IsNullOrEmpty(azp) && !string.Equals(azp, config.ClientId, StringComparison.Ordinal))
+        {
+            logger.LogWarning("OIDC id_token azp does not match this client for connection {ConnectionId}",
+                stateData.ConnectionId);
+            return RedirectWithError(returnUrl, "oidc_error", "ID token validation failed");
+        }
+
         // Verify nonce — must be present and match the stored value
         var nonceClaim = Claim(validationResult.Claims, "nonce");
         if (string.IsNullOrEmpty(nonceClaim) ||

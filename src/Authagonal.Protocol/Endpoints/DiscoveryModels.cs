@@ -35,6 +35,25 @@ public sealed class DiscoveryResponse
     [JsonPropertyName("frontchannel_logout_supported"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public bool? FrontchannelLogoutSupported { get; set; }
     [JsonPropertyName("frontchannel_logout_session_supported"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public bool? FrontchannelLogoutSessionSupported { get; set; }
     [JsonPropertyName("require_pushed_authorization_requests"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public bool? RequirePushedAuthorizationRequests { get; set; }
+    /// <summary>
+    /// OIDC Discovery §3 — RFC 9101 request objects. Both default to a value that over-states this
+    /// server when omitted: <c>request_uri_parameter_supported</c> defaults to <b>true</b>, and JAR
+    /// by reference is not implemented (the only <c>request_uri</c> values accepted are the opaque
+    /// URNs this server's own PAR endpoint issued). Stated explicitly so the document says what is
+    /// true rather than inheriting a default that is not.
+    /// </summary>
+    [JsonPropertyName("request_parameter_supported"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public bool? RequestParameterSupported { get; set; }
+
+    /// <inheritdoc cref="RequestParameterSupported"/>
+    [JsonPropertyName("request_uri_parameter_supported"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public bool? RequestUriParameterSupported { get; set; }
+
+    /// <summary>
+    /// OIDC Discovery §3 — omitting this claims <c>["query", "fragment"]</c> by default, but
+    /// <c>response_mode</c> is never read and the authorization code is always written into the
+    /// query string.
+    /// </summary>
+    [JsonPropertyName("response_modes_supported"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public string[]? ResponseModesSupported { get; set; }
+
     [JsonPropertyName("claims_supported"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public string[]? ClaimsSupported { get; set; }
     [JsonPropertyName("authorization_details_types_supported"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public string[]? AuthorizationDetailsTypesSupported { get; set; }
 }

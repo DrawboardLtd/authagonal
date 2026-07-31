@@ -45,6 +45,11 @@ internal static class DiscoveryEndpoint
                 TokenEndpointAuthMethodsSupported = ["client_secret_basic", "client_secret_post", "private_key_jwt", "none"],
                 CodeChallengeMethodsSupported = ["S256"],
                 AuthorizationResponseIssParameterSupported = true,
+                // Stated rather than defaulted — see the members' own docs. Omitting these claimed
+                // JAR-by-reference support and a fragment response mode, neither of which exists.
+                RequestParameterSupported = false,
+                RequestUriParameterSupported = false,
+                ResponseModesSupported = ["query"],
                 ClaimsSupported = ["sub", "iss", "aud", "exp", "iat", "auth_time", "email", "email_verified", "name", "given_name", "family_name", "phone_number", "roles", "groups", "org_id"],
                 AuthorizationDetailsTypesSupported = authorityTypes,
             }, ProtocolJsonContext.Default.DiscoveryResponse);
