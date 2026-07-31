@@ -64,13 +64,34 @@ public static class ClientRegistrationEndpoint
 
         foreach (var uri in redirectUris)
         {
-            // Require an absolute URI and reject script/data/file pseudo-schemes; http(s) and native
+            // Require an absolute URI and reject script/data/file pseudo-schemes; https and native
             // custom schemes (mobile deep links) remain valid.
             if (!Uri.TryCreate(uri, UriKind.Absolute, out var parsed) ||
                 parsed.Scheme is "javascript" or "data" or "vbscript" or "file")
             {
                 return TypedResults.Json(
                     new ErrorInfoResponse { Error = "invalid_redirect_uri", ErrorDescription = $"Invalid redirect_uri: {uri}" },
+                    AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 400);
+            }
+
+            // RFC 6749 §3.1.2 requires the redirection endpoint to carry no fragment, and the
+            // fragment is where an implicit-style response would put a token — so a registered URI
+            // with one is either a mistake or an attempt to shape where credentials land.
+            if (!string.IsNullOrEmpty(parsed.Fragment))
+            {
+                return TypedResults.Json(
+                    new ErrorInfoResponse { Error = "invalid_redirect_uri", ErrorDescription = $"redirect_uri must not contain a fragment: {uri}" },
+                    AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 400);
+            }
+
+            // Cleartext http is refused except on loopback, which RFC 8252 §7.3 requires for native
+            // apps. Anonymous registration accepting http://anywhere means an authorization code —
+            // and with it the whole authorization — travels to an arbitrary host over a link any
+            // on-path party can read and modify.
+            if (parsed.Scheme == Uri.UriSchemeHttp && !parsed.IsLoopback)
+            {
+                return TypedResults.Json(
+                    new ErrorInfoResponse { Error = "invalid_redirect_uri", ErrorDescription = $"redirect_uri must use https (http is permitted only for loopback): {uri}" },
                     AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 400);
             }
         }
@@ -110,6 +131,23 @@ public static class ClientRegistrationEndpoint
                 return TypedResults.Json(
                     new ErrorInfoResponse { Error = "invalid_scope", ErrorDescription = $"Unknown scope: {s}" },
                     AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 400);
+            }
+
+            // A role-gated scope is not open-registrable.
+            //
+            // Existence in the scope store was the only test, so an anonymous registrant could
+            // self-assign ANY scope the deployment had defined — including the ones an operator
+            // restricted to particular roles. Every authenticated client-mutation path runs those
+            // through IClientScopeGuard; this one, the only unauthenticated one, ran nothing. The
+            // per-user gate still applies at authorize, so the scope would not be granted to an
+            // unentitled user — but the client should not be able to declare it in the first place,
+            // and it appears on the consent screen as though it could.
+            var registered = storeScopes.FirstOrDefault(x => string.Equals(x.Name, s, StringComparison.Ordinal));
+            if (registered is { AllowedRoles.Count: > 0 })
+            {
+                return TypedResults.Json(
+                    new ErrorInfoResponse { Error = "invalid_scope", ErrorDescription = $"Scope '{s}' is restricted and cannot be registered dynamically" },
+                    AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 403);
             }
         }
 
