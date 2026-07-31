@@ -62,11 +62,28 @@ public class ClusteringTests
     {
         var e = new LeaderElection("node-1");
 
-        e.Update(true);
+        e.Update(true, TimeSpan.FromMinutes(1));
         Assert.True(e.IsLeader);
         Assert.Equal("node-1", e.LeaderId);
 
-        e.Update(false);
+        e.Update(false, TimeSpan.Zero);
+        Assert.False(e.IsLeader);
+        Assert.Null(e.LeaderId);
+    }
+
+    [Fact]
+    public void LeaderElection_StopsClaimingLeadershipOnceTheLeaseLapses()
+    {
+        // Leadership used to be whatever the election loop last wrote, with no expiry of its own — so
+        // a node whose loop stalled (a GC pause, a blocked thread, a hung lease-store call) kept
+        // answering true long after the lease had lapsed and another node had taken it. Both then
+        // believed they were leader, which is what the election exists to prevent: the guarded work is
+        // signing-key generation and the expiry reaper.
+        var e = new LeaderElection("node-1");
+
+        e.Update(true, TimeSpan.FromMilliseconds(1));
+        Thread.Sleep(20);
+
         Assert.False(e.IsLeader);
         Assert.Null(e.LeaderId);
     }

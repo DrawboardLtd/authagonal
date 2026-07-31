@@ -34,7 +34,7 @@ public sealed class LeaderElectionService(
             {
                 var held = await leaseProvider.TryAcquireOrRenewAsync(LeaderResource, node.NodeId, ttl, stoppingToken)
                     .ConfigureAwait(false);
-                election.Update(held);
+                election.Update(held, ttl);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
@@ -43,7 +43,7 @@ public sealed class LeaderElectionService(
             catch (Exception ex)
             {
                 // On any backend error, relinquish leadership locally to avoid two leaders.
-                election.Update(false);
+                election.Update(false, TimeSpan.Zero);
                 logger.LogWarning(ex, "Leader lease renew failed; treating this node as non-leader this cycle");
             }
         }
