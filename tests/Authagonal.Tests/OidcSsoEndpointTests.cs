@@ -297,6 +297,91 @@ public sealed class OidcSsoEndpointTests : IAsyncLifetime
         Assert.Equal("invalid_state", json.GetProperty("error").GetString());
     }
 
+    // -------------------------------------------------------------------------------------------
+    // F215 — OIDC Core §3.1.3.7 steps 4-5: azp and the multi-audience case.
+    //
+    // This path had no coverage at all, which is how a fix that READ correctly shipped as dead code:
+    // it counted audiences with `audClaim is IEnumerable<string>`, but IdentityModel surfaces a
+    // repeated claim as a List<object> and a single one as a string, so the count was always 1 and
+    // `audiences > 1` never ran. Nothing failed. The three tests below fix that, and the ordering
+    // matters — the accepted case is what proves the refusals are about azp rather than about the
+    // harness failing to produce a usable multi-audience token.
+    // -------------------------------------------------------------------------------------------
+
+    /// <summary>
+    /// aud names this client AND another party, with no azp. ValidAudience is satisfied by ANY
+    /// matching entry, so IdentityModel passes it; §3.1.3.7 step 4 says the RP must not.
+    /// </summary>
+    [Fact]
+    public async Task OidcCallback_MultiAudienceIdTokenWithoutAzp_IsRefused()
+    {
+        _oidcMock.Audiences = ["test-oidc-client", "some-other-rp"];
+        _oidcMock.Azp = null;
+
+        var cb = await CompleteCallbackAsync();
+
+        await AssertRefusedWithoutCreatingUserAsync(cb);
+    }
+
+    /// <summary>
+    /// azp names a different party, so the token was authorized for someone else even though this
+    /// client is in aud. Refused wherever azp appears, single- or multi-audience.
+    /// </summary>
+    [Fact]
+    public async Task OidcCallback_AzpForAnotherParty_IsRefused()
+    {
+        _oidcMock.Audiences = ["test-oidc-client"];
+        _oidcMock.Azp = "some-other-rp";
+
+        var cb = await CompleteCallbackAsync();
+
+        await AssertRefusedWithoutCreatingUserAsync(cb);
+    }
+
+    /// <summary>
+    /// The counterweight, and the reason the two refusals above mean anything: the same multi-audience
+    /// token WITH a correct azp is accepted and provisions the user. Without this, both tests above
+    /// would pass just as happily against a harness that emitted an unusable token, or against a fix
+    /// that refused every multi-audience token outright.
+    /// </summary>
+    [Fact]
+    public async Task OidcCallback_MultiAudienceWithMatchingAzp_IsAccepted()
+    {
+        _oidcMock.Audiences = ["test-oidc-client", "some-other-rp"];
+        _oidcMock.Azp = "test-oidc-client";
+
+        var cb = await CompleteCallbackAsync();
+
+        Assert.Equal(HttpStatusCode.Redirect, cb.StatusCode);
+        Assert.DoesNotContain("error=", cb.Headers.Location!.ToString());
+        Assert.NotNull(await _factory.UserStore.FindByEmailAsync(_oidcMock.Email));
+    }
+
+    /// <summary>Drives login -> callback with the nonce wired up, the way the full-flow test does.</summary>
+    private async Task<HttpResponseMessage> CompleteCallbackAsync()
+    {
+        var loginResponse = await _client.GetAsync($"/oidc/{_connectionId}/login?returnUrl=/");
+        var qs = HttpUtility.ParseQueryString(new Uri(loginResponse.Headers.Location!.ToString()).Query);
+        _oidcMock.Nonce = qs["nonce"]!;
+
+        return await _client.GetAsync(
+            $"/oidc/callback?code=test-auth-code&state={Uri.EscapeDataString(qs["state"]!)}");
+    }
+
+    /// <summary>
+    /// The redirect carries oidc_error AND no account was provisioned. The second half is the load-
+    /// bearing one: error_description is deliberately generic, so the status alone cannot tell an azp
+    /// refusal from any other validation failure, but a JIT-provisioned user is created only if the
+    /// callback ran to completion.
+    /// </summary>
+    private async Task AssertRefusedWithoutCreatingUserAsync(HttpResponseMessage cb)
+    {
+        Assert.Equal(HttpStatusCode.Redirect, cb.StatusCode);
+        var location = cb.Headers.Location!.ToString();
+        Assert.Contains("error=oidc_error", location);
+        Assert.Null(await _factory.UserStore.FindByEmailAsync(_oidcMock.Email));
+    }
+
     [Fact]
     public async Task SsoCheck_OidcDomain_ReturnsSsoRequired()
     {

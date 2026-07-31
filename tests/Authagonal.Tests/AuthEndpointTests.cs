@@ -145,21 +145,44 @@ public sealed class AuthEndpointTests : IAsyncLifetime
         // answered invalid_credentials forever. Since every account-creation path sets LockoutEnabled,
         // it covered the whole directory, and it undid the dummy-hash timing equalisation, the neutral
         // duplicate registration and the randomised forgot-password delay on the same surface.
+        // The test also used to stop at the status code and the body, which is only half of
+        // "indistinguishable" and was the half that already held. The locked-out branch returns after
+        // one lookup and one verify with no lockout write and no audit hook, and it did not pay the
+        // wall-clock floor every other invalid_credentials pays — so the two responses were byte-
+        // identical and 100-250ms apart at the shipped PBKDF2 cost. An attacker picks who is in that
+        // state (only an existing account can be locked out), so it was the enumeration oracle in
+        // full: six wrong guesses to trip the lockout, then time the seventh.
         await _factory.SeedTestUserAsync();
 
         for (int i = 0; i < 6; i++)
             await _client.PostAsJsonAsync("/api/auth/login", new { email = "test@example.com", password = "Wrong!" });
 
+        var lockedClock = Stopwatch.StartNew();
         var real = await _client.PostAsJsonAsync("/api/auth/login",
             new { email = "test@example.com", password = "Wrong!" });
+        lockedClock.Stop();
+
+        var unknownClock = Stopwatch.StartNew();
         var unknown = await _client.PostAsJsonAsync("/api/auth/login",
             new { email = "no-such-account@example.com", password = "Wrong!" });
+        unknownClock.Stop();
 
         Assert.Equal(HttpStatusCode.Unauthorized, real.StatusCode);
         Assert.Equal(HttpStatusCode.Unauthorized, unknown.StatusCode);
         Assert.Equal(
             await real.Content.ReadAsStringAsync(),
             await unknown.Content.ReadAsStringAsync());
+
+        // Same floor the sibling timing test uses. It is a lower bound the handler waits out, so a
+        // response can be slow but never fast; the tolerance covers timer granularity only.
+        var floor = TimeSpan.FromMilliseconds(new Authagonal.Server.Services.AuthOptions().FailedLoginMinimumMilliseconds - 40);
+
+        Assert.True(lockedClock.Elapsed >= floor,
+            $"Wrong password against a LOCKED OUT account returned in {lockedClock.Elapsed.TotalMilliseconds:F0}ms, "
+            + $"under the {floor.TotalMilliseconds:F0}ms floor — the identical body is undone by the clock.");
+        Assert.True(unknownClock.Elapsed >= floor,
+            $"Login for a nonexistent account returned in {unknownClock.Elapsed.TotalMilliseconds:F0}ms, "
+            + $"under the {floor.TotalMilliseconds:F0}ms floor.");
     }
 
     [Fact]

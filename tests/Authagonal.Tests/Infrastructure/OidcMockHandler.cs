@@ -27,6 +27,26 @@ public sealed class OidcMockHandler : HttpMessageHandler
     /// <summary>Set this to the nonce from the authorization request. The mock will include it in the ID token.</summary>
     public string? Nonce { get; set; }
 
+    /// <summary>
+    /// The <c>aud</c> the id_token carries. One entry emits a JSON string, more than one emits an
+    /// array — which is the shape OIDC Core §3.1.3.7 steps 4-5 are about, and the shape this harness
+    /// could not previously express at all.
+    /// </summary>
+    /// <remarks>
+    /// A multi-valued aud has to be written through <c>Claims["aud"]</c> rather than
+    /// <c>SecurityTokenDescriptor.Audience</c>, which is a single string. The distinction matters to
+    /// the code under test for a second reason: IdentityModel surfaces a repeated claim on
+    /// <c>TokenValidationResult.Claims</c> as a <c>List&lt;object&gt;</c> and a single one as a
+    /// <c>string</c>, and a check that counts them wrongly is how the azp gate became dead code.
+    /// </remarks>
+    public string[] Audiences { get; set; } = ["test-oidc-client"];
+
+    /// <summary>
+    /// OIDC Core <c>azp</c> — the party the token was actually authorized for. Omitted when null,
+    /// which is legal for a single-audience token and a MUST-reject for a multi-audience one.
+    /// </summary>
+    public string? Azp { get; set; }
+
     /// <summary>Extra claims to release on the id_token, simulating an upstream IdP that
     /// scope-gates custom claims. Tests use this to verify federation flow-through.</summary>
     public Dictionary<string, object> ExtraIdTokenClaims { get; } = new();
@@ -112,13 +132,21 @@ public sealed class OidcMockHandler : HttpMessageHandler
         if (Nonce is not null)
             claims["nonce"] = Nonce;
 
+        if (Azp is not null)
+            claims["azp"] = Azp;
+
         foreach (var (k, v) in ExtraIdTokenClaims)
             claims[k] = v;
+
+        // Descriptor.Audience is a single string, so a multi-valued aud has to go through the claim
+        // bag. Exactly one of the two is set — supplying both makes the emitted aud ambiguous.
+        if (Audiences.Length != 1)
+            claims["aud"] = Audiences;
 
         var idTokenDescriptor = new SecurityTokenDescriptor
         {
             Issuer = Issuer,
-            Audience = "test-oidc-client",
+            Audience = Audiences.Length == 1 ? Audiences[0] : null,
             IssuedAt = now,
             Expires = ReturnExpiredToken ? now.AddMinutes(-5) : now.AddHours(1),
             SigningCredentials = new SigningCredentials(key, SecurityAlgorithms.RsaSha256),
