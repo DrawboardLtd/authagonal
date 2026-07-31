@@ -368,6 +368,15 @@ public static class ScimUserEndpoints
         // PUT replaces the whole resource — a missing preferredLanguage clears the stored locale.
         user.Locale = Locales.Normalize(request.PreferredLanguageOrLocale);
 
+        // Same uniqueness rule as create and PATCH: an update must not repoint another user's
+        // (clientId, externalId) mapping at this record.
+        if (!string.IsNullOrEmpty(request.ExternalId))
+        {
+            var externalIdOwner = await userStore.FindByExternalIdAsync(clientId, request.ExternalId, ct);
+            if (externalIdOwner is not null && !string.Equals(externalIdOwner.Id, user.Id, StringComparison.Ordinal))
+                return ScimResults.Conflict($"User with externalId '{request.ExternalId}' already exists");
+        }
+
         // Update externalId
         var oldExternalId = user.ExternalId;
         user.ExternalId = request.ExternalId;
@@ -452,6 +461,19 @@ public static class ScimUserEndpoints
         }
 
         // Update externalId index if changed
+        // externalId uniqueness is enforced on this path too, not only on create.
+        //
+        // POST checks it and 409s; PUT and PATCH did not, so an update could point the
+        // (clientId, externalId) index at THIS user while another user still believed it owned that
+        // mapping — after which the provisioning client's next lookup by externalId resolved to the
+        // wrong account, and a deprovision aimed at one user hit another.
+        if (!string.IsNullOrEmpty(user.ExternalId))
+        {
+            var externalIdOwner = await userStore.FindByExternalIdAsync(clientId, user.ExternalId, ct);
+            if (externalIdOwner is not null && !string.Equals(externalIdOwner.Id, user.Id, StringComparison.Ordinal))
+                return ScimResults.Conflict($"User with externalId '{user.ExternalId}' already exists");
+        }
+
         if (!string.Equals(oldExternalId, user.ExternalId, StringComparison.Ordinal))
         {
             if (!string.IsNullOrEmpty(oldExternalId))

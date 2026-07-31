@@ -331,6 +331,16 @@ public static partial class ScimPatchApplier
         return ids;
     }
 
+    /// <summary>
+    /// The address a PATCH on <c>emails</c> means, which is the PRIMARY one.
+    /// </summary>
+    /// <remarks>
+    /// This took the first element of the array. `emails` is multi-valued and unordered, and POST and
+    /// PUT both select on <c>primary</c> — so an IdP sending [work-alias, primary] in that order (the
+    /// order is theirs, not the spec's) rewrote the account's userName, its normalized email and its
+    /// login identity to an ALIAS. The account then answered to an address its owner may not control,
+    /// and the real one stopped resolving.
+    /// </remarks>
     private static string? ExtractStringOrEmail(JsonElement value)
     {
         if (value.ValueKind == JsonValueKind.String)
@@ -338,11 +348,25 @@ public static partial class ScimPatchApplier
 
         if (value.ValueKind == JsonValueKind.Array)
         {
+            string? firstAny = null;
+
             foreach (var item in value.EnumerateArray())
             {
-                if (item.TryGetProperty("value", out var v) && v.ValueKind == JsonValueKind.String)
+                if (item.ValueKind != JsonValueKind.Object) continue;
+                if (!item.TryGetProperty("value", out var v) || v.ValueKind != JsonValueKind.String) continue;
+
+                if (item.TryGetProperty("primary", out var primary)
+                    && primary.ValueKind == JsonValueKind.True)
+                {
                     return v.GetString();
+                }
+
+                firstAny ??= v.GetString();
             }
+
+            // No element claimed primary: fall back to the first, matching what POST and PUT do when
+            // the provisioning client marks nothing.
+            return firstAny;
         }
 
         return null;

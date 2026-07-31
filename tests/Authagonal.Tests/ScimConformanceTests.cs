@@ -170,14 +170,78 @@ public sealed class ScimConformanceTests : IAsyncLifetime
     }
 
     // -----------------------------------------------------------------------
+    // F113 — externalId uniqueness on update, not only on create
+    // -----------------------------------------------------------------------
+
+    [Fact]
+    public async Task Patch_CannotStealAnotherUsersExternalId()
+    {
+        var owner = await (await CreateUserAsync("owner@example.com", externalId: "ext-1"))
+            .Content.ReadFromJsonAsync<JsonElement>();
+        var thief = await (await CreateUserAsync("thief@example.com", externalId: "ext-2"))
+            .Content.ReadFromJsonAsync<JsonElement>();
+
+        // POST checks this and 409s; PUT and PATCH did not, so an update could repoint the
+        // (clientId, externalId) index at this record while the other user still believed it owned
+        // the mapping — after which a deprovision aimed at one user hit the other.
+        var response = await SendAsync(HttpMethod.Patch, $"/scim/v2/Users/{thief.GetProperty("id").GetString()}", new
+        {
+            schemas = new[] { "urn:ietf:params:scim:api:messages:2.0:PatchOp" },
+            Operations = new[] { new { op = "replace", path = "externalId", value = "ext-1" } },
+        });
+
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+
+        // And the owner still holds it.
+        Assert.Equal(owner.GetProperty("id").GetString(),
+            (await _factory.UserStore.FindByExternalIdAsync(_scimClientId, "ext-1"))?.Id);
+    }
+
+    // -----------------------------------------------------------------------
+    // F191 — a non-primary address must not become the login identity
+    // -----------------------------------------------------------------------
+
+    [Fact]
+    public async Task Patch_Emails_PicksThePrimaryNotTheFirst()
+    {
+        var created = await (await CreateUserAsync("real@example.com")).Content.ReadFromJsonAsync<JsonElement>();
+        var id = created.GetProperty("id").GetString()!;
+
+        // The alias is listed FIRST; the order is the IdP's, not the spec's. Taking element [0]
+        // rewrote the account's userName and login identity to an address its owner may not control,
+        // and the real one stopped resolving.
+        var response = await SendAsync(HttpMethod.Patch, $"/scim/v2/Users/{id}", new
+        {
+            schemas = new[] { "urn:ietf:params:scim:api:messages:2.0:PatchOp" },
+            Operations = new[]
+            {
+                new
+                {
+                    op = "replace",
+                    path = "emails",
+                    value = new object[]
+                    {
+                        new { value = "alias@example.com", primary = false },
+                        new { value = "primary@example.com", primary = true },
+                    },
+                },
+            },
+        });
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal("primary@example.com", (await _factory.UserStore.GetAsync(id))!.Email);
+    }
+
+    // -----------------------------------------------------------------------
     // Helpers
     // -----------------------------------------------------------------------
 
-    private Task<HttpResponseMessage> CreateUserAsync(string userName) =>
+    private Task<HttpResponseMessage> CreateUserAsync(string userName, string? externalId = null) =>
         SendAsync(HttpMethod.Post, "/scim/v2/Users", new
         {
             schemas = new[] { "urn:ietf:params:scim:schemas:core:2.0:User" },
             userName,
+            externalId,
             name = new { givenName = "Test", familyName = "User" },
             emails = new[] { new { value = userName, primary = true } },
             active = true,
