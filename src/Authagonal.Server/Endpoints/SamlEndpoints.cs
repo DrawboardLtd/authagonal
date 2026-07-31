@@ -120,6 +120,7 @@ public static class SamlEndpoints
         Authagonal.Core.Services.ITenantContext tenantContext,
         Authagonal.Core.Services.ISecretProvider secretProvider,
         IProvisioningOrchestrator provisioning,
+        ISsoDomainStore ssoDomainStore,
         IConfiguration configuration,
         IOptions<AuthOptions> authOptions,
         IOptions<CacheOptions> cacheOptions,
@@ -402,6 +403,23 @@ public static class SamlEndpoints
                     logger.LogWarning("SAML login rejected: email {Email} matches an existing account but connection {ConnectionId} is not authorised for its domain", email, connectionId);
                     return RedirectWithError(relayState, "access_denied", "This email already belongs to an account. Contact your administrator to link it.");
                 }
+
+                // AllowedDomains is this connection's own claim about which domains it speaks for, and
+                // adoption is the step that hands it a pre-existing account — so a claim is not enough
+                // when the routing table says the domain belongs to someone else. Refusing here is the
+                // second half of the squatting fix: it stops the adoption that turns a squatted account
+                // into a takeover, whichever connection created it.
+                var adoptDomain = email.Split('@').Last().ToLowerInvariant();
+                var adoptOwner = await ssoDomainStore.GetAsync(adoptDomain, ct);
+                if (adoptOwner is not null && !string.Equals(adoptOwner.ConnectionId, connectionId, StringComparison.Ordinal))
+                {
+                    logger.LogWarning(
+                        "SAML adoption rejected: domain {Domain} is routed to connection {Owner}, not {ConnectionId}",
+                        adoptDomain, adoptOwner.ConnectionId, connectionId);
+                    return RedirectWithError(relayState, "access_denied",
+                        "This email domain is managed by a different identity provider. Contact your administrator.");
+                }
+
                 user = existingByEmail;
             }
         }
@@ -422,6 +440,28 @@ public static class SamlEndpoints
                 case FederationJitPolicy.Decision.RejectInviteRequired:
                     logger.LogInformation("JIT rejected for SAML connection {ConnectionId}: no provisioning context on the request for unknown user {Email}", connectionId, email);
                     return RedirectWithError(relayState, "access_denied", "This login requires an invitation. Contact your administrator.");
+            }
+
+            // The domain must not already belong to a DIFFERENT connection, or a permissive connection
+            // can squat addresses in a domain another connection is the authority for. The OIDC host
+            // has had this since the nOAuth work; this one did not, so the whole takeover survived by
+            // simply arriving over SAML instead: JIT-create `ceo@acme.com` through a connection with an
+            // empty AllowedDomains, wait for Acme's real connection to be added, and the genuine user's
+            // first login finds that account by email, adopts it under the domain-vouched connection,
+            // and inherits the squatter's still-attached external login.
+            //
+            // Note this account is created with EmailConfirmed = true — the SAML assertion is the
+            // vouching — which is exactly why the connection's authority over the domain has to be
+            // established before the assertion is allowed to mean that.
+            var jitEmailDomain = email.Split('@').Last().ToLowerInvariant();
+            var jitDomainOwner = await ssoDomainStore.GetAsync(jitEmailDomain, ct);
+            if (jitDomainOwner is not null && !string.Equals(jitDomainOwner.ConnectionId, connectionId, StringComparison.Ordinal))
+            {
+                logger.LogWarning(
+                    "SAML JIT rejected: domain {Domain} is routed to connection {Owner}, not {ConnectionId}",
+                    jitEmailDomain, jitDomainOwner.ConnectionId, connectionId);
+                return RedirectWithError(relayState, "access_denied",
+                    "This email domain is managed by a different identity provider. Contact your administrator.");
             }
 
             user = new AuthUser

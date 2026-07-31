@@ -122,8 +122,13 @@ internal static class ClientAuthentication
         // and §4.4.2 requires the client to authenticate per §3.2.1. Nothing enforced that: a client
         // with RequireClientSecret=false and client_credentials in AllowedGrantTypes authenticated on
         // a bare client_id, and neither token endpoint nor HandleClientCredentialsAsync re-checked.
-        // Token exchange is refused on the same grounds — it mints a token from another, which a
-        // caller that has proved nothing must not be able to do.
+        // NOTE: this comment used to claim "Token exchange is refused on the same grounds". It is not,
+        // and never was — see the remarks on RequiresConfidentialClient, which explain why that is
+        // deliberate (RFC 8693 imposes no such restriction, and the BFF's context-bound exchange routes
+        // are public clients doing exactly this). Two comments in one file disagreeing about what the
+        // code does is how a reviewer concludes a control exists when it does not, so the false one is
+        // corrected rather than left as aspiration.
+        //
         // Only when the client is actually configured for the grant — a client that does not hold
         // client_credentials at all should still fail with the grant-type error, which says something
         // more useful than "you are public".

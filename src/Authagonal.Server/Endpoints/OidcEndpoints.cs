@@ -430,6 +430,22 @@ public static class OidcEndpoints
                     logger.LogWarning("OIDC login rejected: email {Email} matches an existing account but connection {ConnectionId} is not authorised for its domain", email, stateData.ConnectionId);
                     return RedirectWithError(returnUrl, "access_denied", "This email already belongs to an account. Contact your administrator to link it.");
                 }
+
+                // Same gate as the JIT branch below, for the same reason: AllowedDomains (and more so
+                // AutoLinkExistingByEmail) is this connection's own claim, and adoption is what turns a
+                // squatted account into a takeover. When the routing table says another connection is the
+                // authority for the domain, this one does not get to attach itself to the account.
+                var adoptDomain = email.Split('@').Last().ToLowerInvariant();
+                var adoptOwner = await ssoDomainStore.GetAsync(adoptDomain, ct);
+                if (adoptOwner is not null && !string.Equals(adoptOwner.ConnectionId, stateData.ConnectionId, StringComparison.Ordinal))
+                {
+                    logger.LogWarning(
+                        "OIDC adoption rejected: domain {Domain} is routed to connection {Owner}, not {ConnectionId}",
+                        adoptDomain, adoptOwner.ConnectionId, stateData.ConnectionId);
+                    return RedirectWithError(returnUrl, "access_denied",
+                        "This email domain is managed by a different identity provider. Contact your administrator.");
+                }
+
                 user = existingByEmail;
             }
         }

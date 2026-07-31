@@ -511,6 +511,14 @@ public static class AuthagonalExtensions
                 ValidateAudience = true,
                 ValidateLifetime = true,
                 ValidAlgorithms = ["ES256"], // pin the signing alg (defence-in-depth vs alg confusion)
+                // RFC 9068 §4: a resource server MUST reject a JWT whose typ is anything other than
+                // at+jwt. Every token this issuer mints shares one key and one issuer, so without this
+                // an id_token — minted for a browser, handed to the front end, and not a credential for
+                // any API — passes issuer, audience, lifetime and algorithm validation on this scheme
+                // and authenticates as its subject. The token-exchange path has pinned this since the
+                // typ header was introduced; the host's own resource-server scheme had not, and it is
+                // the one every consumer of this library gets by calling AddAuthagonal.
+                ValidTypes = [Authagonal.Core.Constants.TokenTypes.AccessTokenJwt],
                 ClockSkew = TimeSpan.FromSeconds(60),
                 ValidateIssuerSigningKey = true
             };

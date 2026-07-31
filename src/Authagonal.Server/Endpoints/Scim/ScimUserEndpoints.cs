@@ -210,6 +210,36 @@ public static class ScimUserEndpoints
     /// that are not addresses at all, since a SCIM userName is stored as a PRE-VERIFIED email and becomes a
     /// storage key, a blind-index entry, and the input to email-based account linking.
     /// </summary>
+    /// <summary>
+    /// The provisioning client may only own addresses in domains it is authorised for. Returns the
+    /// refusal result when it may not, or null when the address is permitted.
+    /// </summary>
+    /// <remarks>
+    /// Enforced on create, PUT and PATCH alike. It used to run on create only, which made a rename the
+    /// way around it: create <c>user@a-domain-i-own.example</c>, then <c>PUT</c> or <c>PATCH</c> the
+    /// userName to <c>ceo@someone-else.example</c>. The update paths re-checked plausibility and the
+    /// global email index but never the domain, so the account kept <c>EmailConfirmed = true</c> and
+    /// <c>ScimProvisionedByClientId</c> pointing at the attacker's connector — which then owns that
+    /// account object permanently, while the domain's real connector gets 404/409 forever, and the
+    /// owner's first federated sign-in binds to the squatted record.
+    /// </remarks>
+    private static IResult? EmailDomainRefusal(
+        string email, string clientId, IConfiguration configuration, ILogger logger)
+    {
+        var allowedDomains = configuration
+            .GetSection($"Scim:Clients:{clientId}:AllowedEmailDomains").Get<string[]>() ?? [];
+        if (allowedDomains.Length == 0)
+            return null;
+
+        var scimDomain = email.Split('@').Last();
+        if (allowedDomains.Contains(scimDomain, StringComparer.OrdinalIgnoreCase))
+            return null;
+
+        logger.LogWarning(
+            "SCIM client {ClientId} attempted to provision {Email} outside its allowed domains", clientId, email);
+        return ScimResults.BadRequest($"Domain '{scimDomain}' is not permitted for this provisioning client");
+    }
+
     private static bool IsPlausibleEmail(string value)
     {
         if (string.IsNullOrWhiteSpace(value) || value.Length > 320) return false;
@@ -291,16 +321,8 @@ public static class ScimUserEndpoints
         // this, ANY SCIM token could mint a pre-verified account for any address — including a domain
         // belonging to another tenant — and that account then feeds federation auto-linking and (before
         // the SSO-only guard on forgot-password) a local password reset.
-        var scimDomain = email.Split('@').Last();
-        var allowedDomains = configuration
-            .GetSection($"Scim:Clients:{clientId}:AllowedEmailDomains").Get<string[]>() ?? [];
-        if (allowedDomains.Length > 0 &&
-            !allowedDomains.Contains(scimDomain, StringComparer.OrdinalIgnoreCase))
-        {
-            logger.LogWarning(
-                "SCIM client {ClientId} attempted to provision {Email} outside its allowed domains", clientId, email);
-            return ScimResults.BadRequest($"Domain '{scimDomain}' is not permitted for this provisioning client");
-        }
+        if (EmailDomainRefusal(email, clientId, configuration, logger) is { } domainRefusal)
+            return domainRefusal;
 
         // Check if user already exists
         var existing = await userStore.FindByEmailAsync(email, ct);
@@ -401,6 +423,7 @@ public static class ScimUserEndpoints
         IGrantStore grantStore,
         Authagonal.Core.Services.ITenantContext tenantContext,
         IRateLimiter rateLimiter,
+        IConfiguration configuration,
         ILogger<Program> logger,
         CancellationToken ct)
     {
@@ -430,6 +453,11 @@ public static class ScimUserEndpoints
                 return ScimResults.BadRequest("userName must be a valid email address");
             if (!string.Equals(email, user.Email, StringComparison.OrdinalIgnoreCase))
             {
+                // The domain allowlist binds the ADDRESS, not the moment of creation — otherwise a
+                // rename is simply the way around it.
+                if (EmailDomainRefusal(email, clientId, configuration, logger) is { } domainRefusal)
+                    return domainRefusal;
+
                 // Re-check the global email index so an email change can't repoint another account's
                 // email at this record (account-takeover via email-index clobber).
                 var collision = await userStore.FindByEmailAsync(email, ct);
@@ -496,6 +524,7 @@ public static class ScimUserEndpoints
         IGrantStore grantStore,
         Authagonal.Core.Services.ITenantContext tenantContext,
         IRateLimiter rateLimiter,
+        IConfiguration configuration,
         ILogger<Program> logger,
         CancellationToken ct)
     {
@@ -542,6 +571,12 @@ public static class ScimUserEndpoints
         if (!string.IsNullOrEmpty(user.ExternalId) && !IsUsableExternalId(user.ExternalId))
             return ScimResults.Error(400, "invalidValue",
                 "externalId contains characters that cannot be stored, or is too long");
+
+        // A PATCH that renames the account is subject to the same domain allowlist a create is; the
+        // applier writes straight onto the model, so this is the only place left to enforce it.
+        if (!string.Equals(oldEmail, user.Email, StringComparison.OrdinalIgnoreCase)
+            && EmailDomainRefusal(user.Email, clientId, configuration, logger) is { } patchDomainRefusal)
+            return patchDomainRefusal;
 
         // If the patch changed the email, re-check the global index BEFORE persisting so it can't
         // repoint another account's email→userId mapping at this record (account-takeover clobber).

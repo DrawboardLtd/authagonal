@@ -86,6 +86,8 @@ public static class ClientEndpoints
             return TypedResults.Json(new ErrorInfoResponse { Error = "invalid_request", ErrorDescription = redirectError }, AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 400);
         if (InvalidHomeUri(client) is { } uriError)
             return TypedResults.Json(new ErrorInfoResponse { Error = "invalid_request", ErrorDescription = uriError }, AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 400);
+        if (InvalidPublicClientGrants(client) is { } grantError)
+            return TypedResults.Json(new ErrorInfoResponse { Error = "invalid_request", ErrorDescription = grantError }, AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 400);
 
         if (client.IsDefaultApplication)
             await ClearOtherDefaultsAsync(store, client.ClientId, ct);
@@ -140,6 +142,8 @@ public static class ClientEndpoints
             return TypedResults.Json(new ErrorInfoResponse { Error = "invalid_request", ErrorDescription = redirectError }, AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 400);
         if (InvalidHomeUri(client) is { } uriError)
             return TypedResults.Json(new ErrorInfoResponse { Error = "invalid_request", ErrorDescription = uriError }, AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 400);
+        if (InvalidPublicClientGrants(client) is { } grantError)
+            return TypedResults.Json(new ErrorInfoResponse { Error = "invalid_request", ErrorDescription = grantError }, AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 400);
         if (client.IsDefaultApplication && !existing.IsDefaultApplication)
             await ClearOtherDefaultsAsync(store, clientId, ct);
         await store.UpsertAsync(client, ct);
@@ -232,6 +236,23 @@ public static class ClientEndpoints
     private static string? InvalidRedirectUris(OAuthClient client) =>
         RedirectUriRules.Validate(client.RedirectUris, "redirect_uris", requireHttps: true)
         ?? RedirectUriRules.Validate(client.PostLogoutRedirectUris, "post_logout_redirect_uris", requireHttps: false);
+
+    /// <summary>
+    /// RFC 6749 §4.4 restricts <c>client_credentials</c> to confidential clients, so a client holding
+    /// that grant with no secret requirement is a client that can never use it.
+    /// </summary>
+    /// <remarks>
+    /// The token endpoint already refuses the combination at runtime. Refusing it at write time as well
+    /// is the difference between a deployment that fails on its first machine-to-machine call and one
+    /// that cannot be configured into that state at all — an operator who sets it has misunderstood
+    /// something, and the useful moment to say so is while they are looking at the client.
+    /// </remarks>
+    private static string? InvalidPublicClientGrants(OAuthClient client) =>
+        !client.RequireClientSecret
+        && client.AllowedGrantTypes.Contains(Authagonal.Core.Constants.GrantTypes.ClientCredentials, StringComparer.Ordinal)
+            ? "client_credentials requires a confidential client: set require_client_secret, or remove "
+              + "client_credentials from grant_types. The token endpoint refuses this combination at runtime."
+            : null;
 
     private static OAuthClient Redacted(OAuthClient c) => c with { ClientSecretHashes = [] };
 

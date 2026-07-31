@@ -271,6 +271,44 @@ public sealed class AdminClientEndpointTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
     }
 
+    // -----------------------------------------------------------------------
+    // #14 (re-verification) — RFC 6749 §4.4 restricts client_credentials to confidential clients.
+    // The token endpoint refuses the combination at runtime; nothing stopped an operator creating a
+    // client in that state and discovering it at the first machine-to-machine call.
+    // -----------------------------------------------------------------------
+
+    [Fact]
+    public async Task CreateClient_PublicWithClientCredentials_IsRefused()
+    {
+        var response = await CreateAsync(new
+        {
+            clientId = "public-cc",
+            clientName = "Public with client_credentials",
+            requireClientSecret = false,
+            allowedGrantTypes = new[] { "client_credentials" },
+        });
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Contains("confidential", json.GetProperty("error_description").GetString()!,
+            StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>The control: the same grant on a confidential client is exactly the supported case.</summary>
+    [Fact]
+    public async Task CreateClient_ConfidentialWithClientCredentials_IsPermitted()
+    {
+        var response = await CreateAsync(new
+        {
+            clientId = "confidential-cc",
+            clientName = "Confidential with client_credentials",
+            requireClientSecret = true,
+            allowedGrantTypes = new[] { "client_credentials" },
+        });
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+    }
+
     [Fact]
     public async Task CreateClient_Valid_Returns201WithLocation()
     {

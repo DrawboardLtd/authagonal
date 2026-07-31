@@ -557,6 +557,11 @@ public static class AuthEndpoints
             // verification email below is clicked (ConfirmEmailAsync promotes + converts).
             user = existing!;
             user.PendingPasswordHash = passwordHasher.HashPassword(request.Password);
+            // Rotate the stamp as the credential is staged, so any verification link already in an inbox
+            // stops being valid. Without this, an unconsumed link minted before the claim — by an admin
+            // resend, or by the account's own earlier signup — still validates and promotes whatever is
+            // staged when it is eventually clicked, which is the same fail-open by a slower route.
+            user.SecurityStamp = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
             // STAGE the claim's profile/attributes rather than applying them to the victim account now —
             // they activate only when the fresh verification email is clicked (ConfirmEmailAsync). This
             // stops anyone who merely KNOWS the email from mutating the account's name/custom-attributes
@@ -919,10 +924,21 @@ public static class AuthEndpoints
         {
             // The link must be the one issued FOR this staged credential. If someone else staged a claim
             // after this link was sent, the digests differ and we refuse rather than promoting their
-            // credential on this click. Links minted before the binding existed carry no "pc=" field; those
-            // are still accepted, so an in-flight claim is not broken by the deploy.
+            // credential on this click.
+            //
+            // This used to accept a link carrying no "pc=" field at all, to avoid breaking claims that
+            // were in flight across the deploy that introduced the binding. That grace period is the
+            // hole: an unbound link is not a historical artefact, it is something the tree still mints
+            // today. POST /api/v1/profile/{id}/send-verification-email (Admin/UserEndpoints.cs) and the
+            // admin-create link both issue bare tokens with no pc= segment, and either one can be
+            // requested while a claim is pending. The genuine owner clicks the ordinary-looking
+            // verification mail they were expecting and installs an attacker's password, with nothing in
+            // the message saying a credential was set.
+            //
+            // So it fails closed: while a credential is staged, only a link bound to that exact
+            // credential may promote it.
             var boundDigest = parts.FirstOrDefault(p => p.StartsWith("pc=", StringComparison.Ordinal))?[3..];
-            if (boundDigest is not null &&
+            if (boundDigest is null ||
                 !string.Equals(boundDigest, StagedCredentialDigest(user.PendingPasswordHash), StringComparison.Ordinal))
             {
                 logger.LogWarning(

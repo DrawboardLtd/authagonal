@@ -441,6 +441,12 @@ public sealed class AuthagonalTestFactory : IAsyncDisposable
                 ValidateAudience = true,
                 AudienceValidator = (audiences, _, _) => audiences?.Any() == true,
                 ValidateLifetime = true,
+                // RFC 9068 §4. Mirrored from AddAuthagonal, which this factory copies rather than
+                // calls — so a hardening added to the real registration is invisible here until
+                // someone repeats it. That divergence is exactly why the id_token-as-bearer defect
+                // went unnoticed: production could have been fixed and every test using this factory
+                // would still have exercised the unfixed configuration.
+                ValidTypes = [Authagonal.Core.Constants.TokenTypes.AccessTokenJwt],
                 ClockSkew = TimeSpan.FromSeconds(60),
                 ValidateIssuerSigningKey = true
             };
