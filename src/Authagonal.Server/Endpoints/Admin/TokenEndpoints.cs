@@ -78,10 +78,17 @@ public static class TokenEndpoints
             idToken = await tokenService.CreateIdTokenAsync(subject, client, scopes, ct: ct);
         }
 
+        // RFC 6749 §5.1 — the lifetime of the token actually minted. The mint clamps exp down to the
+        // subject's federated session cap; reporting the client's configured ceiling here told the
+        // caller the token lived longer than it does.
+        var mintedAt = DateTimeOffset.UtcNow;
+        var effectiveExpiry = Authagonal.Protocol.Services.ProtocolTokenService.EffectiveAccessTokenExpiry(
+            subject, client, null, mintedAt);
+
         var response = new TokenResponse
         {
             AccessToken = accessToken,
-            ExpiresIn = client.AccessTokenLifetimeSeconds,
+            ExpiresIn = Math.Max(0, (int)Math.Round((effectiveExpiry - mintedAt).TotalSeconds)),
             RefreshToken = refreshToken,
             IdToken = idToken,
             Scope = string.Join(' ', scopes)

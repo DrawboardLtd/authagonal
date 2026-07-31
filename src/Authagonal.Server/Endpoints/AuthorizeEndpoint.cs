@@ -96,9 +96,17 @@ public static class AuthorizeEndpoint
             // an authenticated principal as unauthenticated and re-run login/federation.
             var isAuthenticated = httpContext.User.Identity?.IsAuthenticated == true;
 
-            var forceReauth = (source.Get("prompt") ?? string.Empty)
-                .Split(' ', StringSplitOptions.RemoveEmptyEntries)
-                .Contains("login");
+            var forceReauth = request.Prompts.Contains("login");
+
+            // OIDC Core §3.1.2.1: when the elapsed time since the end-user last actively authenticated
+            // exceeds max_age, the OP MUST actively re-authenticate them. The parameter was read
+            // nowhere in the product, so `max_age=0` was answered from whatever cookie session existed
+            // — up to the absolute session cap — with no re-authentication and no signal to the RP.
+            // The auth_time needed to honour it has been minted on every sign-in since 0.11.0 and is
+            // already read three lines below for the PAR loop-breaker; it was simply never compared.
+            var sessionAuthTime = ReadAuthTime(httpContext.User);
+            if (isAuthenticated && request.RequiresReauthentication(sessionAuthTime, DateTimeOffset.UtcNow))
+                forceReauth = true;
 
             // prompt=login is satisfied only by a session established AFTER this request began. For a PAR
             // request the prompt rides the pushed payload (not the live query), so it can't be stripped on
@@ -126,7 +134,7 @@ public static class AuthorizeEndpoint
                 // its prompt lives in the pushed payload, and the auth_time >= CreatedAt check above is what
                 // breaks its loop on return.
                 var authorizeRelativeUrl = forceReauth && string.IsNullOrWhiteSpace(requestUri)
-                    ? BuildRelativeUrlWithoutPrompt(httpContext.Request)
+                    ? BuildRelativeUrlWithoutReauthDemands(httpContext.Request)
                     : $"{httpContext.Request.Path}{httpContext.Request.QueryString}";
 
                 // RP-specified upstream IdP. The hint is an OIDC connection id understood
@@ -368,16 +376,40 @@ public static class AuthorizeEndpoint
     // this only helps the non-PAR flow — a PAR request carries prompt inside the pushed payload (which the
     // PAR record deliberately keeps across the login round-trip), so its loop is broken instead by the
     // auth_time >= record.CreatedAt check at /authorize, not by stripping.
-    private static string BuildRelativeUrlWithoutPrompt(Microsoft.AspNetCore.Http.HttpRequest request)
+    /// <summary>
+    /// The same authorize URL with the re-authentication demands removed, for the round-trip through
+    /// login.
+    /// </summary>
+    /// <remarks>
+    /// Both <c>prompt=login</c> and <c>max_age</c> are demands the user is about to satisfy by
+    /// actually authenticating; leaving them on the return URL re-triggers the demand and loops.
+    /// <c>max_age</c> especially: <c>max_age=0</c> is unsatisfiable by any session that has existed
+    /// for a measurable moment, so it would loop forever. Stripping is safe because this URL is built
+    /// server-side, and the demand has already been met by the time it is used — the code issued on
+    /// return carries a fresh <c>auth_time</c>, which is what lets the RP verify that for itself.
+    /// PAR requests keep their URL: their parameters ride the pushed payload, and the
+    /// <c>auth_time &gt;= CreatedAt</c> rule is what breaks their loop.
+    /// </remarks>
+    private static string BuildRelativeUrlWithoutReauthDemands(Microsoft.AspNetCore.Http.HttpRequest request)
     {
         var qs = Microsoft.AspNetCore.Http.QueryString.Empty;
         foreach (var kv in request.Query)
         {
             if (string.Equals(kv.Key, "prompt", StringComparison.OrdinalIgnoreCase)) continue;
+            if (string.Equals(kv.Key, "max_age", StringComparison.OrdinalIgnoreCase)) continue;
             foreach (var v in kv.Value)
                 qs = qs.Add(kv.Key, v ?? string.Empty);
         }
         return $"{request.Path}{qs}";
+    }
+
+    /// <summary>The session's <c>auth_time</c> — when the user last actively authenticated.</summary>
+    private static DateTimeOffset? ReadAuthTime(System.Security.Claims.ClaimsPrincipal principal)
+    {
+        var claim = principal.FindFirst(CookieSignInHelper.AuthTimeClaim)?.Value;
+        return long.TryParse(claim, out var seconds)
+            ? DateTimeOffset.FromUnixTimeSeconds(seconds)
+            : null;
     }
 
     internal sealed class ConsentData

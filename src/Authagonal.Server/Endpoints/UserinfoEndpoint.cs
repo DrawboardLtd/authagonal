@@ -85,13 +85,15 @@ public static class UserinfoEndpoint
 
             var claims = new Dictionary<string, object?> { ["sub"] = user.Id };
 
-            if (scopes.Contains("email", StringComparer.Ordinal))
+            if (scopes.Contains(StandardScopes.Email, StringComparer.Ordinal))
             {
                 claims["email"] = user.Email;
                 claims["email_verified"] = user.EmailConfirmed;
             }
 
-            if (scopes.Contains("profile", StringComparer.Ordinal))
+            var hasProfile = scopes.Contains(StandardScopes.Profile, StringComparer.Ordinal);
+
+            if (hasProfile)
             {
                 if (!string.IsNullOrWhiteSpace(user.FirstName))
                     claims["given_name"] = user.FirstName;
@@ -100,22 +102,35 @@ public static class UserinfoEndpoint
                 var fullName = $"{user.FirstName} {user.LastName}".Trim();
                 if (!string.IsNullOrWhiteSpace(fullName))
                     claims["name"] = fullName;
-                if (!string.IsNullOrWhiteSpace(user.Phone))
-                    claims["phone_number"] = user.Phone;
                 if (!string.IsNullOrWhiteSpace(user.Locale))
                     claims["locale"] = user.Locale;
             }
 
-            if (!string.IsNullOrWhiteSpace(user.OrganizationId))
+            // OIDC §5.4 gives the phone claims their own scope. They were released under `profile`,
+            // so the consent screen never told the user their phone number was being disclosed.
+            if (scopes.Contains(StandardScopes.Phone, StringComparer.Ordinal)
+                && !string.IsNullOrWhiteSpace(user.Phone))
+            {
+                claims["phone_number"] = user.Phone;
+            }
+
+            // org_id, roles and the full SCIM group membership were appended to EVERY response with
+            // no scope gate whatsoever — three lines below a comment citing §5.3.2 for the claims
+            // that were gated. Group membership in particular is an organisational graph fetched live
+            // from the group store and handed to any client holding any access token.
+            if (hasProfile && !string.IsNullOrWhiteSpace(user.OrganizationId))
                 claims["org_id"] = user.OrganizationId;
 
-            if (user.Roles.Count > 0)
+            if (scopes.Contains(StandardScopes.Roles, StringComparer.Ordinal) && user.Roles.Count > 0)
                 claims["roles"] = user.Roles;
 
-            var groups = await scimGroupStore.GetGroupsByUserIdAsync(user.Id, ct);
-            if (groups.Count > 0)
+            if (scopes.Contains(StandardScopes.Groups, StringComparer.Ordinal))
             {
-                claims["groups"] = groups.Select(g => new { id = g.Id, name = g.DisplayName }).ToArray();
+                var groups = await scimGroupStore.GetGroupsByUserIdAsync(user.Id, ct);
+                if (groups.Count > 0)
+                {
+                    claims["groups"] = groups.Select(g => new { id = g.Id, name = g.DisplayName }).ToArray();
+                }
             }
 
             return Results.Ok(claims);

@@ -146,6 +146,18 @@ public sealed record OidcSubject
     public DateTimeOffset? SessionMaxExpiresAt { get; init; }
 
     /// <summary>
+    /// When the end-user last actively authenticated. Emitted as the OIDC <c>auth_time</c> claim, and
+    /// the value <c>max_age</c> is measured against.
+    /// </summary>
+    /// <remarks>
+    /// <c>auth_time</c> was advertised in <c>claims_supported</c> but no ID token could ever carry it:
+    /// the 0.11.0 work recorded the authentication time on the session cookie only, so it never
+    /// reached the subject and never reached a token. Without it, <c>max_age</c> has nothing to
+    /// compare against and an RP's re-authentication demand cannot be honoured or evidenced.
+    /// </remarks>
+    public DateTimeOffset? AuthTime { get; init; }
+
+    /// <summary>
     /// Stable per-authentication-session identifier. Emitted as the <c>sid</c> claim on ID
     /// tokens and propagated into back-channel logout tokens when the relying party has
     /// <c>BackChannelLogoutSessionRequired</c> set. Generated at sign-in by the host and

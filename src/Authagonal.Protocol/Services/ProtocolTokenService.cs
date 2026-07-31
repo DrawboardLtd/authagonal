@@ -156,12 +156,7 @@ public sealed class ProtocolTokenService(
             claims[AuthorityClaims.Actor] = doc.RootElement.Clone();
         }
 
-        // Clamp lifetime by session cap if present.
-        var expires = now.AddSeconds(client.AccessTokenLifetimeSeconds);
-        if (subject?.SessionMaxExpiresAt is { } sessionCap && sessionCap < expires)
-            expires = sessionCap;
-        if (notAfter is { } issuanceCap && issuanceCap < expires)
-            expires = issuanceCap;
+        var expires = EffectiveAccessTokenExpiry(subject, client, notAfter, now);
 
         var descriptor = new SecurityTokenDescriptor
         {
@@ -195,11 +190,47 @@ public sealed class ProtocolTokenService(
         }
 
         var handler = new JsonWebTokenHandler();
-        return new MintedAccessToken(handler.CreateToken(descriptor), jti, expires);
+        return new MintedAccessToken(handler.CreateToken(descriptor), jti, now, expires);
     }
 
-    /// <summary>An access token together with the two facts needed to revoke it later.</summary>
-    private readonly record struct MintedAccessToken(string Token, string Jti, DateTimeOffset ExpiresAt);
+    /// <summary>An access token together with the facts needed to revoke it and to describe it.</summary>
+    private readonly record struct MintedAccessToken(
+        string Token, string Jti, DateTimeOffset IssuedAt, DateTimeOffset ExpiresAt)
+    {
+        /// <summary>
+        /// RFC 6749 §5.1 <c>expires_in</c>: the lifetime of THIS token, not the client's configured
+        /// ceiling.
+        /// </summary>
+        /// <remarks>
+        /// Measured as <c>exp - iat</c> — the token's own stamped lifetime — rather than against a
+        /// later clock read, so an unclamped token reports exactly its configured lifetime instead of
+        /// one second less because a few milliseconds elapsed between minting and responding.
+        /// </remarks>
+        public int ExpiresInSeconds =>
+            Math.Max(0, (int)Math.Round((ExpiresAt - IssuedAt).TotalSeconds));
+    }
+
+    /// <summary>
+    /// The expiry an access token minted now would actually carry: the client's configured lifetime,
+    /// clamped by the subject's federated session cap and by any per-issuance ceiling.
+    /// </summary>
+    /// <remarks>
+    /// Public because callers outside the mint need the same answer to report <c>expires_in</c>
+    /// honestly. The clamp was applied to the JWT's <c>exp</c> but the response builders all reported
+    /// the unclamped <c>client.AccessTokenLifetimeSeconds</c>, so a client whose federated session had
+    /// four minutes left was told it held a thirty-minute token — and scheduled its refresh
+    /// accordingly, i.e. after the token had already died.
+    /// </remarks>
+    public static DateTimeOffset EffectiveAccessTokenExpiry(
+        OidcSubject? subject, OAuthClient client, DateTimeOffset? notAfter, DateTimeOffset now)
+    {
+        var expires = now.AddSeconds(client.AccessTokenLifetimeSeconds);
+        if (subject?.SessionMaxExpiresAt is { } sessionCap && sessionCap < expires)
+            expires = sessionCap;
+        if (notAfter is { } issuanceCap && issuanceCap < expires)
+            expires = issuanceCap;
+        return expires;
+    }
 
     public async Task<string> CreateIdTokenAsync(
         OidcSubject subject,
@@ -223,7 +254,24 @@ public sealed class ProtocolTokenService(
         if (!string.IsNullOrEmpty(subject.SessionId))
             claims["sid"] = subject.SessionId;
 
-        if (scopeList.Contains(StandardScopes.Email) || scopeList.Contains(StandardScopes.OpenId))
+        // OIDC Core §2: REQUIRED whenever max_age was requested, and the claim the RP uses to verify
+        // its demand was met. Emitted whenever it is known rather than only under max_age, since
+        // claims_supported has always advertised it.
+        if (subject.AuthTime is { } authTime)
+            claims["auth_time"] = authTime.ToUnixTimeSeconds();
+
+        // OIDC Core §5.4 binds each standard claim set to a scope. Both the email and the profile
+        // branch used to fire on `openid` as well — and `openid` is mandatory on every OIDC request,
+        // so `scope=openid` alone returned email, email_verified, given_name, family_name, name,
+        // phone_number and locale. There was no request a client could make that did NOT release
+        // them, so the consent screen's scope list described something the token did not honour.
+        //
+        // AlwaysIncludeUserClaimsInIdToken is the documented opt-out, and honouring it here is what
+        // makes it mean anything: it was persisted, seeded and migrated but read nowhere, so
+        // operators had a knob that implied this was already gated.
+        var always = client.AlwaysIncludeUserClaimsInIdToken;
+
+        if (always || scopeList.Contains(StandardScopes.Email))
         {
             if (!string.IsNullOrEmpty(subject.Email))
                 claims["email"] = subject.Email;
@@ -231,7 +279,7 @@ public sealed class ProtocolTokenService(
             claims["email_verified"] = subject.EmailVerified;
         }
 
-        if (scopeList.Contains(StandardScopes.Profile) || scopeList.Contains(StandardScopes.OpenId))
+        if (always || scopeList.Contains(StandardScopes.Profile))
         {
             if (!string.IsNullOrEmpty(subject.GivenName))
                 claims["given_name"] = subject.GivenName;
@@ -243,20 +291,29 @@ public sealed class ProtocolTokenService(
             if (!string.IsNullOrEmpty(fullName))
                 claims["name"] = fullName;
 
-            if (!string.IsNullOrEmpty(subject.Phone))
-                claims["phone_number"] = subject.Phone;
-
             if (!string.IsNullOrEmpty(subject.Locale))
                 claims["locale"] = subject.Locale;
         }
 
-        if (!string.IsNullOrEmpty(subject.OrganizationId))
-            claims["org_id"] = subject.OrganizationId;
+        // §5.4 assigns the phone claims their own scope. They rode `profile` before, which is both
+        // the wrong binding and one the user was never shown.
+        if (always || scopeList.Contains(StandardScopes.Phone))
+        {
+            if (!string.IsNullOrEmpty(subject.Phone))
+                claims["phone_number"] = subject.Phone;
+        }
 
-        if (subject.Roles is { Count: > 0 })
+        // org_id describes the account's placement, so it travels with the profile set.
+        if ((always || scopeList.Contains(StandardScopes.Profile))
+            && !string.IsNullOrEmpty(subject.OrganizationId))
+        {
+            claims["org_id"] = subject.OrganizationId;
+        }
+
+        if ((always || scopeList.Contains(StandardScopes.Roles)) && subject.Roles is { Count: > 0 })
             claims["roles"] = subject.Roles.ToArray();
 
-        if (subject.Groups is { Count: > 0 })
+        if ((always || scopeList.Contains(StandardScopes.Groups)) && subject.Groups is { Count: > 0 })
             claims["groups"] = subject.Groups.ToArray();
 
         var allowedCustomClaims = await GetAllowedCustomClaimNamesAsync(scopeList, ct);
@@ -440,7 +497,9 @@ public sealed class ProtocolTokenService(
         return new TokenResponse
         {
             AccessToken = accessToken.Token,
-            ExpiresIn = client.AccessTokenLifetimeSeconds,
+            // RFC 6749 §5.1: the lifetime of this token. Reporting the configured ceiling instead
+            // overstated it whenever a federated session cap clamped the JWT's own exp.
+            ExpiresIn = accessToken.ExpiresInSeconds,
             IdToken = idToken,
             RefreshToken = refreshToken,
             Scope = string.Join(' ', authCode.Scopes)
@@ -615,7 +674,9 @@ public sealed class ProtocolTokenService(
         return new TokenResponse
         {
             AccessToken = accessToken.Token,
-            ExpiresIn = client.AccessTokenLifetimeSeconds,
+            // RFC 6749 §5.1: the lifetime of this token. Reporting the configured ceiling instead
+            // overstated it whenever a federated session cap clamped the JWT's own exp.
+            ExpiresIn = accessToken.ExpiresInSeconds,
             IdToken = idToken,
             RefreshToken = newRefreshToken,
             Scope = string.Join(' ', data.Scopes)
@@ -677,7 +738,9 @@ public sealed class ProtocolTokenService(
         return new TokenResponse
         {
             AccessToken = accessToken.Token,
-            ExpiresIn = client.AccessTokenLifetimeSeconds,
+            // RFC 6749 §5.1: the lifetime of this token. Reporting the configured ceiling instead
+            // overstated it whenever a federated session cap clamped the JWT's own exp.
+            ExpiresIn = accessToken.ExpiresInSeconds,
             IdToken = idToken,
             RefreshToken = successorKey,
             Scope = string.Join(' ', data.Scopes)
@@ -1511,7 +1574,7 @@ public sealed class ProtocolTokenService(
             AccessToken = accessToken.Token,
             RefreshToken = refreshToken,
             IdToken = idToken,
-            ExpiresIn = client.AccessTokenLifetimeSeconds,
+            ExpiresIn = accessToken.ExpiresInSeconds,
             Scope = string.Join(' ', scopeList)
         };
     }

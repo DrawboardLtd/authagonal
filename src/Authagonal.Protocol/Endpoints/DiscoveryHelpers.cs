@@ -16,7 +16,10 @@ internal static class DiscoveryHelpers
     /// </summary>
     public static async Task<string[]> ResolveSupportedScopesAsync(IScopeStore scopeStore, CancellationToken ct)
     {
-        var builtIn = new[] { "openid", "profile", "email", "offline_access" };
+        // `phone`, `roles` and `groups` are advertised because the claims they gate are ones this OP
+        // actually releases. Before, `phone_number` rode `profile` and `roles`/`groups` rode nothing,
+        // so `claims_supported` named claims that no advertised scope governed.
+        var builtIn = new[] { "openid", "profile", "email", "phone", "roles", "groups", "offline_access" };
         try
         {
             var custom = await scopeStore.ListAsync(ct);

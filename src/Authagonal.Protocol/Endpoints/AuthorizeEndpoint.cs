@@ -43,12 +43,14 @@ internal static class AuthorizeEndpoint
                 return AuthorizeRequestSupport.BuildErrorRedirect(null, "unauthorized_client", "Unknown client_id", initialState);
 
             IReadableRequestParameters source;
+            DateTimeOffset? parCreatedAt = null;
             if (!string.IsNullOrWhiteSpace(requestUri))
             {
                 var record = await parService.LoadAsync(requestUri, clientId, ct);
                 if (record is null)
                     return AuthorizeRequestSupport.BuildErrorRedirect(null, "invalid_request", "request_uri is unknown, expired, or already consumed", initialState);
                 source = new ParRequestParameters(record.Parameters);
+                parCreatedAt = record.CreatedAt;
             }
             else
             {
@@ -103,6 +105,52 @@ internal static class AuthorizeEndpoint
                     string.IsNullOrWhiteSpace(explicitAuth.Failure.Message) ? "Authentication failed" : explicitAuth.Failure.Message,
                     request.State);
 
+            // Re-authentication demands. The 0.11.0 fix for prompt=login landed only in
+            // Authagonal.Server, but this package ships and maps BOTH endpoints — so the shipped
+            // Protocol host still answered `prompt=login` from whatever session already existed. The
+            // guest share-link case that motivated the original fix (a stale SSO cookie outliving the
+            // caller's downstream session and claiming the link as the wrong identity) applied here
+            // unchanged. max_age was never honoured by either host.
+            //
+            // The demand is re-checked here rather than shared wholesale with Server because the two
+            // hosts sign out and re-challenge differently: Server owns a login UI and a cookie scheme,
+            // this host challenges whatever scheme the embedding application registered.
+            var isAuthenticated = principal.Identity?.IsAuthenticated == true;
+            var forceReauth = isAuthenticated
+                && (request.Prompts.Contains("login")
+                    || request.RequiresReauthentication(ReadAuthTime(principal), DateTimeOffset.UtcNow));
+
+            // A PAR request carries its prompt/max_age in the pushed payload, so they cannot be
+            // stripped for the round-trip; the demand is instead satisfied by a session established
+            // after the record was pushed. Same rule as Server, same server-side reference, so a
+            // client cannot forge its way past it.
+            if (forceReauth && parCreatedAt is { } parCreated
+                && ReadAuthTime(principal) is { } established
+                && established >= parCreated)
+            {
+                forceReauth = false;
+            }
+
+            if (forceReauth)
+            {
+                // Drop the existing session first, so the challenge cannot be satisfied by the very
+                // cookie the RP asked us not to reuse.
+                if (!string.IsNullOrEmpty(authScheme))
+                    await httpContext.SignOutAsync(authScheme);
+
+                return Results.Challenge(
+                    new AuthenticationProperties
+                    {
+                        // Stripped for the same reason Server strips them: the user is about to satisfy
+                        // these demands by authenticating, and leaving them on the return URL re-triggers
+                        // the demand. max_age=0 would otherwise never be satisfiable and loop forever.
+                        RedirectUri = string.IsNullOrWhiteSpace(requestUri)
+                            ? BuildUrlWithoutReauthDemands(httpContext.Request)
+                            : $"{httpContext.Request.Path}{httpContext.Request.QueryString}",
+                    },
+                    [authScheme]);
+            }
+
             if (principal.Identity?.IsAuthenticated != true)
             {
                 var originalUrl = $"{httpContext.Request.Path}{httpContext.Request.QueryString}";
@@ -145,5 +193,34 @@ internal static class AuthorizeEndpoint
         .WithTags("OIDC");
 
         return app;
+    }
+
+    /// <summary>The principal's <c>auth_time</c> — when it last actively authenticated.</summary>
+    /// <remarks>
+    /// Read as a claim rather than from a host-specific helper so this works for whatever scheme the
+    /// embedding application registered. A host that never stamps <c>auth_time</c> yields null, which
+    /// <see cref="AuthorizeRequest.RequiresReauthentication"/> treats as "cannot prove freshness" and
+    /// therefore as requiring re-authentication — the safe direction for a demand.
+    /// </remarks>
+    private static DateTimeOffset? ReadAuthTime(System.Security.Claims.ClaimsPrincipal principal)
+    {
+        var claim = principal.FindFirst("auth_time")?.Value;
+        return long.TryParse(claim, out var seconds)
+            ? DateTimeOffset.FromUnixTimeSeconds(seconds)
+            : null;
+    }
+
+    /// <summary>The same URL without <c>prompt</c> / <c>max_age</c>, for the round-trip through login.</summary>
+    private static string BuildUrlWithoutReauthDemands(HttpRequest request)
+    {
+        var qs = QueryString.Empty;
+        foreach (var kv in request.Query)
+        {
+            if (string.Equals(kv.Key, "prompt", StringComparison.OrdinalIgnoreCase)) continue;
+            if (string.Equals(kv.Key, "max_age", StringComparison.OrdinalIgnoreCase)) continue;
+            foreach (var v in kv.Value)
+                qs = qs.Add(kv.Key, v ?? string.Empty);
+        }
+        return $"{request.Path}{qs}";
     }
 }

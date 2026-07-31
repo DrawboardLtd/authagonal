@@ -57,7 +57,10 @@ public sealed class AdminTokenMintTests : IAsyncLifetime
     {
         var user = await _factory.SeedTestUserAsync(email: "target@example.com");
 
-        var response = await MintAsync(AuthagonalTestFactory.TestClientId, user.Id, "openid profile offline_access");
+        // `email` is requested explicitly. It used to be omitted here and the assertion below still
+        // passed, because the ID token released the email and profile sets on `openid` alone — so this
+        // test was pinning the ungated release (OIDC Core §5.4) rather than the mint it is named for.
+        var response = await MintAsync(AuthagonalTestFactory.TestClientId, user.Id, "openid profile email offline_access");
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var json = await response.Content.ReadFromJsonAsync<JsonElement>();
@@ -67,19 +70,31 @@ public sealed class AdminTokenMintTests : IAsyncLifetime
         // offline_access requested + client allows it → refresh token issued
         Assert.False(string.IsNullOrEmpty(json.GetProperty("refresh_token").GetString()));
         Assert.False(string.IsNullOrEmpty(json.GetProperty("id_token").GetString()));
-        Assert.Equal("openid profile offline_access", json.GetProperty("scope").GetString());
+        Assert.Equal("openid profile email offline_access", json.GetProperty("scope").GetString());
         Assert.Equal(3600, json.GetProperty("expires_in").GetInt32()); // client's AccessTokenLifetimeSeconds
 
         // Access token is minted FOR the target user THROUGH the requested client
         var payload = DecodeJwtPayload(accessToken);
         Assert.Equal(user.Id, payload.GetProperty("sub").GetString());
         Assert.Equal(AuthagonalTestFactory.TestClientId, payload.GetProperty("client_id").GetString());
-        Assert.Equal("openid profile offline_access", payload.GetProperty("scope").GetString());
+        Assert.Equal("openid profile email offline_access", payload.GetProperty("scope").GetString());
 
         // Id token subject matches too
         var idPayload = DecodeJwtPayload(json.GetProperty("id_token").GetString()!);
         Assert.Equal(user.Id, idPayload.GetProperty("sub").GetString());
         Assert.Equal("target@example.com", idPayload.GetProperty("email").GetString());
+    }
+
+    [Fact]
+    public async Task Mint_WithoutEmailScope_DoesNotReleaseEmailInIdToken()
+    {
+        var user = await _factory.SeedTestUserAsync(email: "target@example.com");
+
+        var response = await MintAsync(AuthagonalTestFactory.TestClientId, user.Id, "openid profile");
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+
+        var idPayload = DecodeJwtPayload(json.GetProperty("id_token").GetString()!);
+        Assert.False(idPayload.TryGetProperty("email", out _));
     }
 
     [Fact]

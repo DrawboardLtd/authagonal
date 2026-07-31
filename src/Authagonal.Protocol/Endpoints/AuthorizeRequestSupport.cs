@@ -39,20 +39,66 @@ internal sealed class AuthorizeRequest
     public string? Nonce { get; init; }
     public string[] Resources { get; init; } = [];
 
+    /// <summary>
+    /// OIDC Core §3.1.2.1 <c>max_age</c>: the greatest elapsed time, in seconds, the RP will accept
+    /// since the end-user last actively authenticated. Null when absent.
+    /// </summary>
+    /// <remarks>
+    /// Was not read at all — not by this method, not anywhere in <c>src/</c> — so a request carrying
+    /// <c>max_age=0</c> was answered from a thirty-day-old cookie session with no re-authentication
+    /// and no signal to the RP that its demand had been dropped. For PAR clients the parameter was
+    /// even persisted into the pushed payload and then ignored.
+    /// </remarks>
+    public int? MaxAge { get; init; }
+
+    /// <summary>The raw <c>max_age</c>, kept so a malformed value can be refused rather than
+    /// silently treated as absent — which is the failure mode this whole parameter had.</summary>
+    public string? RawMaxAge { get; init; }
+
+    /// <summary>The space-delimited <c>prompt</c> values (OIDC Core §3.1.2.1).</summary>
+    public string[] Prompts { get; init; } = [];
+
     /// <summary>Set by <see cref="AuthorizeRequestSupport.Validate"/>.</summary>
     public string[] RequestedScopes { get; set; } = [];
 
-    public static AuthorizeRequest Read(IReadableRequestParameters source) => new()
+    public static AuthorizeRequest Read(IReadableRequestParameters source)
     {
-        RedirectUri = source.Get("redirect_uri"),
-        ResponseType = source.Get("response_type"),
-        Scope = source.Get("scope"),
-        State = source.Get("state"),
-        CodeChallenge = source.Get("code_challenge"),
-        CodeChallengeMethod = source.Get("code_challenge_method"),
-        Nonce = source.Get("nonce"),
-        Resources = source.GetAll("resource").Where(r => !string.IsNullOrWhiteSpace(r)).ToArray(),
-    };
+        var rawMaxAge = source.Get("max_age");
+        return new AuthorizeRequest
+        {
+            RedirectUri = source.Get("redirect_uri"),
+            ResponseType = source.Get("response_type"),
+            Scope = source.Get("scope"),
+            State = source.Get("state"),
+            CodeChallenge = source.Get("code_challenge"),
+            CodeChallengeMethod = source.Get("code_challenge_method"),
+            Nonce = source.Get("nonce"),
+            Resources = source.GetAll("resource").Where(r => !string.IsNullOrWhiteSpace(r)).ToArray(),
+            RawMaxAge = rawMaxAge,
+            MaxAge = int.TryParse(rawMaxAge, System.Globalization.NumberStyles.None,
+                System.Globalization.CultureInfo.InvariantCulture, out var parsed) && parsed >= 0
+                ? parsed
+                : null,
+            Prompts = (source.Get("prompt") ?? string.Empty)
+                .Split(' ', StringSplitOptions.RemoveEmptyEntries),
+        };
+    }
+
+    /// <summary>
+    /// True when the session's <paramref name="authTime"/> is older than <see cref="MaxAge"/> allows,
+    /// so the OP MUST actively re-authenticate the end-user.
+    /// </summary>
+    /// <remarks>
+    /// A missing <paramref name="authTime"/> with <c>max_age</c> present also demands
+    /// re-authentication: the OP cannot show the session is fresh enough, and answering anyway is
+    /// exactly the silent non-compliance being fixed.
+    /// </remarks>
+    public bool RequiresReauthentication(DateTimeOffset? authTime, DateTimeOffset now)
+    {
+        if (MaxAge is not { } maxAge) return false;
+        if (authTime is not { } established) return true;
+        return now - established > TimeSpan.FromSeconds(maxAge);
+    }
 }
 
 /// <summary>
@@ -82,6 +128,12 @@ internal static class AuthorizeRequestSupport
 
         if (string.IsNullOrWhiteSpace(request.Scope))
             return BuildErrorRedirect(redirectUri, "invalid_scope", "scope is required", state);
+
+        // Refused rather than ignored. `max_age` is a re-authentication DEMAND, so a value the OP
+        // cannot parse must not degrade into "no demand" — that is indistinguishable from honouring
+        // it, and the RP has no way to tell which happened.
+        if (request.RawMaxAge is { Length: > 0 } && request.MaxAge is null)
+            return BuildErrorRedirect(redirectUri, "invalid_request", "max_age must be a non-negative integer", state);
 
         var requestedScopes = request.Scope.Split(' ', StringSplitOptions.RemoveEmptyEntries);
         // Ordinal, NOT OrdinalIgnoreCase. RFC 6749 §3.3 makes scope tokens case-sensitive, and matching

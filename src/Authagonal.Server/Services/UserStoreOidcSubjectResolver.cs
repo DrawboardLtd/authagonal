@@ -60,6 +60,14 @@ public sealed class UserStoreOidcSubjectResolver(
 
         var sessionId = authenticatedPrincipal.FindFirstValue("sid");
 
+        // When this session was actually authenticated. Minted on every sign-in since 0.11.0 but never
+        // carried past the cookie, so no token could ever emit auth_time and max_age had nothing to
+        // compare against — while claims_supported advertised auth_time regardless.
+        DateTimeOffset? authTime = null;
+        var authTimeClaim = authenticatedPrincipal.FindFirstValue(CookieSignInHelper.AuthTimeClaim);
+        if (!string.IsNullOrEmpty(authTimeClaim) && long.TryParse(authTimeClaim, out var authTimeSeconds))
+            authTime = DateTimeOffset.FromUnixTimeSeconds(authTimeSeconds);
+
         // Federation claims captured at the OIDC callback ride on the cookie as
         // `federated:<name>` claims. Pass them through OidcSubject.FederationClaims
         // so ProtocolTokenService's scope-gated emission re-releases them on the
@@ -83,7 +91,7 @@ public sealed class UserStoreOidcSubjectResolver(
 
         var subject = await BuildSubjectAsync(
             user, client, sessionMaxExpiresAt, sessionId, federationClaims,
-            upstreamRefreshToken, upstreamConnectionId, ct);
+            upstreamRefreshToken, upstreamConnectionId, authTime, ct);
         return OidcSubjectResult.Allow(subject);
     }
 
@@ -155,6 +163,10 @@ public sealed class UserStoreOidcSubjectResolver(
         // — the resolver can't re-read any of them from the cookie at refresh time, and
         // they must survive rotations so the cap can't be lifted, back-channel logouts can
         // correlate, and federation-derived claims keep flowing onto refreshed tokens.
+        //
+        // auth_time rides along for the same reason and one of its own: refreshing is not
+        // authenticating, so the value must NOT advance. Bumping it here would let any client hold a
+        // session open past every max_age its RPs demand simply by refreshing.
         var subject = await BuildSubjectAsync(
             user, client,
             priorSubject.SessionMaxExpiresAt,
@@ -162,6 +174,7 @@ public sealed class UserStoreOidcSubjectResolver(
             priorSubject.FederationClaims,
             upstreamRefreshToken,
             priorSubject.UpstreamConnectionId,
+            priorSubject.AuthTime,
             ct);
         return OidcSubjectResult.Allow(subject);
     }
@@ -301,6 +314,7 @@ public sealed class UserStoreOidcSubjectResolver(
         IReadOnlyDictionary<string, string>? federationClaims = null,
         string? upstreamRefreshToken = null,
         string? upstreamConnectionId = null,
+        DateTimeOffset? authTime = null,
         CancellationToken ct = default)
     {
         // SCIM group → role mappings (empty store = no-op). Fetch the user's groups once,
@@ -342,6 +356,7 @@ public sealed class UserStoreOidcSubjectResolver(
             FederationClaims = federationClaims is { Count: > 0 } ? federationClaims : null,
             SessionMaxExpiresAt = sessionMaxExpiresAt,
             SessionId = sessionId,
+            AuthTime = authTime,
             UpstreamRefreshToken = upstreamRefreshToken,
             UpstreamConnectionId = upstreamConnectionId,
         };
