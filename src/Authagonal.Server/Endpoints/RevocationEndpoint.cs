@@ -23,24 +23,21 @@ public static class RevocationEndpoint
         {
             var form = await httpContext.Request.ReadFormAsync(ct);
 
-            // Authenticate client
-            var (clientId, clientSecret) = ExtractClientCredentials(httpContext, form);
+            // Through the shared client-authentication path rather than a private copy of it.
+            // RFC 7009 §2.1 requires the client to authenticate "as described in Section 2.3 of
+            // [RFC6749]", which is the same set of methods the token endpoint accepts — but this
+            // endpoint only ever understood client_secret_basic/_post, so a client whose ONLY
+            // registered credential is a key (private_key_jwt, which is what an FAPI or
+            // mTLS-adjacent deployment registers) had no way to authenticate here at all. It was
+            // locked out of revoking its own tokens: the endpoint that exists to shorten a
+            // compromised token's life was the one it could not reach.
+            var (client, authError) = await Authagonal.Protocol.Endpoints.ClientAuthentication.AuthenticateAsync(
+                httpContext, form, clientStore, secretVerifier,
+                (err, description) => JsonResults.OAuthError(err, description, 401), ct);
+            if (authError is not null)
+                return authError;
 
-            if (string.IsNullOrWhiteSpace(clientId))
-                return JsonResults.OAuthError("invalid_client", "client_id is required", 401);
-
-            var client = await clientStore.GetAsync(clientId, ct);
-            if (client is null)
-                return JsonResults.OAuthError("invalid_client", "Unknown client", 401);
-
-            if (client.RequireClientSecret)
-            {
-                if (string.IsNullOrWhiteSpace(clientSecret))
-                    return JsonResults.OAuthError("invalid_client", "client_secret is required", 401);
-
-                if (!await secretVerifier.VerifyAsync(client, clientSecret, ct))
-                    return JsonResults.OAuthError("invalid_client", "Invalid client credentials", 401);
-            }
+            var clientId = client!.ClientId;
 
             var token = form["token"].FirstOrDefault();
             if (string.IsNullOrWhiteSpace(token))
@@ -121,30 +118,4 @@ public static class RevocationEndpoint
         }
     }
 
-    private static (string? ClientId, string? ClientSecret) ExtractClientCredentials(
-        HttpContext httpContext, IFormCollection form)
-    {
-        var authHeader = httpContext.Request.Headers.Authorization.FirstOrDefault();
-        if (!string.IsNullOrWhiteSpace(authHeader) && authHeader.StartsWith("Basic ", StringComparison.OrdinalIgnoreCase))
-        {
-            try
-            {
-                var encoded = authHeader["Basic ".Length..];
-                var decoded = Encoding.UTF8.GetString(Convert.FromBase64String(encoded));
-                var colonIndex = decoded.IndexOf(':');
-                if (colonIndex > 0)
-                {
-                    var id = Uri.UnescapeDataString(decoded[..colonIndex]);
-                    var secret = Uri.UnescapeDataString(decoded[(colonIndex + 1)..]);
-                    return (id, secret);
-                }
-            }
-            catch (FormatException)
-            {
-                // Fall through
-            }
-        }
-
-        return (form["client_id"].FirstOrDefault(), form["client_secret"].FirstOrDefault());
-    }
 }

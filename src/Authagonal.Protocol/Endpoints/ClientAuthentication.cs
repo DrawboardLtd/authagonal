@@ -73,13 +73,19 @@ internal static class ClientAuthentication
     private static bool RequiresConfidentialClient(string? grantType) =>
         grantType is Authagonal.Core.Constants.GrantTypes.ClientCredentials;
 
+    /// <param name="requireAuthenticatedClient">
+    /// When true, a client that presents neither a client assertion nor a secret is refused rather
+    /// than accepted on its client_id alone. Set by endpoints RFC 7662 §2.1 requires to be
+    /// authenticated regardless of how the client is registered.
+    /// </param>
     public static async Task<(OAuthClient? Client, IResult? Error)> AuthenticateAsync(
         HttpContext httpContext,
         IFormCollection form,
         IClientStore clientStore,
         IClientSecretVerifier secretVerifier,
         Func<string, string, IResult> error,
-        CancellationToken ct)
+        CancellationToken ct,
+        bool requireAuthenticatedClient = false)
     {
         // Read from the form rather than taken as a parameter so revocation and introspection, which
         // carry no grant_type, are unaffected.
@@ -128,6 +134,11 @@ internal static class ClientAuthentication
             return (null, error("invalid_client",
                 $"The {grantType} grant requires a confidential client; '{client.ClientId}' is registered as public"));
         }
+
+        // A public client proves nothing by naming itself, so on an endpoint that must be
+        // authenticated it is refused here rather than sliding past the block below.
+        if (requireAuthenticatedClient && !client.RequireClientSecret)
+            return (null, error("invalid_client", "This endpoint requires client authentication"));
 
         if (client.RequireClientSecret)
         {

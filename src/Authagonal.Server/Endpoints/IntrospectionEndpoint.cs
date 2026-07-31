@@ -35,44 +35,25 @@ public static class IntrospectionEndpoint
     {
         var form = await httpContext.Request.ReadFormAsync(ct);
 
-        // Authenticate the calling client (resource server)
-        var (clientId, clientSecret) = ExtractClientCredentials(httpContext, form);
-        if (string.IsNullOrWhiteSpace(clientId))
-            return InactiveResponse();
-
-        var client = await clientStore.GetAsync(clientId, ct);
-        if (client is null)
-            return InactiveResponse();
-
-        if (!client.Enabled)
-            return InactiveResponse();
-
-        // RFC 7662 §2.1: "To prevent token scanning attacks, the endpoint MUST also require some form
-        // of authorization to access this endpoint", repeated as a MUST in §4.
+        // Authenticate the calling resource server through the shared path.
         //
-        // Client authentication was gated on RequireClientSecret, so a PUBLIC client — every SPA and
-        // native client, and a client_id that is public by construction because it ships in the
-        // browser bundle — could introspect with nothing but that id. Any enabled public client in
-        // the deployment turned this into an anonymous token-scanning oracle.
-        if (!client.RequireClientSecret)
-            return Results.Json(new { error = "invalid_client" }, statusCode: 401);
+        // RFC 7662 §2.1: "To prevent token scanning attacks, the endpoint MUST also require some form
+        // of authorization to access this endpoint", repeated as a MUST in §4 — so a public client is
+        // still refused (requireAuthenticatedClient), and a wrong secret is still §2.3's
+        // authentication failure rather than a 200 {"active": false} that a resource server would read
+        // as "that token is dead".
+        //
+        // What the private copy of this logic could not do was accept a client assertion, so a client
+        // registered with a JWKS and no secret could not introspect at all. It is now the same set of
+        // methods the token endpoint accepts.
+        var (client, authError) = await Authagonal.Protocol.Endpoints.ClientAuthentication.AuthenticateAsync(
+            httpContext, form, clientStore, secretVerifier,
+            (err, _) => Results.Json(new { error = err }, statusCode: 401), ct,
+            requireAuthenticatedClient: true);
+        if (authError is not null)
+            return authError;
 
-        {
-            if (string.IsNullOrWhiteSpace(clientSecret))
-                return InactiveResponse();
-
-            // Through the host's registered verifier, like every other client-authentication path.
-            // Inlining the comparison here meant a host that plugged in its own verifier had it
-            // bypassed on this endpoint.
-            if (!await secretVerifier.VerifyAsync(client, clientSecret, ct))
-            {
-                // RFC 7662 §2.3: invalid credentials are an authentication failure, answered as one.
-                // Answering 200 {"active": false} conflates "your credentials are wrong" with "that
-                // token is not active" — so a resource server with a stale secret silently treated
-                // every live token as inactive instead of reporting that it could not authenticate.
-                return Results.Json(new { error = "invalid_client" }, statusCode: 401);
-            }
-        }
+        var clientId = client!.ClientId;
 
         var token = form["token"].FirstOrDefault();
         if (string.IsNullOrWhiteSpace(token))

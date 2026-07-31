@@ -74,8 +74,13 @@ public sealed class IntrospectionEndpointTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Introspect_NoClientAuth_ReturnsInactive()
+    public async Task Introspect_NoClientAuth_Returns401()
     {
+        // Previously asserted 200 {"active": false}, which is the same answer a live token gets when
+        // the caller simply forgot its credentials — indistinguishable from "that token is dead".
+        // RFC 7662 §2.3 makes an unauthenticated call an authentication failure, and it now answers
+        // like its wrong-secret sibling. Nothing about the token is disclosed either way, so this is
+        // a diagnosability fix on top of the scanning defence, not a loosening of it.
         var token = await _factory.GetAdminTokenAsync(_client);
 
         var form = new FormUrlEncodedContent(new Dictionary<string, string>
@@ -85,10 +90,7 @@ public sealed class IntrospectionEndpointTests : IAsyncLifetime
 
         // No client authentication
         var response = await _client.PostAsync("/connect/introspect", form);
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-
-        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
-        Assert.False(json.GetProperty("active").GetBoolean());
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
     }
 
     [Fact]
