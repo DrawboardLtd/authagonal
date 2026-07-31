@@ -135,6 +135,55 @@ public class SamlRequestBuilderVendorTests
         var xml = DecodeSamlRequest(url);
         Assert.Contains(SamlConstants.NameIdPersistent, xml);
     }
+
+    /// <summary>
+    /// F287 — the AuthnRequest builder was fixed to escape its interpolations and the two logout
+    /// builders in the same file were not, though Destination there comes from the IdP metadata's
+    /// SingleLogoutService Location. A <c>"</c> is legal in a query string, and one closes the
+    /// Destination attribute: everything after it becomes markup in a message this SP then signs with
+    /// its own key.
+    /// </summary>
+    [Theory]
+    [InlineData("https://idp/slo?a=\"/><samlp:Extensions/><x y=\"")]
+    [InlineData("https://idp/slo?a=b&c=d")]
+    public void BuildLogoutMessages_EscapeTheirDestination(string destination)
+    {
+        var requestXml = DecodeSamlMessage(
+            SamlRequestBuilder.BuildLogoutRequestUrl(
+                "_r1", "https://sp.test/x", destination, "user@example.com", null, null),
+            "SAMLRequest");
+        var responseXml = DecodeSamlMessage(
+            SamlRequestBuilder.BuildLogoutResponseUrl("_r1", "https://sp.test/x", destination),
+            "SAMLResponse");
+
+        foreach (var (xml, expectedRoot) in new[]
+                 {
+                     (requestXml, "LogoutRequest"), (responseXml, "LogoutResponse")
+                 })
+        {
+            var doc = new XmlDocument();
+            doc.LoadXml(xml); // throws if the value broke out of the attribute
+            Assert.Equal(expectedRoot, doc.DocumentElement!.LocalName);
+            Assert.Equal(destination, doc.DocumentElement.GetAttribute("Destination"));
+            Assert.Empty(doc.DocumentElement.GetElementsByTagName("Extensions", SamlConstants.Saml2Protocol));
+        }
+    }
+
+    /// <summary>
+    /// The builders append the message to a destination that is itself a URL, so the query cannot be
+    /// read back with <see cref="Uri"/> once the destination carries its own query or characters a URI
+    /// parser normalises. Split on the parameter the builder appended instead.
+    /// </summary>
+    private static string DecodeSamlMessage(string url, string parameterName)
+    {
+        var marker = url.LastIndexOf(parameterName + "=", StringComparison.Ordinal);
+        var encoded = url[(marker + parameterName.Length + 1)..];
+        var compressed = Convert.FromBase64String(Uri.UnescapeDataString(encoded));
+        using var input = new MemoryStream(compressed);
+        using var deflate = new DeflateStream(input, CompressionMode.Decompress);
+        using var reader = new StreamReader(deflate, Encoding.UTF8);
+        return reader.ReadToEnd();
+    }
 }
 
 public class SamlMetadataCondenseTests

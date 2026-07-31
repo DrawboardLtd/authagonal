@@ -376,6 +376,18 @@ public sealed class SamlResponseParser(ILogger<SamlResponseParser> logger)
             return Fail(SignatureFailure);
         }
 
+        // Destination is only OPTIONAL on an unsigned message. Core §3.2.2 makes it mandatory once the
+        // message is signed, and for a reason the compare-if-present check above cannot supply: the
+        // attribute is the SP's only evidence that this Response was addressed HERE. A signed Response
+        // with no Destination is one the IdP minted for whoever holds it, so it can be forwarded from
+        // the SP it was meant for to this one and still verify. Deferred to after signature validation
+        // because the requirement attaches to the signature, not to the message.
+        if (responseSignatureValid && string.IsNullOrEmpty(destination))
+        {
+            logger.LogWarning("Signed SAML Response carries no Destination attribute");
+            return Fail("A signed SAML Response must carry a Destination attribute.");
+        }
+
         // 8. Validate Assertion Conditions — required, and must bind the audience to this SP so an
         // assertion minted for a different audience can't be replayed here. Fail closed if absent.
         var conditionsNode = assertionElement.SelectSingleNode("saml:Conditions", nsManager);
@@ -422,6 +434,30 @@ public sealed class SamlResponseParser(ILogger<SamlResponseParser> logger)
             {
                 logger.LogWarning("Assertion expired: NotOnOrAfter={NotOnOrAfter}, Now={Now}", notOnOrAfter, now);
                 return Fail("Assertion has expired (NotOnOrAfter condition).");
+            }
+        }
+
+        // A condition this SP cannot evaluate makes the assertion Invalid, not unconditioned.
+        //
+        // Core §2.5.1 is explicit: if any condition is unsupported, the assertion is Invalid. Reading
+        // only the children we understand inverted that — an <OneTimeUse> or a <ProxyRestriction> or a
+        // condition from a future profile was silently dropped, so an IdP could believe it had
+        // constrained an assertion this SP had in fact accepted unconstrained. The two named conditions
+        // are listed because this SP genuinely satisfies both: every assertion ID goes through the
+        // single-use replay cache before the ACS acts on it, and this SP never re-issues assertions
+        // derived from one it consumed, so no proxying restriction can be violated.
+        foreach (XmlNode child in conditionsElement.ChildNodes)
+        {
+            if (child.NodeType != XmlNodeType.Element)
+                continue;
+
+            var known = child.NamespaceURI == SamlConstants.Saml2Assertion
+                && child.LocalName is "AudienceRestriction" or "OneTimeUse" or "ProxyRestriction";
+            if (!known)
+            {
+                logger.LogWarning("Assertion carries an unevaluable condition: {Namespace}:{Name}",
+                    child.NamespaceURI, child.LocalName);
+                return Fail("Assertion carries a condition this SP cannot evaluate.");
             }
         }
 
@@ -579,17 +615,30 @@ public sealed class SamlResponseParser(ILogger<SamlResponseParser> logger)
             }
         }
 
-        // 12. Extract SessionIndex
-        var authnStatementNode = assertionElement.SelectSingleNode(
-            "saml:AuthnStatement", nsManager) as XmlElement;
-        var sessionIndex = authnStatementNode?.Attributes?["SessionIndex"]?.Value;
+        // 12. AuthnStatement — REQUIRED, then SessionIndex/SessionNotOnOrAfter off it.
+        //
+        // Web Browser SSO §4.1.4.2: the assertions MUST contain at least one <AuthnStatement>
+        // reflecting the authentication of the principal. It was read with `?.` throughout, so an
+        // assertion carrying none parsed successfully with a null SessionIndex and a null session
+        // bound — and both of those are load-bearing. A null SessionIndex leaves the session with
+        // nothing for single logout to match on, and a null SessionNotOnOrAfter hands back the
+        // unbounded local cookie lifetime. So the one shape of assertion that silently opted out of
+        // both session controls was the one that omitted the statement asserting an authentication had
+        // happened at all — an attribute-only assertion establishing a login.
+        if (assertionElement.SelectSingleNode("saml:AuthnStatement", nsManager) is not XmlElement authnStatementNode)
+        {
+            logger.LogWarning("SAML assertion carries no AuthnStatement");
+            return Fail("Assertion is missing the required AuthnStatement.");
+        }
+
+        var sessionIndex = authnStatementNode.Attributes?["SessionIndex"]?.Value;
 
         // The IdP's stated upper bound on the session it just asserted. It was parsed by nothing, so
         // the local session outlived the authentication it was based on — an IdP that says "this
         // session is good for 8 hours" was silently overruled by whatever the local cookie lifetime
         // happened to be, which is the opposite of what federating to that IdP means.
         DateTimeOffset? sessionNotOnOrAfter = null;
-        var sessionNotOnOrAfterStr = authnStatementNode?.Attributes?["SessionNotOnOrAfter"]?.Value;
+        var sessionNotOnOrAfterStr = authnStatementNode.Attributes?["SessionNotOnOrAfter"]?.Value;
         if (sessionNotOnOrAfterStr is not null)
         {
             if (!TryParseSamlInstant(sessionNotOnOrAfterStr, out var parsedSessionBound))

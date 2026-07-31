@@ -25,7 +25,26 @@ internal static class ClientAuthentication
 
     // Config-derived public key material only — identical on every pod, safe to cache in-memory.
     private static readonly ConcurrentDictionary<string, (JsonWebKeySet Keys, DateTimeOffset FetchedAt)> JwksCache = new();
-    private static readonly HttpClient FallbackHttpClient = new() { Timeout = TimeSpan.FromSeconds(10) };
+
+    /// <summary>
+    /// Ceiling on distinct <c>jwks_uri</c> values held in <see cref="JwksCache"/>.
+    /// </summary>
+    /// <remarks>
+    /// The cache is a process-wide static keyed by a string the client registers, so without a bound it
+    /// grows with the number of distinct URIs ever fetched and never shrinks — a slow memory leak that a
+    /// deployment which exposes jwks_uri through DCR can be driven into. Far above any real client
+    /// count; it exists to make the growth finite, not to be reached.
+    /// </remarks>
+    private const int MaxCachedJwks = 1024;
+
+    /// <summary>
+    /// No redirect following, and a bounded timeout — the same handler policy as every named outbound
+    /// client the Server host registers. <see cref="Core.Services.SafeOutboundHttp"/> resolves hops
+    /// itself so it can re-run the SSRF guard on each one, which it can only do if the handler hands it
+    /// the 3xx instead of quietly chasing it.
+    /// </summary>
+    private static readonly HttpClient FallbackHttpClient =
+        new(new SocketsHttpHandler { AllowAutoRedirect = false }) { Timeout = TimeSpan.FromSeconds(10) };
     public static (string? ClientId, string? ClientSecret) ExtractClientCredentials(
         HttpContext httpContext, IFormCollection form)
     {
@@ -316,6 +335,29 @@ internal static class ClientAuthentication
     /// </remarks>
     private static readonly TimeSpan MaxJwksStaleness = TimeSpan.FromHours(24);
 
+    /// <summary>
+    /// Caches a fetched key set, dropping entries past <see cref="MaxJwksStaleness"/> first and
+    /// refusing to add a new URI once <see cref="MaxCachedJwks"/> live entries remain after that.
+    /// Refusing to cache costs a re-fetch; growing without limit costs the process.
+    /// </summary>
+    private static void StoreJwks(string jwksUri, JsonWebKeySet keys)
+    {
+        if (JwksCache.Count >= MaxCachedJwks && !JwksCache.ContainsKey(jwksUri))
+        {
+            var cutoff = DateTimeOffset.UtcNow - MaxJwksStaleness;
+            foreach (var (key, entry) in JwksCache)
+            {
+                if (entry.FetchedAt < cutoff)
+                    JwksCache.TryRemove(key, out _);
+            }
+
+            if (JwksCache.Count >= MaxCachedJwks)
+                return;
+        }
+
+        JwksCache[jwksUri] = (keys, DateTimeOffset.UtcNow);
+    }
+
     private static async Task<JsonWebKeySet?> ResolveClientJwksAsync(
         HttpContext httpContext, OAuthClient client, CancellationToken ct)
     {
@@ -349,12 +391,20 @@ internal static class ClientAuthentication
         {
             var http = httpContext.RequestServices.GetService<IHttpClientFactory>()?.CreateClient("AuthagonalJwks")
                 ?? FallbackHttpClient;
-            var json = await http.GetStringAsync(uri, ct);
+
+            // Through SafeOutboundHttp, not a raw GetStringAsync. IsSafe above only ever sees the URL
+            // the client registered — and an HttpClient follows redirects on its own, so a jwks_uri on
+            // an attacker-controlled https host answering `302 Location: https://169.254.169.254/…`
+            // reached an address the guard had refused, with the guard none the wiser. Same reason the
+            // SAML metadata and OIDC discovery fetches go through it. It also bounds the response,
+            // which matters here because the trigger is an anonymous /connect/token request.
+            var json = await Authagonal.Core.Services.SafeOutboundHttp.GetStringAsync(http, client.JwksUri, ct: ct);
             var keys = new JsonWebKeySet(json);
-            JwksCache[client.JwksUri] = (keys, DateTimeOffset.UtcNow);
+            StoreJwks(client.JwksUri, keys);
             return keys;
         }
-        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or ArgumentException)
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or ArgumentException
+                                      or InvalidOperationException)
         {
             // A stale cached set beats an outage-shaped auth failure — but only for a bounded time.
             //

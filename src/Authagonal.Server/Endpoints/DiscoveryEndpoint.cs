@@ -55,6 +55,13 @@ public static class DiscoveryEndpoint
                 ResponseTypesSupported = ["code"],
                 GrantTypesSupported = ["authorization_code", "refresh_token", "client_credentials", "urn:ietf:params:oauth:grant-type:device_code", "urn:ietf:params:oauth:grant-type:token-exchange"],
                 SubjectTypesSupported = ["public"],
+                // ES256 alone, and RS256 deliberately absent: this server does not claim the RFC 9068
+                // profile, whose §2.1 would require RS256 among the supported algorithms. The whole key
+                // pipeline is EC — ProtocolSigningKeyOps purges any stored key that is not P-256, and
+                // BuildJwksAsync hard-codes kty=EC — so advertising RS256 would advertise an algorithm
+                // no key here can produce. One algorithm is the posture: every additional accepted one
+                // is another way for a verifier to be talked into the wrong one. Stated in docs/index.md
+                // so an integrator can discover it before writing a resource server that needs RS256.
                 IdTokenSigningAlgValuesSupported = ["ES256"],
                 // `none` is advertised because the token endpoint genuinely accepts it: a public
                 // client (RequireClientSecret = false) authenticates with client_id alone, and
