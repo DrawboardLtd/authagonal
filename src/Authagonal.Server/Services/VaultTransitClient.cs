@@ -33,8 +33,18 @@ public class VaultTransitClient
         _logger = logger;
     }
 
-    /// <summary>Sign data using a Transit key. Returns raw R‖S signature bytes (JWS-marshaled).</summary>
-    public virtual async Task<byte[]> SignAsync(string keyName, byte[] data, CancellationToken ct = default, int keyVersion = 0)
+    /// <summary>
+    /// Sign data using a Transit key. Returns raw R‖S signature bytes (JWS-marshaled) together with
+    /// the key version that produced them.
+    /// </summary>
+    /// <remarks>
+    /// The version is returned because <see cref="VerifyAsync"/> cannot work without it: Vault selects
+    /// the verifying key from the <c>vault:v{n}:</c> prefix of the signature token, and that prefix is
+    /// the only place the version is carried. Discarding it — as this client did — left the caller
+    /// with no way to verify anything signed by a key version other than the first.
+    /// </remarks>
+    public virtual async Task<(byte[] Signature, int KeyVersion)> SignWithVersionAsync(
+        string keyName, byte[] data, CancellationToken ct = default, int keyVersion = 0)
     {
         var input = Convert.ToBase64String(data);
         var payload = JsonSerializer.Serialize(
@@ -55,15 +65,37 @@ public class VaultTransitClient
         if (parts.Length != 3)
             throw new InvalidOperationException($"Unexpected Vault signature format: {sig}");
 
-        return Base64UrlEncoder.DecodeBytes(parts[2]);
+        // parts[1] is "v{n}" — the version that actually signed, which may differ from the requested
+        // keyVersion (0 means "whatever is latest", and only Vault knows what that resolved to).
+        if (!int.TryParse(parts[1].AsSpan(1), out var signedWithVersion) || signedWithVersion < 1)
+            throw new InvalidOperationException($"Unexpected Vault signature version: {sig}");
+
+        return (Base64UrlEncoder.DecodeBytes(parts[2]), signedWithVersion);
     }
 
-    /// <summary>Verify a signature using a Transit key. <paramref name="signature"/> must be JWS-marshaled (raw R‖S).</summary>
-    public virtual async Task<bool> VerifyAsync(string keyName, byte[] data, byte[] signature, CancellationToken ct = default)
+    /// <summary>Signs and discards the key version. Prefer <see cref="SignWithVersionAsync"/>.</summary>
+    public virtual async Task<byte[]> SignAsync(string keyName, byte[] data, CancellationToken ct = default, int keyVersion = 0)
+        => (await SignWithVersionAsync(keyName, data, ct, keyVersion)).Signature;
+
+    /// <summary>
+    /// Verify a signature using a Transit key. <paramref name="signature"/> must be JWS-marshaled
+    /// (raw R‖S), and <paramref name="keyVersion"/> must be the version that produced it — as
+    /// returned by <see cref="SignWithVersionAsync"/>.
+    /// </summary>
+    /// <remarks>
+    /// The version was hardcoded to 1. Vault picks the verifying key from this prefix, so every
+    /// signature made by key version 2 or later was checked against version 1 and reported INVALID,
+    /// while a signature genuinely made by a retired version 1 kept verifying as valid long after the
+    /// key had been rotated away from it — wrong in both directions, and silently so.
+    /// </remarks>
+    public virtual async Task<bool> VerifyAsync(
+        string keyName, byte[] data, byte[] signature, int keyVersion, CancellationToken ct = default)
     {
+        ArgumentOutOfRangeException.ThrowIfLessThan(keyVersion, 1);
+
         var input = Convert.ToBase64String(data);
         // jws marshaling expects the signature back in base64url
-        var sig = $"vault:v1:{Base64UrlEncoder.Encode(signature)}";
+        var sig = $"vault:v{keyVersion}:{Base64UrlEncoder.Encode(signature)}";
         var payload = JsonSerializer.Serialize(
             new VaultVerifyRequest { Input = input, Signature = sig, HashAlgorithm = "sha2-256", MarshalingAlgorithm = "jws" },
             AuthagonalJsonContext.Default.VaultVerifyRequest);

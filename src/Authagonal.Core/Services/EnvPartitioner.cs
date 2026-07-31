@@ -46,14 +46,28 @@ public sealed class EnvPartitioner
     /// <summary>
     /// PartitionKey range filter for "all rows in this env" — used by sweep
     /// operations like wipe-on-disable. Live returns null (no range filter
-    /// needed; the live tables only contain live data). Sandbox env returns
-    /// (lo, hi) where lo=<c>{env}|</c> and hi=<c>{env}|~</c> (next ASCII char).
+    /// needed; the live tables only contain live data). Sandbox env returns the
+    /// half-open range [lo, hi), consumed as <c>pk &gt;= lo &amp;&amp; pk &lt; hi</c>.
     /// </summary>
+    /// <remarks>
+    /// The upper bound is the exclusive SUCCESSOR of the prefix, not a sentinel inside it.
+    ///
+    /// It used to be <c>{env}|~</c>, on the reasoning that tilde (0x7E) sorts after any printable
+    /// ASCII. Keys are not ASCII. Any natural key whose first character sorts at or above '~' fell
+    /// outside the range and was invisible to every env-scoped query — internationalized email
+    /// addresses and domains, non-Latin names in the legacy name index, IdP-supplied external IDs,
+    /// SAML NameIDs. On PostgreSQL the same bound is used under COLLATE "C", where a UTF-8 lead byte
+    /// (0xC2 and up) likewise sorts above 0x7E, so the truncation was identical on both backends.
+    /// That silently under-selects a WIPE as readily as a read.
+    ///
+    /// Incrementing the delimiter instead makes the bound exact for every possible suffix: '|' is
+    /// 0x7C, so the successor is '}' (0x7D), and no string beginning <c>{env}|</c> can reach it.
+    /// </remarks>
     public (string Low, string High)? RangeForEnv()
     {
         if (IsLive) return null;
         var lo = $"{Env}|";
-        var hi = $"{Env}|~"; // tilde 0x7E sorts after any printable ASCII we use
+        var hi = Env + (char)('|' + 1);
         return (lo, hi);
     }
 

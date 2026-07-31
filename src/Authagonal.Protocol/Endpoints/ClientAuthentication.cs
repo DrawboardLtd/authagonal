@@ -256,10 +256,22 @@ internal static class ClientAuthentication
         if (string.IsNullOrWhiteSpace(jti))
             return (null, error("invalid_client", "client_assertion must carry a jti"));
 
-        // Replay: each assertion is single-use for its lifetime. Optional store — a
-        // Protocol-only host without one still gets signature/audience/lifetime enforcement.
+        // Replay: each assertion is single-use for its lifetime.
+        //
+        // Fails closed when no store is registered. This block used to be skipped in silence, so a
+        // host with no IRevokedTokenStore accepted private_key_jwt with NO single-use enforcement at
+        // all — a captured assertion stayed replayable for its whole lifetime — while discovery went
+        // on advertising private_key_jwt in token_endpoint_auth_methods_supported. OIDC Core §9 makes
+        // single use a requirement of that method, so a host that cannot enforce it must refuse the
+        // method rather than quietly offer a weaker version of it. AddAuthagonalProtocol registers no
+        // store; the Azure, AWS and SQL provider packages all do.
         var replayCache = httpContext.RequestServices.GetService<IRevokedTokenStore>();
-        if (replayCache is not null)
+        if (replayCache is null)
+        {
+            return (null, error("invalid_client",
+                "private_key_jwt requires a replay store; this deployment has no IRevokedTokenStore registered"));
+        }
+
         {
             // One atomic claim, not a read followed by a write.
             //

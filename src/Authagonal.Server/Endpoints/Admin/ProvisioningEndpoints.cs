@@ -77,6 +77,34 @@ public static class ProvisioningEndpoints
         };
 
         await store.UpsertAsync(app, ct);
+
+        // Re-check after the write, because the check above is a read and this is a write, with no
+        // lock and no conditional insert between them. IProvisioningAppQuota exists so a SaaS tier can
+        // cap this, which makes the cap a paid boundary: two concurrent creates from count == max-1
+        // both read "under the limit", both wrote, and the tenant ended up over its plan.
+        //
+        // Every racer that finds the store over the cap deletes ITS OWN row and reports the limit.
+        // With k racers that can settle one below the cap rather than exactly at it — the losers get a
+        // clear error and a retry succeeds. Overshooting a paid boundary is the failure that matters;
+        // undershooting by one on a genuine race is not, and this needs no store-interface change to
+        // guarantee it.
+        if (max is not null)
+        {
+            var after = await store.GetAllAsync(ct);
+            if (after.Count > max.Value)
+            {
+                await store.DeleteAsync(appId, ct);
+                return TypedResults.Json(
+                    new ErrorInfoResponse
+                    {
+                        Error = "provisioning_app_limit",
+                        ErrorDescription = $"Maximum of {max.Value} provisioning apps allowed.",
+                    },
+                    AuthagonalJsonContext.Default.ErrorInfoResponse,
+                    statusCode: 400);
+            }
+        }
+
         await audit.LogAsync(Actor(http), "provisioning_app.created", "provisioning_app", appId, app.Name, ct);
         return TypedResults.Json(ToView(app), AuthagonalJsonContext.Default.ProvisioningAppView);
     }
