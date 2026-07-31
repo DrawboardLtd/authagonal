@@ -66,6 +66,27 @@ public sealed class DynamicCorsPolicyProvider(
         return policyBuilder.Build();
     }
 
+    /// <summary>
+    /// True for a syntactically valid Origin: an absolute http(s) URI with no path, query or fragment.
+    /// </summary>
+    /// <remarks>
+    /// Dynamic registration stored <c>allowed_cors_origins</c> with no validation at all, and the
+    /// browser compares Origin headers by exact string — so anything that is not an origin is either
+    /// inert configuration that looks live, or an attempt to smuggle a wildcard into a policy that
+    /// also sets AllowCredentials.
+    /// </remarks>
+    internal static bool IsValidOrigin(string? origin)
+    {
+        if (string.IsNullOrWhiteSpace(origin)) return false;
+        if (!Uri.TryCreate(origin, UriKind.Absolute, out var uri)) return false;
+        if (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps) return false;
+        if (!string.IsNullOrEmpty(uri.Query) || !string.IsNullOrEmpty(uri.Fragment)) return false;
+        if (uri.AbsolutePath != "/") return false;
+
+        // The browser sends the origin without a trailing slash, and matching is exact.
+        return string.Equals(origin.TrimEnd('/'), uri.GetLeftPart(UriPartial.Authority), StringComparison.OrdinalIgnoreCase);
+    }
+
     private async Task<string[]> GetAllowedOriginsAsync(HttpContext context, bool includeClientOrigins)
     {
         var staticOnly = configuration.GetSection("AllowedCorsOrigins").Get<string[]>() ?? [];
@@ -102,7 +123,23 @@ public sealed class DynamicCorsPolicyProvider(
                 var clients = await clientStore.GetAllAsync();
                 foreach (var client in clients)
                 {
-                    clientOrigins.AddRange(client.AllowedCorsOrigins);
+                    // A disabled client contributes nothing. Its origins were pooled in regardless, so
+                    // disabling a client left its origin able to make credentialed cross-origin calls
+                    // to the protocol surface — the one thing an operator disabling it is trying to
+                    // stop.
+                    if (!client.Enabled) continue;
+
+                    foreach (var origin in client.AllowedCorsOrigins)
+                    {
+                        // Only a well-formed scheme://host[:port] is honoured. An entry with a path,
+                        // a wildcard or trailing junk either never matches (dead configuration that
+                        // reads as though it works) or, in the wildcard case, is a request to widen
+                        // the policy in a way this provider must not grant.
+                        if (IsValidOrigin(origin))
+                            clientOrigins.Add(origin);
+                        else
+                            logger.LogWarning("Ignoring malformed CORS origin {Origin} on client {ClientId}", origin, client.ClientId);
+                    }
                 }
             }
             catch (Exception ex)

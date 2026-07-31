@@ -151,6 +151,19 @@ public static class ClientRegistrationEndpoint
             }
         }
 
+        // allowed_cors_origins was stored verbatim. The CORS provider now ignores malformed entries,
+        // but refusing them here is what stops an operator seeing an origin in the client record and
+        // reasonably believing it is in effect.
+        foreach (var origin in request.AllowedCorsOrigins ?? [])
+        {
+            if (!DynamicCorsPolicyProvider.IsValidOrigin(origin))
+            {
+                return TypedResults.Json(
+                    new ErrorInfoResponse { Error = "invalid_client_metadata", ErrorDescription = $"Invalid CORS origin: {origin}" },
+                    AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 400);
+            }
+        }
+
         var clientId = GenerateClientId();
         string? clientSecret = null;
         List<string> secretHashes = [];
