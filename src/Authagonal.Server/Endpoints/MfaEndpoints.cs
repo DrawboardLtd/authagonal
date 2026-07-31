@@ -235,7 +235,7 @@ public static class MfaEndpoints
                 try
                 {
                     (success, _, newSignCount) = await webAuthnService.CompleteAssertionAsync(
-                        assertionOptions, assertionResponse, storedPublicKey, matchedWebAuthnCred.SignCount, ct);
+                        assertionOptions, assertionResponse, storedPublicKey, matchedWebAuthnCred.SignCount, user.Id, ct);
                 }
                 catch (Fido2VerificationException)
                 {
@@ -360,6 +360,20 @@ public static class MfaEndpoints
         if (owner is null) return JsonResults.Error("credential_not_found", 401);
         var (userId, credId) = owner.Value;
 
+        // §7.2 step 6 — for a ceremony where the user was NOT identified beforehand, the user handle is
+        // mandatory and must map to the credential's owner. Neither half was being done: the handle was
+        // never read, and the account came solely from the credential-id index. The index is
+        // authoritative and the signature is checked against that owner's key, so this was not a way in
+        // — it is the tiebreaker the spec puts there for exactly the case where the index is ambiguous
+        // or has been repointed, and it was absent. Checked before verification so a missing handle is a
+        // clean refusal; the equality is re-asserted inside MakeAssertionAsync via the ownership
+        // callback, which is the check the library will not perform without a handle to check.
+        var userHandle = assertionResponse.Response.UserHandle;
+        if (userHandle is null || userHandle.Length == 0)
+            return JsonResults.Error("user_handle_required", 401);
+        if (!userHandle.AsSpan().SequenceEqual(System.Text.Encoding.UTF8.GetBytes(userId)))
+            return JsonResults.Error("credential_not_found", 401);
+
         var user = await userStore.GetAsync(userId, ct);
         if (user is null || !user.IsActive) return JsonResults.Error("credential_not_found", 401);
 
@@ -388,7 +402,7 @@ public static class MfaEndpoints
         try
         {
             (success, _, newSignCount) = await webAuthnService.CompleteAssertionAsync(
-                assertionOptions, assertionResponse, storedPublicKey, cred.SignCount, ct);
+                assertionOptions, assertionResponse, storedPublicKey, cred.SignCount, userId, ct);
         }
         catch (Fido2VerificationException)
         {

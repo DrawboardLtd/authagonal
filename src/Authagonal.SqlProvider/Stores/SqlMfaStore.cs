@@ -71,13 +71,15 @@ public sealed class SqlMfaStore(
         return row is null ? null : (row.GetStr("userId"), row.GetStr("credentialId"));
     }
 
-    public Task StoreWebAuthnCredentialIdMappingAsync(
+    public Task<bool> TryStoreWebAuthnCredentialIdMappingAsync(
         byte[] webAuthnCredentialId, string userId, string credentialId, CancellationToken ct = default)
     {
         var row = new SqlRow(partitioner.PK(Hash(webAuthnCredentialId)), Lookup);
         row.PutS("userId", userId);
         row.PutS("credentialId", credentialId);
-        return webAuthnIndex.PutAsync(row, ct);
+        // INSERT … ON CONFLICT DO NOTHING — the claim is the write, so a second registration of the same
+        // credential id loses rather than repointing the index at itself.
+        return webAuthnIndex.PutIfAbsentAsync(row, ct);
     }
 
     // Delete the WebAuthn credential-id index row for a credential (no-op for TOTP/recovery or missing

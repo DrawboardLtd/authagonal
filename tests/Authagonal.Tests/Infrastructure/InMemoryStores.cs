@@ -523,11 +523,12 @@ public sealed class InMemoryMfaStore : IMfaStore
         return Task.FromResult<(string UserId, string CredentialId)?>(null);
     }
 
-    public Task StoreWebAuthnCredentialIdMappingAsync(byte[] webAuthnCredentialId, string userId, string credentialId, CancellationToken ct = default)
+    // Mirrors the production stores: the claim IS the write (Azure Add/409, DynamoDB conditional put,
+    // SQL ON CONFLICT DO NOTHING), so a second registration of the same credential id loses.
+    public Task<bool> TryStoreWebAuthnCredentialIdMappingAsync(byte[] webAuthnCredentialId, string userId, string credentialId, CancellationToken ct = default)
     {
         var hash = HashWebAuthnCredentialId(webAuthnCredentialId);
-        _webAuthnIndex[hash] = (userId, credentialId);
-        return Task.CompletedTask;
+        return Task.FromResult(_webAuthnIndex.TryAdd(hash, (userId, credentialId)));
     }
 
     public Task DeleteWebAuthnCredentialIdMappingAsync(byte[] webAuthnCredentialId, CancellationToken ct = default)

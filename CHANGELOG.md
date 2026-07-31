@@ -192,6 +192,38 @@
   stored hash; matching the clock is, and it stays correct as formats change. Configurable via
   `Auth:FailedLoginMinimumMilliseconds` (`0` disables); raise it if you hold hashes more expensive than
   the floor, which a one-time warning now tells you about.
+- **WebAuthn §7.2 step 6 (user-handle ownership) was stubbed out, never performed.** The ownership
+  callback handed to Fido2NetLib was a hardcoded `true`, so the library asked the question on every
+  assertion and the answer was always yes — and the passwordless endpoint never read
+  `response.userHandle` at all, resolving the account solely from the credential-id index. Not a way in
+  on its own: the index is authoritative and the signature is checked against that owner's key. But the
+  handle is precisely the tiebreaker the spec puts there for the case where the index is ambiguous or
+  has been repointed, and it was absent. The callback now compares the handle against the account the
+  caller established — the challenged user for second-factor verification, the credential's indexed
+  owner for discoverable login — and `/api/auth/mfa/passwordless/complete`, where the spec makes the
+  handle mandatory, refuses an assertion without one (`401 user_handle_required`) or with one naming
+  another account.
+- **WebAuthn §7.1 step 22 (credential-id uniqueness) was disabled, and the compensating check was
+  TOCTOU.** The uniqueness callback was likewise hardcoded `true`. The cross-user half was
+  re-implemented in the enrolment endpoint, but as a read followed by an unconditional write, so two
+  registrations of the same credential id could both pass it and the second repointed the index —
+  redirecting passwordless login for that credential at whoever wrote last. Nothing at all rejected the
+  *same* user re-registering an identical credential id: that produced a second credential row sharing
+  one credential id, with its signature counter reset to the attestation's, and verification then picked
+  whichever row enumerated first — possibly the stale, lower-counter one, silently weakening clone
+  detection. Deleting either row removed the index entry both depended on. The callback now consults the
+  store, and the index row is claimed with an insert-if-absent write (Azure `Add`/409, DynamoDB
+  conditional put, SQL `ON CONFLICT DO NOTHING`) before the credential is created, so exactly one
+  registration of a credential id can win. A duplicate is refused with `409
+  credential_already_registered` whoever it belongs to.
+
+### Changed
+
+- **Breaking (custom `IMfaStore` implementations):** `StoreWebAuthnCredentialIdMappingAsync` is replaced
+  by `TryStoreWebAuthnCredentialIdMappingAsync`, which returns `false` when the credential-id index row
+  is already claimed. There is deliberately no unconditional write left on the interface — that row is
+  what makes a credential id resolve to exactly one account, and a read followed by a write cannot
+  establish that. Every bundled backend already had the underlying primitive.
 
 ### Fixed
 

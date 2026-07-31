@@ -646,7 +646,11 @@ public abstract class SqlProviderTestsBase : IAsyncLifetime
         Assert.Null(await store.GetChallengeAsync("ch-old"));
 
         byte[] credentialId = [1, 2, 3, 4];
-        await store.StoreWebAuthnCredentialIdMappingAsync(credentialId, "u1", "cred-1");
+        Assert.True(await store.TryStoreWebAuthnCredentialIdMappingAsync(credentialId, "u1", "cred-1"));
+        Assert.Equal(("u1", "cred-1"), await store.FindByWebAuthnCredentialIdAsync(credentialId));
+        // The index claim is insert-if-absent, so a second registration of the same credential id
+        // loses instead of repointing the row at whoever wrote last.
+        Assert.False(await store.TryStoreWebAuthnCredentialIdMappingAsync(credentialId, "u2", "cred-2"));
         Assert.Equal(("u1", "cred-1"), await store.FindByWebAuthnCredentialIdAsync(credentialId));
         await store.DeleteWebAuthnCredentialIdMappingAsync(credentialId);
         Assert.Null(await store.FindByWebAuthnCredentialIdAsync(credentialId));

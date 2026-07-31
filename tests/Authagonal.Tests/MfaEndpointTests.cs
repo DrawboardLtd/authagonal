@@ -466,7 +466,7 @@ public class MfaEndpointTests : IAsyncDisposable
             PublicKeyJson = $"{{\"credentialId\":\"{Convert.ToBase64String(credentialId)}\",\"publicKey\":\"x\",\"credType\":\"public-key\",\"aaguid\":\"\"}}",
             CreatedAt = DateTimeOffset.UtcNow,
         });
-        await _factory.MfaStore.StoreWebAuthnCredentialIdMappingAsync(credentialId, user.Id, credId);
+        Assert.True(await _factory.MfaStore.TryStoreWebAuthnCredentialIdMappingAsync(credentialId, user.Id, credId));
 
         // Precondition: the index resolves.
         Assert.NotNull(await _factory.MfaStore.FindByWebAuthnCredentialIdAsync(credentialId));

@@ -67,12 +67,14 @@ public sealed class DynamoMfaStore(
         return item is null ? null : (item.GetStr("userId"), item.GetStr("credentialId"));
     }
 
-    public Task StoreWebAuthnCredentialIdMappingAsync(byte[] webAuthnCredentialId, string userId, string credentialId, CancellationToken ct = default)
+    public Task<bool> TryStoreWebAuthnCredentialIdMappingAsync(byte[] webAuthnCredentialId, string userId, string credentialId, CancellationToken ct = default)
     {
         var item = Dyn.Item(partitioner.PK(Hash(webAuthnCredentialId)), Lookup);
         item.PutS("userId", userId);
         item.PutS("credentialId", credentialId);
-        return webAuthnIndex.PutAsync(item, ct);
+        // Conditional put — the claim is the write, so a second registration of the same credential id
+        // loses rather than repointing the index at itself.
+        return webAuthnIndex.PutIfAbsentAsync(item, ct);
     }
 
     // Delete the WebAuthn credential-id index row for a credential (no-op for TOTP/recovery or missing

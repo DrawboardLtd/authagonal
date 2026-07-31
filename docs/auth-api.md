@@ -323,7 +323,7 @@ POST /api/auth/mfa/webauthn/confirm
 → { "success": true, "credentialId": "..." }
 ```
 
-Passkey enrolment requires a **confirmed TOTP credential first** (`400 totp_required_first`), passkeys are a per-device convenience layered on a portable base factor, so an account can never end up passkey-only and locked to a device. Users whose email domain is SSO-routed cannot enrol a local passkey (`400 sso_managed`), it would bypass the tenant's IdP. A credential ID already registered to a different user is rejected with `409 credential_already_registered`.
+Passkey enrolment requires a **confirmed TOTP credential first** (`400 totp_required_first`), passkeys are a per-device convenience layered on a portable base factor, so an account can never end up passkey-only and locked to a device. Users whose email domain is SSO-routed cannot enrol a local passkey (`400 sso_managed`), it would bypass the tenant's IdP. A credential ID already registered to **any** account, including the enrolling user's own, is rejected with `409 credential_already_registered` — a duplicate would restart that credential's signature counter and share one lookup entry between two rows.
 
 ### Recovery Codes
 
@@ -354,7 +354,7 @@ POST /api/auth/mfa/passwordless/complete
 → { "userId": "...", "email": "...", "name": "..." }
 ```
 
-Discoverable-credential (resident passkey) login with no prior user context: `begin` issues an assertion challenge with an empty `allowCredentials` list, and `complete` resolves the user **from** the chosen passkey, verifies the assertion, and signs them in (the session carries the MFA marker, a passkey is phishing-resistant strong auth). If the resolved user's email domain is SSO-routed, the login is refused with `409 sso_required` + `redirectUrl` so a local passkey can't sidestep a forced IdP.
+Discoverable-credential (resident passkey) login with no prior user context: `begin` issues an assertion challenge with an empty `allowCredentials` list, and `complete` resolves the user **from** the chosen passkey, verifies the assertion, and signs them in (the session carries the MFA marker, a passkey is phishing-resistant strong auth). Because no user was identified before the ceremony, WebAuthn §7.2 step 6 makes the authenticator's user handle mandatory here: an assertion without one is refused with `401 user_handle_required`, and one naming an account other than the credential's owner with `401 credential_not_found`. If the resolved user's email domain is SSO-routed, the login is refused with `409 sso_required` + `redirectUrl` so a local passkey can't sidestep a forced IdP.
 
 ## Device Authorization (RFC 8628)
 

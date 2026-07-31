@@ -4,8 +4,10 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using Authagonal.Core.Models;
+using Authagonal.Core.Stores;
 using Authagonal.Server;
 using Authagonal.Server.Services;
+using Authagonal.Tests.Infrastructure;
 using Fido2NetLib;
 using Fido2NetLib.Objects;
 using Microsoft.AspNetCore.Http;
@@ -26,14 +28,16 @@ public sealed class WebAuthnRoundTripTests
 
     // WebAuthnService now derives the FIDO2 relying party from the live request host (per-tenant hosts),
     // so drive it with an HTTP context whose host is RpId — giving ServerDomain=RpId and origin=Origin,
-    // exactly what the VirtualAuthenticator signs over.
-    private static WebAuthnService NewService(params string[] allowedHosts)
+    // exactly what the VirtualAuthenticator signs over. The store backs the credential-id uniqueness
+    // callback, so a test that wants an id to look already-registered seeds it there.
+    private static WebAuthnService NewService(IMfaStore? store = null, params string[] allowedHosts)
     {
         var ctx = new DefaultHttpContext();
         ctx.Request.Scheme = "https";
         ctx.Request.Host = new HostString(RpId);
         return new WebAuthnService(
             new StubHttpContextAccessor { HttpContext = ctx },
+            store ?? new InMemoryMfaStore(),
             Microsoft.Extensions.Options.Options.Create(new AuthOptions
             {
                 WebAuthnAllowedHosts = [.. allowedHosts],
@@ -57,6 +61,7 @@ public sealed class WebAuthnRoundTripTests
         ctx.Request.Host = new HostString("attacker.example");
         var service = new WebAuthnService(
             new StubHttpContextAccessor { HttpContext = ctx },
+            new InMemoryMfaStore(),
             Microsoft.Extensions.Options.Options.Create(new AuthOptions
             {
                 WebAuthnAllowedHosts = [RpId],
@@ -104,7 +109,8 @@ public sealed class WebAuthnRoundTripTests
 
         var assertOpts = svc.CreateAssertionOptions([cred]);
         var (success, credentialId, newSignCount) = await svc.CompleteAssertionAsync(
-            assertOpts, auth.Assertion(assertOpts.Challenge, signCount: 1), StoredPublicKey(cred), storedSignCount: 0);
+            assertOpts, auth.Assertion(assertOpts.Challenge, signCount: 1), StoredPublicKey(cred),
+            storedSignCount: 0, expectedUserId: user.Id);
 
         Assert.True(success);
         Assert.Equal(1u, newSignCount);
@@ -122,7 +128,7 @@ public sealed class WebAuthnRoundTripTests
 
         await Assert.ThrowsAnyAsync<Exception>(() => svc.CompleteAssertionAsync(
             assertOpts, auth.Assertion(assertOpts.Challenge, signCount: 1, tamperSignature: true),
-            StoredPublicKey(cred), storedSignCount: 0));
+            StoredPublicKey(cred), storedSignCount: 0, expectedUserId: "user-webauthn-1"));
     }
 
     [Fact]
@@ -160,7 +166,70 @@ public sealed class WebAuthnRoundTripTests
 
         // Authenticator reports a counter lower than what we've already seen → cloned-key signal.
         await Assert.ThrowsAnyAsync<Exception>(() => svc.CompleteAssertionAsync(
-            assertOpts, auth.Assertion(assertOpts.Challenge, signCount: 3), StoredPublicKey(cred), storedSignCount: 10));
+            assertOpts, auth.Assertion(assertOpts.Challenge, signCount: 3), StoredPublicKey(cred),
+            storedSignCount: 10, expectedUserId: "user-webauthn-1"));
+    }
+
+    /// <summary>
+    /// F264 — WebAuthn §7.2 step 6. The ownership callback was hardcoded to true, so an assertion
+    /// carrying any user handle at all was accepted for any account. With it implemented, a handle
+    /// naming a different user is refused even though the signature, challenge, origin, RP-ID hash and
+    /// counter are all valid — this fails on the handle alone.
+    /// </summary>
+    [Fact]
+    public async Task Assertion_WithUserHandleForAnotherAccount_IsRejected()
+    {
+        var svc = NewService();
+        var auth = new VirtualAuthenticator();
+        var (opts, _) = svc.CreateAttestationOptions(TestUser(), []);
+        var cred = await svc.CompleteAttestationAsync("user-webauthn-1", opts, auth.Attestation(opts.Challenge));
+        var assertOpts = svc.CreateAssertionOptions([cred]);
+
+        // The authenticator returns the handle it was enrolled with; the server expects a different one.
+        var ex = await Assert.ThrowsAsync<Fido2VerificationException>(() => svc.CompleteAssertionAsync(
+            assertOpts, auth.Assertion(assertOpts.Challenge, signCount: 1), StoredPublicKey(cred),
+            storedSignCount: 0, expectedUserId: "user-webauthn-2"));
+        Assert.Contains("owner", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// F221 — WebAuthn §7.1 step 22. The uniqueness callback was hardcoded to true, so the library's
+    /// NonUniqueCredentialId check could never fire and a credential id already in the index could be
+    /// registered a second time (a duplicate row with the sign counter reset, sharing one index row).
+    /// Now the callback reads the index, and re-registering an id it already holds is refused — whether
+    /// the id belongs to another account or to the same one.
+    /// </summary>
+    [Theory]
+    [InlineData("user-webauthn-1")] // same user re-registering — a duplicate row, counter reset
+    [InlineData("user-webauthn-9")] // another user's credential id
+    public async Task Attestation_WithCredentialIdAlreadyInTheIndex_IsRejected(string existingOwner)
+    {
+        var store = new InMemoryMfaStore();
+        var svc = NewService(store);
+        var auth = new VirtualAuthenticator();
+
+        Assert.True(await store.TryStoreWebAuthnCredentialIdMappingAsync(auth.CredentialId, existingOwner, "cred-existing"));
+
+        var (opts, _) = svc.CreateAttestationOptions(TestUser(), []);
+        var ex = await Assert.ThrowsAsync<Fido2VerificationException>(() => svc.CompleteAttestationAsync(
+            "user-webauthn-1", opts, auth.Attestation(opts.Challenge)));
+        Assert.Equal(Fido2NetLib.Exceptions.Fido2ErrorCode.NonUniqueCredentialId, ex.Code);
+    }
+
+    /// <summary>
+    /// F221 — the index claim is the write. Two registrations of the same credential id cannot both
+    /// succeed, so the read-then-unconditional-write window that let a racing registration repoint
+    /// another account's index row is gone.
+    /// </summary>
+    [Fact]
+    public async Task CredentialIdIndex_IsClaimedOnceAndNotOverwritten()
+    {
+        var store = new InMemoryMfaStore();
+        var credentialId = new byte[] { 1, 2, 3, 4 };
+
+        Assert.True(await store.TryStoreWebAuthnCredentialIdMappingAsync(credentialId, "user-a", "cred-a"));
+        Assert.False(await store.TryStoreWebAuthnCredentialIdMappingAsync(credentialId, "user-b", "cred-b"));
+        Assert.Equal(("user-a", "cred-a"), await store.FindByWebAuthnCredentialIdAsync(credentialId));
     }
 
     /// <summary>

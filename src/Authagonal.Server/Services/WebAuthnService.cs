@@ -1,6 +1,7 @@
 using System.Text;
 using System.Text.Json;
 using Authagonal.Core.Models;
+using Authagonal.Core.Stores;
 using Fido2NetLib;
 using Fido2NetLib.Objects;
 using Microsoft.AspNetCore.Http;
@@ -9,6 +10,7 @@ namespace Authagonal.Server.Services;
 
 public sealed class WebAuthnService(
     IHttpContextAccessor httpContextAccessor,
+    IMfaStore mfaStore,
     Microsoft.Extensions.Options.IOptions<AuthOptions> authOptions)
 {
     // Build the FIDO2 relying-party config from the ACTUAL request host, not a fixed startup value.
@@ -98,12 +100,21 @@ public sealed class WebAuthnService(
         AuthenticatorAttestationRawResponse attestationResponse,
         CancellationToken ct = default)
     {
+        // §7.1 step 22 — the credential id must not already be registered. This was hardcoded to true,
+        // which does not satisfy the check, it removes it: the library only ever asked, and the answer
+        // was always "unique". The real answer is the index row, and asking here means the verdict is
+        // reached inside the same verification call rather than by a separate read the caller might
+        // forget. Note it is unique across the WHOLE store, not just this user — a duplicate belonging
+        // to the SAME user is just as damaging as a cross-user one: a second credential row for one
+        // authenticator, its sign counter reset to the attestation's, and one shared index row that
+        // either credential's deletion removes.
         var result = await ResolveFido2().MakeNewCredentialAsync(
             new MakeNewCredentialParams
             {
                 AttestationResponse = attestationResponse,
                 OriginalOptions = originalOptions,
-                IsCredentialIdUniqueToUserCallback = (args, _) => Task.FromResult(true),
+                IsCredentialIdUniqueToUserCallback = async (args, token) =>
+                    await mfaStore.FindByWebAuthnCredentialIdAsync(args.CredentialId, token) is null,
             }, ct);
 
         var credData = new WebAuthnCredentialData
@@ -168,13 +179,27 @@ public sealed class WebAuthnService(
             });
     }
 
+    /// <param name="expectedUserId">
+    /// The account this assertion must belong to — the challenged user for second-factor verification,
+    /// the credential's indexed owner for discoverable (passwordless) login.
+    /// </param>
     public async Task<(bool Success, byte[] CredentialId, uint NewSignCount)> CompleteAssertionAsync(
         AssertionOptions originalOptions,
         AuthenticatorAssertionRawResponse assertionResponse,
         byte[] storedPublicKey,
         uint storedSignCount,
+        string expectedUserId,
         CancellationToken ct = default)
     {
+        // §7.2 step 6 — the user handle the authenticator returned must belong to the account being
+        // signed in. This was hardcoded to true, so the check the library offered was answered without
+        // being performed. The handle is UTF-8 of the user id (see CreateAttestationOptions), so the
+        // comparison is direct. Pinning it to the account the caller already established, rather than
+        // to whatever the credential-id index happens to say, is what makes the handle a genuine
+        // tiebreaker: it is the layer that would catch an ambiguous or repointed index instead of
+        // trusting it. The library only invokes this when a handle is present, which is why the
+        // passwordless endpoint — where the spec makes the handle mandatory — also requires it there.
+        var expectedHandle = Encoding.UTF8.GetBytes(expectedUserId);
         var result = await ResolveFido2().MakeAssertionAsync(
             new MakeAssertionParams
             {
@@ -182,7 +207,8 @@ public sealed class WebAuthnService(
                 OriginalOptions = originalOptions,
                 StoredPublicKey = storedPublicKey,
                 StoredSignatureCounter = storedSignCount,
-                IsUserHandleOwnerOfCredentialIdCallback = (args, _) => Task.FromResult(true),
+                IsUserHandleOwnerOfCredentialIdCallback = (args, _) =>
+                    Task.FromResult(args.UserHandle.AsSpan().SequenceEqual(expectedHandle)),
             }, ct);
 
         return (true, result.CredentialId, (uint)result.SignCount);

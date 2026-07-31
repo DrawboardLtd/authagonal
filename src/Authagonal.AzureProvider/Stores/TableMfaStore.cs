@@ -121,7 +121,7 @@ public sealed class TableMfaStore(
         }
     }
 
-    public async Task StoreWebAuthnCredentialIdMappingAsync(
+    public async Task<bool> TryStoreWebAuthnCredentialIdMappingAsync(
         byte[] webAuthnCredentialId, string userId, string credentialId, CancellationToken ct = default)
     {
         var hash = HashWebAuthnCredentialId(webAuthnCredentialId);
@@ -132,7 +132,17 @@ public sealed class TableMfaStore(
             UserId = userId,
             CredentialId = credentialId,
         };
-        await webAuthnIndexTable.UpsertEntityAsync(entity, TableUpdateMode.Replace, ct);
+        try
+        {
+            // Add, not Upsert — 409 means someone already owns this credential id, and the loser of the
+            // race must be told so rather than quietly repointing the index at itself.
+            await webAuthnIndexTable.AddEntityAsync(entity, ct);
+            return true;
+        }
+        catch (Azure.RequestFailedException ex) when (ex.Status == 409)
+        {
+            return false;
+        }
     }
 
     // Delete the WebAuthn credential-id index row for a credential (no-op for TOTP/recovery or missing

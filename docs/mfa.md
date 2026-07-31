@@ -133,7 +133,11 @@ Users enroll MFA through the self-service setup endpoints. These require either 
 
 Passkey enrollment requires a confirmed TOTP credential first (`totp_required_first`). Passkeys are a per-device convenience layered on top of a portable base factor, so every account keeps a device-independent factor and a `Required` policy can't be satisfied by a passkey alone.
 
-Users can register multiple passkeys (one per device). A credential ID already registered to a different user is rejected (`credential_already_registered`), and users whose email domain is routed to an external IdP via forced SSO cannot enroll a local passkey (`sso_managed`), since it would bypass the IdP and its deprovisioning.
+Users can register multiple passkeys (one per device). A credential ID already registered — to any account, including the enrolling user's own — is rejected with `credential_already_registered` (409). Re-enrolling an authenticator that is already enrolled would create a second credential row sharing one credential ID: its signature counter would restart, weakening clone detection, and deleting either row would remove the lookup entry both depend on. The lookup entry is claimed with an insert-if-absent write, so two registrations of the same credential ID cannot both succeed. Users whose email domain is routed to an external IdP via forced SSO cannot enroll a local passkey (`sso_managed`), since it would bypass the IdP and its deprovisioning.
+
+### Relying-party host
+
+The FIDO2 relying-party ID and origin are resolved per request from the host, so each tenant hostname is its own relying party. Set `Auth:WebAuthnAllowedHosts` to the hostnames you serve, so a host outside that list cannot act as a relying party. An empty list (the default) keeps the previous behaviour rather than locking out existing passkey users on upgrade, and is logged as a gap — it is not a safe resting place. Setting `AllowedHosts` in `appsettings.json` as well, so ASP.NET Core's host filtering rejects unrecognised `Host` headers before any handler runs, is the cheaper outer layer.
 
 ### Recovery Codes
 

@@ -416,6 +416,13 @@ public static class MfaSetupEndpoints
         {
             credential = await webAuthnService.CompleteAttestationAsync(userId, originalOptions, attestationResponse, ct);
         }
+        catch (Fido2VerificationException ex) when (ex.Code == Fido2NetLib.Exceptions.Fido2ErrorCode.NonUniqueCredentialId)
+        {
+            // §7.1 step 22, enforced inside verification now that the uniqueness callback consults the
+            // store. Same 409 the endpoint already returned for the cross-user case — the caller should
+            // see "this authenticator is already enrolled", not a generic attestation failure.
+            return JsonResults.Error("credential_already_registered", 409);
+        }
         catch (Fido2VerificationException)
         {
             return JsonResults.Error("attestation_failed");
@@ -424,23 +431,31 @@ public static class MfaSetupEndpoints
         var credData = JsonSerializer.Deserialize(credential.PublicKeyJson!, AuthagonalJsonContext.Default.WebAuthnCredentialData);
         var credentialIdBytes = credData is not null ? Convert.FromBase64String(credData.CredentialId) : null;
 
-        // Credential-ID uniqueness: reject a credential ID already registered to a DIFFERENT user, so
-        // one user's passkey index entry can't be overwritten/hijacked by another's registration.
-        if (credentialIdBytes is not null)
+        // Claim the credential-id index BEFORE the credential row exists. The check used to be a read
+        // (does another user own this?) followed by an unconditional write, which two registrations of
+        // the same credential id could both pass — the second overwrote the index and redirected
+        // passwordless login for that credential at whoever wrote last. A conditional claim has no such
+        // window, and it also catches the same-user duplicate the read deliberately allowed. Claiming
+        // first also means a failure creating the credential leaves no orphan row; the compensating
+        // delete is on the index directly, never DeleteCredentialAsync, which would take the winner's
+        // shared index row with it.
+        if (credentialIdBytes is not null &&
+            !await mfaStore.TryStoreWebAuthnCredentialIdMappingAsync(credentialIdBytes, userId, credential.Id, ct))
         {
-            var existingOwner = await mfaStore.FindByWebAuthnCredentialIdAsync(credentialIdBytes, ct);
-            if (existingOwner is { } owner && !string.Equals(owner.UserId, userId, StringComparison.Ordinal))
-                return JsonResults.Error("credential_already_registered", 409);
+            return JsonResults.Error("credential_already_registered", 409);
         }
 
         // Delete the pending setup credential and create the real one
-        await mfaStore.DeleteCredentialAsync(userId, request.SetupToken, ct);
-        await mfaStore.CreateCredentialAsync(credential, ct);
-
-        // Store WebAuthn credential ID mapping for discovery
-        if (credentialIdBytes is not null)
+        try
         {
-            await mfaStore.StoreWebAuthnCredentialIdMappingAsync(credentialIdBytes, userId, credential.Id, ct);
+            await mfaStore.DeleteCredentialAsync(userId, request.SetupToken, ct);
+            await mfaStore.CreateCredentialAsync(credential, ct);
+        }
+        catch
+        {
+            if (credentialIdBytes is not null)
+                await mfaStore.DeleteWebAuthnCredentialIdMappingAsync(credentialIdBytes, ct);
+            throw;
         }
 
         // Set MfaEnabled on user
