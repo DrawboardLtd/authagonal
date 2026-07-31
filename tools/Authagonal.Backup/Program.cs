@@ -57,6 +57,30 @@ var options = new BackupOptions
     DryRun = dryRun,
 };
 
+// Say what is about to be written in the clear, before writing it.
+//
+// The archive is plaintext JSONL and the only warning that existed was about SigningKeys. It is not
+// the only table that warrants one: MfaCredentials holds TOTP seeds, which are directly replayable —
+// whoever reads one generates that user's second factor indefinitely, undetectably, with no rotation
+// short of re-enrolling them. An operator running "back up the identity provider" should not have to
+// infer that from the table list.
+var selected = (options.Tables ?? BackupDefaults.Tables)
+    .Where(t => BackupDefaults.SecretBearingTables.ContainsKey(t))
+    .Where(t => options.IncludeSigningKeys || !string.Equals(t, "SigningKeys", StringComparison.OrdinalIgnoreCase))
+    .ToList();
+
+if (selected.Count > 0 && !dryRun)
+{
+    Console.Error.WriteLine();
+    Console.Error.WriteLine("This backup will contain credential material in CLEARTEXT:");
+    foreach (var table in selected)
+        Console.Error.WriteLine($"  {table,-24} {BackupDefaults.SecretBearingTables[table]}");
+    Console.Error.WriteLine();
+    Console.Error.WriteLine("Files are created owner-only, which is not encryption. Store the archive");
+    Console.Error.WriteLine("somewhere encrypted and access-controlled, and treat it as a credential.");
+    Console.Error.WriteLine();
+}
+
 var service = new BackupService(serviceClient, target, options);
 var manifest = await service.RunAsync();
 

@@ -80,6 +80,57 @@ public class BackupRestoreCorrectnessTests(AzuriteFixture azurite)
         }
     }
 
+    /// <summary>
+    /// F228 — backup files are not world-readable.
+    /// </summary>
+    /// <remarks>
+    /// They were created with the process umask, which on a typical host means anyone with a shell
+    /// can read them — and a backup is not ordinary data. It carries MFA TOTP seeds, which are
+    /// directly replayable second factors, alongside every password hash, client secret hash and
+    /// recovery-code hash in the deployment, all offline-crackable at leisure. Reading them touches
+    /// the identity provider not at all and leaves no trace in it.
+    ///
+    /// This is not encryption — envelope encryption of the archive is a format change — but it is the
+    /// part that costs nothing and removes the most common way these files get read.
+    /// </remarks>
+    [Fact]
+    public async Task Backup_files_are_owner_only()
+    {
+        if (OperatingSystem.IsWindows()) return; // POSIX modes only
+
+        var prefix = $"pm{Guid.NewGuid():N}";
+        await Table($"{prefix}Users").AddEntityAsync(new TableEntity("u1", "profile") { ["Email"] = "a@b.test" });
+
+        var dir = Path.Combine(Path.GetTempPath(), $"pm{Guid.NewGuid():N}");
+        try
+        {
+            var manifest = await new BackupService(_svc, new FileSystemBackupTarget(dir),
+                new BackupOptions { TablePrefix = prefix, Gzip = false }).RunAsync();
+
+            var backupDir = Path.Combine(dir, manifest.BackupId);
+            var groupOrOther =
+                UnixFileMode.GroupRead | UnixFileMode.GroupWrite | UnixFileMode.GroupExecute |
+                UnixFileMode.OtherRead | UnixFileMode.OtherWrite | UnixFileMode.OtherExecute;
+
+            Assert.Equal(UnixFileMode.None, File.GetUnixFileMode(backupDir) & groupOrOther);
+
+            var files = Directory.GetFiles(backupDir);
+            Assert.NotEmpty(files);
+            foreach (var file in files)
+            {
+                Assert.Equal(UnixFileMode.None, File.GetUnixFileMode(file) & groupOrOther);
+            }
+
+            // The manifest carries the file hashes and their MAC — writing it readable would hand an
+            // attacker the integrity metadata for the archive beside it.
+            Assert.Contains(files, f => Path.GetFileName(f) == "_manifest.json");
+        }
+        finally
+        {
+            if (Directory.Exists(dir)) Directory.Delete(dir, true);
+        }
+    }
+
     [Fact]
     public async Task Legacy_rows_without_marker_still_infer_types()
     {

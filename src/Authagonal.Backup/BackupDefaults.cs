@@ -63,4 +63,32 @@ public static class BackupDefaults
     {
         "Users",
     };
+
+    /// <summary>
+    /// Tables whose rows carry credential material, and what each one exposes if the archive is read.
+    /// </summary>
+    /// <remarks>
+    /// The <c>SigningKeys</c> warning has always been explicit, and it is not the only table that
+    /// warrants one. The archive is plaintext JSONL: MfaCredentials in particular holds TOTP seeds,
+    /// which are DIRECTLY REPLAYABLE — whoever reads one generates that user's second factor
+    /// indefinitely, with nothing to detect it and no rotation short of re-enrolling the user. The
+    /// hashes are not equivalent to that, but they are offline-crackable at the attacker's leisure
+    /// against a wordlist, which is a different proposition from being crackable against a rate-limited
+    /// login endpoint.
+    /// <para>
+    /// Named here so the CLI can print an inventory before it writes, rather than leaving an operator
+    /// to infer what "back up the identity provider" put on disk.
+    /// </para>
+    /// </remarks>
+    public static readonly IReadOnlyDictionary<string, string> SecretBearingTables =
+        new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["MfaCredentials"] = "TOTP seeds (directly replayable second factors) and recovery-code hashes",
+            ["Users"] = "password hashes, offline-crackable",
+            ["Clients"] = "client secret hashes, offline-crackable",
+            ["OidcProviders"] = "upstream IdP client secrets (plaintext under the default secret provider)",
+            ["SigningKeys"] = "the JWT signing PRIVATE key — excluded unless IncludeSigningKeys is set",
+            ["UpstreamRefreshTokens"] = "live refresh tokens for upstream identity providers",
+            ["ScimTokens"] = "SCIM provisioning bearer-token hashes",
+        };
 }

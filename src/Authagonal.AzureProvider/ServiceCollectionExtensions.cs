@@ -11,6 +11,12 @@ namespace Authagonal.AzureProvider;
 
 public static class ServiceCollectionExtensions
 {
+    /// <summary>
+    /// The change log. Physically named "Tombstones" for compatibility — it started as a
+    /// delete-only log and the backup engine still reads it under that name.
+    /// </summary>
+    private const string TombstonesTableName = "Tombstones";
+
     private const string UsersTableName = "Users";
     private const string UserEmailsTableName = "UserEmails";
     private const string UserFirstNamesTableName = "UserFirstNames";
@@ -113,6 +119,7 @@ public static class ServiceCollectionExtensions
         var provisioningApps = EnsureTable(serviceClient, ProvisioningAppsTableName);
         var agentProfiles = EnsureTable(serviceClient, AgentProfilesTableName);
         var upstreamRefreshTokens = EnsureTable(serviceClient, UpstreamRefreshTokensTableName);
+        var tombstones = EnsureTable(serviceClient, TombstonesTableName);
 
         // Register store implementations as singletons.
         // TryAdd allows multi-tenant hosts to register scoped stores first.
@@ -128,36 +135,46 @@ public static class ServiceCollectionExtensions
         // constructor defaults them to null-object passthroughs, which is exactly what made the
         // omission invisible.
         //
-        // NOTE: the change-log (tombstone) seam is still unwired here, because this provider has no
-        // IChangeWriter implementation to wire — the SQL provider has SqlChangeWriter and Azure has
-        // no counterpart. Deletes therefore write no tombstones on this backend, so an incremental
-        // backup cannot carry them. That half of the finding needs a TableChangeWriter written first
-        // and is left open rather than papered over.
+        // The change-log (tombstone) seam is wired too, matching the AWS and SQL providers.
+        // TableChangeWriter existed but nothing registered it, so on this backend deletes wrote no
+        // tombstone at all — and a delete is the one mutation class with no self-heal, because a
+        // backup that scans LIVE rows cannot see a row that is gone. An incremental restore therefore
+        // RESURRECTED every record deleted since the last full backup: revoked grants, removed role
+        // assignments, deprovisioned users.
+        var changeWriter = new TableChangeWriter(tombstones);
+        services.TryAddSingleton<IChangeWriter>(changeWriter);
+
         services.TryAddSingleton<IUserStore>(sp => new TableUserStore(
             users, userEmails, userLogins, userExternalIds, userFirstNames, userLastNames, live,
+            tombstoneWriter: changeWriter,
             fieldCipher: sp.GetService<IFieldCipher>(),
             indexTokenizer: sp.GetService<IIndexTokenizer>(),
             userRolesTable: userRoles));
-        services.TryAddSingleton<IClientStore>(new TableClientStore(clients, live));
+        services.TryAddSingleton<IClientStore>(new TableClientStore(clients, live, changeWriter));
         services.TryAddSingleton<IGrantStore>(sp =>
-            new TableGrantStore(grants, grantsBySubject, grantsByExpiry, live, sp.GetRequiredService<ILoggerFactory>().CreateLogger<TableGrantStore>()));
+            new TableGrantStore(grants, grantsBySubject, grantsByExpiry, live,
+                sp.GetRequiredService<ILoggerFactory>().CreateLogger<TableGrantStore>(),
+                changeWriter, sp.GetService<IFieldCipher>()));
         // Resolved from the container, like the user and grant stores: a host that registers an
         // IFieldCipher expects the PRIVATE SIGNING KEY to be covered by it above all else.
         services.TryAddSingleton<ISigningKeyStore>(sp =>
-            new TableSigningKeyStore(signingKeys, live, null, sp.GetService<IFieldCipher>()));
-        services.TryAddSingleton<ISsoDomainStore>(new TableSsoDomainStore(ssoDomains, live));
-        services.TryAddSingleton<ISamlProviderStore>(new TableSamlProviderStore(samlProviders, live));
-        services.TryAddSingleton<IOidcProviderStore>(new TableOidcProviderStore(oidcProviders, live));
-        services.TryAddSingleton<IUserProvisionStore>(new TableUserProvisionStore(userProvisions, live));
-        services.TryAddSingleton<IMfaStore>(new TableMfaStore(mfaCredentials, mfaChallenges, mfaWebAuthnIndex, live));
-        services.TryAddSingleton<IScimTokenStore>(new TableScimTokenStore(scimTokens, live));
-        services.TryAddSingleton<IScimGroupStore>(new TableScimGroupStore(scimGroups, scimGroupExternalIds, live));
-        services.TryAddSingleton<IScimGroupRoleMappingStore>(new TableScimGroupRoleMappingStore(scimGroupRoleMappings, live));
-        services.TryAddSingleton<IRoleStore>(new TableRoleStore(roles, live));
-        services.TryAddSingleton<IScopeStore>(new TableScopeStore(scopes, live));
+            new TableSigningKeyStore(signingKeys, live, changeWriter, sp.GetService<IFieldCipher>()));
+        services.TryAddSingleton<ISsoDomainStore>(new TableSsoDomainStore(ssoDomains, live, changeWriter));
+        services.TryAddSingleton<ISamlProviderStore>(new TableSamlProviderStore(samlProviders, live, changeWriter));
+        services.TryAddSingleton<IOidcProviderStore>(new TableOidcProviderStore(oidcProviders, live, changeWriter));
+        services.TryAddSingleton<IUserProvisionStore>(new TableUserProvisionStore(userProvisions, live, changeWriter));
+        services.TryAddSingleton<IMfaStore>(new TableMfaStore(mfaCredentials, mfaChallenges, mfaWebAuthnIndex, live, changeWriter));
+        services.TryAddSingleton<IScimTokenStore>(new TableScimTokenStore(scimTokens, live, changeWriter));
+        services.TryAddSingleton<IScimGroupStore>(new TableScimGroupStore(scimGroups, scimGroupExternalIds, live, changeWriter));
+        services.TryAddSingleton<IScimGroupRoleMappingStore>(new TableScimGroupRoleMappingStore(scimGroupRoleMappings, live, changeWriter));
+        services.TryAddSingleton<IRoleStore>(new TableRoleStore(roles, live, changeWriter));
+        services.TryAddSingleton<IScopeStore>(new TableScopeStore(scopes, live, changeWriter));
         services.TryAddSingleton<IRevokedTokenStore>(new TableRevokedTokenStore(revokedTokens, live));
-        services.TryAddSingleton<IProvisioningAppStore>(new TableProvisioningAppStore(provisioningApps, live));
-        services.TryAddSingleton<IAgentProfileStore>(new TableAgentProfileStore(agentProfiles, live));
+        // The ApiKey is the outbound Bearer credential the orchestrator sends to a provisioning app —
+        // reversible, and encrypted at rest when a cipher is registered. It was not being passed.
+        services.TryAddSingleton<IProvisioningAppStore>(sp =>
+            new TableProvisioningAppStore(provisioningApps, live, changeWriter, sp.GetService<IFieldCipher>()));
+        services.TryAddSingleton<IAgentProfileStore>(new TableAgentProfileStore(agentProfiles, live, changeWriter));
         services.TryAddSingleton<IUpstreamRefreshTokenStore>(sp => new TableUpstreamRefreshTokenStore(upstreamRefreshTokens, live, sp.GetService<IFieldCipher>()));
 
         // Register grant table clients as keyed singletons for the reconciliation service.
