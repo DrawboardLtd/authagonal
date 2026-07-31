@@ -12,7 +12,9 @@ public class PasswordHasherTests
     public void HashPassword_ProducesPbkdf2PrefixedHash()
     {
         var hash = _hasher.HashPassword("Test1234!");
-        Assert.StartsWith("PBKDF2v1$", hash);
+        // v2 records the iteration count in the hash. v1 did not, so verification re-derived at
+        // whatever Auth:Pbkdf2Iterations currently said and the setting could never be changed.
+        Assert.StartsWith("PBKDF2v2$", hash);
     }
 
     [Fact]

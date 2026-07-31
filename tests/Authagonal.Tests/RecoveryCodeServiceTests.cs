@@ -5,7 +5,7 @@ namespace Authagonal.Tests;
 
 public class RecoveryCodeServiceTests
 {
-    private readonly RecoveryCodeService _sut = new();
+    private readonly RecoveryCodeService _sut = Infrastructure.CheapHasher.RecoveryCodes();
 
     [Fact]
     public void Generate_Returns10CodesByDefault()
@@ -23,8 +23,9 @@ public class RecoveryCodeServiceTests
 
         foreach (var code in codes)
         {
-            // Format: XXXX-XXXX
-            Assert.Matches(@"^[A-Z2-9]{4}-[A-Z2-9]{4}$", code);
+            // Format: XXXXX-XXXXX. Ten symbols from a 32-symbol alphabet is 50 bits; the previous
+            // eight gave exactly 40, which is a few GPU-seconds of exhaustive search.
+            Assert.Matches(@"^[A-Z2-9]{5}-[A-Z2-9]{5}$", code);
         }
     }
 

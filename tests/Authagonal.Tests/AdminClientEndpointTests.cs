@@ -1,3 +1,4 @@
+using Authagonal.Server.Services;
 using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Http.Headers;
@@ -232,7 +233,7 @@ public sealed class AdminClientEndpointTests : IAsyncLifetime
         {
             clientId = "secret-app",
             clientName = "Secret App",
-            clientSecretHashes = new[] { "hash-1" },
+            clientSecretHashes = new[] { SampleHash },
         });
 
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
@@ -240,7 +241,7 @@ public sealed class AdminClientEndpointTests : IAsyncLifetime
         Assert.Equal(0, json.GetProperty("clientSecretHashes").GetArrayLength()); // masked in the response
 
         var stored = await _host.ClientStore.GetAsync("secret-app");
-        Assert.Equal(["hash-1"], stored!.ClientSecretHashes); // but persisted intact
+        Assert.Equal([SampleHash], stored!.ClientSecretHashes); // but persisted intact
     }
 
     [Fact]
@@ -427,14 +428,51 @@ public sealed class AdminClientEndpointTests : IAsyncLifetime
         {
             ClientId = "rotator",
             ClientName = "Rotator",
-            ClientSecretHashes = ["old-hash"],
+            ClientSecretHashes = [SampleHash],
         });
 
+        var rotated = CheapHasher.Password().HashPassword("rotated-secret");
         var response = await _client.PutAsync("/api/v1/clients/rotator",
-            Json(new { clientId = "rotator", clientName = "Rotator", clientSecretHashes = new[] { "new-hash" } }));
+            Json(new { clientId = "rotator", clientName = "Rotator", clientSecretHashes = new[] { rotated } }));
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        Assert.Equal(["new-hash"], (await _host.ClientStore.GetAsync("rotator"))!.ClientSecretHashes);
+        Assert.Equal([rotated], (await _host.ClientStore.GetAsync("rotator"))!.ClientSecretHashes);
+    }
+
+    /// <summary>A hash this server would actually have written.</summary>
+    private static readonly string SampleHash = CheapHasher.Password().HashPassword("a-real-secret");
+
+    [Fact]
+    public async Task CreateClient_UnrecognisedSecretHashFormat_Returns400()
+    {
+        // A stored hash tells this server how much CPU to spend on the next anonymous /connect/token
+        // call for the client. An arbitrary blob fell through to the ASP.NET Identity parser, where
+        // the iteration count came from the blob itself — so an admin could plant a hash declaring
+        // 2^31-1 iterations and then trigger hours of uncancellable PBKDF2 anonymously.
+        var response = await CreateAsync(new
+        {
+            clientId = "poisoned",
+            clientName = "Poisoned",
+            clientSecretHashes = new[] { "AQAAAAEAmJaAAAAAEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE" },
+        });
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Null(await _host.ClientStore.GetAsync("poisoned"));
+    }
+
+    [Fact]
+    public async Task CreateClient_EmptySecretHashEntry_Returns400()
+    {
+        // VerifyPassword throws on an empty hash, which turned a [""] entry into an unhandled 500 on
+        // every token request for that client.
+        var response = await CreateAsync(new
+        {
+            clientId = "empty-hash",
+            clientName = "Empty Hash",
+            clientSecretHashes = new[] { "" },
+        });
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
     }
 
     [Fact]

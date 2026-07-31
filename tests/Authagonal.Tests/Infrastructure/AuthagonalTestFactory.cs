@@ -274,6 +274,12 @@ public sealed class AuthagonalTestFactory : IAsyncDisposable
         // Options (mirrors AddAuthagonal)
         services.Configure<AuthOptions>(o =>
         {
+            // Deliberately far below AuthOptions.MinimumPbkdf2Iterations. The production floor is
+            // enforced where configuration is bound, not by the hasher, precisely so the suite can
+            // opt out: at the real 600,000 the thousands of sign-ins across these tests spend
+            // minutes in PBKDF2 and measure nothing but the KDF. Tests that care about the cost
+            // (format, recorded iterations, rehash-on-login) set it explicitly.
+            o.Pbkdf2Iterations = 1_000;
             ConfigureAuthOptions?.Invoke(o);
         });
         services.Configure<CacheOptions>(_ => { });

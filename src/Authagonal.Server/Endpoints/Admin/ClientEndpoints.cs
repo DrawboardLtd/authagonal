@@ -2,6 +2,7 @@ using System.Security.Claims;
 using Authagonal.Core.Models;
 using Authagonal.Core.Services;
 using Authagonal.Core.Stores;
+using Authagonal.Server.Services;
 using Microsoft.Extensions.Configuration;
 
 namespace Authagonal.Server.Endpoints.Admin;
@@ -52,6 +53,9 @@ public static class ClientEndpoints
         if (string.IsNullOrWhiteSpace(client.ClientId) || string.IsNullOrWhiteSpace(client.ClientName))
             return TypedResults.Json(new ErrorInfoResponse { Error = "invalid_request", ErrorDescription = "client_id and client_name are required" }, AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 400);
 
+        if (InvalidSecretHashes(client) is { } createHashError)
+            return TypedResults.Json(new ErrorInfoResponse { Error = "invalid_request", ErrorDescription = createHashError }, AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 400);
+
         if (scopeGuard.FindUngrantableScope(http.User, client.AllowedScopes) is not null)
             return Results.Forbid();
 
@@ -97,6 +101,9 @@ public static class ClientEndpoints
         if (IsAdminScopeRequested(client.AllowedScopes, configuration))
             return TypedResults.Json(new ErrorInfoResponse { Error = "forbidden_scope", ErrorDescription = "The administrative scope cannot be granted to a client" }, AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 403);
 
+        if (InvalidSecretHashes(client) is { } hashError)
+            return TypedResults.Json(new ErrorInfoResponse { Error = "invalid_request", ErrorDescription = hashError }, AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 400);
+
         client.ClientId = clientId;
         // Preserve the stored secret when the update omits hashes; never echo them back. (A rotation
         // that explicitly supplies new hashes is still honoured.)
@@ -109,6 +116,44 @@ public static class ClientEndpoints
         await store.UpsertAsync(client, ct);
         await audit.LogAsync(Actor(http), "client.updated", "client", clientId, null, ct);
         return TypedResults.Json(Redacted(client), AuthagonalJsonContext.Default.OAuthClient);
+    }
+
+    /// <summary>
+    /// Rejects a caller-supplied <c>clientSecretHashes</c> entry that this server would not itself
+    /// have written, returning the reason. Null when every entry is acceptable.
+    /// </summary>
+    /// <remarks>
+    /// The admin API binds the whole <see cref="OAuthClient"/> from the request body and honoured
+    /// <c>ClientSecretHashes</c> verbatim, with nothing validating the format, length or parameters.
+    /// A hash is an instruction to this server about how much CPU to spend on the next anonymous
+    /// <c>/connect/token</c> call for that client, so an unvalidated one is a remote CPU-exhaustion
+    /// primitive that any IdentityAdmin — or a stolen admin token — could plant and then trigger
+    /// anonymously. The parser is now bounded too, but refusing unrecognised blobs here is the half
+    /// that keeps the decision on formats this server actually produces.
+    /// <para>
+    /// An empty or whitespace entry is refused for a separate reason: <c>VerifyPassword</c> throws
+    /// <see cref="ArgumentException"/> on one, which turned a <c>[""]</c> entry into an unhandled 500
+    /// on every token request for that client.
+    /// </para>
+    /// </remarks>
+    private static string? InvalidSecretHashes(OAuthClient client)
+    {
+        if (client.ClientSecretHashes is not { Count: > 0 } hashes)
+            return null;
+
+        foreach (var hash in hashes)
+        {
+            if (string.IsNullOrWhiteSpace(hash))
+                return "clientSecretHashes must not contain empty entries";
+
+            if (!PasswordHasher.IsRecognisedHashFormat(hash))
+            {
+                return "clientSecretHashes entries must be hashes produced by this server " +
+                       "(PBKDF2v2$…) or a supported migration format (PBKDF2v1$…, SHA256$…, SHA512$…, bcrypt)";
+            }
+        }
+
+        return null;
     }
 
     // Home URIs are rendered as navigation targets on the hosted account pages, so they must be

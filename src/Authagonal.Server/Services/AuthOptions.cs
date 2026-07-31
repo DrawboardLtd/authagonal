@@ -69,7 +69,25 @@ public sealed class AuthOptions
     public int MfaSetupTokenExpiryMinutes { get; set; } = 15;
 
     // --- Password hashing ---
-    public int Pbkdf2Iterations { get; set; } = 100_000;
+
+    /// <summary>
+    /// PBKDF2-HMAC-SHA256 work factor for newly written hashes. OWASP's 2026 Password Storage
+    /// guidance is 600,000.
+    /// </summary>
+    /// <remarks>
+    /// Raising this is now safe and is the intended way to keep pace: the cost is recorded in each
+    /// hash (<c>PBKDF2v2$</c>), verification derives at the cost the hash carries, and a hash below
+    /// this target is transparently re-written on the owner's next successful login. Previously the
+    /// count was not stored, so verification re-derived at whatever this said and changing it
+    /// invalidated every hash in the deployment at once — which is why the default sat at 100,000.
+    /// </remarks>
+    public int Pbkdf2Iterations { get; set; } = 600_000;
+
+    /// <summary>
+    /// Lower bound enforced at startup, so a typo or a copied dev config cannot silently weaken
+    /// every password and client secret the deployment writes from then on.
+    /// </summary>
+    public const int MinimumPbkdf2Iterations = 100_000;
 
     // --- Refresh tokens ---
     /// <summary>

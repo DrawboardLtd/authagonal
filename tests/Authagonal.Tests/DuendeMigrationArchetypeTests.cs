@@ -6,6 +6,7 @@ using Authagonal.Core.Services;
 using Authagonal.AzureProvider.Stores;
 using Authagonal.Migration;
 using Authagonal.Server.Services; // PasswordHasher, TotpService, RecoveryCodeService, PlaintextSecretProvider
+using Authagonal.Tests.Infrastructure;
 using Authagonal.Protocol.Services; // IClientSecretVerifier
 using Azure.Data.Tables;
 using Microsoft.Data.SqlClient;
@@ -59,7 +60,7 @@ public class DuendeMigrationArchetypeTests(DuendeMigrationArchetypeFixture fixtu
 
         var stores = BuildStores(fixture.Azurite.GetConnectionString(), out var tableClients);
         var engine = new DuendeMigrationEngine(
-            stores, new PlaintextSecretProvider(), new RecoveryCodeService(),
+            stores, new PlaintextSecretProvider(), CheapHasher.RecoveryCodes(),
             NullLogger<DuendeMigrationEngine>.Instance);
 
         var report = await engine.RunAsync(new DuendeMigrationOptions
@@ -74,7 +75,7 @@ public class DuendeMigrationArchetypeTests(DuendeMigrationArchetypeFixture fixtu
         Assert.Equal(6, report.UsersCreated);
         Assert.Empty(report.InvalidUserIds);
 
-        var hasher = new PasswordHasher();
+        var hasher = CheapHasher.Password();
 
         // 1. bcrypt archetype — hash migrated verbatim, verifies (and would rehash on login).
         var bcryptUser = await stores.Users.GetAsync("u-bcrypt");

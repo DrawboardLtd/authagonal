@@ -177,6 +177,17 @@ public static class AuthagonalExtensions
         // Auth / Cache / BackgroundService options
         // ---------------------------------------------------------------------------
         services.Configure<AuthOptions>(configuration.GetSection("Auth"));
+
+        // Refused rather than clamped: a deployment configured below the floor should fail to start
+        // instead of quietly writing weaker password and client-secret hashes than its operator
+        // believes it is writing, and clamping would hide the typo that caused it.
+        services.AddOptions<AuthOptions>()
+            .Validate(
+                o => o.Pbkdf2Iterations >= AuthOptions.MinimumPbkdf2Iterations,
+                $"Auth:Pbkdf2Iterations must be at least {AuthOptions.MinimumPbkdf2Iterations}. " +
+                "Raising it is safe: each hash records the cost it was derived at, so existing hashes " +
+                "keep verifying and are re-written on their owner's next successful login.")
+            .ValidateOnStart();
         services.Configure<CacheOptions>(configuration.GetSection("Cache"));
         services.Configure<BackgroundServiceOptions>(configuration.GetSection("BackgroundServices"));
         // Cloudflare Turnstile — opt-in: verification on /login and /register is enforced
