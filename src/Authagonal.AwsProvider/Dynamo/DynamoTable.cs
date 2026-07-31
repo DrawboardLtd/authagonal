@@ -97,11 +97,21 @@ public sealed class DynamoTable(IAmazonDynamoDB db, string name)
     /// <paramref name="filterExpression"/> is an optional post-filter on non-key attributes. Pass any
     /// placeholders used by either through <paramref name="values"/>. Pages automatically.
     /// </summary>
+    /// <param name="consistentRead">
+    /// Request a strongly-consistent read. DynamoDB defaults Query to EVENTUALLY consistent, which
+    /// "might not reflect the results of a recently completed write" — while
+    /// <see cref="GetAsync"/> here has always set ConsistentRead, so the omission was an oversight
+    /// rather than a considered trade-off. It matters for the query-driven bulk paths: enumerating a
+    /// subject's grants to revoke them deletes only what the query returned, so on this backend
+    /// "revoke every grant for this subject" was best-effort, where Azure and SQL are exact. Costs
+    /// 2x RCU on the queries that ask for it, all of them low-frequency.
+    /// </param>
     public async IAsyncEnumerable<Dictionary<string, AttributeValue>> QueryAsync(
         string pk,
         string? sortKeyCondition = null,
         string? filterExpression = null,
         IReadOnlyDictionary<string, AttributeValue>? values = null,
+        bool consistentRead = false,
         [EnumeratorCancellation] CancellationToken ct = default)
     {
         var keyExpr = sortKeyCondition is null ? "pk = :pk" : $"pk = :pk AND {sortKeyCondition}";
@@ -119,6 +129,7 @@ public sealed class DynamoTable(IAmazonDynamoDB db, string name)
                 FilterExpression = filterExpression,
                 ExpressionAttributeValues = attrValues,
                 ExclusiveStartKey = startKey,
+                ConsistentRead = consistentRead,
             }, ct).ConfigureAwait(false);
 
             foreach (var item in resp.Items ?? []) yield return item;

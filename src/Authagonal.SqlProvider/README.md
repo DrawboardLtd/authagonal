@@ -12,7 +12,8 @@ Implements the full `Authagonal.Core.Stores` surface, the clustering seams (`ILe
 
 ```csharp
 // PostgreSQL — call BEFORE AddAuthagonal
-builder.Services.AddAuthagonalPostgres("Host=db;Database=authagonal;Username=auth;Password=…");
+builder.Services.AddAuthagonalPostgres(
+    "Host=db;Database=authagonal;Username=auth;Password=…;SSL Mode=VerifyFull;Root Certificate=/etc/ssl/certs/db-ca.pem");
 builder.Services.AddAuthagonal(builder.Configuration);
 ```
 

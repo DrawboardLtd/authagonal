@@ -83,6 +83,18 @@ public static class ProtocolSigningKeyOps
         return new SigningCredentials(securityKey, Algorithm);
     }
 
+    /// <summary>
+    /// How long a key stays published after its own expiry.
+    /// </summary>
+    /// <remarks>
+    /// A key was dropped from JWKS at exactly <c>ExpiresAt</c>, with no grace for the tokens already
+    /// minted under it. Access tokens live 1800s by default, so every token signed in the half hour
+    /// before expiry was still inside its own <c>exp</c> while its <c>kid</c> had already vanished —
+    /// and every relying party rejected it. A verification key is needed for as long as any token it
+    /// signed can still be live, which is a different lifetime from "may still be used for signing".
+    /// </remarks>
+    public static readonly TimeSpan JwksRetentionGrace = TimeSpan.FromHours(2);
+
     public static async Task<List<JsonWebKey>> BuildJwksAsync(
         ISigningKeyStore keyStore, CancellationToken ct = default)
     {
@@ -92,7 +104,9 @@ public static class ProtocolSigningKeyOps
 
         foreach (var keyInfo in allKeys)
         {
-            if (keyInfo.ExpiresAt <= now) continue;
+            // Retained past expiry — see JwksRetentionGrace. Publishing a key is not authorising its
+            // use: signing is gated separately, on ExpiresAt itself.
+            if (keyInfo.ExpiresAt.Add(JwksRetentionGrace) <= now) continue;
             if (!IsSupportedAlgorithm(keyInfo.Algorithm)) continue;
 
             // Hand-build the JWK rather than using JsonWebKeyConverter — older versions of

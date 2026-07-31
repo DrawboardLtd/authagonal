@@ -22,6 +22,7 @@ public sealed class DynamoSigningKeyStore(DynamoTable table, EnvPartitioner part
             partitioner.PK(Partition),
             filterExpression: "active = :t",
             values: new Dictionary<string, AttributeValue> { [":t"] = new() { BOOL = true } },
+            consistentRead: true,
             ct: ct).ConfigureAwait(false))
         {
             return Read(item);
@@ -33,7 +34,7 @@ public sealed class DynamoSigningKeyStore(DynamoTable table, EnvPartitioner part
     public async Task<IReadOnlyList<SigningKeyInfo>> GetAllAsync(CancellationToken ct = default)
     {
         var results = new List<SigningKeyInfo>();
-        await foreach (var item in table.QueryAsync(partitioner.PK(Partition), ct: ct).ConfigureAwait(false))
+        await foreach (var item in table.QueryAsync(partitioner.PK(Partition), consistentRead: true, ct: ct).ConfigureAwait(false))
             results.Add(Read(item));
         return results;
     }

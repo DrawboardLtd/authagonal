@@ -9,14 +9,53 @@ namespace Authagonal.SqlProvider.Sql;
 /// per-table schema, and a partial index on <c>expires_at</c> keeps the TTL sweep cheap.
 /// Connection pooling is Npgsql's.
 /// </summary>
-public sealed class PostgresDialect(string connectionString, string schema = "public") : ISqlDialect
+public sealed class PostgresDialect : ISqlDialect
 {
+    private readonly string _connectionString;
+
+    public PostgresDialect(string connectionString, string schema = "public", bool allowUnverifiedTls = false)
+    {
+        Schema = SqlNames.Identifier(schema);
+        _connectionString = allowUnverifiedTls
+            ? connectionString
+            : RequireVerifiedTls(connectionString);
+    }
+
     public string Name => "postgres";
 
     /// <summary>The schema the tables live in. Created on first provision if absent.</summary>
-    public string Schema { get; } = SqlNames.Identifier(schema);
+    public string Schema { get; }
 
-    public DbConnection CreateConnection() => new NpgsqlConnection(connectionString);
+    public DbConnection CreateConnection() => new NpgsqlConnection(_connectionString);
+
+    /// <summary>
+    /// Upgrades a connection string that says nothing about TLS to <c>SslMode=VerifyFull</c>.
+    /// </summary>
+    /// <remarks>
+    /// Npgsql defaults to <c>SSL Mode=Prefer</c>: TLS is used only if the server offers it, the
+    /// server certificate is NOT validated, and the connection silently falls back to plaintext if
+    /// the server declines. Since Npgsql 6.0 <c>Require</c> does not validate either — only
+    /// <c>VerifyCA</c> and <c>VerifyFull</c> do. The connection string in the package README and the
+    /// install guide names no SslMode, so every documented deployment landed on Prefer, carrying the
+    /// signing keys, the DataProtection key ring and every credential in the store over a link an
+    /// on-path attacker can strip or impersonate.
+    /// <para>
+    /// An explicit choice is left alone — an operator who wrote <c>SslMode=Disable</c> for a local
+    /// socket means it — but silence now resolves to the safe end rather than the unsafe one.
+    /// </para>
+    /// </remarks>
+    internal static string RequireVerifiedTls(string connectionString)
+    {
+        // The untyped builder holds only the keywords actually present, which is what distinguishes
+        // "not stated" from "explicitly set". NpgsqlConnectionStringBuilder cannot: being strongly
+        // typed, it reports ContainsKey true for every keyword it knows about, set or not.
+        var stated = new DbConnectionStringBuilder { ConnectionString = connectionString };
+        if (stated.ContainsKey("ssl mode") || stated.ContainsKey("sslmode"))
+            return connectionString;
+
+        var builder = new NpgsqlConnectionStringBuilder(connectionString) { SslMode = SslMode.VerifyFull };
+        return builder.ConnectionString;
+    }
 
     public Task PrepareAsync(DbConnection connection, CancellationToken ct) => Task.CompletedTask;
 

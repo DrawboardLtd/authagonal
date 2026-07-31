@@ -15,7 +15,8 @@ namespace Authagonal.SqlProvider;
 /// Call before <c>AddAuthagonal</c>: the registrations here are what make <c>AddAuthagonal</c> skip
 /// its Azure Table wiring.
 /// <code>
-/// builder.Services.AddAuthagonalPostgres("Host=db;Database=authagonal;Username=auth;Password=…");
+/// builder.Services.AddAuthagonalPostgres(
+///     "Host=db;Database=authagonal;Username=auth;Password=…;SSL Mode=VerifyFull;Root Certificate=/etc/ssl/certs/db-ca.pem");
 /// builder.Services.AddAuthagonal(builder.Configuration);
 /// </code>
 /// </summary>
@@ -167,14 +168,22 @@ public static class ServiceCollectionExtensions
     /// One-call composition for a PostgreSQL host: stores, DataProtection key ring, and (optionally)
     /// the schema the tables live in. Call BEFORE <c>AddAuthagonal</c>.
     /// </summary>
+    /// <param name="allowUnverifiedTls">
+    /// Opt out of the automatic <c>SslMode=VerifyFull</c> upgrade applied when the connection string
+    /// states no SSL mode. Npgsql's own default is <c>Prefer</c>, which does not validate the server
+    /// certificate and silently falls back to plaintext — so the documented connection string, which
+    /// names no mode, carried the signing keys and every stored credential over an unauthenticated
+    /// link. Set this only for a local socket or a link secured by other means.
+    /// </param>
     public static IServiceCollection AddAuthagonalPostgres(
         this IServiceCollection services,
         string connectionString,
         string schema = "public",
         bool nameIndexesEnabled = true,
-        bool persistDataProtectionKeys = true)
+        bool persistDataProtectionKeys = true,
+        bool allowUnverifiedTls = false)
         => services.AddAuthagonalSqlStorage(
-            new SqlDataSource(new PostgresDialect(connectionString, schema)), nameIndexesEnabled, persistDataProtectionKeys);
+            new SqlDataSource(new PostgresDialect(connectionString, schema, allowUnverifiedTls)), nameIndexesEnabled, persistDataProtectionKeys);
 
     /// <summary>
     /// One-call composition for a SQLite host — one file, no server. Suits the quick start, embedded

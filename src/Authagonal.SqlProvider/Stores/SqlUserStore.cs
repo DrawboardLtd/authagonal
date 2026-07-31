@@ -93,13 +93,33 @@ public sealed class SqlUserStore(
         return string.IsNullOrEmpty(local) ? null : local;
     }
 
+    /// <remarks>
+    /// Sliced on rune boundaries, not UTF-16 code units. A name containing any non-BMP character —
+    /// an emoji, a CJK extension-B ideograph, a mathematical alphanumeric — is stored as a surrogate
+    /// pair, and slicing at an arbitrary code-unit offset cut it in half. The resulting lone
+    /// surrogate then became an index row key, where its UTF-8 encoding is undefined for the driver:
+    /// either a replacement character that corrupts the key so the row is never found again, or an
+    /// encoding exception surfacing as a 500.
+    /// </remarks>
     private static IReadOnlyList<string> NamePrefixesOf(string normalizedName)
     {
-        if (normalizedName.Length < NamePrefixMin) return [normalizedName];
-        var hi = Math.Min(normalizedName.Length, NamePrefixMax);
+        // Offsets at which a rune ends, so every prefix is a whole sequence of scalar values.
+        var boundaries = new List<int>();
+        for (var i = 0; i < normalizedName.Length;)
+        {
+            i += char.IsHighSurrogate(normalizedName[i]) && i + 1 < normalizedName.Length
+                 && char.IsLowSurrogate(normalizedName[i + 1])
+                ? 2
+                : 1;
+            boundaries.Add(i);
+        }
+
+        if (boundaries.Count < NamePrefixMin) return [normalizedName];
+
+        var hi = Math.Min(boundaries.Count, NamePrefixMax);
         var prefixes = new List<string>(hi - NamePrefixMin + 1);
-        for (var len = NamePrefixMin; len <= hi; len++)
-            prefixes.Add(normalizedName[..len]);
+        for (var runes = NamePrefixMin; runes <= hi; runes++)
+            prefixes.Add(normalizedName[..boundaries[runes - 1]]);
         return prefixes;
     }
 

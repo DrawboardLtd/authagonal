@@ -22,6 +22,10 @@ public sealed class ProtocolKeyManager : IKeyManager, IHostedService, IDisposabl
     private Timer? _refreshTimer;
 
     private SigningCredentials? _signingCredentials;
+
+    /// <summary>Expiry of the key behind <see cref="_signingCredentials"/>, so a stale cache cannot
+    /// keep signing with a retired key between refreshes.</summary>
+    private DateTimeOffset? _signingKeyExpiresAt;
     private List<JsonWebKey> _allJsonWebKeys = [];
 
     public ProtocolKeyManager(
@@ -57,10 +61,33 @@ public sealed class ProtocolKeyManager : IKeyManager, IHostedService, IDisposabl
         _lock.Dispose();
     }
 
+    /// <remarks>
+    /// The expiry check is the point. This returned whatever was cached, and the cache refreshes only
+    /// every <c>SigningKeyCacheRefreshMinutes</c> (60 by default) — so for up to an hour after a key
+    /// expired, a node that had not yet refreshed kept MINTING tokens with a retired key, whose JWK
+    /// every refreshed node had already stopped publishing. Those tokens were unverifiable by anyone
+    /// from the moment they were issued. Worse, a key-store outage makes the background refresh
+    /// swallow its exception, so the stale credentials would have been used indefinitely.
+    /// <para>
+    /// Failing loudly is the right direction: refusing to mint is a visible outage, while minting
+    /// with a retired key produces tokens that fail at every relying party for reasons none of them
+    /// can diagnose.
+    /// </para>
+    /// </remarks>
     public SigningCredentials GetSigningCredentials()
     {
-        return _signingCredentials
+        var credentials = _signingCredentials
             ?? throw new InvalidOperationException("Signing key has not been initialized. Ensure ProtocolKeyManager is started.");
+
+        if (_signingKeyExpiresAt is { } expiresAt && expiresAt <= DateTimeOffset.UtcNow)
+        {
+            throw new InvalidOperationException(
+                $"The cached signing key '{credentials.Key.KeyId}' expired at {expiresAt:O}. Refusing to " +
+                "sign with a retired key — tokens minted under it are no longer verifiable. A refresh " +
+                "is due; if this persists the signing-key store is unreachable.");
+        }
+
+        return credentials;
     }
 
     public IReadOnlyList<JsonWebKey> GetSecurityKeys() => _allJsonWebKeys;
@@ -84,6 +111,7 @@ public sealed class ProtocolKeyManager : IKeyManager, IHostedService, IDisposabl
             var lifetimeDays = _options.CurrentValue.SigningKeyLifetimeDays;
             var activeKey = await ProtocolSigningKeyOps.EnsureActiveKeyAsync(keyStore, lifetimeDays, _logger, ct);
             _signingCredentials = ProtocolSigningKeyOps.BuildSigningCredentials(activeKey);
+            _signingKeyExpiresAt = activeKey.ExpiresAt;
             _allJsonWebKeys = await ProtocolSigningKeyOps.BuildJwksAsync(keyStore, ct);
 
             _logger.LogInformation(

@@ -51,8 +51,16 @@ public sealed class DynamoGrantStore(
 
     public async Task StoreAsync(PersistedGrant grant, CancellationToken ct = default)
     {
+        // Grants read back from storage carry no Key. Re-storing one without setting it would hash
+        // the empty string and write to the SHA-256("") partition instead of the real row — silently
+        // corrupting the grant rather than updating it.
+        if (string.IsNullOrEmpty(grant.Key))
+            throw new ArgumentException(
+                "PersistedGrant.Key is empty. Grants read back from storage have no Key — set it explicitly before storing.",
+                nameof(grant));
+
         var hashedKey = HashKey(grant.Key);
-        var json = await ProtectAsync(JsonSerializer.Serialize(grant, AwsJsonContext.Default.PersistedGrant), ct).ConfigureAwait(false);
+        var json = await ProtectAsync(SerializeWithoutHandle(grant), ct).ConfigureAwait(false);
 
         // Primary write is the critical one.
         var primary = Dyn.Item(partitioner.PK(hashedKey), GrantSk);
@@ -114,7 +122,7 @@ public sealed class DynamoGrantStore(
 
         var grant = await ReadGrantAsync(item, ct).ConfigureAwait(false);
         grant.ConsumedAt = DateTimeOffset.UtcNow;
-        var json = await ProtectAsync(JsonSerializer.Serialize(grant, AwsJsonContext.Default.PersistedGrant), ct).ConfigureAwait(false);
+        var json = await ProtectAsync(SerializeWithoutHandle(grant), ct).ConfigureAwait(false);
 
         var updated = Dyn.Item(pk, GrantSk);
         updated.PutS("data", json);
@@ -165,7 +173,7 @@ public sealed class DynamoGrantStore(
         var pk = partitioner.PK(hashedKey);
 
         grant.ConsumedAt ??= DateTimeOffset.UtcNow;
-        var json = await ProtectAsync(JsonSerializer.Serialize(grant, AwsJsonContext.Default.PersistedGrant), ct).ConfigureAwait(false);
+        var json = await ProtectAsync(SerializeWithoutHandle(grant), ct).ConfigureAwait(false);
 
         var item = Dyn.Item(pk, GrantSk);
         item.PutS("data", json);
@@ -239,7 +247,7 @@ public sealed class DynamoGrantStore(
     public async Task<IReadOnlyList<PersistedGrant>> GetBySubjectAsync(string subjectId, CancellationToken ct = default)
     {
         var results = new List<PersistedGrant>();
-        await foreach (var item in grantsBySubject.QueryAsync(partitioner.PK(subjectId), ct: ct).ConfigureAwait(false))
+        await foreach (var item in grantsBySubject.QueryAsync(partitioner.PK(subjectId), consistentRead: true, ct: ct).ConfigureAwait(false))
             results.Add(await ReadGrantAsync(item, ct).ConfigureAwait(false));
         return results;
     }
@@ -299,7 +307,7 @@ public sealed class DynamoGrantStore(
         var values = clientId is null ? null : new Dictionary<string, AttributeValue> { [":c"] = new() { S = clientId } };
 
         var items = new List<Dictionary<string, AttributeValue>>();
-        await foreach (var item in grantsBySubject.QueryAsync(spk, filterExpression: filter, values: values, ct: ct).ConfigureAwait(false))
+        await foreach (var item in grantsBySubject.QueryAsync(spk, filterExpression: filter, values: values, consistentRead: true, ct: ct).ConfigureAwait(false))
         {
             if (types is not null && !types.Contains(item.GetStr("type"))) continue;
             items.Add(item);
@@ -308,7 +316,9 @@ public sealed class DynamoGrantStore(
         foreach (var item in items)
         {
             var grant = await ReadGrantAsync(item, ct).ConfigureAwait(false);
-            var hashedKey = HashKey(grant.Key);
+            // Taken from the index row's sort key ("{type}|{hashedKey}"), not by re-hashing
+            // grant.Key — the raw handle is deliberately not persisted, so it is empty here.
+            var hashedKey = HashedKeyFromSubjectSk(item.GetStr(Dyn.Sk));
 
             await grants.DeleteAsync(partitioner.PK(hashedKey), GrantSk, ct).ConfigureAwait(false);
             await grantsBySubject.DeleteAsync(item.GetStr(Dyn.Pk), item.GetStr(Dyn.Sk), ct).ConfigureAwait(false);
@@ -344,6 +354,44 @@ public sealed class DynamoGrantStore(
 
     public static string HashKey(string key)
         => Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(key)));
+
+    /// <summary>
+    /// Serializes a grant with the raw token handle blanked.
+    /// </summary>
+    /// <remarks>
+    /// PersistedGrant.Key IS the bearer credential — the refresh-token / authorization-code /
+    /// device-code handle — and the whole object was being written into the data attribute, so both
+    /// the primary row and the subject-index row held live, replayable tokens in the clear. Only the
+    /// SHA-256 belongs in storage, which is what the partition key already carries. The Azure store
+    /// has always done this and says why: "storing the handle would let a table dump replay live
+    /// tokens." The class comment here claimed the same invariant, but it held only when a non-null
+    /// IFieldCipher was injected — and the default is passthrough, which is every OSS and
+    /// self-hosted host.
+    /// <para>
+    /// Blanked on a copy so a concurrent reader of the caller's object never observes an empty Key.
+    /// Reads return Key empty too, matching Azure, so no caller can depend on one backend populating
+    /// it and another not.
+    /// </para>
+    /// </remarks>
+    private static string SerializeWithoutHandle(PersistedGrant grant) =>
+        JsonSerializer.Serialize(new PersistedGrant
+        {
+            Key = string.Empty,
+            Type = grant.Type,
+            SubjectId = grant.SubjectId,
+            ClientId = grant.ClientId,
+            Data = grant.Data,
+            CreatedAt = grant.CreatedAt,
+            ExpiresAt = grant.ExpiresAt,
+            ConsumedAt = grant.ConsumedAt,
+        }, AwsJsonContext.Default.PersistedGrant);
+
+    /// <summary>The hashed key embedded in a subject-index sort key.</summary>
+    private static string HashedKeyFromSubjectSk(string sk)
+    {
+        var bar = sk.IndexOf('|');
+        return bar >= 0 ? sk[(bar + 1)..] : sk;
+    }
 
     private static string SubjectSk(string type, string hashedKey) => $"{type}|{hashedKey}";
     private static string ExpiryPk(int shard) => $"exp_{shard}";

@@ -24,7 +24,7 @@ public sealed class DynamoMfaStore(
     public async Task<IReadOnlyList<MfaCredential>> GetCredentialsAsync(string userId, CancellationToken ct = default)
     {
         var results = new List<MfaCredential>();
-        await foreach (var item in credentials.QueryAsync(partitioner.PK(userId), ct: ct).ConfigureAwait(false))
+        await foreach (var item in credentials.QueryAsync(partitioner.PK(userId), consistentRead: true, ct: ct).ConfigureAwait(false))
             results.Add(ReadCredential(item));
         return results;
     }
@@ -51,7 +51,7 @@ public sealed class DynamoMfaStore(
     {
         var pk = partitioner.PK(userId);
         var keys = new List<(string, string)>();
-        await foreach (var item in credentials.QueryAsync(pk, ct: ct).ConfigureAwait(false))
+        await foreach (var item in credentials.QueryAsync(pk, consistentRead: true, ct: ct).ConfigureAwait(false))
         {
             var sk = item.GetStr(Dyn.Sk);
             await DeleteWebAuthnIndexForAsync(ReadCredential(item), ct).ConfigureAwait(false);

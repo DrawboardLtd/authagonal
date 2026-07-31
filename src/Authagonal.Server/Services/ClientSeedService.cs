@@ -70,34 +70,50 @@ public sealed class ClientSeedService(
                 secretHashes = [passwordHasher.HashPassword(seed.ClientSecret)];
             }
 
-            var client = new OAuthClient
-            {
-                ClientId = clientId,
-                ClientName = seed.Name ?? seed.ClientName ?? clientId,
-                ClientSecretHashes = secretHashes,
-                AllowedGrantTypes = seed.GrantTypes ?? seed.AllowedGrantTypes ?? [],
-                RedirectUris = seed.RedirectUris ?? [],
-                PostLogoutRedirectUris = seed.PostLogoutRedirectUris ?? [],
-                AllowedScopes = seededScopes,
-                AllowedCorsOrigins = seed.CorsOrigins ?? seed.AllowedCorsOrigins ?? [],
-                RequirePkce = seed.RequirePkce ?? true,
-                AllowOfflineAccess = seed.AllowOfflineAccess ?? false,
-                RequireClientSecret = seed.RequireSecret ?? seed.RequireClientSecret ?? true,
-                AlwaysIncludeUserClaimsInIdToken = seed.AlwaysIncludeUserClaimsInIdToken ?? false,
-                AccessTokenLifetimeSeconds = seed.AccessTokenLifetimeSeconds ?? 1800,
-                IdentityTokenLifetimeSeconds = seed.IdentityTokenLifetimeSeconds ?? 300,
-                AuthorizationCodeLifetimeSeconds = seed.AuthorizationCodeLifetimeSeconds ?? 300,
-                AbsoluteRefreshTokenLifetimeSeconds = seed.AbsoluteRefreshTokenLifetimeSeconds ?? 2592000,
-                SlidingRefreshTokenLifetimeSeconds = seed.SlidingRefreshTokenLifetimeSeconds ?? 1296000,
-                RefreshTokenUsage = seed.RefreshTokenUsage ?? RefreshTokenUsage.OneTime,
-                MfaPolicy = seed.MfaPolicy ?? MfaPolicy.Disabled,
-                BackChannelLogoutUri = seed.BackChannelLogoutUri,
-                // Continue-to-app affordances: without these bound, config-seeded tenants have an
-                // empty /apps and every post-auth continuation collapses to '/' on the auth host.
-                InitiateLoginUri = seed.InitiateLoginUri,
-                ClientUri = seed.ClientUri,
-                IsDefaultApplication = seed.IsDefaultApplication ?? false
-            };
+            // Read-merge-write, matching ScopeSeedService ("a field omitted from the seed preserves
+            // the stored value") and RoleSeedService ("deliberately additive… an operator granting a
+            // role through the admin API must not have it taken away by the next restart").
+            //
+            // This seeder alone built a fresh OAuthClient and Replace-d the row, so every property the
+            // seed does not state reverted to the MODEL DEFAULT on each pod start — silently undoing
+            // admin hardening applied through PUT /api/v1/clients/{id}. Enabled is the sharpest: the
+            // seeder never sets it and the model defaults it to true, so restarting re-enabled a client
+            // an operator had deliberately disabled. RequireConsent, RequirePushedAuthorizationRequests,
+            // Audiences, JwksJson/JwksUri (which kills private_key_jwt for an agent client) and any
+            // secret rotated through the admin API went the same way.
+            var existing = await clientStore.GetAsync(clientId, ct);
+
+            var client = existing is null
+                ? new OAuthClient { ClientId = clientId }
+                : existing;
+
+            client.ClientId = clientId;
+            client.ClientName = seed.Name ?? seed.ClientName ?? existing?.ClientName ?? clientId;
+            // Only overwritten when the seed actually supplies one, so a rotation through the admin
+            // API survives the next restart.
+            if (secretHashes.Count > 0) client.ClientSecretHashes = secretHashes;
+            client.AllowedGrantTypes = seed.GrantTypes ?? seed.AllowedGrantTypes ?? existing?.AllowedGrantTypes ?? [];
+            client.RedirectUris = seed.RedirectUris ?? existing?.RedirectUris ?? [];
+            client.PostLogoutRedirectUris = seed.PostLogoutRedirectUris ?? existing?.PostLogoutRedirectUris ?? [];
+            client.AllowedScopes = seededScopes;
+            client.AllowedCorsOrigins = seed.CorsOrigins ?? seed.AllowedCorsOrigins ?? existing?.AllowedCorsOrigins ?? [];
+            client.RequirePkce = seed.RequirePkce ?? existing?.RequirePkce ?? true;
+            client.AllowOfflineAccess = seed.AllowOfflineAccess ?? existing?.AllowOfflineAccess ?? false;
+            client.RequireClientSecret = seed.RequireSecret ?? seed.RequireClientSecret ?? existing?.RequireClientSecret ?? true;
+            client.AlwaysIncludeUserClaimsInIdToken = seed.AlwaysIncludeUserClaimsInIdToken ?? existing?.AlwaysIncludeUserClaimsInIdToken ?? false;
+            client.AccessTokenLifetimeSeconds = seed.AccessTokenLifetimeSeconds ?? existing?.AccessTokenLifetimeSeconds ?? 1800;
+            client.IdentityTokenLifetimeSeconds = seed.IdentityTokenLifetimeSeconds ?? existing?.IdentityTokenLifetimeSeconds ?? 300;
+            client.AuthorizationCodeLifetimeSeconds = seed.AuthorizationCodeLifetimeSeconds ?? existing?.AuthorizationCodeLifetimeSeconds ?? 300;
+            client.AbsoluteRefreshTokenLifetimeSeconds = seed.AbsoluteRefreshTokenLifetimeSeconds ?? existing?.AbsoluteRefreshTokenLifetimeSeconds ?? 2592000;
+            client.SlidingRefreshTokenLifetimeSeconds = seed.SlidingRefreshTokenLifetimeSeconds ?? existing?.SlidingRefreshTokenLifetimeSeconds ?? 1296000;
+            client.RefreshTokenUsage = seed.RefreshTokenUsage ?? existing?.RefreshTokenUsage ?? RefreshTokenUsage.OneTime;
+            client.MfaPolicy = seed.MfaPolicy ?? existing?.MfaPolicy ?? MfaPolicy.Disabled;
+            client.BackChannelLogoutUri = seed.BackChannelLogoutUri ?? existing?.BackChannelLogoutUri;
+            // Continue-to-app affordances: without these bound, config-seeded tenants have an
+            // empty /apps and every post-auth continuation collapses to '/' on the auth host.
+            client.InitiateLoginUri = seed.InitiateLoginUri ?? existing?.InitiateLoginUri;
+            client.ClientUri = seed.ClientUri ?? existing?.ClientUri;
+            client.IsDefaultApplication = seed.IsDefaultApplication ?? existing?.IsDefaultApplication ?? false;
 
             await clientStore.UpsertAsync(client, ct);
             logger.LogInformation("Seeded client {Id} ({Name})", client.ClientId, client.ClientName);

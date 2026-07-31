@@ -99,7 +99,7 @@ public static class AuthEndpoints
             return JsonResults.Error("too_many_attempts", 429);
 
         // Check SSO domain first
-        var domain = request.Email.Split('@', 2).LastOrDefault()?.ToLowerInvariant();
+        var domain = Authagonal.Core.Services.EmailDomain.Of(request.Email);
         if (!string.IsNullOrWhiteSpace(domain))
         {
             var ssoDomain = await ssoDomainStore.GetAsync(domain, ct);
@@ -405,10 +405,13 @@ public static class AuthEndpoints
         if (string.IsNullOrWhiteSpace(request.Email) || string.IsNullOrWhiteSpace(request.Password))
             return JsonResults.Error("email_and_password_required");
 
-        // Basic email format validation
+        // Basic email format validation. The single-'@' requirement is load-bearing rather than
+        // cosmetic: an address with two of them has a domain that is ambiguous by construction, and
+        // the forced-SSO gates and the storage layer resolved that ambiguity differently — so
+        // `bob@x@corp.com` registered as a corp.com account that forced SSO never fired for.
         var emailTrimmed = request.Email.Trim();
-        if (!emailTrimmed.Contains('@') || emailTrimmed.Length < 5 ||
-            emailTrimmed.StartsWith('@') || emailTrimmed.EndsWith('@') || emailTrimmed.EndsWith('.'))
+        if (!EmailDomain.HasUnambiguousDomain(emailTrimmed) || emailTrimmed.Length < 5 ||
+            emailTrimmed.EndsWith('.'))
             return JsonResults.Error("invalid_email", "Please enter a valid email address.");
 
         var (isValid, validationError) = passwordValidator.Validate(request.Password, passwordPolicy);
@@ -1344,7 +1347,7 @@ public static class AuthEndpoints
         if (string.IsNullOrWhiteSpace(email))
             return JsonResults.Error("email_required");
 
-        var domain = email.Split('@', 2).LastOrDefault()?.ToLowerInvariant();
+        var domain = Authagonal.Core.Services.EmailDomain.Of(email);
         if (string.IsNullOrWhiteSpace(domain))
             return TypedResults.Json(new SsoCheckResponse { SsoRequired = false }, AuthagonalJsonContext.Default.SsoCheckResponse);
 

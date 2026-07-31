@@ -115,7 +115,8 @@ To run on your own database instead of a cloud service, reference `Authagonal.Sq
 using Authagonal.SqlProvider;
 
 // PostgreSQL — the production self-hosted backend
-builder.Services.AddAuthagonalPostgres("Host=db;Database=authagonal;Username=auth;Password=…");
+builder.Services.AddAuthagonalPostgres(
+    "Host=db;Database=authagonal;Username=auth;Password=…;SSL Mode=VerifyFull;Root Certificate=/etc/ssl/certs/db-ca.pem");
 
 // or SQLite — one file, no server. Suits embedded hosts, CI and small single-node deployments
 builder.Services.AddAuthagonalSqlite("Data Source=authagonal.db");

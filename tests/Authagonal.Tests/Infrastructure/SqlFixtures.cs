@@ -51,6 +51,12 @@ public static class SqlTestSource
     public static SqlDataSource Sqlite()
         => new(new SqliteDialect($"Data Source=authagonal-test-{Guid.NewGuid():N};Mode=Memory;Cache=Shared"));
 
+    /// <remarks>
+    /// <c>allowUnverifiedTls</c> because the throwaway container speaks plaintext on a loopback port.
+    /// Production now upgrades a connection string that states no SSL mode to VerifyFull — Npgsql's
+    /// own default is Prefer, which validates no certificate and silently falls back to plaintext —
+    /// and this is the opt-out that exists for exactly this case.
+    /// </remarks>
     public static SqlDataSource Postgres(string connectionString)
-        => new(new PostgresDialect(connectionString, schema: $"t{Guid.NewGuid():N}"));
+        => new(new PostgresDialect(connectionString, schema: $"t{Guid.NewGuid():N}", allowUnverifiedTls: true));
 }

@@ -360,14 +360,51 @@ public sealed class SqlTable(SqlDataSource source, string name)
     }
 
     /// <summary>
-    /// Exclusive upper bound for a prefix range: the prefix with its final character incremented, so
-    /// "AB" bounds to "AC" and the scan stays a range seek instead of a LIKE. Null when there is no
-    /// representable successor (a trailing U+FFFF), which just leaves the range open at the top.
+    /// Exclusive upper bound for a prefix range: the prefix with its final Unicode scalar
+    /// incremented, so "AB" bounds to "AC" and the scan stays a range seek instead of a LIKE.
     /// </summary>
-    private static string? UpperBound(string prefix)
+    /// <remarks>
+    /// Computed over runes rather than UTF-16 code units, which got two things wrong. A prefix
+    /// ending in U+FFFF returned null, and the caller then simply omitted the upper-bound predicate —
+    /// silently turning a bounded prefix seek into an open-ended <c>pk &gt;= @prefix</c> scan over the
+    /// rest of the table, reachable from a caller-supplied search term. And incrementing a bare code
+    /// unit is not surrogate-aware: a prefix sliced mid-pair (any name containing an emoji or a
+    /// non-BMP character) or an increment landing on U+D800 produced a lone surrogate, whose UTF-8
+    /// encoding is undefined for the driver — either a replacement character that corrupts the index
+    /// key so the row can never be found again, or an encoding exception surfacing as a 500.
+    /// <para>
+    /// Returns null only at U+10FFFF, the genuine top of the space. The caller still drops the
+    /// predicate there, which is correct: nothing sorts above it.
+    /// </para>
+    /// </remarks>
+    internal static string? UpperBound(string prefix)
     {
-        var last = prefix[^1];
-        return last == char.MaxValue ? null : prefix[..^1] + (char)(last + 1);
+        if (string.IsNullOrEmpty(prefix)) return null;
+
+        // Walk back over a trailing low surrogate so the last rune is read whole.
+        var lastRuneStart = prefix.Length - 1;
+        if (char.IsLowSurrogate(prefix[lastRuneStart]) && lastRuneStart > 0 &&
+            char.IsHighSurrogate(prefix[lastRuneStart - 1]))
+        {
+            lastRuneStart--;
+        }
+
+        if (!Rune.TryGetRuneAt(prefix, lastRuneStart, out var last))
+        {
+            // An unpaired surrogate: not a scalar value, so there is no successor to compute and the
+            // string should never have reached a key column. Leave the range open rather than
+            // fabricating a bound from a malformed input.
+            return null;
+        }
+
+        var next = last.Value + 1;
+
+        // D800–DFFF are not scalar values; the next representable one is E000.
+        if (next is >= 0xD800 and <= 0xDFFF) next = 0xE000;
+
+        if (next > 0x10FFFF) return null;
+
+        return string.Concat(prefix.AsSpan(0, lastRuneStart), new Rune(next).ToString());
     }
 
     private static string Columns(bool includeData)

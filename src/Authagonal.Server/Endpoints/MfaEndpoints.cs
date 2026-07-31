@@ -366,7 +366,7 @@ public static class MfaEndpoints
         // SSO bypass guard: if the tenant routes this user's domain to an external IdP (forced SSO), a
         // local passkey must NOT sidestep it (and its 2FA / conditional access / deprovisioning). Force
         // the IdP. Non-routed domains (optional/social connections) are unaffected — password + passkey OK.
-        var domain = user.Email.Split('@', 2).LastOrDefault()?.ToLowerInvariant();
+        var domain = Authagonal.Core.Services.EmailDomain.Of(user.Email);
         if (!string.IsNullOrWhiteSpace(domain) && await ssoDomainStore.GetAsync(domain, ct) is { } ssoDomain)
         {
             var ssoRedirectUrl = ssoDomain.ProviderType.Equals("oidc", StringComparison.OrdinalIgnoreCase)

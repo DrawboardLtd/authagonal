@@ -191,7 +191,7 @@ public static class AuthorizeEndpoint
                 // own error redirects, same as the card-initiated path.
                 if (!string.IsNullOrWhiteSpace(loginHint) && loginHint.Contains('@'))
                 {
-                    var hintDomain = loginHint.Split('@', 2).LastOrDefault()?.ToLowerInvariant();
+                    var hintDomain = Authagonal.Core.Services.EmailDomain.Of(loginHint);
                     if (!string.IsNullOrWhiteSpace(hintDomain))
                     {
                         var ssoDomain = await ssoDomainStore.GetAsync(hintDomain, ct);

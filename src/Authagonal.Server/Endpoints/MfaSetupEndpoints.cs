@@ -322,7 +322,7 @@ public static class MfaSetupEndpoints
 
         // Don't let a user whose domain is SSO-routed (the tenant forces the IdP) enrol a local passkey —
         // it would become a bypass of the IdP and its deprovisioning. They authenticate via SSO instead.
-        var ssoDomainName = user.Email.Split('@', 2).LastOrDefault()?.ToLowerInvariant();
+        var ssoDomainName = Authagonal.Core.Services.EmailDomain.Of(user.Email);
         if (!string.IsNullOrWhiteSpace(ssoDomainName) && await ssoDomainStore.GetAsync(ssoDomainName, ct) is not null)
             return Results.Json(new ErrorInfoResponse { Error = "sso_managed" }, AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 400);
 
