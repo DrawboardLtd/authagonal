@@ -153,7 +153,19 @@ public static class AuthEndpoints
                 && passwordHasher.VerifyPassword(request.Password, user.PasswordHash) != PasswordVerifyResult.Failed;
 
             if (!passwordCorrect)
+            {
+                // Padded like every other invalid_credentials, and this branch needs it MORE than the
+                // rest, not less. It returns after one lookup and one verify with no lockout write and
+                // no audit hook, so it was the fastest 401 the endpoint could produce while every
+                // other one paid the floor — a 100-250ms gap at the shipped PBKDF2 cost.
+                //
+                // What made that the whole oracle back is that the attacker chooses who is in it: only
+                // an EXISTING account can be locked out. Six wrong guesses to trip the lockout, then a
+                // seventh timed guess — fast means the address exists, slow means it does not. That is
+                // precisely the enumeration the deferred state checks above are written to prevent.
+                await PadFailedLoginAsync(startedAt, authOptions.Value.FailedLoginMinimumMilliseconds, logger, ct);
                 return JsonResults.Error("invalid_credentials", 401);
+            }
 
             var remaining = user!.LockoutEnd!.Value - DateTimeOffset.UtcNow;
             return TypedResults.Json(new LockedOutError { Error = "locked_out", RetryAfter = (int)remaining.TotalSeconds }, AuthagonalJsonContext.Default.LockedOutError, statusCode: 423);
