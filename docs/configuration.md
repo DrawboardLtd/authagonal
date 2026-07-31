@@ -64,7 +64,17 @@ ASP.NET Core Data Protection keys (which encrypt the session cookie) must be sha
 | `DataProtection:BlobUri` | *(none)* | Explicit Azure Blob URI for the key ring (e.g. `https://{account}.blob.core.windows.net/dataprotection/keys.xml`). Authenticates via `DefaultAzureCredential`, the preferred production path alongside `Storage:TableServiceUri`. |
 | *(fallback)* | — | When `DataProtection:BlobUri` is unset and `Storage:ConnectionString` points at a real storage account (not Azurite), keys are persisted to a `dataprotection` container in that account automatically. With Azurite, keys fall back to the default file-based store. |
 
-On the AWS backend, pass an S3 client + bucket to `AddAuthagonalAwsStorage` to persist the key ring to S3, see [Installation → AWS backend](installation#aws-backend).
+On the AWS backend, pass an S3 client + bucket to `AddAuthagonalAwsStorage` to persist the key ring to S3, see [Installation → AWS backend](installation#aws-backend). On the SQL backend the key ring is persisted by `AddAuthagonalPostgres` / `AddAuthagonalSqlite`, see [Installation → SQL backend](installation#sql-backend).
+
+Persisting is not encrypting. Whichever backend holds the ring, it is written as plaintext XML — master key included — unless one of these is set. That ring protects the authentication cookie, so a store read is the ability to forge a session for any user:
+
+| Setting | Default | Description |
+|---|---|---|
+| `DataProtection:KeyVaultKeyId` | *(none)* | Azure Key Vault key URI used to wrap the key ring. Authenticates via `DefaultAzureCredential`. |
+| `DataProtection:CertificateThumbprint` | *(none)* | Thumbprint of a certificate in the machine store used to wrap the key ring. |
+| `DataProtection:AllowUnencryptedKeyRing` | `false` | Accepts a plaintext key ring deliberately. Restated at `Critical` on every start so it shows up in an audit rather than only in a config file. |
+
+Startup enforces this from the *resolved* key-ring options, so it applies identically to the Azure, AWS, SQL and any host-registered repository. A deployment that persists the ring with no encryption and **no keys yet** is refused, so the insecure state is never created; one whose ring **already has keys** starts and logs at `Critical`, because refusing there would take a running deployment down on a version bump. Development never refuses.
 
 ## Cache and Timeouts
 

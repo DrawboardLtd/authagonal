@@ -104,13 +104,8 @@ public static class AuthagonalExtensions
             dataProtection.PersistKeysToAzureBlobStorage(blobClient);
         }
 
-        // Whether a repository ended up attached is NOT decided here: a SQL or S3 host configures its
-        // own, before or after this call, which this code cannot see. EphemeralKeyRingWarning reads
-        // the resolved options at startup instead, so it is right in every ordering.
-        services.AddSingleton<IHostedService, EphemeralKeyRingWarning>();
-
         // Encrypt the key ring at rest when the operator supplies a key. Without this the ring is
-        // persisted as PLAINTEXT XML on all three backends — no IXmlEncryptor was ever configured —
+        // persisted as PLAINTEXT XML on every backend — no IXmlEncryptor is configured by default —
         // and that ring protects the auth cookie, so anyone who can read the store can mint a valid
         // session for any user. ASP.NET Core does warn about it, at Information level, which the
         // shipped log configuration (Microsoft.AspNetCore: Warning) discards.
@@ -125,23 +120,18 @@ public static class AuthagonalExtensions
         {
             dataProtection.ProtectKeysWithCertificate(dpCertificateThumbprint);
         }
-        else if (configuration.GetValue("DataProtection:AllowUnencryptedKeyRing", false))
-        {
-            // Explicitly acknowledged. Logged loudly so it appears in an audit rather than only in a
-            // config file nobody re-reads.
-            services.AddSingleton<IHostedService>(sp => new UnencryptedKeyRingWarning(
-                sp.GetRequiredService<ILogger<UnencryptedKeyRingWarning>>()));
-        }
-        else if (!string.IsNullOrWhiteSpace(dpBlobUri) || !string.IsNullOrWhiteSpace(storageConnectionString))
-        {
-            // A persistent key ring with no encryption is refused at startup rather than discovered
-            // later from a store dump.
-            throw new InvalidOperationException(
-                "The DataProtection key ring is persisted but not encrypted. This ring protects the " +
-                "authentication cookie, so a store read yields the ability to forge sessions. Set " +
-                "DataProtection:KeyVaultKeyId or DataProtection:CertificateThumbprint, or set " +
-                "DataProtection:AllowUnencryptedKeyRing=true to accept the risk explicitly.");
-        }
+
+        // Neither "is the ring durable" nor "is it encrypted" is decided here. A SQL or S3 host
+        // attaches its own repository — and could attach its own encryptor — before or after this
+        // call, which this code cannot see in either ordering. Both questions are therefore answered
+        // once, at startup, from the resolved options. That is also what fixes the encryption check
+        // having been a registration-time throw guarded on the two Azure settings: correct for Azure,
+        // and silent for every other persistent backend.
+        services.AddSingleton<IHostedService>(sp => new KeyRingStartupCheck(
+            sp.GetRequiredService<IOptions<Microsoft.AspNetCore.DataProtection.KeyManagement.KeyManagementOptions>>(),
+            sp.GetRequiredService<IHostEnvironment>(),
+            sp.GetRequiredService<ILogger<KeyRingStartupCheck>>(),
+            configuration.GetValue("DataProtection:AllowUnencryptedKeyRing", false)));
 
         // Signing-key management is provided by Authagonal.Protocol's ProtocolKeyManager
         // (registered via AddAuthagonalCore → AddAuthagonalProtocol). Single-tenant hosts
