@@ -39,6 +39,14 @@ public static class EndSessionEndpoint
         var state = request.Query["state"].FirstOrDefault()
             ?? (hasForm ? request.Form["state"].FirstOrDefault() : null);
 
+        // OIDC RP-Initiated Logout §2 defines client_id, and it was read nowhere — an RP that sent it
+        // (the spec's recommended way to identify itself when id_token_hint is absent or expired) was
+        // silently ignored. Where BOTH are present they must agree: accepting a client_id that names a
+        // different client than the ID Token would let one RP borrow another's hint to have its own
+        // post_logout_redirect_uri validated against the wrong registration.
+        var clientIdParam = request.Query["client_id"].FirstOrDefault()
+            ?? (hasForm ? request.Form["client_id"].FirstOrDefault() : null);
+
         // Get subject ID before signing out (for back-channel + front-channel logout)
         var subjectId = httpContext.User.FindFirst("sub")?.Value
             ?? httpContext.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
@@ -48,6 +56,24 @@ public static class EndSessionEndpoint
         // (so post_logout_redirect_uri can be checked against it) and whether the request provably came
         // from an RP that holds a token for THIS session.
         var hint = ValidateIdTokenHint(idTokenHint, keyManager, tenantContext.Issuer);
+
+        // When both identifiers are present they must name the same client. Otherwise an RP could
+        // pair its own client_id with another RP's ID Token so that its post_logout_redirect_uri was
+        // validated against the wrong registration.
+        if (!string.IsNullOrEmpty(clientIdParam) && hint?.ClientId is { } hintClient
+            && !string.Equals(clientIdParam, hintClient, StringComparison.Ordinal))
+        {
+            return Results.BadRequest(new
+            {
+                error = "invalid_request",
+                error_description = "client_id does not match the client named by id_token_hint.",
+            });
+        }
+
+        // The client this logout is on behalf of: the ID Token's when we have one, otherwise the
+        // explicit parameter. Previously only the ID Token could name it, so an RP whose token had
+        // expired — the case the parameter exists for — could not have its redirect validated at all.
+        var requestingClientId = hint?.ClientId ?? clientIdParam;
 
         // OIDC RP-Initiated Logout 1.0 §2: the OP MUST ask the End-User to confirm when no id_token_hint
         // was supplied, or when the supplied ID Token does not belong to the current OP session. That is
@@ -150,9 +176,9 @@ public static class EndSessionEndpoint
         // Resolve the final redirect target (if any) by validating post_logout_redirect_uri against the
         // client named by the (already validated) id_token_hint.
         string? finalRedirect = null;
-        if (!string.IsNullOrWhiteSpace(postLogoutRedirectUri) && hint?.ClientId is { } hintClientId)
+        if (!string.IsNullOrWhiteSpace(postLogoutRedirectUri) && requestingClientId is { } resolvedClientId)
         {
-            var client = await clientStore.GetAsync(hintClientId, ct);
+            var client = await clientStore.GetAsync(resolvedClientId, ct);
             if (client is not null &&
                 client.PostLogoutRedirectUris.Contains(postLogoutRedirectUri, StringComparer.OrdinalIgnoreCase))
             {
