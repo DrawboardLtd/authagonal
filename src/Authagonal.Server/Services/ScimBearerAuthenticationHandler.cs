@@ -72,6 +72,14 @@ public sealed class ScimBearerAuthenticationHandler(
             return AuthenticateResult.Fail("Client not found for SCIM token");
         }
 
+        // Every other client-authentication path checks this. Without it, disabling a client stopped
+        // its OAuth flows while leaving its SCIM tokens fully able to read and write the directory —
+        // which is the wider capability of the two.
+        if (!client.Enabled)
+        {
+            return AuthenticateResult.Fail("Client is disabled");
+        }
+
         var claims = new List<Claim>
         {
             new("client_id", scimToken.ClientId),
@@ -86,5 +94,22 @@ public sealed class ScimBearerAuthenticationHandler(
         var ticket = new AuthenticationTicket(principal, Scheme.Name);
 
         return AuthenticateResult.Success(ticket);
+    }
+
+    /// <summary>
+    /// Emits the <c>WWW-Authenticate</c> challenge RFC 6750 §3 requires on a 401.
+    /// </summary>
+    /// <remarks>
+    /// A bare 401 tells a provisioning client that something is wrong but not what — and this handler
+    /// already distinguishes unknown, revoked and expired tokens internally. Those reasons are safe to
+    /// surface: the caller presented the token, so it learns nothing about anyone else's.
+    /// </remarks>
+    protected override Task HandleChallengeAsync(AuthenticationProperties properties)
+    {
+        Response.StatusCode = StatusCodes.Status401Unauthorized;
+        Response.Headers.WWWAuthenticate =
+            "Bearer realm=\"scim\", error=\"invalid_token\", " +
+            "error_description=\"The SCIM bearer token is missing, unknown, revoked, or expired.\"";
+        return Task.CompletedTask;
     }
 }

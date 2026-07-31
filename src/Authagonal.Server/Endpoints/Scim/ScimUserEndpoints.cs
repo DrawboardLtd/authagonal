@@ -77,7 +77,15 @@ public static class ScimUserEndpoints
             return ScimResults.Error(429, "tooMany", "Too many SCIM requests. Please try again later.");
 
         var baseUrl = GetBaseUrl(tenantContext);
-        var pageSize = Math.Min(count ?? 100, 200);
+
+        // RFC 7644 §3.4.2.4: a negative count is invalid, and count=0 means "tell me the total, send
+        // no resources". Both were passed straight through as the store page size, where a
+        // non-positive value is meaningless — the Azure provider answers it with a 500.
+        if (count is < 0)
+            return ScimResults.Error(400, "invalidValue", "count must not be negative.");
+
+        var countOnly = count == 0;
+        var pageSize = Math.Clamp(count ?? 100, 1, 200);
 
         // A filter is honoured or refused, never quietly dropped: ServiceProviderConfig advertises filter
         // support, and a caller whose filter is ignored is answered a question they did not ask.
@@ -137,8 +145,9 @@ public static class ScimUserEndpoints
             // than reporting the page size — see ScimListResponse.TotalResults.
             TotalResults = nextCursor is null ? resourcesOut.Count : null,
             StartIndex = 1,
-            ItemsPerPage = resourcesOut.Count,
-            Resources = resourcesOut,
+            // count=0 asks for the total without the resources (§3.4.2.4).
+            ItemsPerPage = countOnly ? 0 : resourcesOut.Count,
+            Resources = countOnly ? [] : resourcesOut,
             NextCursor = nextCursor,
         });
     }
@@ -292,13 +301,19 @@ public static class ScimUserEndpoints
         {
             await userStore.DeleteAsync(user.Id, ct);
             logger.LogWarning(ex, "Provisioning rejected SCIM user {UserId}", user.Id);
-            return Results.UnprocessableEntity(new { error = "provisioning_rejected", message = ex.Message });
+            // A SCIM error body, not an ad-hoc one, and with a fixed message. The exception text comes
+            // from a downstream provisioning app, so echoing it returned an internal message to an
+            // external provisioning client — and it was the one response on this endpoint that was not
+            // SCIM-shaped, which a conforming client cannot parse either.
+            return ScimResults.Error(400, "invalidValue",
+                "The directory rejected this user. Check the request against the provisioning rules for this client.");
         }
 
         logger.LogInformation("SCIM user created: {UserId} ({Email}) by client {ClientId}", user.Id, email, clientId);
 
         var resource = ScimUserResource.FromUser(user, baseUrl);
-        return ScimResults.Created(resource);
+        // meta.location is already computed on the resource; pass it so the 201 carries it.
+        return ScimResults.Created(resource, resource.Meta?.Location);
     }
 
     private static async Task<IResult> ReplaceUserAsync(
@@ -412,7 +427,17 @@ public static class ScimUserEndpoints
 
         // Report what could not be applied instead of answering 200 regardless. `patch.supported = true` is
         // advertised, so a silently-dropped operation left the directory believing a write had landed.
-        var unsupported = ScimPatchApplier.ApplyToUser(user, operations);
+        IReadOnlyList<string> unsupported;
+        try
+        {
+            unsupported = ScimPatchApplier.ApplyToUser(user, operations);
+        }
+        catch (ScimPatchException ex)
+        {
+            // A value the applier cannot read is refused rather than coerced. `active` is the case
+            // that mattered: an unparseable value used to read as false and deprovision the user.
+            return ScimResults.Error(400, ex.ScimType, ex.Message);
+        }
         if (unsupported.Count > 0)
             return ScimResults.Error(400, "invalidPath",
                 "Unsupported PATCH operation(s): " + string.Join("; ", unsupported));

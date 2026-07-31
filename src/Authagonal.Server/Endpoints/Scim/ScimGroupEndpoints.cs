@@ -198,7 +198,8 @@ public static class ScimGroupEndpoints
 
         logger.LogInformation("SCIM group created: {GroupId} ({DisplayName})", group.Id, group.DisplayName);
 
-        return ScimResults.Created(ScimGroupResource.FromGroup(group, baseUrl));
+        var createdGroup = ScimGroupResource.FromGroup(group, baseUrl);
+        return ScimResults.Created(createdGroup, createdGroup.Meta?.Location);
     }
 
     private static async Task<IResult> ReplaceGroupAsync(
@@ -273,7 +274,14 @@ public static class ScimGroupEndpoints
             .Select(o => new ScimPatchApplier.PatchOperation(o.Op, o.Path, o.Value))
             .ToList();
 
-        ScimPatchApplier.ApplyToGroup(group, operations);
+        try
+        {
+            ScimPatchApplier.ApplyToGroup(group, operations);
+        }
+        catch (ScimPatchException ex)
+        {
+            return ScimResults.Error(400, ex.ScimType, ex.Message);
+        }
 
         group.UpdatedAt = DateTimeOffset.UtcNow;
         // Membership must name users THIS client provisioned. Group membership drives role assignment, so

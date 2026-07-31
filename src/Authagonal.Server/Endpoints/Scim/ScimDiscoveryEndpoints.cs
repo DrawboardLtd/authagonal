@@ -123,7 +123,7 @@ public static class ScimDiscoveryEndpoints
             Resources = schemas,
         };
 
-        return ScimResults.Success(response);
+        return ScimResults.SuccessVerbatim(response);
     }
 
     private static IResult GetResourceTypes(Authagonal.Core.Services.ITenantContext tenantContext)
@@ -161,7 +161,7 @@ public static class ScimDiscoveryEndpoints
             Resources = resourceTypes,
         };
 
-        return ScimResults.Success(response);
+        return ScimResults.SuccessVerbatim(response);
     }
 
     private static object SchemaAttribute(

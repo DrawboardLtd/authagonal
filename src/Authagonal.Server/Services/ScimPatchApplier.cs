@@ -4,6 +4,20 @@ using Authagonal.Core.Models;
 
 namespace Authagonal.Server.Services;
 
+/// <summary>
+/// A PATCH operation that cannot be applied as written.
+/// </summary>
+/// <remarks>
+/// The applier returned void and silently dropped anything it did not recognise, so the endpoint
+/// answered 200 OK for operations it had not performed. For a deprovisioning PATCH that means the
+/// IdP records the user as disabled while the account stays live — the failure mode is invisible on
+/// both sides. Carrying a scimType lets the endpoint answer with the error RFC 7644 §3.12 defines.
+/// </remarks>
+public sealed class ScimPatchException(string scimType, string detail) : Exception(detail)
+{
+    public string ScimType { get; } = scimType;
+}
+
 public static partial class ScimPatchApplier
 {
     public sealed record PatchOperation(string Op, string? Path, JsonElement? Value);
@@ -174,7 +188,12 @@ public static partial class ScimPatchApplier
                 }
                 else if (value.ValueKind == JsonValueKind.String)
                 {
-                    user.IsActive = bool.TryParse(value.GetString(), out var b) && b;
+                    // An unparseable value used to evaluate to false, so PATCH active="maybe" — or any
+                    // typo — silently DEPROVISIONED the user. Refused instead: the operation says
+                    // nothing intelligible, and guessing the destructive reading is the worst choice.
+                    if (!bool.TryParse(value.GetString(), out var b))
+                        throw new ScimPatchException("invalidValue", "active must be a boolean.");
+                    user.IsActive = b;
                 }
                 break;
             case "externalid":
@@ -204,6 +223,13 @@ public static partial class ScimPatchApplier
         {
             if (active.ValueKind == JsonValueKind.True || active.ValueKind == JsonValueKind.False)
                 user.IsActive = active.GetBoolean();
+            else if (active.ValueKind == JsonValueKind.String)
+            {
+                // Same rule as the path-addressed form above, so the two shapes agree.
+                if (!bool.TryParse(active.GetString(), out var activeBool))
+                    throw new ScimPatchException("invalidValue", "active must be a boolean.");
+                user.IsActive = activeBool;
+            }
         }
 
         if (obj.TryGetProperty("userName", out var userName) && userName.ValueKind == JsonValueKind.String)
