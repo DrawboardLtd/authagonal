@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text.Json;
+using Authagonal.Core.Clustering;
 using Authagonal.Core.Models;
 using Authagonal.Core.Stores;
 using Microsoft.Extensions.Logging;
@@ -20,25 +21,101 @@ public static class ProtocolSigningKeyOps
     public const string Algorithm = SecurityAlgorithms.EcdsaSha256;
     private const string CurveName = "P-256";
 
+    /// <summary>Resource name the generation lease contends on.</summary>
+    private const string KeyGenerationLease = "authagonal-signing-key-generation";
+
+    /// <summary>
+    /// Long enough to cover a key generation plus the store round-trips, short enough that a node
+    /// that dies mid-generation does not block the cluster for long.
+    /// </summary>
+    private static readonly TimeSpan KeyGenerationLeaseTtl = TimeSpan.FromSeconds(30);
+
+    /// <param name="lease">
+    /// Cluster lease provider, when the host has one. Generation is single-writer under it.
+    /// </param>
+    /// <param name="nodeId">This node's identity, for the lease.</param>
+    /// <remarks>
+    /// Generation used to be unguarded, and every node runs this at startup and again on each cache
+    /// refresh. The rotation service that IS leader-gated only ever DEACTIVATES — it never generates —
+    /// so its doc comment's "only the cluster leader performs the rotation to avoid concurrent key
+    /// generation" described a guarantee nothing implemented. Worse, KeyRotationEnabled defaults to
+    /// false, so in the default configuration rollover at expiry is driven entirely by this path, on
+    /// every replica at once, with StoreAsync an unconditional upsert on every provider and
+    /// GetActiveKeyAsync returning the FIRST active row — several simultaneously-active keys are
+    /// representable, and which one is "the" active key can flap between reads.
+    ///
+    /// The lease makes generation single-writer wherever the host has one. Where it does not — a
+    /// single-node deployment, or a host that registered no provider — behaviour is unchanged, which
+    /// is correct: one node cannot race itself.
+    /// </remarks>
     public static async Task<SigningKeyInfo> EnsureActiveKeyAsync(
-        ISigningKeyStore keyStore, int keyLifetimeDays, ILogger logger, CancellationToken ct = default)
+        ISigningKeyStore keyStore, int keyLifetimeDays, ILogger logger, CancellationToken ct = default,
+        ILeaseProvider? lease = null, string? nodeId = null)
     {
         var now = DateTimeOffset.UtcNow;
         var activeKey = await keyStore.GetActiveKeyAsync(ct);
 
-        if (activeKey is null || activeKey.ExpiresAt <= now || !IsSupportedAlgorithm(activeKey.Algorithm))
+        if (!NeedsGeneration(activeKey, now))
+            return activeKey!;
+
+        var holdsLease = false;
+        if (lease is not null && !string.IsNullOrEmpty(nodeId))
         {
+            try
+            {
+                holdsLease = await lease.TryAcquireOrRenewAsync(KeyGenerationLease, nodeId, KeyGenerationLeaseTtl, ct);
+            }
+            catch (Exception ex)
+            {
+                // A lease backend that is down must not stop the server from having a signing key —
+                // an IdP that cannot sign is completely unavailable, which is worse than a duplicate
+                // key. Proceed unguarded and say so.
+                logger.LogWarning(ex, "Signing-key generation lease unavailable; generating without it");
+            }
+
+            if (!holdsLease)
+            {
+                // Another node is generating. Re-read rather than racing it; only generate if it did
+                // not produce one, so a lease holder that dies mid-generation still resolves.
+                await Task.Delay(TimeSpan.FromMilliseconds(500), ct).ConfigureAwait(false);
+                activeKey = await keyStore.GetActiveKeyAsync(ct);
+                if (!NeedsGeneration(activeKey, DateTimeOffset.UtcNow))
+                    return activeKey!;
+            }
+        }
+
+        try
+        {
+            // Re-read under the lease: another node may have generated between the first read and the
+            // acquisition, and generating again would deactivate the key it just published.
+            if (holdsLease)
+            {
+                activeKey = await keyStore.GetActiveKeyAsync(ct);
+                if (!NeedsGeneration(activeKey, DateTimeOffset.UtcNow))
+                    return activeKey!;
+            }
+
             logger.LogInformation("Active signing key missing/expired/unsupported algorithm. Generating new ES256 key");
 
             if (activeKey is not null)
                 await keyStore.DeactivateKeyAsync(activeKey.KeyId, ct);
 
-            activeKey = GenerateNewKey(now, keyLifetimeDays);
+            activeKey = GenerateNewKey(DateTimeOffset.UtcNow, keyLifetimeDays);
             await keyStore.StoreAsync(activeKey, ct);
+            return activeKey;
         }
-
-        return activeKey;
+        finally
+        {
+            if (holdsLease && lease is not null && nodeId is not null)
+            {
+                try { await lease.ReleaseAsync(KeyGenerationLease, nodeId, CancellationToken.None); }
+                catch { /* best effort — the lease expires on its own */ }
+            }
+        }
     }
+
+    private static bool NeedsGeneration(SigningKeyInfo? key, DateTimeOffset now) =>
+        key is null || key.ExpiresAt <= now || !IsSupportedAlgorithm(key.Algorithm);
 
     /// <summary>
     /// Checks whether the active signing key is approaching expiry and rotates if so.

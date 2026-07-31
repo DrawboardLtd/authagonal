@@ -104,6 +104,11 @@ public static class AuthagonalExtensions
             dataProtection.PersistKeysToAzureBlobStorage(blobClient);
         }
 
+        // Whether a repository ended up attached is NOT decided here: a SQL or S3 host configures its
+        // own, before or after this call, which this code cannot see. EphemeralKeyRingWarning reads
+        // the resolved options at startup instead, so it is right in every ordering.
+        services.AddSingleton<IHostedService, EphemeralKeyRingWarning>();
+
         // Encrypt the key ring at rest when the operator supplies a key. Without this the ring is
         // persisted as PLAINTEXT XML on all three backends — no IXmlEncryptor was ever configured —
         // and that ring protects the auth cookie, so anyone who can read the store can mint a valid

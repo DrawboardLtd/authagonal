@@ -6,10 +6,16 @@ using Microsoft.Extensions.Options;
 namespace Authagonal.Server.Services;
 
 /// <summary>
-/// Periodically checks whether the active signing key is approaching expiry and rotates it.
-/// Only the cluster leader performs the rotation to avoid concurrent key generation.
-/// Disabled by default — enable via <c>Auth:KeyRotationEnabled = true</c>.
+/// Periodically checks whether the active signing key is approaching expiry and DEACTIVATES it, on
+/// the cluster leader only. Disabled by default — enable via <c>Auth:KeyRotationEnabled = true</c>.
 /// </summary>
+/// <remarks>
+/// This used to say it was what stopped concurrent key generation. It is not: this service never
+/// generates. Generation happens in <c>ProtocolSigningKeyOps.EnsureActiveKeyAsync</c>, which every
+/// node runs at startup and on each cache refresh — and because <c>KeyRotationEnabled</c> defaults to
+/// false, in the default configuration rollover at expiry is driven entirely by that path, with this
+/// service not even running. Generation is single-writer under its own cluster lease; see there.
+/// </remarks>
 public sealed class SigningKeyRotationService(
     IServiceScopeFactory scopeFactory,
     ClusterLeaderService leaderService,

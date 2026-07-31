@@ -185,11 +185,35 @@ internal static class BffProxy
         var client = httpClientFactory.CreateClient("AuthagonalBffProxy");
 
         using var upstreamReq = new HttpRequestMessage(new HttpMethod(ctx.Request.Method), targetUrl);
-        if (ctx.Request.ContentLength is > 0 || ctx.Request.Headers.ContainsKey("Transfer-Encoding"))
+
+        // Decided by the METHOD, not by the framing headers.
+        //
+        // The old condition was `ContentLength > 0 || has Transfer-Encoding`. Over HTTP/2 — which
+        // every browser uses for HTTPS and Kestrel enables by default — RFC 9113 §8.2.2 forbids
+        // Transfer-Encoding and Content-Length is optional, so a request whose length is not known in
+        // advance satisfied neither condition. The entire payload was discarded, along with
+        // Content-Type (re-added inside the same branch), and the request was still forwarded — with
+        // the user's bearer token attached — as a bodyless call. An upstream that treats a POST with
+        // no body as "clear this" rather than "reject this" then acts on an authenticated request the
+        // user never made.
+        //
+        // ContentLength == 0 is an explicit "no body" and stays one; a null length with a
+        // body-bearing method is the streamed case that has to be forwarded.
+        var method = ctx.Request.Method;
+        var bodyless = HttpMethods.IsGet(method) || HttpMethods.IsHead(method)
+            || HttpMethods.IsDelete(method) || HttpMethods.IsTrace(method)
+            || HttpMethods.IsOptions(method);
+
+        if (!bodyless && ctx.Request.ContentLength != 0)
         {
             upstreamReq.Content = new StreamContent(ctx.Request.Body);
             if (ctx.Request.ContentType is { } contentType)
                 upstreamReq.Content.Headers.TryAddWithoutValidation("Content-Type", contentType);
+            // Forwarded with the body it describes: an upstream cannot decode a compressed payload it
+            // was not told was compressed.
+            if (ctx.Request.Headers.ContentEncoding.Count > 0)
+                upstreamReq.Content.Headers.TryAddWithoutValidation(
+                    "Content-Encoding", ctx.Request.Headers.ContentEncoding.ToArray());
         }
         foreach (var h in ctx.Request.Headers)
         {

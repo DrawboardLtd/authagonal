@@ -57,7 +57,7 @@ Limits are enforced **in-process per node** behind the `IRateLimiter` seam, so w
 
 Multiple instances coordinate through a **leader election** and a **cross-node event bus**, both behind pluggable backends:
 
-- **Leader election**: a lease-based election (`Cluster:LeaseTtlSeconds`, default 30s, renewed at roughly half that interval). Exactly one node holds the lease; leadership transfers automatically when the leader dies. Leader-gated work, currently signing key rotation (when enabled), runs only on the leader to avoid concurrent key generation.
+- **Leader election**: a lease-based election (`Cluster:LeaseTtlSeconds`, default 30s, renewed at roughly half that interval). Exactly one node holds the lease; leadership transfers automatically when the leader dies. Leader-gated work — currently signing-key *deactivation* at expiry, when `Auth:KeyRotationEnabled` is on — runs only on the leader.
 - **Event bus**: cross-node notifications (e.g. cache invalidation in multi-tenant hosts), polled every `Cluster:PollIntervalSeconds` (default 3s).
 
 Each instance generates a random 12-hex-char node ID at startup to identify itself; it is not persisted.
@@ -84,6 +84,8 @@ builder.Services.AddAuthagonal(builder.Configuration,
 `UseAzureStorageBus` / `UseAwsDynamoBus` / `UseSqlBus` register the event bus only, keeping the in-process (always-leader) lease, use them on nodes that must receive cluster events but must never contend for leadership.
 
 > **Note:** with the in-process default on multiple nodes, *every* node believes it is the leader. That's harmless for most workloads, but enable a real lease backend before turning on `Auth:KeyRotationEnabled` across multiple instances.
+
+Signing-key **generation** is separate from that leader-gated deactivation, and is not driven by it: every node calls `EnsureActiveKeyAsync` at startup and on each `Auth:SigningKeyCacheRefreshMinutes` refresh, so with `KeyRotationEnabled` off — the default — rollover at the 90-day expiry is driven entirely by that path. Generation takes its own short cluster lease, so it is single-writer wherever a real lease backend is configured. With the in-process default on multiple nodes there is no such coordination and two nodes that reach an expired key at the same moment can each generate one; both end up in the JWKS and tokens signed by either verify, but which key is reported active can flap. This is another reason to configure a real lease backend for multi-node deployments.
 
 See the [Configuration](configuration#cluster) page for all cluster settings.
 

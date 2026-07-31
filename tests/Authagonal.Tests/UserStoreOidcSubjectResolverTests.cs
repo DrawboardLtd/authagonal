@@ -18,7 +18,7 @@ public sealed class UserStoreOidcSubjectResolverTests
     {
         var users = new InMemoryUserStore();
         users.CreateAsync(user).GetAwaiter().GetResult();
-        return ResolverTestSupport.NewResolver(users, new InMemoryScimGroupStore(), new InMemoryScimGroupRoleMappingStore(), new InMemoryClientStore());
+        return ResolverTestSupport.NewResolver(users, new InMemoryScimGroupStore(), new WritableScimGroupRoleMappingStore(), new InMemoryClientStore());
     }
 
     private static ClaimsPrincipal Principal(string subjectId, params (string type, string value)[] extra)
@@ -141,7 +141,7 @@ public sealed class UserStoreOidcSubjectResolverTests
         await store.SetAsync(user.Id, "conn-1", "sid-1", "token-STORE", DateTimeOffset.UtcNow.AddHours(1));
 
         var resolver = ResolverTestSupport.NewResolver(
-            UserStoreWith(user), new InMemoryScimGroupStore(), new InMemoryScimGroupRoleMappingStore(),
+            UserStoreWith(user), new InMemoryScimGroupStore(), new WritableScimGroupRoleMappingStore(),
             new InMemoryClientStore(), upstreamTokenStore: store);
 
         var principal = Principal(user.Id,
@@ -161,7 +161,7 @@ public sealed class UserStoreOidcSubjectResolverTests
         // First authorize, before any refresh has populated the store — the login-cookie copy seeds it.
         var user = ActiveUser();
         var resolver = ResolverTestSupport.NewResolver(
-            UserStoreWith(user), new InMemoryScimGroupStore(), new InMemoryScimGroupRoleMappingStore(),
+            UserStoreWith(user), new InMemoryScimGroupStore(), new WritableScimGroupRoleMappingStore(),
             new InMemoryClientStore(), upstreamTokenStore: new InMemoryUpstreamRefreshTokenStore());
 
         var principal = Principal(user.Id,

@@ -787,3 +787,35 @@ public sealed class InMemoryAgentProfileStore : IAgentProfileStore
         return Task.CompletedTask;
     }
 }
+
+/// <summary>
+/// A WRITABLE group→role mapping store, for tests that need mappings to exist.
+/// </summary>
+/// <remarks>
+/// The production default (<c>InMemoryScimGroupRoleMappingStore</c>) refuses writes on purpose: it is
+/// process-local with no cross-node invalidation, so a revoked mapping would keep granting its role
+/// on every node that missed the removal, and it decides authorization on the token-issuance path.
+/// Tests still need to populate mappings to exercise the resolver, so the writable version lives
+/// here rather than being the shipped default.
+/// </remarks>
+public sealed class WritableScimGroupRoleMappingStore : IScimGroupRoleMappingStore
+{
+    private readonly ConcurrentDictionary<string, ScimGroupRoleMapping> _map = new(StringComparer.Ordinal);
+
+    private static string Key(string groupId, string role) => $"{groupId} {role}";
+
+    public Task<IReadOnlyList<ScimGroupRoleMapping>> GetAllAsync(CancellationToken ct = default) =>
+        Task.FromResult<IReadOnlyList<ScimGroupRoleMapping>>(_map.Values.ToList());
+
+    public Task SetAsync(ScimGroupRoleMapping mapping, CancellationToken ct = default)
+    {
+        _map[Key(mapping.GroupId, mapping.Role)] = mapping;
+        return Task.CompletedTask;
+    }
+
+    public Task DeleteAsync(string groupId, string role, CancellationToken ct = default)
+    {
+        _map.TryRemove(Key(groupId, role), out _);
+        return Task.CompletedTask;
+    }
+}

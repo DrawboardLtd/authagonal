@@ -109,7 +109,13 @@ public sealed class ProtocolKeyManager : IKeyManager, IHostedService, IDisposabl
             var keyStore = scope.ServiceProvider.GetRequiredService<ISigningKeyStore>();
 
             var lifetimeDays = _options.CurrentValue.SigningKeyLifetimeDays;
-            var activeKey = await ProtocolSigningKeyOps.EnsureActiveKeyAsync(keyStore, lifetimeDays, _logger, ct);
+            // The lease and node identity are optional — a host without clustering registers neither,
+            // and a single node cannot race itself.
+            var lease = scope.ServiceProvider.GetService<Authagonal.Core.Clustering.ILeaseProvider>();
+            var nodeId = scope.ServiceProvider.GetService<Authagonal.Core.Clustering.ILeaderElection>()?.NodeId;
+
+            var activeKey = await ProtocolSigningKeyOps.EnsureActiveKeyAsync(
+                keyStore, lifetimeDays, _logger, ct, lease, nodeId);
             _signingCredentials = ProtocolSigningKeyOps.BuildSigningCredentials(activeKey);
             _signingKeyExpiresAt = activeKey.ExpiresAt;
             _allJsonWebKeys = await ProtocolSigningKeyOps.BuildJwksAsync(keyStore, ct);

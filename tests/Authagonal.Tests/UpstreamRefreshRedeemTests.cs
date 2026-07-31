@@ -55,7 +55,7 @@ public sealed class UpstreamRefreshRedeemTests
         users.CreateAsync(new AuthUser { Id = "user-1", Email = "u@example.com", NormalizedEmail = "U@EXAMPLE.COM", EmailConfirmed = true, IsActive = true }).GetAwaiter().GetResult();
 
         return new UserStoreOidcSubjectResolver(
-            users, new InMemoryScimGroupStore(), new InMemoryScimGroupRoleMappingStore(), new InMemoryClientStore(),
+            users, new InMemoryScimGroupStore(), new WritableScimGroupRoleMappingStore(), new InMemoryClientStore(),
             oidc,
             new OidcDiscoveryClient(factory, new MemoryCache(new MemoryCacheOptions()), Options.Create(new CacheOptions())),
             new PlaintextSecretProvider(),

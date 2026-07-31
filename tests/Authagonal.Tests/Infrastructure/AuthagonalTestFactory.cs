@@ -58,7 +58,7 @@ public sealed class AuthagonalTestFactory : IAsyncDisposable
     public InMemoryMfaStore MfaStore { get; } = new();
     public InMemoryScimTokenStore ScimTokenStore { get; } = new();
     public InMemoryScimGroupStore ScimGroupStore { get; } = new();
-    public InMemoryScimGroupRoleMappingStore ScimGroupRoleMappingStore { get; } = new();
+    public WritableScimGroupRoleMappingStore ScimGroupRoleMappingStore { get; } = new();
     public InMemoryRoleStore RoleStore { get; } = new();
     public InMemoryScopeStore ScopeStore { get; } = new();
     public InMemoryRevokedTokenStore RevokedTokenStore { get; } = new();
