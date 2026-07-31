@@ -113,27 +113,29 @@ internal static class AuthorizeRequestSupport
     /// Returns an error result to short-circuit with, or null when the request is valid
     /// (in which case <see cref="AuthorizeRequest.RequestedScopes"/> is populated).
     /// </summary>
-    public static IResult? Validate(OAuthClient client, AuthorizeRequest request)
+    /// <param name="issuer">RFC 9207 <c>iss</c>, carried on the error redirects this builds — see
+    /// <see cref="BuildErrorRedirect"/>.</param>
+    public static IResult? Validate(OAuthClient client, AuthorizeRequest request, string? issuer = null)
     {
         var (redirectUri, state) = (request.RedirectUri, request.State);
 
         if (string.IsNullOrWhiteSpace(redirectUri))
-            return BuildErrorRedirect(null, "invalid_request", "redirect_uri is required", state);
+            return BuildErrorRedirect(null, "invalid_request", "redirect_uri is required", state, issuer);
 
         if (!IsRedirectUriRegistered(redirectUri, client.RedirectUris))
-            return BuildErrorRedirect(null, "invalid_request", "redirect_uri is not registered for this client", state);
+            return BuildErrorRedirect(null, "invalid_request", "redirect_uri is not registered for this client", state, issuer);
 
         if (string.IsNullOrWhiteSpace(request.ResponseType) || request.ResponseType != "code")
-            return BuildErrorRedirect(redirectUri, "unsupported_response_type", "Only response_type=code is supported", state);
+            return BuildErrorRedirect(redirectUri, "unsupported_response_type", "Only response_type=code is supported", state, issuer);
 
         if (string.IsNullOrWhiteSpace(request.Scope))
-            return BuildErrorRedirect(redirectUri, "invalid_scope", "scope is required", state);
+            return BuildErrorRedirect(redirectUri, "invalid_scope", "scope is required", state, issuer);
 
         // Refused rather than ignored. `max_age` is a re-authentication DEMAND, so a value the OP
         // cannot parse must not degrade into "no demand" — that is indistinguishable from honouring
         // it, and the RP has no way to tell which happened.
         if (request.RawMaxAge is { Length: > 0 } && request.MaxAge is null)
-            return BuildErrorRedirect(redirectUri, "invalid_request", "max_age must be a non-negative integer", state);
+            return BuildErrorRedirect(redirectUri, "invalid_request", "max_age must be a non-negative integer", state, issuer);
 
         var requestedScopes = request.Scope.Split(' ', StringSplitOptions.RemoveEmptyEntries);
         // Ordinal, NOT OrdinalIgnoreCase. RFC 6749 §3.3 makes scope tokens case-sensitive, and matching
@@ -144,7 +146,7 @@ internal static class AuthorizeRequestSupport
         // plus loose at the policy is the whole bug; a case variant is simply an unknown scope.
         var invalidScopes = requestedScopes.Except(client.AllowedScopes, StringComparer.Ordinal).ToArray();
         if (invalidScopes.Length > 0)
-            return BuildErrorRedirect(redirectUri, "invalid_scope", $"Scopes not allowed: {string.Join(", ", invalidScopes)}", state);
+            return BuildErrorRedirect(redirectUri, "invalid_scope", $"Scopes not allowed: {string.Join(", ", invalidScopes)}", state, issuer);
 
         // RFC 8707: each resource must be an absolute URI without a fragment, and — when the client
         // declares an audience allowlist — must appear in it.
@@ -160,14 +162,14 @@ internal static class AuthorizeRequestSupport
         foreach (var resource in request.Resources)
         {
             if (!Uri.TryCreate(resource, UriKind.Absolute, out var resourceUri) || !string.IsNullOrEmpty(resourceUri.Fragment))
-                return BuildErrorRedirect(redirectUri, "invalid_target", $"resource '{resource}' is not a valid absolute URI", state);
+                return BuildErrorRedirect(redirectUri, "invalid_target", $"resource '{resource}' is not a valid absolute URI", state, issuer);
 
             if (client.Audiences.Count > 0 && !client.Audiences.Contains(resource, StringComparer.Ordinal))
-                return BuildErrorRedirect(redirectUri, "invalid_target", $"resource '{resource}' is not registered for this client", state);
+                return BuildErrorRedirect(redirectUri, "invalid_target", $"resource '{resource}' is not registered for this client", state, issuer);
         }
 
         if (client.RequirePkce && string.IsNullOrWhiteSpace(request.CodeChallenge))
-            return BuildErrorRedirect(redirectUri, "invalid_request", "code_challenge is required", state);
+            return BuildErrorRedirect(redirectUri, "invalid_request", "code_challenge is required", state, issuer);
 
         // The method is checked whenever a challenge is present, not only for RequirePkce clients. `plain`
         // makes PKCE decorative — the challenge IS the verifier, so anyone positioned to read the
@@ -178,7 +180,7 @@ internal static class AuthorizeRequestSupport
         if (!string.IsNullOrWhiteSpace(request.CodeChallenge)
             && !string.Equals(request.CodeChallengeMethod, "S256", StringComparison.Ordinal))
         {
-            return BuildErrorRedirect(redirectUri, "invalid_request", "code_challenge_method must be S256", state);
+            return BuildErrorRedirect(redirectUri, "invalid_request", "code_challenge_method must be S256", state, issuer);
         }
 
         request.RequestedScopes = requestedScopes;
@@ -271,7 +273,16 @@ internal static class AuthorizeRequestSupport
     /// Redirects the error back to the client when a redirect_uri is available, otherwise
     /// returns a direct OAuth error response.
     /// </summary>
-    public static IResult BuildErrorRedirect(string? redirectUri, string error, string errorDescription, string? state)
+    /// <param name="issuer">
+    /// RFC 9207 <c>iss</c>. Present on the success path but omitted here, while discovery advertises
+    /// <c>authorization_response_iss_parameter_supported: true</c> — so a client that trusts the
+    /// advertisement and requires <c>iss</c> on every authorization response (which is what the
+    /// parameter is for) had to special-case errors, and a client that merely reads it could not tell
+    /// which of several authorization servers an error came back from. That ambiguity is the mix-up
+    /// attack the parameter exists to close, and an error response is a perfectly good vehicle for it.
+    /// </param>
+    public static IResult BuildErrorRedirect(
+        string? redirectUri, string error, string errorDescription, string? state, string? issuer = null)
     {
         if (string.IsNullOrWhiteSpace(redirectUri))
         {
@@ -284,6 +295,8 @@ internal static class AuthorizeRequestSupport
         queryParams["error_description"] = errorDescription;
         if (!string.IsNullOrWhiteSpace(state))
             queryParams["state"] = state;
+        if (!string.IsNullOrWhiteSpace(issuer))
+            queryParams["iss"] = issuer;
         uriBuilder.Query = queryParams.ToString();
 
         return Results.Redirect(uriBuilder.ToString());

@@ -1,3 +1,4 @@
+using Authagonal.Core.Models;
 using Authagonal.Protocol.Services;
 using Microsoft.AspNetCore.Http;
 
@@ -23,7 +24,7 @@ internal static class TokenGrantHandlers
         var codeVerifier = form["code_verifier"].FirstOrDefault() ?? string.Empty;
 
         var response = await tokenService.HandleAuthorizationCodeAsync(code, clientId, redirectUri, codeVerifier, ct);
-        return Results.Ok(response);
+        return TokenSuccess(response);
     }
 
     public static async Task<IResult> HandleRefreshToken(
@@ -39,7 +40,7 @@ internal static class TokenGrantHandlers
         {
             var response = await tokenService.HandleRefreshTokenAsync(
                 refreshToken, clientId, resources.Length > 0 ? resources : null, ct);
-            return Results.Ok(response);
+            return TokenSuccess(response);
         }
         catch (InvalidOperationException ex) when (ex.Message.StartsWith("Resource '", StringComparison.Ordinal))
         {
@@ -58,7 +59,7 @@ internal static class TokenGrantHandlers
         {
             var response = await tokenService.HandleClientCredentialsAsync(
                 clientId, scopes, resources.Length > 0 ? resources : null, ct);
-            return Results.Ok(response);
+            return TokenSuccess(response);
         }
         catch (ProtocolTokenException ex)
         {
@@ -127,7 +128,7 @@ internal static class TokenGrantHandlers
                 authorizationDetailsJson: string.IsNullOrWhiteSpace(authorizationDetails) ? null : authorizationDetails,
                 approvalId: string.IsNullOrWhiteSpace(approvalId) ? null : approvalId,
                 ct: ct);
-            return Results.Ok(response);
+            return TokenSuccess(response);
         }
         catch (ApprovalPendingException pending)
         {
@@ -161,9 +162,47 @@ internal static class TokenGrantHandlers
         }
     }
 
+    /// <summary>
+    /// A token response with the caching headers RFC 6749 §5.1 requires.
+    /// </summary>
+    /// <remarks>
+    /// The spec is explicit — "The authorization server MUST include the HTTP Cache-Control response
+    /// header field with a value of no-store … as well as the Pragma response header field with a
+    /// value of no-cache" — and none were set. The body carries the access token, the refresh token
+    /// and the ID token, so any intermediary or browser applying heuristic freshness could retain
+    /// them.
+    /// </remarks>
+    public static IResult TokenSuccess(TokenResponse response) => new NoStoreJson(response);
+
+    private sealed class NoStoreJson(TokenResponse response) : IResult
+    {
+        public Task ExecuteAsync(HttpContext httpContext)
+        {
+            httpContext.Response.Headers.CacheControl = "no-store";
+            httpContext.Response.Headers.Pragma = "no-cache";
+            return Results.Json(response, ProtocolJsonContext.Default.TokenResponse).ExecuteAsync(httpContext);
+        }
+    }
+
     public static IResult TokenError(string error, string description)
     {
-        return JsonResults.OAuthError(error, description,
-            statusCode: error == "invalid_client" ? 401 : 400);
+        // RFC 6749 §5.2: a 401 invalid_client MUST carry a WWW-Authenticate challenge naming the
+        // scheme the server accepts. Without it a client cannot tell an authentication failure from
+        // any other 401, which is the one distinction the header exists to make.
+        if (error == "invalid_client")
+            return new UnauthorizedClient(description);
+
+        return JsonResults.OAuthError(error, description, statusCode: 400);
+    }
+
+    private sealed class UnauthorizedClient(string description) : IResult
+    {
+        public Task ExecuteAsync(HttpContext httpContext)
+        {
+            httpContext.Response.Headers.WWWAuthenticate =
+                "Basic realm=\"token\", error=\"invalid_client\"";
+            return JsonResults.OAuthError("invalid_client", description, statusCode: 401)
+                .ExecuteAsync(httpContext);
+        }
     }
 }

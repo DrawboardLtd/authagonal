@@ -49,11 +49,11 @@ public static class AuthorizeEndpoint
             // against, so the error MUST be delivered directly — reflecting it to the attacker-supplied
             // redirect_uri would be an open redirect.
             if (string.IsNullOrWhiteSpace(clientId))
-                return AuthorizeRequestSupport.BuildErrorRedirect(null, "invalid_request", "client_id is required", initialState);
+                return AuthorizeRequestSupport.BuildErrorRedirect(null, "invalid_request", "client_id is required", initialState, tenantContext.Issuer);
 
             var client = await clientStore.GetAsync(clientId, ct);
             if (client is null)
-                return AuthorizeRequestSupport.BuildErrorRedirect(null, "unauthorized_client", "Unknown client_id", initialState);
+                return AuthorizeRequestSupport.BuildErrorRedirect(null, "unauthorized_client", "Unknown client_id", initialState, tenantContext.Issuer);
 
             if (!client.Enabled)
             {
@@ -63,7 +63,7 @@ public static class AuthorizeEndpoint
                     && AuthorizeRequestSupport.IsRedirectUriRegistered(initialRedirectUri, client.RedirectUris)
                     ? initialRedirectUri
                     : null;
-                return AuthorizeRequestSupport.BuildErrorRedirect(safeRedirect, "unauthorized_client", "Client is disabled", initialState);
+                return AuthorizeRequestSupport.BuildErrorRedirect(safeRedirect, "unauthorized_client", "Client is disabled", initialState, tenantContext.Issuer);
             }
 
             IReadableRequestParameters source;
@@ -72,20 +72,20 @@ public static class AuthorizeEndpoint
             {
                 var record = await parService.LoadAsync(requestUri, clientId, ct);
                 if (record is null)
-                    return AuthorizeRequestSupport.BuildErrorRedirect(null, "invalid_request", "request_uri is unknown, expired, or already consumed", initialState);
+                    return AuthorizeRequestSupport.BuildErrorRedirect(null, "invalid_request", "request_uri is unknown, expired, or already consumed", initialState, tenantContext.Issuer);
                 source = new ParRequestParameters(record.Parameters);
                 parCreatedAt = record.CreatedAt;
             }
             else
             {
                 if (client.RequirePushedAuthorizationRequests)
-                    return AuthorizeRequestSupport.BuildErrorRedirect(null, "invalid_request", "This client requires requests to be pushed via /connect/par", initialState);
+                    return AuthorizeRequestSupport.BuildErrorRedirect(null, "invalid_request", "This client requires requests to be pushed via /connect/par", initialState, tenantContext.Issuer);
                 source = new QueryRequestParameters(httpContext.Request.Query);
             }
 
             var request = AuthorizeRequest.Read(source);
 
-            if (AuthorizeRequestSupport.Validate(client, request) is { } validationError)
+            if (AuthorizeRequestSupport.Validate(client, request, tenantContext.Issuer) is { } validationError)
                 return validationError;
 
             var (redirectUri, state, requestedScopes) = (request.RedirectUri!, request.State, request.RequestedScopes);
@@ -157,7 +157,7 @@ public static class AuthorizeEndpoint
                         return AuthorizeRequestSupport.BuildErrorRedirect(
                             redirectUri, federationError,
                             string.IsNullOrWhiteSpace(federationErrorDescription) ? "Federated login failed" : federationErrorDescription,
-                            state);
+                            state, tenantContext.Issuer);
                     }
 
                     // Connection interstitial: a connection can declare a login-app path to render
@@ -220,7 +220,7 @@ public static class AuthorizeEndpoint
                 ?? httpContext.User.FindFirstValue("sub");
 
             if (string.IsNullOrWhiteSpace(subjectId))
-                return AuthorizeRequestSupport.BuildErrorRedirect(redirectUri, "server_error", "Unable to determine user identity", state);
+                return AuthorizeRequestSupport.BuildErrorRedirect(redirectUri, "server_error", "Unable to determine user identity", state, tenantContext.Issuer);
 
             // MFA enforcement (defence-in-depth): an MFA-enrolled user's session MUST have completed
             // MFA (local challenge) or have been established via an external IdP. After the login fix
@@ -248,7 +248,7 @@ public static class AuthorizeEndpoint
                     logger.LogWarning("Refusing all requested scopes for {SubjectId} on client {ClientId}: none are role-entitled",
                         subjectId, clientId);
                     return AuthorizeRequestSupport.BuildErrorRedirect(redirectUri, "access_denied",
-                        "The user is not entitled to any of the requested scopes", state);
+                        "The user is not entitled to any of the requested scopes", state, tenantContext.Issuer);
                 }
 
                 logger.LogInformation("Dropping role-gated scopes for {SubjectId} on client {ClientId}: {Dropped}",
@@ -318,7 +318,7 @@ public static class AuthorizeEndpoint
                 if (grantedScopes.Length == 0)
                 {
                     return AuthorizeRequestSupport.BuildErrorRedirect(redirectUri, "access_denied",
-                        "The user approved none of the requested scopes", state);
+                        "The user approved none of the requested scopes", state, tenantContext.Issuer);
                 }
 
                 // Both of these are read downstream — requestedScopes by the subject resolver, and
@@ -333,7 +333,7 @@ public static class AuthorizeEndpoint
             {
                 var provisionUser = await userStore.GetAsync(subjectId, ct);
                 if (provisionUser is null)
-                    return AuthorizeRequestSupport.BuildErrorRedirect(redirectUri, "server_error", "User not found", state);
+                    return AuthorizeRequestSupport.BuildErrorRedirect(redirectUri, "server_error", "User not found", state, tenantContext.Issuer);
 
                 try
                 {
@@ -342,7 +342,7 @@ public static class AuthorizeEndpoint
                 catch (ProvisioningException ex)
                 {
                     return AuthorizeRequestSupport.BuildErrorRedirect(redirectUri, "access_denied",
-                        ex.Reason ?? "User provisioning failed", state);
+                        ex.Reason ?? "User provisioning failed", state, tenantContext.Issuer);
                 }
             }
 
@@ -357,7 +357,7 @@ public static class AuthorizeEndpoint
             if (resolution is OidcSubjectResult.Rejected rejected)
             {
                 var error = AuthorizeRequestSupport.MapRejectionError(rejected.Reason);
-                return AuthorizeRequestSupport.BuildErrorRedirect(redirectUri, error, rejected.Description ?? "Subject not permitted", state);
+                return AuthorizeRequestSupport.BuildErrorRedirect(redirectUri, error, rejected.Description ?? "Subject not permitted", state, tenantContext.Issuer);
             }
 
             var subject = ((OidcSubjectResult.Allowed)resolution).Subject;

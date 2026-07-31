@@ -36,11 +36,11 @@ internal static class AuthorizeEndpoint
             // F46: with no client (missing / unknown client_id) there is nothing to validate redirect_uri
             // against, so the error MUST be delivered directly rather than reflected to an attacker URL.
             if (string.IsNullOrWhiteSpace(clientId))
-                return AuthorizeRequestSupport.BuildErrorRedirect(null, "invalid_request", "client_id is required", initialState);
+                return AuthorizeRequestSupport.BuildErrorRedirect(null, "invalid_request", "client_id is required", initialState, tenantContext.Issuer);
 
             var client = await clientStore.GetAsync(clientId, ct);
             if (client is null)
-                return AuthorizeRequestSupport.BuildErrorRedirect(null, "unauthorized_client", "Unknown client_id", initialState);
+                return AuthorizeRequestSupport.BuildErrorRedirect(null, "unauthorized_client", "Unknown client_id", initialState, tenantContext.Issuer);
 
             IReadableRequestParameters source;
             DateTimeOffset? parCreatedAt = null;
@@ -48,14 +48,14 @@ internal static class AuthorizeEndpoint
             {
                 var record = await parService.LoadAsync(requestUri, clientId, ct);
                 if (record is null)
-                    return AuthorizeRequestSupport.BuildErrorRedirect(null, "invalid_request", "request_uri is unknown, expired, or already consumed", initialState);
+                    return AuthorizeRequestSupport.BuildErrorRedirect(null, "invalid_request", "request_uri is unknown, expired, or already consumed", initialState, tenantContext.Issuer);
                 source = new ParRequestParameters(record.Parameters);
                 parCreatedAt = record.CreatedAt;
             }
             else
             {
                 if (client.RequirePushedAuthorizationRequests)
-                    return AuthorizeRequestSupport.BuildErrorRedirect(null, "invalid_request", "This client requires requests to be pushed via /connect/par", initialState);
+                    return AuthorizeRequestSupport.BuildErrorRedirect(null, "invalid_request", "This client requires requests to be pushed via /connect/par", initialState, tenantContext.Issuer);
                 source = new QueryRequestParameters(httpContext.Request.Query);
             }
 
@@ -71,10 +71,10 @@ internal static class AuthorizeEndpoint
                     && AuthorizeRequestSupport.IsRedirectUriRegistered(request.RedirectUri, client.RedirectUris)
                     ? request.RedirectUri
                     : null;
-                return AuthorizeRequestSupport.BuildErrorRedirect(safeRedirect, "unauthorized_client", "Client is disabled", request.State);
+                return AuthorizeRequestSupport.BuildErrorRedirect(safeRedirect, "unauthorized_client", "Client is disabled", request.State, tenantContext.Issuer);
             }
 
-            if (AuthorizeRequestSupport.Validate(client, request) is { } validationError)
+            if (AuthorizeRequestSupport.Validate(client, request, tenantContext.Issuer) is { } validationError)
                 return validationError;
 
             // Authenticate — if the caller isn't already, either route them through the
@@ -103,7 +103,7 @@ internal static class AuthorizeEndpoint
                 return AuthorizeRequestSupport.BuildErrorRedirect(
                     request.RedirectUri, "access_denied",
                     string.IsNullOrWhiteSpace(explicitAuth.Failure.Message) ? "Authentication failed" : explicitAuth.Failure.Message,
-                    request.State);
+                    request.State, tenantContext.Issuer);
 
             // Re-authentication demands. The 0.11.0 fix for prompt=login landed only in
             // Authagonal.Server, but this package ships and maps BOTH endpoints — so the shipped
@@ -181,7 +181,7 @@ internal static class AuthorizeEndpoint
             if (resolved is OidcSubjectResult.Rejected rejected)
             {
                 var err = AuthorizeRequestSupport.MapRejectionError(rejected.Reason);
-                return AuthorizeRequestSupport.BuildErrorRedirect(request.RedirectUri, err, rejected.Description ?? "Subject not permitted", request.State);
+                return AuthorizeRequestSupport.BuildErrorRedirect(request.RedirectUri, err, rejected.Description ?? "Subject not permitted", request.State, tenantContext.Issuer);
             }
 
             var subject = ((OidcSubjectResult.Allowed)resolved).Subject;

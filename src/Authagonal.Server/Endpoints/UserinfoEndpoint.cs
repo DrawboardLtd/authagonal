@@ -11,7 +11,9 @@ public static class UserinfoEndpoint
 {
     public static IEndpointRouteBuilder MapUserinfoEndpoint(this IEndpointRouteBuilder app)
     {
-        app.MapGet("/connect/userinfo", async (
+        // OIDC Core §5.3.1: userinfo MUST accept both GET and POST. Only GET was mapped, so a
+        // client following the spec's POST form got a 405 from an endpoint that advertises support.
+        app.MapMethods("/connect/userinfo", ["GET", "POST"], async (
             HttpContext httpContext,
             Authagonal.Core.Services.IKeyManager keyManager,
             IUserStore userStore,
@@ -23,11 +25,11 @@ public static class UserinfoEndpoint
             // Extract Bearer token
             var authHeader = httpContext.Request.Headers.Authorization.FirstOrDefault();
             if (string.IsNullOrWhiteSpace(authHeader) || !authHeader.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
-                return Results.Unauthorized();
+                return UnauthorizedWithChallenge();
 
             var token = authHeader["Bearer ".Length..].Trim();
             if (string.IsNullOrWhiteSpace(token))
-                return Results.Unauthorized();
+                return UnauthorizedWithChallenge();
 
             // Validate the JWT
             var issuer = tenantContext.Issuer;
@@ -54,7 +56,7 @@ public static class UserinfoEndpoint
             var result = await handler.ValidateTokenAsync(token, validationParams);
 
             if (!result.IsValid)
-                return Results.Unauthorized();
+                return UnauthorizedWithChallenge();
 
             // Every JWT this server signs shares one issuer and one key, so a valid signature does not
             // establish that the bearer holds an ACCESS token. Without this, an id_token or a back-channel
@@ -63,20 +65,20 @@ public static class UserinfoEndpoint
             if (!TokenTypes.IsAccessToken(
                     (result.SecurityToken as Microsoft.IdentityModel.JsonWebTokens.JsonWebToken)?.Typ,
                     result.Claims.ContainsKey))
-                return Results.Unauthorized();
+                return UnauthorizedWithChallenge();
 
             var subjectId = result.Claims.TryGetValue("sub", out var sub) ? sub?.ToString() : null;
             if (string.IsNullOrWhiteSpace(subjectId))
-                return Results.Unauthorized();
+                return UnauthorizedWithChallenge();
 
             // Reject revoked access tokens (the JWT may still be unexpired).
             var jti = result.Claims.TryGetValue("jti", out var jtiObj) ? jtiObj?.ToString() : null;
             if (!string.IsNullOrWhiteSpace(jti) && await revokedTokenStore.IsRevokedAsync(jti, ct))
-                return Results.Unauthorized();
+                return UnauthorizedWithChallenge();
 
             var user = await userStore.GetAsync(subjectId, ct);
             if (user is null)
-                return Results.Unauthorized();
+                return UnauthorizedWithChallenge();
 
             // Scope-gate claims (OIDC §5.3.2): `sub` is always returned; profile/email/phone claims
             // are released only when the corresponding scope was granted to the access token.
@@ -139,5 +141,28 @@ public static class UserinfoEndpoint
         .WithTags("OAuth");
 
         return app;
+    }
+
+    /// <summary>
+    /// A 401 carrying the challenge RFC 6750 §3 requires.
+    /// </summary>
+    /// <remarks>
+    /// Bare 401s told a resource client that its token was unacceptable but not that Bearer was even
+    /// the scheme in use — the header is how a client learns which credential to present and whether
+    /// to refresh rather than re-authenticate. The reason is deliberately generic: the endpoint
+    /// distinguishes several causes internally (wrong token type, revoked, unknown subject), and some
+    /// of those would report on state the caller has not proved it may know.
+    /// </remarks>
+    private static IResult UnauthorizedWithChallenge() => new BearerChallenge();
+
+    private sealed class BearerChallenge : IResult
+    {
+        public Task ExecuteAsync(HttpContext httpContext)
+        {
+            httpContext.Response.StatusCode = StatusCodes.Status401Unauthorized;
+            httpContext.Response.Headers.WWWAuthenticate =
+                "Bearer realm=\"userinfo\", error=\"invalid_token\"";
+            return Task.CompletedTask;
+        }
     }
 }
