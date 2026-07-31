@@ -18,9 +18,14 @@ public interface IBffSessionStore
 
     /// <summary>Delete every session matching an OIDC <c>sid</c> (a session-scoped back-channel logout).
     /// Returns the count removed.</summary>
-    Task<int> RemoveBySidAsync(string sid, CancellationToken ct = default);
+    /// <param name="tenantKey">
+    /// Scopes the lookup to one tenant. `sub` is unique only within an issuer, so an unscoped removal
+    /// let a logout from one tenant's IdP terminate another tenant's sessions for a colliding subject.
+    /// </param>
+    Task<int> RemoveBySidAsync(string sid, string? tenantKey = null, CancellationToken ct = default);
 
     /// <summary>Delete every session for a subject (a subject-scoped back-channel logout — the form
     /// Authagonal emits). Returns the count removed.</summary>
-    Task<int> RemoveBySubjectAsync(string subject, CancellationToken ct = default);
+    /// <inheritdoc cref="RemoveBySidAsync"/>
+    Task<int> RemoveBySubjectAsync(string subject, string? tenantKey = null, CancellationToken ct = default);
 }

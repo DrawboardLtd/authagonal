@@ -220,6 +220,11 @@ internal static class BffEndpoints
             return Anonymous();
         }
 
+        // no-store, as /bff/ws-ticket already sets. This body carries the signed-in user's identity
+        // claims, so a shared cache or a browser applying heuristic freshness could serve one user's
+        // claims to the next request on the same connection — and the SPA polls this endpoint.
+        ctx.Response.Headers.CacheControl = "no-store";
+
         return Results.Json(new UserResponse
         {
             IsAuthenticated = true,
@@ -485,7 +490,14 @@ internal static class BffEndpoints
 
         // Prefer sid (a single session) if the IdP scoped it that way; otherwise kill every session for
         // the subject (the form Authagonal emits).
-        var removed = hasSid ? await store.RemoveBySidAsync(sid!, ct) : await store.RemoveBySubjectAsync(sub!, ct);
+        // Scoped to the tenant whose IdP signed this token — already resolved above, and previously
+        // discarded. `sub` is unique only within an issuer, so an unscoped removal let a logout
+        // accepted from one tenant terminate another tenant's sessions for a colliding subject; the
+        // endpoint accepts a valid token from ANY configured tenant, which makes that a cross-tenant
+        // denial of service.
+        var removed = hasSid
+            ? await store.RemoveBySidAsync(sid!, tenant.TenantKey, ct)
+            : await store.RemoveBySubjectAsync(sub!, tenant.TenantKey, ct);
         log.LogInformation("BFF back-channel logout removed {Count} session(s) by {Kind}.", removed, hasSid ? "sid" : "sub");
         return Results.Ok();
     }

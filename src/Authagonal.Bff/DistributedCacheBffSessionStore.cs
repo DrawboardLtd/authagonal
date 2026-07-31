@@ -9,8 +9,21 @@ namespace Authagonal.Bff;
 internal sealed class DistributedCacheBffSessionStore(IDistributedCache cache) : IBffSessionStore
 {
     private static string SessKey(string id) => $"agbff:sess:{id}";
-    private static string SidKey(string sid) => $"agbff:sid:{sid}";
-    private static string SubKey(string sub) => $"agbff:sub:{sub}";
+
+    /// <summary>
+    /// Secondary-index keys, namespaced by tenant.
+    /// </summary>
+    /// <remarks>
+    /// These were keyed on the bare sid/sub. `sub` is only unique WITHIN an issuer, so on a
+    /// multi-tenant BFF two tenants' users could share one — and a back-channel logout accepted from
+    /// tenant A's IdP then terminated tenant B's sessions for the colliding subject. Since the logout
+    /// endpoint is reachable by anyone holding a valid token from ANY configured tenant, that is a
+    /// cross-tenant denial of service. Namespacing makes the index mean what its name says: this
+    /// subject, at this issuer.
+    /// </remarks>
+    private static string SidKey(string? tenantKey, string sid) => $"agbff:sid:{tenantKey ?? "-"}:{sid}";
+
+    private static string SubKey(string? tenantKey, string sub) => $"agbff:sub:{tenantKey ?? "-"}:{sub}";
 
     public async Task<BffSession?> GetAsync(string sessionId, CancellationToken ct = default)
     {
@@ -26,9 +39,9 @@ internal sealed class DistributedCacheBffSessionStore(IDistributedCache cache) :
             JsonSerializer.Serialize(session, BffJsonContext.Default.BffSession),
             opts, ct);
 
-        await AddToIndexAsync(SubKey(session.Subject), session.SessionId, opts, ct);
+        await AddToIndexAsync(SubKey(session.TenantKey, session.Subject), session.SessionId, opts, ct);
         if (session.Sid is not null)
-            await AddToIndexAsync(SidKey(session.Sid), session.SessionId, opts, ct);
+            await AddToIndexAsync(SidKey(session.TenantKey, session.Sid), session.SessionId, opts, ct);
     }
 
     public async Task RemoveAsync(string sessionId, CancellationToken ct = default)
@@ -37,16 +50,16 @@ internal sealed class DistributedCacheBffSessionStore(IDistributedCache cache) :
         await cache.RemoveAsync(SessKey(sessionId), ct);
         if (session is null) return;
 
-        await RemoveFromIndexAsync(SubKey(session.Subject), sessionId, ct);
+        await RemoveFromIndexAsync(SubKey(session.TenantKey, session.Subject), sessionId, ct);
         if (session.Sid is not null)
-            await RemoveFromIndexAsync(SidKey(session.Sid), sessionId, ct);
+            await RemoveFromIndexAsync(SidKey(session.TenantKey, session.Sid), sessionId, ct);
     }
 
-    public Task<int> RemoveBySidAsync(string sid, CancellationToken ct = default)
-        => PurgeIndexAsync(SidKey(sid), ct);
+    public Task<int> RemoveBySidAsync(string sid, string? tenantKey = null, CancellationToken ct = default)
+        => PurgeIndexAsync(SidKey(tenantKey, sid), ct);
 
-    public Task<int> RemoveBySubjectAsync(string subject, CancellationToken ct = default)
-        => PurgeIndexAsync(SubKey(subject), ct);
+    public Task<int> RemoveBySubjectAsync(string subject, string? tenantKey = null, CancellationToken ct = default)
+        => PurgeIndexAsync(SubKey(tenantKey, subject), ct);
 
     // Delete every session id listed under an index key, then the index itself.
     private async Task<int> PurgeIndexAsync(string indexKey, CancellationToken ct)
