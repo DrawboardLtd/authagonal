@@ -22,9 +22,72 @@ public sealed class SamlMetadataParser(IHttpClientFactory httpClientFactory)
         // attacker-influenced) metadata host reached a target the guard never saw. It also bounds the
         // response, since an unbounded read on a path reachable from the anonymous ACS is a memory
         // amplifier regardless of where it points.
+        // https only. This document IS the trust anchor for the connection — it carries the signing
+        // certificates every assertion is checked against — so fetching it over cleartext lets any
+        // on-path party substitute their own certificate and mint assertions the SP will accept.
+        // Nothing else in the SAML path can compensate for that, because everything downstream trusts
+        // whatever this returns.
+        if (!Uri.TryCreate(metadataUrl, UriKind.Absolute, out var parsedUrl)
+            || parsedUrl.Scheme != Uri.UriSchemeHttps)
+        {
+            throw new InvalidOperationException(
+                "SAML IdP metadata must be fetched over https: this document carries the signing " +
+                "certificates every assertion is validated against.");
+        }
+
         var client = httpClientFactory.CreateClient("SamlMetadata");
         var response = await SafeOutboundHttp.GetStringAsync(client, metadataUrl, ct: ct);
+
+        // A metadata document that carries its own <ds:Signature> is verified against the key inside
+        // it. That is self-referential on its own — it proves internal consistency, not provenance —
+        // but it does detect tampering in transit by a party who cannot re-sign, and it refuses a
+        // document whose signature is present and BROKEN, which previously parsed happily. Documents
+        // with no signature are accepted as before, since many IdPs publish unsigned metadata and
+        // https is what carries the trust for those.
+        VerifyMetadataSignatureIfPresent(response);
+
         return Parse(response);
+    }
+
+    /// <summary>
+    /// Verifies an <c>EntityDescriptor</c>'s enveloped signature when it has one.
+    /// </summary>
+    /// <remarks>
+    /// Throws when a signature is present but does not verify. Silence about a broken signature is
+    /// the worst of the three options: it tells an operator who deliberately publishes signed
+    /// metadata that the check happened when it did not.
+    /// </remarks>
+    private static void VerifyMetadataSignatureIfPresent(string metadataXml)
+    {
+        var doc = SamlResponseParser.LoadHardened(metadataXml);
+        var signatures = doc.GetElementsByTagName("Signature", "http://www.w3.org/2000/09/xmldsig#");
+        if (signatures.Count == 0) return;
+
+        if (signatures[0] is not System.Xml.XmlElement signatureElement) return;
+
+        var signedXml = new System.Security.Cryptography.Xml.SignedXml(doc);
+        try
+        {
+            signedXml.LoadXml(signatureElement);
+        }
+        catch (System.Security.Cryptography.CryptographicException ex)
+        {
+            throw new InvalidOperationException("SAML IdP metadata carries a malformed signature.", ex);
+        }
+
+        var keyInfoCert = signedXml.KeyInfo
+            .OfType<System.Security.Cryptography.Xml.KeyInfoX509Data>()
+            .SelectMany(k => k.Certificates?.Cast<System.Security.Cryptography.X509Certificates.X509Certificate2>() ?? [])
+            .FirstOrDefault();
+
+        if (keyInfoCert is null)
+            throw new InvalidOperationException("SAML IdP metadata is signed but carries no verification certificate.");
+
+        using (keyInfoCert)
+        {
+            if (!signedXml.CheckSignature(keyInfoCert, verifySignatureOnly: true))
+                throw new InvalidOperationException("SAML IdP metadata signature did not verify.");
+        }
     }
 
     /// <summary>

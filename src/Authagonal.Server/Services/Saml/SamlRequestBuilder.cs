@@ -30,16 +30,23 @@ public static class SamlRequestBuilder
               <samlp:NameIDPolicy Format="{System.Security.SecurityElement.Escape(nameIdFormat ?? SamlConstants.NameIdEmail)}" AllowCreate="true" />
             """;
 
+        // Every interpolated value is XML-escaped. These are operator-configured (entityID, ACS URL,
+        // the IdP's SSO endpoint) rather than caller-supplied, so this is not a live injection — but
+        // an entityID containing `&` or `"`, which is legal in a URI and ordinary in a query string,
+        // produced a malformed document that the IdP rejected with an error naming neither the value
+        // nor the reason. Escaping makes the configuration mean what it says.
+        static string X(string? value) => System.Security.SecurityElement.Escape(value ?? string.Empty);
+
         var xml = $"""
             <samlp:AuthnRequest
                 xmlns:samlp="{SamlConstants.Saml2Protocol}"
-                ID="{requestId}"
+                ID="{X(requestId)}"
                 Version="2.0"
                 IssueInstant="{issueInstant}"
-                Destination="{destination}"
-                AssertionConsumerServiceURL="{acsUrl}"
+                Destination="{X(destination)}"
+                AssertionConsumerServiceURL="{X(acsUrl)}"
                 ProtocolBinding="{SamlConstants.HttpPostBinding}">
-              <saml:Issuer xmlns:saml="{SamlConstants.Saml2Assertion}">{issuer}</saml:Issuer>{nameIdPolicy}
+              <saml:Issuer xmlns:saml="{SamlConstants.Saml2Assertion}">{X(issuer)}</saml:Issuer>{nameIdPolicy}
             </samlp:AuthnRequest>
             """;
 

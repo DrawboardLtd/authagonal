@@ -520,6 +520,14 @@ public static class SamlEndpoints
 
         claims.Add(new Claim(CookieSignInHelper.AuthTimeClaim, DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString()));
 
+        // The IdP's own session bound, carried onto the cookie as session_max_exp — the same claim the
+        // OIDC federation path uses, which the subject resolver already reads and which clamps every
+        // access, id and refresh token issued from this session. Without it the local session outlived
+        // the authentication behind it: an IdP asserting an eight-hour session was overruled by the
+        // local cookie lifetime, which is the opposite of what federating to it means.
+        if (parseResult.SessionNotOnOrAfter is { } idpSessionBound)
+            claims.Add(new Claim("session_max_exp", idpSessionBound.ToUnixTimeSeconds().ToString()));
+
         var identity = new ClaimsIdentity(claims, CookieAuthenticationDefaults.AuthenticationScheme);
         var principal = new ClaimsPrincipal(identity);
 
@@ -527,7 +535,15 @@ public static class SamlEndpoints
         // rejects the login prevents the cookie from being issued (not a 500 after it's already set).
         await authHooks.RunOnUserAuthenticatedAsync(user.Id, email, "saml", ct: ct);
 
-        await httpContext.SignInAsync(CookieAuthenticationDefaults.AuthenticationScheme, principal);
+        // The cookie itself expires no later than the IdP's stated bound.
+        var signInProperties = new AuthenticationProperties();
+        if (parseResult.SessionNotOnOrAfter is { } cookieBound && cookieBound < DateTimeOffset.UtcNow.AddDays(30))
+        {
+            signInProperties.ExpiresUtc = cookieBound;
+            signInProperties.IsPersistent = true;
+        }
+
+        await httpContext.SignInAsync(CookieAuthenticationDefaults.AuthenticationScheme, principal, signInProperties);
 
         logger.LogInformation("User {UserId} ({Email}) signed in via SAML connection {ConnectionId}",
             user.Id, email, connectionId);

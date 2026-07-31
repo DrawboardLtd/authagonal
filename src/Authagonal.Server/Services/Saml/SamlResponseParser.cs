@@ -44,6 +44,18 @@ public sealed record SamlParseResult
     public string? SessionIndex { get; init; }
 
     /// <summary>
+    /// <c>AuthnStatement/@SessionNotOnOrAfter</c> — the IdP's own upper bound on the session it just
+    /// asserted. Null when the IdP states none.
+    /// </summary>
+    /// <remarks>
+    /// Read by nothing before, so a local session outlived the authentication behind it: an IdP
+    /// saying "this session is good for eight hours" was overruled by whatever the local cookie
+    /// lifetime happened to be — the opposite of what federating to that IdP means, and the reason
+    /// deprovisioning at the IdP did not take effect here.
+    /// </remarks>
+    public DateTimeOffset? SessionNotOnOrAfter { get; init; }
+
+    /// <summary>
     /// <c>InResponseTo</c> as it appears inside the SIGNED assertion
     /// (<c>Subject/SubjectConfirmation/SubjectConfirmationData</c>), independent of the Response
     /// wrapper's own copy.
@@ -527,6 +539,23 @@ public sealed class SamlResponseParser(ILogger<SamlResponseParser> logger)
             "saml:AuthnStatement", nsManager) as XmlElement;
         var sessionIndex = authnStatementNode?.Attributes?["SessionIndex"]?.Value;
 
+        // The IdP's stated upper bound on the session it just asserted. It was parsed by nothing, so
+        // the local session outlived the authentication it was based on — an IdP that says "this
+        // session is good for 8 hours" was silently overruled by whatever the local cookie lifetime
+        // happened to be, which is the opposite of what federating to that IdP means.
+        DateTimeOffset? sessionNotOnOrAfter = null;
+        var sessionNotOnOrAfterStr = authnStatementNode?.Attributes?["SessionNotOnOrAfter"]?.Value;
+        if (sessionNotOnOrAfterStr is not null)
+        {
+            if (!TryParseSamlInstant(sessionNotOnOrAfterStr, out var parsedSessionBound))
+            {
+                logger.LogWarning("AuthnStatement SessionNotOnOrAfter is present but unparseable: {Value}", sessionNotOnOrAfterStr);
+                return Fail("Assertion has an unparseable SessionNotOnOrAfter.");
+            }
+
+            sessionNotOnOrAfter = parsedSessionBound;
+        }
+
         logger.LogInformation("SAML response parsed successfully. NameID={NameId}, Attributes={Count}",
             nameId, attributes.Count);
 
@@ -538,6 +567,7 @@ public sealed class SamlResponseParser(ILogger<SamlResponseParser> logger)
             Attributes = attributes,
             AttributeValues = attributeValues,
             SessionIndex = sessionIndex,
+            SessionNotOnOrAfter = sessionNotOnOrAfter,
             AssertionId = assertionId,
             AcceptableUntil = acceptableUntil,
             SignedInResponseTo = signedInResponseTo,
