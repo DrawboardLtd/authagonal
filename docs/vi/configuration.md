@@ -33,6 +33,7 @@ Bộ lưu trữ có thể được cấu hình theo một trong hai cách: cung 
 |---|---|---|
 | `Authentication:CookieLifetimeHours` | `48` | Thời gian sống phiên cookie (trượt) |
 | `Authentication:AlwaysSecureCookie` | `false` | Buộc cờ `Secure` của cookie phiên một cách vô điều kiện. Giá trị mặc định (`SameAsRequest`) đã tạo ra cookie Secure khi chạy phía sau một proxy kết thúc TLS có chuyển tiếp `X-Forwarded-Proto: https`. |
+| `Auth:AllowInsecureHttp` | `false` | Cho phép các endpoint OAuth (`/connect/*`) trả lời các request http thuần. **Chỉ dùng cho phát triển.** RFC 6749 §3.1/§3.2 yêu cầu TLS tại endpoint authorization và token, nên theo mặc định một request không phải https tới bất kỳ endpoint nào trong số đó đều bị từ chối với `invalid_request`. Scheme được đánh giá *sau* khi xử lý các forwarded header, nên một proxy kết thúc TLS và chuyển tiếp `X-Forwarded-Proto: https` vẫn qua được cổng này dù để tắt tùy chọn. Chỉ một triển khai thực sự chạy văn bản thuần (tệp `docker-compose.yml` đi kèm, bản demo custom-server) mới cần đến nó, và máy chủ ghi một cảnh báo khi khởi động bất cứ khi nào nó đang bật. Được truyền sang `AuthagonalProtocolOptions.AllowInsecureHttp`, nên nó cũng chi phối các endpoint do `Authagonal.Protocol` sở hữu (xem [Khả năng mở rộng](extensibility#embedding-authagonalprotocol-alone)). |
 | `Auth:MaxFailedAttempts` | `5` | Số lần đăng nhập thất bại trước khi khóa tài khoản |
 | `Auth:LockoutDurationMinutes` | `10` | Thời gian khóa tài khoản sau khi vượt quá số lần thất bại tối đa |
 | `Auth:MaxRegistrationsPerIp` | `5` | Số lượt đăng ký tối đa mỗi địa chỉ IP trong cửa sổ thời gian |
@@ -328,7 +329,17 @@ Bí mật của client OIDC thượng nguồn và seed TOTP / MFA có thể đư
 |---|---|
 | `SecretProvider:VaultUri` | URI Key Vault (ví dụ: `https://my-vault.vault.azure.net/`). Nếu không đặt, nhà cung cấp **văn bản thuần** sẽ được sử dụng và các bí mật được lưu nguyên trạng trong Table Storage. |
 
+| `SecretProvider:RequireVaultReferences` | Mặc định là `false`. Khi đặt `true`, một tham chiếu đã lưu mà không có tiền tố vault (`kv:` cho Key Vault, `sm:` cho AWS Secrets Manager) sẽ là **lỗi** thay vì được chấp nhận như một giá trị văn bản thuần. Hãy bật nó sau khi đã hoàn tất việc chuyển vào vault. |
+
 Khi được cấu hình, các giá trị bí mật trông giống tham chiếu Key Vault sẽ được giải quyết tại thời điểm chạy. Sử dụng `DefaultAzureCredential` để xác thực.
+
+### Chuyển vào vault, và đóng cửa lại sau đó
+
+Cả hai nhà cung cấp dựa trên vault đều trả về nguyên trạng một tham chiếu không có tiền tố, coi nó như một giá trị văn bản thuần đã được ghi trước khi triển khai có vault. Chính điều đó cho phép chuyển đổi một hệ thống đang chạy theo từng bí mật một thay vì tất cả cùng lúc -- nhưng nếu để ngỏ, nó là một lối hạ cấp vĩnh viễn: bất cứ thứ gì ghi được một cột cấu hình (một lần chuyển đổi làm dở dang, một đường dẫn quản trị lưu giá trị thô vào chỗ lẽ ra phải là tham chiếu, một kẻ tấn công có quyền truy cập kho lưu trữ nhưng không có quyền vào vault) đều thay thế một bí mật được vault bảo vệ bằng một giá trị do chính nó chọn, và nó xác minh hoàn hảo, bởi vì với một tham chiếu không có tiền tố thì tham chiếu *chính là* giá trị.
+
+Hãy đặt `SecretProvider:RequireVaultReferences` khi việc chuyển đổi đã xong. Khi đó, việc giải quyết một tham chiếu không có tiền tố sẽ ném lỗi thay vì lặng lẽ trả về văn bản rõ. Việc đặt nó trong khi nhà cung cấp được phân giải là loại văn bản thuần sẽ bị từ chối lúc khởi động, vì tổ hợp đó không có trạng thái hoạt động nào -- mọi tham chiếu mà nhà cung cấp văn bản thuần ghi ra đều không có tiền tố.
+
+Máy chủ cũng ghi một cảnh báo khi khởi động mỗi khi một host không phải Development rốt cuộc lại dùng nhà cung cấp văn bản thuần.
 
 > ⚠️ **Production: hãy đặt `SecretProvider:VaultUri`.** Nhà cung cấp bí mật mặc định là **văn bản thuần**. Khi `SecretProvider:VaultUri` không được đặt, bí mật của client OIDC thượng nguồn và seed TOTP / MFA được ghi vào Azure Table Storage dưới dạng văn bản rõ, và do đó xuất hiện dưới dạng văn bản rõ trong bất kỳ [bản sao lưu](backup-restore) nào. Đối với bất kỳ triển khai production nào, hãy cấu hình `SecretProvider:VaultUri` để các bí mật này được lưu trong Key Vault.
 

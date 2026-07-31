@@ -33,6 +33,7 @@ Der Speicher kann auf zwei Arten konfiguriert werden: geben Sie **entweder** `St
 |---|---|---|
 | `Authentication:CookieLifetimeHours` | `48` | Cookie-Sitzungsdauer (gleitend) |
 | `Authentication:AlwaysSecureCookie` | `false` | Erzwingt das `Secure`-Flag des Sitzungs-Cookies bedingungslos. Der Standard (`SameAsRequest`) liefert bereits ein sicheres Cookie hinter einem TLS-terminierenden Proxy, der `X-Forwarded-Proto: https` weiterleitet. |
+| `Auth:AllowInsecureHttp` | `false` | Lässt die OAuth-Endpunkte (`/connect/*`) auf einfache http-Anfragen antworten. **Nur für die Entwicklung.** RFC 6749 §3.1/§3.2 verlangen TLS am Autorisierungs- und am Token-Endpunkt, daher wird eine Nicht-https-Anfrage an einen von ihnen standardmäßig mit `invalid_request` abgelehnt. Das Schema wird *nach* der Verarbeitung der weitergeleiteten Header ausgewertet, sodass ein Proxy, der TLS terminiert und `X-Forwarded-Proto: https` weiterleitet, die Schranke auch ohne diese Einstellung passiert. Nur ein tatsächlich unverschlüsseltes Deployment (die mitgelieferte `docker-compose.yml`, die Custom-Server-Demo) braucht sie, und der Server protokolliert beim Start eine Warnung, solange sie aktiv ist. Wird an `AuthagonalProtocolOptions.AllowInsecureHttp` weitergereicht und gilt damit auch für die Endpunkte, die `Authagonal.Protocol` besitzt (siehe [Erweiterbarkeit](extensibility#embedding-authagonalprotocol-alone)). |
 | `Auth:MaxFailedAttempts` | `5` | Fehlgeschlagene Anmeldeversuche vor Kontosperre |
 | `Auth:LockoutDurationMinutes` | `10` | Kontosperrdauer nach maximalen Fehlversuchen |
 | `Auth:MaxRegistrationsPerIp` | `5` | Maximale Registrierungen pro IP-Adresse innerhalb des Zeitfensters |
@@ -327,8 +328,17 @@ Geheimnisse von vorgelagerten OIDC-Clients sowie TOTP-/MFA-Seeds können statt i
 | Einstellung | Beschreibung |
 |---|---|
 | `SecretProvider:VaultUri` | Key-Vault-URI (z.B. `https://my-vault.vault.azure.net/`). Wenn nicht gesetzt, wird der **Klartext**-Anbieter verwendet und Geheimnisse werden unverändert in Table Storage gespeichert. |
+| `SecretProvider:RequireVaultReferences` | Standardmäßig `false`. Bei `true` ist eine gespeicherte Referenz ohne Vault-Präfix (`kv:` für Key Vault, `sm:` für AWS Secrets Manager) ein **Fehler**, statt als Klartextwert akzeptiert zu werden. Setzen Sie es, sobald eine Migration in den Vault abgeschlossen ist. |
 
 Bei Konfiguration werden Geheimniswerte, die wie Key-Vault-Referenzen aussehen, zur Laufzeit aufgelöst. Verwendet `DefaultAzureCredential` zur Authentifizierung.
+
+### Migration in einen Vault, und die Tür danach schließen
+
+Beide vault-gestützten Anbieter geben eine Referenz ohne Präfix unverändert zurück und behandeln sie als Klartextwert, der geschrieben wurde, bevor das Deployment einen Vault hatte. Genau das erlaubt es, ein laufendes System Geheimnis für Geheimnis zu migrieren statt alles auf einmal -- offen gelassen ist es jedoch ein dauerhafter Abwertungspfad: Alles, was eine einzige Konfigurationsspalte schreiben kann (eine halbfertige Migration, ein Admin-Pfad, der einen Rohwert dort ablegt, wo eine Referenz hingehört, ein Angreifer mit Speicherzugriff, aber ohne Vault-Zugriff), ersetzt ein vault-geschütztes Geheimnis durch einen selbst gewählten Wert -- und das verifiziert einwandfrei, denn bei einer Referenz ohne Präfix *ist* die Referenz der Wert.
+
+Setzen Sie `SecretProvider:RequireVaultReferences`, wenn die Migration abgeschlossen ist. Das Auflösen einer Referenz ohne Präfix wirft dann eine Ausnahme, statt stillschweigend Klartext zurückzugeben. Das Setzen bei aufgelöstem Klartext-Anbieter wird beim Start abgelehnt, da diese Kombination keinen funktionierenden Zustand hat -- jede Referenz, die der Klartext-Anbieter schreibt, ist ohne Präfix.
+
+Der Server protokolliert außerdem beim Start eine Warnung, wenn ein Host außerhalb der Entwicklung beim Klartext-Anbieter landet.
 
 > ⚠️ **Produktion: `SecretProvider:VaultUri` setzen.** Der Standard-Geheimnis-Anbieter speichert im **Klartext**. Wenn `SecretProvider:VaultUri` nicht gesetzt ist, werden Geheimnisse von vorgelagerten OIDC-Clients sowie TOTP-/MFA-Seeds im Klartext in Azure Table Storage geschrieben und erscheinen daher auch im Klartext in jeder [Sicherung](backup-restore). Konfigurieren Sie für jedes Produktions-Deployment `SecretProvider:VaultUri`, damit diese Geheimnisse in Key Vault gespeichert werden.
 
