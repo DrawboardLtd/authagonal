@@ -203,15 +203,23 @@ public class TccProvisioningOrchestratorTests
         var ex = await Assert.ThrowsAsync<ProvisioningException>(() => orchestrator.ProvisionAsync(User()));
 
         Assert.Equal("app2", ex.AppId);
-        // app1 confirmed before the failure and keeps its provision. app3 is still try-only →
-        // cancelled. app2 itself is deliberately NOT cancelled (its confirm may or may not have
-        // landed downstream; the reservation expires via TTL) — asserting current behavior.
+
+        // app3 is still try-only → cancelled. app2 itself is deliberately NOT cancelled (its confirm
+        // may or may not have landed downstream; the reservation expires via TTL).
+        //
+        // app1 confirmed before the failure, and it is now COMPENSATED. This test used to assert that
+        // app1 "keeps its provision" — which is what the code did, and what every caller then made
+        // wrong: they answer a ProvisioningException by deleting the local user and nothing else, so
+        // the rollback left app1 holding a live, confirmed account for a subject the IdP no longer
+        // has, and a provision row pointing at a deleted user id. Cancel is a no-op for an app past
+        // confirm, so the confirmed set needs an explicit deprovision.
         Assert.Equal(
-            ["app1:/try", "app2:/try", "app3:/try", "app1:/confirm", "app2:/confirm", "app3:/cancel"],
+            ["app1:/try", "app2:/try", "app3:/try", "app1:/confirm", "app2:/confirm", "app3:/cancel",
+             "app1:/users/user-1"],
             CallSequence);
 
-        var records = await _provisions.GetByUserAsync("user-1");
-        Assert.Equal("app1", Assert.Single(records).AppId);
+        // …and nothing survives pointing at the user that is about to be deleted.
+        Assert.Empty(await _provisions.GetByUserAsync("user-1"));
     }
 
     // ── Try-response merge semantics ─────────────────────────────────

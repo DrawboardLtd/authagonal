@@ -460,7 +460,7 @@ public sealed class TableUserStore(
         // Batch the fields that need protection into ONE Vault round-trip (vs 7 sequential). Fields that
         // don't need protecting (empty, or the "{}" attrs default) are left untouched, preserving the
         // exact per-field semantics of the old ProtectFieldAsync path.
-        var fields = new[] { e.Email, e.NormalizedEmail, e.FirstName, e.LastName, e.Phone, e.CompanyName, e.CustomAttributesJson };
+        var fields = new[] { e.Email, e.NormalizedEmail, e.FirstName, e.LastName, e.Phone, e.CompanyName, e.CustomAttributesJson, e.PendingClaimJson };
         var idx = new List<int>(fields.Length);
         var toProtect = new List<string>(fields.Length);
         for (var i = 0; i < fields.Length; i++)
@@ -479,6 +479,13 @@ public sealed class TableUserStore(
         e.Phone = fields[4];
         e.CompanyName = fields[5];
         e.CustomAttributesJson = fields[6] ?? "{}";
+        // PendingClaimJson serialises the SAME fields the columns above protect — first name, last
+        // name and the caller-supplied custom attributes — staged for a not-yet-confirmed sign-up. It
+        // was left out of the list, so a table dump exposed in cleartext exactly the PII the scheme
+        // exists to hide, for every user mid-registration. The AWS and SQL stores do not have this gap
+        // because they encrypt the whole serialized document, which is also why the shared
+        // provider-parity tests could never have caught it.
+        e.PendingClaimJson = fields[7];
     }
 
     // Decrypt the at-rest PII fields on an entity read from the table, before ToModel() (or before its
@@ -486,7 +493,7 @@ public sealed class TableUserStore(
     // through untouched (ResolveManyAsync handles per-item passthrough).
     private async Task DecryptEntityAsync(UserEntity e, CancellationToken ct)
     {
-        var fields = new[] { e.Email, e.NormalizedEmail, e.FirstName, e.LastName, e.Phone, e.CompanyName, e.CustomAttributesJson };
+        var fields = new[] { e.Email, e.NormalizedEmail, e.FirstName, e.LastName, e.Phone, e.CompanyName, e.CustomAttributesJson, e.PendingClaimJson };
         var idx = new List<int>(fields.Length);
         var toResolve = new List<string>(fields.Length);
         for (var i = 0; i < fields.Length; i++)
@@ -505,6 +512,13 @@ public sealed class TableUserStore(
         e.Phone = fields[4];
         e.CompanyName = fields[5];
         e.CustomAttributesJson = fields[6] ?? "{}";
+        // PendingClaimJson serialises the SAME fields the columns above protect — first name, last
+        // name and the caller-supplied custom attributes — staged for a not-yet-confirmed sign-up. It
+        // was left out of the list, so a table dump exposed in cleartext exactly the PII the scheme
+        // exists to hide, for every user mid-registration. The AWS and SQL stores do not have this gap
+        // because they encrypt the whole serialized document, which is also why the shared
+        // provider-parity tests could never have caught it.
+        e.PendingClaimJson = fields[7];
     }
 
     /// <summary>

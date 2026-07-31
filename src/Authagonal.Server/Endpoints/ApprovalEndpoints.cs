@@ -44,6 +44,7 @@ public static class ApprovalEndpoints
                     ClientName = client?.ClientName ?? data.ClientId,
                     PendingActions = [.. data.PendingActions],
                     Slice = ToElement(data.Slice),
+                    Context = new Dictionary<string, string>(data.Context, StringComparer.Ordinal),
                     CreatedAt = data.CreatedAt,
                     ExpiresAt = grant.ExpiresAt,
                 });
@@ -133,6 +134,17 @@ public sealed class ApprovalView
     public string ClientName { get; set; } = "";
     public List<string> PendingActions { get; set; } = [];
     public JsonElement Slice { get; set; }
+
+    /// <summary>
+    /// The host extension parameters the exchange carried — the tenant/project/workspace the approved
+    /// authority will be bound to.
+    /// </summary>
+    /// <remarks>
+    /// Surfaced because the screen showed the client, the actions and the authority slice and nothing
+    /// about the context, while a context-bound exchange scopes the resulting token entirely through
+    /// these. A human cannot approve "read payments" meaningfully without knowing whose payments.
+    /// </remarks>
+    public Dictionary<string, string> Context { get; set; } = [];
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset ExpiresAt { get; set; }
 }

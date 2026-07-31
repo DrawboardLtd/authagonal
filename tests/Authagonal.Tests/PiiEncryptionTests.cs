@@ -48,6 +48,37 @@ public class PiiEncryptionTests(AzuriteFixture azurite)
             EnvPartitioner.Live, fieldCipher: cipher);
     }
 
+    /// <summary>
+    /// F329 — staged sign-up PII is inside the encrypted set.
+    /// </summary>
+    /// <remarks>
+    /// The Azure store encrypts a fixed column list, and PendingClaimJson was not on it — yet it
+    /// serialises exactly the fields the list protects: first name, last name and the caller-supplied
+    /// custom attributes, staged for a not-yet-confirmed registration. A table dump therefore exposed
+    /// in cleartext precisely the PII the scheme exists to hide, for every user mid-signup. The AWS
+    /// and SQL stores encrypt the whole serialized document, so they never had this gap — which is
+    /// also why the shared provider-parity tests could not have caught it.
+    /// </remarks>
+    [Fact]
+    public async Task PendingClaimJson_IsEncryptedAtRest()
+    {
+        var prefix = $"pc{Guid.NewGuid():N}";
+        var store = NewStore(prefix, new FakeCipher());
+
+        var user = SampleUser("u-pending", "pending@example.com");
+        user.PendingClaimJson = "{\"firstName\":\"Ada\",\"lastName\":\"Lovelace\"}";
+        await store.CreateAsync(user);
+
+        var raw = await RawProfile(prefix, "u-pending");
+        Assert.NotNull(raw.PendingClaimJson);
+        Assert.StartsWith(FakeCipher.Prefix, raw.PendingClaimJson, StringComparison.Ordinal);
+        Assert.DoesNotContain("Lovelace", raw.PendingClaimJson, StringComparison.Ordinal);
+
+        // …and it round-trips, so the confirm path still reads what registration staged.
+        var read = await store.GetAsync("u-pending");
+        Assert.Equal(user.PendingClaimJson, read!.PendingClaimJson);
+    }
+
     // Reads the profile row WITHOUT going through the store's decrypt, i.e. what a dump would show.
     private async Task<UserEntity> RawProfile(string prefix, string userId)
         => (await _svc.GetTableClient($"{prefix}Users")

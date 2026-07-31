@@ -36,6 +36,20 @@ public sealed class ApprovalData
     /// scopes/authority/audiences must not be able to spend it.</summary>
     public required string RequestHash { get; set; }
 
+    /// <summary>
+    /// The host extension parameters the exchange carried — the context the approved authority will
+    /// be bound to.
+    /// </summary>
+    /// <remarks>
+    /// Recorded so the resolving human can SEE it. The approval screen shows the client, the pending
+    /// type:action pairs and the authority slice; a context-bound exchange scopes the resulting token
+    /// to a tenant, project or workspace through these parameters, and none of that reached the
+    /// person being asked to approve it. They are also part of the request hash now, so the
+    /// displayed context is the context the approval can be redeemed against.
+    /// </remarks>
+    public IReadOnlyDictionary<string, string> Context { get; set; } =
+        new Dictionary<string, string>(StringComparer.Ordinal);
+
     public ApprovalStatus Status { get; set; } = ApprovalStatus.Pending;
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset? ResolvedAt { get; set; }
@@ -72,6 +86,13 @@ public static class Approval
             },
             ["created_at"] = Iso(data.CreatedAt),
         };
+        if (data.Context.Count > 0)
+        {
+            var context = new JsonObject();
+            foreach (var (name, value) in data.Context.OrderBy(p => p.Key, StringComparer.Ordinal))
+                context[name] = value;
+            node["context"] = context;
+        }
         if (data.ResolvedAt is { } resolvedAt) node["resolved_at"] = Iso(resolvedAt);
         if (data.ResolvedBy is not null) node["resolved_by"] = data.ResolvedBy;
         if (data.LastPolledAt is { } polledAt) node["last_polled_at"] = Iso(polledAt);
@@ -98,11 +119,20 @@ public static class Approval
         if (id is null || clientId is null || subjectId is null || requestHash is null) return null;
         if (!AuthorityJson.TryParse(obj["slice"], out var slice)) return null;
 
+        var context = new Dictionary<string, string>(StringComparer.Ordinal);
+        if (obj["context"] is JsonObject contextObj)
+        {
+            foreach (var (name, value) in contextObj)
+                if (value is JsonValue v && v.GetValueKind() == JsonValueKind.String)
+                    context[name] = v.GetValue<string>();
+        }
+
         return new ApprovalData
         {
             Id = id,
             ClientId = clientId,
             SubjectId = subjectId,
+            Context = context,
             Slice = slice,
             PendingActions = ReadStringArray(obj["pending_actions"]),
             RequestHash = requestHash,

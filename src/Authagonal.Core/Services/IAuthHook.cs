@@ -126,7 +126,28 @@ public sealed record TokenIssuanceContext(
     string? SubjectId,
     string GrantType,
     IReadOnlyList<string> Scopes,
-    string? RequestedAuthorityJson);
+    string? RequestedAuthorityJson)
+{
+    /// <summary>
+    /// The authority that is actually about to be minted — the ceiling ∩ consent ∩ subject, after
+    /// every narrowing. This is what a gate should decide on.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="RequestedAuthorityJson"/> used to carry different things depending on grant type:
+    /// the effective set on the client_credentials path, but the raw request parameter on the
+    /// delegated token-exchange path — where it is null whenever the agent simply omits
+    /// authorization_details, which means "everything grantable". So on the one path that mints
+    /// delegated USER authority, a hook could not see what was being granted, and could be silenced
+    /// entirely by leaving the parameter out. The effective set was only surfaced afterwards, through
+    /// OnDelegationMintedAsync, which is documented as notification after the token exists.
+    /// <para>
+    /// Both are now present and named for what they are. RequestedAuthorityJson keeps its meaning for
+    /// hooks that want to see what was asked for; anything making an allow/deny decision should read
+    /// this.
+    /// </para>
+    /// </remarks>
+    public string? EffectiveAuthorityJson { get; init; }
+}
 
 /// <summary>Audit payload for a minted delegation. <paramref name="ActorChain"/> is outermost
 /// (current actor) first; <paramref name="EffectiveAuthorityJson"/> is the RFC 9396 array the

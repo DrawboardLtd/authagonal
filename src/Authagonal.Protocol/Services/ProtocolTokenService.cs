@@ -868,7 +868,10 @@ public sealed class ProtocolTokenService(
             expiresIn = Math.Min(expiresIn, profile.MaxTokenLifetimeSeconds);
 
             await Hooks.RunOnTokenIssuingAsync(
-                new TokenIssuanceContext(clientId, null, GrantTypes.ClientCredentials, scopeList, authorityJson), ct);
+                new TokenIssuanceContext(clientId, null, GrantTypes.ClientCredentials, scopeList, authorityJson)
+                {
+                    EffectiveAuthorityJson = authorityJson,
+                }, ct);
         }
 
         var accessToken = await CreateAccessTokenAsync(
@@ -1248,7 +1251,8 @@ public sealed class ProtocolTokenService(
             if (askActions.Count > 0)
             {
                 var requestHash = ComputeRequestHash(
-                    clientId, sub, grantedScopes, targetAudiences, AuthorityJson.Serialize(effective));
+                    clientId, sub, grantedScopes, targetAudiences, AuthorityJson.Serialize(effective),
+                    extraParameters);
                 if (approvalId is not null)
                 {
                     var approvedSlice = await RedeemApprovalAsync(approvalId, clientId, sub, requestHash, ct);
@@ -1262,7 +1266,8 @@ public sealed class ProtocolTokenService(
                 else
                 {
                     var id = await CreatePendingApprovalAsync(
-                        clientId, sub, effective, askActions, requestHash, ct);
+                        clientId, sub, effective, askActions, requestHash,
+                        extraParameters ?? EmptyExtraParameters, ct);
                     throw new ApprovalPendingException(id, Approval.PollIntervalSeconds);
                 }
             }
@@ -1335,8 +1340,13 @@ public sealed class ProtocolTokenService(
 
         if (agentProfile is not null)
         {
+            // Called here, AFTER `effective` is computed and before the token is created, so the gate
+            // sees what is actually being granted rather than what was asked for.
             await Hooks.RunOnTokenIssuingAsync(new TokenIssuanceContext(
-                clientId, sub, GrantTypes.TokenExchange, grantedScopes, authorizationDetailsJson), ct);
+                clientId, sub, GrantTypes.TokenExchange, grantedScopes, authorizationDetailsJson)
+            {
+                EffectiveAuthorityJson = effectiveJson,
+            }, ct);
         }
 
         var accessToken = await CreateAccessTokenAsync(
@@ -1474,17 +1484,51 @@ public sealed class ProtocolTokenService(
 
     /// <summary>Binds an approval to the exact request shape (and current policy state) it was
     /// minted for — a retry with different scopes, audiences or authority cannot spend it.</summary>
+    /// <param name="extraParameters">
+    /// The host extension parameters — every non-protocol form field, which the exchange forwards to
+    /// <c>ITokenExchangeSubjectTransformer</c>.
+    /// </param>
+    /// <remarks>
+    /// These were omitted from the hash, and they are exactly the dimension a context-bound exchange
+    /// is scoped by: the transformer is the documented seam for project/workspace tokens, and it
+    /// "forces the resulting binding claims onto the subject". Because it runs before the authority
+    /// section and nothing covered its inputs, the request parked for approval and the request that
+    /// redeemed it could differ in precisely the parameter that decides WHICH tenant the approved
+    /// authority binds to — while the documentation claimed approvals are "bound to the exact request
+    /// shape". The approval UI shows the client, the pending type:action pairs and the authority
+    /// slice, never the context binding, so a human could not compensate for the gap either.
+    /// <para>
+    /// Every component is length-prefixed rather than newline-joined. The previous encoding was
+    /// ambiguous on its own terms — a clientId or subjectId containing a newline could impersonate a
+    /// field boundary — and adding free-form host parameters to a delimiter-joined string would have
+    /// made that reachable rather than theoretical.
+    /// </para>
+    /// </remarks>
     private static string ComputeRequestHash(
         string clientId, string subjectId, IEnumerable<string> scopes,
-        IEnumerable<string> audiences, string effectiveAuthorityJson)
+        IEnumerable<string> audiences, string effectiveAuthorityJson,
+        IReadOnlyDictionary<string, string>? extraParameters = null)
     {
-        var canonical = string.Join('\n',
-            clientId,
-            subjectId,
-            string.Join(' ', scopes.Order(StringComparer.Ordinal)),
-            string.Join(' ', audiences.Order(StringComparer.Ordinal)),
-            effectiveAuthorityJson);
-        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(canonical)));
+        var builder = new StringBuilder();
+
+        void Append(string value)
+        {
+            builder.Append(value.Length).Append(':').Append(value).Append('|');
+        }
+
+        Append(clientId);
+        Append(subjectId);
+        Append(string.Join(' ', scopes.Order(StringComparer.Ordinal)));
+        Append(string.Join(' ', audiences.Order(StringComparer.Ordinal)));
+        Append(effectiveAuthorityJson);
+
+        foreach (var (name, value) in (extraParameters ?? EmptyExtraParameters).OrderBy(p => p.Key, StringComparer.Ordinal))
+        {
+            Append(name);
+            Append(value);
+        }
+
+        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(builder.ToString())));
     }
 
     /// <summary>
@@ -1495,7 +1539,8 @@ public sealed class ProtocolTokenService(
 
     private async Task<string> CreatePendingApprovalAsync(
         string clientId, string subjectId, AuthoritySet slice,
-        IReadOnlyList<string> pendingActions, string requestHash, CancellationToken ct)
+        IReadOnlyList<string> pendingActions, string requestHash,
+        IReadOnlyDictionary<string, string> context, CancellationToken ct)
     {
         var now = DateTimeOffset.UtcNow;
 
@@ -1538,6 +1583,7 @@ public sealed class ProtocolTokenService(
             Slice = slice,
             PendingActions = pendingActions,
             RequestHash = requestHash,
+            Context = context,
             Status = ApprovalStatus.Pending,
             CreatedAt = now,
         };

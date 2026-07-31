@@ -24,6 +24,10 @@ public sealed class TccProvisioningOrchestrator(
         httpContextAccessor.HttpContext?.RequestServices.GetRequiredService<IUserProvisionStore>()
         ?? throw new InvalidOperationException("UserProvisionStore requires an active HTTP request");
 
+    /// <summary>Optional — a host outside a request scope simply skips the merge persist.</summary>
+    private IUserStore? TryGetUserStore() =>
+        httpContextAccessor.HttpContext?.RequestServices.GetService<IUserStore>();
+
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
@@ -88,6 +92,7 @@ public sealed class TccProvisioningOrchestrator(
 
         var transactionId = Guid.NewGuid().ToString("N");
         var succeededTries = new List<string>();
+        var merged = false;
 
         // ── Phase 1: Try ──────────────────────────────────────────────
         foreach (var appId in appsToProvision)
@@ -95,6 +100,9 @@ public sealed class TccProvisioningOrchestrator(
             try
             {
                 var result = await TryAsync(apps[appId], transactionId, user, ct);
+                // TryAsync merges the response into `user` in place; record that so phase 3 knows
+                // there is something to persist.
+                merged = true;
                 if (!result.Approved)
                 {
                     await CancelAllAsync(apps, succeededTries, transactionId);
@@ -131,8 +139,42 @@ public sealed class TccProvisioningOrchestrator(
                     .ToList();
                 await CancelAllAsync(apps, unconfirmed, transactionId);
 
-                // Persist records for apps that did confirm so they aren't retried
+                // Compensate the apps that DID confirm, here rather than leaving it to the caller.
+                //
+                // This used to persist provision records for them and rethrow. Every caller answers a
+                // ProvisioningException by deleting the local user and nothing else — no deprovision,
+                // no provision-row cleanup (IUserProvisionStore.RemoveAllByUserAsync exists in all
+                // three providers and was called from nowhere). So a partial failure ended with a
+                // downstream app holding a live, confirmed account for a subject the IdP no longer
+                // has, provision rows pointing at a deleted user id, and nothing anywhere recording
+                // that a compensation was owed. Cancel is a no-op for an app past confirm, which is
+                // why the confirmed set needs an explicit deprovision.
+                //
+                // The records are still written first, because DeprovisionAllAsync walks the store to
+                // find what to undo — and it removes each row as it goes, so nothing is left behind.
                 await StoreProvisionRecordsAsync(user.Id, confirmedApps, ct);
+
+                if (confirmedApps.Count > 0)
+                {
+                    logger.LogWarning(
+                        "Compensating {Count} app(s) that already confirmed in transaction {TransactionId}",
+                        confirmedApps.Count, transactionId);
+
+                    try
+                    {
+                        await DeprovisionAllAsync(user.Id, ct);
+                    }
+                    catch (Exception compensationEx)
+                    {
+                        // The original failure is what the caller needs to see. A failed compensation
+                        // is louder in the log than it can be in the exception, and swallowing the
+                        // cause to report the cleanup would hide why any of this happened.
+                        logger.LogError(compensationEx,
+                            "Compensation failed for transaction {TransactionId}; app accounts for user " +
+                            "{UserId} may survive the rollback and need manual removal",
+                            transactionId, user.Id);
+                    }
+                }
 
                 throw new ProvisioningException(appId, "Confirm callback failed", ex);
             }
@@ -140,6 +182,20 @@ public sealed class TccProvisioningOrchestrator(
 
         // ── Phase 3: Persist provision records ────────────────────────
         await StoreProvisionRecordsAsync(user.Id, confirmedApps, ct);
+
+        // …and persist the merge, which is the whole point of the /try response.
+        //
+        // MergeIntoUser mutates the in-memory AuthUser only: it sets OrganizationId, unions
+        // CustomAttributes and can set EmailConfirmed (the documented "downstream vouches it verified
+        // this address" contract). Exactly ONE caller saved afterwards — self-service registration.
+        // Admin create, SAML JIT, OIDC JIT and SCIM create all call CreateAsync BEFORE provisioning
+        // and never update after, and /authorize re-reads the user through the subject resolver
+        // immediately afterwards, so the merge was thrown away there too. And because the provision
+        // records above mark the app as provisioned, /try is never repeated — the values were lost
+        // permanently, not for one request. For the admin path that included EmailConfirmed, which is
+        // what made an admin-created user unable to log in.
+        if (merged)
+            await PersistMergeAsync(user, ct);
 
         logger.LogInformation(
             "User {UserId} provisioned into apps [{Apps}], transaction {TransactionId}",
@@ -219,6 +275,73 @@ public sealed class TccProvisioningOrchestrator(
             MergeIntoUser(user, response);
 
         return response;
+    }
+
+    /// <summary>
+    /// Writes the merged in-memory user back to the store, so the values a downstream app supplied at
+    /// /try survive the request that fetched them.
+    /// </summary>
+    /// <remarks>
+    /// Best effort: provisioning has already succeeded at this point, and failing the whole operation
+    /// because a profile write did not land would undo real downstream work to fix a metadata
+    /// problem. A failure is logged with the fields at stake.
+    /// </remarks>
+    private async Task PersistMergeAsync(AuthUser user, CancellationToken ct)
+    {
+        var userStore = TryGetUserStore();
+        if (userStore is null) return;
+
+        try
+        {
+            // Re-read and re-apply rather than writing the in-hand instance: it was loaded before the
+            // provisioning round-trips, and overwriting the row wholesale would clobber anything
+            // written in between (a login stamp, a lockout reset).
+            var current = await userStore.GetAsync(user.Id, ct);
+            if (current is null) return;
+
+            var changed = false;
+
+            if (!string.IsNullOrWhiteSpace(user.OrganizationId)
+                && !string.Equals(current.OrganizationId, user.OrganizationId, StringComparison.Ordinal))
+            {
+                current.OrganizationId = user.OrganizationId;
+                changed = true;
+            }
+
+            // Only the vouch direction: a downstream app may confirm an address, never un-confirm one.
+            if (user.EmailConfirmed && !current.EmailConfirmed)
+            {
+                current.EmailConfirmed = true;
+                changed = true;
+            }
+
+            foreach (var (key, value) in user.CustomAttributes)
+            {
+                if (current.CustomAttributes.TryGetValue(key, out var existing)
+                    && string.Equals(existing, value, StringComparison.Ordinal))
+                    continue;
+                current.CustomAttributes[key] = value;
+                changed = true;
+            }
+
+            if (!changed) return;
+
+            current.UpdatedAt = DateTimeOffset.UtcNow;
+            await userStore.UpdateAsync(current, ct);
+
+            // Keep the caller's instance consistent with what was stored — several callers go on to
+            // build a subject or a response from it.
+            user.OrganizationId = current.OrganizationId;
+            user.EmailConfirmed = current.EmailConfirmed;
+            user.CustomAttributes = current.CustomAttributes;
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex,
+                "Could not persist the provisioning merge for user {UserId}; organization id, custom " +
+                "attributes and any email-verified vouch from /try will not survive this request",
+                user.Id);
+        }
     }
 
     private static void MergeIntoUser(AuthUser user, TryResponse response)
