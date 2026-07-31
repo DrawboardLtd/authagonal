@@ -81,8 +81,21 @@ public static class SamlEndpoints
         {
             using var spCert = SamlSpKey.Load(await secretProvider.ResolveAsync(config.SpCertificate, ct));
             using var rsa = spCert.GetRSAPrivateKey();
-            if (rsa is not null)
-                url = SamlRedirectBinding.Sign(url, rsa);
+            // Fail loudly rather than send the request unsigned. A null private key here used to fall
+            // through silently, so a connection configured for signed AuthnRequests — and whose
+            // published metadata says AuthnRequestsSigned="true" — sent unsigned requests that a
+            // strict IdP rejects and a lenient one accepts. Neither outcome is visible from here, and
+            // the lenient one is the request forgery the signature exists to prevent.
+            if (rsa is null)
+            {
+                logger.LogError(
+                    "SAML connection {ConnectionId} requires signed AuthnRequests but its SP certificate has no usable private key",
+                    connectionId);
+                return Results.Problem(
+                    "This SAML connection is configured to sign AuthnRequests but its SP certificate has no usable private key.",
+                    statusCode: 500);
+            }
+            url = SamlRedirectBinding.Sign(url, rsa);
         }
 
         logger.LogInformation("SAML login initiated for connection {ConnectionId}, RequestId={RequestId}",
@@ -618,23 +631,41 @@ public static class SamlEndpoints
         var authnRequestsSigned = config.SignAuthnRequests == true && !string.IsNullOrEmpty(config.SpCertificate)
             ? "true" : "false";
 
+        // Metadata §2.4.4.1 defines WantAssertionsSigned as a REQUIREMENT that received
+        // <saml:Assertion> elements be signed. This was hardcoded "true" while the ACS accepts a
+        // Response-level signature instead (SamlResponseParser: responseSignatureValid ||
+        // assertionSignatureValid) — which is correct per Web Browser SSO errata E26 for the POST
+        // binding, and is deliberately kept. So the attribute was advertising a requirement the SP
+        // does not enforce, and an IdP administrator reading the metadata could not tell what would
+        // actually be accepted. Declared "false" to match the implementation: a signature is still
+        // mandatory, it simply may sit at either level, which this attribute cannot express.
+        const string wantAssertionsSigned = "false";
+
+        // Every interpolated value is escaped. entityID and the endpoint Locations were not, while the
+        // NameIDFormat two lines up was — and EntityId is stored by the admin API with no charset
+        // validation, so a value containing a double quote closed the attribute and injected arbitrary
+        // markup into a document a customer's IdP administrator then imports as trusted configuration.
+        var safeIssuer = System.Security.SecurityElement.Escape(issuer);
+        var safeSloUrl = System.Security.SecurityElement.Escape(sloUrl);
+        var safeAcsUrl = System.Security.SecurityElement.Escape(acsUrl);
+
         var xml = $"""
             <?xml version="1.0" encoding="UTF-8"?>
             <md:EntityDescriptor xmlns:md="urn:oasis:names:tc:SAML:2.0:metadata"
-                entityID="{issuer}">
+                entityID="{safeIssuer}">
               <md:SPSSODescriptor
                   AuthnRequestsSigned="{authnRequestsSigned}"
-                  WantAssertionsSigned="true"
+                  WantAssertionsSigned="{wantAssertionsSigned}"
                   protocolSupportEnumeration="urn:oasis:names:tc:SAML:2.0:protocol">{keyDescriptors}{nameIdFormatLine}
                 <md:SingleLogoutService
                     Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect"
-                    Location="{sloUrl}" />
+                    Location="{safeSloUrl}" />
                 <md:SingleLogoutService
                     Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST"
-                    Location="{sloUrl}" />
+                    Location="{safeSloUrl}" />
                 <md:AssertionConsumerService
                     Binding="urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST"
-                    Location="{acsUrl}"
+                    Location="{safeAcsUrl}"
                     index="0"
                     isDefault="true" />
               </md:SPSSODescriptor>
@@ -750,12 +781,57 @@ public static class SamlEndpoints
             samlResponse = httpContext.Request.Query["SAMLResponse"].ToString();
         }
 
-        // LogoutResponse: the IdP answering our SP-initiated LogoutRequest. The session is already
-        // gone; consume the request id and land the user on the stored return URL.
+        // LogoutResponse: the IdP answering our SP-initiated LogoutRequest.
+        //
+        // This leg was entirely unauthenticated — no signature check and no Status check — while
+        // sharing the "request" sort key with pending AuthnRequest IDs. Anyone could therefore POST a
+        // forged LogoutResponse naming a pending AuthnRequest ID and consume it, so the legitimate
+        // SAML login that followed was rejected as a replay: an unauthenticated login-denial
+        // primitive. The signature is now required on the same terms as a LogoutRequest, and a
+        // non-Success Status is reported rather than presented to the user as a completed logout.
         if (!string.IsNullOrEmpty(samlResponse))
         {
             var xml = DecodeSloMessage(samlResponse, isPost, logger);
-            var inResponseTo = xml?.DocumentElement?.Attributes?["InResponseTo"]?.Value;
+            if (xml?.DocumentElement is not { LocalName: "LogoutResponse" } logoutResponse)
+                return Results.BadRequest(new { error = "saml_invalid", error_description = "Expected a LogoutResponse." });
+
+            var responseMetadata = await GetCachedMetadataAsync(config, metadataParser, memoryCache, cacheOptions.Value, ct);
+
+            // Authenticated only. The harm in this leg is not the redirect, it is CONSUMING the
+            // InResponseTo out of the replay cache: that cache shares its "request" sort key with
+            // pending AuthnRequest IDs, so an unauthenticated attacker who POSTed a forged
+            // LogoutResponse naming a pending AuthnRequest ID consumed it, and the legitimate SAML
+            // login that followed was then rejected as a replay. That is a login-denial primitive
+            // available to anyone who can reach the endpoint.
+            //
+            // So: verify the signature, Issuer and Status before honouring the message. An
+            // unverifiable one still lands the user somewhere sensible — not every IdP signs this
+            // leg, and by this point the local session is already gone — but it consumes nothing and
+            // carries no state from the attacker.
+            var responseSignatureValid = isPost
+                ? SamlResponseParser.ValidateElementSignature(logoutResponse, responseMetadata.SigningCertificates, logger)
+                : SamlRedirectBinding.Verify(httpContext.Request.QueryString.Value ?? "", responseMetadata.SigningCertificates);
+
+            var statusCode = logoutResponse
+                .GetElementsByTagName("StatusCode", SamlConstants.Saml2Protocol)
+                .Cast<System.Xml.XmlNode>()
+                .FirstOrDefault()?.Attributes?["Value"]?.Value;
+
+            if (!responseSignatureValid || !IsIssuerExpected(logoutResponse, responseMetadata.EntityId))
+            {
+                logger.LogWarning(
+                    "SAML SLO: unauthenticated LogoutResponse for {ConnectionId} — redirecting without consuming request state",
+                    connectionId);
+                return Results.Redirect(SanitizeReturnUrl(null));
+            }
+
+            if (!string.Equals(statusCode, SamlConstants.StatusSuccess, StringComparison.Ordinal))
+            {
+                logger.LogWarning("SAML SLO: LogoutResponse for {ConnectionId} carried status {Status}", connectionId, statusCode);
+                return Results.BadRequest(new { error = "saml_logout_failed", error_description = "The IdP reported that logout did not succeed." });
+            }
+
+            var inResponseTo = logoutResponse.Attributes?["InResponseTo"]?.Value;
             var state = inResponseTo is null ? null : await replayCache.ValidateAndConsumeRequestAsync(inResponseTo, ct);
             return Results.Redirect(SanitizeReturnUrl(state?.ReturnUrl));
         }
@@ -790,6 +866,14 @@ public static class SamlEndpoints
                 logger.LogWarning("SAML SLO: unsigned LogoutRequest for {ConnectionId} without a matching session — ignored", connectionId);
                 return Results.BadRequest(new { error = "saml_invalid", error_description = "LogoutRequest is unsigned and no matching session exists." });
             }
+        }
+
+        // The request must come from the IdP this connection is bound to, not merely from a holder of
+        // a certificate in its trust set.
+        if (!IsIssuerExpected(logoutRequest, metadata.EntityId))
+        {
+            logger.LogWarning("SAML SLO: LogoutRequest Issuer does not match the IdP for {ConnectionId}", connectionId);
+            return Results.BadRequest(new { error = "saml_invalid", error_description = "LogoutRequest Issuer does not match this connection's IdP." });
         }
 
         // Freshness. A LogoutRequest carries no expiry of its own, so without a bound on IssueInstant
@@ -838,6 +922,24 @@ public static class SamlEndpoints
                     connectionId);
                 return Results.BadRequest(new { error = "saml_invalid", error_description = "LogoutRequest does not match this session." });
             }
+
+            // SessionIndex, when the IdP supplies one (Core §3.7.1). The ACS stored it for exactly
+            // this comparison. A NameID match alone ends every session that subject holds, so an
+            // IdP asking to terminate one session terminated all of them.
+            var sessionIndex = sloAuth.Principal?.FindFirst("saml_session_index")?.Value;
+            var requestedSessionIndex = logoutRequest
+                .GetElementsByTagName("SessionIndex", SamlConstants.Saml2Protocol)
+                .Cast<System.Xml.XmlNode>()
+                .FirstOrDefault()?.InnerText?.Trim();
+
+            if (!string.IsNullOrEmpty(sessionIndex) && !string.IsNullOrEmpty(requestedSessionIndex)
+                && !string.Equals(sessionIndex, requestedSessionIndex, StringComparison.Ordinal))
+            {
+                logger.LogWarning(
+                    "SAML SLO: LogoutRequest names a different session than this browser's for {ConnectionId} — ignored",
+                    connectionId);
+                return Results.BadRequest(new { error = "saml_invalid", error_description = "LogoutRequest does not match this session." });
+            }
         }
 
         await httpContext.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
@@ -855,6 +957,28 @@ public static class SamlEndpoints
                 responseUrl = SamlRedirectBinding.Sign(responseUrl, rsa);
         }
         return Results.Redirect(responseUrl);
+    }
+
+    /// <summary>
+    /// True when the message's <c>&lt;saml:Issuer&gt;</c> is the IdP this connection is bound to.
+    /// </summary>
+    /// <remarks>
+    /// Absent an issuer check, a signature was the whole of the authentication — and the certificate
+    /// set comes from the connection's metadata, so a multi-IdP deployment whose connections share a
+    /// federation certificate would accept one IdP's logout messages on another's connection. An
+    /// absent Issuer is treated as a mismatch: it cannot be shown to be the expected one.
+    /// </remarks>
+    private static bool IsIssuerExpected(System.Xml.XmlElement message, string expectedEntityId)
+    {
+        if (string.IsNullOrEmpty(expectedEntityId))
+            return true; // nothing to compare against
+
+        var issuer = message
+            .GetElementsByTagName("Issuer", SamlConstants.Saml2Assertion)
+            .Cast<System.Xml.XmlNode>()
+            .FirstOrDefault()?.InnerText?.Trim();
+
+        return string.Equals(issuer, expectedEntityId, StringComparison.Ordinal);
     }
 
     /// <summary>How old a LogoutRequest may be. It carries no expiry of its own.</summary>

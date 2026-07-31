@@ -390,14 +390,64 @@ public sealed class SamlSpKeySloEndpointTests(AzuriteFixture azurite) : IAsyncLi
         var logoutRequestId = doc.DocumentElement!.GetAttribute("ID");
         var responseXml = $"""
             <samlp:LogoutResponse xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol"
+                xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion"
                 ID="_lr{Guid.NewGuid():N}" Version="2.0" IssueInstant="{DateTime.UtcNow:O}"
                 InResponseTo="{logoutRequestId}">
+              <saml:Issuer>https://idp.test</saml:Issuer>
               <samlp:Status><samlp:StatusCode Value="urn:oasis:names:tc:SAML:2.0:status:Success"/></samlp:Status>
             </samlp:LogoutResponse>
             """;
-        var slo = await _client.GetAsync($"/saml/{connectionId}/slo?SAMLResponse={DeflateEncode(responseXml)}");
+        // Signed, because the response leg is only HONOURED when it authenticates — see F290. The
+        // stored return URL is state the message is claiming, so an unsigned one must not reach it.
+        var sloUrl = SamlRedirectBinding.Sign(
+            $"{AuthagonalTestFactory.TestIssuer}/saml/{connectionId}/slo?SAMLResponse={DeflateEncode(responseXml)}",
+            SamlTestHelper.TestKey);
+        var slo = await _client.GetAsync(new Uri(sloUrl).PathAndQuery);
         Assert.Equal(HttpStatusCode.Redirect, slo.StatusCode);
         Assert.Equal("/goodbye", slo.Headers.Location!.ToString());
+    }
+
+    /// <summary>
+    /// F290 — the LogoutResponse leg was entirely unauthenticated, and it consumes an InResponseTo
+    /// from a replay cache whose "request" sort key is shared with pending AuthnRequest IDs. So a
+    /// forged LogoutResponse naming a pending AuthnRequest ID consumed it, and the legitimate login
+    /// that followed was rejected as a replay — unauthenticated login denial. The unsigned message
+    /// must still land the browser somewhere, but must consume nothing.
+    /// </summary>
+    [Fact]
+    public async Task F290_UnsignedLogoutResponse_DoesNotConsumePendingRequestState()
+    {
+        var connectionId = await CreateConnectionAsync(new
+        {
+            connectionName = "Denial SLO",
+            entityId = "https://sp.test/denial-slo",
+            metadataXml = SamlTestHelper.BuildIdpMetadata(sloUrl: "https://idp.test/slo"),
+            allowedDomains = new[] { "example.com" }
+        });
+
+        // A login is in flight: its request ID is pending in the replay cache.
+        var login = await _client.GetAsync($"/saml/{connectionId}/login");
+        var pendingRequestId = ExtractRequestId(login.Headers.Location!.ToString());
+
+        // The attacker forges an unsigned LogoutResponse naming that pending request ID.
+        var forged = $"""
+            <samlp:LogoutResponse xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol"
+                ID="_lr{Guid.NewGuid():N}" Version="2.0" IssueInstant="{DateTime.UtcNow:O}"
+                InResponseTo="{pendingRequestId}">
+              <samlp:Status><samlp:StatusCode Value="urn:oasis:names:tc:SAML:2.0:status:Success"/></samlp:Status>
+            </samlp:LogoutResponse>
+            """;
+        await _client.GetAsync($"/saml/{connectionId}/slo?SAMLResponse={DeflateEncode(forged)}");
+
+        // The real login must still complete: its request ID was not consumed.
+        var acsUrl = $"{AuthagonalTestFactory.TestIssuer}/saml/{connectionId}/acs";
+        var saml = SamlTestHelper.BuildSignedResponse(
+            acsUrl, "https://sp.test/denial-slo", "victim@example.com",
+            inResponseTo: pendingRequestId, email: "victim@example.com");
+        var acs = await _client.PostAsync($"/saml/{connectionId}/acs",
+            new FormUrlEncodedContent(new Dictionary<string, string> { ["SAMLResponse"] = saml }));
+
+        Assert.Equal(HttpStatusCode.Redirect, acs.StatusCode);
     }
 
     [Fact]
