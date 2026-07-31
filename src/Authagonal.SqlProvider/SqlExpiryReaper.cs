@@ -7,7 +7,8 @@ namespace Authagonal.SqlProvider;
 /// <summary>
 /// Deletes rows whose <c>expires_at</c> has passed, on a timer.
 /// <para>
-/// This exists because neither backend expires rows on its own the way DynamoDB TTL does. Without it
+/// This exists because neither PostgreSQL nor SQL Server expires rows on its own; the DynamoDB
+/// provider gets the same effect from a TTL attribute the service reclaims on. Without it
 /// the transient tables — SAML replay ids, OIDC federation state, MFA challenges, upstream refresh
 /// tokens, the revocation list — would only ever grow: every one of those rows is already ignored on
 /// read once expired, so the correctness is unaffected, but the tables are not. It is a

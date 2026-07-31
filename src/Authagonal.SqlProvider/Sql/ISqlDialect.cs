@@ -40,4 +40,22 @@ public interface ISqlDialect
 
     /// <summary>DDL creating the generic key-value table (and its indexes) if absent. Idempotent.</summary>
     IReadOnlyList<string> CreateTableStatements(string table);
+
+    /// <summary>
+    /// Verifies that an existing table actually has the properties this code's SQL depends on, and
+    /// throws with the fix if it does not. Returns without doing anything when the backend has
+    /// nothing to check.
+    /// </summary>
+    /// <remarks>
+    /// The DDL is all <c>IF NOT EXISTS</c>, so against a table provisioned out-of-band it verified
+    /// nothing at all. On PostgreSQL that matters: the byte-ordinal <c>COLLATE "C"</c> pin on the key
+    /// columns is load-bearing, not tidiness. Every range predicate, the prefix successor used for
+    /// <c>sk</c> scans, and the ISO-8601 timestamp comparisons in the expiry sweep all assume byte
+    /// ordering. A table created without the pin inherits the database's collation — and managed
+    /// PostgreSQL commonly defaults to ICU or en_US.UTF-8 — under which those comparisons quietly
+    /// mean something else and UNDER-match: a prefix scan for <c>"login|"</c> returns nothing,
+    /// because ICU orders <c>'}'</c> before <c>'|'</c> and the half-open upper bound falls below
+    /// every row it was meant to include. Nothing fails loudly; lookups simply come back empty.
+    /// </remarks>
+    Task VerifyTableAsync(DbConnection connection, string table, CancellationToken ct);
 }

@@ -57,6 +57,10 @@ public static class SqlTestSource
     /// own default is Prefer, which validates no certificate and silently falls back to plaintext —
     /// and this is the opt-out that exists for exactly this case.
     /// </remarks>
-    public static SqlDataSource Postgres(string connectionString)
-        => new(new PostgresDialect(connectionString, schema: $"t{Guid.NewGuid():N}", allowUnverifiedTls: true));
+    /// <param name="schema">
+    /// A pre-existing schema to point at, for the one test that provisions a table out-of-band. Left
+    /// null everywhere else, which is what gives each test its own isolated schema.
+    /// </param>
+    public static SqlDataSource Postgres(string connectionString, string? schema = null)
+        => new(new PostgresDialect(connectionString, schema: schema ?? $"t{Guid.NewGuid():N}", allowUnverifiedTls: true));
 }

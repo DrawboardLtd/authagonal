@@ -95,6 +95,10 @@ public sealed class DynamoMfaStore(
     {
         var item = Dyn.Item(partitioner.PK(challenge.ChallengeId), ChallengeSk);
         item.PutS("data", JsonSerializer.Serialize(challenge, AwsJsonContext.Default.MfaChallenge));
+        // A challenge is dead the moment it expires — GetChallengeAsync already refuses it — and
+        // nothing ever removed the row. A day's margin covers clock skew and DynamoDB's best-effort
+        // deletion window.
+        item.PutTtl(challenge.ExpiresAt.AddDays(1));
         return challenges.PutAsync(item, ct);
     }
 

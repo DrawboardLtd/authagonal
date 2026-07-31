@@ -17,6 +17,10 @@ public sealed class DynamoRevokedTokenStore(DynamoTable table, EnvPartitioner pa
         item.PutDate("expiresAt", expiresAt);
         item.PutS("clientId", clientId);
         item.PutDate("revokedAt", DateTimeOffset.UtcNow);
+        // A revocation stops mattering at the token's own expiry — IsRevokedAsync already says so —
+        // so the row has nothing left to protect after it. A grace margin keeps the entry alive
+        // across clock skew and DynamoDB's best-effort deletion window.
+        item.PutTtl(expiresAt.AddDays(1));
         return table.PutAsync(item, ct);
     }
 

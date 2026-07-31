@@ -74,6 +74,57 @@ public sealed class PostgresDialect : ISqlDialect
 
     public string AttrsParameter => "@attrs::jsonb";
 
+    /// <summary>Columns whose collation the query layer depends on being byte-ordinal.</summary>
+    private static readonly string[] ByteOrdinalColumns = ["pk", "sk", "expires_at"];
+
+    /// <inheritdoc />
+    public async Task VerifyTableAsync(DbConnection connection, string table, CancellationToken ct)
+    {
+        await using var cmd = connection.CreateCommand();
+        // attcollation = 0 means "no collation" (a non-collatable type); for a text column the
+        // database default appears under its own name, which is exactly the case being caught.
+        cmd.CommandText =
+            "SELECT a.attname, COALESCE(c.collname, '') " +
+            "FROM pg_attribute a " +
+            "LEFT JOIN pg_collation c ON a.attcollation = c.oid " +
+            "WHERE a.attrelid = @rel::regclass AND a.attnum > 0 AND NOT a.attisdropped";
+
+        var parameter = cmd.CreateParameter();
+        parameter.ParameterName = "rel";
+        parameter.Value = TableRef(table);
+        cmd.Parameters.Add(parameter);
+
+        var collations = new Dictionary<string, string>(StringComparer.Ordinal);
+        await using (var reader = await cmd.ExecuteReaderAsync(ct).ConfigureAwait(false))
+        {
+            while (await reader.ReadAsync(ct).ConfigureAwait(false))
+                collations[reader.GetString(0)] = reader.GetString(1);
+        }
+
+        // No columns back means the table is not visible to this connection — a permissions or
+        // search_path problem, which the first real query reports far more usefully than a collation
+        // complaint would.
+        if (collations.Count == 0) return;
+
+        var wrong = ByteOrdinalColumns
+            .Where(column => collations.TryGetValue(column, out var collation)
+                             && collation.Length > 0
+                             && !string.Equals(collation, "C", StringComparison.Ordinal)
+                             && !string.Equals(collation, "POSIX", StringComparison.Ordinal))
+            .ToList();
+
+        if (wrong.Count == 0) return;
+
+        var fix = string.Join(" ", wrong.Select(c =>
+            $"ALTER TABLE {TableRef(table)} ALTER COLUMN {c} TYPE TEXT COLLATE \"C\";"));
+
+        throw new InvalidOperationException(
+            $"Table {TableRef(table)} has column(s) {string.Join(", ", wrong)} on a linguistic collation. "
+            + "Every key range predicate in this provider is byte-ordinal, so under a linguistic collation "
+            + "lookups silently return the wrong rows — a prefix scan can match nothing at all — rather "
+            + $"than failing. Fix with: {fix} then REINDEX TABLE {TableRef(table)};");
+    }
+
     public IReadOnlyList<string> CreateTableStatements(string table)
     {
         var name = SqlNames.Identifier(table);

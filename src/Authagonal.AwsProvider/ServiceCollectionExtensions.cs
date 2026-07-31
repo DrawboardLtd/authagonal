@@ -87,8 +87,21 @@ public static class ServiceCollectionExtensions
             SamlReplayCacheTable, OidcStateStoreTable,
         };
         if (nameIndexesEnabled) tables.AddRange([UserFirstNamesTable, UserLastNamesTable]);
+
+        // Tables whose rows are transient by construction get DynamoDB TTL. Everything here is
+        // written by a flow that either completes in minutes or expires on its own, and every one of
+        // them was previously retained forever — including UpstreamRefreshTokens, which holds live
+        // credentials for another IdP.
+        //
+        // SamlReplayCache is deliberately absent: its assertion rows must outlive the longest
+        // assertion the server will accept, so expiring them is a replay hole rather than a saving.
+        var expiring = new HashSet<string>(StringComparer.Ordinal)
+        {
+            OidcStateStoreTable, MfaChallengesTable, RevokedTokensTable, UpstreamRefreshTokensTable,
+        };
+
         foreach (var table in tables)
-            DynamoTableProvisioner.EnsureTableAsync(db, table).GetAwaiter().GetResult();
+            DynamoTableProvisioner.EnsureTableAsync(db, table, expiring.Contains(table)).GetAwaiter().GetResult();
 
         var live = EnvPartitioner.Live;
         var tombstones = new DynamoChangeWriter(new DynamoTable(db, TombstonesTable));

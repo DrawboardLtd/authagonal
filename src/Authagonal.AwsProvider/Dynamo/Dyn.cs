@@ -28,6 +28,17 @@ internal static class Dyn
         if (value is not null) item[name] = new AttributeValue { S = value };
     }
 
+    /// <summary>
+    /// Writes the DynamoDB time-to-live attribute (epoch seconds) so the service reclaims the row.
+    /// </summary>
+    /// <remarks>
+    /// DynamoDB deletes on a best-effort schedule — typically within 48 hours — so a TTL is a
+    /// retention bound, never an access control. Every store that writes one still enforces expiry on
+    /// read; this only stops sensitive rows accumulating forever.
+    /// </remarks>
+    public static void PutTtl(this Dictionary<string, AttributeValue> item, DateTimeOffset expiresAt)
+        => item.PutN(DynamoTableProvisioner.TtlAttribute, expiresAt.ToUnixTimeSeconds());
+
     public static void PutN(this Dictionary<string, AttributeValue> item, string name, long value)
         => item[name] = new AttributeValue { N = value.ToString(CultureInfo.InvariantCulture) };
 

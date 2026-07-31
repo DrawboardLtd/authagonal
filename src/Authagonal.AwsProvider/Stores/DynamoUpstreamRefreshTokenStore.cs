@@ -29,7 +29,10 @@ public sealed class DynamoUpstreamRefreshTokenStore(
         var item = Dyn.Item(Pk(userId), Sk(connectionId, sessionId));
         item.PutS("token", await _cipher.ProtectAsync(refreshToken, ct).ConfigureAwait(false));
         item.PutN("exp", expiresAt.ToUnixTimeSeconds());
-        item.PutN("ttl", expiresAt.ToUnixTimeSeconds()); // DynamoDB TTL attribute (if enabled on the table)
+        // TTL is now enabled on this table at provisioning time, so the caveat this line used to
+        // carry ("if enabled on the table") no longer applies — these rows hold live credentials for
+        // ANOTHER IdP, and they were being retained forever.
+        item.PutTtl(expiresAt);
         await table.PutAsync(item, ct).ConfigureAwait(false);
     }
 

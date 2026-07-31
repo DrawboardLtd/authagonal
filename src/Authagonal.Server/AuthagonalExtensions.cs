@@ -169,8 +169,15 @@ public static class AuthagonalExtensions
             services.TryAddSingleton<ISamlReplayCache>(sp =>
                 new SamlReplayCache(sp.GetRequiredKeyedService<TableClient>("SamlReplayCache"), sp.GetRequiredService<IOptions<CacheOptions>>()));
         if (services.Any(d => d.IsKeyedService && (d.ServiceKey as string) == "OidcStateStore"))
+        {
             services.TryAddSingleton<IOidcStateStore>(sp =>
                 new OidcStateStore(sp.GetRequiredKeyedService<TableClient>("OidcStateStore"), sp.GetRequiredService<IOptions<CacheOptions>>()));
+
+            // Azure Table has no TTL, and the anonymous federation-login endpoint writes one of these
+            // rows on every hit. Without a sweep every abandoned attempt left a permanent row holding
+            // a code verifier and a nonce.
+            services.AddSingleton<IHostedService, Authagonal.Server.Services.Oidc.OidcStateSweepService>();
+        }
 
         // Health check (depends on ISigningKeyStore singleton)
         services.AddHealthChecks()

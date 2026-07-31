@@ -8,9 +8,10 @@ namespace Authagonal.SqlProvider.Stores;
 /// "assertion". Request ids are consumed (delete-and-return) for single-use validation; assertion ids
 /// are recorded with an insert-if-absent so a second sighting is detected as a replay.
 /// <para>
-/// Rows carry a TTL so the reaper clears them. That matters more here than on DynamoDB, which expires
-/// rows itself: an assertion id must stay recorded for at least as long as the assertion could still
-/// be accepted, and no longer, or the table grows without bound.
+/// Rows carry a TTL so the reaper clears them: an assertion id must stay recorded for at least as long
+/// as the assertion could still be accepted, and no longer, or the table grows without bound. The
+/// DynamoDB provider does NOT put a TTL on its replay table for exactly that first reason — expiring a
+/// replay record early is a replay hole — so this is not a difference in diligence between the two.
 /// </para>
 /// </summary>
 public sealed class SqlSamlReplayCache(SqlTable table, TimeSpan ttl) : ISamlReplayCache

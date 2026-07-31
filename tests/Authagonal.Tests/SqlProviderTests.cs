@@ -774,3 +774,59 @@ public sealed class PostgresProviderTests(PostgresFixture postgres) : SqlProvide
 {
     protected override SqlDataSource CreateSource() => SqlTestSource.Postgres(postgres.ConnectionString);
 }
+
+/// <summary>
+/// F126 — a table provisioned out-of-band without the byte-ordinal collation pin must be refused, not
+/// silently accepted.
+/// </summary>
+/// <remarks>
+/// EnsureTableAsync is all <c>CREATE ... IF NOT EXISTS</c>, so against an existing table it verified
+/// nothing — and the rest of the suite could never catch that, because every table it touches is one
+/// this code created (with the pin). The failure mode is silent under-matching, not an error: on the
+/// ICU-collated database this fixture uses, <c>'}'</c> sorts before <c>'|'</c>, so a half-open prefix
+/// scan for <c>"login|"</c> excludes every row it was meant to return and an external-login lookup
+/// simply comes back empty.
+/// </remarks>
+[Collection("Postgres")]
+public sealed class PostgresCollationVerificationTests(PostgresFixture postgres)
+{
+    [Fact]
+    public async Task PreExistingTableWithoutTheCollationPin_IsRefusedWithTheFix()
+    {
+        var schema = $"verify_{Guid.NewGuid():N}";
+        const string table = "Grants";
+
+        await using (var connection = new Npgsql.NpgsqlConnection(postgres.ConnectionString))
+        {
+            await connection.OpenAsync();
+            await using var cmd = connection.CreateCommand();
+            // What a DBA's migration or a Terraform module writes when it does not know the pin
+            // matters: plain TEXT columns, inheriting the database's ICU collation.
+            cmd.CommandText =
+                $"CREATE SCHEMA \"{schema}\";" +
+                $"CREATE TABLE \"{schema}\".\"{table}\" (" +
+                "  pk TEXT NOT NULL, sk TEXT NOT NULL, data TEXT," +
+                "  attrs JSONB NOT NULL DEFAULT '{}'::jsonb, version BIGINT NOT NULL DEFAULT 0," +
+                "  expires_at TEXT, PRIMARY KEY (pk, sk));";
+            await cmd.ExecuteNonQueryAsync();
+        }
+
+        var source = SqlTestSource.Postgres(postgres.ConnectionString, schema);
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => source.EnsureTableAsync(table));
+
+        // The message has to be actionable — an operator who hits this at startup needs the DDL, not
+        // a complaint.
+        Assert.Contains("collation", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("COLLATE \"C\"", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("REINDEX", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ATableThisCodeCreated_Passes()
+    {
+        var source = SqlTestSource.Postgres(postgres.ConnectionString);
+        await source.EnsureTableAsync("Grants");
+    }
+}

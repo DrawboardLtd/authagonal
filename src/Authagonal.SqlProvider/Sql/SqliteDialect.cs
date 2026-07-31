@@ -60,6 +60,12 @@ public sealed class SqliteDialect : ISqlDialect, IAsyncDisposable
 
     public string AttrsParameter => "@attrs";
 
+    /// <summary>
+    /// Nothing to verify. SQLite's default BINARY collation is byte-ordinal already, and there is no
+    /// database-wide default that a table could inherit something else from.
+    /// </summary>
+    public Task VerifyTableAsync(DbConnection connection, string table, CancellationToken ct) => Task.CompletedTask;
+
     public IReadOnlyList<string> CreateTableStatements(string table)
     {
         var name = SqlNames.Identifier(table);

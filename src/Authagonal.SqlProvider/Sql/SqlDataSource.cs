@@ -33,10 +33,17 @@ public sealed class SqlDataSource(ISqlDialect dialect) : IAsyncDisposable
     }
 
     /// <summary>
-    /// Creates the table and its indexes if absent. Idempotent and safe to race — every statement is
-    /// <c>IF NOT EXISTS</c>, so a second pod running the same DDL concurrently is a no-op. A table
-    /// already provisioned out-of-band (Terraform, a DBA's migration) is left exactly as it is.
+    /// Creates the table and its indexes if absent, then verifies that the result actually has the
+    /// properties this code's SQL depends on. Idempotent and safe to race — every DDL statement is
+    /// <c>IF NOT EXISTS</c>, so a second pod running it concurrently is a no-op.
     /// </summary>
+    /// <remarks>
+    /// The DDL alone verified nothing against a table provisioned out-of-band (Terraform, a DBA's
+    /// migration): it is all <c>IF NOT EXISTS</c>, so an existing table was accepted whatever shape it
+    /// was in. That is not a safe assumption on PostgreSQL, where the <c>COLLATE "C"</c> pin is
+    /// load-bearing and its absence makes range predicates silently under-match rather than fail.
+    /// See <see cref="ISqlDialect.VerifyTableAsync"/>.
+    /// </remarks>
     public async Task EnsureTableAsync(string table, CancellationToken ct = default)
     {
         if (_provisioned.ContainsKey(table)) return;
@@ -65,6 +72,10 @@ public sealed class SqlDataSource(ISqlDialect dialect) : IAsyncDisposable
                 // error or a syntax error still surfaces, because those are real misconfiguration.
             }
         }
+
+        // After the DDL, not instead of it: a table this code just created passes trivially, and one
+        // it did not create is the case worth checking.
+        await dialect.VerifyTableAsync(connection, table, ct).ConfigureAwait(false);
 
         _provisioned[table] = true;
     }

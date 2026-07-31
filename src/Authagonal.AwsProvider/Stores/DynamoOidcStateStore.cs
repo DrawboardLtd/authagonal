@@ -16,7 +16,13 @@ public sealed class DynamoOidcStateStore(DynamoTable table, TimeSpan ttl) : IOid
         item.PutS("returnUrl", returnUrl);
         item.PutS("codeVerifier", codeVerifier);
         item.PutS("nonce", nonce);
-        item.PutDate("createdAt", DateTimeOffset.UtcNow);
+        var now = DateTimeOffset.UtcNow;
+        item.PutDate("createdAt", now);
+        // /oidc/{connectionId}/login is anonymous and writes one of these on every hit, before any
+        // authentication or rate limit, and the row is removed only when the flow completes. Without a
+        // TTL an abandoned — or deliberately abandoned — federation attempt left a permanent row
+        // holding the code verifier and nonce.
+        item.PutTtl(now + ttl);
         return table.PutAsync(item, ct);
     }
 
