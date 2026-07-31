@@ -54,6 +54,7 @@ internal static class TokenEndpoint
         })
         .AllowAnonymous()
         .DisableAntiforgery()
+        .RequireTls()
         .WithTags("OIDC");
 
         return app;

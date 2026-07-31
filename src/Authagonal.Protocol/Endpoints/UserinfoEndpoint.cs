@@ -110,6 +110,7 @@ internal static class UserinfoEndpoint
             return Results.Ok(claims);
         })
         .AllowAnonymous()
+        .RequireTls()
         .WithTags("OIDC");
 
         return app;

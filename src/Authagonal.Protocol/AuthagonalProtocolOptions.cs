@@ -15,6 +15,26 @@ public sealed class AuthagonalProtocolOptions
     public string AuthenticationScheme { get; set; } = "Cookies";
 
     /// <summary>
+    /// Allows <c>/connect/authorize</c>, <c>/connect/token</c>, <c>/connect/userinfo</c> and
+    /// <c>/connect/par</c> to answer plaintext http requests. Default false: a non-https request to any
+    /// of them is refused with <c>invalid_request</c>.
+    /// </summary>
+    /// <remarks>
+    /// RFC 6749 §3.1 and §3.2 require TLS at the authorization and token endpoints, and the reason is not
+    /// ceremonial — a plaintext exchange hands anyone on the path the authorization code, the client
+    /// secret in the Basic header, and the access and refresh tokens that come back. Because this package
+    /// does not own the host's pipeline, the requirement is enforced by an endpoint filter attached to
+    /// those four routes, so it holds however the host composes its middleware and whether it maps the
+    /// whole surface or one endpoint at a time.
+    /// <para>
+    /// The scheme is read after routing, so a host that terminates TLS at a proxy and calls
+    /// <c>UseForwardedHeaders</c> passes with this left alone. Set it only for a host that genuinely
+    /// serves the protocol surface over http — a local development host, or a test server.
+    /// </para>
+    /// </remarks>
+    public bool AllowInsecureHttp { get; set; }
+
+    /// <summary>
     /// Enable the admin / discovery endpoints that aren't required for pure
     /// protocol use. Disabled by default — hosts that want a full server call
     /// the Authagonal.Server extensions instead.
