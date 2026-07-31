@@ -52,6 +52,10 @@ public sealed class ConsentEndpointTests : IAsyncLifetime
     [Fact]
     public async Task ConsentInfo_ReturnsClientMetadataAndRequestedScopes()
     {
+        // Signed in first: the consent screen is only ever rendered to an authenticated user, and
+        // anonymous access made this a client-enumeration oracle over the whole registry.
+        await LoginAsync();
+
         var response = await _client.GetAsync(
             $"/consent/info?client_id={ConsentClientId}&scope=openid%20profile");
 
@@ -66,6 +70,8 @@ public sealed class ConsentEndpointTests : IAsyncLifetime
     [Fact]
     public async Task ConsentInfo_UnknownClient_Returns404()
     {
+        await LoginAsync();
+
         var response = await _client.GetAsync("/consent/info?client_id=no-such-client");
 
         Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
@@ -286,6 +292,16 @@ public sealed class ConsentEndpointTests : IAsyncLifetime
         var scopes = item.GetProperty("scopes").EnumerateArray().Select(s => s.GetString()).ToList();
         Assert.Contains("openid", scopes);
         Assert.Contains("profile", scopes);
+    }
+
+    [Fact]
+    public async Task ConsentInfo_Unauthenticated_DisclosesNothing()
+    {
+        // The registry is not public. Names, descriptions, logo and home URIs are reconnaissance for
+        // a consent-phishing page impersonating a client the user has seen before.
+        var response = await _client.GetAsync($"/consent/info?client_id={ConsentClientId}");
+        Assert.NotEqual(HttpStatusCode.OK, response.StatusCode);
+        Assert.DoesNotContain("Consent SPA", await response.Content.ReadAsStringAsync(), StringComparison.Ordinal);
     }
 
     [Fact]

@@ -54,7 +54,13 @@ public static class ConsentEndpoint
                 Scopes = requestedScopes,
                 ScopeDetails = details.ToArray(),
             }, AuthagonalJsonContext.Default.ConsentInfoResponse);
-        });
+        })
+        // The consent screen is only ever rendered to a signed-in user, and this endpoint answers
+        // "does client X exist, and what is it called" to anyone who asks. Anonymous access made it a
+        // client-enumeration oracle over the whole registry — names, descriptions, logo and home URIs
+        // — which is reconnaissance for a consent-phishing page that impersonates a real client the
+        // user has seen before. Its three sibling endpoints already require authorization.
+        .RequireAuthorization();
 
         app.MapPost("/consent", async (
             HttpContext httpContext,
