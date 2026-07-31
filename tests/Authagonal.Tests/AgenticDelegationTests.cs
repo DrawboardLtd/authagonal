@@ -214,6 +214,40 @@ public sealed class AgenticDelegationTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Exchange_PendingPoll_WritesNothingAndStillThrottles()
+    {
+        // The poll used to persist LastPolledAt, which meant re-serializing the whole approval —
+        // Status included — from a copy read moments earlier. A poll racing the user's decision wrote
+        // `Pending` back over their approve or DENY, and the losing resolve was discarded silently.
+        // A pending poll now leaves the row alone: there is nothing left to roll a decision back with.
+        var primary = await GetPrimaryAccessTokenAsync();
+        await GrantConsentAsync(AgentClientId);
+
+        var parked = await ExchangeAsync(AgentClientId, AgentClientSecret, primary,
+            authorizationDetails: """[{"type":"email","actions":["send"]}]""");
+        var approvalId = (await parked.Content.ReadFromJsonAsync<JsonElement>())
+            .GetProperty("approval_id").GetString()!;
+
+        var before = await _factory.GrantStore.GetAsync(Approval.Key(approvalId));
+        Assert.NotNull(before);
+
+        var poll = await ExchangeAsync(AgentClientId, AgentClientSecret, primary,
+            authorizationDetails: """[{"type":"email","actions":["send"]}]""", approvalId: approvalId);
+        Assert.Equal("authorization_pending",
+            (await poll.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("error").GetString());
+
+        var after = await _factory.GrantStore.GetAsync(Approval.Key(approvalId));
+        Assert.Equal(before!.Data, after!.Data);
+
+        // The interval it used to enforce is still enforced — it just rides the rate limiter now, the
+        // same mechanism the device flow's identical §3.5 throttle uses.
+        var immediate = await ExchangeAsync(AgentClientId, AgentClientSecret, primary,
+            authorizationDetails: """[{"type":"email","actions":["send"]}]""", approvalId: approvalId);
+        Assert.Equal("slow_down",
+            (await immediate.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("error").GetString());
+    }
+
+    [Fact]
     public async Task Exchange_DeniedApproval_IsAccessDenied()
     {
         var primary = await GetPrimaryAccessTokenAsync();

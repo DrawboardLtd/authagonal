@@ -32,8 +32,20 @@ public sealed class ProtocolTokenService(
     IEnumerable<IAuthHook>? authHooks = null,
     // Optional for the same reason as the seams above (hand-constructed hosts), but wired everywhere
     // real: without it a REVOKED subject_token can still be exchanged for a fresh one.
-    IRevokedTokenStore? revokedTokenStore = null) : IProtocolTokenService
+    IRevokedTokenStore? revokedTokenStore = null,
+    // Throttles the approval poll (RFC 8628-style slow_down). Optional so hand-constructed hosts keep
+    // working; a host that registers a limiter gets its scoping (the Server's is per tenant).
+    IRateLimiter? rateLimiter = null) : IProtocolTokenService
 {
+    /// <summary>
+    /// Fallback for the approval-poll throttle when the host registers no <see cref="IRateLimiter"/>.
+    /// Static because this service is scoped: a per-instance limiter would start a fresh window on every
+    /// request and throttle nothing at all.
+    /// </summary>
+    private static readonly IRateLimiter FallbackPollLimiter = new InProcessRateLimiter();
+
+    private IRateLimiter PollLimiter => rateLimiter ?? FallbackPollLimiter;
+
     /// <summary>Per-user scope entitlement, re-applied at refresh. Built over the injected scope
     /// store rather than taken from DI so hosts that construct this service by hand keep working.</summary>
     private readonly IScopeRoleGate _scopeRoleGate = new ScopeRoleGate(scopeStore);
@@ -1638,34 +1650,24 @@ public sealed class ProtocolTokenService(
                 throw new ProtocolTokenException("access_denied", "the user denied the request");
 
             case ApprovalStatus.Pending:
-                var now = DateTimeOffset.UtcNow;
-                if (data.LastPolledAt is { } lastPolled &&
-                    now - lastPolled < TimeSpan.FromSeconds(Approval.PollIntervalSeconds))
+                // The poll writes NOTHING — the interval rides the rate limiter instead of a
+                // LastPolledAt field persisted through the grant.
+                //
+                // Persisting the marker meant serializing the WHOLE payload, including Status, from a
+                // copy read moments earlier: a poll racing the user's decision wrote back the stale
+                // `Pending` and silently reverted an approve or a DENY — the agent's own polling
+                // undoing the answer it was waiting for. Re-reading first narrowed the window but
+                // could not close it, because read-check-write is not atomic and IGrantStore has no
+                // conditional write for the payload. A poll counter is not worth a path that can
+                // resurrect a denied approval, so the counter moved to the same mechanism the device
+                // flow's identical §3.5 throttle uses (Server/Endpoints/TokenEndpoint.cs).
+                //
+                // Keyed on the approval handle, so one agent's polling cannot throttle another's.
+                if (await PollLimiter.IsRateLimitedAsync(
+                        $"approval-poll|{approvalId}", 1, TimeSpan.FromSeconds(Approval.PollIntervalSeconds), ct))
                     throw new ProtocolTokenException("slow_down",
                         "Polling too frequently. Increase your interval and try again.");
-                // The poll marker is written ONLY if the row is still pending when the write lands.
-                //
-                // This was an unconditional StoreAsync of the whole payload, read moments earlier. A
-                // poll racing the user's decision therefore wrote back the stale `Pending` status and
-                // silently reverted an approve or a DENY — the agent's own polling undoing the user's
-                // answer. Re-reading and re-checking before the write closes the window to the point
-                // where a lost update costs one un-throttled poll, which is what the comment always
-                // claimed the cost was.
-                var current = await grantStore.GetAsync(key, ct);
-                if (current is null || Approval.Parse(current.Data) is not { } currentData)
-                    throw new ApprovalPendingException(approvalId, Approval.PollIntervalSeconds);
 
-                if (currentData.Status != ApprovalStatus.Pending)
-                {
-                    // The user answered between our read and now. Re-evaluate against their answer
-                    // rather than overwriting it.
-                    return await RedeemApprovalAsync(approvalId, clientId, subjectId, requestHash, ct);
-                }
-
-                currentData.LastPolledAt = now;
-                current.Key = key;
-                current.Data = Approval.Serialize(currentData);
-                await grantStore.StoreAsync(current, ct);
                 throw new ApprovalPendingException(approvalId, Approval.PollIntervalSeconds);
 
             default:

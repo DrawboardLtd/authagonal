@@ -84,16 +84,32 @@ else
     return 1;
 }
 
-// The CLI writes through stores built without an IFieldCipher, an IIndexTokenizer or an IChangeWriter,
-// because none of the three is configuration-derived — a host registers them programmatically. So this
-// is stated rather than silently assumed: at-rest PII encryption and blind-index tokenization are NOT
-// applied to anything this tool writes, and the writes are not change-log captured.
+// At-rest PII encryption and blind-index tokenization must match the TARGET deployment's too, and
+// unlike the change log neither is configuration-derived: IFieldCipher and IIndexTokenizer are
+// registered programmatically by the host (Authagonal Cloud registers a per-tenant Vault Transit
+// cipher), so this tool cannot construct them from a connection string. It therefore refuses rather
+// than assuming their absence, on the same grounds as the secret provider above.
+//
+// The divergence this closes is not theoretical: the server's Azure registration DOES resolve both
+// seams, so against such a deployment the CLI wrote every user's PII in plaintext into tables whose
+// other rows are encrypted — and, worse, wrote plaintext-keyed index rows that a tokenizing reader
+// cannot find at all, so the migrated accounts silently could not be looked up by email.
+if (!config.GetValue("AllowPlaintextPii", false))
+{
+    Console.Error.WriteLine(
+        "ERROR: this tool writes user PII with no at-rest field encryption and no blind-index\n" +
+        "       tokenization, because IFieldCipher / IIndexTokenizer are registered in code, not in\n" +
+        "       configuration. If the TARGET deployment registers either, use the in-host runner\n" +
+        "       (AddAuthagonalDuendeMigration) — migrating with this tool would write plaintext rows\n" +
+        "       and plaintext-keyed indexes the server cannot resolve. If the target registers\n" +
+        "       neither, pass --AllowPlaintextPii true to confirm that.");
+    return 1;
+}
+
 Console.WriteLine();
-Console.WriteLine("  NOTE: this tool writes user PII without at-rest field encryption or blind-index");
-Console.WriteLine("        tokenization, and its writes are not captured in the change log (a");
-Console.WriteLine("        change-log-driven incremental backup will miss them until the next full");
-Console.WriteLine("        scan). A deployment that registers IFieldCipher or IIndexTokenizer should");
-Console.WriteLine("        use the in-host runner (AddAuthagonalDuendeMigration) instead.");
+Console.WriteLine("  PII:     PLAINTEXT (--AllowPlaintextPii) — no field encryption, no blind-index");
+Console.WriteLine("           tokenization. Writes ARE captured in the change log, so an incremental");
+Console.WriteLine("           backup sees the migrated rows.");
 Console.WriteLine();
 
 var stores = StoreFactory.Create(targetConnectionString);

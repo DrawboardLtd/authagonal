@@ -400,6 +400,40 @@ public sealed class DeviceAuthorizationTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task ConcurrentApprovalsOfOneUserCode_OnlyOneIsHonoured()
+    {
+        // The sequential case above is stopped by a read of the user-code grant, and a read is
+        // check-then-act: overlapping approvals all see it live, all pass, and all reach the approval
+        // write. That write is an unconditional upsert of a row carrying ConsumedAt = null, so a
+        // loser landing after the device's poll consumed the code re-arms it for a second token set.
+        // The claim on the user code is now the conditional delete, so exactly one caller can proceed.
+        await _factory.SeedTestUserAsync();
+        var deviceCodes = await RequestDeviceCodes();
+        await _client.PostAsJsonAsync("/api/auth/login", new { email = "test@example.com", password = "Test1234!" });
+
+        var responses = await Task.WhenAll(Enumerable.Range(0, 5).Select(_ =>
+            _client.PostAsync("/api/auth/device/approve", new FormUrlEncodedContent(
+                new Dictionary<string, string> { ["user_code"] = deviceCodes.UserCode }))));
+
+        Assert.Equal(1, responses.Count(r => r.StatusCode == HttpStatusCode.OK));
+
+        // And the one approval yields exactly one token set: the consumed marker the atomic redemption
+        // writes is still there afterwards, not overwritten by a straggler.
+        var tokenForm = new Dictionary<string, string>
+        {
+            ["grant_type"] = GrantTypes.DeviceCode,
+            ["device_code"] = deviceCodes.DeviceCode,
+            ["client_id"] = AuthagonalTestFactory.AdminClientId,
+            ["client_secret"] = AuthagonalTestFactory.AdminClientSecret,
+        };
+        Assert.Equal(HttpStatusCode.OK,
+            (await _client.PostAsync("/connect/token", new FormUrlEncodedContent(tokenForm))).StatusCode);
+
+        var redeemed = await _factory.GrantStore.GetAsync($"device:{deviceCodes.DeviceCode}");
+        Assert.NotNull(redeemed!.ConsumedAt);
+    }
+
+    [Fact]
     public async Task PendingPoll_DoesNotRewriteTheGrant()
     {
         await _factory.SeedTestUserAsync();
