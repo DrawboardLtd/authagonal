@@ -3,6 +3,18 @@ using System.Text;
 
 namespace Authagonal.Server.Services.Saml;
 
+/// <summary>
+/// Builds the SP's outbound messages — AuthnRequest, LogoutRequest, LogoutResponse — in the SAML 2.0
+/// HTTP-Redirect binding (Bindings §3.4.4.1): DEFLATE, base64, URL-encode into a query string.
+/// <para>
+/// That is the only binding implemented, and it is why <see cref="SamlMetadataParser"/> accepts only
+/// endpoints published for it: every destination reaching these methods carries
+/// <see cref="SamlBinding.HttpRedirect"/>. HTTP-POST (§3.5.4) would need base64 without DEFLATE in a
+/// self-submitting form with a noscript control, and its signature inside the message as XML-DSig
+/// rather than over the query string the way <see cref="SamlRedirectBinding"/> signs — a second
+/// implementation, not a branch.
+/// </para>
+/// </summary>
 public static class SamlRequestBuilder
 {
     /// <summary>

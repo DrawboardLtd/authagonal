@@ -143,6 +143,12 @@ public static class ScimDiscoveryEndpoints
             description = "User Account",
             attributes = new object[]
             {
+                // id / meta are RFC 7643 §3.1 common attributes. They were omitted here while being
+                // returned on every User, which is the same defect as omitting preferredLanguage:
+                // an integrator building a mapping from /Schemas cannot see them.
+                SchemaAttribute("id", "string", "Server-assigned unique identifier for the User.",
+                    required: true, mutability: "readOnly", returned: "always", uniqueness: "server"),
+                SchemaAttribute("externalId", "string", "External identifier from the provisioning client."),
                 SchemaAttribute("userName", "string", "Unique identifier for the User, typically email.", required: true, uniqueness: "server"),
                 SchemaAttribute("name", "complex", "The components of the user's real name.", subAttributes: new object[]
                 {
@@ -158,7 +164,19 @@ public static class ScimDiscoveryEndpoints
                     SchemaAttribute("primary", "boolean", "Is this the primary email."),
                 }),
                 SchemaAttribute("active", "boolean", "Whether the user account is active."),
-                SchemaAttribute("externalId", "string", "External identifier from the provisioning client."),
+                SchemaAttribute("preferredLanguage", "string",
+                    "The User's preferred written or spoken language, used to localise the emails Authagonal sends. " +
+                    "Stored as the user's locale."),
+                // locale is accepted on write purely as a fallback for IdPs that send it and no
+                // preferredLanguage; both land in the same stored field and the User resource
+                // returns it as preferredLanguage. returned="never" (RFC 7643 §7: "the value is not
+                // stored") is the accurate way to say write-only-alias, and is what keeps the
+                // round-trip test from demanding a locale member that will never appear.
+                SchemaAttribute("locale", "string",
+                    "Formatting locale. Accepted on create/replace as a fallback when the client sends no " +
+                    "preferredLanguage; the stored value is returned as preferredLanguage, never as locale.",
+                    returned: "never"),
+                MetaAttribute("User"),
             },
             meta = new { resourceType = "Schema", location = $"{baseUrl}/scim/v2/Schemas/urn:ietf:params:scim:schemas:core:2.0:User" },
         }),
@@ -170,14 +188,19 @@ public static class ScimDiscoveryEndpoints
             description = "Group",
             attributes = new object[]
             {
+                SchemaAttribute("id", "string", "Server-assigned unique identifier for the Group.",
+                    required: true, mutability: "readOnly", returned: "always", uniqueness: "server"),
+                SchemaAttribute("externalId", "string", "External identifier from the provisioning client."),
                 SchemaAttribute("displayName", "string", "A human-readable name for the Group.", required: true),
                 SchemaAttribute("members", "complex", "A list of members of the Group.", multiValued: true, subAttributes: new object[]
                 {
                     SchemaAttribute("value", "string", "Identifier of the group member."),
-                    SchemaAttribute("$ref", "reference", "The URI of the member resource."),
+                    // §7 requires referenceTypes on a reference-typed attribute. Without it a client
+                    // has a URI and no statement of what it points at; Groups only ever hold Users.
+                    SchemaAttribute("$ref", "reference", "The URI of the member resource.", referenceTypes: ["User"]),
                     SchemaAttribute("type", "string", "The type of the member (User)."),
                 }),
-                SchemaAttribute("externalId", "string", "External identifier from the provisioning client."),
+                MetaAttribute("Group"),
             },
             meta = new { resourceType = "Schema", location = $"{baseUrl}/scim/v2/Schemas/urn:ietf:params:scim:schemas:core:2.0:Group" },
         }),
@@ -207,22 +230,62 @@ public static class ScimDiscoveryEndpoints
         }),
     ];
 
-    private static object SchemaAttribute(
+    /// <summary>
+    /// RFC 7643 §3.1 <c>meta</c>, identical on every resource type bar the resourceType description.
+    /// </summary>
+    private static Dictionary<string, object> MetaAttribute(string resourceType) =>
+        SchemaAttribute("meta", "complex", "Resource metadata.", mutability: "readOnly", subAttributes:
+        [
+            SchemaAttribute("resourceType", "string", $"The name of the resource type — \"{resourceType}\".", mutability: "readOnly"),
+            SchemaAttribute("created", "dateTime", "When the resource was added to the service provider.", mutability: "readOnly"),
+            SchemaAttribute("lastModified", "dateTime", "The most recent modification to the resource.", mutability: "readOnly"),
+            SchemaAttribute("location", "reference", "The URI of the resource.", mutability: "readOnly", referenceTypes: ["uri"]),
+        ]);
+
+    /// <summary>
+    /// One attribute definition per RFC 7643 §7's schema-of-schemas.
+    /// <para>
+    /// Three things here are deliberate, each having been wrong before. <c>caseExact</c> is emitted for
+    /// every attribute whose type has character comparison semantics (string, reference) and omitted for
+    /// the rest, matching §8.7.1 — it is what tells a client whether <c>userName eq</c> is
+    /// case-sensitive, and a client that finds nothing has to guess. The value is <c>false</c>
+    /// throughout because that is what <see cref="Services.Scim.ScimFilterEvaluator"/> actually does: it
+    /// compares every string with <c>OrdinalIgnoreCase</c>. If per-attribute case sensitivity is ever
+    /// implemented there, these move with it, or the document goes back to lying.
+    /// </para>
+    /// <para>
+    /// <c>referenceTypes</c> is required by §7 on a reference-typed attribute and has no sensible
+    /// default, so it is passed explicitly. And <c>subAttributes</c> is omitted rather than emitted as
+    /// <c>null</c>, which is what a dictionary buys over an anonymous type — a simple attribute has no
+    /// sub-attributes, which is not the same statement as having a null list of them.
+    /// </para>
+    /// </summary>
+    private static Dictionary<string, object> SchemaAttribute(
         string name, string type, string description,
         bool required = false, bool multiValued = false,
-        string? uniqueness = null, object[]? subAttributes = null)
+        string mutability = "readWrite", string returned = "default",
+        string uniqueness = "none",
+        string[]? referenceTypes = null, object[]? subAttributes = null)
     {
-        return new
+        var attribute = new Dictionary<string, object>
         {
-            name,
-            type,
-            description,
-            required,
-            multiValued,
-            mutability = "readWrite",
-            returned = "default",
-            uniqueness = uniqueness ?? "none",
-            subAttributes,
+            ["name"] = name,
+            ["type"] = type,
+            ["description"] = description,
+            ["required"] = required,
+            ["multiValued"] = multiValued,
+            ["mutability"] = mutability,
+            ["returned"] = returned,
+            ["uniqueness"] = uniqueness,
         };
+
+        if (type is "string" or "reference")
+            attribute["caseExact"] = false;
+        if (referenceTypes is not null)
+            attribute["referenceTypes"] = referenceTypes;
+        if (subAttributes is not null)
+            attribute["subAttributes"] = subAttributes;
+
+        return attribute;
     }
 }

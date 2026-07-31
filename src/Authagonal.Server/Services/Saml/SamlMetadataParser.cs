@@ -3,12 +3,34 @@ using System.Xml.Linq;
 
 namespace Authagonal.Server.Services.Saml;
 
+/// <summary>
+/// A SAML 2.0 binding, as far as outbound messages are concerned. <see cref="SamlRequestBuilder"/>
+/// implements <see cref="HttpRedirect"/> only, and this enum exists so that fact is stated in the
+/// data rather than assumed by the caller — see <see cref="SamlIdpMetadata"/>.
+/// </summary>
+public enum SamlBinding
+{
+    /// <summary>urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect — DEFLATE, base64, query string.</summary>
+    HttpRedirect,
+
+    /// <summary>urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST — base64 without DEFLATE, form POST.</summary>
+    HttpPost,
+}
+
+/// <param name="SingleSignOnServiceBinding">
+/// The binding the <paramref name="SingleSignOnServiceUrl"/> was selected for. Always
+/// <see cref="SamlBinding.HttpRedirect"/> today — a URL and the encoding it expects are one fact, and
+/// keeping them apart is what let a POST-only endpoint be handed to a redirect-binding builder (F293).
+/// </param>
+/// <param name="SingleLogoutServiceBinding">As above, for <paramref name="SingleLogoutServiceUrl"/>.</param>
 public sealed record SamlIdpMetadata(
     string SingleSignOnServiceUrl,
     List<X509Certificate2> SigningCertificates,
     string EntityId,
     string? SingleLogoutServiceUrl = null,
-    bool WantAuthnRequestsSigned = false);
+    bool WantAuthnRequestsSigned = false,
+    SamlBinding SingleSignOnServiceBinding = SamlBinding.HttpRedirect,
+    SamlBinding SingleLogoutServiceBinding = SamlBinding.HttpRedirect);
 
 public sealed class SamlMetadataParser(IHttpClientFactory httpClientFactory)
 {
@@ -95,6 +117,11 @@ public sealed class SamlMetadataParser(IHttpClientFactory httpClientFactory)
     /// the SP consumes (entityID, SSO endpoints, signing certs). Vendor documents can exceed 100KB
     /// (ADFS FederationMetadata.xml) — past the 64KB Azure Table property cap — while the parts we
     /// use are a few KB of certificates. Parses (validating the paste) and re-emits.
+    /// <para>
+    /// The re-emitted endpoints are labelled HTTP-Redirect. That is only true because
+    /// <see cref="Parse"/> now selects nothing else; while the POST fallback existed, condensing a
+    /// POST-only document silently relabelled a POST endpoint as a redirect one and persisted the lie.
+    /// </para>
     /// </summary>
     public static string Condense(string metadataXml)
     {
@@ -136,7 +163,23 @@ public sealed class SamlMetadataParser(IHttpClientFactory httpClientFactory)
         var idpDescriptor = root.Element(Md + "IDPSSODescriptor")
             ?? throw new InvalidOperationException("Metadata missing IDPSSODescriptor element.");
 
-        // Extract SingleSignOnService with HTTP-Redirect binding
+        // Extract SingleSignOnService with HTTP-Redirect binding.
+        //
+        // F293: this used to fall back to an HTTP-POST endpoint when no HTTP-Redirect one was
+        // published, which made a POST-only IdP (some ADFS and Ping deployments, and anything hardened
+        // to refuse query-string requests) look configured while being unsupported. The URL is only
+        // ever consumed by SamlRequestBuilder, which DEFLATEs, base64s and URL-encodes into a query
+        // string — the HTTP-Redirect encoding of Bindings §3.4.4.1. HTTP-POST (§3.5.4) is base64
+        // without DEFLATE, delivered as a form POST, and its signature lives in the message as XML-DSig
+        // rather than in the query string the way SamlRedirectBinding.Sign puts it. So the fallback
+        // could not have worked: every login GET a deflated AuthnRequest at an endpoint expecting a
+        // form, and the IdP answered with an opaque error.
+        //
+        // Supporting POST outbound is a feature (an XML signing path for requests, form rendering with
+        // a noscript control, at three call sites), not a fix. Until it exists the honest behaviour is
+        // to refuse the connection here, where the message names the actual problem — for pasted
+        // metadata that surfaces as a 400 at connection-create time, and for a metadata URL at the
+        // first login rather than as an IdP-side error with no explanation.
         string? ssoUrl = null;
         foreach (var ssoElement in idpDescriptor.Elements(Md + "SingleSignOnService"))
         {
@@ -148,22 +191,16 @@ public sealed class SamlMetadataParser(IHttpClientFactory httpClientFactory)
             }
         }
 
-        // Fallback: try HTTP-POST binding if no redirect binding found
         if (string.IsNullOrEmpty(ssoUrl))
         {
-            foreach (var ssoElement in idpDescriptor.Elements(Md + "SingleSignOnService"))
-            {
-                var binding = ssoElement.Attribute("Binding")?.Value;
-                if (string.Equals(binding, SamlConstants.HttpPostBinding, StringComparison.Ordinal))
-                {
-                    ssoUrl = ssoElement.Attribute("Location")?.Value;
-                    break;
-                }
-            }
+            var postOnly = idpDescriptor.Elements(Md + "SingleSignOnService").Any(e =>
+                string.Equals(e.Attribute("Binding")?.Value, SamlConstants.HttpPostBinding, StringComparison.Ordinal));
+            throw new InvalidOperationException(postOnly
+                ? "IdP publishes no HTTP-Redirect SingleSignOnService endpoint (only HTTP-POST). " +
+                  "Authagonal sends AuthnRequests using the HTTP-Redirect binding, so the IdP must " +
+                  "publish a SingleSignOnService with Binding=\"urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect\"."
+                : "Metadata missing SingleSignOnService with HTTP-Redirect binding.");
         }
-
-        if (string.IsNullOrEmpty(ssoUrl))
-            throw new InvalidOperationException("Metadata missing SingleSignOnService with HTTP-Redirect or HTTP-POST binding.");
 
         // Extract signing certificates from <KeyDescriptor>
         var certificates = new List<X509Certificate2>();
@@ -192,24 +229,26 @@ public sealed class SamlMetadataParser(IHttpClientFactory httpClientFactory)
         if (certificates.Count == 0)
             throw new InvalidOperationException("Metadata contains no signing certificates.");
 
-        // Single logout endpoint (F55) — Redirect binding preferred, POST fallback
+        // Single logout endpoint (F55) — HTTP-Redirect only, for the same reason as SSO above. The POST
+        // fallback is dropped rather than made fatal: SLO is best-effort by contract (SloAsync already
+        // ends the local session and redirects when there is no IdP endpoint), so a POST-only IdP loses
+        // upstream logout instead of losing login. Sending it a deflated query-string LogoutRequest
+        // would not have logged the user out either — it would just have failed less visibly.
         string? sloUrl = null;
-        foreach (var binding in new[] { SamlConstants.HttpRedirectBinding, SamlConstants.HttpPostBinding })
+        foreach (var sloElement in idpDescriptor.Elements(Md + "SingleLogoutService"))
         {
-            foreach (var sloElement in idpDescriptor.Elements(Md + "SingleLogoutService"))
+            if (string.Equals(sloElement.Attribute("Binding")?.Value, SamlConstants.HttpRedirectBinding, StringComparison.Ordinal))
             {
-                if (string.Equals(sloElement.Attribute("Binding")?.Value, binding, StringComparison.Ordinal))
-                {
-                    sloUrl = sloElement.Attribute("Location")?.Value;
-                    break;
-                }
+                sloUrl = sloElement.Attribute("Location")?.Value;
+                break;
             }
-            if (!string.IsNullOrEmpty(sloUrl)) break;
         }
 
         var wantSignedRequests = string.Equals(
             idpDescriptor.Attribute("WantAuthnRequestsSigned")?.Value, "true", StringComparison.OrdinalIgnoreCase);
 
-        return new SamlIdpMetadata(ssoUrl, certificates, entityId, sloUrl, wantSignedRequests);
+        return new SamlIdpMetadata(
+            ssoUrl, certificates, entityId, sloUrl, wantSignedRequests,
+            SamlBinding.HttpRedirect, SamlBinding.HttpRedirect);
     }
 }

@@ -1,7 +1,10 @@
 using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
+using System.Reflection;
 using System.Text.Json;
+using System.Text.Json.Serialization;
+using Authagonal.Server.Endpoints.Scim;
 using Authagonal.Tests.Infrastructure;
 
 namespace Authagonal.Tests;
@@ -42,6 +45,148 @@ public sealed class ScimDiscoveryTests : IAsyncLifetime
     {
         var response = await _client.GetAsync("/scim/v2/ResourceTypes");
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+    }
+
+    // ── /Schemas is a contract, not a formality (F324) ──
+    //
+    // The advertised schema had drifted from the resource: preferredLanguage was bound, stored and
+    // returned but undeclared, so an integrator building the attribute mapping from /Schemas simply
+    // never mapped it and SCIM-provisioned users silently lost their localisation — the exact reason
+    // the field was added. id and meta were missing the same way. The two tests below are the invariant
+    // that stops it happening again: one pins the document to the resource in both directions, the
+    // other pins its shape to RFC 7643 §7.
+
+    /// <summary>
+    /// Every attribute the User and Group resources serialize is declared in the advertised schema, and
+    /// every declared attribute the server claims it returns actually exists on the resource. Driven off
+    /// the DTOs by reflection rather than a hand-written list, so adding a property to a resource
+    /// without declaring it fails here.
+    /// </summary>
+    [Fact]
+    public async Task AdvertisedSchemas_AndResourceRepresentations_AgreeInBothDirections()
+    {
+        await AssertSchemaMatchesResource(
+            "urn:ietf:params:scim:schemas:core:2.0:User", typeof(ScimUserResource),
+            new Dictionary<string, Type>
+            {
+                ["name"] = typeof(ScimName),
+                ["emails"] = typeof(ScimEmail),
+                ["meta"] = typeof(ScimMeta),
+            });
+
+        await AssertSchemaMatchesResource(
+            "urn:ietf:params:scim:schemas:core:2.0:Group", typeof(ScimGroupResource),
+            new Dictionary<string, Type>
+            {
+                ["members"] = typeof(ScimMember),
+                ["meta"] = typeof(ScimMeta),
+            });
+    }
+
+    /// <summary>
+    /// The attribute definitions are structurally valid per RFC 7643 §7: caseExact stated wherever
+    /// character comparison applies, referenceTypes present on reference-typed attributes,
+    /// subAttributes omitted rather than emitted as null, and the enumerated fields inside their
+    /// canonical value sets.
+    /// </summary>
+    [Fact]
+    public async Task SchemaAttributeDefinitions_AreStructurallyValidPerRfc7643()
+    {
+        foreach (var schema in await GetSchemasAsync())
+            foreach (var attribute in schema.GetProperty("attributes").EnumerateArray())
+                AssertAttributeDefinitionValid(attribute, schema.GetProperty("id").GetString()!);
+    }
+
+    private static void AssertAttributeDefinitionValid(JsonElement attribute, string path)
+    {
+        var name = attribute.GetProperty("name").GetString()!;
+        var where = $"{path}:{name}";
+        var type = attribute.GetProperty("type").GetString()!;
+
+        foreach (var required in new[] { "name", "type", "description", "required", "multiValued", "mutability", "returned", "uniqueness" })
+            Assert.True(attribute.TryGetProperty(required, out _), $"{where} is missing '{required}'.");
+
+        Assert.Contains(attribute.GetProperty("mutability").GetString(), new[] { "readOnly", "readWrite", "immutable", "writeOnly" });
+        Assert.Contains(attribute.GetProperty("returned").GetString(), new[] { "always", "never", "default", "request" });
+        Assert.Contains(attribute.GetProperty("uniqueness").GetString(), new[] { "none", "server", "global" });
+
+        // caseExact is what tells a client whether `userName eq` is case-sensitive. It is meaningful
+        // only where values are compared as characters, so it is stated for exactly those types.
+        Assert.Equal(type is "string" or "reference", attribute.TryGetProperty("caseExact", out _));
+
+        // §7: a reference-typed attribute carries referenceTypes, and nothing else does.
+        if (type == "reference")
+        {
+            Assert.True(attribute.TryGetProperty("referenceTypes", out var refTypes), $"{where} is a reference with no referenceTypes.");
+            Assert.NotEmpty(refTypes.EnumerateArray());
+        }
+        else
+        {
+            Assert.False(attribute.TryGetProperty("referenceTypes", out _), $"{where} is not a reference but declares referenceTypes.");
+        }
+
+        // A simple attribute has no sub-attributes — which is not the same claim as `subAttributes: null`.
+        if (attribute.TryGetProperty("subAttributes", out var subs))
+        {
+            Assert.Equal("complex", type);
+            Assert.NotEqual(JsonValueKind.Null, subs.ValueKind);
+            foreach (var sub in subs.EnumerateArray())
+                AssertAttributeDefinitionValid(sub, where);
+        }
+        else
+        {
+            Assert.NotEqual("complex", type);
+        }
+    }
+
+    private async Task AssertSchemaMatchesResource(string schemaId, Type resourceType, Dictionary<string, Type> complexTypes)
+    {
+        var schema = (await GetSchemasAsync()).Single(s => s.GetProperty("id").GetString() == schemaId);
+        AssertAttributesMatch(schema.GetProperty("attributes"), resourceType, complexTypes, schemaId);
+    }
+
+    private static void AssertAttributesMatch(JsonElement attributes, Type resourceType, Dictionary<string, Type> complexTypes, string where)
+    {
+        var declared = attributes.EnumerateArray().ToDictionary(a => a.GetProperty("name").GetString()!, a => a);
+        var serialized = SerializedMemberNames(resourceType);
+
+        foreach (var member in serialized)
+        {
+            // "schemas" is the resource's schema-URI list (RFC 7644 §3.1), carried by every SCIM
+            // message rather than defined by any one schema. It is the only exemption.
+            if (member == "schemas") continue;
+
+            Assert.True(declared.ContainsKey(member),
+                $"{where} returns '{member}' but the advertised schema does not declare it.");
+
+            if (complexTypes.TryGetValue(member, out var subType))
+                AssertAttributesMatch(declared[member].GetProperty("subAttributes"), subType, [], $"{where}:{member}");
+        }
+
+        foreach (var (name, attribute) in declared)
+        {
+            // returned="never" is the server saying the attribute is accepted but not stored under that
+            // name — SCIM's locale, which is folded into preferredLanguage. Nothing else may be absent.
+            if (attribute.GetProperty("returned").GetString() == "never") continue;
+
+            Assert.True(serialized.Contains(name),
+                $"{where} declares '{name}' but the resource never returns it.");
+        }
+    }
+
+    /// <summary>The JSON member names a DTO actually writes, in the serializer's own terms.</summary>
+    private static HashSet<string> SerializedMemberNames(Type type) =>
+        type.GetProperties(BindingFlags.Public | BindingFlags.Instance)
+            .Where(p => p.GetCustomAttribute<JsonIgnoreAttribute>()?.Condition is not JsonIgnoreCondition.Always)
+            .Select(p => p.GetCustomAttribute<JsonPropertyNameAttribute>()?.Name ?? p.Name)
+            .ToHashSet(StringComparer.Ordinal);
+
+    private async Task<List<JsonElement>> GetSchemasAsync()
+    {
+        var response = await _client.GetAsync("/scim/v2/Schemas");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+        return [.. body.GetProperty("Resources").EnumerateArray()];
     }
 
     [Fact]
