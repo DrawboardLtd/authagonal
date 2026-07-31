@@ -160,6 +160,103 @@ public class SamlMetadataCondenseTests
     }
 }
 
+/// <summary>
+/// F293: the parser used to fall back to an HTTP-POST endpoint when the IdP published no HTTP-Redirect
+/// one, but every outbound message is built by <see cref="SamlRequestBuilder"/> in the redirect binding
+/// — DEFLATE, base64, query string. A POST-only IdP therefore looked configured and then failed every
+/// login with an opaque IdP-side error, because it was being sent a deflated AuthnRequest by GET to an
+/// endpoint expecting a form POST. These pin the fallback as gone and the binding as recorded.
+/// </summary>
+public class SamlBindingSelectionTests
+{
+    private const string RedirectBinding = "urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect";
+    private const string PostBinding = "urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST";
+
+    /// <summary>IdP metadata with arbitrary SSO/SLO endpoint bindings, which SamlTestHelper does not vary.</summary>
+    private static string Metadata(params (string Element, string Binding, string Location)[] endpoints)
+    {
+        var certBase64 = Convert.ToBase64String(SamlTestHelper.TestCertificate.Export(X509ContentType.Cert));
+        var elements = string.Concat(endpoints.Select(e =>
+            $@"<{e.Element} Binding=""{e.Binding}"" Location=""{e.Location}""/>"));
+
+        return $@"<?xml version=""1.0""?>
+<EntityDescriptor xmlns=""urn:oasis:names:tc:SAML:2.0:metadata"" entityID=""https://idp.test"">
+    <IDPSSODescriptor protocolSupportEnumeration=""urn:oasis:names:tc:SAML:2.0:protocol"">
+        <KeyDescriptor use=""signing"">
+            <KeyInfo xmlns=""http://www.w3.org/2000/09/xmldsig#"">
+                <X509Data><X509Certificate>{certBase64}</X509Certificate></X509Data>
+            </KeyInfo>
+        </KeyDescriptor>{elements}
+    </IDPSSODescriptor>
+</EntityDescriptor>";
+    }
+
+    [Fact]
+    public void Parse_PostOnlySsoEndpoint_IsRefusedWithAnExplicitReason()
+    {
+        var xml = Metadata(("SingleSignOnService", PostBinding, "https://idp.test/sso-post"));
+
+        var ex = Assert.Throws<InvalidOperationException>(() => SamlMetadataParser.Parse(xml));
+
+        // The message is what an admin sees on the connection-create 400, so it has to name the cause.
+        Assert.Contains("HTTP-Redirect", ex.Message);
+        Assert.Contains("SingleSignOnService", ex.Message);
+        Assert.DoesNotContain("https://idp.test/sso-post", ex.Message);
+    }
+
+    [Fact]
+    public void Parse_NoSsoEndpointAtAll_StillReportsTheMissingEndpoint()
+    {
+        var ex = Assert.Throws<InvalidOperationException>(() =>
+            SamlMetadataParser.Parse(Metadata(("SingleLogoutService", RedirectBinding, "https://idp.test/slo"))));
+
+        Assert.Contains("SingleSignOnService", ex.Message);
+    }
+
+    [Fact]
+    public void Parse_BothBindingsPublished_TakesRedirectAndRecordsIt()
+    {
+        var parsed = SamlMetadataParser.Parse(Metadata(
+            ("SingleSignOnService", PostBinding, "https://idp.test/sso-post"),
+            ("SingleSignOnService", RedirectBinding, "https://idp.test/sso-redirect"),
+            ("SingleLogoutService", PostBinding, "https://idp.test/slo-post"),
+            ("SingleLogoutService", RedirectBinding, "https://idp.test/slo-redirect")));
+
+        // Document order puts POST first; the binding decides, not the position.
+        Assert.Equal("https://idp.test/sso-redirect", parsed.SingleSignOnServiceUrl);
+        Assert.Equal("https://idp.test/slo-redirect", parsed.SingleLogoutServiceUrl);
+        Assert.Equal(SamlBinding.HttpRedirect, parsed.SingleSignOnServiceBinding);
+        Assert.Equal(SamlBinding.HttpRedirect, parsed.SingleLogoutServiceBinding);
+    }
+
+    [Fact]
+    public void Parse_PostOnlySloEndpoint_LosesUpstreamLogoutRatherThanLogin()
+    {
+        // SLO is best-effort by contract — SloAsync ends the local session and redirects when there is
+        // no IdP endpoint — so a POST-only SLO must not take the whole connection down with it.
+        var parsed = SamlMetadataParser.Parse(Metadata(
+            ("SingleSignOnService", RedirectBinding, "https://idp.test/sso"),
+            ("SingleLogoutService", PostBinding, "https://idp.test/slo-post")));
+
+        Assert.Equal("https://idp.test/sso", parsed.SingleSignOnServiceUrl);
+        Assert.Null(parsed.SingleLogoutServiceUrl);
+    }
+
+    [Fact]
+    public void Condense_NeverRelabelsAPostEndpointAsRedirect()
+    {
+        // Condense re-emits every endpoint with the redirect binding. That was a second-order bug while
+        // the fallback existed: a POST-only document was persisted as though it were a redirect one.
+        Assert.ThrowsAny<Exception>(() => SamlMetadataParser.Condense(
+            Metadata(("SingleSignOnService", PostBinding, "https://idp.test/sso-post"))));
+
+        var condensed = SamlMetadataParser.Condense(
+            Metadata(("SingleSignOnService", RedirectBinding, "https://idp.test/sso")));
+        Assert.Contains(RedirectBinding, condensed);
+        Assert.DoesNotContain(PostBinding, condensed);
+    }
+}
+
 public class SamlParserMultiValueTests
 {
     [Fact]

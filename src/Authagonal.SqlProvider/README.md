@@ -96,6 +96,47 @@ leave them out and the layout is plaintext. Rows written before you turned encry
 resolving, and `IUserStore.ReindexUserAsync` backfills them — so it can be switched on without
 downtime. For key material, pair with the HashiCorp Vault Transit signer.
 
+The same seam covers the `SigningKeys` table, whose `keyMaterialJson` is the *private* half of the
+token-signing key. That one is worth calling out, because the SQL backend changes its blast radius. On
+Azure the signing key is in Table Storage and the DataProtection ring in a Blob container, each with its
+own grantable RBAC; on AWS, DynamoDB and S3. Here everything is one database behind one connection
+string, so **treat that connection string as equivalent to the signing key itself** — a `pg_dump` handed
+to a developer, a read replica, an analytics role with `SELECT`, or a restored backup is otherwise
+enough to mint access tokens and id_tokens for any subject, scope and client. Registering a cipher is
+what breaks that equivalence. Keys written before you did keep loading, and re-protect themselves at the
+next rotation.
+
+## DataProtection keys
+
+`AddAuthagonalPostgres` / `AddAuthagonalSqlite` persist the ASP.NET DataProtection key ring to the same
+database by default, so cookies and antiforgery tokens survive restarts and work across pods with no
+extra service. Persisting is not encrypting: unless DataProtection has an `IXmlEncryptor`, each row
+holds a bare `<masterKey>`, and read access to `DataProtectionKeys` is the ability to forge and decrypt
+auth cookies. Configure one of:
+
+| Setting | Effect |
+|---|---|
+| `DataProtection:KeyVaultKeyId` | Wraps the ring with an Azure Key Vault key (`DefaultAzureCredential`). |
+| `DataProtection:CertificateThumbprint` | Wraps the ring with a certificate from the machine store. |
+| `DataProtection:AllowUnencryptedKeyRing` | Explicitly accepts a plaintext ring; logged at Critical on every start. |
+
+> ⚠️ **The startup refusal does not cover this backend.** `AddAuthagonal` refuses to start when a ring
+> is persisted but unencrypted, but it can only detect the rings it attaches itself — the ones keyed off
+> `DataProtection:BlobUri` or `Storage:ConnectionString`. A SQL host attaches its own repository, before
+> or after `AddAuthagonal`, which that check cannot see. So a SQL deployment with none of the settings
+> above starts silently with a plaintext key ring. Set one of them deliberately.
+
+The complementary control is to stop the key ring sharing a blast radius with the application data at
+all. `PersistDataProtectionKeysToSql` takes its own `SqlDataSource`, so it can point at a separate
+schema under a separately-granted role, leaving a `SELECT` on the application schema with nothing
+key-shaped in it:
+
+```csharp
+builder.Services.AddAuthagonalPostgres(appConnectionString, persistDataProtectionKeys: false);
+builder.Services.PersistDataProtectionKeysToSql(
+    new SqlDataSource(new PostgresDialect(keyRingConnectionString, schema: "authagonal_keys")));
+```
+
 ## Clustering (PostgreSQL)
 
 ```csharp
