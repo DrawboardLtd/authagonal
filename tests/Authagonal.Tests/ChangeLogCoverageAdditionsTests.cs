@@ -103,6 +103,58 @@ public class ChangeLogCoverageAdditionsTests(AzuriteFixture azurite)
         Assert.NotEmpty(await Rows(log, "UserEmailLocalPrefixes", "U")); // one row per local-part prefix
     }
 
+    /// <summary>
+    /// F33 — a rolled-up backup is verifiable, and an unverifiable one is refused.
+    /// </summary>
+    /// <remarks>
+    /// MergeService reimplemented the write path with a plain GZipStream/StreamWriter and computed no
+    /// hash, so every merged manifest carried an empty FileHashes — and RestoreService gates its
+    /// whole verification step on that dictionary being non-empty, so a rolled-up backup restored
+    /// entirely unverified with only a Console.Error line to say so. Rollups are the documented
+    /// long-term-retention path and RollupAndCleanAsync then DELETES the hashed inputs, so after a
+    /// rollup the only surviving copy was the one nothing could check.
+    /// </remarks>
+    [Fact]
+    public async Task Rollup_hashes_its_files_and_a_tampered_one_aborts_the_restore()
+    {
+        var prefix = $"rh{Guid.NewGuid():N}";
+        var users = Table(prefix, "Users");
+        await users.AddEntityAsync(new TableEntity("u1", "profile") { ["Email"] = "a@b.test" });
+
+        var dir = Path.Combine(Path.GetTempPath(), $"rh{Guid.NewGuid():N}");
+        try
+        {
+            var target = new FileSystemBackupTarget(dir);
+            var full = await new BackupService(_svc, target,
+                new BackupOptions { TablePrefix = prefix, Gzip = false }).RunAsync();
+
+            var source = new FileSystemBackupSource(dir);
+            var rolled = await new RollupService(source, target)
+                .RollupAsync(full.BackupId, [], gzip: false, newBackupId: $"{full.BackupId}-weekly");
+
+            Assert.NotEmpty(rolled.FileHashes);
+            Assert.True(rolled.FileHashes.ContainsKey("Users.jsonl"),
+                "the merged data file was written without a recorded hash");
+
+            // Corrupt a byte of the merged file. Restore must abort rather than apply it.
+            var dataFile = Path.Combine(dir, rolled.BackupId, "Users.jsonl");
+            var contents = await File.ReadAllTextAsync(dataFile);
+            await File.WriteAllTextAsync(dataFile, contents.Replace("a@b.test", "z@b.test"));
+
+            var restore = new RestoreService(_svc, source, new RestoreOptions
+            {
+                TablePrefix = $"{prefix}restored",
+                VerifyIntegrity = true,
+            });
+
+            await Assert.ThrowsAnyAsync<Exception>(() => restore.RunAsync(rolled.BackupId));
+        }
+        finally
+        {
+            if (Directory.Exists(dir)) Directory.Delete(dir, recursive: true);
+        }
+    }
+
     [Fact]
     public async Task Rollup_honors_explicit_backup_id()
     {

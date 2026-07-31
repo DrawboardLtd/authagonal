@@ -1,4 +1,4 @@
-# Keeps the SHA-pinned actions current.
+# Keeps the SHA-pinned actions AND the digest-pinned base images current.
 #
 # Pinning to a commit SHA is what stops a compromised upstream retargeting a moving tag at malicious
 # code — the tj-actions/changed-files incident (CVE-2025-30066) verbatim, and these workflows hold
@@ -12,3 +12,19 @@ updates:
       interval: weekly
     commit-message:
       prefix: "chore(ci)"
+
+  # The base images are pinned by digest, which freezes them against upstream patches — right for
+  # reproducibility, wrong if nothing ever moves the pin. Dependabot moves it, and the release scan
+  # gate runs on the resulting PR, so a bump that would ship a known-vulnerable base fails before
+  # it merges rather than after it publishes.
+  - package-ecosystem: docker
+    directories:
+      - /
+      - /demos/custom-server
+      - /demos/sample-app/frontend
+      - /demos/sample-app/SampleApp.Api
+      - /tools/Authagonal.Backup
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "chore(deps)"

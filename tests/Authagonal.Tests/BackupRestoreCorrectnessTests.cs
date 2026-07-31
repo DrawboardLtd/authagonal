@@ -92,8 +92,12 @@ public class BackupRestoreCorrectnessTests(AzuriteFixture azurite)
                 """{"PartitionKey":"p","RowKey":"r","When":"2026-01-02T03:04:05.0000000+00:00","N":7}""" + "\n");
 
             var restorePrefix = $"lgr{Guid.NewGuid():N}";
+            // AllowUnverified because this fixture IS the case the flag exists for: a hand-written
+            // backup with no manifest and therefore no file hashes. Missing hashes are now a hard
+            // failure rather than a Console.Error line nobody reads, so restoring one is a decision
+            // the caller states rather than a default it stumbles into.
             var result = await new RestoreService(_svc, new FileSystemBackupSource(dir),
-                new RestoreOptions { TablePrefix = restorePrefix }).RunAsync("20260101-000000");
+                new RestoreOptions { TablePrefix = restorePrefix, AllowUnverified = true }).RunAsync("20260101-000000");
             Assert.Equal(1, result.TotalRestored);
 
             var restored = (await Table($"{restorePrefix}Users").GetEntityAsync<TableEntity>("p", "r")).Value;

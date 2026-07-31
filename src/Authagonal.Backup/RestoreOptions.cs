@@ -13,6 +13,18 @@ public sealed class RestoreOptions
     public string? TablePrefix { get; set; }
 
     /// <summary>
+    /// Restore a backup that carries no file hashes, when <c>VerifyIntegrity</c> is on.
+    /// </summary>
+    /// <remarks>
+    /// Off by default, and the absence of hashes is a hard failure rather than a warning. It used to
+    /// print a line to Console.Error and restore anyway — a library writing to stderr inside a host
+    /// process is not a signal anyone sees, and the outcome is a restore that reports success while
+    /// having verified nothing. Turn this on deliberately for a genuinely old backup taken before
+    /// integrity hashing existed, having decided that unverified data is acceptable.
+    /// </remarks>
+    public bool AllowUnverified { get; set; }
+
+    /// <summary>
     /// Restore mode: Upsert (default), Merge, or Clean (delete all then restore).
     /// </summary>
     public RestoreMode Mode { get; set; } = RestoreMode.Upsert;

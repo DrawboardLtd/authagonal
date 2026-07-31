@@ -12,10 +12,34 @@ public sealed class DynamicCorsPolicyProvider(
     ILogger<DynamicCorsPolicyProvider> logger) : ICorsPolicyProvider
 {
 
-    private readonly SemaphoreSlim _semaphore = new(1, 1);
-    // Per-tenant cache: single-tenant hosts hold one "default" entry; multi-tenant hosts must not
-    // serve one tenant's allowed origins to another, so the cache is keyed by tenant.
-    private readonly ConcurrentDictionary<string, (string[] Origins, DateTimeOffset Expiry)> _cache = new();
+    /// <summary>
+    /// One gate PER cache key, not one for the whole process.
+    /// </summary>
+    /// <remarks>
+    /// A single process-wide semaphore was held across an unpaged full scan of a tenant's client
+    /// table, with no timeout, on the CORS middleware path — which runs for every request. One tenant
+    /// with a large client table (or a slow store) therefore stalled CORS resolution for every other
+    /// tenant on the node, and a store that hung stalled it indefinitely.
+    /// </remarks>
+    private readonly ConcurrentDictionary<string, SemaphoreSlim> _gates = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// Per-(tenant, env) cache.
+    /// </summary>
+    /// <remarks>
+    /// It was keyed on tenant alone. Env is a first-class isolation boundary — every store threads it
+    /// into the partition key, and a tenant's sandbox envs have their own client records — so the
+    /// origins list was built from an env-scoped scan and then cached under a key that did not name
+    /// the env. Whichever env warmed the entry first served its origins to all of them, which for a
+    /// credentialed policy means a sandbox origin could be honoured against production.
+    /// </remarks>
+    private readonly ConcurrentDictionary<string, (string[] Origins, DateTimeOffset Expiry)> _cache = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// How long the client-table scan may take before the cached (or static) answer is used instead.
+    /// CORS resolution sits in front of every request; it must not be the thing that hangs.
+    /// </summary>
+    private static readonly TimeSpan ScanTimeout = TimeSpan.FromSeconds(5);
 
     /// <summary>
     /// Path prefixes where a CLIENT-registered origin may be honoured: the OAuth/OIDC protocol surface a
@@ -101,26 +125,31 @@ public sealed class DynamicCorsPolicyProvider(
                 .ToArray();
         }
 
-        var tenantId = context.RequestServices.GetService<ITenantContext>()?.TenantId ?? "default";
+        var tenant = context.RequestServices.GetService<ITenantContext>();
+        var cacheKey = $"{tenant?.TenantId ?? "default"}|{tenant?.Env ?? ""}";
 
-        if (_cache.TryGetValue(tenantId, out var entry) && DateTimeOffset.UtcNow < entry.Expiry)
+        if (_cache.TryGetValue(cacheKey, out var entry) && DateTimeOffset.UtcNow < entry.Expiry)
             return entry.Origins;
 
-        await _semaphore.WaitAsync();
+        var gate = _gates.GetOrAdd(cacheKey, _ => new SemaphoreSlim(1, 1));
+        await gate.WaitAsync();
         try
         {
             // Double-check after acquiring the lock.
-            if (_cache.TryGetValue(tenantId, out entry) && DateTimeOffset.UtcNow < entry.Expiry)
+            if (_cache.TryGetValue(cacheKey, out entry) && DateTimeOffset.UtcNow < entry.Expiry)
                 return entry.Origins;
 
             var staticOrigins = staticOnly;
 
             var clientOrigins = new List<string>();
+            var scanned = false;
             try
             {
                 // Resolve IClientStore from the request scope (supports multi-tenant)
                 var clientStore = context.RequestServices.GetRequiredService<IClientStore>();
-                var clients = await clientStore.GetAllAsync();
+                using var timeout = new CancellationTokenSource(ScanTimeout);
+                var clients = await clientStore.GetAllAsync(timeout.Token);
+                scanned = true;
                 foreach (var client in clients)
                 {
                     // A disabled client contributes nothing. Its origins were pooled in regardless, so
@@ -144,7 +173,24 @@ public sealed class DynamicCorsPolicyProvider(
             }
             catch (Exception ex)
             {
-                logger.LogError(ex, "Failed to load client CORS origins; using static origins only");
+                logger.LogError(ex, "Failed to load client CORS origins for {CacheKey}", cacheKey);
+            }
+
+            if (!scanned)
+            {
+                // A stale entry beats collapsing to static-origins-only: dropping every client origin
+                // because one scan timed out turns a slow store into a CORS outage for every relying
+                // party. The entry is not re-dated, so the next request retries.
+                if (entry.Origins is { Length: > 0 })
+                {
+                    logger.LogWarning("Serving stale CORS origins for {CacheKey} after a failed refresh", cacheKey);
+                    return entry.Origins;
+                }
+
+                return staticOrigins
+                    .Where(o => !string.IsNullOrWhiteSpace(o))
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToArray();
             }
 
             var origins = staticOrigins
@@ -153,13 +199,13 @@ public sealed class DynamicCorsPolicyProvider(
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToArray();
 
-            _cache[tenantId] = (origins, DateTimeOffset.UtcNow.AddMinutes(cacheOptions.Value.CorsCacheMinutes));
-            logger.LogDebug("CORS origins cache refreshed for tenant {Tenant} with {Count} origins", tenantId, origins.Length);
+            _cache[cacheKey] = (origins, DateTimeOffset.UtcNow.AddMinutes(cacheOptions.Value.CorsCacheMinutes));
+            logger.LogDebug("CORS origins cache refreshed for {CacheKey} with {Count} origins", cacheKey, origins.Length);
             return origins;
         }
         finally
         {
-            _semaphore.Release();
+            gate.Release();
         }
     }
 }

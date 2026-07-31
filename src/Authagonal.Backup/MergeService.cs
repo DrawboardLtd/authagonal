@@ -50,18 +50,51 @@ public sealed class MergeService(IBackupSource source)
             // Output opens lazily on the first surviving row, so an empty table writes no file —
             // same behaviour as the old dictionary merge.
             StreamWriter? writer = null;
+            GZipStream? gzipStream = null;
+            HashingStream? hashingStream = null;
+            Stream? outputStream = null;
+            string? fileName = null;
+
+            // Hashed on the way out, exactly as BackupService does.
+            //
+            // This reimplemented the write path with a plain GZipStream/StreamWriter and computed no
+            // hash, so every merged manifest carried an empty FileHashes — and RestoreService gates
+            // the whole verification step on that dictionary being non-empty. So a rolled-up backup
+            // restored entirely unverified, and the only signal was a line on Console.Error from
+            // inside a library. Rollups are the documented long-term-retention path, and
+            // RollupAndCleanAsync then DELETES the hashed full and incrementals: after a rollup the
+            // only surviving copy of the data was the one that could not be checked.
             var count = await MergeTableAsync(
                 fullBackupId, incrementalBackupIds, tableName, tableTombstones,
                 openWriter: async () =>
                 {
                     var ext = gzip ? ".jsonl.gz" : ".jsonl";
-                    var outputStream = await target.OpenWriteAsync(backupId, $"{tableName}{ext}", ct);
-                    Stream writeStream = gzip ? new GZipStream(outputStream, CompressionLevel.Optimal) : outputStream;
-                    writer = new StreamWriter(writeStream, System.Text.Encoding.UTF8);
+                    fileName = $"{tableName}{ext}";
+                    outputStream = await target.OpenWriteAsync(backupId, fileName, ct);
+                    hashingStream = new HashingStream(outputStream);
+                    // leaveOpen on both layers so disposing the writer does not cascade into the hash
+                    // before GetHashHex reads it — same reason, and the same shape, as BackupService.
+                    if (gzip)
+                    {
+                        gzipStream = new GZipStream(hashingStream, CompressionLevel.Optimal, leaveOpen: true);
+                        writer = new StreamWriter(gzipStream, System.Text.Encoding.UTF8, bufferSize: 8192, leaveOpen: true);
+                    }
+                    else
+                    {
+                        writer = new StreamWriter(hashingStream, System.Text.Encoding.UTF8, bufferSize: 8192, leaveOpen: true);
+                    }
                     return writer;
                 }, ct);
-            if (writer is not null)
-                await writer.DisposeAsync(); // cascades: flushes + disposes gzip + output streams
+
+            if (writer is not null) await writer.DisposeAsync();
+            if (gzipStream is not null) await gzipStream.DisposeAsync();
+            if (hashingStream is not null)
+            {
+                // writer + gzip are disposed, so every byte has flushed through the hash.
+                if (fileName is not null) manifest.FileHashes[fileName] = hashingStream.GetHashHex();
+                await hashingStream.DisposeAsync();
+            }
+            if (outputStream is not null) await outputStream.DisposeAsync();
 
             if (count == 0) continue;
             manifest.Tables[tableName] = new TableBackupInfo

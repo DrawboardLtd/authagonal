@@ -1,5 +1,5 @@
 # Stage 1: Build SPA
-FROM node:24-alpine AS frontend
+FROM node:24-alpine@sha256:f70403e87646dc51b45295f4b8b70cdad0b63d2297c4c9899119b03f7af7a6b3 AS frontend
 WORKDIR /app/login-app
 COPY login-app/package*.json ./
 RUN npm ci
@@ -7,7 +7,7 @@ COPY login-app/ ./
 RUN npm run build:spa
 
 # Stage 2: Build .NET
-FROM mcr.microsoft.com/dotnet/sdk:10.0 AS backend
+FROM mcr.microsoft.com/dotnet/sdk:10.0@sha256:ed034a8bf0b24ded0cbbac07e17825d8e9ebfe21e308191d0f7421eaf5ad4664 AS backend
 WORKDIR /src
 COPY *.slnx ./
 COPY src/Authagonal.Core/*.csproj src/Authagonal.Core/
@@ -19,7 +19,7 @@ COPY src/ src/
 RUN dotnet publish src/Authagonal.Server/ -f net10.0 -c Release -o /app/publish --no-restore
 
 # Stage 3: Runtime
-FROM mcr.microsoft.com/dotnet/aspnet:10.0
+FROM mcr.microsoft.com/dotnet/aspnet:10.0@sha256:1fa23fc4872d95fd71c2833ebe65d7e84a43b2d51a31d119516852f13d9505a7
 WORKDIR /app
 COPY --from=backend /app/publish .
 COPY --from=frontend /app/login-app/dist-spa ./wwwroot/

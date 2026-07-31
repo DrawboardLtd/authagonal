@@ -161,6 +161,31 @@ jobs:
             type=semver,pattern={{major}}.{{minor}}
             type=sha,format=long
 
+      # Built locally first and scanned BEFORE it is pushed. Nothing gated the published image on a
+      # vulnerability scan, so a base with a known fixable CRITICAL shipped as a release without
+      # anything in the pipeline noticing. Failing here costs a release; not failing here ships it to
+      # everyone who pulls the tag.
+      - name: Build server image for scanning
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .
+          load: true
+          tags: authagonal-server:scan
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Scan server image
+        uses: aquasecurity/trivy-action@dc5a429b52fcf669ce959baa2c2dd26090d2a6c4 # v0.32.0
+        with:
+          image-ref: authagonal-server:scan
+          format: table
+          exit-code: '1'
+          # Only what an operator could actually act on: a vulnerability with no fix available would
+          # block every release indefinitely without making anyone safer.
+          ignore-unfixed: true
+          vuln-type: os,library
+          severity: HIGH,CRITICAL
+
       - name: Build and push server image
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         with:

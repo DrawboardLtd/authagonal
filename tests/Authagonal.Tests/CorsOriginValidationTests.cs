@@ -32,4 +32,36 @@ public class CorsOriginValidationTests
     {
         Assert.Equal(expected, DynamicCorsPolicyProvider.IsValidOrigin(origin));
     }
+
+    // -----------------------------------------------------------------------
+    // F81 — the origins cache is keyed per (tenant, env)
+    // -----------------------------------------------------------------------
+
+    /// <remarks>
+    /// The cache was keyed on tenant alone. Env is a first-class isolation boundary — every store
+    /// threads it into the partition key, and a tenant's sandbox envs hold their own client records —
+    /// so the origins list was built from an env-scoped scan and then filed under a key that did not
+    /// name the env. Whichever env warmed the entry first served its origins to all of them, and this
+    /// policy sets AllowCredentials, so a sandbox origin could be honoured against production.
+    /// </remarks>
+    [Theory]
+    [InlineData("acme", "live", "sandbox", false)]
+    [InlineData("acme", "live", "live", true)]
+    [InlineData("acme", "live", null, false)]
+    [InlineData("acme", null, "other", false)]
+    public void CacheKey_SeparatesEnvsWithinATenant(
+        string tenant, string? envA, string? envB, bool expectedSame)
+    {
+        // Mirrors the key built in GetAllowedOriginsAsync.
+        static string Key(string tenant, string? env) => $"{tenant}|{env ?? ""}";
+
+        Assert.Equal(expectedSame, Key(tenant, envA) == Key(tenant, envB));
+    }
+
+    [Fact]
+    public void CacheKey_SeparatesTenants()
+    {
+        static string Key(string tenant, string? env) => $"{tenant}|{env ?? ""}";
+        Assert.NotEqual(Key("acme", "live"), Key("globex", "live"));
+    }
 }

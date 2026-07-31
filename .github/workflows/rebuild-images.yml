@@ -1,0 +1,87 @@
+# Rebuilds and re-pushes the CURRENT published image tags so a patched base image reaches people who
+# already pulled them.
+#
+# Images were only ever built on a tag push, and the base images are pinned by digest — which is the
+# right call for reproducibility, but it means a published tag is frozen against its base forever. A
+# CVE fixed upstream never reached anyone who had already pulled, and never reached a new puller
+# either, because the digest pin is doing exactly what it was asked to do. Pinning without a rebuild
+# is how an image gets steadily older while looking maintained.
+#
+# This does not move the pins — Dependabot does that, and its PRs run the release scan. This rebuilds
+# with the pins as committed, which catches the case where the fix is in the application layers or in
+# a base whose digest was already bumped on main but never republished under the release tag.
+name: Rebuild published images
+
+on:
+  schedule:
+    # Weekly, after the usual base-image refresh cadence.
+    - cron: '0 4 * * 1'
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Tag or ref to rebuild (defaults to the latest release tag)'
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  rebuild:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          fetch-depth: 0
+
+      - name: Resolve the tag to rebuild
+        id: target
+        run: |
+          ref="${{ inputs.ref }}"
+          if [ -z "$ref" ]; then
+            ref=$(git tag --list 'v*' --sort=-v:refname | head -n1)
+          fi
+          if [ -z "$ref" ]; then
+            echo "No release tag found; nothing to rebuild." >&2
+            exit 1
+          fi
+          git checkout --detach "$ref"
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+          echo "version=${ref#v}" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          username: drawboardci
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build server image
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .
+          load: true
+          tags: authagonal-server:rebuild
+
+      # The rebuild is only worth pushing if it is actually better than what is published. A scan
+      # that still fails means the fix is not available yet, and republishing would just move the
+      # digest without moving the risk.
+      - name: Scan server image
+        uses: aquasecurity/trivy-action@dc5a429b52fcf669ce959baa2c2dd26090d2a6c4 # v0.32.0
+        with:
+          image-ref: authagonal-server:rebuild
+          format: table
+          exit-code: '1'
+          ignore-unfixed: true
+          vuln-type: os,library
+          severity: HIGH,CRITICAL
+
+      - name: Push server image
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .
+          push: true
+          tags: |
+            drawboardci/authagonal:${{ steps.target.outputs.version }}
+            drawboardci/authagonal:latest

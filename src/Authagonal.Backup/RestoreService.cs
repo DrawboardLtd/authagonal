@@ -16,12 +16,17 @@ public sealed class RestoreService(TableServiceClient serviceClient, IBackupSour
 
         var manifest = await source.ReadManifestAsync(backupId, ct);
         var canVerify = options.VerifyIntegrity && manifest?.FileHashes is { Count: > 0 };
-        if (options.VerifyIntegrity && !canVerify)
+        if (options.VerifyIntegrity && !canVerify && !options.AllowUnverified)
         {
-            // Manifest missing or predates integrity hashing — cannot verify. Don't hard-fail
-            // (so legacy backups remain restorable), but make the gap loud.
-            Console.Error.WriteLine(
-                "WARNING: backup has no recorded file hashes; integrity cannot be verified. Restoring unverified data.");
+            // Refused, not warned. This used to print to Console.Error and restore anyway — which
+            // inside a host process is a signal nobody sees, and it produced a restore that reported
+            // success having checked nothing. Every backup this code writes now carries hashes
+            // (merged ones included, which is what made this reachable at all), so reaching here
+            // means either a backup older than integrity hashing or a manifest that has lost them.
+            throw new InvalidOperationException(
+                "Backup has no recorded file hashes, so integrity cannot be verified. Restore with " +
+                "VerifyIntegrity disabled, or set AllowUnverified if this is a backup taken before " +
+                "integrity hashing existed and unverified data is acceptable.");
         }
 
         // Authenticate the manifest itself before trusting the hashes in it. Verifying files against
