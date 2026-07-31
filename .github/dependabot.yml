@@ -1,0 +1,14 @@
+# Keeps the SHA-pinned actions current.
+#
+# Pinning to a commit SHA is what stops a compromised upstream retargeting a moving tag at malicious
+# code — the tj-actions/changed-files incident (CVE-2025-30066) verbatim, and these workflows hold
+# the NuGet API key, both Docker Hub tokens and npm publish OIDC. But a pin nobody updates becomes a
+# stale, unpatched dependency, so the pin and this file belong together.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "chore(ci)"
