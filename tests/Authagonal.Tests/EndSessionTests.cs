@@ -22,38 +22,90 @@ public sealed class EndSessionTests : IAsyncLifetime
 
     public Task DisposeAsync() => _factory.DisposeAsync().AsTask();
 
+    // Both tests below previously asserted that a bare GET (and a bare POST) ended the session
+    // outright. That is the behaviour OIDC RP-Initiated Logout 1.0 §2 forbids without an
+    // id_token_hint matching the session — and because the session cookie is SameSite=Lax, which
+    // does ride a cross-site top-level GET, it was also a logout-CSRF sink (§6 names it as a DoS
+    // vector). The confirmation interstitial closed it. The GET test then failed outright (it
+    // parses the HTML page as JSON) and the POST test kept passing vacuously, because it asserted
+    // only 200 and the interstitial is also a 200. Both now pin the interstitial itself.
+
     [Fact]
-    public async Task EndSession_Get_SignsOutAndReturnsMessage()
+    public async Task EndSession_Get_WithoutIdTokenHint_ConfirmsAndLeavesSessionIntact()
     {
-        // Login first
+        await _factory.SeedTestUserAsync();
+        await _client.PostAsJsonAsync("/api/auth/login", new { email = "test@example.com", password = "Test1234!" });
+        Assert.Equal(HttpStatusCode.OK, (await _client.GetAsync("/api/auth/session")).StatusCode);
+
+        var response = await _client.GetAsync("/connect/endsession");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal("text/html", response.Content.Headers.ContentType?.MediaType);
+        Assert.Contains("logout_confirm", await response.Content.ReadAsStringAsync(), StringComparison.Ordinal);
+
+        // The whole point of the branch: it has no side effects, so a cross-site navigation cannot
+        // sign the user out.
+        Assert.Equal(HttpStatusCode.OK, (await _client.GetAsync("/api/auth/session")).StatusCode);
+    }
+
+    [Fact]
+    public async Task EndSession_Post_WithConfirmationToken_SignsOut()
+    {
         await _factory.SeedTestUserAsync();
         await _client.PostAsJsonAsync("/api/auth/login", new { email = "test@example.com", password = "Test1234!" });
 
-        // Verify session exists
-        var sessionResponse = await _client.GetAsync("/api/auth/session");
-        Assert.Equal(HttpStatusCode.OK, sessionResponse.StatusCode);
+        // Drive the real interstitial rather than a fabricated token, so the test breaks if the
+        // form stops carrying a usable confirmation.
+        var confirmation = await _client.GetAsync("/connect/endsession");
+        var token = ConfirmationTokenFrom(await confirmation.Content.ReadAsStringAsync());
 
-        // End session
-        var response = await _client.GetAsync("/connect/endsession");
+        var response = await _client.PostAsync("/connect/endsession", new FormUrlEncodedContent(
+            new Dictionary<string, string> { ["logout_confirm"] = token }));
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
 
         var json = await response.Content.ReadFromJsonAsync<JsonElement>();
         Assert.NotNull(json.GetProperty("message").GetString());
 
-        // Session should be gone
-        var afterResponse = await _client.GetAsync("/api/auth/session");
-        Assert.NotEqual(HttpStatusCode.OK, afterResponse.StatusCode);
+        Assert.NotEqual(HttpStatusCode.OK, (await _client.GetAsync("/api/auth/session")).StatusCode);
     }
 
     [Fact]
-    public async Task EndSession_Post_SignsOutAndReturnsMessage()
+    public async Task EndSession_Post_WithoutConfirmationToken_DoesNotSignOut()
     {
         await _factory.SeedTestUserAsync();
         await _client.PostAsJsonAsync("/api/auth/login", new { email = "test@example.com", password = "Test1234!" });
 
-        var form = new FormUrlEncodedContent(new Dictionary<string, string>());
-        var response = await _client.PostAsync("/connect/endsession", form);
+        var response = await _client.PostAsync("/connect/endsession",
+            new FormUrlEncodedContent(new Dictionary<string, string>()));
+
+        // 200, but the interstitial — which is why asserting the status code alone said nothing.
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal("text/html", response.Content.Headers.ContentType?.MediaType);
+        Assert.Equal(HttpStatusCode.OK, (await _client.GetAsync("/api/auth/session")).StatusCode);
+    }
+
+    [Fact]
+    public async Task EndSession_Post_WithTamperedConfirmationToken_DoesNotSignOut()
+    {
+        await _factory.SeedTestUserAsync();
+        await _client.PostAsJsonAsync("/api/auth/login", new { email = "test@example.com", password = "Test1234!" });
+
+        var confirmation = await _client.GetAsync("/connect/endsession");
+        var token = ConfirmationTokenFrom(await confirmation.Content.ReadAsStringAsync());
+
+        var response = await _client.PostAsync("/connect/endsession", new FormUrlEncodedContent(
+            new Dictionary<string, string> { ["logout_confirm"] = token[..^4] + "AAAA" }));
+
+        Assert.Equal("text/html", response.Content.Headers.ContentType?.MediaType);
+        Assert.Equal(HttpStatusCode.OK, (await _client.GetAsync("/api/auth/session")).StatusCode);
+    }
+
+    /// <summary>Pulls the hidden <c>logout_confirm</c> value out of the interstitial's form.</summary>
+    private static string ConfirmationTokenFrom(string html)
+    {
+        var match = System.Text.RegularExpressions.Regex.Match(
+            html, "name=\"logout_confirm\" value=\"([^\"]+)\"");
+        Assert.True(match.Success, "The confirmation page did not render a logout_confirm token.");
+        return WebUtility.HtmlDecode(match.Groups[1].Value);
     }
 
     [Fact]

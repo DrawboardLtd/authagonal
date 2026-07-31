@@ -1,7 +1,10 @@
 using System.Security.Claims;
 using System.Text.Json;
+using Authagonal.Core.Constants;
 using Authagonal.Core.Models;
+using Authagonal.Core.Services;
 using Authagonal.Core.Stores;
+using Authagonal.Protocol.Services;
 
 namespace Authagonal.Server.Endpoints;
 
@@ -181,11 +184,24 @@ public static class ConsentEndpoint
             return Results.Ok(results);
         });
 
-        // Revoke consent for a specific client
+        // Revoke an authorized app.
+        //
+        // This used to remove the consent:{sub}:{clientId} row and nothing else, which meant the button
+        // labelled "Revoke access for this app" withdrew only the record of the user's decision. The
+        // app's refresh token is a separate grant row that no part of the refresh path consults, so it
+        // kept rotating and kept minting access tokens — for up to AbsoluteRefreshTokenLifetimeSeconds
+        // (30 days by default) after the user was told access had been revoked. Short of resetting
+        // their password there was no way for a user to cut off a misbehaving client at all.
+        //
+        // So: drop the consent AND the session-bound grants for this client, and revoke the access
+        // tokens minted under them, which are self-contained JWTs that outlive their grant otherwise.
+        // Scoped to this clientId, so every other authorized app is untouched.
         app.MapDelete("/consent/grants/{clientId}", async (
             string clientId,
             HttpContext httpContext,
             IGrantStore grantStore,
+            IEnumerable<IAuthHook> authHooks,
+            ILoggerFactory loggerFactory,
             CancellationToken ct) =>
         {
             var subjectId = httpContext.User.FindFirstValue(ClaimTypes.NameIdentifier)
@@ -193,8 +209,20 @@ public static class ConsentEndpoint
             if (string.IsNullOrWhiteSpace(subjectId))
                 return Results.Unauthorized();
 
-            var consentKey = $"consent:{subjectId}:{clientId}";
-            await grantStore.RemoveAsync(consentKey, ct);
+            // Resolved off the request rather than taken as a handler parameter: an unregistered
+            // optional service would otherwise be inferred as a body-bound parameter on a DELETE.
+            var revokedTokenStore = httpContext.RequestServices.GetService<IRevokedTokenStore>();
+
+            var removed = await GrantRevocation.RevokeClientGrantsAsync(
+                grantStore,
+                revokedTokenStore,
+                subjectId,
+                clientId,
+                [.. PersistedGrantTypes.SessionBound, PersistedGrantTypes.Consent],
+                loggerFactory.CreateLogger(typeof(ConsentEndpoint)),
+                ct);
+
+            await authHooks.RunOnConsentRevokedAsync(subjectId, clientId, removed, ct);
             return Results.NoContent();
         });
 

@@ -66,14 +66,40 @@ public sealed class ProtocolTokenService(
         DateTimeOffset? notAfter = null,
         CancellationToken ct = default)
     {
+        var minted = await MintAccessTokenAsync(
+            subject, client, scopes, resources, authorizationDetailsJson, actorJson, notAfter, ct);
+        return minted.Token;
+    }
+
+    /// <summary>
+    /// The access-token mint, surfacing the <c>jti</c> and expiry the public
+    /// <see cref="CreateAccessTokenAsync"/> discards.
+    /// </summary>
+    /// <remarks>
+    /// Callers that also issue a refresh token record these on the refresh grant, so revoking the
+    /// refresh token can revoke the access tokens minted under it — a self-contained JWT has no
+    /// other kill switch. See <see cref="RefreshTokenData.AccessTokens"/>. The public signature is
+    /// left alone because it is shipped surface on <see cref="IProtocolTokenService"/>.
+    /// </remarks>
+    private async Task<MintedAccessToken> MintAccessTokenAsync(
+        OidcSubject? subject,
+        OAuthClient client,
+        IEnumerable<string> scopes,
+        IEnumerable<string>? resources = null,
+        string? authorizationDetailsJson = null,
+        string? actorJson = null,
+        DateTimeOffset? notAfter = null,
+        CancellationToken ct = default)
+    {
         var now = DateTimeOffset.UtcNow;
         var scopeList = scopes.ToList();
+        var jti = Guid.NewGuid().ToString("N");
 
         var claims = new Dictionary<string, object>
         {
             ["client_id"] = client.ClientId,
             ["scope"] = string.Join(' ', scopeList),
-            ["jti"] = Guid.NewGuid().ToString("N"),
+            ["jti"] = jti,
             ["iat"] = now.ToUnixTimeSeconds()
         };
 
@@ -169,8 +195,11 @@ public sealed class ProtocolTokenService(
         }
 
         var handler = new JsonWebTokenHandler();
-        return handler.CreateToken(descriptor);
+        return new MintedAccessToken(handler.CreateToken(descriptor), jti, expires);
     }
+
+    /// <summary>An access token together with the two facts needed to revoke it later.</summary>
+    private readonly record struct MintedAccessToken(string Token, string Jti, DateTimeOffset ExpiresAt);
 
     public async Task<string> CreateIdTokenAsync(
         OidcSubject subject,
@@ -272,13 +301,29 @@ public sealed class ProtocolTokenService(
         return handler.CreateToken(descriptor);
     }
 
-    public async Task<string> CreateRefreshTokenAsync(
+    public Task<string> CreateRefreshTokenAsync(
         OidcSubject subject,
         OAuthClient client,
         IEnumerable<string> scopes,
         IEnumerable<string>? resources = null,
         DateTimeOffset? originalCreatedAt = null,
-        CancellationToken ct = default)
+        CancellationToken ct = default) =>
+        CreateRefreshTokenAsync(subject, client, scopes, resources, originalCreatedAt, null, ct);
+
+    /// <summary>
+    /// Issues a refresh grant, recording the access tokens that must die with it.
+    /// </summary>
+    /// <param name="inheritedAccessTokens">The still-live access tokens this family has minted —
+    /// the predecessor's surviving set on a rotation, plus the token being issued alongside this
+    /// one. Pruned and capped here rather than at the call sites so no caller can forget.</param>
+    private async Task<string> CreateRefreshTokenAsync(
+        OidcSubject subject,
+        OAuthClient client,
+        IEnumerable<string> scopes,
+        IEnumerable<string>? resources,
+        DateTimeOffset? originalCreatedAt,
+        IEnumerable<IssuedAccessToken>? inheritedAccessTokens,
+        CancellationToken ct)
     {
         var handle = GenerateRefreshTokenHandle();
         var now = DateTimeOffset.UtcNow;
@@ -315,6 +360,7 @@ public sealed class ProtocolTokenService(
                 OriginalCreatedAt = origin,
                 SessionMaxExpiresAt = subject.SessionMaxExpiresAt,
                 Subject = subject,
+                AccessTokens = PruneAccessTokens(inheritedAccessTokens, now),
             }, ProtocolJsonContext.Default.RefreshTokenData),
             CreatedAt = now,
             ExpiresAt = expiresAt,
@@ -369,7 +415,7 @@ public sealed class ProtocolTokenService(
 
         var subject = authCode.Subject;
 
-        var accessToken = await CreateAccessTokenAsync(subject, client, authCode.Scopes, authCode.Resources, ct: ct);
+        var accessToken = await MintAccessTokenAsync(subject, client, authCode.Scopes, authCode.Resources, ct: ct);
 
         string? idToken = null;
         if (authCode.Scopes.Contains(StandardScopes.OpenId))
@@ -380,8 +426,11 @@ public sealed class ProtocolTokenService(
         string? refreshToken = null;
         if (authCode.Scopes.Contains(StandardScopes.OfflineAccess) && client.AllowOfflineAccess)
         {
+            // The access token just minted is recorded on the refresh grant, so revoking the refresh
+            // token revokes it too rather than leaving it live for its full lifetime.
             refreshToken = await CreateRefreshTokenAsync(
-                subject, client, authCode.Scopes, authCode.Resources, ct: ct);
+                subject, client, authCode.Scopes, authCode.Resources, null,
+                [new IssuedAccessToken { Jti = accessToken.Jti, ExpiresAt = accessToken.ExpiresAt }], ct);
         }
 
         logger.LogInformation(
@@ -390,7 +439,7 @@ public sealed class ProtocolTokenService(
 
         return new TokenResponse
         {
-            AccessToken = accessToken,
+            AccessToken = accessToken.Token,
             ExpiresIn = client.AccessTokenLifetimeSeconds,
             IdToken = idToken,
             RefreshToken = refreshToken,
@@ -443,7 +492,17 @@ public sealed class ProtocolTokenService(
 
             if (grant.SubjectId is not null)
             {
-                await grantStore.RemoveAllBySubjectAndClientAsync(grant.SubjectId, clientId, ct);
+                // Theft detection, so this must reach the thief's ACCESS token too — that is the one
+                // credential nobody but the thief has ever seen, and killing only the refresh family
+                // left it working for up to AccessTokenLifetimeSeconds.
+                //
+                // Scoped to the session-bound types rather than every grant for the pair: the previous
+                // RemoveAllBySubjectAndClientAsync also deleted the user's standing agent consent and
+                // any pending approvals, which are long-lived records of the user's decisions, not
+                // token authority, and are not what a stolen refresh token compromises.
+                await GrantRevocation.RevokeClientGrantsAsync(
+                    grantStore, revokedTokenStore, grant.SubjectId, clientId,
+                    PersistedGrantTypes.SessionBound, logger, ct);
             }
 
             throw new InvalidOperationException("Refresh token has been revoked (replay detected)");
@@ -502,10 +561,20 @@ public sealed class ProtocolTokenService(
             tokenResources = data.Resources;
         }
 
+        // Minted before the successor so the successor grant can record its jti: the successor is the
+        // live refresh token from here on, so it is the one whose revocation must kill this access
+        // token. Losing the consume race below discards both, and the orphan successor holding the
+        // jti expires with it — the token is never returned to any caller.
+        var accessToken = await MintAccessTokenAsync(freshSubject, client, data.Scopes, tokenResources, ct: ct);
+
         // Rotation: issue successor, mark old consumed with successor key recorded.
         var originalCreatedAt = data.OriginalCreatedAt ?? data.CreatedAt;
         var newRefreshToken = await CreateRefreshTokenAsync(
-            freshSubject, client, data.Scopes, data.Resources, originalCreatedAt, ct);
+            freshSubject, client, data.Scopes, data.Resources, originalCreatedAt,
+            // The predecessor's surviving access tokens carry forward, so a revocation after several
+            // rotations still reaches every token of this family that is genuinely still live.
+            [.. data.AccessTokens ?? [], new IssuedAccessToken { Jti = accessToken.Jti, ExpiresAt = accessToken.ExpiresAt }],
+            ct);
 
         data.SuccessorKey = newRefreshToken;
         // GetAsync returns Key empty (the raw handle is never persisted — only its hash is the
@@ -533,8 +602,6 @@ public sealed class ProtocolTokenService(
             return await HandleRefreshTokenAsync(refreshToken, clientId, resources, ct);
         }
 
-        var accessToken = await CreateAccessTokenAsync(freshSubject, client, data.Scopes, tokenResources, ct: ct);
-
         string? idToken = null;
         if (data.Scopes.Contains(StandardScopes.OpenId))
         {
@@ -547,7 +614,7 @@ public sealed class ProtocolTokenService(
 
         return new TokenResponse
         {
-            AccessToken = accessToken,
+            AccessToken = accessToken.Token,
             ExpiresIn = client.AccessTokenLifetimeSeconds,
             IdToken = idToken,
             RefreshToken = newRefreshToken,
@@ -584,7 +651,18 @@ public sealed class ProtocolTokenService(
             tokenResources = data.Resources;
         }
 
-        var accessToken = await CreateAccessTokenAsync(data.Subject, client, data.Scopes, tokenResources, ct: ct);
+        var accessToken = await MintAccessTokenAsync(data.Subject, client, data.Scopes, tokenResources, ct: ct);
+
+        // The grace path mints against a successor that already exists, so the jti has to be appended
+        // to it rather than passed in at creation. Without this write, an access token handed out on a
+        // retry would survive revocation of the very refresh token it was issued against — and the
+        // grace window is exactly where a stolen token racing the legitimate client gets served.
+        data.AccessTokens = PruneAccessTokens(
+            [.. data.AccessTokens ?? [], new IssuedAccessToken { Jti = accessToken.Jti, ExpiresAt = accessToken.ExpiresAt }],
+            DateTimeOffset.UtcNow);
+        successor.Key = successorKey; // grants read back from storage carry no key; see the rotation note
+        successor.Data = JsonSerializer.Serialize(data, ProtocolJsonContext.Default.RefreshTokenData);
+        await grantStore.StoreAsync(successor, ct);
 
         string? idToken = null;
         if (data.Scopes.Contains(StandardScopes.OpenId))
@@ -598,7 +676,7 @@ public sealed class ProtocolTokenService(
 
         return new TokenResponse
         {
-            AccessToken = accessToken,
+            AccessToken = accessToken.Token,
             ExpiresIn = client.AccessTokenLifetimeSeconds,
             IdToken = idToken,
             RefreshToken = successorKey,
@@ -1408,12 +1486,14 @@ public sealed class ProtocolTokenService(
     {
         var scopeList = scopes.ToList();
 
-        var accessToken = await CreateAccessTokenAsync(subject, client, scopeList, ct: ct);
+        var accessToken = await MintAccessTokenAsync(subject, client, scopeList, ct: ct);
 
         string? refreshToken = null;
         if (scopeList.Contains(StandardScopes.OfflineAccess) && client.AllowOfflineAccess)
         {
-            refreshToken = await CreateRefreshTokenAsync(subject, client, scopeList, ct: ct);
+            refreshToken = await CreateRefreshTokenAsync(
+                subject, client, scopeList, null, null,
+                [new IssuedAccessToken { Jti = accessToken.Jti, ExpiresAt = accessToken.ExpiresAt }], ct);
         }
 
         string? idToken = null;
@@ -1428,7 +1508,7 @@ public sealed class ProtocolTokenService(
 
         return new TokenResponse
         {
-            AccessToken = accessToken,
+            AccessToken = accessToken.Token,
             RefreshToken = refreshToken,
             IdToken = idToken,
             ExpiresIn = client.AccessTokenLifetimeSeconds,
@@ -1446,10 +1526,41 @@ public sealed class ProtocolTokenService(
         if (!string.Equals(grant.ClientId, clientId, StringComparison.Ordinal))
             return false;
 
+        // RFC 7009 §2.1: an AS that supports access-token revocation SHOULD also invalidate the access
+        // tokens issued under the same grant. This one does support it — IRevokedTokenStore is enforced
+        // at userinfo, introspection, the JwtBearer scheme and the token-exchange subject check — so the
+        // SHOULD is engaged. Before this, revocation killed the refresh token and left the access token
+        // minted from it valid for up to AccessTokenLifetimeSeconds, so incident response silently
+        // failed to do what the operator believed it had done.
+        await GrantRevocation.RevokeTrackedAccessTokensAsync(revokedTokenStore, grant, logger, ct);
+
         await grantStore.RemoveAsync(token, ct);
 
         logger.LogInformation("Refresh token revoked for client {ClientId}", clientId);
         return true;
+    }
+
+    /// <summary>
+    /// Drops access-token entries that have expired on their own and caps what remains, newest first.
+    /// </summary>
+    /// <remarks>
+    /// An expired jti needs no revocation entry — every enforcement point already rejects the token on
+    /// <c>exp</c> — so pruning here is what keeps the tracked set at one or two entries in steady
+    /// state instead of growing with the family's 30-day absolute life. Returns null rather than an
+    /// empty list so grants that track nothing serialize without the member.
+    /// </remarks>
+    private static List<IssuedAccessToken>? PruneAccessTokens(
+        IEnumerable<IssuedAccessToken>? tokens, DateTimeOffset now)
+    {
+        if (tokens is null) return null;
+
+        var live = tokens
+            .Where(t => t.ExpiresAt > now)
+            .OrderByDescending(t => t.ExpiresAt)
+            .Take(RefreshTokenData.MaxTrackedAccessTokens)
+            .ToList();
+
+        return live.Count > 0 ? live : null;
     }
 
     private static string GenerateRefreshTokenHandle()

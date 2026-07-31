@@ -105,6 +105,14 @@ public interface IAuthHook
     /// <param name="change">"granted" or "revoked".</param>
     Task OnAgentConsentChangedAsync(string subjectId, string clientId, string change, CancellationToken ct = default) => Task.CompletedTask;
 
+    /// <summary>Called when a user revokes an authorized app from the Authorized Apps screen.
+    /// Notification only — the consent record and the client's session-bound grants are already
+    /// gone. Distinct from <see cref="OnAgentConsentChangedAsync"/>, which covers the agentic
+    /// (RFC 9396) standing consents. Default: no-op.</summary>
+    /// <param name="grantsRemoved">How many session-bound grants (refresh tokens, codes, device
+    /// codes, PAR requests) were removed along with the consent — 0 means the app held none.</param>
+    Task OnConsentRevokedAsync(string subjectId, string clientId, int grantsRemoved, CancellationToken ct = default) => Task.CompletedTask;
+
     /// <summary>Called when a capability ticket is redeemed for its bound token.
     /// Default: no-op.</summary>
     Task OnCapabilityTicketRedeemedAsync(string ticketId, string? subjectId, string clientId, CancellationToken ct = default) => Task.CompletedTask;
@@ -257,6 +265,12 @@ public static class AuthHookExtensions
     {
         foreach (var hook in hooks)
             await hook.OnAgentConsentChangedAsync(subjectId, clientId, change, ct);
+    }
+
+    public static async Task RunOnConsentRevokedAsync(this IEnumerable<IAuthHook> hooks, string subjectId, string clientId, int grantsRemoved, CancellationToken ct = default)
+    {
+        foreach (var hook in hooks)
+            await hook.OnConsentRevokedAsync(subjectId, clientId, grantsRemoved, ct);
     }
 
     public static async Task RunOnCapabilityTicketRedeemedAsync(this IEnumerable<IAuthHook> hooks, string ticketId, string? subjectId, string clientId, CancellationToken ct = default)
