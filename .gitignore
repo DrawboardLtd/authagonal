@@ -58,3 +58,4 @@ appsettings.*.json
 
 # Claude
 .claude/
+.playwright-mcp/
