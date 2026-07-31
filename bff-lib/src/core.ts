@@ -110,6 +110,13 @@ export async function authorizeProxy(ctx: HttpCtx, d: BffDeps): Promise<ProxyDec
 export const PROXY_STRIP = new Set([
   'connection', 'keep-alive', 'proxy-authenticate', 'proxy-authorization', 'te', 'trailer',
   'transfer-encoding', 'upgrade', 'host', 'cookie', 'authorization',
+
+  // Forwarding metadata, stripped for the same reason the .NET proxy strips it: copied through
+  // verbatim, these let a caller tell the upstream that this BFF — a trusted reverse proxy — had
+  // vouched for whatever client IP, host and scheme they chose. None is a forbidden header, so any
+  // script in the SPA's origin can set them.
+  'x-forwarded-for', 'x-forwarded-host', 'x-forwarded-proto', 'x-forwarded-port',
+  'x-forwarded-prefix', 'x-real-ip', 'forwarded',
 ]);
 
 async function handleLogin(ctx: HttpCtx, d: BffDeps): Promise<void> {

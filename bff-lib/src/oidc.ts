@@ -110,12 +110,39 @@ export class OidcClient {
 
   /** Verify an OIDC back-channel logout token. Logout tokens carry no `exp`; jwtVerify only enforces `exp`
    * when present, so this validates signature + issuer + audience. Caller checks `events` / no-`nonce`. */
+  /**
+   * Verifies a back-channel Logout Token.
+   *
+   * A Logout Token carries no `exp` (OIDC Back-Channel Logout 1.0 §2.4 forbids relying on one), so
+   * signature + issuer + audience alone made a captured token valid FOREVER: anyone who obtained one
+   * could log the user out at will, indefinitely. The .NET BFF has bounded `iat` since 0.20.0; this
+   * implementation did not, so a TypeScript host had a permanent denial-of-service primitive against
+   * every session it had ever ended.
+   */
   async verifyLogoutToken(logoutToken: string, clientId: string): Promise<JWTPayload> {
     const m = await this.meta();
     const { payload } = await jwtVerify(logoutToken, this.jwks!, { issuer: m.issuer, audience: clientId });
+
+    const iat = payload.iat;
+    if (typeof iat !== 'number') {
+      throw new Error('logout token has no iat');
+    }
+
+    const ageSeconds = Math.abs(Date.now() / 1000 - iat);
+    if (ageSeconds > LOGOUT_TOKEN_MAX_AGE_SECONDS) {
+      throw new Error('logout token is outside its freshness window');
+    }
+
     return payload;
   }
 }
+
+/**
+ * How far a Logout Token's `iat` may be from now. Generous enough for ordinary clock skew between
+ * the OP and this host, tight enough that a captured token stops working in minutes rather than
+ * never.
+ */
+const LOGOUT_TOKEN_MAX_AGE_SECONDS = 300;
 
 /** Returns a memoized {@link OidcClient} per authority, so a multi-tenant BFF discovers each tenant's auth host
  * once and reuses its cached metadata + JWKS. Mirrors the .NET `BffOidcConfig` per-authority dictionary. */
