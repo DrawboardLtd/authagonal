@@ -330,10 +330,13 @@ public sealed class TccProvisioningOrchestrator(
             await userStore.UpdateAsync(current, ct);
 
             // Keep the caller's instance consistent with what was stored — several callers go on to
-            // build a subject or a response from it.
+            // build a subject or a response from it. That includes the revision: this write moved the
+            // row on, and callers like ConfirmEmailAsync update their own instance right afterwards,
+            // which the store now refuses if it is still holding the pre-merge revision.
             user.OrganizationId = current.OrganizationId;
             user.EmailConfirmed = current.EmailConfirmed;
             user.CustomAttributes = current.CustomAttributes;
+            user.ConcurrencyToken = current.ConcurrencyToken;
         }
         catch (Exception ex)
         {

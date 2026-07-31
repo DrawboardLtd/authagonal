@@ -3,6 +3,7 @@ using Authagonal.Core.Models;
 using Authagonal.Core.Stores;
 using Authagonal.Server.Services;
 using Authagonal.Server.Services.Scim;
+using Microsoft.Extensions.Options;
 
 namespace Authagonal.Server.Endpoints.Scim;
 
@@ -39,6 +40,20 @@ public static class ScimGroupEndpoints
         !string.IsNullOrEmpty(group.OrganizationId) &&
         string.Equals(group.OrganizationId, CallerClientId(httpContext), StringComparison.Ordinal);
 
+    /// <summary>
+    /// Refuses a membership list past <see cref="AuthOptions.MaxScimGroupMembers"/>.
+    /// </summary>
+    /// <remarks>
+    /// The list is one uncapped array on the group row and every member in it is re-verified against the
+    /// user store on write, so an unbounded array is both an unbounded row and an unbounded number of
+    /// point reads inside a single request.
+    /// </remarks>
+    private static IResult? RefuseOversizedMembership(IReadOnlyCollection<string> memberIds, AuthOptions options) =>
+        memberIds.Count > options.MaxScimGroupMembers
+            ? ScimResults.Error(400, "invalidValue",
+                $"A group may carry at most {options.MaxScimGroupMembers} members.")
+            : null;
+
     private static async Task<IResult> ListGroupsAsync(
         HttpContext httpContext,
         IScimGroupStore groupStore,
@@ -49,6 +64,7 @@ public static class ScimGroupEndpoints
         string? attributes,
         string? excludedAttributes,
         IRateLimiter rateLimiter,
+        IOptions<AuthOptions> authOptions,
         CancellationToken ct)
     {
         // The Group endpoints had no rate limiting at all, and every list is a full table scan of all
@@ -65,8 +81,12 @@ public static class ScimGroupEndpoints
         var start = startIndex ?? 1;
         var pageSize = Math.Min(count ?? 100, 200);
 
-        // Scope enumeration to groups owned by the calling SCIM client.
-        var (groups, _) = await groupStore.ListAsync(CallerClientId(httpContext), 0, int.MaxValue, ct);
+        // Scope enumeration to groups owned by the calling SCIM client. The fetch is bounded by the same
+        // per-client quota the create path enforces rather than by int.MaxValue: no backend indexes the
+        // owner, so this is a full scan, and asking for "everything" made one request's cost a function
+        // of how many rows an attacker had managed to write.
+        var (groups, _) = await groupStore.ListAsync(
+            CallerClientId(httpContext), 0, authOptions.Value.MaxScimGroupsPerClient, ct);
 
         // A filter is honoured or refused, never quietly dropped — silently listing every group answers a
         // different question than the one asked (RFC 7644 §3.4.2.2).
@@ -166,6 +186,7 @@ public static class ScimGroupEndpoints
         ILogger<Program> logger,
         IUserStore userStore,
         IRateLimiter rateLimiter,
+        IOptions<AuthOptions> authOptions,
         CancellationToken ct)
     {
         // The Group endpoints had no rate limiting at all, and every list is a full table scan of all
@@ -175,6 +196,7 @@ public static class ScimGroupEndpoints
             return ScimResults.Error(429, "tooMany", "Too many SCIM requests. Please try again later.");
 
         var baseUrl = GetBaseUrl(tenantContext);
+        var options = authOptions.Value;
 
         if (string.IsNullOrWhiteSpace(request.DisplayName))
             return ScimResults.BadRequest("displayName is required");
@@ -183,10 +205,21 @@ public static class ScimGroupEndpoints
             .Select(m => m.Value)
             .Where(v => !string.IsNullOrEmpty(v))
             .ToList() ?? [];
+        if (RefuseOversizedMembership(memberIds!, options) is { } oversized) return oversized;
 
         var clientId = CallerClientId(httpContext);
         if (string.IsNullOrEmpty(clientId))
             return ScimResults.BadRequest("Unable to determine the calling SCIM client");
+
+        // Group creation was unbounded: the rate limiter paces it at 200/min but nothing stopped a SCIM
+        // token from growing its group table forever. That matters far past this endpoint, because
+        // GetGroupsByUserIdAsync is an unindexed full scan of the same table and runs on EVERY token mint
+        // and every /connect/userinfo call for the tenant once a group→role mapping exists — so an
+        // inflated table makes every login in the tenant pay for it. The cap is what bounds that scan.
+        var (_, ownedCount) = await groupStore.ListAsync(clientId, 0, options.MaxScimGroupsPerClient, ct);
+        if (ownedCount >= options.MaxScimGroupsPerClient)
+            return ScimResults.Error(403, "invalidValue",
+                $"This provisioning client already owns the maximum of {options.MaxScimGroupsPerClient} groups.");
 
         var group = new ScimGroup
         {
@@ -221,6 +254,7 @@ public static class ScimGroupEndpoints
         Authagonal.Core.Services.ITenantContext tenantContext,
         IUserStore userStore,
         IRateLimiter rateLimiter,
+        IOptions<AuthOptions> authOptions,
         CancellationToken ct)
     {
         // The Group endpoints had no rate limiting at all, and every list is a full table scan of all
@@ -244,6 +278,7 @@ public static class ScimGroupEndpoints
             .Select(m => m.Value)
             .Where(v => !string.IsNullOrEmpty(v))
             .ToList() ?? [];
+        if (RefuseOversizedMembership(group.MemberUserIds, authOptions.Value) is { } oversized) return oversized;
         group.UpdatedAt = DateTimeOffset.UtcNow;
 
         // Membership must name users THIS client provisioned. Group membership drives role assignment, so
@@ -267,6 +302,7 @@ public static class ScimGroupEndpoints
         ILogger<Program> logger,
         IUserStore userStore,
         IRateLimiter rateLimiter,
+        IOptions<AuthOptions> authOptions,
         CancellationToken ct)
     {
         // The Group endpoints had no rate limiting at all, and every list is a full table scan of all
@@ -294,6 +330,7 @@ public static class ScimGroupEndpoints
             return ScimResults.Error(400, ex.ScimType, ex.Message);
         }
 
+        if (RefuseOversizedMembership(group.MemberUserIds, authOptions.Value) is { } oversized) return oversized;
         group.UpdatedAt = DateTimeOffset.UtcNow;
         // Membership must name users THIS client provisioned. Group membership drives role assignment, so
         // an unchecked id in a role-mapped group is a privilege path.

@@ -28,6 +28,18 @@ public sealed class TableUserStore(
     TableClient? userRolesTable = null) : IUserStore
 {
     private readonly EnvPartitioner _partitioner = partitioner; // Phase B2 will wrap PartitionKeys with _partitioner.PK
+
+    /// <summary>
+    /// How many times a full-document write retries a row that keeps moving under it.
+    /// </summary>
+    /// <remarks>
+    /// Generous on purpose. Every attempt costs a read, a decrypt and an encrypt, and the writer it
+    /// loses to is usually a login stamp — which an attacker in the reported password-reset race is
+    /// free to generate in a tight loop. Giving up too early would hand them a way to fail an
+    /// administrative write instead of merely reverting it, which is not an improvement. Each pass
+    /// re-checks the caller's revision, so a long budget never lets a genuinely stale write through.
+    /// </remarks>
+    private const int ContendedWriteAttempts = 25;
     // Name-index tables are optional. When null (Storage:NameIndexesEnabled=false),
     // CreateAsync/UpdateAsync/DeleteAsync skip the index writes entirely and
     // SearchAsync degrades from "email + name prefix" to "email prefix only".
@@ -183,15 +195,41 @@ public sealed class TableUserStore(
         }
     }
 
-    private async Task TryDeleteExternalIdAsync(string pk, CancellationToken ct)
+    // Removes the lookup row only when it still names <paramref name="ownerUserId"/>. It used to delete
+    // by key alone, so once an externalId had been repointed at another user, the ORIGINAL holder's next
+    // externalId change deleted the row that now belonged to the new one — and the connector's
+    // deprovisioning lookup for that user then returned nothing, silently, forever.
+    //
+    // Note the ordering is delete-then-tombstone here, the reverse of the unconditional deletes: a
+    // tombstone written for a row we turn out not to own would delete a live index row on restore.
+    private async Task TryDeleteExternalIdAsync(string pk, string ownerUserId, CancellationToken ct)
     {
-        if (tombstoneWriter is not null)
-            await tombstoneWriter.WriteAsync("UserExternalIds", pk, UserExternalIdEntity.LookupRowKey, ct);
+        UserExternalIdEntity existing;
         try
         {
-            await userExternalIdsTable.DeleteEntityAsync(pk, UserExternalIdEntity.LookupRowKey, cancellationToken: ct);
+            existing = (await userExternalIdsTable.GetEntityAsync<UserExternalIdEntity>(
+                pk, UserExternalIdEntity.LookupRowKey, cancellationToken: ct)).Value;
         }
-        catch (RequestFailedException ex) when (ex.Status == 404) { }
+        catch (RequestFailedException ex) when (ex.Status == 404)
+        {
+            return;
+        }
+
+        if (!string.Equals(existing.UserId, ownerUserId, StringComparison.Ordinal)) return;
+
+        try
+        {
+            // If-Match, so a repoint that lands between the read above and this delete wins rather than
+            // being erased by a caller that no longer owns the row.
+            await userExternalIdsTable.DeleteEntityAsync(pk, UserExternalIdEntity.LookupRowKey, existing.ETag, ct);
+        }
+        catch (RequestFailedException ex) when (ex.Status is 404 or 412)
+        {
+            return;
+        }
+
+        if (tombstoneWriter is not null)
+            await tombstoneWriter.WriteAsync("UserExternalIds", pk, UserExternalIdEntity.LookupRowKey, ct);
     }
 
     // Email-domain index ("all users @X"). Optional (null table → feature off). PartitionKey = tokenized
@@ -672,6 +710,9 @@ public sealed class TableUserStore(
         await EncryptEntityAsync(userEntity, ct);
 
         await usersTable.AddEntityAsync(userEntity, ct);
+        // Hand the caller the revision it now holds, so a create-then-update chain (registration, JIT
+        // federation) writes guarded instead of falling back to an unguarded write.
+        user.ConcurrencyToken = UserRevision.Of(user);
         await LogUpsertAsync("Users", userEntity.PartitionKey, userEntity.RowKey, ct);
 
         // The profile row is durable from here. If index writing then fails, the user exists but
@@ -806,35 +847,82 @@ public sealed class TableUserStore(
         // Fetch the existing entity to check if email changed
         try
         {
-            var existing = await usersTable.GetEntityAsync<UserEntity>(
-                _partitioner.PK(user.Id), UserEntity.ProfileRowKey, cancellationToken: ct);
-            // Decrypt first: the old email/names drive old-index-key removal, and must be plaintext (never
-            // the stored ciphertext) to recompute the right tokens.
-            await DecryptEntityAsync(existing.Value, ct);
+            // Read → check the caller's revision → conditional write, retried as a unit. The retry is
+            // for the store's OWN microsecond window only: a login stamp that lands between the read and
+            // the write yields 412, and re-reading is safe because the caller's revision is re-checked
+            // against the fresh row each time. Without it an ordinary sign-in would fail an unrelated
+            // administrative write, which is the opposite of the guarantee this is here to give.
+            AuthUser? storedModel = null;
+            var stored = false;
+            for (var attempt = 0; attempt < ContendedWriteAttempts && !stored; attempt++)
+            {
+                if (attempt > 0) await Task.Delay(Random.Shared.Next(2, 12), ct);
 
-            var oldNormalizedEmail = existing.Value.NormalizedEmail;
+                var existing = await usersTable.GetEntityAsync<UserEntity>(
+                    _partitioner.PK(user.Id), UserEntity.ProfileRowKey, cancellationToken: ct);
+                // Decrypt first: the old email/names drive old-index-key removal, and must be plaintext
+                // (never the stored ciphertext) to recompute the right tokens.
+                await DecryptEntityAsync(existing.Value, ct);
+                storedModel = existing.Value.ToModel();
+
+                // The write below is a full-entity Replace, so it puts back every column as it stood
+                // when the CALLER read — silently reverting a password reset and its security-stamp
+                // rotation, a deactivation, a role revocation, an active lockout. Record*LoginAsync were
+                // already ETag-conditional, which covers this store's read-to-write window; this covers
+                // the caller's, which is the one an admin reset actually races with and the only one an
+                // attacker can widen by authenticating in a loop. A mismatch is refused rather than
+                // merged: the store cannot know which of two conflicting intents should win.
+                if (user.ConcurrencyToken is { Length: > 0 } token &&
+                    !string.Equals(token, storedModel.ConcurrencyToken, StringComparison.Ordinal))
+                {
+                    throw new InvalidOperationException(
+                        $"Concurrent update to user '{user.Id}': the record changed between read and " +
+                        "write. Re-read and retry.");
+                }
+
+                var candidate = UserEntity.FromModel(user);
+                candidate.PartitionKey = _partitioner.PK(candidate.PartitionKey);
+                await EncryptEntityAsync(candidate, ct);
+
+                try
+                {
+                    await usersTable.UpdateEntityAsync(candidate, existing.Value.ETag, TableUpdateMode.Replace, ct);
+                    await LogUpsertAsync("Users", candidate.PartitionKey, candidate.RowKey, ct);
+                    stored = true;
+                }
+                catch (RequestFailedException ex) when (ex.Status == 412)
+                {
+                    // Someone wrote between our read and our write; that costs an attempt. If they
+                    // changed anything that decides something, the revision check above turns the next
+                    // pass into a refusal.
+                }
+            }
+
+            if (!stored || storedModel is null)
+            {
+                throw new InvalidOperationException(
+                    $"Concurrent update to user '{user.Id}': the record kept changing between read and " +
+                    "write. Re-read and retry.");
+            }
+            user.ConcurrencyToken = UserRevision.Of(user);
+
+            var oldNormalizedEmail = storedModel.NormalizedEmail;
             var newNormalizedEmail = user.NormalizedEmail;
             var emailChanged = !string.Equals(oldNormalizedEmail, newNormalizedEmail, StringComparison.Ordinal);
             var localChanged = emailChanged && !string.Equals(LocalPartOf(oldNormalizedEmail), LocalPartOf(newNormalizedEmail), StringComparison.Ordinal);
             var oldDomain = UserEmailDomainEntity.DomainOf(oldNormalizedEmail);
             var newDomain = UserEmailDomainEntity.DomainOf(newNormalizedEmail);
             var domainChanged = emailChanged && !string.Equals(oldDomain, newDomain, StringComparison.Ordinal);
-            var oldFirst = Normalize(existing.Value.FirstName);
+            var oldFirst = Normalize(storedModel.FirstName);
             var newFirst = Normalize(user.FirstName);
             var firstChanged = userFirstNamesTable is not null && !string.Equals(oldFirst, newFirst, StringComparison.Ordinal);
-            var oldLast = Normalize(existing.Value.LastName);
+            var oldLast = Normalize(storedModel.LastName);
             var newLast = Normalize(user.LastName);
             var lastChanged = userLastNamesTable is not null && !string.Equals(oldLast, newLast, StringComparison.Ordinal);
             // Read from the STORED entity, not from the incoming model: the caller may have mutated
             // the same instance it read, in which case user.Roles is already the new set and there is
             // nothing left to diff against.
-            var oldRoles = existing.Value.ToModel().Roles;
-
-            var userEntity = UserEntity.FromModel(user);
-            userEntity.PartitionKey = _partitioner.PK(userEntity.PartitionKey);
-            await EncryptEntityAsync(userEntity, ct);
-            await usersTable.UpsertEntityAsync(userEntity, TableUpdateMode.Replace, ct);
-            await LogUpsertAsync("Users", userEntity.PartitionKey, userEntity.RowKey, ct);
+            var oldRoles = storedModel.Roles;
 
             // Every index key the changed fields need — new-side and old-side — in ONE tokenizer
             // round-trip, computed BEFORE any index write: a tokenizer throw here leaves every existing
@@ -1049,7 +1137,7 @@ public sealed class TableUserStore(
                 new UserExternalIdEntity { PartitionKey = tokenPk, RowKey = UserExternalIdEntity.LookupRowKey, UserId = row.UserId },
                 TableUpdateMode.Replace, ct);
             await LogUpsertAsync("UserExternalIds", tokenPk, UserExternalIdEntity.LookupRowKey, ct);
-            await TryDeleteExternalIdAsync(row.PartitionKey, ct);
+            await TryDeleteExternalIdAsync(row.PartitionKey, row.UserId, ct);
         }
         return count;
     }
@@ -1553,11 +1641,37 @@ public sealed class TableUserStore(
         return ids;
     }
 
+    /// <summary>
+    /// Binds (clientId, externalId) to a user, refusing to take a binding another user already holds.
+    /// </summary>
+    /// <remarks>
+    /// The row is a single (clientId, externalId) → userId mapping and it was written with a blind
+    /// Replace, so assigning user B an externalId user A already held repointed it: A's own record still
+    /// claimed the value, but the index — and therefore the connector's `externalId eq` lookup and its
+    /// "update A" write — resolved to B. The SCIM endpoints now check first, but that is a
+    /// check-then-act; the store is the only layer that can make it stick.
+    /// </remarks>
     public async Task SetExternalIdAsync(string userId, string clientId, string externalId, CancellationToken ct = default)
     {
         var entity = UserExternalIdEntity.Create(clientId, externalId, userId);
         entity.PartitionKey = await ExternalIdIndexPkAsync(clientId, externalId, ct);
-        await userExternalIdsTable.UpsertEntityAsync(entity, TableUpdateMode.Replace, ct);
+
+        try
+        {
+            await userExternalIdsTable.AddEntityAsync(entity, ct);
+        }
+        catch (RequestFailedException ex) when (ex.Status == 409)
+        {
+            // Re-asserting a user's own binding is ordinary (a retried sync, a no-op PUT) and must stay
+            // idempotent; a different user holding it is the collision this exists to catch.
+            var existing = await TryGetExternalIdUserIdAsync(entity.PartitionKey, ct);
+            if (existing is not null && !string.Equals(existing, userId, StringComparison.Ordinal))
+                throw new InvalidOperationException(
+                    $"The externalId is already assigned to a different user ({entity.PartitionKey}).");
+
+            await userExternalIdsTable.UpsertEntityAsync(entity, TableUpdateMode.Replace, ct);
+        }
+
         await LogUpsertAsync("UserExternalIds", entity.PartitionKey, UserExternalIdEntity.LookupRowKey, ct);
     }
 
@@ -1565,12 +1679,12 @@ public sealed class TableUserStore(
     {
         // Delete the tokenized row and, while tokenization is on, any legacy plaintext row too.
         var tokenPk = await ExternalIdIndexPkAsync(clientId, externalId, ct);
-        await TryDeleteExternalIdAsync(tokenPk, ct);
+        await TryDeleteExternalIdAsync(tokenPk, userId, ct);
         if (_indexTokenized)
         {
             var plainPk = _partitioner.PK($"{clientId}|{externalId}");
             if (!string.Equals(plainPk, tokenPk, StringComparison.Ordinal))
-                await TryDeleteExternalIdAsync(plainPk, ct);
+                await TryDeleteExternalIdAsync(plainPk, userId, ct);
         }
     }
 

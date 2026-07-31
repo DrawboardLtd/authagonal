@@ -74,6 +74,25 @@ public sealed class SqlUserStore(
     private static IReadOnlyList<string> PadToFixedCount(IReadOnlyList<string> prefixes, string value)
         => Authagonal.Core.Services.BlindIndexPadding.Pad(prefixes, value, NamePrefixCount);
 
+    /// <summary>
+    /// How many times a full-document write retries a row that keeps moving under it.
+    /// </summary>
+    /// <remarks>
+    /// Generous on purpose: the writer it loses to is usually a login stamp, which an attacker in the
+    /// reported password-reset race is free to generate in a tight loop. Giving up too early would hand
+    /// them a way to fail an administrative write instead of merely reverting it, which is not an
+    /// improvement. Each pass re-checks the caller's revision, so a long budget never lets a genuinely
+    /// stale write through.
+    /// </remarks>
+    private const int ContendedWriteAttempts = 25;
+
+    // An instance the caller built itself carries no token — refusing those would break the paths that
+    // hand UpdateAsync a freshly constructed model — so an absent token means "unguarded", and only a
+    // token that no longer describes the stored record is a conflict.
+    private static bool IsStale(string? concurrencyToken, AuthUser stored)
+        => concurrencyToken is { Length: > 0 }
+           && !string.Equals(concurrencyToken, stored.ConcurrencyToken, StringComparison.Ordinal);
+
     // A domain's members are bucketed so one big-domain tenant doesn't funnel every index write into a
     // single partition. Must stay identical to the other backends' constants/hash so semantics (and
     // tests) agree. Bucket = stable FNV-1a of the userId (string.GetHashCode is not stable across
@@ -234,6 +253,10 @@ public sealed class SqlUserStore(
             user.PasswordHash = row.GetS("pwd");
             user.PendingPasswordHash = row.GetS("pwdPending");
         }
+
+        // The revision the caller is holding. UpdateAsync refuses a write whose token no longer matches
+        // the stored state, so a stale snapshot cannot revert what landed in between.
+        user.ConcurrencyToken = UserRevision.Of(user);
         return user;
     }
 
@@ -288,9 +311,35 @@ public sealed class SqlUserStore(
         if (!inserted)
             throw new InvalidOperationException(
                 $"A user with id '{user.Id}' already exists. CreateAsync will not overwrite an existing user.");
+        // Hand the caller the revision it now holds, so a create-then-update chain writes guarded
+        // instead of falling back to an unguarded write.
+        user.ConcurrencyToken = UserRevision.Of(user);
         await LogUpsertAsync("Users", partitioner.PK(user.Id), Profile, ct).ConfigureAwait(false);
-        await WriteProfileIndexesAsync(
-            user.NormalizedEmail, Normalize(user.FirstName), Normalize(user.LastName), user.Id, dropLegacy: false, ct).ConfigureAwait(false);
+
+        // The profile row is durable from here. If the email claim then loses to a concurrent
+        // registration for the same address, the user exists but cannot be found by email — invisible
+        // to FindByEmailAsync and so to every duplicate check, yet still occupying an id and still
+        // listed. Undo the profile row rather than leave a record nothing can reach (the Azure store
+        // makes the same trade).
+        try
+        {
+            await WriteProfileIndexesAsync(
+                user.NormalizedEmail, Normalize(user.FirstName), Normalize(user.LastName), user.Id, dropLegacy: false, ct).ConfigureAwait(false);
+        }
+        catch
+        {
+            try
+            {
+                await users.DeleteAsync(partitioner.PK(user.Id), Profile, ct).ConfigureAwait(false);
+            }
+            catch
+            {
+                // Best effort. The original failure is the one worth surfacing — swallowing it here to
+                // report a cleanup failure would hide what actually went wrong.
+            }
+
+            throw;
+        }
     }
 
     /// <summary>
@@ -312,10 +361,9 @@ public sealed class SqlUserStore(
         var lastTokens = ReserveNameTokens(batch, userLastNames, normalizedLast);
         await batch.RunAsync(ct).ConfigureAwait(false);
 
-        // Email lookup.
+        // Email lookup — claimed, not overwritten. See ClaimEmailIndexAsync.
         var emailPk = partitioner.PK(emailToken());
-        await userEmails.PutAsync(LookupRow(emailPk, userId), ct).ConfigureAwait(false);
-        await LogUpsertAsync("UserEmails", emailPk, Lookup, ct).ConfigureAwait(false);
+        await ClaimEmailIndexAsync(emailPk, userId, ct).ConfigureAwait(false);
         if (dropLegacy && _indexTokenized)
         {
             var plainPk = partitioner.PK(normalizedEmail);
@@ -354,15 +402,51 @@ public sealed class SqlUserStore(
 
     public async Task UpdateAsync(AuthUser user, CancellationToken ct = default)
     {
-        var existing = await users.GetAsync(partitioner.PK(user.Id), Profile, ct: ct).ConfigureAwait(false);
-        if (existing is null)
+        // Read → check the caller's revision → conditional write, retried as a unit. The retry is for
+        // this store's OWN microsecond window: a login stamp landing between the read and the write
+        // loses the version race, and re-reading is safe because the caller's revision is re-checked
+        // against the fresh row each time. Without it an ordinary sign-in would fail an unrelated
+        // administrative write.
+        AuthUser? old = null;
+        var stored = false;
+        for (var attempt = 0; attempt < ContendedWriteAttempts && !stored; attempt++)
         {
-            await CreateAsync(user, ct).ConfigureAwait(false);
-            return;
+            if (attempt > 0) await Task.Delay(Random.Shared.Next(2, 12), ct).ConfigureAwait(false);
+
+            var row = await users.GetAsync(partitioner.PK(user.Id), Profile, ct: ct).ConfigureAwait(false);
+            if (row is null)
+            {
+                await CreateAsync(user, ct).ConfigureAwait(false);
+                return;
+            }
+
+            // Old plaintext values drive old-index-key removal.
+            old = await ReadUserAsync(row, ct).ConfigureAwait(false);
+
+            // The row is written whole, so a stale snapshot puts every column back as it stood when the
+            // CALLER read — silently reverting a password reset and its security-stamp rotation, a
+            // deactivation, a role revocation, an active lockout. The version check alone covered only
+            // this store's read-to-write gap; the caller's is the one an admin reset actually races with
+            // and the only one an attacker can widen by authenticating in a loop.
+            if (IsStale(user.ConcurrencyToken, old))
+                throw new InvalidOperationException(
+                    $"Concurrent update to user '{user.Id}': the record changed between read and write. " +
+                    "Re-read and retry.");
+
+            // Someone writing between our read and our write costs an attempt. If they changed anything
+            // that decides something, the revision check above turns the next pass into a refusal.
+            stored = await users.PutIfVersionAsync(
+                await UserRowAsync(user, ct).ConfigureAwait(false), row.Version, ct).ConfigureAwait(false);
         }
 
-        // Old plaintext values drive old-index-key removal.
-        var old = await ReadUserAsync(existing, ct).ConfigureAwait(false);
+        if (!stored || old is null)
+            throw new InvalidOperationException(
+                $"Concurrent update to user '{user.Id}': the record kept changing between read and " +
+                "write. Re-read and retry.");
+
+        user.ConcurrencyToken = UserRevision.Of(user);
+        await LogUpsertAsync("Users", partitioner.PK(user.Id), Profile, ct).ConfigureAwait(false);
+
         var emailChanged = !string.Equals(old.NormalizedEmail, user.NormalizedEmail, StringComparison.Ordinal);
         var localChanged = emailChanged && !string.Equals(LocalPartOf(old.NormalizedEmail), LocalPartOf(user.NormalizedEmail), StringComparison.Ordinal);
         var oldDomain = DomainOf(old.NormalizedEmail);
@@ -374,9 +458,6 @@ public sealed class SqlUserStore(
         var oldLast = Normalize(old.LastName);
         var newLast = Normalize(user.LastName);
         var lastChanged = userLastNames is not null && !string.Equals(oldLast, newLast, StringComparison.Ordinal);
-
-        await users.PutAsync(await UserRowAsync(user, ct).ConfigureAwait(false), ct).ConfigureAwait(false);
-        await LogUpsertAsync("Users", partitioner.PK(user.Id), Profile, ct).ConfigureAwait(false);
 
         // Every index key the changed fields need — old-side and new-side — in one tokenizer round
         // trip, computed before any index write (a tokenizer throw leaves every existing lookup row
@@ -407,9 +488,10 @@ public sealed class SqlUserStore(
 
         if (emailChanged)
         {
-            var newPk = partitioner.PK(newEmailToken!());
-            await userEmails.PutAsync(LookupRow(newPk, user.Id), ct).ConfigureAwait(false);
-            await LogUpsertAsync("UserEmails", newPk, Lookup, ct).ConfigureAwait(false);
+            // Write-before-delete, and the new binding is CLAIMED rather than written over: if another
+            // user already holds this address the claim throws and the old binding is left alone, so the
+            // caller's check-then-act gap cannot end in one user owning another's login identifier.
+            await ClaimEmailIndexAsync(partitioner.PK(newEmailToken!()), user.Id, ct).ConfigureAwait(false);
             await DeleteEmailIndexAsync(old.NormalizedEmail, oldEmailToken!(), ct).ConfigureAwait(false);
 
             if (localChanged)
@@ -850,7 +932,7 @@ public sealed class SqlUserStore(
             if (string.Equals(tokenPk, row.Pk, StringComparison.Ordinal)) continue; // defensive
             await userExternalIds.PutAsync(LookupRow(tokenPk, row.GetStr("userId")), ct).ConfigureAwait(false);
             await LogUpsertAsync("UserExternalIds", tokenPk, Lookup, ct).ConfigureAwait(false);
-            await TryDeleteRowAsync(userExternalIds, row.Pk, Lookup, "UserExternalIds", ct).ConfigureAwait(false);
+            await DeleteOwnedExternalIdAsync(row.Pk, row.GetStr("userId"), ct).ConfigureAwait(false);
         }
         return count;
     }
@@ -897,10 +979,31 @@ public sealed class SqlUserStore(
 
     // ── external ids ─────────────────────────────────────────────────────────────
 
+    /// <summary>
+    /// Binds (clientId, externalId) to a user, refusing to take a binding another user already holds.
+    /// </summary>
+    /// <remarks>
+    /// The row is a single (clientId, externalId) → userId mapping and it was written with a blind
+    /// upsert, so assigning user B an externalId user A already held repointed it: A's own record still
+    /// claimed the value, but the index — and therefore the connector's `externalId eq` lookup and its
+    /// "update A" write — resolved to B. The SCIM endpoints now check first, but that is a
+    /// check-then-act; the store is the only layer that can make it stick.
+    /// </remarks>
     public async Task SetExternalIdAsync(string userId, string clientId, string externalId, CancellationToken ct = default)
     {
         var pk = partitioner.PK(await _tokenizer.TokenizeAsync($"{clientId}|{externalId}", ct).ConfigureAwait(false));
-        await userExternalIds.PutAsync(LookupRow(pk, userId), ct).ConfigureAwait(false);
+        if (!await userExternalIds.PutIfAbsentAsync(LookupRow(pk, userId), ct).ConfigureAwait(false))
+        {
+            // Re-asserting a user's own binding is ordinary (a retried sync, a no-op PUT) and must stay
+            // idempotent; a different user holding it is the collision this exists to catch.
+            var existing = await userExternalIds.GetAsync(pk, Lookup, includeData: false, ct).ConfigureAwait(false);
+            var owner = existing?.GetS("userId");
+            if (owner is { Length: > 0 } && !string.Equals(owner, userId, StringComparison.Ordinal))
+                throw new InvalidOperationException(
+                    $"The externalId is already assigned to a different user ({pk}).");
+
+            await userExternalIds.PutAsync(LookupRow(pk, userId), ct).ConfigureAwait(false);
+        }
         await LogUpsertAsync("UserExternalIds", pk, Lookup, ct).ConfigureAwait(false);
     }
 
@@ -908,13 +1011,28 @@ public sealed class SqlUserStore(
     {
         var composite = $"{clientId}|{externalId}";
         var tokenPk = partitioner.PK(await _tokenizer.TokenizeAsync(composite, ct).ConfigureAwait(false));
-        await TryDeleteRowAsync(userExternalIds, tokenPk, Lookup, "UserExternalIds", ct).ConfigureAwait(false);
+        await DeleteOwnedExternalIdAsync(tokenPk, userId, ct).ConfigureAwait(false);
         if (_indexTokenized)
         {
             var plainPk = partitioner.PK(composite);
             if (!string.Equals(plainPk, tokenPk, StringComparison.Ordinal))
-                await TryDeleteRowAsync(userExternalIds, plainPk, Lookup, "UserExternalIds", ct).ConfigureAwait(false);
+                await DeleteOwnedExternalIdAsync(plainPk, userId, ct).ConfigureAwait(false);
         }
+    }
+
+    // Removes the lookup row only when it still names <paramref name="ownerUserId"/>. It used to delete
+    // by key alone, so once an externalId had been repointed at another user, the ORIGINAL holder's next
+    // externalId change deleted the row that now belonged to the new one — and the connector's
+    // deprovisioning lookup for that user then returned nothing, silently, forever.
+    //
+    // Note the ordering is delete-then-tombstone here, the reverse of the unconditional deletes: a
+    // tombstone written for a row we turn out not to own would delete a live index row on restore.
+    private async Task DeleteOwnedExternalIdAsync(string pk, string ownerUserId, CancellationToken ct)
+    {
+        if (!await userExternalIds.DeleteIfAttrEqualsAsync(pk, Lookup, "userId", ownerUserId, ct).ConfigureAwait(false))
+            return;
+        if (tombstones is not null)
+            await tombstones.WriteAsync("UserExternalIds", pk, Lookup, ct).ConfigureAwait(false);
     }
 
     // ── external logins ──────────────────────────────────────────────────────────
@@ -977,6 +1095,40 @@ public sealed class SqlUserStore(
         var row = new SqlRow(pk, Lookup);
         row.PutS("userId", userId);
         return row;
+    }
+
+    /// <summary>
+    /// Writes the email→userId binding with an insert-if-absent, and accepts an existing row only when
+    /// it already names this user.
+    /// </summary>
+    /// <remarks>
+    /// This row is the authority for <see cref="FindByEmailAsync"/> — password login, password reset,
+    /// SCIM matching and federated account linking all resolve an identity through it. Every write of
+    /// it was an unconditional upsert, so it would happily repoint an existing binding at a different
+    /// user; uniqueness rested entirely on callers doing a FindByEmailAsync first, which is a
+    /// check-then-act with several round trips of gap. Two concurrent registrations for one address
+    /// could therefore both pass their check and the second silently take ownership of the first's
+    /// login identifier. There is no UNIQUE constraint on this table to fall back on — the schema is
+    /// one generic key-value shape shared by every store — so the claim has to be the enforcer.
+    /// </remarks>
+    private async Task ClaimEmailIndexAsync(string emailPk, string userId, CancellationToken ct)
+    {
+        if (!await userEmails.PutIfAbsentAsync(LookupRow(emailPk, userId), ct).ConfigureAwait(false))
+        {
+            // Already bound. Re-registering the same user's own address is ordinary (a reindex, a
+            // retried write, a no-op profile update) and must stay idempotent; a different user holding
+            // it is the collision this exists to catch.
+            var existing = await userEmails.GetAsync(emailPk, Lookup, includeData: false, ct).ConfigureAwait(false);
+            var owner = existing?.GetS("userId");
+            if (owner is { Length: > 0 } && !string.Equals(owner, userId, StringComparison.Ordinal))
+                throw new InvalidOperationException(
+                    $"The email address is already registered to a different user ({emailPk}).");
+
+            // Same user, or a row with no usable userId — rewrite so the binding is well-formed.
+            await userEmails.PutAsync(LookupRow(emailPk, userId), ct).ConfigureAwait(false);
+        }
+
+        await LogUpsertAsync("UserEmails", emailPk, Lookup, ct).ConfigureAwait(false);
     }
 
     private async Task DeleteEmailIndexAsync(string normalizedEmail, string emailToken, CancellationToken ct)

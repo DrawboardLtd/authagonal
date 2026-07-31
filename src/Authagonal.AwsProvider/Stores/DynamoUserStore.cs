@@ -213,8 +213,31 @@ public sealed class DynamoUserStore(
             user.PasswordHash = item.GetS("pwd");
             user.PendingPasswordHash = item.GetS("pwdPending");
         }
+
+        // The revision the caller is holding. UpdateAsync refuses a write whose token no longer matches
+        // the stored state, so a stale snapshot cannot revert what landed in between.
+        user.ConcurrencyToken = UserRevision.Of(user);
         return user;
     }
+
+    /// <summary>
+    /// How many times a full-document write retries an item that keeps moving under it.
+    /// </summary>
+    /// <remarks>
+    /// Generous on purpose: the writer it loses to is usually a login stamp, which an attacker in the
+    /// reported password-reset race is free to generate in a tight loop. Giving up too early would hand
+    /// them a way to fail an administrative write instead of merely reverting it, which is not an
+    /// improvement. Each pass re-checks the caller's revision, so a long budget never lets a genuinely
+    /// stale write through.
+    /// </remarks>
+    private const int ContendedWriteAttempts = 25;
+
+    // An instance the caller built itself carries no token — refusing those would break the paths that
+    // hand UpdateAsync a freshly constructed model — so an absent token means "unguarded", and only a
+    // token that no longer describes the stored record is a conflict.
+    private static bool IsStale(string? concurrencyToken, AuthUser stored)
+        => concurrencyToken is { Length: > 0 }
+           && !string.Equals(concurrencyToken, stored.ConcurrencyToken, StringComparison.Ordinal);
 
     // ── point reads ──────────────────────────────────────────────────────────────
 
@@ -267,8 +290,34 @@ public sealed class DynamoUserStore(
         if (!inserted)
             throw new InvalidOperationException(
                 $"A user with id '{user.Id}' already exists. CreateAsync will not overwrite an existing user.");
+        // Hand the caller the revision it now holds, so a create-then-update chain writes guarded
+        // instead of falling back to an unguarded write.
+        user.ConcurrencyToken = UserRevision.Of(user);
         await LogUpsertAsync("Users", partitioner.PK(user.Id), Profile, ct).ConfigureAwait(false);
-        await WriteProfileIndexesAsync(user.NormalizedEmail, Normalize(user.FirstName), Normalize(user.LastName), user.Id, dropLegacy: false, ct).ConfigureAwait(false);
+
+        // The profile row is durable from here. If the email claim then loses to a concurrent
+        // registration for the same address, the user exists but cannot be found by email — invisible
+        // to FindByEmailAsync and so to every duplicate check, yet still occupying an id and still
+        // listed. Undo the profile row rather than leave a record nothing can reach (the Azure store
+        // makes the same trade).
+        try
+        {
+            await WriteProfileIndexesAsync(user.NormalizedEmail, Normalize(user.FirstName), Normalize(user.LastName), user.Id, dropLegacy: false, ct).ConfigureAwait(false);
+        }
+        catch
+        {
+            try
+            {
+                await users.DeleteAsync(partitioner.PK(user.Id), Profile, ct).ConfigureAwait(false);
+            }
+            catch
+            {
+                // Best effort. The original failure is the one worth surfacing — swallowing it here to
+                // report a cleanup failure would hide what actually went wrong.
+            }
+
+            throw;
+        }
     }
 
     /// <summary>
@@ -290,10 +339,9 @@ public sealed class DynamoUserStore(
         var lastTokens = ReserveNameTokens(batch, userLastNames, normalizedLast);
         await batch.RunAsync(ct).ConfigureAwait(false);
 
-        // Email lookup.
+        // Email lookup — claimed, not overwritten. See ClaimEmailIndexAsync.
         var emailPk = partitioner.PK(emailToken());
-        await userEmails.PutAsync(LookupItem(emailPk, userId), ct).ConfigureAwait(false);
-        await LogUpsertAsync("UserEmails", emailPk, Lookup, ct).ConfigureAwait(false);
+        await ClaimEmailIndexAsync(emailPk, userId, ct).ConfigureAwait(false);
         if (dropLegacy && _indexTokenized)
         {
             var plainPk = partitioner.PK(normalizedEmail);
@@ -332,15 +380,52 @@ public sealed class DynamoUserStore(
 
     public async Task UpdateAsync(AuthUser user, CancellationToken ct = default)
     {
-        var existing = await users.GetAsync(partitioner.PK(user.Id), Profile, ct).ConfigureAwait(false);
-        if (existing is null)
+        // Read → check the caller's revision → conditional write, retried as a unit. The retry is for
+        // this store's OWN microsecond window: a login stamp landing between the read and the write
+        // bumps `_v` and loses the condition, and re-reading is safe because the caller's revision is
+        // re-checked against the fresh item each time. Without it an ordinary sign-in would fail an
+        // unrelated administrative write.
+        AuthUser? old = null;
+        var stored = false;
+        for (var attempt = 0; attempt < ContendedWriteAttempts && !stored; attempt++)
         {
-            await CreateAsync(user, ct).ConfigureAwait(false);
-            return;
+            if (attempt > 0) await Task.Delay(Random.Shared.Next(2, 12), ct).ConfigureAwait(false);
+
+            var item = await users.GetAsync(partitioner.PK(user.Id), Profile, ct).ConfigureAwait(false);
+            if (item is null)
+            {
+                await CreateAsync(user, ct).ConfigureAwait(false);
+                return;
+            }
+
+            // Old plaintext values drive old-index-key removal.
+            old = await ReadUserAsync(item, ct).ConfigureAwait(false);
+
+            // The document is written whole, so a stale snapshot puts every field back as it stood when
+            // the CALLER read — reverting a password reset and its security-stamp rotation, a
+            // deactivation, or an active lockout (UserItemAsync rewrites the login-state attribute group
+            // too, and an omitted null DELETES lockoutEnd outright). Matching `_v` alone covered only
+            // this store's read-to-write gap, which is not the window an admin reset races with.
+            if (IsStale(user.ConcurrencyToken, old))
+                throw new InvalidOperationException(
+                    $"Concurrent update to user '{user.Id}': the record changed between read and write. " +
+                    "Re-read and retry.");
+
+            // Someone writing between our read and our write costs an attempt. If they changed anything
+            // that decides something, the revision check above turns the next pass into a refusal.
+            var version = item.GetN("_v");
+            stored = await users.PutIfVersionAsync(
+                await UserItemAsync(user, version + 1, ct).ConfigureAwait(false), version, ct).ConfigureAwait(false);
         }
 
-        // Old plaintext values drive old-index-key removal.
-        var old = await ReadUserAsync(existing, ct).ConfigureAwait(false);
+        if (!stored || old is null)
+            throw new InvalidOperationException(
+                $"Concurrent update to user '{user.Id}': the record kept changing between read and " +
+                "write. Re-read and retry.");
+
+        user.ConcurrencyToken = UserRevision.Of(user);
+        await LogUpsertAsync("Users", partitioner.PK(user.Id), Profile, ct).ConfigureAwait(false);
+
         var emailChanged = !string.Equals(old.NormalizedEmail, user.NormalizedEmail, StringComparison.Ordinal);
         var localChanged = emailChanged && !string.Equals(LocalPartOf(old.NormalizedEmail), LocalPartOf(user.NormalizedEmail), StringComparison.Ordinal);
         var oldDomain = DomainOf(old.NormalizedEmail);
@@ -352,23 +437,6 @@ public sealed class DynamoUserStore(
         var oldLast = Normalize(old.LastName);
         var newLast = Normalize(user.LastName);
         var lastChanged = userLastNames is not null && !string.Equals(oldLast, newLast, StringComparison.Ordinal);
-
-        // Conditional on the version we read, so a racing writer cannot be silently overwritten. The
-        // `_v` attribute was being incremented and tested by nothing, which made the documented
-        // optimistic concurrency a no-op: two concurrent updates both read, both wrote, and the second
-        // discarded the first — on a record where the first might be a password reset, a deactivation
-        // or a security-stamp rotation.
-        var expectedVersion = existing.GetN("_v");
-        var written = await users.PutIfVersionAsync(
-            await UserItemAsync(user, expectedVersion + 1, ct).ConfigureAwait(false), expectedVersion, ct).ConfigureAwait(false);
-
-        if (!written)
-        {
-            throw new InvalidOperationException(
-                $"Concurrent update to user '{user.Id}': the record changed between read and write. " +
-                "Re-read and retry.");
-        }
-        await LogUpsertAsync("Users", partitioner.PK(user.Id), Profile, ct).ConfigureAwait(false);
 
         // Every index key the changed fields need — old-side and new-side — in one tokenizer
         // round-trip, computed before any index write (a tokenizer throw leaves every existing lookup
@@ -399,9 +467,10 @@ public sealed class DynamoUserStore(
 
         if (emailChanged)
         {
-            var newPk = partitioner.PK(newEmailToken!());
-            await userEmails.PutAsync(LookupItem(newPk, user.Id), ct).ConfigureAwait(false);
-            await LogUpsertAsync("UserEmails", newPk, Lookup, ct).ConfigureAwait(false);
+            // Write-before-delete, and the new binding is CLAIMED rather than written over: if another
+            // user already holds this address the claim throws and the old binding is left alone, so the
+            // caller's check-then-act gap cannot end in one user owning another's login identifier.
+            await ClaimEmailIndexAsync(partitioner.PK(newEmailToken!()), user.Id, ct).ConfigureAwait(false);
             await DeleteEmailIndexAsync(old.NormalizedEmail, oldEmailToken!(), ct).ConfigureAwait(false);
 
             if (localChanged)
@@ -476,6 +545,7 @@ public sealed class DynamoUserStore(
         {
             [":zero"] = new() { N = "0" },
             [":now"] = new() { S = now },
+            [":one"] = new() { N = "1" },
         };
         var set = "SET failedCount = :zero, lastLogin = :now, updated = :now";
         if (rehashedPassword is not null)
@@ -490,8 +560,13 @@ public sealed class DynamoUserStore(
             {
                 TableName = users.Name,
                 Key = KeyOf(partitioner.PK(userId), Profile),
-                UpdateExpression = set + " REMOVE lockoutEnd",
+                // ADD _v: the stamp writes attributes the full-document write also carries, so it has to
+                // move the version too. Without it a full write built from a snapshot taken BEFORE this
+                // stamp still matches the condition and reverts the columns below — a login rehash, or
+                // (via RecordFailedLoginAsync) an active lockout.
+                UpdateExpression = set + " REMOVE lockoutEnd ADD #v :one",
                 ConditionExpression = "attribute_exists(pk)",
+                ExpressionAttributeNames = new Dictionary<string, string> { ["#v"] = "_v" },
                 ExpressionAttributeValues = values,
             }, ct).ConfigureAwait(false);
         }
@@ -544,6 +619,7 @@ public sealed class DynamoUserStore(
                 [":fc"] = new() { N = failed.ToString(CultureInfo.InvariantCulture) },
                 [":le"] = new() { BOOL = lockEnabled },
                 [":now"] = new() { S = Iso(DateTimeOffset.UtcNow) },
+                [":one"] = new() { N = "1" },
             };
             var set = "SET failedCount = :fc, lockEnabled = :le, updated = :now";
             // Stamp lockoutEnd when newly locked, or when first materializing the attribute group on a
@@ -572,8 +648,12 @@ public sealed class DynamoUserStore(
                 {
                     TableName = users.Name,
                     Key = KeyOf(pk, Profile),
-                    UpdateExpression = set,
+                    // ADD _v so a lockout this stamp just wrote cannot be reverted by a full-document
+                    // write built from a snapshot taken before it — that is how a locked-out account
+                    // gets silently unlocked mid brute-force by an unrelated profile update.
+                    UpdateExpression = set + " ADD #v :one",
                     ConditionExpression = condition,
+                    ExpressionAttributeNames = new Dictionary<string, string> { ["#v"] = "_v" },
                     ExpressionAttributeValues = values,
                 }, ct).ConfigureAwait(false);
                 return locked;
@@ -937,7 +1017,7 @@ public sealed class DynamoUserStore(
             if (string.Equals(tokenPk, item.GetStr("pk"), StringComparison.Ordinal)) continue; // defensive
             await userExternalIds.PutAsync(LookupItem(tokenPk, item.GetStr("userId")), ct).ConfigureAwait(false);
             await LogUpsertAsync("UserExternalIds", tokenPk, Lookup, ct).ConfigureAwait(false);
-            await TryDeleteRowAsync(userExternalIds, item.GetStr("pk"), Lookup, "UserExternalIds", ct).ConfigureAwait(false);
+            await DeleteOwnedExternalIdAsync(item.GetStr("pk"), item.GetStr("userId"), ct).ConfigureAwait(false);
         }
         return count;
     }
@@ -993,10 +1073,31 @@ public sealed class DynamoUserStore(
 
     // ── external ids ─────────────────────────────────────────────────────────────
 
+    /// <summary>
+    /// Binds (clientId, externalId) to a user, refusing to take a binding another user already holds.
+    /// </summary>
+    /// <remarks>
+    /// The row is a single (clientId, externalId) → userId mapping and it was written with a blind
+    /// PutItem, so assigning user B an externalId user A already held repointed it: A's own record still
+    /// claimed the value, but the index — and therefore the connector's `externalId eq` lookup and its
+    /// "update A" write — resolved to B. The SCIM endpoints now check first, but that is a
+    /// check-then-act; the store is the only layer that can make it stick.
+    /// </remarks>
     public async Task SetExternalIdAsync(string userId, string clientId, string externalId, CancellationToken ct = default)
     {
         var pk = partitioner.PK(await _tokenizer.TokenizeAsync($"{clientId}|{externalId}", ct).ConfigureAwait(false));
-        await userExternalIds.PutAsync(LookupItem(pk, userId), ct).ConfigureAwait(false);
+        if (!await userExternalIds.PutIfAbsentAsync(LookupItem(pk, userId), ct).ConfigureAwait(false))
+        {
+            // Re-asserting a user's own binding is ordinary (a retried sync, a no-op PUT) and must stay
+            // idempotent; a different user holding it is the collision this exists to catch.
+            var existing = await userExternalIds.GetAsync(pk, Lookup, ct).ConfigureAwait(false);
+            var owner = existing?.GetS("userId");
+            if (owner is { Length: > 0 } && !string.Equals(owner, userId, StringComparison.Ordinal))
+                throw new InvalidOperationException(
+                    $"The externalId is already assigned to a different user ({pk}).");
+
+            await userExternalIds.PutAsync(LookupItem(pk, userId), ct).ConfigureAwait(false);
+        }
         await LogUpsertAsync("UserExternalIds", pk, Lookup, ct).ConfigureAwait(false);
     }
 
@@ -1004,13 +1105,28 @@ public sealed class DynamoUserStore(
     {
         var composite = $"{clientId}|{externalId}";
         var tokenPk = partitioner.PK(await _tokenizer.TokenizeAsync(composite, ct).ConfigureAwait(false));
-        await TryDeleteRowAsync(userExternalIds, tokenPk, Lookup, "UserExternalIds", ct).ConfigureAwait(false);
+        await DeleteOwnedExternalIdAsync(tokenPk, userId, ct).ConfigureAwait(false);
         if (_indexTokenized)
         {
             var plainPk = partitioner.PK(composite);
             if (!string.Equals(plainPk, tokenPk, StringComparison.Ordinal))
-                await TryDeleteRowAsync(userExternalIds, plainPk, Lookup, "UserExternalIds", ct).ConfigureAwait(false);
+                await DeleteOwnedExternalIdAsync(plainPk, userId, ct).ConfigureAwait(false);
         }
+    }
+
+    // Removes the lookup row only when it still names <paramref name="ownerUserId"/>. It used to delete
+    // by key alone, so once an externalId had been repointed at another user, the ORIGINAL holder's next
+    // externalId change deleted the row that now belonged to the new one — and the connector's
+    // deprovisioning lookup for that user then returned nothing, silently, forever.
+    //
+    // Note the ordering is delete-then-tombstone here, the reverse of the unconditional deletes: a
+    // tombstone written for a row we turn out not to own would delete a live index row on restore.
+    private async Task DeleteOwnedExternalIdAsync(string pk, string ownerUserId, CancellationToken ct)
+    {
+        if (!await userExternalIds.DeleteIfAttrEqualsAsync(pk, Lookup, "userId", ownerUserId, ct).ConfigureAwait(false))
+            return;
+        if (tombstones is not null)
+            await tombstones.WriteAsync("UserExternalIds", pk, Lookup, ct).ConfigureAwait(false);
     }
 
     // ── external logins ──────────────────────────────────────────────────────────
@@ -1081,6 +1197,41 @@ public sealed class DynamoUserStore(
         var item = Dyn.Item(pk, Lookup);
         item.PutS("userId", userId);
         return item;
+    }
+
+    /// <summary>
+    /// Writes the email→userId binding with an insert-if-absent, and accepts an existing row only when
+    /// it already names this user.
+    /// </summary>
+    /// <remarks>
+    /// This row is the authority for <see cref="FindByEmailAsync"/> — password login, password reset,
+    /// SCIM matching and federated account linking all resolve an identity through it. Every write of
+    /// it was an unconditional PutItem, so it would happily repoint an existing binding at a different
+    /// user; uniqueness rested entirely on callers doing a FindByEmailAsync first, which is a
+    /// check-then-act with several round trips of gap. Two concurrent registrations for one address
+    /// could therefore both pass their check and the second silently take ownership of the first's
+    /// login identifier. The Azure store was given this guarantee; this is the same one, on the
+    /// backend that was left behind.
+    /// </remarks>
+    private async Task ClaimEmailIndexAsync(string emailPk, string userId, CancellationToken ct)
+    {
+        var item = LookupItem(emailPk, userId);
+        if (!await userEmails.PutIfAbsentAsync(item, ct).ConfigureAwait(false))
+        {
+            // Already bound. Re-registering the same user's own address is ordinary (a reindex, a
+            // retried write, a no-op profile update) and must stay idempotent; a different user holding
+            // it is the collision this exists to catch.
+            var existing = await userEmails.GetAsync(emailPk, Lookup, ct).ConfigureAwait(false);
+            var owner = existing?.GetS("userId");
+            if (owner is { Length: > 0 } && !string.Equals(owner, userId, StringComparison.Ordinal))
+                throw new InvalidOperationException(
+                    $"The email address is already registered to a different user ({emailPk}).");
+
+            // Same user, or a row with no usable userId — rewrite so the binding is well-formed.
+            await userEmails.PutAsync(item, ct).ConfigureAwait(false);
+        }
+
+        await LogUpsertAsync("UserEmails", emailPk, Lookup, ct).ConfigureAwait(false);
     }
 
     private async Task DeleteEmailIndexAsync(string normalizedEmail, string emailToken, CancellationToken ct)

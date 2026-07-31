@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace Authagonal.Core.Models;
 
 public sealed class AuthUser
@@ -58,4 +60,21 @@ public sealed class AuthUser
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset? UpdatedAt { get; set; }
     public DateTimeOffset? LastLoginAt { get; set; }
+
+    /// <summary>
+    /// Digest of the decision-carrying state this instance was read at (see
+    /// <c>Authagonal.Core.Services.UserRevision</c>). Set by the store on every read, refreshed by a
+    /// successful <c>UpdateAsync</c>, and null on an instance the caller built itself.
+    /// </summary>
+    /// <remarks>
+    /// Every backend persists the user as one document, so an <c>UpdateAsync</c> built from a stale read
+    /// writes back EVERY column as it was at read time. That silently reverts whatever landed in
+    /// between: an admin password reset and its security-stamp rotation (so the compromised password
+    /// keeps working and the killed sessions come back), a SCIM deactivation, an active lockout. The
+    /// window is the CALLER's, not the store's — read in the endpoint, written several round-trips
+    /// later — so conditioning the write on a revision the store re-reads for itself just before
+    /// writing closes nothing.
+    /// </remarks>
+    [JsonIgnore]
+    public string? ConcurrencyToken { get; set; }
 }

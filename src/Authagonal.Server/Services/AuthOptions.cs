@@ -172,4 +172,29 @@ public sealed class AuthOptions
     /// can be abused in multi-tenant deployments.
     /// </summary>
     public bool DynamicClientRegistrationEnabled { get; set; }
+
+    // --- SCIM provisioning limits ---
+
+    /// <summary>
+    /// Most SCIM groups one provisioning client may own. Refuses the create past the cap.
+    /// </summary>
+    /// <remarks>
+    /// Group storage is unindexed on every backend, so a list is a full scan — and worse,
+    /// <c>GetGroupsByUserIdAsync</c> is that same scan and runs on EVERY token mint and every
+    /// /connect/userinfo call for the tenant whenever a group→role mapping exists. Without a cap, a SCIM
+    /// token could inflate its group table without bound and make every login in the tenant pay for it;
+    /// the rate limiter only paces that, it does not bound the table. This is the bound. It is generous
+    /// — far above any real directory — because its job is to stop amplification, not to price a plan.
+    /// </remarks>
+    public int MaxScimGroupsPerClient { get; set; } = 5_000;
+
+    /// <summary>
+    /// Most members one SCIM group may carry. Refuses the create/replace/patch past the cap.
+    /// </summary>
+    /// <remarks>
+    /// Membership is stored as one uncapped list on the group row and every member is re-verified
+    /// against the user store on write, so an unbounded array is both an unbounded row and an unbounded
+    /// number of point reads inside one request.
+    /// </remarks>
+    public int MaxScimGroupMembers { get; set; } = 10_000;
 }
