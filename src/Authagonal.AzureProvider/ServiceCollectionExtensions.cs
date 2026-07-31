@@ -120,8 +120,23 @@ public static class ServiceCollectionExtensions
         var live = EnvPartitioner.Live;
         // userRoles is always created: unlike the name indexes it is small, bounded by how many
         // people hold a role, and it is what makes "who administers this" answerable at all.
-        services.TryAddSingleton<IUserStore>(new TableUserStore(
+        // The encryption and blind-index seams are resolved from the container, matching the SQL
+        // provider. They were simply not passed: TableUserStore accepts IFieldCipher and
+        // IIndexTokenizer, and this registration supplied neither — so a host that had deliberately
+        // registered an IFieldCipher (Authagonal Cloud does, per tenant) had every user's PII written
+        // in PLAINTEXT on this backend, silently, while believing encryption was in force. The
+        // constructor defaults them to null-object passthroughs, which is exactly what made the
+        // omission invisible.
+        //
+        // NOTE: the change-log (tombstone) seam is still unwired here, because this provider has no
+        // IChangeWriter implementation to wire — the SQL provider has SqlChangeWriter and Azure has
+        // no counterpart. Deletes therefore write no tombstones on this backend, so an incremental
+        // backup cannot carry them. That half of the finding needs a TableChangeWriter written first
+        // and is left open rather than papered over.
+        services.TryAddSingleton<IUserStore>(sp => new TableUserStore(
             users, userEmails, userLogins, userExternalIds, userFirstNames, userLastNames, live,
+            fieldCipher: sp.GetService<IFieldCipher>(),
+            indexTokenizer: sp.GetService<IIndexTokenizer>(),
             userRolesTable: userRoles));
         services.TryAddSingleton<IClientStore>(new TableClientStore(clients, live));
         services.TryAddSingleton<IGrantStore>(sp =>

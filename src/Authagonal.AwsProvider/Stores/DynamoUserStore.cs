@@ -339,7 +339,21 @@ public sealed class DynamoUserStore(
         var newLast = Normalize(user.LastName);
         var lastChanged = userLastNames is not null && !string.Equals(oldLast, newLast, StringComparison.Ordinal);
 
-        await users.PutAsync(await UserItemAsync(user, existing.GetN("_v") + 1, ct).ConfigureAwait(false), ct).ConfigureAwait(false);
+        // Conditional on the version we read, so a racing writer cannot be silently overwritten. The
+        // `_v` attribute was being incremented and tested by nothing, which made the documented
+        // optimistic concurrency a no-op: two concurrent updates both read, both wrote, and the second
+        // discarded the first — on a record where the first might be a password reset, a deactivation
+        // or a security-stamp rotation.
+        var expectedVersion = existing.GetN("_v");
+        var written = await users.PutIfVersionAsync(
+            await UserItemAsync(user, expectedVersion + 1, ct).ConfigureAwait(false), expectedVersion, ct).ConfigureAwait(false);
+
+        if (!written)
+        {
+            throw new InvalidOperationException(
+                $"Concurrent update to user '{user.Id}': the record changed between read and write. " +
+                "Re-read and retry.");
+        }
         await LogUpsertAsync("Users", partitioner.PK(user.Id), Profile, ct).ConfigureAwait(false);
 
         // Every index key the changed fields need — old-side and new-side — in one tokenizer
@@ -871,7 +885,21 @@ public sealed class DynamoUserStore(
         var user = await ReadUserAsync(existing, ct).ConfigureAwait(false);
 
         // 1. Re-write the profile under the current cipher (plaintext → ciphertext; idempotent).
-        await users.PutAsync(await UserItemAsync(user, existing.GetN("_v") + 1, ct).ConfigureAwait(false), ct).ConfigureAwait(false);
+        // Conditional on the version we read, so a racing writer cannot be silently overwritten. The
+        // `_v` attribute was being incremented and tested by nothing, which made the documented
+        // optimistic concurrency a no-op: two concurrent updates both read, both wrote, and the second
+        // discarded the first — on a record where the first might be a password reset, a deactivation
+        // or a security-stamp rotation.
+        var expectedVersion = existing.GetN("_v");
+        var written = await users.PutIfVersionAsync(
+            await UserItemAsync(user, expectedVersion + 1, ct).ConfigureAwait(false), expectedVersion, ct).ConfigureAwait(false);
+
+        if (!written)
+        {
+            throw new InvalidOperationException(
+                $"Concurrent update to user '{user.Id}': the record changed between read and write. " +
+                "Re-read and retry.");
+        }
         await LogUpsertAsync("Users", pk, Profile, ct).ConfigureAwait(false);
 
         // 2. Rewrite the profile-derived indexes under the current keys, dropping legacy rows.

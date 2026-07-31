@@ -89,6 +89,42 @@ public sealed class DynamoTable(IAmazonDynamoDB db, string name)
         }
     }
 
+    /// <summary>
+    /// Writes <paramref name="item"/> only if the stored row still carries <paramref name="expectedVersion"/>
+    /// in its <c>_v</c> attribute. Returns false when another writer got there first.
+    /// </summary>
+    /// <remarks>
+    /// The version attribute was written on every user document and tested by nothing, so the
+    /// "optimistic concurrency on full-document writes" the store documents did not exist: two
+    /// concurrent updates both read, both wrote, and the second silently discarded the first. On a
+    /// user record that means a password reset, a deactivation or a security-stamp rotation could be
+    /// erased by a racing profile write — which is the same class of defect as the Azure store's
+    /// missing ETag, fixed earlier in this review.
+    /// </remarks>
+    public async Task<bool> PutIfVersionAsync(
+        Dictionary<string, AttributeValue> item, long expectedVersion, CancellationToken ct = default)
+    {
+        try
+        {
+            await db.PutItemAsync(new PutItemRequest
+            {
+                TableName = name,
+                Item = item,
+                ConditionExpression = "attribute_not_exists(pk) OR #v = :expected",
+                ExpressionAttributeNames = new Dictionary<string, string> { ["#v"] = "_v" },
+                ExpressionAttributeValues = new Dictionary<string, AttributeValue>
+                {
+                    [":expected"] = new() { N = expectedVersion.ToString(System.Globalization.CultureInfo.InvariantCulture) },
+                },
+            }, ct).ConfigureAwait(false);
+            return true;
+        }
+        catch (ConditionalCheckFailedException)
+        {
+            return false;
+        }
+    }
+
     // ── queries ──
 
     /// <summary>
