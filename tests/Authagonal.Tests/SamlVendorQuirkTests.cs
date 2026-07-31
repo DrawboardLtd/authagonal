@@ -390,6 +390,11 @@ public sealed class SamlVendorQuirkEndpointTests(AzuriteFixture azurite) : IAsyn
         var saml = SamlTestHelper.BuildSignedResponse(
             acsUrl, "https://sp.test/okta", "okta-user@example.com",
             inResponseTo: ExtractRequestId(redirect),
+            // Must match the entityID in the metadata this connection was created with. The fixture
+            // previously issued as the default https://idp.test while configuring Okta's metadata, a
+            // mismatch the ACS now rejects — the Issuer is what binds a verified signature to the IdP
+            // the connection actually means.
+            issuer: "https://okta.test",
             email: "okta-user@example.com");
 
         var acs = await _client.PostAsync($"/saml/{connectionId}/acs",

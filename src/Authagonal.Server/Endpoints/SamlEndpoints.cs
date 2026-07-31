@@ -208,6 +208,10 @@ public static class SamlEndpoints
             ExpectedAudience: config.EntityId,
             ExpectedInResponseTo: expectedInResponseTo,
             TrustedCertificates: metadata.SigningCertificates,
+            // From the IdP's own metadata — the trust anchor's declaration of who it is — rather than
+            // a separately-configured value that could drift from it. Null-safe: metadata without an
+            // entityID leaves the previous behaviour rather than failing every login on upgrade.
+            ExpectedIssuer: metadata.EntityId,
             DecryptionKey: spDecryptionKey);
 
         // Parse and validate the response
@@ -294,8 +298,11 @@ public static class SamlEndpoints
             return Results.BadRequest(new { error = "saml_invalid", error_description = "SAML assertion is missing an ID." });
         }
 
+        // Namespaced per connection: the assertion ID space belongs to the issuing IdP, so a global
+        // namespace let one IdP's assertion ID collide with another's and be rejected as a replay —
+        // and, on a multi-tenant host, let one tenant's traffic deny another's by ID collision.
         var isNewAssertion = await replayCache.CheckAndStoreAssertionIdAsync(
-            parseResult.AssertionId, parseResult.AcceptableUntil, ct);
+            $"{connectionId}|{parseResult.AssertionId}", parseResult.AcceptableUntil, ct);
         if (!isNewAssertion)
         {
             logger.LogWarning("SAML assertion replay detected: AssertionId={AssertionId}, ConnectionId={ConnectionId}",

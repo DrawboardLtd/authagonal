@@ -9,6 +9,19 @@ public sealed record SamlResponseValidationContext(
     string ExpectedAudience,
     string? ExpectedInResponseTo,
     IReadOnlyList<X509Certificate2> TrustedCertificates,
+    /// <summary>
+    /// The IdP entityID this connection is configured for. When set, the Response's and Assertion's
+    /// <c>Issuer</c> must equal it.
+    /// </summary>
+    /// <remarks>
+    /// The Issuer was never read at all. Trust rested entirely on the signing certificate, which is
+    /// enough only while one certificate maps to one issuer — but a deployment whose IdPs share a
+    /// CA-issued cert, or whose metadata for two connections resolves to overlapping keys, had no
+    /// binding between "this signature verifies" and "this is the IdP this connection means". SAML
+    /// 2.0 Core §3.2.2 makes Issuer the identifier of the asserting party; checking it is what turns
+    /// a valid signature into a valid signature FROM THE RIGHT PARTY.
+    /// </remarks>
+    string? ExpectedIssuer = null,
     TimeSpan ClockSkew = default,
     System.Security.Cryptography.RSA? DecryptionKey = null)
 {
@@ -96,6 +109,21 @@ public sealed class SamlResponseParser(ILogger<SamlResponseParser> logger)
     /// anonymous ACS. The endpoint's separate ad-hoc parse (used only to read InResponseTo before
     /// signature validation) had exactly that shape, so this helper is public and both callers use it.
     /// </remarks>
+    /// <summary>
+    /// Parses an xs:dateTime from a SAML document, culture-independently.
+    /// </summary>
+    /// <remarks>
+    /// <c>DateTimeOffset.TryParse</c> without an explicit culture honours the ambient one, so the
+    /// same assertion could parse differently on two pods configured with different locales. XML
+    /// timestamps are defined in a single format; this reads that format and nothing else.
+    /// </remarks>
+    internal static bool TryParseSamlInstant(string value, out DateTimeOffset instant) =>
+        DateTimeOffset.TryParse(
+            value,
+            System.Globalization.CultureInfo.InvariantCulture,
+            System.Globalization.DateTimeStyles.RoundtripKind | System.Globalization.DateTimeStyles.AssumeUniversal,
+            out instant);
+
     public static XmlDocument LoadHardened(string xml)
     {
         var doc = new XmlDocument { PreserveWhitespace = true, XmlResolver = null };
@@ -185,6 +213,19 @@ public sealed class SamlResponseParser(ILogger<SamlResponseParser> logger)
         if (responseElement is null || responseElement.LocalName != "Response")
             return Fail("Root element is not a SAML Response.");
 
+        // Issuer, before anything is read out of the document.
+        if (!string.IsNullOrEmpty(context.ExpectedIssuer))
+        {
+            var responseIssuer = responseElement.SelectSingleNode("saml:Issuer", nsManager)?.InnerText?.Trim();
+            if (!string.IsNullOrEmpty(responseIssuer) &&
+                !string.Equals(responseIssuer, context.ExpectedIssuer, StringComparison.Ordinal))
+            {
+                logger.LogWarning("SAML Response Issuer mismatch: expected={Expected}, actual={Actual}",
+                    context.ExpectedIssuer, responseIssuer);
+                return Fail("SAML Response Issuer does not match this connection's IdP.");
+            }
+        }
+
         // 4. Validate Status
         var statusCodeNode = responseElement.SelectSingleNode(
             "samlp:Status/samlp:StatusCode", nsManager);
@@ -253,6 +294,18 @@ public sealed class SamlResponseParser(ILogger<SamlResponseParser> logger)
         if (assertionNode is not XmlElement assertionElement)
             return Fail("SAML response does not contain an Assertion.");
 
+        if (!string.IsNullOrEmpty(context.ExpectedIssuer))
+        {
+            // The assertion's own Issuer is inside the signature, so this is the binding that counts.
+            var assertionIssuer = assertionElement.SelectSingleNode("saml:Issuer", nsManager)?.InnerText?.Trim();
+            if (!string.Equals(assertionIssuer, context.ExpectedIssuer, StringComparison.Ordinal))
+            {
+                logger.LogWarning("SAML Assertion Issuer mismatch: expected={Expected}, actual={Actual}",
+                    context.ExpectedIssuer, assertionIssuer);
+                return Fail("SAML Assertion Issuer does not match this connection's IdP.");
+            }
+        }
+
         var assertionId = assertionElement.Attributes?["ID"]?.Value;
 
         var responseSignatureValid = ValidateElementSignature(
@@ -274,9 +327,24 @@ public sealed class SamlResponseParser(ILogger<SamlResponseParser> logger)
 
         var now = DateTimeOffset.UtcNow;
 
+        // A timestamp that is PRESENT but unparseable now fails closed.
+        //
+        // `TryParse(...) &&` meant a malformed value skipped the comparison entirely — so an
+        // attacker who could influence the assertion's conditions (or an IdP emitting a format this
+        // parser does not read) removed the validity window rather than failing validation, and the
+        // assertion became acceptable forever. Parsing is pinned to the invariant culture with
+        // round-trip/universal styles too: xs:dateTime is culture-independent, but TryParse without
+        // them honours the ambient culture, so the same assertion could parse differently on two
+        // pods with different locale settings.
         var notBeforeStr = conditionsElement.Attributes?["NotBefore"]?.Value;
-        if (notBeforeStr is not null && DateTimeOffset.TryParse(notBeforeStr, out var notBefore))
+        if (notBeforeStr is not null)
         {
+            if (!TryParseSamlInstant(notBeforeStr, out var notBefore))
+            {
+                logger.LogWarning("Assertion NotBefore is present but unparseable: {Value}", notBeforeStr);
+                return Fail("Assertion has an unparseable NotBefore condition.");
+            }
+
             if (now + context.ClockSkew < notBefore)
             {
                 logger.LogWarning("Assertion not yet valid: NotBefore={NotBefore}, Now={Now}", notBefore, now);
@@ -285,8 +353,14 @@ public sealed class SamlResponseParser(ILogger<SamlResponseParser> logger)
         }
 
         var notOnOrAfterStr = conditionsElement.Attributes?["NotOnOrAfter"]?.Value;
-        if (notOnOrAfterStr is not null && DateTimeOffset.TryParse(notOnOrAfterStr, out var notOnOrAfter))
+        if (notOnOrAfterStr is not null)
         {
+            if (!TryParseSamlInstant(notOnOrAfterStr, out var notOnOrAfter))
+            {
+                logger.LogWarning("Assertion NotOnOrAfter is present but unparseable: {Value}", notOnOrAfterStr);
+                return Fail("Assertion has an unparseable NotOnOrAfter condition.");
+            }
+
             if (now - context.ClockSkew >= notOnOrAfter)
             {
                 logger.LogWarning("Assertion expired: NotOnOrAfter={NotOnOrAfter}, Now={Now}", notOnOrAfter, now);
@@ -294,16 +368,39 @@ public sealed class SamlResponseParser(ILogger<SamlResponseParser> logger)
             }
         }
 
-        var audienceNode = conditionsElement.SelectSingleNode(
-            "saml:AudienceRestriction/saml:Audience", nsManager);
-        var audience = audienceNode?.InnerText?.Trim();
-        if (string.IsNullOrEmpty(audience))
+        // Every AudienceRestriction must admit us, and any Audience within one satisfies it.
+        //
+        // Only the first Audience of the first AudienceRestriction was read. SAML 2.0 Core §2.5.1.4
+        // makes multiple <AudienceRestriction> elements a CONJUNCTION — the assertion is valid only
+        // where all of them hold — so reading one and stopping accepted an assertion whose other
+        // restrictions excluded this SP. It also rejected the legitimate case of one restriction
+        // listing several audiences with ours second.
+        var audienceRestrictions = conditionsElement.SelectNodes("saml:AudienceRestriction", nsManager);
+        if (audienceRestrictions is null || audienceRestrictions.Count == 0)
             return Fail("Assertion is missing the required AudienceRestriction/Audience.");
-        if (!string.Equals(audience, context.ExpectedAudience, StringComparison.OrdinalIgnoreCase))
+
+        foreach (XmlNode restriction in audienceRestrictions)
         {
-            logger.LogWarning("Audience mismatch: expected={Expected}, actual={Actual}",
-                context.ExpectedAudience, audience);
-            return Fail("Assertion audience does not match the expected audience.");
+            var audiences = restriction.SelectNodes("saml:Audience", nsManager);
+            var admitted = false;
+            if (audiences is not null)
+            {
+                foreach (XmlNode a in audiences)
+                {
+                    if (string.Equals(a.InnerText?.Trim(), context.ExpectedAudience, StringComparison.OrdinalIgnoreCase))
+                    {
+                        admitted = true;
+                        break;
+                    }
+                }
+            }
+
+            if (!admitted)
+            {
+                logger.LogWarning("Audience mismatch: expected={Expected} was not admitted by an AudienceRestriction",
+                    context.ExpectedAudience);
+                return Fail("Assertion audience does not match the expected audience.");
+            }
         }
 
         // 9. Validate SubjectConfirmation. REQUIRED, not conditional — SAML 2.0 Profiles §4.1.4.2/§4.1.4.3
@@ -351,7 +448,7 @@ public sealed class SamlResponseParser(ILogger<SamlResponseParser> logger)
         var dataNotOnOrAfterStr = confirmationData.Attributes?["NotOnOrAfter"]?.Value;
         if (string.IsNullOrEmpty(dataNotOnOrAfterStr))
             return Fail("SubjectConfirmationData is missing the required NotOnOrAfter attribute.");
-        if (!DateTimeOffset.TryParse(dataNotOnOrAfterStr, out var dataNotOnOrAfter))
+        if (!TryParseSamlInstant(dataNotOnOrAfterStr, out var dataNotOnOrAfter))
             return Fail("SubjectConfirmationData NotOnOrAfter is not a valid timestamp.");
         if (now - context.ClockSkew >= dataNotOnOrAfter)
         {
