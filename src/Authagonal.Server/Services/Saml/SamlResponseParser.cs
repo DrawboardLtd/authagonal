@@ -225,6 +225,13 @@ public sealed class SamlResponseParser(ILogger<SamlResponseParser> logger)
         if (responseElement is null || responseElement.LocalName != "Response")
             return Fail("Root element is not a SAML Response.");
 
+        // Core §3.2.2 makes Version REQUIRED and fixes it at "2.0"; §4.1 obliges a responder that
+        // cannot process the version to say so rather than proceeding. Parsing an unversioned or
+        // future-versioned document with 2.0 semantics is how a element that means something else
+        // gets read as one this parser understands.
+        if (!string.Equals(responseElement.GetAttribute("Version"), "2.0", StringComparison.Ordinal))
+            return Fail("SAML Response Version is not 2.0.");
+
         // Issuer, before anything is read out of the document.
         if (!string.IsNullOrEmpty(context.ExpectedIssuer))
         {
@@ -337,6 +344,11 @@ public sealed class SamlResponseParser(ILogger<SamlResponseParser> logger)
         }
         if (assertionNode is not XmlElement assertionElement)
             return Fail("SAML response does not contain an Assertion.");
+
+        // Core §2.3.3 — same requirement on the Assertion, checked separately because a decrypted
+        // EncryptedAssertion carries its own Version that the Response's says nothing about.
+        if (!string.Equals(assertionElement.GetAttribute("Version"), "2.0", StringComparison.Ordinal))
+            return Fail("SAML Assertion Version is not 2.0.");
 
         if (!string.IsNullOrEmpty(context.ExpectedIssuer))
         {

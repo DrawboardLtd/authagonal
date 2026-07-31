@@ -98,6 +98,12 @@ internal static class TokenGrantHandlers
         var actorTokenType = form["actor_token_type"].FirstOrDefault();
         if (!string.IsNullOrWhiteSpace(actorToken) && string.IsNullOrWhiteSpace(actorTokenType))
             return TokenError("invalid_request", "actor_token_type is required when actor_token is present");
+        // RFC 8693 §2.1 states the constraint in both directions: actor_token_type "MUST NOT be
+        // included otherwise". Ignoring the orphan meant the whole actor block — including the check
+        // binding the actor to the authenticated client — was skipped while the caller believed it had
+        // asked for delegation.
+        if (string.IsNullOrWhiteSpace(actorToken) && !string.IsNullOrWhiteSpace(actorTokenType))
+            return TokenError("invalid_request", "actor_token_type must not be present without actor_token");
 
         // RFC 9396 narrowing + the approval-poll handle (both agentic; harmless when absent).
         var authorizationDetails = form["authorization_details"].FirstOrDefault();

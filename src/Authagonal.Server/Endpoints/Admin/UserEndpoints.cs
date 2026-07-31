@@ -1,4 +1,5 @@
 using System.Security.Cryptography;
+using System.Text;
 using Authagonal.Core.Models;
 using Authagonal.Core.Services;
 using Authagonal.Core.Stores;
@@ -543,7 +544,10 @@ public static class UserEndpoints
         if (user is null)
             return TypedResults.Json(new ErrorInfoResponse { Error = "user_not_found", ErrorDescription = localizer["Admin_UserNotFoundSimple"].Value }, AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 404);
 
-        if (user.SecurityStamp != securityStamp)
+        // Fixed-time — see the matching check in AuthEndpoints.ConfirmEmailAsync. The stamp is the
+        // whole of the authorisation for this state change and the token carries no MAC.
+        if (!CryptographicOperations.FixedTimeEquals(
+                Encoding.UTF8.GetBytes(user.SecurityStamp ?? ""), Encoding.UTF8.GetBytes(securityStamp)))
             return TypedResults.Json(new ErrorInfoResponse { Error = "invalid_token", ErrorDescription = localizer["Admin_TokenInvalidOrExpired"].Value }, AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 400);
 
         user.EmailConfirmed = true;

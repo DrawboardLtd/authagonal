@@ -28,16 +28,21 @@ public sealed class SamlSignatureTests
     }
 
     // Build a SAML Response whose <Assertion> is enveloped-signed with `signingCert`.
-    private static string BuildSignedResponse(X509Certificate2 signingCert, string email = "user@acme.com", bool sign = true)
+    private static string BuildSignedResponse(
+        X509Certificate2 signingCert,
+        string email = "user@acme.com",
+        bool sign = true,
+        string responseVersion = "2.0",
+        string assertionVersion = "2.0")
     {
         const string aid = "_assertion-1";
         var now = DateTimeOffset.UtcNow;
         var notOnOrAfter = now.AddMinutes(5).ToString("o");
         var xml = $"""
-        <samlp:Response xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol" xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion" ID="_resp-1" Version="2.0" IssueInstant="{now:o}" Destination="{Acs}">
+        <samlp:Response xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol" xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion" ID="_resp-1" Version="{responseVersion}" IssueInstant="{now:o}" Destination="{Acs}">
           <saml:Issuer>https://idp.example.com</saml:Issuer>
           <samlp:Status><samlp:StatusCode Value="urn:oasis:names:tc:SAML:2.0:status:Success"/></samlp:Status>
-          <saml:Assertion ID="{aid}" Version="2.0" IssueInstant="{now:o}">
+          <saml:Assertion ID="{aid}" Version="{assertionVersion}" IssueInstant="{now:o}">
             <saml:Issuer>https://idp.example.com</saml:Issuer>
             <saml:Subject>
               <saml:NameID Format="urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress">{email}</saml:NameID>
@@ -100,6 +105,33 @@ public sealed class SamlSignatureTests
 
     private static SamlResponseValidationContext Ctx(params X509Certificate2[] trusted) =>
         new(Acs, Audience, ExpectedInResponseTo: null, TrustedCertificates: trusted);
+
+    // ---------------------------------------------------------------------------------------------
+    // F349 — Core §2.3.3 / §3.2.2 make Version REQUIRED and fix it at "2.0"
+    // ---------------------------------------------------------------------------------------------
+
+    /// <summary>
+    /// Neither element's Version was ever read, so a document declaring another version — or none —
+    /// was parsed with 2.0 semantics regardless. Core §4.1 obliges a responder that cannot process
+    /// the version to say so rather than proceed. Both elements are checked separately: a decrypted
+    /// EncryptedAssertion carries its own Version that the Response's says nothing about.
+    /// </summary>
+    [Theory]
+    [InlineData("1.1", "2.0")]
+    [InlineData("", "2.0")]
+    [InlineData("2.0", "1.1")]
+    [InlineData("2.0", "")]
+    public void WrongOrMissingVersion_IsRejected(string responseVersion, string assertionVersion)
+    {
+        using var cert = NewCert();
+        var response = BuildSignedResponse(
+            cert, responseVersion: responseVersion, assertionVersion: assertionVersion);
+
+        var result = Parser.Parse(response, Ctx(cert));
+
+        Assert.False(result.Success);
+        Assert.Contains("Version", result.Error);
+    }
 
     [Fact]
     public void ValidSignature_FromTrustedCert_IsAccepted()

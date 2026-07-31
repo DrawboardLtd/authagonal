@@ -805,7 +805,13 @@ public static class AuthEndpoints
         if (user is null)
             return JsonResults.Error("invalid_token", "Invalid or expired verification link.");
 
-        if (user.SecurityStamp != securityStamp)
+        // Fixed-time: the stamp is the ONLY thing authorising this state change. The confirmation
+        // token is base64(stamp || email || exp) and carries no MAC, so an ordinal compare that
+        // short-circuits on the first differing byte leaks the stamp prefix to anyone who can time
+        // the endpoint — and the email half of the token is attacker-chosen, so the request can be
+        // replayed freely while the guess is refined.
+        if (!CryptographicOperations.FixedTimeEquals(
+                Encoding.UTF8.GetBytes(user.SecurityStamp ?? ""), Encoding.UTF8.GetBytes(securityStamp)))
         {
             // Already confirmed by an earlier click (or by a scanner that beat the user to it). The
             // link's assertion — this address is verified — is TRUE, so saying "invalid" is both wrong

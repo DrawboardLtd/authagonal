@@ -79,6 +79,42 @@ public sealed class CapabilityTicketTests
         Assert.Equal(AuthorityJson.Serialize(narrowing), AuthorityJson.Serialize(redeemed.Narrowing));
     }
 
+    // ---------------------------------------------------------------------------------------------
+    // F291 — a narrowing that is present but unreadable must not redeem as "no narrowing"
+    // ---------------------------------------------------------------------------------------------
+
+    /// <summary>
+    /// Null narrowing means "the token's own authority applies as-is", so a garbled member falling
+    /// through to null promoted a corrupt ticket to an UNattenuated one — strictly widening. Every
+    /// other authority read in the tree fails closed; this one did not.
+    /// </summary>
+    [Fact]
+    public async Task Redeem_UnparseableNarrowing_FailsClosedRatherThanWidening()
+    {
+        var handle = await _service.MintAsync("bound-token", "client-a");
+        var key = GrantStoreCapabilityTicketService.Key(handle);
+        var minted = await _grants.GetAsync(key);
+
+        // A narrowing member that is a JSON string rather than the authority array TryParse expects.
+        minted!.Key = key; // grants read back from storage carry no Key
+        minted.Data = """{"token":"bound-token","narrowing":"not-an-authority-set"}""";
+        await _grants.StoreAsync(minted);
+
+        Assert.Null(await _service.TryRedeemAsync(handle));
+    }
+
+    /// <summary>An ABSENT narrowing is still the documented "no extra attenuation" case, not an error.</summary>
+    [Fact]
+    public async Task Redeem_AbsentNarrowing_StillSucceeds()
+    {
+        var handle = await _service.MintAsync("bound-token", "client-a");
+
+        var redeemed = await _service.TryRedeemAsync(handle);
+
+        Assert.NotNull(redeemed);
+        Assert.Null(redeemed.Narrowing);
+    }
+
     [Fact]
     public async Task ConcurrentRedemption_ExactlyOneWins()
     {

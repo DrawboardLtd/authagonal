@@ -184,8 +184,14 @@ public static class EndSessionEndpoint
         if (!string.IsNullOrWhiteSpace(postLogoutRedirectUri) && requestingClientId is { } resolvedClientId)
         {
             var client = await clientStore.GetAsync(resolvedClientId, ct);
+            // Component-wise, matching the authorization endpoint. RP-Initiated Logout 1.0 §3 requires
+            // an EXACT match against a registered value; a whole-string OrdinalIgnoreCase compare also
+            // admitted case variants of the path and query, so a registration of
+            // https://rp.example/Logout?tenant=Acme let through /logout?tenant=acme. The two matchers
+            // had drifted — this one is the copy that was wrong.
             if (client is not null &&
-                client.PostLogoutRedirectUris.Contains(postLogoutRedirectUri, StringComparer.OrdinalIgnoreCase))
+                Authagonal.Protocol.Endpoints.AuthorizeRequestSupport.IsRedirectUriRegistered(
+                    postLogoutRedirectUri, client.PostLogoutRedirectUris))
             {
                 finalRedirect = string.IsNullOrWhiteSpace(state)
                     ? postLogoutRedirectUri

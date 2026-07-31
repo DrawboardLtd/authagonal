@@ -149,6 +149,73 @@ public sealed class EndSessionTests : IAsyncLifetime
         Assert.Contains("state=logout123", location);
     }
 
+    // ---------------------------------------------------------------------------------------------
+    // F331 — RP-Initiated Logout 1.0 §3 requires an EXACT match against a registered value
+    // ---------------------------------------------------------------------------------------------
+
+    /// <summary>
+    /// The check was a whole-string OrdinalIgnoreCase Contains, so a registration carrying a
+    /// mixed-case path or query also admitted every case variant of it. Scheme and host stay
+    /// case-insensitive (RFC 3986); path and query must not. The authorization endpoint always got
+    /// this right — the two matchers had drifted, and this was the copy that was wrong.
+    /// </summary>
+    [Theory]
+    [InlineData("https://app.test/Logout?tenant=Acme", true)]  // exactly as registered
+    [InlineData("https://APP.TEST/Logout?tenant=Acme", true)]  // host case is legitimately insensitive
+    [InlineData("https://app.test/logout?tenant=Acme", false)] // path case differs
+    [InlineData("https://app.test/Logout?tenant=acme", false)] // query case differs
+    public async Task EndSession_PostLogoutRedirectUri_MatchesPathAndQueryCaseSensitively(
+        string requested, bool shouldRedirect)
+    {
+        const string registered = "https://app.test/Logout?tenant=Acme";
+        var client = await _factory.ClientStore.GetAsync(AuthagonalTestFactory.TestClientId);
+        client!.PostLogoutRedirectUris = [.. client.PostLogoutRedirectUris, registered];
+        await _factory.ClientStore.UpsertAsync(client);
+
+        var idToken = await SignInAndGetIdTokenAsync();
+
+        var response = await _client.GetAsync(
+            $"/connect/endsession?id_token_hint={Uri.EscapeDataString(idToken)}" +
+            $"&post_logout_redirect_uri={Uri.EscapeDataString(requested)}");
+
+        if (shouldRedirect)
+        {
+            Assert.Equal(HttpStatusCode.Redirect, response.StatusCode);
+            Assert.StartsWith("https://", response.Headers.Location!.ToString());
+        }
+        else
+        {
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        }
+    }
+
+    /// <summary>Runs the PKCE flow and returns an id_token usable as an <c>id_token_hint</c>.</summary>
+    private async Task<string> SignInAndGetIdTokenAsync()
+    {
+        await _factory.SeedTestUserAsync();
+        await _client.PostAsJsonAsync("/api/auth/login", new { email = "test@example.com", password = "Test1234!" });
+
+        var (verifier, challenge) = GeneratePkce();
+        var authResponse = await _client.GetAsync(
+            $"/connect/authorize?client_id={AuthagonalTestFactory.TestClientId}" +
+            $"&redirect_uri={Uri.EscapeDataString("https://app.test/callback")}" +
+            $"&response_type=code&scope=openid+profile+email" +
+            $"&state=test&code_challenge={challenge}&code_challenge_method=S256");
+        var code = HttpUtility.ParseQueryString(authResponse.Headers.Location!.Query)["code"]!;
+
+        var tokenResponse = await _client.PostAsync("/connect/token", new FormUrlEncodedContent(
+            new Dictionary<string, string>
+            {
+                ["grant_type"] = "authorization_code",
+                ["code"] = code,
+                ["redirect_uri"] = "https://app.test/callback",
+                ["code_verifier"] = verifier,
+                ["client_id"] = AuthagonalTestFactory.TestClientId,
+            }));
+        var tokens = await tokenResponse.Content.ReadFromJsonAsync<JsonElement>();
+        return tokens.GetProperty("id_token").GetString()!;
+    }
+
     [Fact]
     public async Task EndSession_WithUnregisteredRedirectUri_DoesNotRedirect()
     {

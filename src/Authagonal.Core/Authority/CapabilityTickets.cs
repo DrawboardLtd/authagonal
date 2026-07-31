@@ -113,9 +113,18 @@ public sealed class GrantStoreCapabilityTicketService(
             tokenValue.GetValueKind() != JsonValueKind.String)
             return null;
 
+        // Present-but-unreadable must not widen. Null narrowing means "the token's own authority
+        // applies as-is", so letting a garbled member fall through to null turned a corrupt ticket
+        // into an UNattenuated one — the opposite of every other authority read in the tree
+        // (AuthorityEvaluator.ParseOrDeny, ProtocolTokenService.ReadAuthorityClaim, AgentProfileEntity
+        // .ToModel), which all fall back to Empty. Absent is fine; unparseable fails the redemption.
         AuthoritySet? narrowing = null;
-        if (obj["narrowing"] is { } narrowingNode && AuthorityJson.TryParse(narrowingNode, out var parsed))
+        if (obj["narrowing"] is { } narrowingNode)
+        {
+            if (!AuthorityJson.TryParse(narrowingNode, out var parsed))
+                return null;
             narrowing = parsed;
+        }
 
         await authHooks.RunOnCapabilityTicketRedeemedAsync(handle, grant.SubjectId, grant.ClientId, ct);
 

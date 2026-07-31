@@ -154,6 +154,31 @@ public sealed class TokenExchangeTests : IAsyncLifetime
         Assert.Equal("invalid_request", body.GetProperty("error").GetString());
     }
 
+    // ---------------------------------------------------------------------------------------------
+    // F271 — RFC 8693 §2.1 constrains actor_token_type in BOTH directions
+    // ---------------------------------------------------------------------------------------------
+
+    /// <summary>
+    /// §2.1: actor_token_type "is REQUIRED when the actor_token parameter is present ... but MUST NOT
+    /// be included otherwise". Only the first half was checked. An orphan type was discarded in
+    /// silence, skipping the whole actor block — including the check that binds the actor to the
+    /// authenticated client — while the caller believed it had asked for delegation.
+    /// </summary>
+    [Fact]
+    public async Task Exchange_ActorTokenTypeWithoutActorToken_IsRejected()
+    {
+        var primary = await GetPrimaryAccessTokenAsync();
+
+        var form = BaseExchangeForm(primary);
+        form["actor_token_type"] = "urn:ietf:params:oauth:token-type:access_token";
+
+        var response = await _client.PostAsync("/connect/token", new FormUrlEncodedContent(form));
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("invalid_request", body.GetProperty("error").GetString());
+    }
+
     [Fact]
     public async Task Exchange_UnknownSubjectTokenType_IsRejected()
     {

@@ -59,6 +59,81 @@ public class PkceValidatorTests
         Assert.False(PkceValidator.ValidateCodeVerifier("", "challenge", "S256"));
     }
 
+    // ---------------------------------------------------------------------------------------------
+    // F332 — RFC 7636 §4.1: code-verifier = 43*128unreserved
+    // ---------------------------------------------------------------------------------------------
+
+    /// <summary>
+    /// A verifier shorter than 43 characters must be refused even when it genuinely hashes to the
+    /// stored challenge. Otherwise the entropy PKCE rests on is whatever the client picked, and a
+    /// three-character verifier is brute-forceable against an intercepted code.
+    /// </summary>
+    [Theory]
+    [InlineData(3)]
+    [InlineData(42)] // one short of the floor
+    public void ValidateCodeVerifier_TooShort_IsRejectedEvenWhenItMatches(int length)
+    {
+        var verifier = new string('a', length);
+        var challenge = Base64UrlEncode(SHA256.HashData(Encoding.ASCII.GetBytes(verifier)));
+
+        Assert.False(PkceValidator.ValidateCodeVerifier(verifier, challenge, "S256"));
+    }
+
+    [Fact]
+    public void ValidateCodeVerifier_TooLong_IsRejectedEvenWhenItMatches()
+    {
+        var verifier = new string('a', 129);
+        var challenge = Base64UrlEncode(SHA256.HashData(Encoding.ASCII.GetBytes(verifier)));
+
+        Assert.False(PkceValidator.ValidateCodeVerifier(verifier, challenge, "S256"));
+    }
+
+    [Fact]
+    public void ValidateCodeVerifier_MinimumAndMaximumLengths_AreAccepted()
+    {
+        foreach (var length in new[] { 43, 128 })
+        {
+            var verifier = new string('a', length);
+            var challenge = Base64UrlEncode(SHA256.HashData(Encoding.ASCII.GetBytes(verifier)));
+
+            Assert.True(PkceValidator.ValidateCodeVerifier(verifier, challenge, "S256"),
+                $"a {length}-character verifier is inside the ABNF and must be accepted");
+        }
+    }
+
+    /// <summary>
+    /// The charset half is not cosmetic. The hash runs over ASCII, which maps every non-ASCII code
+    /// point to '?', so without this check two different non-ASCII verifiers of the same length hash
+    /// identically — one redeems the other's code.
+    /// </summary>
+    [Fact]
+    public void ValidateCodeVerifier_NonAsciiAlphabet_DoesNotCollapseToAConstant()
+    {
+        var attacker = new string('é', 43);
+        var victim = new string('ü', 43);
+        var victimChallenge = Base64UrlEncode(SHA256.HashData(Encoding.ASCII.GetBytes(victim)));
+
+        // Same challenge under the lossy encoding — the collision is real, so the charset check is
+        // what stands between it and a redeemable code.
+        Assert.Equal(victimChallenge, Base64UrlEncode(SHA256.HashData(Encoding.ASCII.GetBytes(attacker))));
+        Assert.False(PkceValidator.ValidateCodeVerifier(attacker, victimChallenge, "S256"));
+        Assert.False(PkceValidator.ValidateCodeVerifier(victim, victimChallenge, "S256"));
+    }
+
+    [Theory]
+    [InlineData('+')]
+    [InlineData('/')]
+    [InlineData('=')]
+    [InlineData(' ')]
+    [InlineData('%')]
+    public void ValidateCodeVerifier_ReservedCharacter_IsRejected(char reserved)
+    {
+        var verifier = new string('a', 42) + reserved;
+        var challenge = Base64UrlEncode(SHA256.HashData(Encoding.ASCII.GetBytes(verifier)));
+
+        Assert.False(PkceValidator.ValidateCodeVerifier(verifier, challenge, "S256"));
+    }
+
     private static string Base64UrlEncode(byte[] input)
     {
         return Convert.ToBase64String(input)
