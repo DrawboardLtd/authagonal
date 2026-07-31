@@ -151,5 +151,6 @@
   "account.save": "Guardar cambios",
   "account.saving": "Guardando…",
   "emailVerified": "El correo electrónico ha sido verificado; inicie sesión para continuar.",
-  "accountCreated": "Cuenta creada: inicie sesión para continuar."
+  "accountCreated": "Cuenta creada: inicie sesión para continuar.",
+  "oidcErrorGeneric": "No se pudo completar el inicio de sesión. Vuelve a intentarlo."
 }

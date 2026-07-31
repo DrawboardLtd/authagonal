@@ -59,7 +59,7 @@ export default function RegisterPage() {
       if (returnUrl) params.set('returnUrl', returnUrl);
       params.set('login_hint', email);
       if (!result.emailVerified) params.set('message', 'registration_success');
-      navigate(`/login?${params.toString()}`);
+      navigate(`/?${params.toString()}`);
     } catch (err) {
       if (err instanceof ApiRequestError) {
         switch (err.error) {
@@ -91,9 +91,11 @@ export default function RegisterPage() {
     }
   }
 
+  // basename is /login, so the login page is app-relative "/" — NOT "/login", which resolves to
+  // /login/login, matches no route, and falls through to the catch-all Navigate that DROPS returnUrl.
   const loginLink = returnUrl
-    ? `/login?returnUrl=${encodeURIComponent(returnUrl)}`
-    : '/login';
+    ? `/?returnUrl=${encodeURIComponent(returnUrl)}`
+    : '/';
 
   return (
     <div>

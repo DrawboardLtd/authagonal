@@ -29,9 +29,11 @@ export default function ForgotPasswordPage() {
       .catch(() => {});
   }, []);
 
+  // basename is /login, so the login page is app-relative "/" — NOT "/login", which resolves to
+  // /login/login, matches no route, and falls through to the catch-all Navigate that DROPS returnUrl.
   const loginLink = returnUrl
-    ? `/login?returnUrl=${encodeURIComponent(returnUrl)}`
-    : '/login';
+    ? `/?returnUrl=${encodeURIComponent(returnUrl)}`
+    : '/';
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();

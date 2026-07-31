@@ -40,7 +40,16 @@ export default function LoginPage() {
     }
   }
   const loginHint = searchParams.get('login_hint') || '';
-  const oidcError = searchParams.get('error_description') || searchParams.get('error') || '';
+  // The `error` CODE is reflected, never the free-text `error_description`.
+  //
+  // error_description arrives in the query string and is fully attacker-chosen: a link to
+  // /login?error_description=<anything> rendered that text inside the page's own error alert, in the
+  // IdP's origin and styling. React escapes it, so this is not XSS — it is a credible-phishing
+  // surface, which on a login page is the more useful primitive: "Your session expired, confirm your
+  // password at ...". Error codes are a closed set, so they are safe to show and are what the user
+  // can actually act on.
+  const oidcErrorCode = searchParams.get('error') || '';
+  const oidcError = oidcErrorCode ? t(`oidcError.${oidcErrorCode}`, { defaultValue: t('oidcErrorGeneric') }) : '';
   const messageParam = searchParams.get('message') || '';
 
   const [email, setEmail] = useState(loginHint);

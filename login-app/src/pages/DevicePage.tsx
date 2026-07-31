@@ -131,7 +131,7 @@ export default function DevicePage() {
         </p>
         <Button
           className="w-full"
-          onClick={() => navigate(`/login?returnUrl=${encodeURIComponent(returnUrl)}`)}
+          onClick={() => navigate(`/?returnUrl=${encodeURIComponent(returnUrl)}`)}
         >
           Sign In
         </Button>
