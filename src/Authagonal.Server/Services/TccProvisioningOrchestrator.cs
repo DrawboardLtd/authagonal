@@ -330,13 +330,21 @@ public sealed class TccProvisioningOrchestrator(
             await userStore.UpdateAsync(current, ct);
 
             // Keep the caller's instance consistent with what was stored — several callers go on to
-            // build a subject or a response from it. That includes the revision: this write moved the
-            // row on, and callers like ConfirmEmailAsync update their own instance right afterwards,
-            // which the store now refuses if it is still holding the pre-merge revision.
+            // build a subject or a response from it.
+            //
+            // The revision is deliberately NOT copied. It was, so that a caller updating its own instance
+            // straight afterwards would not be refused — but that made the guard useless instead of
+            // satisfying it. The instance being written was read before the provisioning round-trip, so
+            // handing it a current revision let a stale PasswordHash, lockout state or profile be written
+            // over whatever landed during that round-trip, while the store saw a revision it had no reason
+            // to reject. Finding #115 is exactly that lost update, and this is the same defect one layer up.
+            //
+            // A caller that needs to write after this must re-read (see ConfirmEmailAsync, which rebases
+            // onto the stored row and re-applies only the fields it decides). Being refused by the store is
+            // the correct outcome for a stale instance, not a problem to work around here.
             user.OrganizationId = current.OrganizationId;
             user.EmailConfirmed = current.EmailConfirmed;
             user.CustomAttributes = current.CustomAttributes;
-            user.ConcurrencyToken = current.ConcurrencyToken;
         }
         catch (Exception ex)
         {

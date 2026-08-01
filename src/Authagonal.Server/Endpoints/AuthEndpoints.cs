@@ -952,6 +952,7 @@ public static class AuthEndpoints
         // was waiting for. Run the downstream conversion FIRST (it may reject — e.g. seat policy),
         // then promote the staged credential. Side effects run to completion regardless of the
         // caller's abort token (same shielding as registration).
+        var promotedStagedCredential = false;
         if (!string.IsNullOrWhiteSpace(user.PendingPasswordHash))
         {
             // The link must be the one issued FOR this staged credential. If someone else staged a claim
@@ -1008,13 +1009,40 @@ public static class AuthEndpoints
             user.PasswordHash = user.PendingPasswordHash;
             user.PendingPasswordHash = null;
             user.PendingClaimJson = null;
+            promotedStagedCredential = true;
             logger.LogInformation("Passwordless account claimed by {UserId} — credential promoted after fresh verification", user.Id);
         }
 
-        user.EmailConfirmed = true;
-        user.SecurityStamp = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
-        user.UpdatedAt = DateTimeOffset.UtcNow;
-        await userStore.UpdateAsync(user, CancellationToken.None);
+        // Rebase onto the stored row before writing, rather than writing the instance held across the
+        // provisioning round-trip.
+        //
+        // That round-trip is a network call to a downstream app and can take seconds. This instance was read
+        // before it, so every field on it is a pre-round-trip copy. PersistMergeAsync used to copy the
+        // post-merge revision onto it so this write would pass the store's concurrency guard — which
+        // defeated the guard rather than satisfying it: the revision handed over was genuinely current, so
+        // the guard had nothing to object to, while the PasswordHash, lockout state, roles and profile being
+        // written were all stale. An admin password reset or a lockout landing during the round-trip was
+        // silently reverted here. That is finding #115 again, through a door the store cannot see.
+        //
+        // Re-reading and re-applying only what THIS handler decides is the fix: a concurrent write that
+        // moved the row survives, and a genuine conflict now surfaces from UpdateAsync instead of being
+        // laundered past it.
+        var confirmed = await userStore.GetAsync(user.Id, CancellationToken.None) ?? user;
+        if (promotedStagedCredential && !ReferenceEquals(confirmed, user))
+        {
+            // Only on the claim path, and only these three: promoting the staged credential is this
+            // handler's decision. Copying PasswordHash unconditionally would revert a password change that
+            // landed during the round-trip — the very thing this rebase exists to prevent.
+            confirmed.PasswordHash = user.PasswordHash;
+            confirmed.PendingPasswordHash = null;
+            confirmed.PendingClaimJson = null;
+        }
+
+        confirmed.EmailConfirmed = true;
+        confirmed.SecurityStamp = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
+        confirmed.UpdatedAt = DateTimeOffset.UtcNow;
+        await userStore.UpdateAsync(confirmed, CancellationToken.None);
+        user = confirmed;
 
         logger.LogInformation("Email confirmed for user {UserId}", user.Id);
 
