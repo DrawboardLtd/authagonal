@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router';
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router';
 import AuthLayout from './components/AuthLayout';
 import LoginPage from './pages/LoginPage';
 import RegisterPage from './pages/RegisterPage';
@@ -12,6 +12,20 @@ import ConsentPage from './pages/ConsentPage';
 import AgentConsentPage from './pages/AgentConsentPage';
 import GrantsPage from './pages/GrantsPage';
 import AccountPage from './pages/AccountPage';
+
+/**
+ * Catch-all: send an unmatched path to the sign-in page, KEEPING the query string.
+ *
+ * It used to be a bare `<Navigate to="/" replace />`, which discarded the search. Every parameter this
+ * app carries between screens rides in the query — returnUrl above all — so any path that failed to
+ * match (a typo, a route renamed, a link built without the router basename) silently dropped the
+ * user's destination and landed them on a bare login form that would send them to the default app
+ * afterwards. Preserving the search means the same slip degrades into "wrong page, right destination".
+ */
+function NotFoundRedirect() {
+  const location = useLocation();
+  return <Navigate to={{ pathname: '/', search: location.search }} replace />;
+}
 
 /**
  * The login SPA. `extraRoutes` lets the host app inject product-specific routes
@@ -37,7 +51,7 @@ export default function App({ extraRoutes }: { extraRoutes?: ReactNode }) {
           <Route path="/grants" element={<GrantsPage />} />
           <Route path="/account" element={<AccountPage />} />
           {extraRoutes}
-          <Route path="*" element={<Navigate to="/" replace />} />
+          <Route path="*" element={<NotFoundRedirect />} />
         </Routes>
       </AuthLayout>
     </BrowserRouter>

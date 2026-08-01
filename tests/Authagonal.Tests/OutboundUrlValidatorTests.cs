@@ -133,4 +133,40 @@ public class OutboundUrlValidatorTests
     [InlineData("https://login.microsoftonline.com./common/v2.0/.well-known/openid-configuration")]
     public void TrailingDotExternalHosts_AreAllowed(string url)
         => Assert.True(OutboundUrlValidator.IsSafe(url), url);
+
+    // -----------------------------------------------------------------------
+    // The loopback opt-in (#186)
+    // -----------------------------------------------------------------------
+
+    /// <summary>
+    /// Loopback is refused by default and permitted only where a caller opts in — which is the OIDC
+    /// logout DELIVERY path, where a relying party on localhost is a supported development setup and
+    /// the write-time guards have already refused anything new. Everywhere a URL is ACCEPTED, loopback
+    /// stays blocked.
+    /// </summary>
+    [Theory]
+    [InlineData("http://127.0.0.1:5000/logout")]
+    [InlineData("http://127.5.5.5/logout")]
+    [InlineData("http://localhost:5000/logout")]
+    [InlineData("http://[::1]:5000/logout")]
+    public void Loopback_IsBlockedByDefault_AndPermittedOnlyOnOptIn(string url)
+    {
+        Assert.False(Authagonal.Core.Services.OutboundUrl.IsSafe(url), url);
+        Assert.True(Authagonal.Core.Services.OutboundUrl.IsSafe(url, allowLoopback: true), url);
+    }
+
+    /// <summary>
+    /// The opt-in is loopback ONLY. Everything the finding is actually about — the cloud metadata
+    /// address, RFC1918, internal DNS — stays blocked on both sides, or the delivery-time check would
+    /// be decoration.
+    /// </summary>
+    [Theory]
+    [InlineData("http://169.254.169.254/latest/meta-data/")]
+    [InlineData("http://10.0.0.5/logout")]
+    [InlineData("http://192.168.1.1/logout")]
+    [InlineData("http://172.16.0.1/logout")]
+    [InlineData("https://vault.internal/logout")]
+    [InlineData("https://svc.local/logout")]
+    public void LoopbackOptIn_DoesNotOpenInternalTargets(string url)
+        => Assert.False(Authagonal.Core.Services.OutboundUrl.IsSafe(url, allowLoopback: true), url);
 }

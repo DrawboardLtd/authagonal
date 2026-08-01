@@ -53,6 +53,7 @@ public class RestoreDataLossTests(AzuriteFixture azurite)
 
             await new RestoreService(_svc, new FileSystemBackupSource(dir), new RestoreOptions
             {
+                AllowUnauthenticatedManifest = true,
                 TablePrefix = prefix,
                 Mode = RestoreMode.Clean,
                 DryRun = true,
@@ -97,6 +98,7 @@ public class RestoreDataLossTests(AzuriteFixture azurite)
             var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
                 new RestoreService(_svc, new FileSystemBackupSource(dir), new RestoreOptions
                 {
+                    AllowUnauthenticatedManifest = true,
                     TablePrefix = prefix,
                     Mode = RestoreMode.Clean,
                 }).RunAsync(incr.BackupId));
@@ -131,6 +133,7 @@ public class RestoreDataLossTests(AzuriteFixture azurite)
 
             await new RestoreService(_svc, new FileSystemBackupSource(dir), new RestoreOptions
             {
+                AllowUnauthenticatedManifest = true,
                 TablePrefix = prefix,
                 Mode = RestoreMode.Clean,
                 CleanEnvPrefix = "sandbox-1|",
@@ -180,6 +183,7 @@ public class RestoreDataLossTests(AzuriteFixture azurite)
 
             var result = await new RestoreService(_svc, new FileSystemBackupSource(dir), new RestoreOptions
             {
+                AllowUnauthenticatedManifest = true,
                 TablePrefix = prefix,
                 Mode = RestoreMode.Clean,
                 CleanEnvPrefix = "sandbox-1|",
@@ -215,6 +219,7 @@ public class RestoreDataLossTests(AzuriteFixture azurite)
             var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
                 new RestoreService(_svc, new FileSystemBackupSource(dir), new RestoreOptions
                 {
+                    AllowUnauthenticatedManifest = true,
                     TablePrefix = prefix,
                     Mode = RestoreMode.Clean,
                 }).RunAsync(full.BackupId));
@@ -224,6 +229,7 @@ public class RestoreDataLossTests(AzuriteFixture azurite)
             // The opt-out is honoured, so a genuine single-env deployment is not blocked.
             var allowed = await new RestoreService(_svc, new FileSystemBackupSource(dir), new RestoreOptions
             {
+                AllowUnauthenticatedManifest = true,
                 TablePrefix = prefix,
                 Mode = RestoreMode.Clean,
                 AllowCleanAllEnvs = true,

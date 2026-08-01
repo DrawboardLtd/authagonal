@@ -86,12 +86,15 @@ public static class ClientEndpoints
             return TypedResults.Json(new ErrorInfoResponse { Error = "invalid_request", ErrorDescription = redirectError }, AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 400);
         if (InvalidHomeUri(client) is { } uriError)
             return TypedResults.Json(new ErrorInfoResponse { Error = "invalid_request", ErrorDescription = uriError }, AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 400);
+        if (InvalidLogoutUris(client) is { } logoutUriError)
+            return TypedResults.Json(new ErrorInfoResponse { Error = "invalid_request", ErrorDescription = logoutUriError }, AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 400);
         if (InvalidPublicClientGrants(client) is { } grantError)
             return TypedResults.Json(new ErrorInfoResponse { Error = "invalid_request", ErrorDescription = grantError }, AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 400);
 
         if (client.IsDefaultApplication)
             await ClearOtherDefaultsAsync(store, client.ClientId, ct);
         await store.UpsertAsync(client, ct);
+        await InvalidateCorsAsync(http, ct);
         await audit.LogAsync(Actor(http), "client.created", "client", client.ClientId, client.ClientName, ct);
         return Results.Created($"/api/v1/clients/{client.ClientId}", Redacted(client));
     }
@@ -142,11 +145,14 @@ public static class ClientEndpoints
             return TypedResults.Json(new ErrorInfoResponse { Error = "invalid_request", ErrorDescription = redirectError }, AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 400);
         if (InvalidHomeUri(client) is { } uriError)
             return TypedResults.Json(new ErrorInfoResponse { Error = "invalid_request", ErrorDescription = uriError }, AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 400);
+        if (InvalidLogoutUris(client) is { } logoutUriError)
+            return TypedResults.Json(new ErrorInfoResponse { Error = "invalid_request", ErrorDescription = logoutUriError }, AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 400);
         if (InvalidPublicClientGrants(client) is { } grantError)
             return TypedResults.Json(new ErrorInfoResponse { Error = "invalid_request", ErrorDescription = grantError }, AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 400);
         if (client.IsDefaultApplication && !existing.IsDefaultApplication)
             await ClearOtherDefaultsAsync(store, clientId, ct);
         await store.UpsertAsync(client, ct);
+        await InvalidateCorsAsync(http, ct);
         await audit.LogAsync(Actor(http), "client.updated", "client", clientId, null, ct);
         return TypedResults.Json(Redacted(client), AuthagonalJsonContext.Default.OAuthClient);
     }
@@ -186,6 +192,31 @@ public static class ClientEndpoints
             }
         }
 
+        return null;
+    }
+
+    /// <summary>
+    /// The same outbound-URL rule the dynamic-registration endpoint applies to the two logout URIs.
+    /// </summary>
+    /// <remarks>
+    /// Both are dereferenced by the SERVER — back-channel is an outbound POST from the logout path,
+    /// front-channel is rendered into an iframe — so an unvalidated value is server-side SSRF with an
+    /// attacker-chosen target. DCR was hardened and this path was not, which left the privileged
+    /// surface as the permissive one: an IdentityAdmin, or a stolen admin token, could point a client
+    /// at <c>http://169.254.169.254/…</c> and have the logout path fetch it on demand.
+    /// </remarks>
+    private static string? InvalidLogoutUris(OAuthClient client)
+    {
+        foreach (var (name, value) in new[]
+                 {
+                     ("backChannelLogoutUri", client.BackChannelLogoutUri),
+                     ("frontChannelLogoutUri", client.FrontChannelLogoutUri),
+                 })
+        {
+            if (string.IsNullOrWhiteSpace(value)) continue;
+            if (!OutboundUrl.IsSafe(value))
+                return $"{name} must be an absolute http(s) URL to an external host";
+        }
         return null;
     }
 
@@ -267,8 +298,34 @@ public static class ClientEndpoints
         if (existing is null) return Results.NotFound();
 
         await store.DeleteAsync(clientId, ct);
+        await InvalidateCorsAsync(http, ct);
         await audit.LogAsync(Actor(http), "client.deleted", "client", clientId, null, ct);
         return Results.NoContent();
+    }
+
+    /// <summary>
+    /// Drops every node's cached CORS origins for this tenant after a client write.
+    /// </summary>
+    /// <remarks>
+    /// The credentialed origin list is pooled from the client table and cached for
+    /// <c>Cache:CorsCacheMinutes</c> — 60 by default — with no invalidation at all. So disabling a
+    /// compromised client, or removing an origin from one, left that origin able to make credentialed
+    /// cross-origin calls to the protocol surface for up to an hour on every node with a warm entry.
+    /// Best-effort by design: a bus failure must not fail the write the admin actually asked for, and
+    /// the entry still expires on its own.
+    /// </remarks>
+    private static async Task InvalidateCorsAsync(HttpContext http, CancellationToken ct)
+    {
+        try
+        {
+            // Resolved from the request scope rather than taken as a handler parameter: an embedding
+            // host maps these endpoints into its own pipeline, and a minimal-API parameter it has not
+            // registered is inferred as a BODY parameter, which 400s the route before the handler runs.
+            if (http.RequestServices.GetService<Authagonal.Core.Clustering.IClusterEventBus>() is { } bus)
+                await DynamicCorsPolicyProvider.InvalidateAsync(
+                    bus, http.RequestServices.GetService<ITenantContext>(), ct);
+        }
+        catch (Exception) { /* the cache entry still expires; the write must not fail on a bus hiccup */ }
     }
 
     private static string Actor(HttpContext http) =>

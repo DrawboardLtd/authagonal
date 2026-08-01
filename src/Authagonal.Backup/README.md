@@ -22,11 +22,27 @@ var backup = new BackupService(serviceClient, target, backupOptions);
 await backup.RunAsync(ct);
 
 // Restore
-var restoreOptions = new RestoreOptions { Mode = RestoreMode.Upsert };
+var restoreOptions = new RestoreOptions { Mode = RestoreMode.Upsert, ManifestKey = manifestKey };
 var source = new FileSystemBackupSource("./backups/20260426-120000");
 var restore = new RestoreService(serviceClient, source, restoreOptions);
 var result = await restore.RunAsync(ct);
 ```
+
+## Integrity
+
+The manifest records a SHA-256 per file, and restore verifies each one from the same read it applies
+the entities from. Those hashes establish that the archive matches the manifest — not that either is
+authentic, because the manifest sits on the same target as the data: whoever can rewrite
+`Clients.jsonl.gz` can rewrite the line recording its hash.
+
+`BackupOptions.ManifestKey` (CLI: `--manifest-key`) closes that by HMAC-ing the manifest, and
+`RestoreOptions.ManifestKey` verifies it. **Keep the key outside the backup target** — a MAC key
+stored beside the archive reproduces exactly the circularity it exists to remove.
+
+Restore fails closed: with no `ManifestKey` it refuses rather than warning, and
+`AllowUnauthenticatedManifest` is the explicit opt-out for an archive written before manifest signing.
+A file listed in the manifest but missing from the store aborts the restore, as does one present but
+unlisted.
 
 ## Surface
 

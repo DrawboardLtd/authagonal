@@ -172,4 +172,22 @@ public sealed class AuthOptions
     /// can be abused in multi-tenant deployments.
     /// </summary>
     public bool DynamicClientRegistrationEnabled { get; set; }
+
+    /// <summary>
+    /// Scopes an anonymous registrant may put in its own <c>AllowedScopes</c>, on top of the four
+    /// OIDC built-ins (<c>openid</c>, <c>profile</c>, <c>email</c>, <c>offline_access</c>) which are
+    /// always registrable. Empty — the default — means the built-ins and nothing else.
+    /// </summary>
+    /// <remarks>
+    /// The only test used to be "does this scope exist in the store", so a registrant could declare
+    /// every API scope the deployment had ever defined — <c>billing.write</c>, <c>orders.read</c> —
+    /// simply because they existed. Role-gated scopes were later refused, but the documented default
+    /// for <see cref="Core.Models.Scope.AllowedRoles"/> is empty ("every scope until an operator says
+    /// otherwise"), so the ungated majority stayed self-assignable. The per-user gate still means an
+    /// unentitled user is not granted them, but the client should not be able to declare them, and a
+    /// user staring at a consent screen listing <c>billing.write</c> next to an unvetted client_name
+    /// has been handed a decision nobody vetted. An allowlist inverts the default: registration
+    /// reaches what an operator named, not what happens to exist.
+    /// </remarks>
+    public List<string> DynamicClientRegistrationScopes { get; set; } = [];
 }

@@ -6,11 +6,63 @@ using Microsoft.Extensions.Options;
 
 namespace Authagonal.Server.Services;
 
-public sealed class DynamicCorsPolicyProvider(
-    IConfiguration configuration,
-    IOptions<CacheOptions> cacheOptions,
-    ILogger<DynamicCorsPolicyProvider> logger) : ICorsPolicyProvider
+public sealed class DynamicCorsPolicyProvider : ICorsPolicyProvider
 {
+    /// <summary>
+    /// Cluster topic carrying the cache key of a tenant whose client-derived origins have changed.
+    /// </summary>
+    /// <remarks>
+    /// Nothing invalidated this cache: an entry lived for <c>Cache:CorsCacheMinutes</c> (60 by default)
+    /// on every node that had warmed it. So disabling a compromised client, or removing an origin from
+    /// one, left that origin credentialed on the protocol surface for up to an hour — and on a
+    /// multi-replica deployment, on each node independently. An operator revoking access has no way to
+    /// tell that it has not taken effect yet, which is the worst property a revocation can have.
+    /// </remarks>
+    public const string InvalidationTopic = "cors.origins.changed";
+
+    private readonly IConfiguration configuration;
+    private readonly IOptions<CacheOptions> cacheOptions;
+    private readonly ILogger<DynamicCorsPolicyProvider> logger;
+
+    public DynamicCorsPolicyProvider(
+        IConfiguration configuration,
+        IOptions<CacheOptions> cacheOptions,
+        ILogger<DynamicCorsPolicyProvider> logger,
+        Authagonal.Core.Clustering.IClusterEventBus clusterEvents)
+    {
+        this.configuration = configuration;
+        this.cacheOptions = cacheOptions;
+        this.logger = logger;
+
+        // Never unsubscribed: this provider is a singleton for the lifetime of the host, and the bus
+        // outlives it.
+        clusterEvents.Subscribe(InvalidationTopic, (payload, cancellation) =>
+        {
+            var key = System.Text.Encoding.UTF8.GetString(payload.Span);
+            if (key.Length == 0)
+                _cache.Clear();
+            else
+                _cache.TryRemove(key, out _);
+            return Task.CompletedTask;
+        });
+    }
+
+    /// <summary>
+    /// Tells every node to drop <paramref name="tenant"/>'s cached origins. Call after any write that
+    /// can change a client's <c>AllowedCorsOrigins</c> or its <c>Enabled</c> flag.
+    /// </summary>
+    public static Task InvalidateAsync(
+        Authagonal.Core.Clustering.IClusterEventBus clusterEvents,
+        ITenantContext? tenant,
+        CancellationToken ct = default)
+        => clusterEvents.PublishAsync(
+            InvalidationTopic,
+            System.Text.Encoding.UTF8.GetBytes(CacheKeyFor(tenant)),
+            ct);
+
+    private static string CacheKeyFor(ITenantContext? tenant)
+        => $"{tenant?.TenantId ?? "default"}|{tenant?.Env ?? ""}";
+
 
     /// <summary>
     /// One gate PER cache key, not one for the whole process.
@@ -126,7 +178,7 @@ public sealed class DynamicCorsPolicyProvider(
         }
 
         var tenant = context.RequestServices.GetService<ITenantContext>();
-        var cacheKey = $"{tenant?.TenantId ?? "default"}|{tenant?.Env ?? ""}";
+        var cacheKey = CacheKeyFor(tenant);
 
         if (_cache.TryGetValue(cacheKey, out var entry) && DateTimeOffset.UtcNow < entry.Expiry)
             return entry.Origins;

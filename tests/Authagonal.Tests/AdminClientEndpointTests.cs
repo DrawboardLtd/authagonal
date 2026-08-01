@@ -47,6 +47,13 @@ internal sealed class AdminSurfaceHost : IAsyncDisposable
     public int? MaxProvisioningApps { get; set; }
 
     /// <summary>
+    /// Records what the client-mutation paths publish on the cluster bus. The CORS origin list is
+    /// pooled from the client table and cached for an hour with no invalidation, so a write that does
+    /// not announce itself leaves a revoked origin credentialed on every warm node.
+    /// </summary>
+    public RecordingClusterEventBus ClusterEvents { get; } = new();
+
+    /// <summary>
     /// Set before the first CreateClient() to substitute the privilege gate. Defaults to the shipped
     /// single-role implementation, which grants everything — so the endpoints' denial branches are
     /// unreachable unless a test supplies a guard that actually refuses something.
@@ -90,6 +97,7 @@ internal sealed class AdminSurfaceHost : IAsyncDisposable
         services.AddSingleton<IAuditLogger, NullAuditLogger>();
         services.AddSingleton<IClientScopeGuard>(ScopeGuard);
         services.AddSingleton<IProvisioningAppQuota>(new FixedProvisioningAppQuota(MaxProvisioningApps));
+        services.AddSingleton<Authagonal.Core.Clustering.IClusterEventBus>(ClusterEvents);
 
         if (ProvisioningHttpHandler is not null)
             services.AddHttpClient("Provisioning").ConfigurePrimaryHttpMessageHandler(() => ProvisioningHttpHandler);
@@ -114,6 +122,23 @@ internal sealed class AdminSurfaceHost : IAsyncDisposable
         _app.MapProvisioningAdminEndpoints();
         _app.StartAsync().GetAwaiter().GetResult();
     }
+}
+
+/// <summary>Cluster bus that records published topics, so a test can assert a write announced itself.</summary>
+internal sealed class RecordingClusterEventBus : Authagonal.Core.Clustering.IClusterEventBus
+{
+    public List<string> Published { get; } = [];
+
+    public Task PublishAsync(string topic, ReadOnlyMemory<byte> payload, CancellationToken ct = default)
+    {
+        Published.Add(topic);
+        return Task.CompletedTask;
+    }
+
+    public IDisposable Subscribe(string topic, Func<ReadOnlyMemory<byte>, CancellationToken, Task> handler)
+        => new Noop();
+
+    private sealed class Noop : IDisposable { public void Dispose() { } }
 }
 
 internal sealed class HeaderAdminAuthHandler(
@@ -269,6 +294,142 @@ public sealed class AdminClientEndpointTests : IAsyncLifetime
         });
 
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    /// <summary>
+    /// Every client write announces itself, so the pooled CORS origin list does not stay stale.
+    /// </summary>
+    /// <remarks>
+    /// Disabling a compromised client used to leave its origin credentialed on the protocol surface for
+    /// up to <c>Cache:CorsCacheMinutes</c> (60) on every node with a warm entry, and nothing told the
+    /// operator that their revocation had not taken effect.
+    /// </remarks>
+    [Fact]
+    public async Task ClientWrites_PublishACorsInvalidation()
+    {
+        var clientId = $"c{Guid.NewGuid():N}";
+        await CreateAsync(new
+        {
+            clientId,
+            clientName = "Test",
+            redirectUris = new[] { "https://app.test/cb" },
+            allowedCorsOrigins = new[] { "https://app.test" },
+            allowedScopes = new[] { "openid" },
+            allowedGrantTypes = new[] { "authorization_code" },
+        });
+        Assert.Contains(DynamicCorsPolicyProvider.InvalidationTopic, _host.ClusterEvents.Published);
+
+        _host.ClusterEvents.Published.Clear();
+        await _client.PutAsync($"/api/v1/clients/{clientId}", Json(new
+        {
+            clientId,
+            clientName = "Test",
+            enabled = false,
+            redirectUris = new[] { "https://app.test/cb" },
+            allowedCorsOrigins = new[] { "https://app.test" },
+            allowedScopes = new[] { "openid" },
+            allowedGrantTypes = new[] { "authorization_code" },
+        }));
+        Assert.Contains(DynamicCorsPolicyProvider.InvalidationTopic, _host.ClusterEvents.Published);
+
+        _host.ClusterEvents.Published.Clear();
+        await _client.DeleteAsync($"/api/v1/clients/{clientId}");
+        Assert.Contains(DynamicCorsPolicyProvider.InvalidationTopic, _host.ClusterEvents.Published);
+    }
+
+    // -----------------------------------------------------------------------
+    // #186 (re-verification) — the two logout URIs are dereferenced BY THE SERVER (back-channel is an
+    // outbound POST from the logout path, front-channel is rendered into an iframe). DCR ran them
+    // through the outbound-URL guard; the admin API ran nothing, so the privileged surface was the
+    // permissive one and an IdentityAdmin — or a stolen admin token — could aim either at the cloud
+    // metadata address or an internal host and trigger the fetch by logging out.
+    // -----------------------------------------------------------------------
+
+    [Theory]
+    [InlineData("http://169.254.169.254/latest/meta-data/")]
+    [InlineData("http://localhost:8080/logout")]
+    [InlineData("https://10.1.2.3/logout")]
+    [InlineData("https://vault.internal/logout")]
+    [InlineData("/relative/logout")]
+    public async Task AdminCreate_RefusesInternalBackChannelLogoutUri(string logoutUri)
+    {
+        var response = await CreateAsync(new
+        {
+            clientId = $"c{Guid.NewGuid():N}",
+            clientName = "Test",
+            redirectUris = new[] { "https://app.test/cb" },
+            backChannelLogoutUri = logoutUri,
+            allowedScopes = new[] { "openid" },
+            allowedGrantTypes = new[] { "authorization_code" },
+        });
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task AdminCreate_RefusesInternalFrontChannelLogoutUri()
+    {
+        var response = await CreateAsync(new
+        {
+            clientId = $"c{Guid.NewGuid():N}",
+            clientName = "Test",
+            redirectUris = new[] { "https://app.test/cb" },
+            frontChannelLogoutUri = "http://169.254.169.254/latest/meta-data/",
+            allowedScopes = new[] { "openid" },
+            allowedGrantTypes = new[] { "authorization_code" },
+        });
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    /// <summary>Update is the other write path, and it is the one an attacker uses on an existing client.</summary>
+    [Fact]
+    public async Task AdminUpdate_RefusesInternalBackChannelLogoutUri()
+    {
+        var clientId = $"c{Guid.NewGuid():N}";
+        var created = await CreateAsync(new
+        {
+            clientId,
+            clientName = "Test",
+            redirectUris = new[] { "https://app.test/cb" },
+            backChannelLogoutUri = "https://app.test/backchannel",
+            allowedScopes = new[] { "openid" },
+            allowedGrantTypes = new[] { "authorization_code" },
+        });
+        Assert.Equal(HttpStatusCode.Created, created.StatusCode);
+
+        var response = await _client.PutAsync($"/api/v1/clients/{clientId}", Json(new
+        {
+            clientId,
+            clientName = "Test",
+            redirectUris = new[] { "https://app.test/cb" },
+            backChannelLogoutUri = "http://169.254.169.254/latest/meta-data/",
+            allowedScopes = new[] { "openid" },
+            allowedGrantTypes = new[] { "authorization_code" },
+        }));
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        var stored = await _host.ClientStore.GetAsync(clientId);
+        Assert.Equal("https://app.test/backchannel", stored!.BackChannelLogoutUri);
+    }
+
+    /// <summary>The control: a real external https logout endpoint is exactly the supported case.</summary>
+    [Fact]
+    public async Task AdminCreate_AcceptsExternalLogoutUris()
+    {
+        var response = await CreateAsync(new
+        {
+            clientId = $"c{Guid.NewGuid():N}",
+            clientName = "Test",
+            redirectUris = new[] { "https://app.test/cb" },
+            backChannelLogoutUri = "https://app.test/oidc/backchannel",
+            frontChannelLogoutUri = "https://app.test/oidc/frontchannel",
+            allowedScopes = new[] { "openid" },
+            allowedGrantTypes = new[] { "authorization_code" },
+        });
+
+        Assert.True(response.StatusCode == HttpStatusCode.Created,
+            $"{(int)response.StatusCode}: {await response.Content.ReadAsStringAsync()}");
     }
 
     // -----------------------------------------------------------------------

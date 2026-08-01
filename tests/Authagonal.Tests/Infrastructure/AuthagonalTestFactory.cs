@@ -28,6 +28,7 @@ using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
@@ -482,6 +483,10 @@ public sealed class AuthagonalTestFactory : IAsyncDisposable
         });
 
         services.AddCors();
+        // The provider subscribes to the cluster bus so a client write drops the cached origins on
+        // every node; AddAuthagonal supplies the in-process default, this host has to as well.
+        services.TryAddSingleton<Authagonal.Core.Clustering.IClusterEventBus,
+            Authagonal.Core.Clustering.InProcessClusterEventBus>();
         services.AddSingleton<ICorsPolicyProvider, DynamicCorsPolicyProvider>();
         services.AddHealthChecks().AddCheck<TableStorageHealthCheck>("table_storage");
 

@@ -49,11 +49,23 @@ app.MapGet("/custom/health", () => Results.Ok(new
 // ---------------------------------------------------------------------------
 app.MapPost("/api/auth/register", async (
     RegisterRequest request,
+    HttpContext http,
     IUserStore userStore,
     PasswordHasher passwordHasher,
     IAuthHook authHook,
+    IRateLimiter rateLimiter,
     CancellationToken ct) =>
 {
+    // This is an anonymous, antiforgery-disabled account-creation endpoint on a PUBLIC demo host, and
+    // it had no bound of any kind: a script could mint accounts (all with EmailConfirmed = true) as
+    // fast as the storage account would take them, which is both a free-storage sink and a way to make
+    // the demo look compromised. The purge service only removes them after 24 hours. A per-IP budget
+    // is the cheapest thing that makes the endpoint self-limiting without asking a demo visitor to
+    // solve a captcha.
+    var ip = http.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+    if (await rateLimiter.IsRateLimitedAsync($"demo-register|{ip}", 5, TimeSpan.FromHours(1), ct))
+        return Results.Json(new { error = "rate_limited", message = "Too many registrations from this address. Try again later." }, statusCode: 429);
+
     if (string.IsNullOrWhiteSpace(request.Email) || string.IsNullOrWhiteSpace(request.Password))
         return Results.Json(new { error = "email_and_password_required" }, statusCode: 400);
 

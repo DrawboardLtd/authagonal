@@ -26,6 +26,23 @@ public static class ClientRegistrationEndpoint
     private static readonly HashSet<string> RegistrableGrantTypes =
         new(["authorization_code", "refresh_token"], StringComparer.Ordinal);
 
+    /// <summary>
+    /// The OIDC built-ins, always registrable. Anything beyond these has to be named in
+    /// <c>Auth:DynamicClientRegistrationScopes</c>.
+    /// </summary>
+    private static readonly HashSet<string> BuiltInScopes =
+        new(["openid", "profile", "email", "offline_access"], StringComparer.Ordinal);
+
+    /// <summary>
+    /// Ceiling on how many redirect URIs one anonymous registration may declare, and how long each may
+    /// be. Nothing bounded either, so a single registration could carry a megabyte of URIs and the only
+    /// limit on total client-record bloat was the 10/hour per-IP budget — which is 10 unbounded records
+    /// an hour, per IP, forever. The numbers are generous for a real client and useless as an
+    /// amplifier.
+    /// </summary>
+    private const int MaxRedirectUris = 20;
+    private const int MaxRedirectUriLength = 2048;
+
     private static async Task<IResult> HandleAsync(
         ClientRegistrationRequest request,
         HttpContext httpContext,
@@ -60,6 +77,28 @@ public static class ClientRegistrationEndpoint
                 return TypedResults.Json(
                     new ErrorInfoResponse { Error = "invalid_client_metadata", ErrorDescription = $"grant_type '{gt}' may not be registered via dynamic client registration" },
                     AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 400);
+        }
+
+        // Bound the list before inspecting it, and bound post_logout_redirect_uris with it — both land
+        // in the same client record and neither had a cap of any kind.
+        foreach (var (name, list) in new[]
+                 {
+                     ("redirect_uris", redirectUris),
+                     ("post_logout_redirect_uris", request.PostLogoutRedirectUris ?? []),
+                 })
+        {
+            if (list.Count > MaxRedirectUris)
+                return TypedResults.Json(
+                    new ErrorInfoResponse { Error = "invalid_client_metadata", ErrorDescription = $"{name} may contain at most {MaxRedirectUris} entries" },
+                    AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 400);
+
+            foreach (var entry in list)
+            {
+                if (entry?.Length > MaxRedirectUriLength)
+                    return TypedResults.Json(
+                        new ErrorInfoResponse { Error = "invalid_redirect_uri", ErrorDescription = $"Each {name} entry may be at most {MaxRedirectUriLength} characters" },
+                        AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 400);
+            }
         }
 
         foreach (var uri in redirectUris)
@@ -112,16 +151,34 @@ public static class ClientRegistrationEndpoint
             ? new List<string>()
             : request.Scope.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
 
-        var builtInScopes = new HashSet<string>(["openid", "profile", "email", "offline_access"], StringComparer.Ordinal);
         var storeScopes = await scopeStore.ListAsync(ct);
         var knownScopes = new HashSet<string>(storeScopes.Select(s => s.Name), StringComparer.Ordinal);
-        knownScopes.UnionWith(builtInScopes);
+        knownScopes.UnionWith(BuiltInScopes);
+
+        // What open registration may reach: the built-ins, plus exactly what an operator named.
+        //
+        // The previous set was "everything in the scope store minus the admin name", which inverts the
+        // default in the wrong direction — a scope exists because some client needs it, not because
+        // every anonymous registrant should be able to claim it.
+        var registrableScopes = new HashSet<string>(BuiltInScopes, StringComparer.Ordinal);
+        registrableScopes.UnionWith(
+            authOptions.Value.DynamicClientRegistrationScopes.Where(s => !string.IsNullOrWhiteSpace(s)));
 
         // The administrative scope is never grantable through open registration.
         var adminScope = configuration["AdminApi:Scope"] ?? AdminScopeReservation.DefaultAdminScope;
         if (AdminScopeReservation.Grants(requestedScopes, adminScope))
             return TypedResults.Json(
                 new ErrorInfoResponse { Error = "invalid_scope", ErrorDescription = "The administrative scope cannot be registered" },
+                AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 403);
+
+        // Give the host's own escalation policy a say, exactly as every authenticated client-mutation
+        // path does. The principal here is anonymous, which is the point: a host that distinguishes
+        // callers can refuse outright what it would let a named admin grant. The shipped guard allows
+        // everything, so on a default deployment the allowlist above is what binds.
+        var scopeGuard = httpContext.RequestServices.GetService<IClientScopeGuard>();
+        if (scopeGuard?.FindUngrantableScope(httpContext.User, requestedScopes) is { } ungrantable)
+            return TypedResults.Json(
+                new ErrorInfoResponse { Error = "invalid_scope", ErrorDescription = $"Scope '{ungrantable}' cannot be registered dynamically" },
                 AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 403);
 
         foreach (var s in requestedScopes)
@@ -133,17 +190,16 @@ public static class ClientRegistrationEndpoint
                     AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 400);
             }
 
-            // A role-gated scope is not open-registrable.
+            // Not on the allowlist, or role-gated: not open-registrable.
             //
             // Existence in the scope store was the only test, so an anonymous registrant could
-            // self-assign ANY scope the deployment had defined — including the ones an operator
-            // restricted to particular roles. Every authenticated client-mutation path runs those
-            // through IClientScopeGuard; this one, the only unauthenticated one, ran nothing. The
-            // per-user gate still applies at authorize, so the scope would not be granted to an
-            // unentitled user — but the client should not be able to declare it in the first place,
-            // and it appears on the consent screen as though it could.
+            // self-assign ANY scope the deployment had defined. Role-gated scopes were then refused,
+            // but Scope.AllowedRoles defaults to empty — "every scope until an operator says
+            // otherwise" — so the ungated majority stayed reachable. The per-user gate still applies at
+            // authorize, so the scope would not be granted to an unentitled user; but the client should
+            // not be able to declare it, and it appears on the consent screen as though it could.
             var registered = storeScopes.FirstOrDefault(x => string.Equals(x.Name, s, StringComparison.Ordinal));
-            if (registered is { AllowedRoles.Count: > 0 })
+            if (!registrableScopes.Contains(s) || registered is { AllowedRoles.Count: > 0 })
             {
                 return TypedResults.Json(
                     new ErrorInfoResponse { Error = "invalid_scope", ErrorDescription = $"Scope '{s}' is restricted and cannot be registered dynamically" },
@@ -226,6 +282,18 @@ public static class ClientRegistrationEndpoint
         };
 
         await clientStore.UpsertAsync(client, ct);
+
+        // A registration adds credentialed origins to the pooled CORS list, which every node caches for
+        // an hour with no invalidation — so without this the registrant's own origins do not work until
+        // the cache turns over, and (worse, on the revocation side) removing them later would not take
+        // effect either. Best-effort: the client is already written, and the entry expires anyway.
+        try
+        {
+            if (httpContext.RequestServices.GetService<Authagonal.Core.Clustering.IClusterEventBus>() is { } bus)
+                await DynamicCorsPolicyProvider.InvalidateAsync(
+                    bus, httpContext.RequestServices.GetService<ITenantContext>(), ct);
+        }
+        catch (Exception) { /* registration succeeded; a bus hiccup must not turn it into a 500 */ }
 
         var response = new ClientRegistrationResponse
         {

@@ -104,6 +104,11 @@ public static class EndSessionEndpoint
                 {
                     var c = await clientStore.GetAsync(clientIdGrant, ct);
                     if (c?.FrontChannelLogoutUri is null) continue;
+                    // Re-checked at use time, not only at write time. A client row can predate the
+                    // registration guard, arrive from a migration, or be written by an embedding host's
+                    // own IClientStore — and this URI is put in an iframe src by the logout page, so an
+                    // internal one turns any logout into a browser-side probe of the private network.
+                    if (!Authagonal.Core.Services.OutboundUrl.IsSafe(c.FrontChannelLogoutUri, allowLoopback: true)) continue;
                     var uri = c.FrontChannelLogoutUri;
                     if (c.FrontChannelLogoutSessionRequired)
                     {
@@ -142,6 +147,10 @@ public static class EndSessionEndpoint
                 {
                     var c = await clientStore.GetAsync(clientIdGrant, ct);
                     if (c?.BackChannelLogoutUri is null) continue;
+                    // Same reason as the front-channel loop above: the server itself POSTs to this URI,
+                    // so a stored value that never went through the registration guard is SSRF with the
+                    // logout path as the trigger.
+                    if (!Authagonal.Core.Services.OutboundUrl.IsSafe(c.BackChannelLogoutUri, allowLoopback: true)) continue;
                     var tokenSid = c.BackChannelLogoutSessionRequired ? sessionId : null;
                     notifications.Add((c.BackChannelLogoutUri,
                         CreateBackChannelLogoutToken(tenantContext.Issuer, clientIdGrant, subjectId, tokenSid, keyManager)));

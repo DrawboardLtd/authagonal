@@ -66,6 +66,18 @@ public static class BackChannelLogoutEndpoint
             if (client?.BackChannelLogoutUri is null)
                 continue;
 
+            // Validated at use time as well as at write time. The registration guard covers what this
+            // server writes; a client row can also come from a migration, a restore, or an embedding
+            // host's own IClientStore, and this loop is the thing that dereferences it.
+            if (!OutboundUrl.IsSafe(client.BackChannelLogoutUri, allowLoopback: true))
+            {
+                failed++;
+                logger.LogWarning(
+                    "Back-channel logout skipped for client {ClientId}: its logout URI is not an external http(s) endpoint",
+                    clientId);
+                continue;
+            }
+
             try
             {
                 var logoutToken = CreateLogoutToken(

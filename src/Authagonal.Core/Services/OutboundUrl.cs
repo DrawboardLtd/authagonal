@@ -17,7 +17,16 @@ namespace Authagonal.Core.Services;
 /// </summary>
 public static class OutboundUrl
 {
-    public static bool IsSafe(string? url)
+    /// <param name="allowLoopback">
+    /// Permit <c>localhost</c> / 127.0.0.0/8 / ::1. Off everywhere a URL is being ACCEPTED — an
+    /// operator or a registrant naming loopback has either made a mistake or is probing this server's
+    /// own admin surface. On only at DELIVERY time for the OIDC logout URIs, where a relying party on
+    /// localhost is a supported development configuration and the write-time guards have already
+    /// refused anything new: the delivery check exists to catch rows that predate those guards or come
+    /// from an embedding host's own store, and re-litigating loopback there would break a flow that
+    /// nothing in the write path is even trying to stop.
+    /// </param>
+    public static bool IsSafe(string? url, bool allowLoopback = false)
     {
         if (string.IsNullOrWhiteSpace(url)) return false;
         if (!Uri.TryCreate(url, UriKind.Absolute, out var uri)) return false;
@@ -30,22 +39,24 @@ public static class OutboundUrl
         var host = uri.DnsSafeHost.TrimEnd('.');
         if (host.Length == 0) return false;
 
-        if (host.Equals("localhost", StringComparison.OrdinalIgnoreCase)
-            || host.EndsWith(".localhost", StringComparison.OrdinalIgnoreCase)
+        var isLoopbackName = host.Equals("localhost", StringComparison.OrdinalIgnoreCase)
+            || host.EndsWith(".localhost", StringComparison.OrdinalIgnoreCase);
+
+        if ((isLoopbackName && !allowLoopback)
             || host.EndsWith(".local", StringComparison.OrdinalIgnoreCase)
             || host.EndsWith(".internal", StringComparison.OrdinalIgnoreCase))
             return false;
 
         if (IPAddress.TryParse(host, out var ip))
-            return !IsBlockedIp(ip);
+            return !IsBlockedIp(ip, allowLoopback);
 
         return true;
     }
 
-    private static bool IsBlockedIp(IPAddress ip)
+    private static bool IsBlockedIp(IPAddress ip, bool allowLoopback)
     {
         if (ip.IsIPv4MappedToIPv6) ip = ip.MapToIPv4();
-        if (IPAddress.IsLoopback(ip)) return true;
+        if (IPAddress.IsLoopback(ip)) return !allowLoopback;
 
         var b = ip.GetAddressBytes();
         return ip.AddressFamily switch

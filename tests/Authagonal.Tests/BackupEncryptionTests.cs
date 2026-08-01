@@ -170,6 +170,7 @@ public class BackupEncryptionTests(AzuriteFixture azurite)
             var restorePrefix = $"ber{Guid.NewGuid():N}";
             var result = await new RestoreService(_svc, new FileSystemBackupSource(dir), new RestoreOptions
             {
+                AllowUnauthenticatedManifest = true,
                 TablePrefix = restorePrefix,
                 EncryptionKey = kek,
             }).RunAsync(manifest.BackupId);
@@ -200,6 +201,7 @@ public class BackupEncryptionTests(AzuriteFixture azurite)
 
             var restore = new RestoreService(_svc, new FileSystemBackupSource(dir), new RestoreOptions
             {
+                AllowUnauthenticatedManifest = true,
                 TablePrefix = $"bnr{Guid.NewGuid():N}",
             });
 
@@ -233,12 +235,14 @@ public class BackupEncryptionTests(AzuriteFixture azurite)
             await Assert.ThrowsAsync<InvalidOperationException>(() =>
                 new RestoreService(_svc, source, new RestoreOptions
                 {
+                    AllowUnauthenticatedManifest = true,
                     TablePrefix = restorePrefix, EncryptionKey = Kek(),
                 }).RunAsync(manifest.BackupId));
 
             // …and the explicit opt-out works, for an archive that genuinely predates encryption.
             var result = await new RestoreService(_svc, source, new RestoreOptions
             {
+                AllowUnauthenticatedManifest = true,
                 TablePrefix = restorePrefix, EncryptionKey = Kek(), AllowUnencrypted = true,
             }).RunAsync(manifest.BackupId);
             Assert.Equal(1, result.TotalRestored);
@@ -281,6 +285,7 @@ public class BackupEncryptionTests(AzuriteFixture azurite)
             var restorePrefix = $"brr{Guid.NewGuid():N}";
             var result = await new RestoreService(_svc, source, new RestoreOptions
             {
+                AllowUnauthenticatedManifest = true,
                 TablePrefix = restorePrefix, EncryptionKey = kek,
             }).RunAsync(rolled.BackupId);
 

@@ -29,6 +29,26 @@ if (!string.IsNullOrWhiteSpace(encryptionKeyArg))
         return 1;
     }
 }
+// The manifest MAC. BackupOptions has carried this since manifest signing landed and no CLI flag
+// ever set it, so every backup the shipped tool produced was unsigned — the library could
+// authenticate a manifest that nothing in the release could actually sign.
+byte[]? manifestKey = null;
+var manifestKeyArg = GetArg(cliArgs, "--manifest-key");
+if (!string.IsNullOrWhiteSpace(manifestKeyArg))
+{
+    try { manifestKey = Convert.FromBase64String(manifestKeyArg); }
+    catch (FormatException)
+    {
+        Console.Error.WriteLine("ERROR: --manifest-key must be base64.");
+        return 1;
+    }
+
+    if (manifestKey.Length < 32)
+    {
+        Console.Error.WriteLine($"ERROR: --manifest-key must decode to at least 32 bytes (got {manifestKey.Length}).");
+        return 1;
+    }
+}
 var incremental = HasFlag(cliArgs, "--incremental");
 var tableFilter = GetArg(cliArgs, "--tables")?.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 var prefix = GetArg(cliArgs, "--prefix") ?? "";
@@ -55,6 +75,10 @@ if (connectionString is null || HasFlag(cliArgs, "--help"))
                                    AES-256-GCM under a per-backup content key, wrapped under this one
                                    and recorded in the manifest. Keep it OUTSIDE the backup target —
                                    an envelope whose key sits beside the archive protects nothing.
+      --manifest-key <base64>      >=32-byte HMAC key. Signs the manifest, so a restore holding the
+                                   same key can prove the recorded file hashes were not rewritten
+                                   along with the files they describe. Without it the hashes detect
+                                   corruption but not tampering. Keep it OUTSIDE the backup target.
       --dry-run                    Show what would be backed up without writing
       --help                       Show this help
     """);
@@ -78,6 +102,7 @@ var options = new BackupOptions
     Gzip = useGzip,
     DryRun = dryRun,
     EncryptionKey = encryptionKey,
+    ManifestKey = manifestKey,
 };
 
 // Say what is about to be written in the clear, before writing it.

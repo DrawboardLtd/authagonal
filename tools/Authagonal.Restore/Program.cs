@@ -17,6 +17,22 @@ var modeStr = GetArg(cliArgs, "--mode") ?? "upsert";
 var dryRun = HasFlag(cliArgs, "--dry-run");
 var cleanEnv = GetArg(cliArgs, "--clean-env");
 var allowCleanIncremental = HasFlag(cliArgs, "--allow-clean-from-incremental");
+var allowCleanAllEnvs = HasFlag(cliArgs, "--allow-clean-all-envs");
+var allowUnverified = HasFlag(cliArgs, "--allow-unverified");
+var allowUnauthenticatedManifest = HasFlag(cliArgs, "--allow-unauthenticated-manifest");
+
+// RestoreOptions has carried EncryptionKey and ManifestKey since backup encryption and manifest
+// signing landed, and this tool set neither: an encrypted archive was unrestorable by the shipped
+// CLI, and a signed manifest was never checked by it. Both keys must come from outside the backup
+// target — a vault entry, a KMS key, an environment secret on the restoring host — or they protect
+// nothing.
+byte[]? encryptionKey = ReadKey(cliArgs, "--encryption-key", exactBytes: 32);
+byte[]? manifestKey = ReadKey(cliArgs, "--manifest-key", minBytes: 32);
+if (KeyError is not null)
+{
+    Console.Error.WriteLine(KeyError);
+    return 1;
+}
 
 if (connectionString is null || inputDir is null || HasFlag(cliArgs, "--help"))
 {
@@ -41,6 +57,18 @@ if (connectionString is null || inputDir is null || HasFlag(cliArgs, "--help"))
                                    Permit --mode clean against an incremental backup.
                                    Refused by default: it would leave the table holding
                                    only the delta, destroying every unchanged row.
+      --allow-clean-all-envs       Permit --mode clean with no --clean-env, emptying the
+                                   whole physical table rather than one env's rows.
+      --encryption-key <base64>    32-byte key-encryption key the backup was written with.
+                                   Required to restore an encrypted archive.
+      --manifest-key <base64>      >=32-byte HMAC key the backup was signed with. Proves the
+                                   file hashes in the manifest were not rewritten along with
+                                   the files. REQUIRED unless --allow-unauthenticated-manifest.
+      --allow-unauthenticated-manifest
+                                   Restore without --manifest-key, accepting hashes that
+                                   detect corruption but not tampering.
+      --allow-unverified           Restore a backup whose manifest carries no file hashes
+                                   at all (written before integrity hashing existed).
       --dry-run                    Show what would be restored without writing
                                    (writes nothing and deletes nothing)
       --help                       Show this help
@@ -76,6 +104,11 @@ var options = new RestoreOptions
     DryRun = dryRun,
     CleanEnvPrefix = string.IsNullOrEmpty(cleanEnv) ? null : $"{cleanEnv}|",
     AllowCleanFromIncremental = allowCleanIncremental,
+    AllowCleanAllEnvs = allowCleanAllEnvs,
+    AllowUnverified = allowUnverified,
+    AllowUnauthenticatedManifest = allowUnauthenticatedManifest,
+    EncryptionKey = encryptionKey,
+    ManifestKey = manifestKey,
 };
 
 var service = new RestoreService(serviceClient, source, options);
@@ -91,6 +124,29 @@ Console.WriteLine($"Done: {result.TotalRestored:N0} entities restored, {result.T
 
 return result.TotalErrors > 0 ? 2 : 0;
 
+// Set by ReadKey rather than thrown: top-level statements run before the help block, and a malformed
+// key must not stop `--help` from printing.
+static byte[]? ReadKey(string[] args, string name, int? exactBytes = null, int? minBytes = null)
+{
+    var raw = GetArg(args, name);
+    if (string.IsNullOrWhiteSpace(raw)) return null;
+
+    byte[] key;
+    try { key = Convert.FromBase64String(raw); }
+    catch (FormatException)
+    {
+        KeyError = $"ERROR: {name} must be base64.";
+        return null;
+    }
+
+    if (exactBytes is { } exact && key.Length != exact)
+        KeyError = $"ERROR: {name} must decode to exactly {exact} bytes (got {key.Length}).";
+    else if (minBytes is { } min && key.Length < min)
+        KeyError = $"ERROR: {name} must decode to at least {min} bytes (got {key.Length}).";
+
+    return KeyError is null ? key : null;
+}
+
 static string? GetArg(string[] args, string name)
 {
     for (int i = 0; i < args.Length - 1; i++)
@@ -99,3 +155,6 @@ static string? GetArg(string[] args, string name)
 }
 
 static bool HasFlag(string[] args, string name) => args.Contains(name);
+
+
+partial class Program { private static string? KeyError; }

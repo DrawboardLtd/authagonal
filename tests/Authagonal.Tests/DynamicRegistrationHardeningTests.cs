@@ -78,6 +78,94 @@ public sealed class DynamicRegistrationHardeningTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
     }
 
+    /// <summary>
+    /// An ungated store scope — <see cref="Scope.AllowedRoles"/> empty, which is the documented default,
+    /// "every scope until an operator says otherwise" — was still freely self-assignable, because
+    /// existence in the store was the whole test. Registration now reaches the built-ins plus exactly
+    /// what an operator named in <c>Auth:DynamicClientRegistrationScopes</c>.
+    /// </summary>
+    [Fact]
+    public async Task UngatedApiScope_IsNotSelfAssignable()
+    {
+        await _factory.ScopeStore.CreateAsync(new Scope { Name = "billing.write" });
+
+        var response = await RegisterAsync("https://app.example/cb", scope: "openid billing.write");
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+    }
+
+    /// <summary>The allowlist is the escape hatch, so an operator can still open a scope deliberately.</summary>
+    [Fact]
+    public async Task AllowlistedScope_IsRegistrable()
+    {
+        await using var factory = new AuthagonalTestFactory
+        {
+            ConfigureAuthOptions = o =>
+            {
+                o.DynamicClientRegistrationEnabled = true;
+                o.DynamicClientRegistrationScopes = ["billing.write"];
+            },
+        };
+        await factory.SeedTestDataAsync();
+        await factory.ScopeStore.CreateAsync(new Scope { Name = "billing.write" });
+        var client = factory.CreateClient(new() { AllowAutoRedirect = false });
+
+        var response = await client.PostAsJsonAsync("/connect/register", new
+        {
+            client_name = "Test App",
+            redirect_uris = new[] { "https://app.example/cb" },
+            grant_types = new[] { "authorization_code" },
+            token_endpoint_auth_method = "none",
+            scope = "openid billing.write",
+        });
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+    }
+
+    /// <summary>
+    /// Nothing bounded the list or its entries, so one registration could carry an arbitrary amount of
+    /// data and the only limit on client-record bloat was 10 unbounded records per IP per hour.
+    /// </summary>
+    [Fact]
+    public async Task UnboundedRedirectUriList_IsRefused()
+    {
+        var many = Enumerable.Range(0, 200).Select(i => $"https://app.example/cb{i}").ToArray();
+
+        var response = await _client.PostAsJsonAsync("/connect/register", new
+        {
+            client_name = "Test App",
+            redirect_uris = many,
+            grant_types = new[] { "authorization_code" },
+            token_endpoint_auth_method = "none",
+            scope = "openid",
+        });
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task OverlongRedirectUri_IsRefused()
+    {
+        var response = await RegisterAsync("https://app.example/" + new string('a', 4000));
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    /// <summary>post_logout_redirect_uris lands in the same client record and had no cap either.</summary>
+    [Fact]
+    public async Task UnboundedPostLogoutRedirectUriList_IsRefused()
+    {
+        var response = await _client.PostAsJsonAsync("/connect/register", new
+        {
+            client_name = "Test App",
+            redirect_uris = new[] { "https://app.example/cb" },
+            post_logout_redirect_uris = Enumerable.Range(0, 200).Select(i => $"https://app.example/out{i}").ToArray(),
+            grant_types = new[] { "authorization_code" },
+            token_endpoint_auth_method = "none",
+            scope = "openid",
+        });
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
     private Task<HttpResponseMessage> RegisterAsync(string redirectUri, string scope = "openid") =>
         _client.PostAsJsonAsync("/connect/register", new
         {
