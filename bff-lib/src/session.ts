@@ -30,10 +30,17 @@ export interface IBffSessionStore {
   /** Create or replace a session. Implementations must index it by `subject` and (when present) `sid`. */
   set(session: BffSession): Promise<void>;
   remove(sessionId: string): Promise<void>;
-  /** Delete every session matching an OIDC `sid` (session-scoped logout). Returns the count removed. */
-  removeBySid(sid: string): Promise<number>;
-  /** Delete every session for a subject (subject-scoped logout — the form Authagonal emits). Returns count. */
-  removeBySubject(subject: string): Promise<number>;
+  /** Delete every session matching an OIDC `sid` (session-scoped logout). Returns the count removed.
+   *
+   * `tenantKey` scopes the lookup to one tenant, and implementations MUST honour it. `sub` and `sid` are
+   * unique only within an issuer, so an unscoped removal lets a logout accepted from one tenant's IdP
+   * terminate another tenant's sessions for a colliding value — and `/bff/backchannel-logout` accepts a
+   * valid token from ANY configured tenant, which makes that a cross-tenant denial of service. */
+  removeBySid(sid: string, tenantKey?: string): Promise<number>;
+  /** Delete every session for a subject (subject-scoped logout — the form Authagonal emits). Returns count.
+   *
+   * `tenantKey` scopes the lookup exactly as in {@link removeBySid}. */
+  removeBySubject(subject: string, tenantKey?: string): Promise<number>;
 }
 
 /** Single-process in-memory session store. Fine for one instance; use a shared store (e.g. Redis) for more.
@@ -55,24 +62,24 @@ export class MemorySessionStore implements IBffSessionStore {
 
   async set(session: BffSession): Promise<void> {
     this.sessions.set(session.sessionId, session);
-    index(this.bySub, session.subject, session.sessionId);
-    if (session.sid) index(this.bySid, session.sid, session.sessionId);
+    index(this.bySub, indexKey(session.tenantKey, session.subject), session.sessionId);
+    if (session.sid) index(this.bySid, indexKey(session.tenantKey, session.sid), session.sessionId);
   }
 
   async remove(sessionId: string): Promise<void> {
     const s = this.sessions.get(sessionId);
     this.sessions.delete(sessionId);
     if (!s) return;
-    deindex(this.bySub, s.subject, sessionId);
-    if (s.sid) deindex(this.bySid, s.sid, sessionId);
+    deindex(this.bySub, indexKey(s.tenantKey, s.subject), sessionId);
+    if (s.sid) deindex(this.bySid, indexKey(s.tenantKey, s.sid), sessionId);
   }
 
-  removeBySid(sid: string): Promise<number> {
-    return this.purge(this.bySid, sid);
+  removeBySid(sid: string, tenantKey?: string): Promise<number> {
+    return this.purge(this.bySid, indexKey(tenantKey, sid));
   }
 
-  removeBySubject(subject: string): Promise<number> {
-    return this.purge(this.bySub, subject);
+  removeBySubject(subject: string, tenantKey?: string): Promise<number> {
+    return this.purge(this.bySub, indexKey(tenantKey, subject));
   }
 
   private async purge(idx: Map<string, Set<string>>, key: string): Promise<number> {
@@ -82,6 +89,16 @@ export class MemorySessionStore implements IBffSessionStore {
     for (const id of [...ids]) await this.remove(id);
     return n;
   }
+}
+
+/** Namespaces a secondary-index entry by tenant, mirroring the .NET `agbff:sub:{tenantKey}:{sub}` keys.
+ *
+ * These were keyed on the bare sid/sub, which made the index mean "this subject, at any issuer" — so a
+ * back-channel logout accepted from one tenant killed a colliding subject's sessions at every other one.
+ * The tenant key is percent-encoded so it can never contain the separator: without that, tenant "a:b"
+ * with subject "c" and tenant "a" with subject "b:c" would collide right back into the same bug. */
+function indexKey(tenantKey: string | undefined, value: string): string {
+  return `${encodeURIComponent(tenantKey ?? '-')}:${value}`;
 }
 
 function index(idx: Map<string, Set<string>>, key: string, id: string): void {

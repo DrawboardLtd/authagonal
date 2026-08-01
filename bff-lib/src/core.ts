@@ -86,6 +86,44 @@ export function isProxyPath(path: string, o: ResolvedBffOptions): boolean {
 /** A resolved proxy target + bearer token, or an HTTP error status. */
 export type ProxyDecision = { targetUrl: string; accessToken: string } | { error: number };
 
+/**
+ * True when `path` is under `prefix` on a segment boundary. Mirrors the .NET `BffProxy.PrefixMatches`.
+ *
+ * A bare `startsWith` let an upstream registered for `/user` capture `/userdata/...`, so the request —
+ * carrying the session's bearer token — was forwarded to a backend that was never configured to receive
+ * it. Which upstream a path belongs to is a trust decision, and it has to be made per path segment.
+ */
+export function prefixMatches(path: string, prefix: string): boolean {
+  return path.startsWith(prefix)
+    && (path.length === prefix.length || prefix.endsWith('/') || path[prefix.length] === '/');
+}
+
+/**
+ * Builds the upstream URL and confirms it still addresses the configured upstream, or returns null —
+ * which means the composition escaped and the request must not be sent. Mirrors the .NET
+ * `BffProxy.TryComposeTarget`.
+ *
+ * String concatenation is what the caller used to do, and it trusts that the forwarded path can only
+ * ever be an absolute path. Anything that makes it authority-shaped — a `//host` from a doubled slash,
+ * a backslash the WHATWG parser normalizes to `/` — turns the "target base URL" into a prefix of a URL
+ * pointing somewhere else entirely, with the session's access token attached. Forcing a leading `/`
+ * prevents that; re-parsing against the base and comparing the authority proves it.
+ */
+export function composeTarget(targetBaseUrl: string, forwardedPath: string, query: string): string | null {
+  let base: URL;
+  try { base = new URL(targetBaseUrl); } catch { return null; }
+
+  const relative = forwardedPath.length === 0 || forwardedPath.startsWith('/') ? forwardedPath : '/' + forwardedPath;
+
+  let composed: URL;
+  try { composed = new URL(relative, base); } catch { return null; }
+  // host (not origin — that is the opaque string "null" for a non-special scheme, which would compare
+  // equal to itself and wave the request through) plus protocol, i.e. the .NET Authority + Scheme pair.
+  if (composed.host !== base.host || composed.protocol !== base.protocol) return null;
+
+  return `${base.protocol}//${base.host}` + base.pathname.replace(/\/+$/, '') + relative + query;
+}
+
 /** Authorize + resolve a proxy request: anti-forgery header, session, single-flight refresh, upstream
  * match. The adapter performs the actual streaming forward with the returned target + token. */
 export async function authorizeProxy(ctx: HttpCtx, d: BffDeps): Promise<ProxyDecision> {
@@ -99,10 +137,11 @@ export async function authorizeProxy(ctx: HttpCtx, d: BffDeps): Promise<ProxyDec
 
   const apiBase = `${d.o.basePath}/api`;
   const apiPath = ctx.path.length > apiBase.length ? ctx.path.slice(apiBase.length) : '';
-  const upstream = d.o.upstreams.find((u) => apiPath.startsWith(u.prefix));
+  const upstream = d.o.upstreams.find((u) => prefixMatches(apiPath, u.prefix));
   if (!upstream) return { error: 404 };
   const qs = ctx.query.toString();
-  const targetUrl = upstream.targetBaseUrl.replace(/\/+$/, '') + apiPath + (qs ? `?${qs}` : '');
+  const targetUrl = composeTarget(upstream.targetBaseUrl, apiPath, qs ? `?${qs}` : '');
+  if (targetUrl === null) return { error: 404 };
   return { targetUrl, accessToken: fresh.accessToken };
 }
 
@@ -204,6 +243,14 @@ async function handleCallback(ctx: HttpCtx, d: BffDeps): Promise<void> {
 }
 
 async function handleUser(ctx: HttpCtx, d: BffDeps): Promise<void> {
+  // Every response here reports authentication state, and the authenticated one carries the user's identity
+  // claims — keyed by nothing but the session cookie. Without this a shared cache (or a browser applying
+  // heuristic freshness to a 200 with no validators) can serve one user's claims to the next request on the
+  // same connection, and the SPA polls this endpoint. Set before the branches so the anonymous answers are
+  // uncacheable too: a stale `isAuthenticated: false` keeps a signed-in user looking signed out.
+  ctx.setHeader('Cache-Control', 'no-store');
+  ctx.setHeader('Vary', 'Cookie');
+
   if (!hasAntiForgery(ctx, d.o)) { ctx.text('', 401); return; }
   const sessionId = ctx.getCookie(d.o.cookieName);
   if (!sessionId) { ctx.json({ isAuthenticated: false }); return; }
@@ -285,7 +332,13 @@ async function handleBackchannel(ctx: HttpCtx, d: BffDeps): Promise<void> {
   const sub = typeof payload.sub === 'string' ? payload.sub : undefined;
   if (!sid && !sub) { ctx.text('missing_sub_or_sid', 400); return; }
 
-  const removed = sid ? await d.store.removeBySid(sid) : await d.store.removeBySubject(sub!);
+  // Scoped to the tenant whose IdP signed this token — resolved above, and previously discarded. `sub` is
+  // unique only within an issuer, so an unscoped removal let a logout accepted from one tenant terminate
+  // another tenant's sessions for a colliding subject; this endpoint accepts a valid token from ANY
+  // configured tenant, which makes that a cross-tenant denial of service.
+  const removed = sid
+    ? await d.store.removeBySid(sid, tenant.tenantKey)
+    : await d.store.removeBySubject(sub!, tenant.tenantKey);
   d.log(`back-channel logout removed ${removed} session(s) by ${sid ? 'sid' : 'sub'}`);
   ctx.text('', 200);
 }

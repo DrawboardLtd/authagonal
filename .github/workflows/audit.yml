@@ -92,6 +92,30 @@ jobs:
 
           echo "${{ matrix.dir }}: no unaccepted high or critical advisories."
 
+  # The TypeScript BFF's unit tests. @authagonal/bff is a second implementation of Authagonal.Bff, and
+  # its security guards — which upstream a proxied path belongs to, which tenant a back-channel logout
+  # may purge — had all drifted out of it while the .NET side was fixed and covered by
+  # tests/Authagonal.Tests. Nothing in the .NET build looks at this package, so without this job the
+  # divergence is invisible again the moment it reappears.
+  bff:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+
+      - name: Install
+        working-directory: bff-lib
+        run: npm ci
+
+      # `npm test` builds first: the tests are plain JS over the compiled output, so a type error is
+      # also a test failure.
+      - name: Unit tests
+        working-directory: bff-lib
+        run: npm test
+
   # Locale drift. i18next falls back to en for any key a locale is missing, so a dropped
   # translation ships as untranslated English and nothing anywhere reports it — which is how
   # oidcErrorGeneric stayed missing from seven of the ten shipped locales. No npm install: the

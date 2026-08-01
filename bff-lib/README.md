@@ -86,6 +86,11 @@ Log in / out by navigating (not fetching): `location.href = '/bff/login'` / `'/b
 Sessions default to an in-memory store, fine for a single instance. Pass a shared `sessionStore`
 (implement `IBffSessionStore`, e.g. over Redis) to run more than one instance.
 
+A custom store must honour the `tenantKey` argument on `removeBySid` / `removeBySubject`: `sub` and
+`sid` are unique only within an issuer, and back-channel logout accepts a validly signed token from
+any tenant this BFF serves. A store that indexes on the bare value lets one tenant's IdP log out
+another tenant's users.
+
 ## Extension points (the hosted seam)
 
 `sessionStore` (`IBffSessionStore`), `cookieProtector` (`ICookieProtector`), and the core `OidcClient`
