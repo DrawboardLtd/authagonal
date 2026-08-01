@@ -23,6 +23,12 @@ public enum SamlBinding
 /// keeping them apart is what let a POST-only endpoint be handed to a redirect-binding builder (F293).
 /// </param>
 /// <param name="SingleLogoutServiceBinding">As above, for <paramref name="SingleLogoutServiceUrl"/>.</param>
+/// <param name="ValidUntil">
+/// <c>@validUntil</c> — the instant after which the IdP says this document must not be trusted.
+/// </param>
+/// <param name="CacheDuration">
+/// <c>@cacheDuration</c> — the longest the IdP permits this document to be cached.
+/// </param>
 public sealed record SamlIdpMetadata(
     string SingleSignOnServiceUrl,
     List<X509Certificate2> SigningCertificates,
@@ -30,7 +36,9 @@ public sealed record SamlIdpMetadata(
     string? SingleLogoutServiceUrl = null,
     bool WantAuthnRequestsSigned = false,
     SamlBinding SingleSignOnServiceBinding = SamlBinding.HttpRedirect,
-    SamlBinding SingleLogoutServiceBinding = SamlBinding.HttpRedirect);
+    SamlBinding SingleLogoutServiceBinding = SamlBinding.HttpRedirect,
+    DateTimeOffset? ValidUntil = null,
+    TimeSpan? CacheDuration = null);
 
 public sealed class SamlMetadataParser(IHttpClientFactory httpClientFactory)
 {
@@ -125,6 +133,15 @@ public sealed class SamlMetadataParser(IHttpClientFactory httpClientFactory)
     /// </summary>
     public static string Condense(string metadataXml)
     {
+        // Pasted metadata gets the same signature treatment as fetched metadata. It arrives over the
+        // authenticated admin API rather than off the wire, so provenance is the operator's — but a
+        // document whose signature is present and BROKEN is not a document the operator meant to paste,
+        // and accepting it silently tells an operator who publishes signed metadata that the check
+        // happened when it did not. This is the only point a pasted document is ever verified: Condense
+        // strips the signature (it re-emits a minimal descriptor), and the stored form is what Parse
+        // sees at every login afterwards.
+        VerifyMetadataSignatureIfPresent(metadataXml);
+
         var parsed = Parse(metadataXml);
         var idpDescriptor = new XElement(Md + "IDPSSODescriptor",
             new XAttribute("protocolSupportEnumeration", SamlConstants.Saml2Protocol));
@@ -146,6 +163,14 @@ public sealed class SamlMetadataParser(IHttpClientFactory httpClientFactory)
         var root = new XElement(Md + "EntityDescriptor",
             new XAttribute("entityID", parsed.EntityId),
             idpDescriptor);
+        // Carried through, not dropped. Condensing used to discard the IdP's own expiry, so a pasted
+        // document — which is never re-fetched — became permanently valid at the moment it was stored,
+        // and the one statement the IdP makes about when to stop trusting these certificates was erased
+        // by the act of saving them.
+        if (parsed.ValidUntil is { } validUntil)
+            root.SetAttributeValue("validUntil", validUntil.UtcDateTime.ToString("O"));
+        if (parsed.CacheDuration is { } cacheDuration)
+            root.SetAttributeValue("cacheDuration", System.Xml.XmlConvert.ToString(cacheDuration));
         return root.ToString(SaveOptions.DisableFormatting);
     }
 
@@ -158,6 +183,38 @@ public sealed class SamlMetadataParser(IHttpClientFactory httpClientFactory)
         // Extract EntityID from root <EntityDescriptor>
         var entityId = root.Attribute("entityID")?.Value
             ?? throw new InvalidOperationException("Metadata missing entityID attribute.");
+
+        // validUntil is the IdP's own expiry on this document (SAML 2.0 Metadata §2.2.1: consumers MUST
+        // NOT use it past that instant). Ignoring it removed the only revocation channel metadata has:
+        // an IdP that pulls a compromised signing certificate republishes with a past validUntil, and
+        // until this was read that republication had no effect here — the certificate kept validating
+        // assertions until someone noticed. Fail closed rather than warn, because "expired trust anchor"
+        // and "trust anchor an attacker wants you to keep using" look identical from here.
+        DateTimeOffset? validUntil = null;
+        if (root.Attribute("validUntil")?.Value is { } validUntilRaw)
+        {
+            if (!SamlResponseParser.TryParseSamlInstant(validUntilRaw, out var parsedValidUntil))
+                throw new InvalidOperationException($"Metadata validUntil is not a valid timestamp: {validUntilRaw}");
+            if (parsedValidUntil <= DateTimeOffset.UtcNow)
+                throw new InvalidOperationException(
+                    $"IdP metadata expired at {parsedValidUntil:O} (its own validUntil). Re-fetch it from the " +
+                    "IdP — the signing certificates it carries are no longer published as current.");
+            validUntil = parsedValidUntil;
+        }
+
+        // cacheDuration bounds how long a consumer may hold the document. Read here so the memory cache
+        // can honour it: caching for a fixed hour past a document that says PT5M is the same staleness
+        // problem in slower motion.
+        TimeSpan? cacheDuration = null;
+        if (root.Attribute("cacheDuration")?.Value is { } cacheDurationRaw)
+        {
+            try { cacheDuration = System.Xml.XmlConvert.ToTimeSpan(cacheDurationRaw); }
+            catch (FormatException)
+            {
+                throw new InvalidOperationException(
+                    $"Metadata cacheDuration is not a valid xs:duration: {cacheDurationRaw}");
+            }
+        }
 
         // Find <IDPSSODescriptor>
         var idpDescriptor = root.Element(Md + "IDPSSODescriptor")
@@ -249,6 +306,6 @@ public sealed class SamlMetadataParser(IHttpClientFactory httpClientFactory)
 
         return new SamlIdpMetadata(
             ssoUrl, certificates, entityId, sloUrl, wantSignedRequests,
-            SamlBinding.HttpRedirect, SamlBinding.HttpRedirect);
+            SamlBinding.HttpRedirect, SamlBinding.HttpRedirect, validUntil, cacheDuration);
     }
 }

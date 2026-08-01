@@ -148,4 +148,61 @@ public sealed class AdminSsoEndpointTests : IAsyncLifetime
         var response = await _client.GetAsync("/api/v1/sso/domains");
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
     }
+
+    // ── Metadata location: the trust anchor's transport ──
+    //
+    // The metadata document carries the signing certificates every assertion on the connection is
+    // validated against, so fetching it over cleartext hands an on-path party the ability to substitute
+    // its own certificate and mint assertions this SP accepts. SamlMetadataParser refuses non-https at
+    // fetch time; the admin API stored anything, so the refusal surfaced as a failed login weeks later
+    // instead of as a 400 on the request that created the problem.
+
+    [Theory]
+    [InlineData("http://idp.test/metadata")]        // plaintext — substitutable in transit
+    [InlineData("https://127.0.0.1/metadata")]      // loopback — server-side request forgery
+    [InlineData("https://169.254.169.254/meta")]    // cloud metadata service
+    [InlineData("file:///etc/passwd")]              // not an http(s) URL at all
+    [InlineData("/relative/metadata")]              // not absolute
+    public async Task CreateSamlConnection_RefusesAnUnsafeMetadataLocation(string metadataLocation)
+    {
+        var response = await _client.SendAsync(AdminRequest(HttpMethod.Post, "/api/v1/saml/connections",
+            new
+            {
+                connectionName = "Unsafe",
+                entityId = "https://unsafe.test/saml",
+                metadataLocation,
+            }));
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Contains("https", json.GetProperty("error_description").GetString()!, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// And on update, which is the path that would otherwise let a connection created with an https URL
+    /// be walked down to http afterwards.
+    /// </summary>
+    [Fact]
+    public async Task UpdateSamlConnection_RefusesAnUnsafeMetadataLocation()
+    {
+        var createResponse = await _client.SendAsync(AdminRequest(HttpMethod.Post, "/api/v1/saml/connections",
+            new
+            {
+                connectionName = "Downgrade",
+                entityId = "https://downgrade.test/saml",
+                metadataLocation = "https://downgrade.test/metadata",
+            }));
+        var created = await createResponse.Content.ReadFromJsonAsync<JsonElement>();
+        var id = created.GetProperty("connectionId").GetString()!;
+
+        var response = await _client.SendAsync(AdminRequest(HttpMethod.Put, $"/api/v1/saml/connections/{id}",
+            new { metadataLocation = "http://downgrade.test/metadata" }));
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+
+        // And the stored connection is untouched.
+        var after = await _client.SendAsync(AdminRequest(HttpMethod.Get, $"/api/v1/saml/connections/{id}"));
+        var json = await after.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("https://downgrade.test/metadata", json.GetProperty("metadataLocation").GetString());
+    }
 }

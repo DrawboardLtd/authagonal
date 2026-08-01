@@ -23,9 +23,24 @@ public sealed record SamlResponseValidationContext(
     /// </remarks>
     string? ExpectedIssuer = null,
     TimeSpan ClockSkew = default,
-    System.Security.Cryptography.RSA? DecryptionKey = null)
+    System.Security.Cryptography.RSA? DecryptionKey = null,
+    /// <summary>
+    /// How far past its own <c>IssueInstant</c> an assertion may still be presented here, whatever the
+    /// IdP's <c>NotOnOrAfter</c> attributes say. One hour by default.
+    /// </summary>
+    /// <remarks>
+    /// Web-SSO assertions are consumed within seconds of being minted: the browser POSTs them straight
+    /// from the IdP to this ACS. The cap exists for the case where the issuer's own bounds are not
+    /// trustworthy — a compromised IdP, or one misconfigured to a month-long window — where without it a
+    /// captured assertion stays replayable for exactly as long as its issuer decided, and the replay
+    /// cache has to retain the assertion id for the same span or forget it while it is still valid.
+    /// </remarks>
+    TimeSpan MaxAssertionAge = default)
 {
     public TimeSpan ClockSkew { get; init; } = ClockSkew == default ? TimeSpan.FromMinutes(5) : ClockSkew;
+
+    public TimeSpan MaxAssertionAge { get; init; } =
+        MaxAssertionAge == default ? TimeSpan.FromHours(1) : MaxAssertionAge;
 }
 
 public sealed record SamlParseResult
@@ -271,7 +286,24 @@ public sealed class SamlResponseParser(ILogger<SamlResponseParser> logger)
         }
 
         // 6. Validate Destination
+        //
+        // Required whenever the Response itself is signed — SAML 2.0 Bindings §3.5.5.2 for HTTP-POST:
+        // "If the message is signed, the Destination XML attribute in the root SAML element MUST be
+        // present." Core §3.2.2 then obliges the recipient to compare it. Only comparing "if present"
+        // let an attacker delete the attribute and skip the comparison, which is the anti-forwarding
+        // control the attribute exists to provide — and Destination sits OUTSIDE the assertion, so on
+        // the common assertion-only-signed shape it can be deleted without breaking anything.
+        //
+        // The requirement is therefore tied to the Response signature, which is what covers the
+        // attribute: strip that signature and the requirement lifts, but then the signed, mandatory
+        // SubjectConfirmationData/@Recipient below is the binding to this ACS and it cannot be stripped.
         var destination = responseElement.Attributes?["Destination"]?.Value;
+        var responseIsSigned = responseElement.SelectSingleNode("ds:Signature", nsManager) is not null;
+        if (responseIsSigned && string.IsNullOrEmpty(destination))
+        {
+            logger.LogWarning("Signed SAML Response carries no Destination attribute");
+            return Fail("A signed SAML Response must carry the Destination attribute.");
+        }
         if (!string.IsNullOrEmpty(destination) &&
             !string.Equals(destination, context.ExpectedAcsUrl, StringComparison.OrdinalIgnoreCase))
         {
@@ -376,13 +408,38 @@ public sealed class SamlResponseParser(ILogger<SamlResponseParser> logger)
             return Fail(SignatureFailure);
         }
 
+        var now = DateTimeOffset.UtcNow;
+
+        // 7b. Absolute age. IssueInstant is REQUIRED on an Assertion (Core §2.3.3) and was read by
+        // nothing, so the only bound on how old an assertion could be was whatever the IdP put in its
+        // own NotOnOrAfter attributes. That inverts who decides: a compromised or misconfigured IdP
+        // emitting a month-long window made a single captured assertion good for a month here, and it
+        // forced the replay cache to retain the id for that whole month or forget it while it was still
+        // acceptable. The cap is this SP's own statement of how long a web-SSO assertion can be worth
+        // presenting — seconds, in a live flow — so it never trips a real IdP but does bound a bad one.
+        var issueInstantStr = assertionElement.Attributes?["IssueInstant"]?.Value;
+        if (string.IsNullOrEmpty(issueInstantStr))
+            return Fail("Assertion is missing the required IssueInstant attribute.");
+        if (!TryParseSamlInstant(issueInstantStr, out var issueInstant))
+            return Fail("Assertion IssueInstant is not a valid timestamp.");
+        if (now - issueInstant > context.MaxAssertionAge + context.ClockSkew)
+        {
+            logger.LogWarning("Assertion is older than the accepted maximum: IssueInstant={IssueInstant}, Now={Now}",
+                issueInstant, now);
+            return Fail("Assertion is older than the accepted maximum age.");
+        }
+        if (issueInstant - now > context.ClockSkew)
+        {
+            logger.LogWarning("Assertion IssueInstant is in the future: IssueInstant={IssueInstant}, Now={Now}",
+                issueInstant, now);
+            return Fail("Assertion IssueInstant is in the future.");
+        }
+
         // 8. Validate Assertion Conditions — required, and must bind the audience to this SP so an
         // assertion minted for a different audience can't be replayed here. Fail closed if absent.
         var conditionsNode = assertionElement.SelectSingleNode("saml:Conditions", nsManager);
         if (conditionsNode is not XmlElement conditionsElement)
             return Fail("Assertion is missing the required Conditions element.");
-
-        var now = DateTimeOffset.UtcNow;
 
         // A timestamp that is PRESENT but unparseable now fails closed.
         //
@@ -525,8 +582,12 @@ public sealed class SamlResponseParser(ILogger<SamlResponseParser> logger)
 
         // How long this assertion remains acceptable to US. The replay record must be retained at least
         // this long (SAML 2.0 Profiles §4.1.4.5), otherwise the id is forgotten while the assertion is
-        // still valid and can be presented again.
-        var acceptableUntil = dataNotOnOrAfter + context.ClockSkew;
+        // still valid and can be presented again. Whichever bound expires first governs: the IdP's own
+        // NotOnOrAfter, or the absolute age cap checked above — so an IdP naming a month cannot conscript
+        // this SP's replay cache into holding a month of assertion ids either.
+        var ageCappedUntil = issueInstant + context.MaxAssertionAge;
+        var acceptableUntil = (dataNotOnOrAfter < ageCappedUntil ? dataNotOnOrAfter : ageCappedUntil)
+            + context.ClockSkew;
 
         // 10. Extract NameID
         var nameIdNode = assertionElement.SelectSingleNode("saml:Subject/saml:NameID", nsManager);

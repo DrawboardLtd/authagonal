@@ -250,6 +250,21 @@ public static class AuthagonalExtensions
             .ConfigureHttpClient(c => c.Timeout = TimeSpan.FromSeconds(10))
             .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AllowAutoRedirect = false });
 
+        // The two clients that were named at their call sites and registered nowhere, so the factory
+        // handed each one the default handler — 100-second timeout, up to 50 redirects followed.
+        //
+        // BackChannelLogout POSTs a signed logout_token to a client-registered URI, and Resend carries
+        // the mail API key in an Authorization header. A redirect on either sends a credential to a host
+        // nothing validated: for back-channel logout that host is chosen by whoever registered the
+        // client, and .NET only strips Authorization when the redirect crosses origins — a same-origin
+        // path change keeps it.
+        services.AddHttpClient("BackChannelLogout")
+            .ConfigureHttpClient(c => c.Timeout = TimeSpan.FromSeconds(10))
+            .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AllowAutoRedirect = false });
+        services.AddHttpClient("Resend")
+            .ConfigureHttpClient(c => c.Timeout = TimeSpan.FromSeconds(10))
+            .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AllowAutoRedirect = false });
+
         // Protocol — token service, key manager (when not pre-registered), auth-code
         // service. Server maps AuthOptions into AuthagonalProtocolOptions so there's one
         // source of truth for key lifetime / rotation / grace window.
@@ -450,6 +465,25 @@ public static class AuthagonalExtensions
                 }
             }
 
+            // Every sign-in carries the session-start stamp, whoever performs it.
+            //
+            // CookieSignInHelper wrote it, and the two federated sign-ins did not go through
+            // CookieSignInHelper: the OIDC callback called SignInAsync with no AuthenticationProperties at
+            // all and the SAML ACS built its own bag holding only ExpiresUtc/IsPersistent. Both therefore
+            // read back as "no stamp", the absolute-lifetime branch below is written `is { } started &&`,
+            // and the cap was skipped entirely — on precisely the sessions where it matters most, because
+            // a session established by an upstream IdP is the one a stolen cookie rides longest.
+            //
+            // Stamping here rather than at each call site is the point: this event is the single funnel
+            // every SignInAsync on this scheme passes through, including a host's own, so the next sign-in
+            // path added cannot reintroduce the gap. Sliding renewal does not raise SigningIn, so the
+            // value is written once and stays put.
+            options.Events.OnSigningIn = context =>
+            {
+                CookieSignInHelper.MarkSessionStart(context.Properties);
+                return Task.CompletedTask;
+            };
+
             options.Events.OnValidatePrincipal = async context =>
             {
                 var stampClaim = context.Principal?.FindFirst("security_stamp")?.Value;
@@ -469,12 +503,23 @@ public static class AuthagonalExtensions
                 // revalidation — so the clock was reset at least every SecurityStampRevalidationMinutes
                 // of activity. IssuedUtc could therefore never reach 7 days on a session that was used
                 // at all, and this branch was dead code.
-                if (CookieSignInHelper.SessionStartedAt(context.Properties) is { } sessionStarted &&
-                    DateTimeOffset.UtcNow - sessionStarted > TimeSpan.FromDays(7))
+                if (CookieSignInHelper.SessionStartedAt(context.Properties) is { } sessionStarted)
                 {
-                    context.RejectPrincipal();
-                    await context.HttpContext.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
-                    return;
+                    if (DateTimeOffset.UtcNow - sessionStarted > TimeSpan.FromDays(7))
+                    {
+                        context.RejectPrincipal();
+                        await context.HttpContext.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
+                        return;
+                    }
+                }
+                else
+                {
+                    // A cookie issued before the stamp existed has no start to measure from, and "no start"
+                    // read as "exempt" — so every session live at upgrade time kept its unbounded lifetime
+                    // forever. Adopt it instead: the deadline runs from first sight, which bounds it
+                    // without signing the whole user base out on deploy.
+                    CookieSignInHelper.MarkSessionStart(context.Properties);
+                    context.ShouldRenew = true;
                 }
 
                 var authOpts = context.HttpContext.RequestServices.GetRequiredService<IOptions<AuthOptions>>().Value;
@@ -794,7 +839,9 @@ public static class AuthagonalExtensions
 
         // Record the untampered peer address BEFORE forwarded headers can overwrite it, so an
         // authorization decision can be made on the real peer rather than a client-supplied header.
-        app.UseRawPeerAddressCapture();
+        // The declaration travels with the request too: a per-source quota keyed on the rewritten
+        // RemoteIpAddress is only meaningful when a named proxy put the value there.
+        app.UseRawPeerAddressCapture(proxyTrustDeclared);
         app.UseForwardedHeaders(fhOptions);
 
         // RFC 6749 §3.1 and §3.2: the authorization server MUST require TLS at the authorization and

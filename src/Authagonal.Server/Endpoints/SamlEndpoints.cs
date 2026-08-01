@@ -1228,7 +1228,7 @@ public static class SamlEndpoints
                 return cachedXml;
 
             var parsed = SamlMetadataParser.Parse(config.MetadataXml);
-            memoryCache.Set(xmlCacheKey, parsed, TimeSpan.FromMinutes(cacheOpts.SamlMetadataCacheMinutes));
+            memoryCache.Set(xmlCacheKey, parsed, MetadataCacheTtl(parsed, cacheOpts));
             return parsed;
         }
 
@@ -1242,7 +1242,34 @@ public static class SamlEndpoints
             return cached;
 
         var metadata = await metadataParser.ParseFromUrlAsync(config.MetadataLocation, ct);
-        memoryCache.Set(cacheKey, metadata, TimeSpan.FromMinutes(cacheOpts.SamlMetadataCacheMinutes));
+        memoryCache.Set(cacheKey, metadata, MetadataCacheTtl(metadata, cacheOpts));
         return metadata;
+    }
+
+    /// <summary>
+    /// The configured TTL, shortened by whatever the IdP said about this document.
+    /// </summary>
+    /// <remarks>
+    /// The fixed hour ignored both <c>cacheDuration</c> ("do not hold this longer than…") and
+    /// <c>validUntil</c> ("do not trust this after…"), so a document the IdP expired in five minutes was
+    /// still serving signing certificates an hour later — the window in which a revoked key still
+    /// validates assertions. A floor of one minute keeps an IdP publishing a tiny or already-elapsed
+    /// duration from turning every login into a metadata fetch.
+    /// </remarks>
+    private static TimeSpan MetadataCacheTtl(SamlIdpMetadata metadata, CacheOptions cacheOpts)
+    {
+        var ttl = TimeSpan.FromMinutes(cacheOpts.SamlMetadataCacheMinutes);
+
+        if (metadata.CacheDuration is { } cacheDuration && cacheDuration < ttl)
+            ttl = cacheDuration;
+
+        if (metadata.ValidUntil is { } validUntil)
+        {
+            var untilExpiry = validUntil - DateTimeOffset.UtcNow;
+            if (untilExpiry < ttl)
+                ttl = untilExpiry;
+        }
+
+        return ttl < TimeSpan.FromMinutes(1) ? TimeSpan.FromMinutes(1) : ttl;
     }
 }

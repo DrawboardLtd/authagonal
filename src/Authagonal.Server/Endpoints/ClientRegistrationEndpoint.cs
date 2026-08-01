@@ -42,8 +42,10 @@ public static class ClientRegistrationEndpoint
                 new ErrorInfoResponse { Error = "not_supported", ErrorDescription = "Dynamic client registration is not enabled" },
                 AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 403);
 
-        // Rate-limit anonymous registration to prevent client-record flooding.
-        var ip = httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+        // Rate-limit anonymous registration to prevent client-record flooding. Keyed on the address the
+        // caller cannot choose — Connection.RemoteIpAddress is the forwarded value whenever the immediate
+        // peer sits in the default-trusted private ranges, which made this bucket per-request.
+        var ip = Services.Cluster.InternalEndpointGuard.TrustedClientAddress(httpContext);
         if (await rateLimiter.IsRateLimitedAsync($"dcr|{ip}", 10, TimeSpan.FromMinutes(60), ct))
             return TypedResults.Json(
                 new ErrorInfoResponse { Error = "rate_limited", ErrorDescription = "Too many registration attempts. Try again later." },

@@ -34,6 +34,21 @@ public static class CookieSignInHelper
         return long.TryParse(raw, out var seconds) ? DateTimeOffset.FromUnixTimeSeconds(seconds) : null;
     }
 
+    /// <summary>
+    /// Stamps <see cref="SessionStartedProperty"/> with now, unless it is already set.
+    /// </summary>
+    /// <remarks>
+    /// Idempotent because the absolute cap is only a cap while this value is written ONCE. Re-stamping on
+    /// a renewal, or on a second sign-in that reuses an existing property bag, would slide the 7-day
+    /// deadline forward on every request — which is exactly the defect that made the cap dead code when
+    /// it read <c>Properties.IssuedUtc</c>.
+    /// </remarks>
+    public static void MarkSessionStart(AuthenticationProperties properties)
+    {
+        if (SessionStartedAt(properties) is null)
+            properties.SetString(SessionStartedProperty, DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString());
+    }
+
     public static async Task SignInAsync(HttpContext httpContext, AuthUser user, bool mfaAuthenticated = false)
     {
         var name = $"{user.FirstName} {user.LastName}".Trim();
@@ -58,7 +73,7 @@ public static class CookieSignInHelper
         var principal = new ClaimsPrincipal(identity);
 
         var properties = new AuthenticationProperties();
-        properties.SetString(SessionStartedProperty, DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString());
+        MarkSessionStart(properties);
 
         await httpContext.SignInAsync(CookieAuthenticationDefaults.AuthenticationScheme, principal, properties);
     }

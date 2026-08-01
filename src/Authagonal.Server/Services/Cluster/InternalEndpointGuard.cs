@@ -35,6 +35,42 @@ public static class InternalEndpointGuard
     /// </summary>
     public const string RawPeerAddressItem = "Authagonal.RawPeerAddress";
 
+    /// <summary>
+    /// <see cref="HttpContext.Items"/> key recording whether the operator DECLARED the proxy in front of
+    /// this process (<c>ForwardedHeaders:KnownProxies</c> / <c>:KnownNetworks</c>). Absent means no.
+    /// </summary>
+    public const string ProxyTrustDeclaredItem = "Authagonal.ProxyTrustDeclared";
+
+    /// <summary>
+    /// The client address a per-source quota may be keyed on: the forwarded client IP when the operator
+    /// declared the proxy that supplies it, and the raw peer address otherwise.
+    /// </summary>
+    /// <remarks>
+    /// <c>Connection.RemoteIpAddress</c> is not that address. With no proxy declared, <c>UseAuthagonal</c>
+    /// still honours <c>X-Forwarded-For</c> from the loopback/private ranges — a deliberate guess that
+    /// beats the framework's honour-it-from-anybody default for logging — so any caller whose immediate
+    /// peer sits in those ranges and does not append its own XFF (an L4 load balancer, a docker bridge,
+    /// pod-to-pod) writes the value the rewrite lands on. A limiter keyed on it therefore hands the
+    /// attacker a fresh bucket per request, which is the same as having no limiter: registration flooding
+    /// and DCR client-record flooding become unbounded from one host.
+    /// <para>
+    /// The declared case is different in kind, not in degree: there the header can only have been set by
+    /// the named proxy, so it is evidence rather than a guess. That is the same line
+    /// <c>UseAuthagonal</c> already draws for <c>X-Forwarded-Proto</c>, and the reason the fallback ranges
+    /// are documented as never load-bearing for a security decision — a quota is one.
+    /// </para>
+    /// </remarks>
+    public static string TrustedClientAddress(HttpContext httpContext)
+    {
+        if (httpContext.Items.TryGetValue(ProxyTrustDeclaredItem, out var declared) && declared is true)
+            return httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+
+        // Undeclared: fall back to the peer we actually observed. Behind an L7 proxy every client
+        // collapses into one bucket, which throttles harder than intended rather than not at all — and
+        // the operator fixes it by declaring the proxy, which is what makes the header trustworthy.
+        return RawPeerAddress(httpContext)?.ToString() ?? "unknown";
+    }
+
     public static bool IsAuthorized(HttpContext httpContext, string? secret)
     {
         if (!string.IsNullOrEmpty(secret))
@@ -59,11 +95,20 @@ public static class InternalEndpointGuard
     /// </summary>
     public static IPAddress? RawPeerAddress(HttpContext httpContext)
     {
-        if (httpContext.Items.TryGetValue(RawPeerAddressItem, out var stashed) && stashed is IPAddress ip)
-            return ip;
+        // The PRESENCE of the key is what says the middleware ran, not the value. A server that reports
+        // no peer at all (TestServer, some in-memory transports) stashes null, and that null is the
+        // honest answer — falling through to Connection.RemoteIpAddress there would return the value
+        // UseForwardedHeaders had just written from the client's own header.
+        if (httpContext.Items.TryGetValue(RawPeerAddressItem, out var stashed))
+            return stashed as IPAddress;
 
         // Not stashed. If the request carries a forwarded header we cannot tell whether
         // RemoteIpAddress is genuine or rewritten, so refuse to guess.
+        //
+        // Note this test is weaker than it looks: ForwardedHeadersMiddleware CONSUMES the header it
+        // honours, so by the time an endpoint runs there may be none left to find. It catches the case
+        // where the header was never trusted (and so survives) and nothing more — which is why the
+        // stash above, taken ahead of that middleware, is the mechanism and this is only the backstop.
         if (httpContext.Request.Headers.ContainsKey("X-Forwarded-For")
             || httpContext.Request.Headers.ContainsKey("Forwarded"))
             return null;
@@ -72,13 +117,16 @@ public static class InternalEndpointGuard
     }
 
     /// <summary>
-    /// Middleware that records the raw peer address. MUST be registered before
+    /// Middleware that records the raw peer address, and whether the operator declared the proxy whose
+    /// forwarded client IP is about to overwrite it. MUST be registered before
     /// <c>UseForwardedHeaders</c>.
     /// </summary>
-    public static IApplicationBuilder UseRawPeerAddressCapture(this IApplicationBuilder app)
+    public static IApplicationBuilder UseRawPeerAddressCapture(
+        this IApplicationBuilder app, bool proxyTrustDeclared = false)
         => app.Use(async (ctx, next) =>
         {
             ctx.Items[RawPeerAddressItem] = ctx.Connection.RemoteIpAddress;
+            ctx.Items[ProxyTrustDeclaredItem] = proxyTrustDeclared;
             await next(ctx);
         });
 

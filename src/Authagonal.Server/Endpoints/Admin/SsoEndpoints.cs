@@ -68,6 +68,9 @@ public static class SsoEndpoints
         if (hasUrl == hasXml)
             return Results.BadRequest(new { error = "invalid_request", error_description = "Provide exactly one of MetadataLocation (a metadata URL) or MetadataXml (pasted IdP metadata)." });
 
+        if (hasUrl && ValidateMetadataLocation(request.MetadataLocation!) is { } urlError)
+            return urlError;
+
         string? condensedXml = null;
         if (hasXml && CondenseMetadataXml(request.MetadataXml!, out condensedXml) is { } xmlError)
             return xmlError;
@@ -179,6 +182,8 @@ public static class SsoEndpoints
         // two are mutually exclusive sources); NameIdFormat "" resets to the default.
         if (!string.IsNullOrWhiteSpace(request.MetadataLocation))
         {
+            if (ValidateMetadataLocation(request.MetadataLocation) is { } urlError)
+                return urlError;
             config.MetadataLocation = request.MetadataLocation;
             config.MetadataXml = null;
         }
@@ -398,6 +403,37 @@ public static class SsoEndpoints
                     "Paste the full EntityDescriptor document your IdP provides (it must contain an IDPSSODescriptor with a signing certificate and a SingleSignOnService)."
             });
         }
+    }
+
+    /// <summary>
+    /// A SAML metadata URL must be an absolute https URL that passes the SSRF guard.
+    /// </summary>
+    /// <remarks>
+    /// SamlMetadataParser refuses anything else at fetch time — this document carries the signing
+    /// certificates every assertion is checked against, so over cleartext any on-path party substitutes
+    /// its own and mints assertions this SP accepts. Refusing it here too is what makes that refusal
+    /// visible: stored unvalidated, an <c>http://</c> location is accepted by the admin API, looks
+    /// configured in the portal, and surfaces only as a failed login later — by which point the operator
+    /// is debugging SSO rather than reading a message about TLS. The SSRF guard is applied for the same
+    /// reason it is applied to provisioning callbacks: a metadata URL is a server-fetched URL.
+    /// </remarks>
+    private static IResult? ValidateMetadataLocation(string metadataLocation)
+    {
+        if (Uri.TryCreate(metadataLocation, UriKind.Absolute, out var uri)
+            && uri.Scheme == Uri.UriSchemeHttps
+            && Authagonal.Core.Services.OutboundUrl.IsSafe(metadataLocation))
+        {
+            return null;
+        }
+
+        return Results.BadRequest(new
+        {
+            error = "invalid_request",
+            error_description = "MetadataLocation must be an absolute https URL on a publicly routable host. " +
+                "The metadata document carries the signing certificates every assertion is validated against, " +
+                "so it cannot be fetched over plaintext http. Paste the document into MetadataXml instead if " +
+                "the IdP publishes no https metadata endpoint."
+        });
     }
 
     /// <summary>F51: NameIdFormat must be null/empty, "none", or a plausible URN.</summary>

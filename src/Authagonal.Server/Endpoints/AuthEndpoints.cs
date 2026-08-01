@@ -475,15 +475,21 @@ public static class AuthEndpoints
         ILogger<Program> logger,
         CancellationToken ct)
     {
-        // Rate limit by IP (distributed via gossip-based CRDT)
-        var ip = httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+        // Rate limit by source (distributed via gossip-based CRDT). Keyed on the address the caller
+        // cannot choose: Connection.RemoteIpAddress carries whatever X-Forwarded-For said whenever the
+        // immediate peer falls in the default-trusted private ranges, so keying on it let one host mint
+        // a fresh bucket per request and the cap never bound anything.
+        var ip = Services.Cluster.InternalEndpointGuard.TrustedClientAddress(httpContext);
         var ao = authOptions.Value;
         var rateLimited = await rateLimiter.IsRateLimitedAsync($"register|{ip}", ao.MaxRegistrationsPerIp, TimeSpan.FromMinutes(ao.RegistrationWindowMinutes), ct);
         if (rateLimited)
             return JsonResults.Error("rate_limited", "Too many registration attempts. Please try again later.", 429);
 
-        // Cloudflare Turnstile (opt-in) — gate registration when configured.
-        if (turnstile.Enabled && !await turnstile.VerifyAsync(request.TurnstileToken, ip, ct))
+        // Cloudflare Turnstile (opt-in) — gate registration when configured. This one deliberately stays
+        // on the effective client IP: Turnstile matches remoteip against the address that solved the
+        // challenge, so a proxy address fails every verification, and a forged one fails the forger's own.
+        if (turnstile.Enabled && !await turnstile.VerifyAsync(
+                request.TurnstileToken, httpContext.Connection.RemoteIpAddress?.ToString(), ct))
             return JsonResults.Error("captcha_failed", 400);
 
         if (string.IsNullOrWhiteSpace(request.Email) || string.IsNullOrWhiteSpace(request.Password))
