@@ -300,6 +300,51 @@ public sealed class MfaSingleUseClaimTests : IAsyncLifetime
         Id = id, UserId = "u1", Type = type, SecretProtected = "secret", CreatedAt = DateTimeOffset.UtcNow,
     };
 
+    /// <summary>
+    /// A legacy-hash upgrade must not resurrect a consumed recovery code.
+    /// </summary>
+    /// <remarks>
+    /// The third-pass refuter's catch on #99. The store-level claim was correct, and the recovery handler
+    /// then wrote the whole credential row back from a snapshot taken before verification — so a code a
+    /// concurrent request had spent came back with <c>IsConsumed = false</c>, and a single-use bypass of the
+    /// entire second factor was usable twice. #102's opportunistic upgrade reopened #99 from inside the
+    /// same handler, which is why neither branch could see it.
+    /// </remarks>
+    [Fact]
+    public async Task AnUpgradeCannotResurrectAConsumedRecoveryCode()
+    {
+        var store = await BuildStoreAsync();
+        await store.CreateCredentialAsync(Credential("r1", MfaCredentialType.RecoveryCode));
+
+        Assert.True(await store.TryConsumeRecoveryCodeAsync("u1", "r1"));
+
+        // The upgrade arrives late, carrying the pre-verification view in which the code was unspent.
+        Assert.False(await store.TryUpgradeRecoverySecretAsync("u1", "r1", "upgraded-hash"));
+
+        var after = await store.GetCredentialAsync("u1", "r1");
+        Assert.True(after!.IsConsumed);
+        Assert.Equal("secret", after.SecretProtected);
+    }
+
+    /// <summary>The upgrade still works on a live code — the guard must not make it a no-op.</summary>
+    [Fact]
+    public async Task AnUnconsumedRecoveryCodeIsUpgradedInPlace()
+    {
+        var store = await BuildStoreAsync();
+        await store.CreateCredentialAsync(Credential("r2", MfaCredentialType.RecoveryCode));
+
+        Assert.True(await store.TryUpgradeRecoverySecretAsync("u1", "r2", "upgraded-hash"));
+
+        var after = await store.GetCredentialAsync("u1", "r2");
+        Assert.Equal("upgraded-hash", after!.SecretProtected);
+        Assert.False(after.IsConsumed);
+        // Not a use: the upgrade sweeps the whole set, so stamping LastUsedAt would mark every code as
+        // used because one of them was.
+        Assert.Null(after.LastUsedAt);
+        // And the code is still spendable afterwards.
+        Assert.True(await store.TryConsumeRecoveryCodeAsync("u1", "r2"));
+    }
+
     private async Task<SqlMfaStore> BuildStoreAsync()
     {
         var tables = await _source.EnsureTablesAsync(

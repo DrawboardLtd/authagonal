@@ -534,14 +534,23 @@ public sealed class InMemoryMfaStore : IMfaStore
     public Task<bool> TryConsumeRecoveryCodeAsync(string userId, string credentialId, CancellationToken ct = default)
         => Task.FromResult(Claim(userId, credentialId, c => !c.IsConsumed, c => c.IsConsumed = true));
 
-    private bool Claim(string userId, string credentialId, Func<MfaCredential, bool> guard, Action<MfaCredential> apply)
+    public Task<bool> TryUpgradeRecoverySecretAsync(
+        string userId, string credentialId, string secretProtected, CancellationToken ct = default)
+        => Task.FromResult(Claim(userId, credentialId, c => !c.IsConsumed,
+            c => c.SecretProtected = secretProtected, touchLastUsed: false));
+
+    private bool Claim(
+        string userId, string credentialId, Func<MfaCredential, bool> guard, Action<MfaCredential> apply,
+        bool touchLastUsed = true)
     {
         lock (_claimGate)
         {
             if (!_credentials.TryGetValue($"{userId}|{credentialId}", out var credential)) return false;
             if (!guard(credential)) return false;
             apply(credential);
-            credential.LastUsedAt = DateTimeOffset.UtcNow;
+            // Skipped for the legacy-hash upgrade: it sweeps the user's whole recovery set, so stamping
+            // would mark every code as used because one of them was.
+            if (touchLastUsed) credential.LastUsedAt = DateTimeOffset.UtcNow;
             return true;
         }
     }

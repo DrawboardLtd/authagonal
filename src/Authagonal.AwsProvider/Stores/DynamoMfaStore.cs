@@ -56,6 +56,12 @@ public sealed class DynamoMfaStore(
     public Task<bool> TryConsumeRecoveryCodeAsync(string userId, string credentialId, CancellationToken ct = default)
         => ClaimAsync(userId, credentialId, c => !c.IsConsumed, c => c.IsConsumed = true, ct);
 
+    /// <inheritdoc />
+    public Task<bool> TryUpgradeRecoverySecretAsync(
+        string userId, string credentialId, string secretProtected, CancellationToken ct = default)
+        => ClaimAsync(userId, credentialId, c => !c.IsConsumed,
+            c => c.SecretProtected = secretProtected, ct, touchLastUsed: false);
+
     /// <summary>
     /// Re-reads the credential, re-tests the guard against what is actually stored, and writes under a
     /// version compare-and-set — so the transition happens for exactly one caller.
@@ -67,7 +73,8 @@ public sealed class DynamoMfaStore(
     /// is the case this exists to refuse.
     /// </remarks>
     private async Task<bool> ClaimAsync(
-        string userId, string credentialId, Func<MfaCredential, bool> guard, Action<MfaCredential> apply, CancellationToken ct)
+        string userId, string credentialId, Func<MfaCredential, bool> guard, Action<MfaCredential> apply,
+        CancellationToken ct, bool touchLastUsed = true)
     {
         var pk = partitioner.PK(userId);
         var existing = await credentials.GetAsync(pk, credentialId, ct).ConfigureAwait(false);
@@ -77,7 +84,9 @@ public sealed class DynamoMfaStore(
         if (!guard(credential)) return false;
 
         apply(credential);
-        credential.LastUsedAt = DateTimeOffset.UtcNow;
+        // Skipped for the legacy-hash upgrade: it sweeps the user's whole recovery set, so stamping
+        // would mark every code as used because one of them was.
+        if (touchLastUsed) credential.LastUsedAt = DateTimeOffset.UtcNow;
 
         long? expected = existing.ContainsKey(VersionAttribute) ? existing.GetN(VersionAttribute) : null;
         var item = Dyn.Item(pk, credentialId);

@@ -4,6 +4,23 @@
 
 ### Breaking
 
+- **`IMfaStore` gains `TryUpgradeRecoverySecretAsync`.** Source-breaking for an external implementer of the
+  interface; every bundled backend (Azure Table, SQL, DynamoDB) implements it, so a deployment using one of
+  those is unaffected.
+
+  It rewrites a recovery credential's protected secret **only while that credential is still unconsumed**,
+  and returns `false` — skip the rewrite — when it is gone, already consumed, or was written by someone else
+  first. The recovery-verification path upgrades every legacy unsalted-SHA-256 digest it touches, for the
+  user's whole set, from a snapshot taken *before* verification. Persisting that snapshot with an
+  unconditional upsert put `IsConsumed` back to `false` for any code a concurrent request had spent in the
+  meantime, so a single-use bypass of the entire second factor was usable twice — reopening the race
+  `TryConsumeRecoveryCodeAsync` exists to close, from inside the same request handler.
+
+  There is deliberately no unconditional "update the secret" on the interface: the guard is the whole point.
+  Implement it with your backend's conditional-write primitive (ETag, version compare-and-set, conditional
+  expression) and return `false` on a lost race rather than retrying. It must not stamp `LastUsedAt` — the
+  upgrade sweeps the user's whole recovery set, so stamping marks every code as used because one of them was.
+
 - **`/connect/*` now returns HTTP 400 `invalid_request` with `"TLS is required at the OAuth endpoints"`.**
   If your deployment started answering that after upgrading, this is why, and there are two one-line fixes.
 

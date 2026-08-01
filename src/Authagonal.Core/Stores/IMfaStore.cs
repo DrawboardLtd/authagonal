@@ -40,6 +40,27 @@ public interface IMfaStore
     /// </remarks>
     Task<bool> TryConsumeRecoveryCodeAsync(string userId, string credentialId, CancellationToken ct = default);
 
+    /// <summary>
+    /// Rewrites a recovery credential's protected secret, but only while it is still unconsumed. Returns
+    /// false when the credential is gone, already consumed, or was written by someone else first — in which
+    /// case the rewrite is simply skipped.
+    /// </summary>
+    /// <remarks>
+    /// Exists because the alternative was a blind full-row write, and that reopened
+    /// <see cref="TryConsumeRecoveryCodeAsync"/> from inside the same handler. The recovery path upgrades
+    /// every legacy unsalted-SHA-256 digest it touches, for the whole set, from a snapshot taken BEFORE
+    /// verification. Persisting that snapshot with an unconditional upsert put <c>IsConsumed</c> back to
+    /// false for any code a concurrent request had spent in the meantime — re-arming a single-use bypass of
+    /// the entire second factor, which is precisely what the conditional consume above was added to prevent.
+    /// <para>
+    /// Deliberately not an unconditional "update the secret" either: the guard is the point. And unlike the
+    /// claim operations this does NOT stamp <c>LastUsedAt</c> — the upgrade sweeps the user's whole set, so
+    /// stamping would mark every recovery code as used because one of them was.
+    /// </para>
+    /// </remarks>
+    Task<bool> TryUpgradeRecoverySecretAsync(
+        string userId, string credentialId, string secretProtected, CancellationToken ct = default);
+
     // WebAuthn credential ID index
     Task<(string UserId, string CredentialId)?> FindByWebAuthnCredentialIdAsync(byte[] webAuthnCredentialId, CancellationToken ct = default);
 

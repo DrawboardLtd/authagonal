@@ -60,6 +60,12 @@ public sealed class TableMfaStore(
     public Task<bool> TryConsumeRecoveryCodeAsync(string userId, string credentialId, CancellationToken ct = default)
         => ClaimAsync(userId, credentialId, e => !e.IsConsumed, e => e.IsConsumed = true, ct);
 
+    /// <inheritdoc />
+    public Task<bool> TryUpgradeRecoverySecretAsync(
+        string userId, string credentialId, string secretProtected, CancellationToken ct = default)
+        => ClaimAsync(userId, credentialId, e => !e.IsConsumed,
+            e => e.SecretProtected = secretProtected, ct, touchLastUsed: false);
+
     /// <summary>
     /// Re-reads the entity, re-tests the guard against what is actually stored, and writes back under
     /// the ETag that read returned — so the transition happens for exactly one caller.
@@ -71,7 +77,8 @@ public sealed class TableMfaStore(
     /// </remarks>
     private async Task<bool> ClaimAsync(
         string userId, string credentialId,
-        Func<MfaCredentialEntity, bool> guard, Action<MfaCredentialEntity> apply, CancellationToken ct)
+        Func<MfaCredentialEntity, bool> guard, Action<MfaCredentialEntity> apply,
+        CancellationToken ct, bool touchLastUsed = true)
     {
         MfaCredentialEntity entity;
         try
@@ -88,7 +95,9 @@ public sealed class TableMfaStore(
         if (!guard(entity)) return false;
 
         apply(entity);
-        entity.LastUsedAt = DateTimeOffset.UtcNow;
+        // Skipped for the legacy-hash upgrade: it sweeps the user's whole recovery set, so stamping
+        // would mark every code as used because one of them was.
+        if (touchLastUsed) entity.LastUsedAt = DateTimeOffset.UtcNow;
 
         try
         {

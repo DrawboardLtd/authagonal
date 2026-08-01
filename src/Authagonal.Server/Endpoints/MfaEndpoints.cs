@@ -173,16 +173,32 @@ public static class MfaEndpoints
                 // does not exhaust their codes never regenerates. The KDF is applied to the digest, so
                 // the user's printed codes keep working; only the offline economics change. Best-effort:
                 // a failed rewrite must not stop the person in front of us from getting in.
+                // Through the CONDITIONAL rewrite, not UpdateCredentialAsync.
+                //
+                // This loop runs before verification, over a snapshot read before that, and it used to
+                // persist each credential with an unconditional full-row upsert. That put IsConsumed back
+                // to false for any code a concurrent request had spent in between — re-arming a single-use
+                // bypass of the whole second factor, and reopening the very race
+                // TryConsumeRecoveryCodeAsync was added to close, from inside the same handler. The
+                // opportunistic upgrade must not be able to undo a consume.
                 foreach (var c in recoveryCreds)
                 {
+                    if (c.IsConsumed) continue;
+
                     var current = await secretProvider.ResolveAsync(c.SecretProtected!, ct);
                     if (recoveryCodeService.UpgradeLegacyHash(current) is not { } upgraded) continue;
 
                     try
                     {
-                        c.SecretProtected = await secretProvider.ProtectAsync(
+                        var protectedSecret = await secretProvider.ProtectAsync(
                             $"mfa-recovery-{user.Id}-{c.Id}", upgraded, ct);
-                        await mfaStore.UpdateCredentialAsync(c, ct);
+
+                        // A false return means the row was consumed or rewritten under us, so the upgrade
+                        // is skipped rather than forced. Best-effort by design: a code that stays legacy
+                        // gets upgraded on the next pass through this path, and a person mid-login must not
+                        // be blocked by it.
+                        if (await mfaStore.TryUpgradeRecoverySecretAsync(user.Id, c.Id, protectedSecret, ct))
+                            c.SecretProtected = protectedSecret;
                     }
                     catch (Exception ex)
                     {
