@@ -484,6 +484,17 @@ public sealed class OAuthEndpointTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.OK, userinfoResponse.StatusCode);
         var userinfo = await userinfoResponse.Content.ReadFromJsonAsync<JsonElement>();
         Assert.Equal(user.Id, userinfo.GetProperty("sub").GetString());
+
+        // The body is the subject's PII, so it carries the same no-store the token response does.
+        Assert.True(userinfoResponse.Headers.CacheControl!.NoStore);
+
+        // RFC 6750 §2.2 — the same token presented as a form field, which OIDC Core §5.3.1 routes
+        // through by requiring "Section 2 of RFC 6750" rather than the Authorization header alone.
+        var formResponse = await _client.PostAsync("/connect/userinfo", new FormUrlEncodedContent(
+            new Dictionary<string, string> { ["access_token"] = accessToken }));
+        Assert.Equal(HttpStatusCode.OK, formResponse.StatusCode);
+        var formUserinfo = await formResponse.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(user.Id, formUserinfo.GetProperty("sub").GetString());
     }
 
     // -----------------------------------------------------------------------

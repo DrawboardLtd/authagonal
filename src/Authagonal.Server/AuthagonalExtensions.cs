@@ -327,10 +327,12 @@ public static class AuthagonalExtensions
         // The concrete limiter, plus a decorator that scopes every key to the current tenant. Without the
         // decorator all tenants share one budget per logical key, so one tenant can exhaust another's.
         //
-        // Registered BEFORE AddAuthagonalProtocol, like the client-secret verifier above and for the same
-        // reason: the protocol package now defaults an untenanted in-process limiter of its own so a
-        // Protocol-only embedder gets the client-secret throttle at all, and a TryAdd there would win if
-        // it ran first — silently dropping tenant scoping on the full server.
+        // Registered BEFORE AddAuthagonalProtocol, like IClientSecretVerifier above and for the same
+        // reason: the protocol package now TryAdds a plain untenanted InProcessRateLimiter of its own, so
+        // that a Protocol-only embedder gets the client-secret throttle and the PAR bound at all. A
+        // TryAdd that ran first would shadow this tenant-scoping decorator — turning a per-tenant budget
+        // back into one shared budget, with nothing failing to say so. The ORDER IS LOAD-BEARING; do not
+        // move this below the AddAuthagonalProtocol call.
         services.TryAddSingleton<InProcessRateLimiter>();
         services.TryAddSingleton<IRateLimiter>(sp => new TenantScopedRateLimiter(
             sp.GetRequiredService<InProcessRateLimiter>(),

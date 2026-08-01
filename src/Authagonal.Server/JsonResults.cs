@@ -18,6 +18,14 @@ internal static class JsonResults
 
     public static IResult OAuthError(string error, string description, int statusCode = 400)
         => Protocol.Endpoints.JsonResults.OAuthError(error, description, statusCode);
+
+    /// <summary>A 401 client-authentication failure with the RFC 6749 §5.2 WWW-Authenticate challenge.</summary>
+    public static IResult UnauthorizedClient(string error, string description, string realm)
+        => Protocol.Endpoints.JsonResults.UnauthorizedClient(error, description, realm);
+
+    /// <summary>Adds the RFC 6749 §5.1 caching headers to a response that carries tokens or claims.</summary>
+    public static IResult NoStore(IResult inner)
+        => Protocol.Endpoints.JsonResults.NoStore(inner);
 }
 
 // ── Common response DTOs ────────────────────────────────────────────

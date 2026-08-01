@@ -76,18 +76,21 @@ public static class AuthagonalProtocolExtensions
         // their own ahead of this call.
         services.TryAddSingleton<IClientSecretVerifier, BCryptClientSecretVerifier>();
 
-        // Default rate limiter, so the client-secret throttle in ClientAuthentication is not dead code
-        // in a Protocol-only host.
+        // Default rate limiter, so the throttles in this package are not dead code in a Protocol-only
+        // host.
         //
-        // That throttle is `limiter is not null`-gated (this package cannot force a limiter on a host
-        // that has its own), and nothing here registered one — so for an embedder that calls
-        // AddAuthagonalProtocol without AddAuthagonal, /connect/token, /connect/introspect,
-        // /connect/revocation and /connect/par were an unbounded client-secret guessing oracle AND a CPU
-        // amplifier: each attempt spends a full KDF on an endpoint reachable with no credential. Per-node
-        // and untenanted, which is the same backstop the full server ships; a host that needs a
-        // cluster-wide or tenant-scoped bound registers its own IRateLimiter ahead of this call (as
-        // AddAuthagonal does).
-        services.TryAddSingleton<Core.Services.IRateLimiter>(_ => new Core.Services.InProcessRateLimiter());
+        // Both of them resolved the limiter optionally and simply did not apply when a host registered
+        // none, and nothing here registered one — so the bound existed only in hosts that happened to
+        // bring one. For an embedder that calls AddAuthagonalProtocol without AddAuthagonal, that left
+        // /connect/token, /connect/introspect, /connect/revocation and /connect/par as an unbounded
+        // client-secret guessing oracle AND a CPU amplifier (each attempt spends a full KDF on an
+        // endpoint reachable with no credential); PAR additionally is an anonymous write that persists a
+        // grant row per request and needs only a public client_id to reach.
+        //
+        // Per-node and untenanted, which is the same backstop the full server ships. TryAdd, so a host
+        // with a distributed or tenant-scoped limiter (Authagonal.Server has both) still wins — which is
+        // why that host registers its own BEFORE calling this.
+        services.TryAddSingleton<Core.Services.IRateLimiter, Core.Services.InProcessRateLimiter>();
 
         // Token-exchange host seam — no-op unless the host registers its own transformer ahead
         // of this call (context-bound tokens: validate extra params, force binding claims).

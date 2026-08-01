@@ -160,6 +160,10 @@ public static class TokenEndpoint
         // shape match what the authorize flow produces.
         var subject = await subjectResolver.BuildSubjectAsync(user, client, ct: ct);
         var response = await tokenService.HandleDeviceCodeAsync(subject, client, data.Scopes, ct);
-        return Results.Ok(response);
+        // Through TokenSuccess, not Results.Ok: this is the one grant handled outside
+        // TokenGrantHandlers, so it was the one token set leaving /connect/token with no
+        // Cache-Control: no-store — RFC 6749 §5.1 makes that a MUST, and the body carries an access
+        // token, a refresh token and an id_token.
+        return TokenGrantHandlers.TokenSuccess(response);
     }
 }

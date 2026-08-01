@@ -1,9 +1,11 @@
 using System.Text.Json;
+using Authagonal.Core.Services;
 using Authagonal.Core.Stores;
 using Authagonal.Protocol.Services;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace Authagonal.Protocol.Endpoints;
 
@@ -29,14 +31,33 @@ internal static class PushedAuthorizationEndpoint
             var form = await httpContext.Request.ReadFormAsync(ct);
 
             // RFC 9126 client-auth failures are all 401 here (unlike the token endpoint,
-            // where only invalid_client is).
+            // where only invalid_client is), and every one of them carries the RFC 6749 §5.2
+            // challenge — the token endpoint's fix never reached this sibling.
             var (client, authError) = await ClientAuthentication.AuthenticateAsync(
                 httpContext, form, clientStore, secretVerifier,
-                (error, description) => JsonResults.OAuthError(error, description, statusCode: 401), ct);
+                (error, description) => JsonResults.UnauthorizedClient(error, description, realm: "par"), ct);
             if (authError is not null)
                 return authError;
 
             var clientId = client!.ClientId;
+
+            // Throttled per client, because a PAR request is an anonymous write.
+            //
+            // A public client authenticates here on a bare client_id, which is readable from any SPA's
+            // network traffic, and every accepted request persists a grant row keyed by a fresh
+            // request_uri. Unthrottled that is a storage-flood primitive against the grant store from
+            // an unauthenticated caller — the same exposure /connect/register was rate-limited for.
+            // The budget is deliberately generous: it bounds a flood, it must not interfere with a
+            // busy client's normal traffic. Resolved through the service provider because IRateLimiter
+            // is a host registration this package does not make (a Server host has one; an embedding
+            // host may bring a distributed one) — the same optional seam the client-secret throttle in
+            // ClientAuthentication uses.
+            var limiter = httpContext.RequestServices.GetService<IRateLimiter>();
+            if (limiter is not null &&
+                await limiter.IsRateLimitedAsync($"par|{clientId}", 300, TimeSpan.FromMinutes(1), ct))
+            {
+                return JsonResults.OAuthError("temporarily_unavailable", "Too many pushed authorization requests", 429);
+            }
 
             // RFC 9126 §2.1: request_uri MUST NOT be sent to PAR — chaining is forbidden.
             if (form.ContainsKey("request_uri"))

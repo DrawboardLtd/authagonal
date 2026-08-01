@@ -101,13 +101,21 @@ public static class TokenEndpoints
         // host most needs to see, and it was the one issuance the hooks never heard about.
         await authHooks.RunOnTokenIssuedAsync(user.Id, client.ClientId, "admin_mint", ct);
 
-        var accessToken = await tokenService.CreateAccessTokenAsync(subject, client, scopes, ct: ct);
         // Refresh token only when offline access was actually requested and the client allows it —
         // an unconditional mint handed every impersonation call a long-lived credential, the exact
         // persistence the admin-scope guard above exists to prevent.
+        //
+        // Minted as a PAIR when there is a refresh token, so the access token's jti is recorded on
+        // the refresh grant. Pairing the two single-token calls wrote a grant with no jti list, so
+        // revoking that refresh token revoked nothing and the impersonation access token stayed live
+        // for its full lifetime — on the one issuance path an operator is most likely to need to pull
+        // back in a hurry, and the one whose subject never agreed to it.
+        string accessToken;
         string? refreshToken = null;
         if (scopes.Contains("offline_access", StringComparer.OrdinalIgnoreCase) && client.AllowOfflineAccess)
-            refreshToken = await tokenService.CreateRefreshTokenAsync(subject, client, scopes, ct: ct);
+            (accessToken, refreshToken) = await tokenService.CreateTrackedTokenPairAsync(subject, client, scopes, ct: ct);
+        else
+            accessToken = await tokenService.CreateAccessTokenAsync(subject, client, scopes, ct: ct);
 
         string? idToken = null;
         if (scopes.Contains("openid", StringComparer.OrdinalIgnoreCase))

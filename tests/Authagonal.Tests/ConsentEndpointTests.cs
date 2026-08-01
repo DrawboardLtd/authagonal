@@ -213,6 +213,13 @@ public sealed class ConsentEndpointTests : IAsyncLifetime
         Assert.Contains("error=access_denied", redirect);
         Assert.Contains("state=abc123", redirect);
 
+        // RFC 9207 iss. Discovery advertises authorization_response_iss_parameter_supported
+        // unconditionally, and this is the authorization error an interactive OP emits most often —
+        // a client strict enough to require iss (the reason to ask for it) rejected a genuine denial
+        // as a suspected mix-up while every other error redirect carried it.
+        Assert.Equal(AuthagonalTestFactory.TestIssuer,
+            System.Web.HttpUtility.ParseQueryString(redirectUri.Query)["iss"]);
+
         // No consent grant persisted on deny
         var grant = await _factory.GrantStore.GetAsync($"consent:{user.Id}:{ConsentClientId}");
         Assert.Null(grant);
