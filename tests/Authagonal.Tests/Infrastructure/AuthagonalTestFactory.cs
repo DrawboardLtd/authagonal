@@ -287,8 +287,17 @@ public sealed class AuthagonalTestFactory : IAsyncDisposable
         services.AddSingleton<Authagonal.Core.Services.ITenantContext>(
             new TestTenantContext(TestIssuer));
 
-        // Rate limiter (in-process, local-only for tests)
-        services.AddSingleton<IRateLimiter>(new Authagonal.Core.Services.InProcessRateLimiter());
+        // Rate limiter — through the SAME tenant-scoping decorator the real registration installs.
+        //
+        // This used to register a bare InProcessRateLimiter as IRateLimiter, so TenantScopedRateLimiter was
+        // exercised by no test in the suite: every key reached the limiter WITHOUT its tenant prefix, which
+        // is precisely the cross-tenant denial of service the decorator exists to prevent. The registration
+        // ORDER that makes the decorator win in the real host was treated as load-bearing during the branch
+        // merge and verified only by reading, because nothing here could have caught getting it wrong.
+        services.AddSingleton<Authagonal.Core.Services.InProcessRateLimiter>();
+        services.AddSingleton<IRateLimiter>(sp => new TenantScopedRateLimiter(
+            sp.GetRequiredService<Authagonal.Core.Services.InProcessRateLimiter>(),
+            sp.GetRequiredService<IHttpContextAccessor>()));
 
         // Extensibility test doubles
         services.AddSingleton<IEmailService>(EmailService);
@@ -364,23 +373,36 @@ public sealed class AuthagonalTestFactory : IAsyncDisposable
             options.ServerName = "Authagonal Test";
             options.Origins = new HashSet<string> { TestIssuer };
         });
-        services.AddHttpClient("Provisioning");
-        if (SamlHttpHandler is not null)
-            services.AddHttpClient("SamlMetadata").ConfigurePrimaryHttpMessageHandler(() => SamlHttpHandler);
-        else
-            services.AddHttpClient("SamlMetadata");
-        if (OidcHttpHandler is not null)
-            services.AddHttpClient("OidcDiscovery").ConfigurePrimaryHttpMessageHandler(() => OidcHttpHandler);
-        else
-            services.AddHttpClient("OidcDiscovery");
-        if (JwksHttpHandler is not null)
-            services.AddHttpClient("AuthagonalJwks").ConfigurePrimaryHttpMessageHandler(() => JwksHttpHandler);
-        else
-            services.AddHttpClient("AuthagonalJwks");
+        // Named outbound clients, with the SAME handler policy the real registration applies: no redirect
+        // following and a bounded timeout.
+        //
+        // These were registered bare, so every test involving an outbound fetch ran against a
+        // redirect-following 100-second client while production refused redirects — which is the exact
+        // property findings #52 / #62 / #66 / #346 exist to enforce, and it was unobservable from here. A
+        // test handler still replaces the primary handler where one is supplied (that is the seam), but the
+        // DEFAULT for each name now matches production instead of the framework default.
+        //
+        // Every name is registered unconditionally, handler or not. A CreateClient on an unregistered name
+        // silently returns a default client, so a name missing here fails open in exactly the way the real
+        // registration was found to fail open.
+        foreach (var (name, handler) in new (string, HttpMessageHandler?)[]
+                 {
+                     ("Provisioning", null),
+                     ("SamlMetadata", SamlHttpHandler),
+                     ("OidcDiscovery", OidcHttpHandler),
+                     ("AuthagonalJwks", JwksHttpHandler),
+                     ("BackChannelLogout", BackChannelLogoutHttpHandler),
+                     ("Resend", null),
+                 })
+        {
+            var httpBuilder = services.AddHttpClient(name)
+                .ConfigureHttpClient(c => c.Timeout = TimeSpan.FromSeconds(10));
 
-        if (BackChannelLogoutHttpHandler is not null)
-            services.AddHttpClient("BackChannelLogout")
-                .ConfigurePrimaryHttpMessageHandler(() => BackChannelLogoutHttpHandler);
+            if (handler is not null)
+                httpBuilder.ConfigurePrimaryHttpMessageHandler(() => handler);
+            else
+                httpBuilder.ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AllowAutoRedirect = false });
+        }
         services.AddMemoryCache();
 
         // SAML/OIDC services (state stores need real table storage for SSO tests)
@@ -474,8 +496,30 @@ public sealed class AuthagonalTestFactory : IAsyncDisposable
                 // went unnoticed: production could have been fixed and every test using this factory
                 // would still have exercised the unfixed configuration.
                 ValidTypes = [Authagonal.Core.Constants.TokenTypes.AccessTokenJwt],
+                // Pins the signing algorithm, as the real registration does — defence in depth against
+                // algorithm confusion. Omitted here until the merge audit noticed, which meant every test
+                // asserting on the resource-server scheme ran against a configuration that would accept a
+                // token signed with an algorithm production refuses.
+                ValidAlgorithms = ["ES256"],
                 ClockSkew = TimeSpan.FromSeconds(60),
                 ValidateIssuerSigningKey = true
+            };
+
+            // Access-token revocation, as the real registration does: a token whose jti is in the revoked
+            // store is refused even though it is still cryptographically valid and unexpired. Without this
+            // the suite could not tell a working revocation path from a missing one on the bearer scheme.
+            options.Events = new JwtBearerEvents
+            {
+                OnTokenValidated = async ctx =>
+                {
+                    var jti = ctx.Principal?.FindFirst("jti")?.Value;
+                    if (!string.IsNullOrEmpty(jti))
+                    {
+                        var revoked = ctx.HttpContext.RequestServices.GetRequiredService<IRevokedTokenStore>();
+                        if (await revoked.IsRevokedAsync(jti, ctx.HttpContext.RequestAborted))
+                            ctx.Fail("Token has been revoked");
+                    }
+                }
             };
         })
         .AddScheme<AuthenticationSchemeOptions, Authagonal.Server.Services.ScimBearerAuthenticationHandler>("ScimBearer", null);
