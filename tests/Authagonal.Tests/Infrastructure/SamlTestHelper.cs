@@ -38,6 +38,12 @@ public static class SamlTestHelper
         string? sessionIndex = null,
         bool signAssertion = false,
         SubjectConfirmationShape confirmationShape = SubjectConfirmationShape.Conforming,
+        // F260 — a signed Response with no Destination is one the IdP minted for whoever holds it.
+        bool includeDestination = true,
+        // F260 — an extra <Conditions> child, to prove an unevaluable condition is not silently dropped.
+        string? extraConditionsXml = null,
+        // F285 — Web Browser SSO §4.1.4.2 requires an AuthnStatement; omitting it used to parse fine.
+        bool includeAuthnStatement = true,
         // Leaves the document unsigned, for callers that sign it themselves after transforming it —
         // see SignResponseAfterEncryption.
         bool sign = true,
@@ -60,8 +66,9 @@ public static class SamlTestHelper
             xmlns:saml=""urn:oasis:names:tc:SAML:2.0:assertion""
             ID=""{responseId}""
             Version=""2.0""
-            IssueInstant=""{now:O}""
-            Destination=""{acsUrl}""");
+            IssueInstant=""{now:O}""");
+        if (includeDestination)
+            sb.Append($@" Destination=""{acsUrl}""");
         if (inResponseTo is not null)
             sb.Append($@" InResponseTo=""{inResponseTo}""");
         sb.Append(">");
@@ -108,12 +115,16 @@ public static class SamlTestHelper
 
         sb.Append($@"<saml:Conditions NotBefore=""{notBefore:O}"" NotOnOrAfter=""{notOnOrAfter:O}"">
             <saml:AudienceRestriction><saml:Audience>{audience}</saml:Audience></saml:AudienceRestriction>
+            {extraConditionsXml}
         </saml:Conditions>");
 
-        var sessionIndexAttr = sessionIndex is null ? "" : $@" SessionIndex=""{sessionIndex}""";
-        sb.Append($@"<saml:AuthnStatement AuthnInstant=""{now:O}""{sessionIndexAttr}>
-            <saml:AuthnContext><saml:AuthnContextClassRef>urn:oasis:names:tc:SAML:2.0:ac:classes:PasswordProtectedTransport</saml:AuthnContextClassRef></saml:AuthnContext>
-        </saml:AuthnStatement>");
+        if (includeAuthnStatement)
+        {
+            var sessionIndexAttr = sessionIndex is null ? "" : $@" SessionIndex=""{sessionIndex}""";
+            sb.Append($@"<saml:AuthnStatement AuthnInstant=""{now:O}""{sessionIndexAttr}>
+                <saml:AuthnContext><saml:AuthnContextClassRef>urn:oasis:names:tc:SAML:2.0:ac:classes:PasswordProtectedTransport</saml:AuthnContextClassRef></saml:AuthnContext>
+            </saml:AuthnStatement>");
+        }
 
         sb.Append("<saml:AttributeStatement>");
         if (email is not null)

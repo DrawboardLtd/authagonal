@@ -1,6 +1,7 @@
 using System.Net;
 using Authagonal.Server.Services.Saml;
 using Authagonal.Tests.Infrastructure;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Authagonal.Tests;
 
@@ -56,6 +57,92 @@ public sealed class SamlValidationHardeningTests : IAsyncLifetime
         {
             System.Globalization.CultureInfo.CurrentCulture = original;
         }
+    }
+
+    // -----------------------------------------------------------------------
+    // F260 / F285 — the remaining fail-open gates in the assertion pipeline
+    // -----------------------------------------------------------------------
+
+    private const string Acs = "https://sp.test/saml/c1/acs";
+    private const string Audience = "https://sp.test/saml/c1";
+
+    private static SamlParseResult ParseWithDefaults(string base64Response) =>
+        new SamlResponseParser(NullLogger<SamlResponseParser>.Instance).Parse(
+            base64Response,
+            new SamlResponseValidationContext(Acs, Audience, null, [SamlTestHelper.TestCertificate]));
+
+    /// <summary>
+    /// F260 — Destination is only optional on an UNSIGNED message. Core §3.2.2 makes it mandatory once
+    /// the message is signed, and it is the SP's only evidence the Response was addressed here: without
+    /// it, one signed Response is valid at every SP in the federation that trusts the signer, so it can
+    /// be forwarded from the SP it was meant for to this one.
+    /// </summary>
+    [Fact]
+    public void SignedResponse_WithNoDestination_IsRefused()
+    {
+        var result = ParseWithDefaults(SamlTestHelper.BuildSignedResponse(
+            Acs, Audience, "user@example.com", email: "user@example.com", includeDestination: false));
+
+        Assert.False(result.Success);
+        Assert.Contains("Destination", result.Error);
+    }
+
+    /// <summary>Control: the same document with its Destination is accepted, so the refusal above is the Destination.</summary>
+    [Fact]
+    public void SignedResponse_WithDestination_IsAccepted()
+    {
+        var result = ParseWithDefaults(SamlTestHelper.BuildSignedResponse(
+            Acs, Audience, "user@example.com", email: "user@example.com"));
+
+        Assert.True(result.Success, result.Error);
+    }
+
+    /// <summary>
+    /// F260 — Core §2.5.1: a condition the SP cannot evaluate makes the assertion Invalid, not
+    /// unconditioned. Only AudienceRestriction was ever selected, so anything else the IdP attached was
+    /// silently dropped and the IdP believed it had constrained an assertion this SP accepted freely.
+    /// </summary>
+    [Fact]
+    public void Assertion_WithAnUnevaluableCondition_IsRefused()
+    {
+        var result = ParseWithDefaults(SamlTestHelper.BuildSignedResponse(
+            Acs, Audience, "user@example.com", email: "user@example.com",
+            extraConditionsXml: @"<saml:Condition xmlns:xsi=""http://www.w3.org/2001/XMLSchema-instance"" xsi:type=""x:DeviceBoundCondition"" xmlns:x=""urn:example:conditions"" />"));
+
+        Assert.False(result.Success);
+        Assert.Contains("condition", result.Error, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// The conditions this SP does satisfy stay acceptable: OneTimeUse, because every assertion ID goes
+    /// through the single-use replay cache before the ACS acts on it, and ProxyRestriction, because this
+    /// SP never re-issues assertions derived from one it consumed.
+    /// </summary>
+    [Fact]
+    public void Assertion_WithOneTimeUseAndProxyRestriction_IsAccepted()
+    {
+        var result = ParseWithDefaults(SamlTestHelper.BuildSignedResponse(
+            Acs, Audience, "user@example.com", email: "user@example.com",
+            extraConditionsXml: @"<saml:OneTimeUse /><saml:ProxyRestriction Count=""0"" />"));
+
+        Assert.True(result.Success, result.Error);
+    }
+
+    /// <summary>
+    /// F285 — Web Browser SSO §4.1.4.2 requires at least one AuthnStatement. It was read with `?.`
+    /// throughout, so an assertion carrying none parsed successfully with a null SessionIndex and a null
+    /// SessionNotOnOrAfter — meaning the one shape of assertion that opted out of BOTH session controls
+    /// (the SLO binding and the IdP's session bound) was the one that never claimed an authentication
+    /// had happened.
+    /// </summary>
+    [Fact]
+    public void Assertion_WithNoAuthnStatement_IsRefused()
+    {
+        var result = ParseWithDefaults(SamlTestHelper.BuildSignedResponse(
+            Acs, Audience, "user@example.com", email: "user@example.com", includeAuthnStatement: false));
+
+        Assert.False(result.Success);
+        Assert.Contains("AuthnStatement", result.Error);
     }
 
     // -----------------------------------------------------------------------

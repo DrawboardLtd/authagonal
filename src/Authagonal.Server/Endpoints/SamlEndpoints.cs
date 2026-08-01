@@ -941,21 +941,43 @@ public static class SamlEndpoints
         var metadata = await GetCachedMetadataAsync(config, metadataParser, memoryCache, cacheOptions.Value, ct);
 
         // Authenticate the request: a signature (query-level for the redirect binding, XML for POST)
-        // validated against the IdP's certs. Unsigned requests are honored only when this browser's
-        // own session belongs to this connection — an unauthenticated attacker can then log out
-        // nobody but themselves.
+        // validated against the IdP's certs. Nothing else will do.
+        //
+        // There used to be an unsigned fallback, honoured whenever the browser's own cookie session
+        // named this connection, justified as "an unauthenticated attacker can then log out nobody but
+        // themselves." That reasoning is backwards. This is an anonymous GET route and the SSO cookie
+        // cannot be SameSite=Strict — the ACS POST-binding round trip is itself cross-site — so a
+        // third-party page that navigates the VICTIM's browser here supplies the victim's session, not
+        // the attacker's. The check confirmed that a session existed; it never confirmed who initiated
+        // the request, which is the whole of logout CSRF. Every gate added below (freshness, replay,
+        // NameID binding) raises the attacker's required knowledge without removing that.
+        //
+        // Profiles §4.4.3.1 requires the IdP to sign a LogoutRequest delivered over the Redirect or
+        // POST binding anyway, and the connection's metadata already supplies the certificates, so
+        // refusing an unsigned one costs no conformant IdP anything.
         var signatureValid = isPost
             ? SamlResponseParser.ValidateElementSignature(logoutRequest, metadata.SigningCertificates, logger)
             : SamlRedirectBinding.Verify(httpContext.Request.QueryString.Value ?? "", metadata.SigningCertificates);
         if (!signatureValid)
         {
-            var auth = await httpContext.AuthenticateAsync(CookieAuthenticationDefaults.AuthenticationScheme);
-            var sessionConnection = auth.Succeeded ? auth.Principal?.FindFirst("saml_connection")?.Value : null;
-            if (!string.Equals(sessionConnection, connectionId, StringComparison.OrdinalIgnoreCase))
-            {
-                logger.LogWarning("SAML SLO: unsigned LogoutRequest for {ConnectionId} without a matching session — ignored", connectionId);
-                return Results.BadRequest(new { error = "saml_invalid", error_description = "LogoutRequest is unsigned and no matching session exists." });
-            }
+            logger.LogWarning("SAML SLO: unsigned or unverifiable LogoutRequest for {ConnectionId} — ignored", connectionId);
+            return Results.BadRequest(new { error = "saml_invalid", error_description = "LogoutRequest is not signed by this connection's IdP." });
+        }
+
+        // Destination, the anti-forwarding binding Core §3.2.2 makes mandatory on a signed message:
+        // the IdP states which endpoint it addressed, and a recipient that is not that endpoint MUST
+        // discard the message. Without it, one signed LogoutRequest the IdP minted for a DIFFERENT SP
+        // in the same federation is replayable here — the signature verifies, the Issuer matches, and
+        // nothing else says the message was ever meant for us.
+        var expectedSloUrl = $"{tenantContext.Issuer}/saml/{connectionId}/slo";
+        var requestDestination = logoutRequest.Attributes?["Destination"]?.Value;
+        if (string.IsNullOrEmpty(requestDestination)
+            || !string.Equals(requestDestination, expectedSloUrl, StringComparison.OrdinalIgnoreCase))
+        {
+            logger.LogWarning(
+                "SAML SLO: LogoutRequest Destination {Destination} is not this connection's SLO endpoint",
+                requestDestination);
+            return Results.BadRequest(new { error = "saml_invalid", error_description = "LogoutRequest Destination does not address this SLO endpoint." });
         }
 
         // The request must come from the IdP this connection is bound to, not merely from a holder of

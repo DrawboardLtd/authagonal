@@ -76,6 +76,9 @@ public sealed class AuthagonalTestFactory : IAsyncDisposable
     public HttpMessageHandler? OidcHttpHandler { get; set; }
     public HttpMessageHandler? SamlHttpHandler { get; set; }
 
+    /// <summary>Backs the "AuthagonalJwks" named client — the client jwks_uri fetch on the private_key_jwt path.</summary>
+    public HttpMessageHandler? JwksHttpHandler { get; set; }
+
     /// <summary>Set to an Azurite connection string to enable SAML/OIDC state storage.</summary>
     public string? AzuriteConnectionString { get; set; }
 
@@ -362,6 +365,10 @@ public sealed class AuthagonalTestFactory : IAsyncDisposable
             services.AddHttpClient("OidcDiscovery").ConfigurePrimaryHttpMessageHandler(() => OidcHttpHandler);
         else
             services.AddHttpClient("OidcDiscovery");
+        if (JwksHttpHandler is not null)
+            services.AddHttpClient("AuthagonalJwks").ConfigurePrimaryHttpMessageHandler(() => JwksHttpHandler);
+        else
+            services.AddHttpClient("AuthagonalJwks");
         services.AddMemoryCache();
 
         // SAML/OIDC services (state stores need real table storage for SSO tests)

@@ -391,6 +391,14 @@ public static class AuthagonalExtensions
             .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AllowAutoRedirect = false });
         services.AddSingleton<OidcDiscoveryClient>();
 
+        // The client jwks_uri fetch on the private_key_jwt path (ClientAuthentication). It asked the
+        // factory for this name and the name was registered nowhere, so it got a default handler: 100
+        // second timeout, and 50 automatic redirects that carried the request past the SSRF guard to a
+        // host the guard never saw. That fetch is reachable from an anonymous /connect/token request.
+        services.AddHttpClient("AuthagonalJwks")
+            .ConfigureHttpClient(c => c.Timeout = TimeSpan.FromSeconds(10))
+            .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AllowAutoRedirect = false });
+
         // ---------------------------------------------------------------------------
         // Authentication
         // ---------------------------------------------------------------------------

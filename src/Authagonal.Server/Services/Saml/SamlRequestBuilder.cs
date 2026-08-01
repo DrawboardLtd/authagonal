@@ -24,6 +24,19 @@ public static class SamlRequestBuilder
     /// </summary>
     public const string NameIdFormatNone = "none";
 
+    /// <summary>
+    /// XML-escapes a value on its way into one of these interpolated documents.
+    /// </summary>
+    /// <remarks>
+    /// Every interpolated value goes through this. The values are operator-configured (entityID, ACS
+    /// URL, the IdP's SSO/SLO endpoint) rather than caller-supplied, so this is not a live injection —
+    /// but a <c>&amp;</c> or <c>"</c> is legal in a URI and ordinary in a query string, and an
+    /// unescaped one either produced a malformed document the IdP rejected with an error naming
+    /// neither the value nor the reason, or — for a <c>"</c> — closed the attribute and let the rest
+    /// of the configured string become markup in a message this SP then signs with its own key.
+    /// </remarks>
+    private static string X(string? value) => System.Security.SecurityElement.Escape(value ?? string.Empty);
+
     public static string BuildAuthnRequestUrl(string requestId, string issuer, string acsUrl, string destination, string? loginHint = null, string? nameIdFormat = null)
     {
         var issueInstant = DateTime.UtcNow.ToString("o");
@@ -39,15 +52,8 @@ public static class SamlRequestBuilder
         var nameIdPolicy = string.Equals(nameIdFormat, NameIdFormatNone, StringComparison.OrdinalIgnoreCase)
             ? ""
             : $"""
-              <samlp:NameIDPolicy Format="{System.Security.SecurityElement.Escape(nameIdFormat ?? SamlConstants.NameIdEmail)}" AllowCreate="true" />
+              <samlp:NameIDPolicy Format="{X(nameIdFormat ?? SamlConstants.NameIdEmail)}" AllowCreate="true" />
             """;
-
-        // Every interpolated value is XML-escaped. These are operator-configured (entityID, ACS URL,
-        // the IdP's SSO endpoint) rather than caller-supplied, so this is not a live injection — but
-        // an entityID containing `&` or `"`, which is legal in a URI and ordinary in a query string,
-        // produced a malformed document that the IdP rejected with an error naming neither the value
-        // nor the reason. Escaping makes the configuration mean what it says.
-        static string X(string? value) => System.Security.SecurityElement.Escape(value ?? string.Empty);
 
         var xml = $"""
             <samlp:AuthnRequest
@@ -98,20 +104,23 @@ public static class SamlRequestBuilder
         var issueInstant = DateTime.UtcNow.ToString("o");
         var formatAttr = string.IsNullOrEmpty(nameIdFormat)
             ? ""
-            : $@" Format=""{System.Security.SecurityElement.Escape(nameIdFormat)}""";
+            : $@" Format=""{X(nameIdFormat)}""";
         var sessionIndexElement = string.IsNullOrEmpty(sessionIndex)
             ? ""
-            : $"<samlp:SessionIndex>{System.Security.SecurityElement.Escape(sessionIndex)}</samlp:SessionIndex>";
+            : $"<samlp:SessionIndex>{X(sessionIndex)}</samlp:SessionIndex>";
 
+        // Destination is the IdP metadata's SingleLogoutService Location and was the one value here
+        // left raw while its neighbours were escaped — the same defect the AuthnRequest carried, in
+        // the same file. A `"` or `&` in a published SLO Location breaks out of the attribute.
         var xml = $"""
             <samlp:LogoutRequest
                 xmlns:samlp="{SamlConstants.Saml2Protocol}"
-                ID="{requestId}"
+                ID="{X(requestId)}"
                 Version="2.0"
                 IssueInstant="{issueInstant}"
-                Destination="{destination}">
-              <saml:Issuer xmlns:saml="{SamlConstants.Saml2Assertion}">{System.Security.SecurityElement.Escape(issuer)}</saml:Issuer>
-              <saml:NameID xmlns:saml="{SamlConstants.Saml2Assertion}"{formatAttr}>{System.Security.SecurityElement.Escape(nameId)}</saml:NameID>{sessionIndexElement}
+                Destination="{X(destination)}">
+              <saml:Issuer xmlns:saml="{SamlConstants.Saml2Assertion}">{X(issuer)}</saml:Issuer>
+              <saml:NameID xmlns:saml="{SamlConstants.Saml2Assertion}"{formatAttr}>{X(nameId)}</saml:NameID>{sessionIndexElement}
             </samlp:LogoutRequest>
             """;
 
@@ -130,9 +139,9 @@ public static class SamlRequestBuilder
                 ID="{responseId}"
                 Version="2.0"
                 IssueInstant="{issueInstant}"
-                Destination="{destination}"
-                InResponseTo="{System.Security.SecurityElement.Escape(inResponseTo)}">
-              <saml:Issuer xmlns:saml="{SamlConstants.Saml2Assertion}">{System.Security.SecurityElement.Escape(issuer)}</saml:Issuer>
+                Destination="{X(destination)}"
+                InResponseTo="{X(inResponseTo)}">
+              <saml:Issuer xmlns:saml="{SamlConstants.Saml2Assertion}">{X(issuer)}</saml:Issuer>
               <samlp:Status><samlp:StatusCode Value="{SamlConstants.StatusSuccess}"/></samlp:Status>
             </samlp:LogoutResponse>
             """;

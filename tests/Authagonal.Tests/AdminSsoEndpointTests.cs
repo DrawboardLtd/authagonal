@@ -51,6 +51,30 @@ public sealed class AdminSsoEndpointTests : IAsyncLifetime
         Assert.NotNull(json.GetProperty("connectionId").GetString());
     }
 
+    /// <summary>
+    /// F287 — EntityId was validated only for non-emptiness, and it is interpolated into two documents
+    /// other parties consume as authoritative: the outbound AuthnRequest/LogoutRequest this SP signs
+    /// with its own key, and the anonymous SP metadata endpoint. Both interpolations escape now, so this
+    /// is the second barrier — but a connection admin is a lower privilege than the platform in a
+    /// multi-tenant deployment, and free text has no business reaching a signed protocol message.
+    /// </summary>
+    [Theory]
+    [InlineData("not an entity id")]
+    [InlineData("\"/><script>alert(1)</script>")]
+    [InlineData("https://sp.test/x&y\" WantAssertionsSigned=\"false")]
+    public async Task CreateSamlConnection_WithAnEntityIdThatIsNotAUri_IsRefused(string entityId)
+    {
+        var response = await _client.SendAsync(AdminRequest(HttpMethod.Post, "/api/v1/saml/connections",
+            new
+            {
+                connectionName = "Hostile",
+                entityId,
+                metadataLocation = "https://okta.test/metadata"
+            }));
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
     [Fact]
     public async Task GetSamlConnection_ReturnsDetails()
     {

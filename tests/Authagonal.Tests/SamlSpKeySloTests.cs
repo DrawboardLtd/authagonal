@@ -526,16 +526,10 @@ public sealed class SamlSpKeySloEndpointTests(AzuriteFixture azurite) : IAsyncLi
             (await _client.PostAsync($"/saml/{connectionId}/acs",
                 new FormUrlEncodedContent(new Dictionary<string, string> { ["SAMLResponse"] = saml }))).StatusCode);
 
-        // Unsigned IdP-initiated LogoutRequest arriving in the logged-in browser: honored (the
-        // session vouches for itself) and answered with a LogoutResponse to the IdP.
-        var logoutRequest = $"""
-            <samlp:LogoutRequest xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol"
-                ID="_idplr{Guid.NewGuid():N}" Version="2.0" IssueInstant="{DateTime.UtcNow:O}">
-              <saml:Issuer xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion">https://idp.test</saml:Issuer>
-              <saml:NameID xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion">idpslo-user@example.com</saml:NameID>
-            </samlp:LogoutRequest>
-            """;
-        var slo = await _client.GetAsync($"/saml/{connectionId}/slo?SAMLRequest={DeflateEncode(logoutRequest)}");
+        // Signed IdP-initiated LogoutRequest arriving in the logged-in browser: honoured, and answered
+        // with a LogoutResponse to the IdP.
+        var slo = await _client.GetAsync(
+            SignedSloPath(connectionId, LogoutRequestXml(connectionId, "idpslo-user@example.com")));
         Assert.Equal(HttpStatusCode.Redirect, slo.StatusCode);
         var responseUrl = slo.Headers.Location!.ToString();
         Assert.StartsWith("https://idp.test/slo", responseUrl);
@@ -552,23 +546,65 @@ public sealed class SamlSpKeySloEndpointTests(AzuriteFixture azurite) : IAsyncLi
             metadataXml = SamlTestHelper.BuildIdpMetadata(sloUrl: "https://idp.test/slo")
         });
 
-        var logoutRequest = $"""
-            <samlp:LogoutRequest xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol"
-                ID="_x{Guid.NewGuid():N}" Version="2.0" IssueInstant="{DateTime.UtcNow:O}">
-              <saml:Issuer xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion">https://idp.test</saml:Issuer>
-              <saml:NameID xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion">victim@example.com</saml:NameID>
-            </samlp:LogoutRequest>
-            """;
-        var slo = await _client.GetAsync($"/saml/{connectionId}/slo?SAMLRequest={DeflateEncode(logoutRequest)}");
+        var slo = await _client.GetAsync(
+            UnsignedSloPath(connectionId, LogoutRequestXml(connectionId, "victim@example.com")));
         Assert.Equal(HttpStatusCode.BadRequest, slo.StatusCode);
     }
 
     /// <summary>
+    /// F227 — logout CSRF. The unsigned fallback was honoured whenever the browser's cookie session
+    /// named this connection, justified in the code as "an unauthenticated attacker can then log out
+    /// nobody but themselves." Backwards: this is an anonymous GET and the SSO cookie cannot be
+    /// SameSite=Strict (the ACS POST-binding round trip is itself cross-site), so a third-party page
+    /// that navigates the VICTIM's browser here supplies the VICTIM's session. The check proved a
+    /// session existed, never who initiated the request — which is the whole of CSRF.
+    /// <para>
+    /// The second half is the control: the same session is then ended by the same message WITH the
+    /// IdP's signature, proving the session survived the refusal rather than the test asserting against
+    /// a browser that had already been signed out.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task F227_UnsignedIdpInitiatedSlo_WithAMatchingSession_IsRefused()
+    {
+        var connectionId = await EstablishSamlSessionAsync("csrf-slo", "csrf-user@example.com");
+
+        var refused = await _client.GetAsync(
+            UnsignedSloPath(connectionId, LogoutRequestXml(connectionId, "csrf-user@example.com")));
+        Assert.Equal(HttpStatusCode.BadRequest, refused.StatusCode);
+
+        // Control: the session is still there, so the IdP's own signed request still ends it.
+        var honoured = await _client.GetAsync(
+            SignedSloPath(connectionId, LogoutRequestXml(connectionId, "csrf-user@example.com")));
+        Assert.Equal(HttpStatusCode.Redirect, honoured.StatusCode);
+    }
+
+    /// <summary>
+    /// F310 — Destination is the anti-forwarding binding Core §3.2.2 makes mandatory on a signed
+    /// message. Without it a LogoutRequest the IdP minted for a DIFFERENT SP in the same federation
+    /// replays here: the signature verifies, the Issuer matches, and nothing else says the message was
+    /// ever meant for this endpoint.
+    /// </summary>
+    [Fact]
+    public async Task F310_SignedLogoutRequestAddressedToAnotherSp_IsRefused()
+    {
+        var connectionId = await EstablishSamlSessionAsync("destination-slo", "dest-user@example.com");
+
+        var elsewhere = LogoutRequestXml(
+            connectionId, "dest-user@example.com", destination: "https://other-sp.test/saml/slo");
+        var refused = await _client.GetAsync(SignedSloPath(connectionId, elsewhere));
+        Assert.Equal(HttpStatusCode.BadRequest, refused.StatusCode);
+
+        // Control: the session survived, and the same request addressed to us is honoured.
+        var honoured = await _client.GetAsync(
+            SignedSloPath(connectionId, LogoutRequestXml(connectionId, "dest-user@example.com")));
+        Assert.Equal(HttpStatusCode.Redirect, honoured.StatusCode);
+    }
+
+    /// <summary>
     /// F290 — the forced-logout gadget. The NameID binding only compared when a NameID was present, so
-    /// a LogoutRequest carrying none skipped the comparison and signed the browser out. Unsigned is
-    /// accepted when the session belongs to the connection, the route is an anonymous GET, and every
-    /// request carries a fresh ID so the replay cache never fires — which makes
-    /// <c>&lt;img src="…/slo?SAMLRequest=…"&gt;</c> on any page a repeatable logout of every visitor.
+    /// a LogoutRequest carrying none skipped the comparison and signed the browser out — and every
+    /// request carries a fresh ID, so the replay cache never fires on a repeat.
     /// <para>
     /// The second half is the control: the same session is then logged out by a well-formed request,
     /// proving the session survived the refusal rather than the test asserting against a browser that
@@ -582,23 +618,24 @@ public sealed class SamlSpKeySloEndpointTests(AzuriteFixture azurite) : IAsyncLi
 
         var noNameId = $"""
             <samlp:LogoutRequest xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol"
-                ID="_g{Guid.NewGuid():N}" Version="2.0" IssueInstant="{DateTime.UtcNow:O}">
+                ID="_g{Guid.NewGuid():N}" Version="2.0" IssueInstant="{DateTime.UtcNow:O}"
+                Destination="{SloUrl(connectionId)}">
               <saml:Issuer xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion">https://idp.test</saml:Issuer>
             </samlp:LogoutRequest>
             """;
-        var refused = await _client.GetAsync($"/saml/{connectionId}/slo?SAMLRequest={DeflateEncode(noNameId)}");
+        var refused = await _client.GetAsync(SignedSloPath(connectionId, noNameId));
         Assert.Equal(HttpStatusCode.BadRequest, refused.StatusCode);
 
         // Control: the session is still there, so a request naming the right subject still ends it.
         var honoured = await _client.GetAsync(
-            $"/saml/{connectionId}/slo?SAMLRequest={DeflateEncode(LogoutRequestXml("gadget-user@example.com"))}");
+            SignedSloPath(connectionId, LogoutRequestXml(connectionId, "gadget-user@example.com")));
         Assert.Equal(HttpStatusCode.Redirect, honoured.StatusCode);
     }
 
     /// <summary>
     /// The session is deliberately re-established between the two attempts. Without that the second
-    /// request is refused by the unsigned-without-a-session gate instead — a refusal that would pass
-    /// this test while proving nothing about the replay cache.
+    /// request is refused by the session-binding gate instead — a refusal that would pass this test
+    /// while proving nothing about the replay cache.
     /// </summary>
     [Fact]
     public async Task F290_LogoutRequestReplay_IsRefused()
@@ -606,15 +643,14 @@ public sealed class SamlSpKeySloEndpointTests(AzuriteFixture azurite) : IAsyncLi
         var connectionId = await CreateSloConnectionAsync("replay-slo");
         await LoginThroughAcsAsync(connectionId, "replay-slo", "replay-user@example.com");
 
-        var xml = LogoutRequestXml("replay-user@example.com");
-        Assert.Equal(HttpStatusCode.Redirect,
-            (await _client.GetAsync($"/saml/{connectionId}/slo?SAMLRequest={DeflateEncode(xml)}")).StatusCode);
+        var path = SignedSloPath(connectionId, LogoutRequestXml(connectionId, "replay-user@example.com"));
+        Assert.Equal(HttpStatusCode.Redirect, (await _client.GetAsync(path)).StatusCode);
 
         // Log back in, so the session gate cannot be what refuses the replay.
         await LoginThroughAcsAsync(connectionId, "replay-slo", "replay-user@example.com");
 
         // Same ID a second time: within the freshness window this was replayable without limit.
-        var replayed = await _client.GetAsync($"/saml/{connectionId}/slo?SAMLRequest={DeflateEncode(xml)}");
+        var replayed = await _client.GetAsync(path);
         Assert.Equal(HttpStatusCode.BadRequest, replayed.StatusCode);
         Assert.Contains("saml_replay", await replayed.Content.ReadAsStringAsync());
     }
@@ -624,8 +660,9 @@ public sealed class SamlSpKeySloEndpointTests(AzuriteFixture azurite) : IAsyncLi
     {
         var connectionId = await EstablishSamlSessionAsync("stale-slo", "stale-user@example.com");
 
-        var stale = LogoutRequestXml("stale-user@example.com", issueInstant: DateTime.UtcNow.AddMinutes(-30));
-        var response = await _client.GetAsync($"/saml/{connectionId}/slo?SAMLRequest={DeflateEncode(stale)}");
+        var stale = LogoutRequestXml(
+            connectionId, "stale-user@example.com", issueInstant: DateTime.UtcNow.AddMinutes(-30));
+        var response = await _client.GetAsync(SignedSloPath(connectionId, stale));
 
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
     }
@@ -640,8 +677,9 @@ public sealed class SamlSpKeySloEndpointTests(AzuriteFixture azurite) : IAsyncLi
         var connectionId = await EstablishSamlSessionAsync("expiry-slo", "expiry-user@example.com");
 
         // Fresh IssueInstant — so only the NotOnOrAfter can refuse this one.
-        var expired = LogoutRequestXml("expiry-user@example.com", notOnOrAfter: DateTime.UtcNow.AddMinutes(-10));
-        var response = await _client.GetAsync($"/saml/{connectionId}/slo?SAMLRequest={DeflateEncode(expired)}");
+        var expired = LogoutRequestXml(
+            connectionId, "expiry-user@example.com", notOnOrAfter: DateTime.UtcNow.AddMinutes(-10));
+        var response = await _client.GetAsync(SignedSloPath(connectionId, expired));
 
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
     }
@@ -651,8 +689,9 @@ public sealed class SamlSpKeySloEndpointTests(AzuriteFixture azurite) : IAsyncLi
     {
         var connectionId = await EstablishSamlSessionAsync("issuer-slo", "issuer-user@example.com");
 
-        var wrongIssuer = LogoutRequestXml("issuer-user@example.com", issuer: "https://attacker.test");
-        var response = await _client.GetAsync($"/saml/{connectionId}/slo?SAMLRequest={DeflateEncode(wrongIssuer)}");
+        var wrongIssuer = LogoutRequestXml(
+            connectionId, "issuer-user@example.com", issuer: "https://attacker.test");
+        var response = await _client.GetAsync(SignedSloPath(connectionId, wrongIssuer));
 
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
     }
@@ -666,27 +705,46 @@ public sealed class SamlSpKeySloEndpointTests(AzuriteFixture azurite) : IAsyncLi
     {
         var connectionId = await EstablishSamlSessionAsync("subject-slo", "mine@example.com");
 
-        var otherSubject = LogoutRequestXml("someone-else@example.com");
-        var response = await _client.GetAsync($"/saml/{connectionId}/slo?SAMLRequest={DeflateEncode(otherSubject)}");
+        var otherSubject = LogoutRequestXml(connectionId, "someone-else@example.com");
+        var response = await _client.GetAsync(SignedSloPath(connectionId, otherSubject));
 
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
     }
 
     private static string LogoutRequestXml(
+        string connectionId,
         string nameId,
         string issuer = "https://idp.test",
         DateTime? issueInstant = null,
-        DateTime? notOnOrAfter = null)
+        DateTime? notOnOrAfter = null,
+        string? destination = null)
     {
         var notOnOrAfterAttr = notOnOrAfter is null ? "" : $""" NotOnOrAfter="{notOnOrAfter:O}" """;
         return $"""
             <samlp:LogoutRequest xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol"
-                ID="_lq{Guid.NewGuid():N}" Version="2.0" IssueInstant="{issueInstant ?? DateTime.UtcNow:O}"{notOnOrAfterAttr}>
+                ID="_lq{Guid.NewGuid():N}" Version="2.0" IssueInstant="{issueInstant ?? DateTime.UtcNow:O}"{notOnOrAfterAttr}
+                Destination="{destination ?? SloUrl(connectionId)}">
               <saml:Issuer xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion">{issuer}</saml:Issuer>
               <saml:NameID xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion">{nameId}</saml:NameID>
             </samlp:LogoutRequest>
             """;
     }
+
+    private static string SloUrl(string connectionId) =>
+        $"{AuthagonalTestFactory.TestIssuer}/saml/{connectionId}/slo";
+
+    /// <summary>
+    /// The IdP-initiated SLO leg as a conformant IdP delivers it: redirect binding, signed over the
+    /// query string with the key the connection's metadata publishes (Profiles §4.4.3.1).
+    /// </summary>
+    private static string SignedSloPath(string connectionId, string logoutRequestXml) =>
+        new Uri(SamlRedirectBinding.Sign(
+            $"{SloUrl(connectionId)}?SAMLRequest={DeflateEncode(logoutRequestXml)}",
+            SamlTestHelper.TestKey)).PathAndQuery;
+
+    /// <summary>The same message with the signature simply left off.</summary>
+    private static string UnsignedSloPath(string connectionId, string logoutRequestXml) =>
+        $"/saml/{connectionId}/slo?SAMLRequest={DeflateEncode(logoutRequestXml)}";
 
     /// <summary>Creates a connection, completes a real login through the ACS, and returns its id.</summary>
     private async Task<string> EstablishSamlSessionAsync(string slug, string email)

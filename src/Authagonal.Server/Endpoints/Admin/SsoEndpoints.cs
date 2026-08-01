@@ -61,6 +61,9 @@ public static class SsoEndpoints
         if (string.IsNullOrWhiteSpace(request.EntityId))
             return Results.BadRequest(new { error = "invalid_request", error_description = "EntityId is required" });
 
+        if (ValidateEntityId(request.EntityId) is { } entityIdError)
+            return entityIdError;
+
         // F49: a connection is fed by a metadata URL OR pasted metadata XML (for IdPs with no
         // metadata URL, e.g. Google Workspace). Exactly one must be supplied.
         var hasUrl = !string.IsNullOrWhiteSpace(request.MetadataLocation);
@@ -433,6 +436,40 @@ public static class SsoEndpoints
                 "The metadata document carries the signing certificates every assertion is validated against, " +
                 "so it cannot be fetched over plaintext http. Paste the document into MetadataXml instead if " +
                 "the IdP publishes no https metadata endpoint."
+        });
+    }
+
+    /// <summary>
+    /// The SP entityID must be what SAML says it is — an absolute URI — and no longer than the 1024
+    /// characters Metadata §2.2.1 caps it at.
+    /// </summary>
+    /// <remarks>
+    /// This value is written by a connection admin, who in a multi-tenant deployment is a lower
+    /// privilege than the platform, and it is then interpolated into two documents other parties
+    /// consume as authoritative: the outbound AuthnRequest/LogoutRequest this SP signs with its own
+    /// key, and the anonymous <c>/saml/{id}/metadata</c> response. Both interpolations escape, so this
+    /// is defence in depth rather than the only barrier — but free text reaching a signed protocol
+    /// message is worth refusing at the point it is stored, where the error is attributable to the
+    /// admin who caused it instead of surfacing later as an unexplained IdP rejection.
+    /// </remarks>
+    private static IResult? ValidateEntityId(string entityId)
+    {
+        // Uri.TryCreate alone is not enough: it accepts a space or a double quote and silently
+        // percent-encodes them, so `https://sp.test/x" WantAssertionsSigned="false` parses as a valid
+        // absolute URI. Those are exactly the characters that break out of an XML attribute, and RFC
+        // 3986 excludes every one of them from a URI anyway. Non-ASCII is left alone — an IRI-form
+        // entityID is legal and carries none of these.
+        var wellFormed = entityId.Length <= 1024
+            && Uri.TryCreate(entityId, UriKind.Absolute, out _)
+            && !entityId.Any(c => c <= ' ' || c is '"' or '<' or '>' or '\\' or '^' or '`' or '{' or '|' or '}' or (char)0x7F);
+
+        if (wellFormed)
+            return null;
+
+        return Results.BadRequest(new
+        {
+            error = "invalid_request",
+            error_description = "EntityId must be an absolute URI (https://… or a urn:…) of at most 1024 characters, with no spaces or URI-illegal characters."
         });
     }
 

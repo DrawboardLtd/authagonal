@@ -27,17 +27,24 @@ internal static class ClientAuthentication
     private static readonly ConcurrentDictionary<string, (JsonWebKeySet Keys, DateTimeOffset FetchedAt)> JwksCache = new();
 
     /// <summary>
-    /// Cap on distinct jwks_uri values held at once. Every entry is keyed by a URL a client record
-    /// supplies, and dynamic client registration lets an anonymous caller create those records — so an
-    /// uncapped dictionary is an unbounded, process-lifetime allocation an attacker drives. Well past
-    /// any real deployment's client count; the eviction below only ever fires under abuse.
+    /// Ceiling on distinct <c>jwks_uri</c> values held in <see cref="JwksCache"/> at once.
     /// </summary>
+    /// <remarks>
+    /// The cache is a process-wide static keyed by a URL a client record supplies, and dynamic client
+    /// registration lets an anonymous caller create those records — so without a bound it grows with the
+    /// number of distinct URIs ever fetched and never shrinks, an unbounded process-lifetime allocation
+    /// an attacker drives. Well past any real deployment's client count; the eviction below only ever
+    /// fires under abuse.
+    /// </remarks>
     private const int MaxCachedJwks = 512;
 
     /// <summary>
     /// Used only when the host did not register the named client (a host that composes its own
-    /// container). Redirects are off for the same reason they are off on the named client: jwks_uri is
-    /// checked once, before the request, and an automatic 302 sends it somewhere the check never saw.
+    /// container). No redirect following, and a bounded timeout — the same handler policy as every named
+    /// outbound client the Server host registers. jwks_uri is checked once, before the request, so an
+    /// automatic 302 would reach somewhere the check never saw;
+    /// <see cref="Core.Services.SafeOutboundHttp"/> resolves the hops itself so it can re-run the guard
+    /// on each one, which it can only do if the handler hands it the 3xx instead of chasing it.
     /// </summary>
     private static readonly HttpClient FallbackHttpClient =
         new(new SocketsHttpHandler { AllowAutoRedirect = false }) { Timeout = TimeSpan.FromSeconds(10) };
@@ -364,13 +371,21 @@ internal static class ClientAuthentication
         {
             var http = httpContext.RequestServices.GetService<IHttpClientFactory>()?.CreateClient("AuthagonalJwks")
                 ?? FallbackHttpClient;
-            var json = await http.GetStringAsync(uri, ct);
+
+            // Through SafeOutboundHttp, not a raw GetStringAsync. IsSafe above only ever sees the URL
+            // the client registered — and an HttpClient follows redirects on its own, so a jwks_uri on
+            // an attacker-controlled https host answering `302 Location: https://169.254.169.254/…`
+            // reached an address the guard had refused, with the guard none the wiser. Same reason the
+            // SAML metadata and OIDC discovery fetches go through it. It also bounds the response,
+            // which matters here because the trigger is an anonymous /connect/token request.
+            var json = await Authagonal.Core.Services.SafeOutboundHttp.GetStringAsync(http, client.JwksUri, ct: ct);
             var keys = new JsonWebKeySet(json);
             EvictExpiredJwks();
             JwksCache[client.JwksUri] = (keys, DateTimeOffset.UtcNow);
             return keys;
         }
-        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or ArgumentException)
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or ArgumentException
+                                      or InvalidOperationException)
         {
             // A stale cached set beats an outage-shaped auth failure — but only for a bounded time.
             //
