@@ -201,9 +201,11 @@ public static class AuthEndpoints
                 // race the counter and slip past the lockout threshold.
                 var opts = authOptions.Value;
                 var locked = await userStore.RecordFailedLoginAsync(user.Id, opts.MaxFailedAttempts, TimeSpan.FromMinutes(opts.LockoutDurationMinutes), ct);
-                // Addresses go through LogSafe.Email everywhere in this file (see its remarks): the login,
-                // registration, confirmation and reset paths are anonymous, so the value is caller-supplied
-                // text, and the log is the wrong place to keep the directory's login identifiers.
+                // The user id, never the address. The login, registration, confirmation and reset paths are
+                // anonymous, so an address here is caller-supplied text, and the log is the wrong place to
+                // keep the directory's login identifiers. Where a line has no id to name and the domain is
+                // the only thing diagnostic, the domain goes through LogSafe.Text — EmailDomain.Of returns
+                // everything after the last '@' with no stripping and no length cap of its own.
                 if (locked)
                     logger.LogWarning("Account locked out for user {UserId}", user.Id);
             }

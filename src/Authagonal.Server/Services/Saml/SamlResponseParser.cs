@@ -414,12 +414,17 @@ public sealed class SamlResponseParser(ILogger<SamlResponseParser> logger)
         // with no Destination is one the IdP minted for whoever holds it, so it can be forwarded from
         // the SP it was meant for to this one and still verify. Deferred to after signature validation
         // because the requirement attaches to the signature, not to the message.
-        if (responseSignatureValid && string.IsNullOrEmpty(destination))
-        {
-            logger.LogWarning("Signed SAML Response carries no Destination attribute");
-            return Fail("A signed SAML Response must carry a Destination attribute.");
-        }
-
+        // The Destination requirement is NOT repeated here, and deliberately not.
+        //
+        // Two branches closed #260 and #6 independently and both added this check; the merge kept both,
+        // which left this one dead. Reaching it with responseSignatureValid == true means a ds:Signature
+        // element was present on the Response, and the check above already refused that shape when
+        // Destination was empty — so the condition here can never be true.
+        //
+        // The earlier one is the one to keep: it keys on the signature being PRESENT rather than valid, so
+        // it also refuses a Response that purports to be signed and is not, and Bindings §3.5.5.2 attaches
+        // the requirement to the message being signed rather than to the signature verifying. Do not
+        // re-add a post-validation copy; it would be unreachable again.
         var now = DateTimeOffset.UtcNow;
 
         // 7b. Absolute age. IssueInstant is REQUIRED on an Assertion (Core §2.3.3) and was read by

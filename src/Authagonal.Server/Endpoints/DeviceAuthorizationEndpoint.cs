@@ -269,6 +269,24 @@ public static class DeviceAuthorizationEndpoint
                     new ErrorInfoResponse { Error = "invalid_user_code", Message = "Code is invalid or expired" },
                     AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 400);
 
+            // Claim the user_code ATOMICALLY, before the write — the same order, and for the same reason,
+            // as the approve path above.
+            //
+            // Everything above this line is check-then-act, so a racing pair of requests both read the
+            // user-code grant un-consumed and both read the device grant un-consumed. The write below is
+            // an unconditional full-row upsert, and the row it serialises carries whatever ConsumedAt it
+            // read — so a deny that lands AFTER the device polled and the token endpoint marked the code
+            // spent would erase that marker and re-arm the device code for a second token set. Consuming
+            // afterwards, as this did, does not help: by then the damaging write has already happened.
+            //
+            // TryConsumeAsync is the conditional (ETag) delete, so exactly one caller wins and the losers
+            // stop here having written nothing. That also settles deny-racing-approve: whichever claims
+            // the code decides, and the other cannot overwrite the decision.
+            if (!await grantStore.TryConsumeAsync($"device_user:{userCode}", ct))
+                return TypedResults.Json(
+                    new ErrorInfoResponse { Error = "invalid_user_code", Message = "Code is invalid or expired" },
+                    AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 400);
+
             var deniedData = JsonSerializer.Deserialize(deniedGrant.Data, AuthagonalJsonContext.Default.DeviceCodeData)!;
             deniedData.IsDenied = true;
             deniedData.IsApproved = false;
@@ -279,9 +297,6 @@ public static class DeviceAuthorizationEndpoint
             deniedGrant.Key = $"device:{deniedDeviceCode}";
             deniedGrant.Data = JsonSerializer.Serialize(deniedData, AuthagonalJsonContext.Default.DeviceCodeData);
             await grantStore.StoreAsync(deniedGrant, ct);
-
-            // Burn the user code either way: a decision, once made, ends this code's usefulness.
-            await grantStore.ConsumeAsync($"device_user:{userCode}", ct);
 
             return TypedResults.Json(new SuccessResponse { Success = true }, AuthagonalJsonContext.Default.SuccessResponse);
         })

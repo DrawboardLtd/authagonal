@@ -3,6 +3,8 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using Authagonal.Core.Constants;
 using Authagonal.Core.Models;
+using Authagonal.Server;
+using Authagonal.Server.Endpoints;
 using Authagonal.Tests.Infrastructure;
 
 namespace Authagonal.Tests;
@@ -437,6 +439,71 @@ public sealed class DeviceAuthorizationTests : IAsyncLifetime
 
         var redeemed = await _factory.GrantStore.GetAsync($"device:{deviceCodes.DeviceCode}");
         Assert.NotNull(redeemed!.ConsumedAt);
+    }
+
+    /// <summary>
+    /// The deny handler is the approve handler's sibling and carried the same race.
+    /// </summary>
+    /// <remarks>
+    /// Found by the merge audit, not by a branch: the approve path was given an atomic claim on the
+    /// user_code before its write, and deny was left on check-then-act with an unconditional full-row
+    /// upsert followed by a non-atomic ConsumeAsync — so the same straggler that could re-arm a device code
+    /// through approve could do it through deny, and a deny racing an approve could overwrite the decision.
+    /// The consume-afterwards did not help: by the time it ran, the damaging write had happened.
+    /// <para>
+    /// Weakly non-vacuous, and it is worth saying so: with the claim reverted this test still passes,
+    /// because five requests issued on one HttpClient against TestServer end up ordered closely enough that
+    /// the first consume lands before the second read. <see cref="ApproveAndDenyRacingOneUserCode_OnlyOneDecisionSticks"/>
+    /// is the load-bearing one — it fails when the claim is removed. Same caveat as the SQL rate-limit
+    /// counter tests and the MFA single-use claim tests: an ordering the harness happens to impose is not
+    /// the absence of a race.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task ConcurrentDenialsOfOneUserCode_OnlyOneIsHonoured()
+    {
+        await _factory.SeedTestUserAsync();
+        var deviceCodes = await RequestDeviceCodes();
+        await _client.PostAsJsonAsync("/api/auth/login", new { email = "test@example.com", password = "Test1234!" });
+
+        var responses = await Task.WhenAll(Enumerable.Range(0, 5).Select(_ =>
+            _client.PostAsync("/api/auth/device/deny", new FormUrlEncodedContent(
+                new Dictionary<string, string> { ["user_code"] = deviceCodes.UserCode }))));
+
+        Assert.Equal(1, responses.Count(r => r.StatusCode == HttpStatusCode.OK));
+
+        // The decision stands and the user code is spent: a straggler cannot re-arm it.
+        Assert.Null(await _factory.GrantStore.GetAsync($"device_user:{deviceCodes.UserCode}"));
+
+        var denied = await _factory.GrantStore.GetAsync($"device:{deviceCodes.DeviceCode}");
+        var data = System.Text.Json.JsonSerializer.Deserialize(
+            denied!.Data, AuthagonalJsonContext.Default.DeviceCodeData)!;
+        Assert.True(data.IsDenied);
+        Assert.False(data.IsApproved);
+    }
+
+    /// <summary>A deny cannot overwrite an approval that already won the claim, or the reverse.</summary>
+    [Fact]
+    public async Task ApproveAndDenyRacingOneUserCode_OnlyOneDecisionSticks()
+    {
+        await _factory.SeedTestUserAsync();
+        var deviceCodes = await RequestDeviceCodes();
+        await _client.PostAsJsonAsync("/api/auth/login", new { email = "test@example.com", password = "Test1234!" });
+
+        var form = () => new FormUrlEncodedContent(
+            new Dictionary<string, string> { ["user_code"] = deviceCodes.UserCode });
+
+        var results = await Task.WhenAll(
+            _client.PostAsync("/api/auth/device/approve", form()),
+            _client.PostAsync("/api/auth/device/deny", form()));
+
+        Assert.Equal(1, results.Count(r => r.StatusCode == HttpStatusCode.OK));
+
+        var grant = await _factory.GrantStore.GetAsync($"device:{deviceCodes.DeviceCode}");
+        var data = System.Text.Json.JsonSerializer.Deserialize(
+            grant!.Data, AuthagonalJsonContext.Default.DeviceCodeData)!;
+        // Exactly one decision, not both and not neither.
+        Assert.True(data.IsApproved ^ data.IsDenied);
     }
 
     [Fact]

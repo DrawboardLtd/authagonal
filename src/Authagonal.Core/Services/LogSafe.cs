@@ -46,6 +46,14 @@ public static class LogSafe
     }
 
     /// <summary>An email address as <c>j***@example.com</c>: domain kept, local part reduced.</summary>
+    /// <remarks>
+    /// Nothing in this server calls it. Two findings landed on the same log lines — one asked for the
+    /// address to be masked, the other for it to be replaced by the user id — and the id won, being
+    /// strictly less PII. It is kept because it is a reasonable thing for an embedding host to want in its
+    /// own log lines, and because masking is the right answer where there is no id to name instead. If you
+    /// reach for it inside Authagonal, check first that the line could not carry
+    /// <c>{UserId}</c> plus <see cref="Text"/> of the domain, which is what every line here does.
+    /// </remarks>
     public static string Email(string? email)
     {
         if (string.IsNullOrWhiteSpace(email)) return "(none)";
