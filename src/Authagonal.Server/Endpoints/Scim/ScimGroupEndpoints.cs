@@ -250,7 +250,12 @@ public static class ScimGroupEndpoints
         // GetGroupsByUserIdAsync is an unindexed full scan of the same table and runs on EVERY token mint
         // and every /connect/userinfo call for the tenant once a group→role mapping exists — so an
         // inflated table makes every login in the tenant pay for it. The cap is what bounds that scan.
-        var (_, ownedCount) = await groupStore.ListAsync(clientId, 0, options.MaxScimGroupsPerClient, ct);
+        //
+        // Asks for ONE row, not MaxScimGroupsPerClient of them. Only the total is read here, and every
+        // store returns the full count independently of the page it hands back — so requesting the cap's
+        // worth meant materialising and ordering up to 5000 group models on every single group create,
+        // paying a slice of the very amplification this check exists to bound.
+        var (_, ownedCount) = await groupStore.ListAsync(clientId, 1, 1, ct);
         if (ownedCount >= options.MaxScimGroupsPerClient)
             return ScimResults.Error(403, "invalidValue",
                 $"This provisioning client already owns the maximum of {options.MaxScimGroupsPerClient} groups.");
