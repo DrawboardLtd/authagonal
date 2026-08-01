@@ -174,7 +174,12 @@ public static class AuthagonalExtensions
             services.AddSingleton<IHostedService, Authagonal.Server.Services.Oidc.OidcStateSweepService>();
         }
 
-        // Health check (depends on ISigningKeyStore singleton)
+        // Health check (depends on ISigningKeyStore singleton).
+        //
+        // Registered as a SINGLETON on purpose: the check caches its own answer for a few seconds so an
+        // anonymous caller cannot drive one storage query (and one private-key unwrap) per request, and
+        // AddCheck<T> would otherwise construct a fresh instance per probe — a cache that never hits.
+        services.TryAddSingleton<TableStorageHealthCheck>();
         services.AddHealthChecks()
             .AddCheck<TableStorageHealthCheck>("table_storage");
 
@@ -965,10 +970,11 @@ public static class AuthagonalExtensions
     {
         // Anonymous, but no longer a free storage query per request.
         //
-        // Each call ran a live store probe, so an unauthenticated caller could drive database load
-        // with a trivially cheap request — and the response is cached briefly so a load balancer
-        // polling every second does not multiply that by every replica. Liveness does not change
-        // faster than this window.
+        // Each call ran a live store probe, so an unauthenticated caller could drive database load with
+        // a trivially cheap request. The bound is server-side, in TableStorageHealthCheck: it reuses its
+        // answer for CacheOptions.HealthCheckCacheSeconds. The header below only tells intermediaries
+        // they may do the same — a client that ignores it still reaches the endpoint, which is why the
+        // header alone was never the fix.
         app.MapHealthChecks("/health", new Microsoft.AspNetCore.Diagnostics.HealthChecks.HealthCheckOptions
         {
             ResultStatusCodes =

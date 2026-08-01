@@ -264,7 +264,8 @@ public static class DeviceAuthorizationEndpoint
             // A code that has already been redeemed must not be approved again. The write below is an
             // unconditional full-row upsert, and the row it writes carries ConsumedAt = null — so
             // approving a consumed code erased the marker the atomic consume relies on and handed the
-            // device a second token set from one approval.
+            // device a second token set from one approval. This read is the cheap first filter; the
+            // atomic claim below is what actually holds under concurrency.
             if (deviceGrant.ConsumedAt is not null)
                 return TypedResults.Json(
                     new ErrorInfoResponse { Error = "invalid_user_code", Message = "Code is invalid or expired" },
@@ -294,6 +295,24 @@ public static class DeviceAuthorizationEndpoint
             data.IsApproved = true;
             data.SubjectId = subjectId;
 
+            // Claim the user_code ATOMICALLY, and do it before the approval write rather than after it.
+            //
+            // Everything above this line is check-then-act: two overlapping approvals of one user_code
+            // both read the user-code grant un-consumed and both read the device grant un-consumed (the
+            // budget is 10/min, so a racing pair is free). The old order let both of them through, and
+            // the loser's StoreAsync — an unconditional full-row upsert whose serialized row carries
+            // ConsumedAt = null — could land AFTER the device had polled and TryMarkConsumedAsync had
+            // marked the device code spent. That erased the consumed marker and re-armed the device code
+            // for a second token set from a single approval.
+            //
+            // TryConsumeAsync is the conditional (ETag) delete, so exactly one caller can win the claim;
+            // the loser stops here having written nothing. It runs after the entitlement gate so a
+            // refusal does not burn a code the user is still entitled to retry with.
+            if (!await grantStore.TryConsumeAsync($"device_user:{userCode}", ct))
+                return TypedResults.Json(
+                    new ErrorInfoResponse { Error = "invalid_user_code", Message = "Code is invalid or expired" },
+                    AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 400);
+
             // GetAsync returns Key empty (the raw handle is never persisted — only its hash is the
             // partition key), so it MUST be re-set before the store re-hashes it; an empty key would
             // silently write the approval to the SHA-256("") partition and leave the device polling
@@ -302,9 +321,6 @@ public static class DeviceAuthorizationEndpoint
             deviceGrant.Data = JsonSerializer.Serialize(data, AuthagonalJsonContext.Default.DeviceCodeData);
             deviceGrant.SubjectId = subjectId;
             await grantStore.StoreAsync(deviceGrant, ct);
-
-            // Consume the user code so it can't be reused
-            await grantStore.ConsumeAsync($"device_user:{userCode}", ct);
 
             return TypedResults.Json(new DeviceApprovedResponse(), AuthagonalJsonContext.Default.DeviceApprovedResponse);
         })

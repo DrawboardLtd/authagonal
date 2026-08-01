@@ -460,6 +460,30 @@ public sealed class AuthEndpointTests : IAsyncLifetime
     }
 
     // -----------------------------------------------------------------------
+    // F307 — an anonymous registrant must not be able to write control
+    // characters into a log line, a storage key or an index row
+    // -----------------------------------------------------------------------
+
+    [Theory]
+    [InlineData("victim\r\n2026-01-01 INFO User registered: admin@example.com")] // forged log entry
+    [InlineData("victim\ttabbed")]
+    [InlineData("victim\u0000null")]
+    public async Task Register_WithControlCharactersInTheAddress_IsRefused(string localPart)
+    {
+        // The address reaches "User registered: {UserId} in domain {Domain}" and, before that, the
+        // email index key. A CR/LF in it forges whole entries in any line-oriented sink, which is how
+        // the rest of an attacker's activity gets hidden. SCIM refuses the same characters
+        // (ScimUserEndpoints.IsPlausibleEmail); self-registration needs no credential at all and did not.
+        var response = await _client.PostAsJsonAsync("/api/auth/register",
+            new { email = $"{localPart}@example.com", password = "NewPass1234!" });
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("invalid_email", json.GetProperty("error").GetString());
+        Assert.Null(await _factory.UserStore.FindByEmailAsync($"{localPart}@example.com"));
+    }
+
+    // -----------------------------------------------------------------------
     // GET/POST /api/auth/confirm-email  (email verification — CRITICAL PATH)
     // -----------------------------------------------------------------------
 

@@ -13,7 +13,18 @@ namespace Authagonal.Migration.Cli;
 /// </summary>
 internal static class StoreFactory
 {
-    public static DuendeMigrationStores Create(string connectionString)
+    /// <param name="fieldCipher">
+    /// At-rest field encryption and blind-index tokenization for the TARGET deployment. Null means the
+    /// operator declared the target has neither (see Program.cs) — the same tables written by the server
+    /// would otherwise be encrypted and tokenized while this tool's rows are not, which is worse than
+    /// either state on its own: a plaintext-keyed index row is invisible to a tokenizing reader, so the
+    /// migrated user cannot be found by email at all.
+    /// </param>
+    /// <param name="indexTokenizer"><inheritdoc cref="fieldCipher" path="/summary"/></param>
+    public static DuendeMigrationStores Create(
+        string connectionString,
+        IFieldCipher? fieldCipher = null,
+        IIndexTokenizer? indexTokenizer = null)
     {
         var serviceClient = new TableServiceClient(connectionString);
         var partitioner = EnvPartitioner.Live;
@@ -25,21 +36,30 @@ internal static class StoreFactory
             return client;
         }
 
+        // The change log, wired exactly as the provider wires it. Unlike the cipher and the tokenizer
+        // this one IS derivable from the connection string, and it was simply not passed: every row the
+        // migration wrote was invisible to a change-log-driven incremental backup, so a restore taken
+        // between full scans came back missing the entire migrated population.
+        var changeWriter = new TableChangeWriter(Table("Tombstones"));
+
         return new DuendeMigrationStores
         {
             Users = new TableUserStore(
                 Table("Users"), Table("UserEmails"), Table("UserLogins"), Table("UserExternalIds"),
-                Table("UserFirstNames"), Table("UserLastNames"), partitioner),
-            Roles = new TableRoleStore(Table("Roles"), partitioner),
-            Scopes = new TableScopeStore(Table("Scopes"), partitioner),
-            Clients = new TableClientStore(Table("Clients"), partitioner),
-            Mfa = new TableMfaStore(Table("MfaCredentials"), Table("MfaChallenges"), Table("MfaWebAuthnIndex"), partitioner),
-            SamlProviders = new TableSamlProviderStore(Table("SamlProviders"), partitioner),
-            OidcProviders = new TableOidcProviderStore(Table("OidcProviders"), partitioner),
-            SsoDomains = new TableSsoDomainStore(Table("SsoDomains"), partitioner),
+                Table("UserFirstNames"), Table("UserLastNames"), partitioner,
+                tombstoneWriter: changeWriter,
+                fieldCipher: fieldCipher,
+                indexTokenizer: indexTokenizer),
+            Roles = new TableRoleStore(Table("Roles"), partitioner, changeWriter),
+            Scopes = new TableScopeStore(Table("Scopes"), partitioner, changeWriter),
+            Clients = new TableClientStore(Table("Clients"), partitioner, changeWriter),
+            Mfa = new TableMfaStore(Table("MfaCredentials"), Table("MfaChallenges"), Table("MfaWebAuthnIndex"), partitioner, changeWriter),
+            SamlProviders = new TableSamlProviderStore(Table("SamlProviders"), partitioner, changeWriter),
+            OidcProviders = new TableOidcProviderStore(Table("OidcProviders"), partitioner, changeWriter),
+            SsoDomains = new TableSsoDomainStore(Table("SsoDomains"), partitioner, changeWriter),
             Grants = new TableGrantStore(
                 Table("Grants"), Table("GrantsBySubject"), Table("GrantsByExpiry"),
-                partitioner, NullLogger<TableGrantStore>.Instance),
+                partitioner, NullLogger<TableGrantStore>.Instance, changeWriter, fieldCipher),
         };
     }
 }
