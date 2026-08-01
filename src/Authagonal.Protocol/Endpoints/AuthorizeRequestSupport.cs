@@ -273,38 +273,31 @@ internal static class AuthorizeRequestSupport
         // RFC 8707 §2: each resource must be an absolute URI without a fragment, and — when the
         // client declares an audience allowlist — must appear in it. Anything else is invalid_target.
         //
-        // An EMPTY Audiences list means "unset", not "deny everything". A dynamically registered
-        // client cannot declare audiences (RFC 7591 has no field for them), so treating empty as
-        // deny-all made `resource` unusable for every DCR client — which is every MCP client, since
-        // the MCP authorization spec requires them to name the MCP server as the resource. The
-        // restriction still applies wherever an operator has deliberately configured one.
+        // The rule itself is in ResourceAudiencePolicy, called from here, from the client_credentials
+        // mint, and from the exchange path — it used to be written out at all three, and the three had
+        // drifted into disagreeing.
         //
-        // Be exact about what that costs, because §2 also requires invalid_target for a resource the
-        // server does not RECOGNISE, and this cannot do that. A client with no Audiences may name any
-        // absolute URI and get back an access token whose `aud` is that string, signed by this
-        // tenant's key, carrying the requesting user's `sub` and whatever scopes the client is
-        // allowed. Naming a resource is not access to it — the value only narrows `aud` — but the
-        // remaining check then lives entirely at the resource server, which must authorize on
-        // `scope` (or its own model) and must not read a matching iss + aud + sub as permission.
+        // An empty Audiences list used to mean "unset, allow any resource" here, because reading it as
+        // deny-all would have made `resource` unusable for a client with no way to declare one — and an
+        // MCP client is required by its spec to name the MCP server as the resource. That reasoning was
+        // sound about the consequence and wrong about the cause: every surface that creates a client
+        // (dynamic registration, the admin API, seed configuration) does accept audiences. So the
+        // permissive reading is now scoped to clients that predate OAuthClient.AudiencesDeclared, and a
+        // client that was asked and declared none may not name a resource at all.
         //
-        // Recognising a resource would need a registry of them, and there is none: Scope carries no
-        // resource identifier and no IResourceStore exists, so a validation written today would pass
-        // whenever the set came back empty — a check that fails open on the exact deployments that
-        // never configured anything, which is worse than no check because it reads like one. Left as
-        // a stated resource-server obligation (docs/configuration.md, "Audiences and resource
-        // indicators") until there is something real to validate against.
-        //
-        // The convention is NOT uniform, and deliberately so: the RFC 8693 exchange path in
-        // ProtocolTokenService reads an empty Audiences as deny, because there the subject token's own
-        // `aud` is never consulted and an undeclared target would land verbatim in the minted token.
-        // Here the client still has to get a user through an interactive authorization first.
+        // What the permissive path still costs, for the stored rows that keep it: RFC 8707 §2 also
+        // requires invalid_target for a resource the server does not RECOGNISE, and this cannot do that —
+        // Scope carries no resource identifier and there is no IResourceStore, so a check written against
+        // a registry would pass whenever the registry came back empty. Such a client may name any absolute
+        // URI and receive an access token whose `aud` is that string, signed by this tenant's key and
+        // carrying the requesting user's `sub`. Naming a resource is not access to it, but the remaining
+        // check then lives entirely at the resource server, which must authorize on `scope` and must not
+        // read a matching iss + aud + sub as permission. See docs/configuration.md, "Audiences and
+        // resource indicators".
         foreach (var resource in request.Resources)
         {
-            if (!Uri.TryCreate(resource, UriKind.Absolute, out var resourceUri) || !string.IsNullOrEmpty(resourceUri.Fragment))
-                return BuildErrorRedirect(redirectUri, "invalid_target", $"resource '{resource}' is not a valid absolute URI", state, issuer);
-
-            if (client.Audiences.Count > 0 && !client.Audiences.Contains(resource, StringComparer.Ordinal))
-                return BuildErrorRedirect(redirectUri, "invalid_target", $"resource '{resource}' is not registered for this client", state, issuer);
+            if (Authagonal.Core.Services.ResourceAudiencePolicy.RejectResource(client, resource) is { } rejected)
+                return BuildErrorRedirect(redirectUri, "invalid_target", rejected, state, issuer);
         }
 
         if (client.RequirePkce && string.IsNullOrWhiteSpace(request.CodeChallenge))

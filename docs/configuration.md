@@ -170,25 +170,30 @@ Clients are defined in the `Clients` array and seeded on startup. Each client ca
 
 `Audiences` is the client's allowlist for the `resource` parameter (RFC 8707) and the `audience` parameter of a token exchange (RFC 8693). Whatever survives that check becomes the `aud` claim of the issued access token; with no `resource` on the request, `aud` falls back to `Audiences`, and with neither it is the `client_id`.
 
-An empty `Audiences` list is read differently depending on the grant, and the difference is deliberate:
+An empty `Audiences` list means **"none"** for any client created through a surface that accepts audiences — dynamic registration (the `audiences` metadata field), the admin API, or seed configuration. Such a client may not name a `resource` at all, on any path: authorize, `client_credentials` and token exchange agree.
 
-| Path | Empty `Audiences` means |
+The one exception is a client stored **before** this rule existed. Those rows carry `AudiencesDeclared: false`, and for them an empty list still reads as "unset, so any absolute URI is accepted as `resource`" — because tightening every stored client on upgrade would break flows that work today.
+
+| Client | Empty `Audiences` means |
 |---|---|
-| `/connect/authorize`, `client_credentials` | **"unset", not "deny everything"** — any absolute URI is accepted as `resource` |
-| Token exchange (RFC 8693) | **deny** — a client that has declared no audiences may not aim an exchanged token anywhere |
+| Created through DCR or the admin API | **deny** — no `resource` may be named |
+| Stored before `AudiencesDeclared` existed | **"unset"** — any absolute URI is accepted as `resource` |
 
-The permissive reading exists because a dynamically registered client cannot declare audiences — RFC 7591 has no field for them — so treating empty as deny-all would make `resource` unusable for every DCR client, including every MCP client, since the MCP authorization spec requires them to name the MCP server as the resource. Token exchange is held to the stricter rule because the consequence there differs in kind: the subject token's own `aud` is never consulted, so an undeclared target would land verbatim in the minted token.
+**Retrofitting a legacy client** is a `PUT` to the admin client API with `audiencesDeclared: true` (and whatever `audiences` it should be pinned to). The flag only ever tightens: an update can set it and cannot clear it, so an unrelated edit will never silently return a client to the permissive reading.
 
-The consequence on the permissive paths is worth stating plainly rather than burying:
+The consequence for the legacy rows is worth stating plainly rather than burying:
 
-> A client with no configured `Audiences` may name **any** absolute URI as `resource` at the authorization endpoint or under `client_credentials`, and receive an access token whose `aud` is that value — signed by this tenant's key, carrying the requesting user's `sub` and whatever scopes the client is allowed.
+> A pre-existing client with no configured `Audiences` may name **any** absolute URI as `resource` at the authorization endpoint or under `client_credentials`, and receive an access token whose `aud` is that value — signed by this tenant's key, carrying the requesting user's `sub` and whatever scopes the client is allowed.
+
+A declared `audiences` list is validated where it is written: at most 20 entries of at most 512 characters, each an absolute URI with an explicit scheme and no fragment. `resource` values are held to the same shape — note that a bare path such as `/admin` is **not** accepted, even though .NET's `Uri` parser will call it an absolute `file:` URI on Linux.
 
 Naming a resource is not access to it. But it does mean the authorization server cannot be the only thing standing between a client and an API it was never meant to call, so:
 
 - **Resource servers MUST authorize on `scope`** (or their own model), not on `iss` + `aud` + `sub` alone. A token that names your API in `aud` proves the client asked for your API. It does not prove the client is allowed to call it, and this server cannot make it prove that.
 - **Resource servers MUST validate `aud` against their own identifier**, not merely against "some value is present".
 - **Set `Audiences` on every client that should be pinned to a fixed set of APIs.** With it configured, an unlisted `resource` is refused with `invalid_target` at the authorization endpoint and on `client_credentials`. This is the only place the restriction can be enforced.
-- **Leave `Auth:DynamicClientRegistrationEnabled` off** (the default) unless you accept that self-registered clients arrive with no audience restriction at all. See [Dynamic Client Registration](client-registration).
+- **Retrofit `audiencesDeclared: true` onto clients created before it existed**, so their empty audience list means "none" rather than "anything".
+- **A self-registered client may declare `audiences`** at registration and is held to what it declares — including to an empty list. `Auth:DynamicClientRegistrationEnabled` is still off by default; see [Dynamic Client Registration](client-registration).
 
 ### Grant Types
 

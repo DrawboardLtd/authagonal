@@ -26,6 +26,28 @@ public sealed record OAuthClient
     public string? FrontChannelLogoutUri { get; set; }
     public bool FrontChannelLogoutSessionRequired { get; set; } = true;
     public List<string> Audiences { get; set; } = [];
+
+    /// <summary>
+    /// True when this client's <see cref="Audiences"/> is a deliberate statement rather than an absence:
+    /// the client was created through a surface that accepts audiences, so an empty list means "none"
+    /// instead of "never asked".
+    /// </summary>
+    /// <remarks>
+    /// An empty <see cref="Audiences"/> was read as "unset, so allow any resource" at the authorize and
+    /// client_credentials paths, because reading it as deny-all would have made RFC 8707 <c>resource</c>
+    /// unusable for every client that had no way to declare one — and an MCP client is required by its
+    /// spec to name the MCP server as the resource. The consequence was that such a client could name any
+    /// absolute URI and receive a tenant-signed token whose <c>aud</c> was that string.
+    /// <para>
+    /// Every surface that creates a client does accept audiences, so the permissive reading is only needed
+    /// for rows that predate this flag. New clients carry it and are held to their declaration: empty means
+    /// no <c>resource</c> may be named at all. Existing rows keep the old reading until an operator sets
+    /// the flag, which is the migration path — and it only ever tightens, so an update can set it and
+    /// never clear it.
+    /// </para>
+    /// </remarks>
+    public bool AudiencesDeclared { get; set; }
+
     public List<string> AllowedScopes { get; set; } = [];
     public List<string> AllowedCorsOrigins { get; set; } = [];
     public bool RequirePkce { get; set; } = true;

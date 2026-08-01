@@ -34,6 +34,13 @@ public sealed class ClientEntity : ITableEntity
     public string? FrontChannelLogoutUri { get; set; }
     public bool FrontChannelLogoutSessionRequired { get; set; } = true;
     public string AudiencesJson { get; set; } = "[]";
+
+    /// <summary>
+    /// Whether <see cref="AudiencesJson"/> is a deliberate statement. Nullable so a row written before
+    /// the column existed reads as false — "never asked" — which is the permissive legacy behaviour those
+    /// clients already have, rather than silently tightening every stored client on upgrade.
+    /// </summary>
+    public bool? AudiencesDeclared { get; set; }
     public required string AllowedScopesJson { get; set; }
     public required string AllowedCorsOriginsJson { get; set; }
     public bool RequirePkce { get; set; }
@@ -79,6 +86,7 @@ public sealed class ClientEntity : ITableEntity
         FrontChannelLogoutUri = client.FrontChannelLogoutUri,
         FrontChannelLogoutSessionRequired = client.FrontChannelLogoutSessionRequired,
         AudiencesJson = JsonSerializer.Serialize(client.Audiences, AzureJsonContext.Default.ListString),
+        AudiencesDeclared = client.AudiencesDeclared,
         AllowedScopesJson = JsonSerializer.Serialize(client.AllowedScopes, AzureJsonContext.Default.ListString),
         AllowedCorsOriginsJson = JsonSerializer.Serialize(client.AllowedCorsOrigins, AzureJsonContext.Default.ListString),
         RequirePkce = client.RequirePkce,
@@ -121,6 +129,7 @@ public sealed class ClientEntity : ITableEntity
         FrontChannelLogoutUri = FrontChannelLogoutUri,
         FrontChannelLogoutSessionRequired = FrontChannelLogoutSessionRequired,
         Audiences = JsonSerializer.Deserialize(AudiencesJson, AzureJsonContext.Default.ListString) ?? [],
+        AudiencesDeclared = AudiencesDeclared ?? false,
         AllowedScopes = JsonSerializer.Deserialize(AllowedScopesJson, AzureJsonContext.Default.ListString) ?? [],
         AllowedCorsOrigins = JsonSerializer.Deserialize(AllowedCorsOriginsJson, AzureJsonContext.Default.ListString) ?? [],
         RequirePkce = RequirePkce,

@@ -94,6 +94,15 @@ public static class ClientEndpoints
         if (InvalidPublicClientGrants(client) is { } grantError)
             return TypedResults.Json(new ErrorInfoResponse { Error = "invalid_request", ErrorDescription = grantError }, AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 400);
 
+        if (Authagonal.Core.Services.ResourceAudiencePolicy.RejectAudiences(client.Audiences) is { } createAudienceError)
+            return TypedResults.Json(new ErrorInfoResponse { Error = "invalid_request", ErrorDescription = createAudienceError }, AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 400);
+
+        // The admin sent the whole client record, audiences included, so its answer counts — including an
+        // empty list, which now means "may not name a resource" rather than "was never asked". Forced
+        // server-side rather than taken from the body: a caller cannot opt a new client back into the
+        // legacy permissive reading.
+        client.AudiencesDeclared = true;
+
         if (client.IsDefaultApplication)
             await ClearOtherDefaultsAsync(store, client.ClientId, ct);
         await store.UpsertAsync(client, ct);
@@ -141,6 +150,16 @@ public static class ClientEndpoints
 
         if (InvalidSecretHashes(client) is { } hashError)
             return TypedResults.Json(new ErrorInfoResponse { Error = "invalid_request", ErrorDescription = hashError }, AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 400);
+
+        if (Authagonal.Core.Services.ResourceAudiencePolicy.RejectAudiences(client.Audiences) is { } audienceError)
+            return TypedResults.Json(new ErrorInfoResponse { Error = "invalid_request", ErrorDescription = audienceError }, AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 400);
+
+        // Monotonic: an update may SET the declaration but never clear it. The handler binds a whole
+        // OAuthClient, so a body that omits the flag deserialises it as false — and a PUT that changed one
+        // unrelated field would otherwise silently return the client to the permissive reading of an empty
+        // audience list. Setting it is the retrofit path for a client that predates the flag; there is
+        // deliberately no way to unset it, because that direction only ever loosens.
+        client.AudiencesDeclared = existing.AudiencesDeclared || client.AudiencesDeclared;
 
         client.ClientId = clientId;
         // Preserve the stored secret when the update omits hashes; never echo them back. (A rotation

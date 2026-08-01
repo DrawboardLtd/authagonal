@@ -103,6 +103,14 @@ public static class ClientRegistrationEndpoint
             }
         }
 
+        // audiences was stored verbatim: unbounded list, unbounded entries, any string at all — on a field
+        // that becomes the `aud` of a signed token, from an anonymous endpoint. Same unbounded-list problem
+        // the caps above close.
+        if (Authagonal.Core.Services.ResourceAudiencePolicy.RejectAudiences(request.Audiences ?? []) is { } audienceError)
+            return TypedResults.Json(
+                new ErrorInfoResponse { Error = "invalid_client_metadata", ErrorDescription = audienceError },
+                AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 400);
+
         foreach (var uri in redirectUris)
         {
             // Require an absolute URI and reject script/data/file pseudo-schemes; https and native
@@ -321,6 +329,11 @@ public static class ClientRegistrationEndpoint
             FrontChannelLogoutUri = request.FrontchannelLogoutUri,
             FrontChannelLogoutSessionRequired = request.FrontchannelLogoutSessionRequired ?? true,
             Audiences = request.Audiences ?? [],
+            // The registrant had the field, so its answer counts — including "none". Without this flag an
+            // empty list was indistinguishable from a client that was never offered the choice, and every
+            // DCR client therefore kept the permissive reading that let it name any absolute URI as a
+            // resource and receive a tenant-signed token aimed at it.
+            AudiencesDeclared = true,
             AllowedScopes = requestedScopes,
             // Restricted to the origins of the registrant's OWN already-validated https redirect URIs.
             // An arbitrary list here landed in a server-wide credentialed CORS allowlist that (before it was

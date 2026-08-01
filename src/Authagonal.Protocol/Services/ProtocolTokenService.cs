@@ -894,14 +894,13 @@ public sealed class ProtocolTokenService(
         var resourceList = resources?.Where(r => !string.IsNullOrWhiteSpace(r)).ToList();
         if (resourceList is { Count: > 0 })
         {
+            // Same rule as the authorize path and the exchange path, from the one function all three read
+            // — see ResourceAudiencePolicy for why an empty list is permissive only on a client that
+            // predates AudiencesDeclared.
             foreach (var r in resourceList)
             {
-                if (!Uri.TryCreate(r, UriKind.Absolute, out var u) || !string.IsNullOrEmpty(u.Fragment))
-                    throw new InvalidOperationException($"Resource '{r}' is not a valid absolute URI");
-                // Empty Audiences means unset, not deny-all — see AuthorizeRequestSupport for why,
-                // and for what the resource server is therefore obliged to check for itself.
-                if (client.Audiences.Count > 0 && !client.Audiences.Contains(r, StringComparer.Ordinal))
-                    throw new InvalidOperationException($"Resource '{r}' is not registered for this client");
+                if (ResourceAudiencePolicy.RejectResource(client, r) is { } rejected)
+                    throw new InvalidOperationException(rejected);
             }
         }
 
