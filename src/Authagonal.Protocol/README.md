@@ -33,7 +33,7 @@ app.MapAuthagonalProtocolEndpoints();
 
 ## Federation passthrough
 
-`OidcSubject.FederationClaims` carries per-session claims received from an upstream IdP through to issued tokens, gated by the same scope-driven `UserClaims` whitelist as `CustomAttributes`. Federation values win on key collision and survive refresh rotations distinct from the per-user record.
+`OidcSubject.FederationClaims` carries per-session claims received from an upstream IdP through to issued tokens, gated by the same scope-driven `UserClaims` whitelist as `CustomAttributes`. On key collision the per-user record wins — an upstream id_token must not restate a claim this server holds its own value for — and federation values survive refresh rotations distinct from that record.
 
 ## Packages
 

@@ -44,12 +44,16 @@ export default function DevicePage() {
   const [checking, setChecking] = useState(true);
   const [authenticated, setAuthenticated] = useState(false);
   const [approved, setApproved] = useState(false);
+  const [denied, setDenied] = useState(false);
   const [error, setError] = useState('');
   // What the user is actually approving. Until this is loaded and displayed, Approve stays disabled:
   // RFC 8628 §5.4's remote-phishing warning is about approving an OPAQUE prompt, and
   // verification_uri_complete pre-fills the code so approval was otherwise one click on nothing.
   const [info, setInfo] = useState<DeviceInfo | null>(null);
   const [loadingInfo, setLoadingInfo] = useState(false);
+  // Which of the offered scopes the user is actually granting. The device asks for a set; the user
+  // gets to hand back a subset, the same choice /connect/authorize's consent screen offers.
+  const [selectedScopes, setSelectedScopes] = useState<string[]>([]);
 
   // Check if user is already authenticated
   useEffect(() => {
@@ -79,7 +83,9 @@ export default function DevicePage() {
         { credentials: 'include' },
       );
       if (res.ok) {
-        setInfo(await res.json());
+        const loaded: DeviceInfo = await res.json();
+        setInfo(loaded);
+        setSelectedScopes(loaded.scopes);
       } else {
         const body = await res.json().catch(() => ({}));
         setError(
@@ -112,7 +118,7 @@ export default function DevicePage() {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         credentials: 'include',
-        body: `user_code=${encodeURIComponent(code)}`,
+        body: `user_code=${encodeURIComponent(code)}&scopes=${encodeURIComponent(selectedScopes.join(' '))}`,
       });
 
       if (res.ok) {
@@ -124,6 +130,40 @@ export default function DevicePage() {
         } else {
           setError(body.message || 'Failed to approve. Please try again.');
         }
+      }
+    } catch {
+      setError('Something went wrong. Please try again.');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  /**
+   * The user's "no", sent to the server.
+   *
+   * Cancel used to clear local state only, which told the device nothing: it kept polling
+   * authorization_pending until the code expired, so a user who realised the prompt was not theirs
+   * (RFC 8628 §5.4's illicit-consent shape) left the requesting device waiting rather than refused.
+   * The server records the refusal and the token endpoint answers access_denied per §3.5.
+   */
+  async function handleDeny() {
+    setLoading(true);
+    setError('');
+
+    const code = formatUserCode(userCode);
+    try {
+      const res = await fetch(`${API_URL}/api/auth/device/deny`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        credentials: 'include',
+        body: `user_code=${encodeURIComponent(code)}`,
+      });
+
+      if (res.ok) {
+        setDenied(true);
+      } else {
+        const body = await res.json().catch(() => ({}));
+        setError(body.message || 'Failed to deny the request. Please try again.');
       }
     } catch {
       setError('Something went wrong. Please try again.');
@@ -181,6 +221,19 @@ export default function DevicePage() {
     );
   }
 
+  // Denied — the device has been told, so say so plainly rather than returning to the code form as
+  // though nothing had happened.
+  if (denied) {
+    return (
+      <div className="text-center">
+        <CardTitle className="mb-4">Request denied</CardTitle>
+        <p className="text-sm text-gray-500 dark:text-gray-400">
+          The device has been told you declined. You can close this window.
+        </p>
+      </div>
+    );
+  }
+
   // Enter code form
   return (
     <div>
@@ -229,9 +282,22 @@ export default function DevicePage() {
               This application is requesting access to:
             </p>
             {info.scopes.length > 0 ? (
-              <ul className="text-sm list-disc list-inside">
+              <ul className="text-sm space-y-1">
                 {info.scopes.map((s) => (
-                  <li key={s} className="font-mono">{s}</li>
+                  <li key={s}>
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={selectedScopes.includes(s)}
+                        onChange={(e) =>
+                          setSelectedScopes((prev) =>
+                            e.target.checked ? [...prev, s] : prev.filter((x) => x !== s),
+                          )
+                        }
+                      />
+                      <span className="font-mono">{s}</span>
+                    </label>
+                  </li>
                 ))}
               </ul>
             ) : (
@@ -243,11 +309,16 @@ export default function DevicePage() {
             Only approve this if you started signing in on that device yourself.
           </p>
 
-          <Button onClick={handleApprove} className="w-full mb-2" loading={loading}>
+          <Button
+            onClick={handleApprove}
+            className="w-full mb-2"
+            loading={loading}
+            disabled={info.scopes.length > 0 && selectedScopes.length === 0}
+          >
             Approve {info.clientName}
           </Button>
-          <Button variant="secondary" className="w-full" onClick={() => { setInfo(null); setError(''); }}>
-            Cancel
+          <Button variant="secondary" className="w-full" onClick={handleDeny} disabled={loading}>
+            Deny
           </Button>
         </div>
       )}

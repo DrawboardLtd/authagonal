@@ -1,3 +1,4 @@
+using System.Text.Json;
 using System.Text.Json.Serialization;
 
 namespace Authagonal.Server.Endpoints;
@@ -491,6 +492,15 @@ public sealed class ClientRegistrationRequest
     [JsonPropertyName("response_types")] public List<string>? ResponseTypes { get; set; }
     [JsonPropertyName("scope")] public string? Scope { get; set; }
     [JsonPropertyName("token_endpoint_auth_method")] public string? TokenEndpointAuthMethod { get; set; }
+
+    /// <summary>RFC 7591 §2 — inline JWKS, required (or <see cref="JwksUri"/>) for
+    /// <c>private_key_jwt</c>. Without one the method binds no key and cannot authenticate anything.</summary>
+    [JsonPropertyName("jwks")] public JsonElement? Jwks { get; set; }
+
+    /// <summary>RFC 7591 §2 — JWKS by reference. Fetched by this server during client authentication,
+    /// so it is validated against the outbound SSRF guard at registration time.</summary>
+    [JsonPropertyName("jwks_uri")] public string? JwksUri { get; set; }
+
     [JsonPropertyName("application_type")] public string? ApplicationType { get; set; }
     [JsonPropertyName("contacts")] public List<string>? Contacts { get; set; }
     [JsonPropertyName("backchannel_logout_uri")] public string? BackchannelLogoutUri { get; set; }

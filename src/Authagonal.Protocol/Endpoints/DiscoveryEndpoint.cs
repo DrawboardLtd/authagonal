@@ -49,7 +49,11 @@ internal static class DiscoveryEndpoint
                 // client (RequireClientSecret = false) authenticates with client_id alone, and
                 // dynamic registration issues exactly such clients. Omitting it told every SPA and
                 // native client that the only way in was a credential they cannot hold.
-                TokenEndpointAuthMethodsSupported = ["client_secret_basic", "client_secret_post", "private_key_jwt", "none"],
+                //
+                // Both lists come from ClientAuthentication, which is the code that implements them —
+                // restating them here is how the two discovery documents drifted apart in the first place.
+                TokenEndpointAuthMethodsSupported = ClientAuthentication.SupportedAuthMethods,
+                TokenEndpointAuthSigningAlgValuesSupported = ClientAuthentication.SupportedAssertionAlgorithms,
                 CodeChallengeMethodsSupported = ["S256"],
                 AuthorizationResponseIssParameterSupported = true,
                 // Stated rather than defaulted — see the members' own docs. Omitting these claimed

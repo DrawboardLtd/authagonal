@@ -26,6 +26,18 @@ public sealed class DiscoveryResponse
     [JsonPropertyName("subject_types_supported")] public string[] SubjectTypesSupported { get; set; } = [];
     [JsonPropertyName("id_token_signing_alg_values_supported")] public string[] IdTokenSigningAlgValuesSupported { get; set; } = [];
     [JsonPropertyName("token_endpoint_auth_methods_supported")] public string[] TokenEndpointAuthMethodsSupported { get; set; } = [];
+
+    /// <summary>
+    /// OIDC Discovery §3 — the JWS algorithms accepted on a <c>private_key_jwt</c> client assertion.
+    /// </summary>
+    /// <remarks>
+    /// Omitting it while advertising <c>private_key_jwt</c> left a client with no way to learn which
+    /// algorithms it may sign with, so agreement was by trial and error against an endpoint whose only
+    /// failure signal is <c>invalid_client</c>. The list mirrors <c>ValidAlgorithms</c> in
+    /// ClientAuthentication — RFC 7518 asymmetric algorithms only, so a symmetric key in a client's own
+    /// published JWKS can never turn client authentication into an HMAC over a public value.
+    /// </remarks>
+    [JsonPropertyName("token_endpoint_auth_signing_alg_values_supported"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public string[]? TokenEndpointAuthSigningAlgValuesSupported { get; set; }
     [JsonPropertyName("code_challenge_methods_supported")] public string[] CodeChallengeMethodsSupported { get; set; } = [];
     /// <summary>RFC 9207 — we name ourselves in the authorization response so a client talking to
     /// several authorization servers can tell which one answered (the mix-up defence).</summary>

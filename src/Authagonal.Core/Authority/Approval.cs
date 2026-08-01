@@ -62,7 +62,7 @@ public sealed class ApprovalData
     /// mirroring the device flow: persisting the marker meant rewriting the whole payload — Status
     /// included — from a copy read moments earlier, so a poll racing the user's answer could write
     /// `Pending` back over their approve or DENY. Kept so an approval serialized by an earlier
-    /// version still deserializes.
+    /// version still deserializes. Mirrors DeviceCodeData.LastPolledAt.
     /// </summary>
     public DateTimeOffset? LastPolledAt { get; set; }
 }

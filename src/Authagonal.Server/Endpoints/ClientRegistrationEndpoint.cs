@@ -146,8 +146,56 @@ public static class ClientRegistrationEndpoint
                 AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 400);
         }
 
+        // RFC 7591 §2 / §3.2.1: the registered token_endpoint_auth_method must be one the AS supports,
+        // and the response must state the method the AS ACTUALLY assigned.
+        //
+        // Nothing validated it. Anything that was not the literal string "none" produced a confidential
+        // client with a generated secret, and the response echoed whatever the caller had asked for — so
+        // registering "private_key_jwt" returned a client that says it authenticates with a private key
+        // and in fact authenticates with a shared secret nobody expected to receive, while a typo'd
+        // method registered silently as client_secret_basic. A client that believes it holds no bearer
+        // secret does not protect the one it was handed.
         var authMethod = request.TokenEndpointAuthMethod ?? "client_secret_basic";
+        if (!Authagonal.Protocol.Endpoints.ClientAuthentication.SupportedAuthMethods.Contains(authMethod, StringComparer.Ordinal))
+            return TypedResults.Json(
+                new ErrorInfoResponse
+                {
+                    Error = "invalid_client_metadata",
+                    ErrorDescription = $"Unsupported token_endpoint_auth_method '{authMethod}'. Supported: {string.Join(", ", Authagonal.Protocol.Endpoints.ClientAuthentication.SupportedAuthMethods)}",
+                },
+                AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 400);
+
         var isPublicClient = authMethod == "none";
+
+        // private_key_jwt authenticates against the client's registered JWKS and nothing else, so a
+        // registration that names it without supplying one asks for a method that cannot ever succeed —
+        // and, before this, was quietly downgraded to a client_secret. Bind the key material here, at
+        // the only point the registrant can prove it owns it.
+        var usesPrivateKeyJwt = authMethod == "private_key_jwt";
+        string? registeredJwksJson = null;
+        if (usesPrivateKeyJwt)
+        {
+            if (request.Jwks is { } jwksElement && jwksElement.ValueKind == System.Text.Json.JsonValueKind.Object)
+            {
+                registeredJwksJson = jwksElement.GetRawText();
+            }
+            else if (!string.IsNullOrWhiteSpace(request.JwksUri))
+            {
+                // Server-fetched client metadata (RFC 9700 §4.14): the JWKS URI is retrieved by THIS
+                // process during client authentication, from an anonymously-registrable field, so it
+                // goes through the same outbound guard as every other URL a registrant supplies.
+                if (!Authagonal.Core.Services.OutboundUrl.IsSafe(request.JwksUri))
+                    return TypedResults.Json(
+                        new ErrorInfoResponse { Error = "invalid_client_metadata", ErrorDescription = "jwks_uri must be an external https endpoint." },
+                        AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 400);
+            }
+            else
+            {
+                return TypedResults.Json(
+                    new ErrorInfoResponse { Error = "invalid_client_metadata", ErrorDescription = "token_endpoint_auth_method 'private_key_jwt' requires jwks or jwks_uri" },
+                    AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 400);
+            }
+        }
 
         var requestedScopes = string.IsNullOrWhiteSpace(request.Scope)
             ? new List<string>()
@@ -225,7 +273,10 @@ public static class ClientRegistrationEndpoint
         var clientId = GenerateClientId();
         string? clientSecret = null;
         List<string> secretHashes = [];
-        if (!isPublicClient)
+        // No secret for private_key_jwt either: the client authenticates with a signed assertion, and
+        // issuing one anyway would leave a second, weaker credential in circulation for a client whose
+        // whole point is not to hold one.
+        if (!isPublicClient && !usesPrivateKeyJwt)
         {
             clientSecret = GenerateClientSecret();
             secretHashes.Add(passwordHasher.HashPassword(clientSecret));
@@ -281,6 +332,10 @@ public static class ClientRegistrationEndpoint
             RequirePkce = true,
             AllowOfflineAccess = offlineAccess,
             RequireClientSecret = !isPublicClient,
+            // The key material the assertion will be verified against. Without it, registering
+            // private_key_jwt bound nothing and ClientAuthentication had no JWKS to resolve.
+            JwksJson = registeredJwksJson,
+            JwksUri = usesPrivateKeyJwt && registeredJwksJson is null ? request.JwksUri : null,
             // Consent is NOT optional for a self-registered client. A statically seeded client was
             // configured by an operator who already decided what it may do; this one registered itself
             // over an anonymous endpoint and chose its own scope list. Skipping consent would mean a

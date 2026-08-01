@@ -1,5 +1,7 @@
 using Authagonal.Core.Models;
+using Authagonal.Core.Services;
 using Authagonal.Core.Stores;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -17,6 +19,7 @@ namespace Authagonal.Protocol.Services;
 internal sealed class ProtocolSeedService(
     IServiceScopeFactory scopeFactory,
     IOptions<AuthagonalProtocolOptions> options,
+    IConfiguration configuration,
     ILogger<ProtocolSeedService> logger) : IHostedService
 {
     public async Task StartAsync(CancellationToken cancellationToken)
@@ -29,8 +32,40 @@ internal sealed class ProtocolSeedService(
         var clientStore = scope.ServiceProvider.GetRequiredService<IClientStore>();
         var scopeStore = scope.ServiceProvider.GetRequiredService<IScopeStore>();
 
+        // The administrative scope is unholdable by any client — see AdminScopeReservation. The
+        // Server's own seeder enforces that; this one wrote AllowedScopes verbatim, and AddAuthagonal
+        // registers THIS seeder inside every Server host too, so a host that binds
+        // AuthagonalProtocolOptions from configuration had a second, unguarded route to the same
+        // store. A seeded "authagonal-admin" client is permanent admin persistence.
+        var adminScope = configuration["AdminApi:Scope"] ?? AdminScopeReservation.DefaultAdminScope;
+
         foreach (var descriptor in protocolOptions.Clients)
         {
+            // Skip the whole entry rather than silently dropping the scope: a seed asking for this is
+            // a misconfiguration the operator needs to see, not one to paper over.
+            if (AdminScopeReservation.Grants(descriptor.AllowedScopes, adminScope))
+            {
+                logger.LogError(
+                    "Refusing to seed OIDC client {ClientId}: it requests the reserved administrative scope " +
+                    "'{Scope}'. No client may hold it — a client that did could mint admin tokens indefinitely.",
+                    descriptor.ClientId, adminScope);
+                continue;
+            }
+
+            // A scope entry containing whitespace is not one scope: it expands into several in the
+            // space-delimited `scope` claim, which is exactly how the reservation above gets bypassed.
+            if (AdminScopeReservation.FindMalformedScope(descriptor.AllowedScopes) is { } malformed)
+            {
+                logger.LogError(
+                    "Refusing to seed OIDC client {ClientId}: scope entry '{Scope}' is not a single scope " +
+                    "token. Scope names cannot contain whitespace — list each scope separately.",
+                    descriptor.ClientId, malformed);
+                continue;
+            }
+
+            // Merged onto the stored row, never a fresh record: this ran on every pod start and a full
+            // upsert re-enabled a client an operator had disabled and reverted every field the seed
+            // section has no key for. ApplySeed touches only what the descriptor actually carries.
             var existing = await clientStore.GetAsync(descriptor.ClientId, cancellationToken);
             await clientStore.UpsertAsync(ApplySeed(existing, descriptor), cancellationToken);
             logger.LogInformation("Seeded OIDC client {ClientId}", descriptor.ClientId);

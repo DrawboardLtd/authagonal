@@ -43,6 +43,7 @@ public static class DeviceAuthorizationEndpoint
             IGrantStore grantStore,
             ITenantContext tenantContext,
             IClientSecretVerifier secretVerifier,
+            IRateLimiter rateLimiter,
             IConfiguration configuration,
             CancellationToken ct) =>
         {
@@ -79,6 +80,17 @@ public static class DeviceAuthorizationEndpoint
             {
                 if (string.IsNullOrWhiteSpace(clientSecret))
                     return DeviceError("invalid_client", "client_secret is required");
+
+                // Bound the guesses BEFORE spending the hash — the same guard, on the same budget key,
+                // that ClientAuthentication applies to /connect/token, /connect/introspect,
+                // /connect/revocation and /connect/par. This endpoint does not route through
+                // ClientAuthentication, so it was the one anonymous entry point left where a junk
+                // client_secret bought a full PBKDF2 (600k iterations) on a thread-pool thread with no
+                // counter: an unbounded secret-guessing oracle and a CPU amplifier at one request per core.
+                // Sharing the key means an attacker cannot get a fresh budget by switching endpoints.
+                if (await rateLimiter.IsRateLimitedAsync(
+                        $"client-secret|{client.ClientId}", 30, TimeSpan.FromMinutes(1), ct))
+                    return DeviceError("invalid_client", "Too many authentication attempts");
 
                 if (!await secretVerifier.VerifyAsync(client, clientSecret, ct))
                     return DeviceError("invalid_client", "Invalid client credentials");
@@ -214,10 +226,80 @@ public static class DeviceAuthorizationEndpoint
         })
         .WithTags("OAuth");
 
+        // RFC 8628 §3.5 access_denied — the user's "no".
+        //
+        // There was no server-side deny at all: the approval screen's Cancel button only cleared local
+        // state, DeviceCodeData had nowhere to record a refusal, and the token endpoint could only emit
+        // authorization_pending / slow_down / expired_token / invalid_grant. So a user who declined left
+        // the device polling as though they had not answered yet, until the code expired — the device
+        // could not tell "not yet" from "no", and the RFC's own signal for the decision the user actually
+        // made was unreachable. Worse for the illicit-consent case §5.4 warns about: a victim who
+        // realises what the prompt is and cancels leaves the attacker's device polling for the full
+        // remaining lifetime, in case they change their mind.
+        app.MapPost("/api/auth/device/deny", async (
+            HttpContext httpContext,
+            IGrantStore grantStore,
+            IRateLimiter rateLimiter,
+            CancellationToken ct) =>
+        {
+            if (httpContext.User.Identity?.IsAuthenticated != true)
+                return JsonResults.Error("not_authenticated", 401);
+
+            // The same budget as approve and info: refusing is also a code submission, so it must not be
+            // a way to probe user codes on a fresh allowance.
+            var denierSubject = httpContext.User.FindFirst("sub")?.Value ?? "anonymous";
+            if (await rateLimiter.IsRateLimitedAsync($"device-approve|{denierSubject}", 10, TimeSpan.FromMinutes(1), ct))
+                return JsonResults.Error("too_many_requests", 429);
+
+            var denyForm = await httpContext.Request.ReadFormAsync(ct);
+            var userCode = NormalizeUserCode(denyForm["user_code"].FirstOrDefault());
+            if (userCode.Length == 0)
+                return TypedResults.Json(new ErrorInfoResponse { Error = "user_code_required" },
+                    AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 400);
+
+            var userCodeGrant = await grantStore.GetAsync($"device_user:{userCode}", ct);
+            if (userCodeGrant is null || userCodeGrant.ConsumedAt is not null || userCodeGrant.ExpiresAt < DateTimeOffset.UtcNow)
+                return TypedResults.Json(
+                    new ErrorInfoResponse { Error = "invalid_user_code", Message = "Code is invalid or expired" },
+                    AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 400);
+
+            var deniedDeviceCode = userCodeGrant.Data;
+            var deniedGrant = await grantStore.GetAsync($"device:{deniedDeviceCode}", ct);
+            if (deniedGrant is null || deniedGrant.ExpiresAt < DateTimeOffset.UtcNow)
+                return TypedResults.Json(new ErrorInfoResponse { Error = "expired", Message = "Device code has expired" },
+                    AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 400);
+
+            // An already-redeemed code cannot be retracted, and rewriting the row would erase the
+            // consumed marker the atomic consume depends on — the same trap the approve path carries.
+            if (deniedGrant.ConsumedAt is not null)
+                return TypedResults.Json(
+                    new ErrorInfoResponse { Error = "invalid_user_code", Message = "Code is invalid or expired" },
+                    AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 400);
+
+            var deniedData = JsonSerializer.Deserialize(deniedGrant.Data, AuthagonalJsonContext.Default.DeviceCodeData)!;
+            deniedData.IsDenied = true;
+            deniedData.IsApproved = false;
+            deniedData.SubjectId = null;
+
+            // GetAsync returns Key empty (only the hash is persisted), so it must be re-set or the write
+            // lands in the SHA-256("") partition — see the approve path.
+            deniedGrant.Key = $"device:{deniedDeviceCode}";
+            deniedGrant.Data = JsonSerializer.Serialize(deniedData, AuthagonalJsonContext.Default.DeviceCodeData);
+            await grantStore.StoreAsync(deniedGrant, ct);
+
+            // Burn the user code either way: a decision, once made, ends this code's usefulness.
+            await grantStore.ConsumeAsync($"device_user:{userCode}", ct);
+
+            return TypedResults.Json(new SuccessResponse { Success = true }, AuthagonalJsonContext.Default.SuccessResponse);
+        })
+        .DisableAntiforgery()
+        .WithTags("OAuth");
+
         // User approval endpoint — called by the login app after authentication
         app.MapPost("/api/auth/device/approve", async (
             HttpContext httpContext,
             IGrantStore grantStore,
+            IClientStore clientStore,
             IUserStore userStore,
             IScopeRoleGate scopeRoleGate,
             IRateLimiter rateLimiter,
@@ -290,7 +372,21 @@ public static class DeviceAuthorizationEndpoint
                 return TypedResults.Json(
                     new ErrorInfoResponse { Error = "access_denied", Message = "You are not entitled to any of the requested scopes" },
                     AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 403);
-            data.Scopes = [.. entitledScopes];
+
+            // Per-scope narrowing, as /connect/authorize's consent screen does. Device approval was
+            // all-or-nothing over whatever the device asked for: the only choices were "grant everything"
+            // or "say nothing and let it expire". A submitted set only ever narrows — it is intersected
+            // with the entitled set, never unioned — so a tampered body cannot widen the grant.
+            var selected = (form["scopes"].FirstOrDefault() ?? "")
+                .Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            var grantedScopes = selected.Length == 0
+                ? [.. entitledScopes]
+                : entitledScopes.Where(s => selected.Contains(s, StringComparer.Ordinal)).ToList();
+            if (grantedScopes.Count == 0)
+                return TypedResults.Json(
+                    new ErrorInfoResponse { Error = "invalid_scope", Message = "Select at least one permission, or cancel to deny the request" },
+                    AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 400);
+            data.Scopes = grantedScopes;
 
             data.IsApproved = true;
             data.SubjectId = subjectId;
@@ -322,6 +418,52 @@ public static class DeviceAuthorizationEndpoint
             deviceGrant.SubjectId = subjectId;
             await grantStore.StoreAsync(deviceGrant, ct);
 
+            // Record it as consent, in the same shape /connect/authorize records.
+            //
+            // client.RequireConsent was read at exactly one site — the authorize endpoint — so the device
+            // grant was the one interactive path that could hand a client scopes without producing a
+            // consent record. Two consequences: the approval never appeared on the Authorized Apps page,
+            // so the user had no way to see or revoke what their television was holding; and a client
+            // registered with RequireConsent got, through this path, a grant it would have had to ask for
+            // on any other. This screen IS the consent interaction for the device grant — it shows the
+            // client and the scopes and the user chooses them — so what it records is a real consent,
+            // narrowed to what was actually approved rather than what was requested.
+            var deviceClient = await clientStore.GetAsync(data.ClientId, ct);
+            if (deviceClient is not null)
+            {
+                var consentKey = $"consent:{subjectId}:{data.ClientId}";
+                var priorConsent = await grantStore.GetAsync(consentKey, ct);
+                var priorScopes = priorConsent is null
+                    ? []
+                    : JsonSerializer.Deserialize(priorConsent.Data, AuthagonalJsonContext.Default.ConsentData)?.Scopes ?? [];
+
+                var consentData = new AuthorizeEndpoint.ConsentData
+                {
+                    // Additive: approving a device must not silently retract consent the user gave the
+                    // same client through a browser flow.
+                    Scopes = [.. priorScopes.Union(grantedScopes, StringComparer.Ordinal)],
+                    // What the user was shown. Anything offered and NOT selected is recorded so a later
+                    // request for it prompts once rather than on every authorize.
+                    OfferedScopes = [.. priorScopes.Union(entitledScopes, StringComparer.Ordinal)],
+                    ConsentedAt = DateTimeOffset.UtcNow,
+                };
+
+                await grantStore.StoreAsync(new PersistedGrant
+                {
+                    Key = consentKey,
+                    Type = Core.Constants.PersistedGrantTypes.Consent,
+                    SubjectId = subjectId,
+                    ClientId = data.ClientId,
+                    Data = JsonSerializer.Serialize(consentData, AuthagonalJsonContext.Default.ConsentData),
+                    CreatedAt = DateTimeOffset.UtcNow,
+                    ExpiresAt = DateTimeOffset.UtcNow.AddYears(5),
+                }, ct);
+            }
+
+            // No ConsumeAsync here: the user_code was already CLAIMED above, atomically, before the
+            // approval write. Consuming it again at the end would be the old order — the one where the
+            // loser of a racing pair could land its full-row upsert after the device had polled and
+            // re-arm the device code for a second token set.
             return TypedResults.Json(new DeviceApprovedResponse(), AuthagonalJsonContext.Default.DeviceApprovedResponse);
         })
         .DisableAntiforgery()
@@ -409,6 +551,13 @@ internal sealed class DeviceCodeData
     public required string ClientId { get; set; }
     public required List<string> Scopes { get; set; }
     public bool IsApproved { get; set; }
+
+    /// <summary>
+    /// The user said no. RFC 8628 §3.5 <c>access_denied</c>: the device must be told the decision was
+    /// made and was negative, rather than polling <c>authorization_pending</c> until the code expires.
+    /// </summary>
+    public bool IsDenied { get; set; }
+
     public string? SubjectId { get; set; }
 
     /// <summary>Timestamp of the last accepted token poll, for interval throttling. Null until first polled.</summary>

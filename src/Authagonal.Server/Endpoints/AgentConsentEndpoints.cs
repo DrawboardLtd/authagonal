@@ -108,6 +108,19 @@ public static class AgentConsentEndpoints
                         Error = "invalid_request",
                         ErrorDescription = "authority must be an RFC 9396 authorization_details array",
                     }, AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 400);
+
+                // The consent screen may narrow the ceiling; it may not extend its vocabulary. There is
+                // no type schema, so every member AuthorityJson does not recognise becomes a constraint,
+                // and a constraint on one side of a meet carries over — which would let this endpoint
+                // launder an invented member into the stored floor, from where the token exchange emits
+                // it into the signed authorization_details claim. See AuthoritySet.FindUngrantedConstraint.
+                if (profile.Ceiling.FindUngrantedConstraint(requested) is { } ungranted)
+                    return TypedResults.Json(new ErrorInfoResponse
+                    {
+                        Error = "invalid_authorization_details",
+                        ErrorDescription = $"'{ungranted.Member}' is not a member of the agent's ceiling for type '{ungranted.Type}'",
+                    }, AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 400);
+
                 floor = requested.Intersect(profile.Ceiling);
             }
 

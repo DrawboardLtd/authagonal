@@ -43,6 +43,14 @@ public static class ScopeEndpoints
         if (string.IsNullOrWhiteSpace(request.Name))
             return TypedResults.Json(new ErrorInfoResponse { Error = "invalid_request", ErrorDescription = "name is required" }, AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 400);
 
+        // RFC 6749 §3.3 delimits scopes by space, so a name containing whitespace is never one scope.
+        // Registering "openid authagonal-admin" as a scope would make it a legal element of a client's
+        // AllowedScopes — which every reservation guard compares element-wise — and it would flatten
+        // back into two scopes in the emitted claim. The reserved-scope guards live upstream of this;
+        // refusing the name here is what stops the vocabulary being poisoned in the first place.
+        if (Core.Services.AdminScopeReservation.FindMalformedScope([request.Name]) is not null)
+            return TypedResults.Json(new ErrorInfoResponse { Error = "invalid_request", ErrorDescription = "A scope name cannot contain whitespace" }, AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 400);
+
         var existing = await scopeStore.GetAsync(request.Name, ct);
         if (existing is not null)
             return TypedResults.Json(new ErrorInfoResponse { Error = "scope_exists", ErrorDescription = $"Scope '{request.Name}' already exists" }, AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 409);

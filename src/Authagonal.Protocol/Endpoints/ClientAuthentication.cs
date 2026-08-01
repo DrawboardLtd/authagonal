@@ -23,6 +23,36 @@ internal static class ClientAuthentication
     private static readonly TimeSpan MaxAssertionLifetime = TimeSpan.FromMinutes(10);
     private static readonly TimeSpan JwksCacheTtl = TimeSpan.FromMinutes(10);
 
+    /// <summary>
+    /// The <c>token_endpoint_auth_method</c> values this code actually implements — the single source
+    /// for both discovery documents and for what dynamic registration will accept.
+    /// </summary>
+    /// <remarks>
+    /// Kept here rather than restated at each site because it was restated at each site: the two
+    /// discovery endpoints drifted from one another, and registration validated against nothing at all,
+    /// so a client could register <c>private_key_jwt</c> and silently be issued a client_secret instead.
+    /// </remarks>
+    public static readonly string[] SupportedAuthMethods =
+        ["client_secret_basic", "client_secret_post", "private_key_jwt", "none"];
+
+    /// <summary>
+    /// Algorithms accepted on a <c>private_key_jwt</c> client assertion, and advertised as
+    /// <c>token_endpoint_auth_signing_alg_values_supported</c>.
+    /// </summary>
+    /// <remarks>
+    /// Pinned rather than accepting whatever the assertion header asks for. Keys come from the client's
+    /// registered JWKS and never from a jku/jwk/x5u header (IdentityModel does not resolve those), so
+    /// this is not the classic RS/HS confusion — but an explicit list means a symmetric key appearing in
+    /// a client's JWKS cannot quietly turn client authentication into an HMAC over a value the client
+    /// also publishes. RFC 7518 asymmetric algorithms only.
+    /// </remarks>
+    public static readonly string[] SupportedAssertionAlgorithms =
+    [
+        SecurityAlgorithms.RsaSha256, SecurityAlgorithms.RsaSha384, SecurityAlgorithms.RsaSha512,
+        SecurityAlgorithms.RsaSsaPssSha256, SecurityAlgorithms.RsaSsaPssSha384, SecurityAlgorithms.RsaSsaPssSha512,
+        SecurityAlgorithms.EcdsaSha256, SecurityAlgorithms.EcdsaSha384, SecurityAlgorithms.EcdsaSha512,
+    ];
+
     // Config-derived public key material only — identical on every pod, safe to cache in-memory.
     private static readonly ConcurrentDictionary<string, (JsonWebKeySet Keys, DateTimeOffset FetchedAt)> JwksCache = new();
 
@@ -255,17 +285,9 @@ internal static class ClientAuthentication
             RequireSignedTokens = true,
             IssuerSigningKeys = jwks.GetSigningKeys(),
             ValidateIssuerSigningKey = true,
-            // Pin the algorithms rather than accepting whatever the assertion header asks for. Keys come
-            // from the client's registered JWKS and never from a jku/jwk/x5u header (IdentityModel does
-            // not resolve those), so this is not the classic RS/HS confusion — but an explicit list means
-            // a symmetric key appearing in a client's JWKS cannot quietly turn client authentication into
-            // an HMAC over a value the client also publishes. RFC 7518 asymmetric algorithms only.
-            ValidAlgorithms =
-            [
-                SecurityAlgorithms.RsaSha256, SecurityAlgorithms.RsaSha384, SecurityAlgorithms.RsaSha512,
-                SecurityAlgorithms.RsaSsaPssSha256, SecurityAlgorithms.RsaSsaPssSha384, SecurityAlgorithms.RsaSsaPssSha512,
-                SecurityAlgorithms.EcdsaSha256, SecurityAlgorithms.EcdsaSha384, SecurityAlgorithms.EcdsaSha512,
-            ],
+            // See SupportedAssertionAlgorithms — the same list discovery advertises, so what a client
+            // is told it may sign with is what this validator will accept.
+            ValidAlgorithms = SupportedAssertionAlgorithms,
             ClockSkew = TimeSpan.FromSeconds(60),
         });
         if (!validated.IsValid)

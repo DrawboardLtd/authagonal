@@ -33,14 +33,16 @@ public sealed class ProtocolTokenService(
     // Optional for the same reason as the seams above (hand-constructed hosts), but wired everywhere
     // real: without it a REVOKED subject_token can still be exchanged for a fresh one.
     IRevokedTokenStore? revokedTokenStore = null,
-    // Throttles the approval poll (RFC 8628-style slow_down). Optional so hand-constructed hosts keep
-    // working; a host that registers a limiter gets its scoping (the Server's is per tenant).
+    // Throttles the approval poll (RFC 8628-style slow_down). AddAuthagonalProtocol registers one, so
+    // this is present in every composed host; optional only so a hand-constructed service still works,
+    // and a host that registers its own gets that one's scoping (the Server's is per tenant).
     IRateLimiter? rateLimiter = null) : IProtocolTokenService
 {
     /// <summary>
-    /// Fallback for the approval-poll throttle when the host registers no <see cref="IRateLimiter"/>.
-    /// Static because this service is scoped: a per-instance limiter would start a fresh window on every
-    /// request and throttle nothing at all.
+    /// Process-wide fallback for the approval-poll throttle when the host registers no
+    /// <see cref="IRateLimiter"/>. Static because this service is SCOPED: a per-instance limiter would be
+    /// a fresh (and therefore always-empty) window on every request, which is a throttle that cannot
+    /// throttle.
     /// </summary>
     private static readonly IRateLimiter FallbackPollLimiter = new InProcessRateLimiter();
 
@@ -115,6 +117,21 @@ public sealed class ProtocolTokenService(
     {
         var now = DateTimeOffset.UtcNow;
         var scopeList = scopes.ToList();
+
+        // Last line of defence for the reserved-scope guards, at the one place every path converges.
+        //
+        // The `scope` claim is a SPACE-DELIMITED string (RFC 6749 §3.3) and every consumer splits it —
+        // including the IdentityAdmin policy, which admits any token whose split scope claim contains
+        // the administrative scope. Every ingress guard, by contrast, compares whole list ELEMENTS, so
+        // a single stored entry "openid authagonal-admin" passed each of them and then flattened back
+        // into two scopes right here. Rather than trust that no ingress will ever miss the split again,
+        // the emission point refuses to write a scope claim that would parse back into more scopes than
+        // it was handed.
+        if (AdminScopeReservation.FindMalformedScope(scopeList) is { } malformed)
+            throw new InvalidOperationException(
+                $"Refusing to mint a token for client '{client.ClientId}': scope entry '{malformed}' is not a " +
+                "single scope token. A scope containing whitespace expands into several scopes in the claim.");
+
         var jti = Guid.NewGuid().ToString("N");
 
         var claims = new Dictionary<string, object>
@@ -144,12 +161,19 @@ public sealed class ProtocolTokenService(
             MergeCustomClaims(claims, subject.CustomAttributes, allowedCustomClaims, overwriteExisting: false);
         }
 
-        // Federation claims layered on top — same scope gate, but federation values
-        // win on collision because they describe the authoritative state of the
-        // upstream-issued session.
+        // Federation claims layered on top — same scope gate, and they FILL GAPS ONLY.
+        //
+        // These come verbatim from an upstream id_token, filtered by nothing but the protocol-reserved
+        // list at the federation callback. They used to overwrite, on the reasoning that they describe
+        // the authoritative state of the upstream-issued session — but the values they were overwriting
+        // are this server's own: attributes an admin set on the user record, released by a scope this
+        // deployment defined. So for any claim name a scope lists in UserClaims, a customer-controlled
+        // IdP could restate it about their user and win, and a resource server reading that claim for
+        // authorization (a plan, a tier, a department) was taking the upstream's word over the store's.
+        // The upstream is authoritative only where this server holds nothing.
         if (subject?.FederationClaims is not null)
         {
-            MergeCustomClaims(claims, subject.FederationClaims, allowedCustomClaims, overwriteExisting: true);
+            MergeCustomClaims(claims, subject.FederationClaims, allowedCustomClaims, overwriteExisting: false);
         }
 
         // Ungated additional claims — forced onto the token regardless of scope. Used for
@@ -343,9 +367,11 @@ public sealed class ProtocolTokenService(
         {
             MergeCustomClaims(claims, subject.CustomAttributes, allowedCustomClaims, overwriteExisting: false);
         }
+        // Gap-fill only, exactly as on the access token — see the note there. An upstream id_token
+        // must not restate a claim this server derives from its own user store.
         if (subject.FederationClaims is not null)
         {
-            MergeCustomClaims(claims, subject.FederationClaims, allowedCustomClaims, overwriteExisting: true);
+            MergeCustomClaims(claims, subject.FederationClaims, allowedCustomClaims, overwriteExisting: false);
         }
 
         // Ungated additional claims ride the id_token too (not just the access token): for an
@@ -1237,8 +1263,19 @@ public sealed class ProtocolTokenService(
 
             // The invariant, literally: ceiling ∩ consent ∩ request ∩ what the subject token
             // itself already carried (which is what makes each further hop attenuate).
-            effective = agentProfile.Ceiling
-                .Intersect(floor)
+            var granted = agentProfile.Ceiling.Intersect(floor);
+
+            // RFC 9396 §5, the member half. The type/action half above is only checked when a connector
+            // catalog is registered; there is no schema for MEMBERS at all, so anything the parser did
+            // not recognise became a "constraint" — and a constraint on one side of a meet carries over.
+            // Refused here, against what the ceiling and consent actually granted, so an invented member
+            // cannot ride the intersection into the signed claim.
+            if (granted.FindUngrantedConstraint(requestedAuthority) is { } ungranted)
+                throw new ProtocolTokenException("invalid_authorization_details",
+                    $"'{ungranted.Member}' is not a member of the granted authority for type " +
+                    $"'{ungranted.Type}'; only members the ceiling and consent define may be requested");
+
+            effective = granted
                 .Intersect(requestedAuthority)
                 .Intersect(subjectAuthority);
             effective = await ApplyHighRiskDefaultsAsync(effective, agentProfile.HighRiskDefault, ct);
@@ -1326,6 +1363,14 @@ public sealed class ProtocolTokenService(
                 throw new ProtocolTokenException("invalid_authorization_details",
                     "the subject token carries no authorization_details to narrow, so this exchange cannot " +
                     "request any; an agent profile is required to originate authority");
+
+            // Same member check as the profile branch: the subject token's own claim is the vocabulary
+            // an attenuating request may narrow within, and a member it never carried was granted by
+            // nobody — see AuthoritySet.FindUngrantedConstraint.
+            if (subjectAuthority.FindUngrantedConstraint(requestedAuthority) is { } ungrantedMember)
+                throw new ProtocolTokenException("invalid_authorization_details",
+                    $"'{ungrantedMember.Member}' is not a member of the subject token's authority for type " +
+                    $"'{ungrantedMember.Type}'; an exchange may narrow the authority it holds, not add to it");
 
             effective = subjectAuthority.Intersect(requestedAuthority);
             if (effective.Grants.Count == 0)
@@ -1663,19 +1708,21 @@ public sealed class ProtocolTokenService(
                 throw new ProtocolTokenException("access_denied", "the user denied the request");
 
             case ApprovalStatus.Pending:
-                // The poll writes NOTHING — the interval rides the rate limiter instead of a
-                // LastPolledAt field persisted through the grant.
+                // RFC 8628 §3.5 slow_down, through the rate limiter keyed on the approval handle — the
+                // poll writes NOTHING back. This is the same move the device flow already made
+                // (Server/Endpoints/TokenEndpoint.cs), for the same two reasons.
                 //
-                // Persisting the marker meant serializing the WHOLE payload, including Status, from a
-                // copy read moments earlier: a poll racing the user's decision wrote back the stale
-                // `Pending` and silently reverted an approve or a DENY — the agent's own polling
-                // undoing the answer it was waiting for. Re-reading first narrowed the window but
-                // could not close it, because read-check-write is not atomic and IGrantStore has no
-                // conditional write for the payload. A poll counter is not worth a path that can
-                // resurrect a denied approval, so the counter moved to the same mechanism the device
-                // flow's identical §3.5 throttle uses (Server/Endpoints/TokenEndpoint.cs).
-                //
-                // Keyed on the approval handle, so one agent's polling cannot throttle another's.
+                // A poll used to persist LastPolledAt with an unconditional StoreAsync of the WHOLE
+                // payload, Status included, that it had read moments earlier — so a poll racing the
+                // user's decision wrote the stale `Pending` back over an approve or a DENY: the agent's
+                // own polling undoing the answer it was waiting for. Re-reading first narrowed that
+                // window but could not close it, because read-check-write is not atomic and IGrantStore
+                // has no conditional write for the payload. And the throttle it bought did not survive
+                // concurrency anyway: two parallel polls both read the old timestamp, both passed, and
+                // both wrote, so the interval bound was defeated by the very traffic pattern it exists
+                // to bound. The limiter's check-and-increment is atomic, so parallel polls spend one
+                // shared budget — and it is keyed on the approval handle, so one agent's polling cannot
+                // throttle another's.
                 if (await PollLimiter.IsRateLimitedAsync(
                         $"approval-poll|{approvalId}", 1, TimeSpan.FromSeconds(Approval.PollIntervalSeconds), ct))
                     throw new ProtocolTokenException("slow_down",

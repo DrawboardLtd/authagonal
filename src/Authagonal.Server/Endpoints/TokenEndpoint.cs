@@ -126,6 +126,17 @@ public static class TokenEndpoint
             return JsonResults.OAuthError("slow_down", "Polling too frequently. Increase your interval and try again.");
         }
 
+        // RFC 8628 §3.5 — access_denied. A refusal is an ANSWER, and the device has to be able to tell
+        // it from silence: without this the only outcome of declining was authorization_pending until
+        // expiry, so the device kept polling and the user's "no" changed nothing they could observe.
+        // The code is consumed here rather than left to expire — the decision is final, and leaving a
+        // denied code alive is a window in which the user could be talked into approving it after all.
+        if (data.IsDenied)
+        {
+            await grantStore.RemoveAsync($"device:{deviceCode}", ct);
+            return JsonResults.OAuthError("access_denied", "The user denied the request");
+        }
+
         if (!data.IsApproved || string.IsNullOrEmpty(data.SubjectId))
         {
             // RFC 8628 §3.5 — authorization_pending. Nothing is written: the poll left no trace to
