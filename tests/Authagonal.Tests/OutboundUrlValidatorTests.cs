@@ -71,6 +71,10 @@ public class OutboundUrlValidatorTests
     [InlineData("http://[::ffff:127.0.0.1]/")]                        // IPv4-mapped loopback
     [InlineData("http://[::ffff:10.0.0.1]/")]                         // IPv4-mapped RFC1918
     [InlineData("http://[::ffff:169.254.169.254]/")]                  // IPv4-mapped metadata
+    // The unspecified address. The IPv4 arm had blocked 0.0.0.0 since it was written and the IPv6 arm had
+    // no counterpart, so the guard refused one spelling of "the local host" and permitted the other.
+    [InlineData("http://[::]/")]
+    [InlineData("http://[0:0:0:0:0:0:0:0]/")]                         // the same address, written out
     public void InternalIPv6_IsBlocked(string url)
         => Assert.False(OutboundUrlValidator.IsSafe(url));
 

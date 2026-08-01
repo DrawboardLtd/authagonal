@@ -104,6 +104,47 @@ public sealed class AdminSsoEndpointTests : IAsyncLifetime
 
     // ── OIDC connections ──
 
+    /// <summary>
+    /// The OIDC sibling of <see cref="CreateSamlConnection_RefusesAnUnsafeMetadataLocation"/>, and it is
+    /// the higher-stakes one.
+    /// </summary>
+    /// <remarks>
+    /// The SAML twin got this guard on create and on update; the OIDC create path kept an
+    /// <c>IsNullOrWhiteSpace</c> check and nothing else, and no test noticed for the same reason no test
+    /// noticed the original: the finding was written about the runtime fetch, so both fixes and both tests
+    /// went there. This document supplies the connection's <c>issuer</c> AND its <c>jwks_uri</c>, and
+    /// <c>OidcEndpoints</c> takes <c>ValidIssuer</c> and <c>IssuerSigningKeys</c> straight from it — so an
+    /// on-path party who can substitute the document substitutes both together and every upstream id_token
+    /// validates against keys it chose. That is authentication bypass for the connection, which is why #163
+    /// is Tier 0.
+    /// <para>
+    /// There is no update route for an OIDC connection (the group is MapPost/MapGet/MapDelete), so create
+    /// is the whole write surface.
+    /// </para>
+    /// </remarks>
+    [Theory]
+    [InlineData("http://idp.test/.well-known/openid-configuration")]  // plaintext — substitutable in transit
+    [InlineData("https://127.0.0.1/.well-known/openid-configuration")] // loopback — server-side request forgery
+    [InlineData("https://169.254.169.254/openid-configuration")]      // cloud metadata service
+    [InlineData("file:///etc/passwd")]                                // not an http(s) URL at all
+    [InlineData("/relative/openid-configuration")]                    // not absolute
+    public async Task CreateOidcConnection_RefusesAnUnsafeMetadataLocation(string metadataLocation)
+    {
+        var response = await _client.SendAsync(AdminRequest(HttpMethod.Post, "/api/v1/oidc/connections",
+            new
+            {
+                connectionName = "Unsafe",
+                metadataLocation,
+                clientId = "unsafe-client-id",
+                clientSecret = "unsafe-secret",
+                redirectUrl = "https://test.authagonal.local/oidc/callback",
+            }));
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Contains("https", json.GetProperty("error_description").GetString()!, StringComparison.OrdinalIgnoreCase);
+    }
+
     [Fact]
     public async Task CreateOidcConnection_ReturnsConnection()
     {

@@ -70,7 +70,15 @@ public static class OutboundUrl
                 || (b[0] == 169 && b[1] == 254)  // link-local, incl. 169.254.169.254 metadata
                 || b[0] >= 224,                  // multicast / reserved
             AddressFamily.InterNetworkV6 =>
-                ip.IsIPv6LinkLocal || ip.IsIPv6Multicast || (b[0] & 0xFE) == 0xFC, // ULA fc00::/7
+                ip.IsIPv6LinkLocal
+                || ip.IsIPv6Multicast
+                || (b[0] & 0xFE) == 0xFC       // ULA fc00::/7
+                // The unspecified address, :: — the IPv6 sibling of the `b[0] == 0` rule on the IPv4 arm,
+                // which was there and had no counterpart here. A connect() to :: goes to the local host on
+                // every mainstream stack, exactly as 0.0.0.0 does, so leaving it out meant the guard
+                // refused `http://0.0.0.0/` and permitted `http://[::]/` — the same target by the other
+                // family. Equals rather than a byte test because IPAddress.IPv6Any is the canonical value.
+                || ip.Equals(IPAddress.IPv6Any),
             _ => true,
         };
     }

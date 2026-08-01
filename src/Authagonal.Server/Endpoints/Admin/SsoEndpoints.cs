@@ -276,6 +276,22 @@ public static class SsoEndpoints
         if (string.IsNullOrWhiteSpace(request.MetadataLocation))
             return Results.BadRequest(new { error = "invalid_request", error_description = "MetadataLocation is required" });
 
+        // The same validation the SAML twin applies on create AND update, and it was missing here — an
+        // absent-sibling, not an absent rule. `IsNullOrWhiteSpace` was the only check, so any string was
+        // stored: this document supplies `issuer` and `jwks_uri` for the connection, and OidcEndpoints
+        // takes ValidIssuer and IssuerSigningKeys straight from it, so over cleartext an on-path party
+        // substitutes both together and every upstream id_token then validates against attacker keys. The
+        // runtime funnel in OidcDiscoveryClient does now require https and bind the metadata URL to the
+        // issuer, so this is defence in depth rather than the only barrier — but storing an unvalidated
+        // location means the refusal surfaces as a failed login later instead of as a message to the admin
+        // who caused it. The SSRF guard applies for the same reason it applies to provisioning callbacks:
+        // this is a server-fetched URL.
+        //
+        // Create is the only verb that needed it: this group exposes MapPost/MapGet/MapDelete, with no
+        // update route for an OIDC connection.
+        if (ValidateMetadataLocation(request.MetadataLocation!) is { } oidcMetadataError)
+            return oidcMetadataError;
+
         if (string.IsNullOrWhiteSpace(request.ClientId))
             return Results.BadRequest(new { error = "invalid_request", error_description = "ClientId is required" });
 
