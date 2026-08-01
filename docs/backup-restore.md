@@ -25,6 +25,8 @@ dotnet run --project tools/Authagonal.Backup -- \
 | `--tables <t1,t2,...>` | Comma-separated list of tables (default: all Authagonal tables) |
 | `--prefix <prefix>` | Table name prefix (for multi-tenant storage) |
 | `--gzip` | Compress backup files with gzip (`.jsonl.gz`) |
+| `--encryption-key <base64>` | 32-byte AES-256 key-encryption key. Encrypts every data file. Keep it **outside** the backup target. |
+| `--manifest-key <base64>` | ≥32-byte HMAC key. Signs the manifest so restore can prove the recorded hashes were not rewritten with the files. Keep it **outside** the backup target. |
 | `--dry-run` | Show what would be backed up without writing |
 
 ### Output format
@@ -53,7 +55,9 @@ Entity values round-trip exactly: each backed-up row carries a `"@v"` format mar
 
 ### Integrity verification
 
-Each backup manifest includes a `FileHashes` dictionary mapping filenames to their SHA-256 hashes. During restore, each file's integrity is verified against these hashes before any of its data is written; a file that fails the check, or a data file absent from the manifest, aborts the restore with an error. Backups written before integrity hashing existed (no `FileHashes` in the manifest) cannot be verified and are restored with a loud warning instead. Verification can be disabled programmatically via `RestoreOptions.VerifyIntegrity` (default `true`).
+Each backup manifest includes a `FileHashes` dictionary mapping filenames to their SHA-256 hashes. During restore each file is verified against its recorded hash — from the same read the entities are applied from, so the bytes that were checked are the bytes that get written — before any of its data reaches a table. A file that fails the check, a data file absent from the manifest, or a manifest-listed file missing from the store all abort the restore. Backups written before integrity hashing existed (no `FileHashes`) cannot be verified and are refused unless `--allow-unverified`. Verification can be disabled programmatically via `RestoreOptions.VerifyIntegrity` (default `true`).
+
+Hashes establish that the archive matches the manifest, not that either is authentic: the manifest sits on the same target as the data, so whoever can rewrite `Clients.jsonl.gz` can rewrite the line recording its hash. `--manifest-key` closes that — the backup HMACs the manifest, the restore verifies it, and the key lives somewhere the backup writer cannot reach. **Restore fails closed**: with no `--manifest-key` it refuses rather than warning, and `--allow-unauthenticated-manifest` is the explicit opt-out for archives written before manifest signing.
 
 ### Incremental backups
 
@@ -94,6 +98,13 @@ dotnet run --project tools/Authagonal.Restore -- \
 | `--mode <mode>` | Restore mode: `upsert` (default), `merge`, or `clean` |
 | `--tables <t1,t2,...>` | Comma-separated list of tables to restore (default: all `.jsonl`/`.jsonl.gz` files in backup) |
 | `--prefix <prefix>` | Table name prefix (for multi-tenant storage) |
+| `--clean-env <env>` | With `--mode clean`, wipe only this env's rows (PartitionKey prefix `<env>|`) |
+| `--allow-clean-from-incremental` | Permit `--mode clean` against an incremental backup |
+| `--allow-clean-all-envs` | Permit `--mode clean` with no `--clean-env`, emptying the whole table |
+| `--encryption-key <base64>` | The 32-byte key-encryption key the backup was written with. Required for an encrypted archive. |
+| `--manifest-key <base64>` | The HMAC key the backup was signed with. **Required** unless `--allow-unauthenticated-manifest`. |
+| `--allow-unauthenticated-manifest` | Restore without `--manifest-key`, accepting hashes that detect corruption but not tampering |
+| `--allow-unverified` | Restore a backup whose manifest carries no file hashes at all |
 | `--dry-run` | Show what would be restored without writing |
 
 ### Restore modes

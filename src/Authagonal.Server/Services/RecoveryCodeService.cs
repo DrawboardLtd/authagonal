@@ -22,8 +22,11 @@ namespace Authagonal.Server.Services;
 /// provider. So the mitigation was absent by default and unavailable on a shipped backend.
 /// </para>
 /// <para>
-/// Now: 10 characters (50 bits) hashed with the same salted PBKDF2 KDF as passwords. The legacy
-/// SHA-256 form still verifies so existing codes keep working until regenerated.
+/// Now: 10 characters (50 bits) hashed with the same salted PBKDF2 KDF as passwords. Codes issued
+/// before that change keep working, but they are no longer LEFT in the bare-digest form: see
+/// <see cref="UpgradeLegacyHash"/>, which re-hashes the stored digest under the KDF without needing
+/// the plaintext code, so a store read stops yielding the whole deployment's recovery codes for one
+/// GPU pass.
 /// </para>
 /// </remarks>
 public sealed class RecoveryCodeService(PasswordHasher passwordHasher)
@@ -38,6 +41,11 @@ public sealed class RecoveryCodeService(PasswordHasher passwordHasher)
 
     /// <summary>Legacy stored form: 64 lowercase hex characters of unsalted SHA-256.</summary>
     private const int LegacySha256HexLength = 64;
+
+    /// <summary>
+    /// Marks a stored value as "the KDF applied to a legacy SHA-256 digest" rather than to the code.
+    /// </summary>
+    private const string WrappedLegacyPrefix = "SHA256WRAP$";
 
     /// <summary>Parameterless construction keeps hand-built hosts and the migration CLI working.</summary>
     public RecoveryCodeService() : this(new PasswordHasher()) { }
@@ -88,8 +96,38 @@ public sealed class RecoveryCodeService(PasswordHasher passwordHasher)
                 Encoding.UTF8.GetBytes(storedHash));
         }
 
+        // A legacy code whose stored digest has since been re-hashed under the KDF: the KDF input is
+        // the digest, not the code, so the same printed code still verifies.
+        if (storedHash.StartsWith(WrappedLegacyPrefix, StringComparison.Ordinal))
+        {
+            return passwordHasher.VerifyPassword(
+                LegacyHash(normalized), storedHash[WrappedLegacyPrefix.Length..]) != PasswordVerifyResult.Failed;
+        }
+
         return passwordHasher.VerifyPassword(normalized, storedHash) != PasswordVerifyResult.Failed;
     }
+
+    /// <summary>
+    /// Re-hashes a legacy unsalted-SHA-256 recovery-code digest under the KDF, returning the value to
+    /// store. Null when <paramref name="storedHash"/> is already in a current form.
+    /// </summary>
+    /// <remarks>
+    /// The plaintext code is not needed and is not available: the KDF is applied to the DIGEST. That is
+    /// what makes this a migration a running deployment can actually perform, rather than one that
+    /// waits for every user to print new codes.
+    /// <para>
+    /// The exposure it removes is not theoretical. A legacy digest is one unsalted SHA-256 of a 40-bit
+    /// code, so 2^40 evaluations — under a minute on a commodity GPU — recovers a code; and with no
+    /// salt the pass is not per-user, so a single run matches every row in the store at once and hands
+    /// over the live second-factor bypass of every enrolled user. Wrapped, the same search costs one
+    /// full KDF evaluation per candidate PER CREDENTIAL, which is the same wall the password hashes
+    /// stand behind.
+    /// </para>
+    /// </remarks>
+    public string? UpgradeLegacyHash(string storedHash)
+        => IsLegacySha256(storedHash)
+            ? WrappedLegacyPrefix + passwordHasher.HashPassword(storedHash)
+            : null;
 
     /// <summary>
     /// True for the legacy unsalted-SHA-256 form. Checked by shape rather than by a prefix because

@@ -228,9 +228,12 @@ public sealed class ClientRegistrationEndpointTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Register_StoreDefinedScope_IsAccepted()
+    public async Task Register_StoreDefinedScope_IsRefusedUnlessTheOperatorOpenedIt()
     {
-        // Scopes registered in the scope store extend the built-in allowlist.
+        // Existence in the scope store used to BE the allowlist, so an anonymous registrant could
+        // declare every API scope the deployment had ever defined simply because it existed. A scope
+        // exists because some client needs it, not because everyone may claim it — registration now
+        // reaches the four built-ins plus whatever Auth:DynamicClientRegistrationScopes names.
         await _factory.ScopeStore.CreateAsync(new Scope { Name = "orders.read" });
 
         var response = await _client.PostAsJsonAsync("/connect/register", new
@@ -240,9 +243,9 @@ public sealed class ClientRegistrationEndpointTests : IAsyncLifetime
             scope = "openid orders.read"
         });
 
-        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
         var json = await response.Content.ReadFromJsonAsync<JsonElement>();
-        Assert.Equal("openid orders.read", json.GetProperty("scope").GetString());
+        Assert.Equal("invalid_scope", json.GetProperty("error").GetString());
     }
 
     // -----------------------------------------------------------------------

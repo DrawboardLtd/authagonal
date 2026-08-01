@@ -143,6 +143,7 @@ public class ChangeLogCoverageAdditionsTests(AzuriteFixture azurite)
 
             var restore = new RestoreService(_svc, source, new RestoreOptions
             {
+                AllowUnauthenticatedManifest = true,
                 TablePrefix = $"{prefix}restored",
                 VerifyIntegrity = true,
             });

@@ -30,7 +30,11 @@ public static class ClusteringServiceCollectionExtensions
         Action<ClusteringBuilder>? configure = null,
         bool runLeaderElection = true)
     {
-        services.Configure<Services.Cluster.ClusterOptions>(configuration.GetSection("Cluster"));
+        var section = configuration.GetSection("Cluster");
+        services.Configure<Services.Cluster.ClusterOptions>(section);
+
+        var options = new Services.Cluster.ClusterOptions();
+        section.Bind(options);
 
         var node = new Services.Cluster.ClusterNode(
             Convert.ToHexString(RandomNumberGenerator.GetBytes(6)).ToLowerInvariant());
@@ -51,7 +55,19 @@ public static class ClusteringServiceCollectionExtensions
         if (runLeaderElection)
             services.AddHostedService<Services.Cluster.LeaderElectionService>();
 
-        var builder = new ClusteringBuilder(services);
+        var builder = new ClusteringBuilder(
+            services,
+            options.PollIntervalSeconds > 0 ? TimeSpan.FromSeconds(options.PollIntervalSeconds) : null);
+
+        // Cluster:Enabled=false means "run standalone", and only half of that was honoured: the
+        // leader-election loop short-circuited to permanent leader, but the backend callback still ran
+        // and REPLACED the in-process bus with the distributed one. A node an operator had deliberately
+        // taken out of the cluster therefore kept polling the shared event log and acting on other
+        // nodes' invalidations, while believing itself standalone — the two halves of the switch
+        // disagreeing is worse than either answer.
+        if (!options.Enabled)
+            return builder;
+
         configure?.Invoke(builder);
         return builder;
     }

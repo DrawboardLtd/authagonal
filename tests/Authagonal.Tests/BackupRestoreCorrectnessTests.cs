@@ -57,7 +57,7 @@ public class BackupRestoreCorrectnessTests(AzuriteFixture azurite)
 
             var restorePrefix = $"tyr{Guid.NewGuid():N}";
             var result = await new RestoreService(_svc, new FileSystemBackupSource(dir),
-                new RestoreOptions { TablePrefix = restorePrefix }).RunAsync(full.BackupId);
+                new RestoreOptions { TablePrefix = restorePrefix, AllowUnauthenticatedManifest = true }).RunAsync(full.BackupId);
             Assert.Equal(1, result.TotalRestored);
 
             var restored = (await Table($"{restorePrefix}Users")
@@ -148,7 +148,7 @@ public class BackupRestoreCorrectnessTests(AzuriteFixture azurite)
             // failure rather than a Console.Error line nobody reads, so restoring one is a decision
             // the caller states rather than a default it stumbles into.
             var result = await new RestoreService(_svc, new FileSystemBackupSource(dir),
-                new RestoreOptions { TablePrefix = restorePrefix, AllowUnverified = true }).RunAsync("20260101-000000");
+                new RestoreOptions { TablePrefix = restorePrefix, AllowUnverified = true, AllowUnauthenticatedManifest = true }).RunAsync("20260101-000000");
             Assert.Equal(1, result.TotalRestored);
 
             var restored = (await Table($"{restorePrefix}Users").GetEntityAsync<TableEntity>("p", "r")).Value;
@@ -189,7 +189,7 @@ public class BackupRestoreCorrectnessTests(AzuriteFixture azurite)
             // Restore full then incremental, oldest-first, into a fresh prefix.
             var restorePrefix = $"tbr{Guid.NewGuid():N}";
             var source = new FileSystemBackupSource(dir);
-            var restore = new RestoreService(_svc, source, new RestoreOptions { TablePrefix = restorePrefix });
+            var restore = new RestoreService(_svc, source, new RestoreOptions { TablePrefix = restorePrefix, AllowUnauthenticatedManifest = true });
             await restore.RunAsync(full.BackupId);
             var incrResult = await restore.RunAsync(incr.BackupId);
 

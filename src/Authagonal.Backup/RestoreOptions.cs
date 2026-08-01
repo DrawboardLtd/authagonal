@@ -65,6 +65,24 @@ public sealed class RestoreOptions
     public byte[]? ManifestKey { get; set; }
 
     /// <summary>
+    /// Restore without a <see cref="ManifestKey"/>, i.e. against a manifest nothing authenticates.
+    /// </summary>
+    /// <remarks>
+    /// Off by default, and the absence of a key is a hard failure rather than a warning — the same
+    /// shape as <see cref="AllowUnverified"/> and for the same reason. Authentication that fails OPEN
+    /// authenticates nothing: the file hashes sit in the manifest, the manifest sits beside the files
+    /// on the same target, and anyone who can rewrite <c>Clients.jsonl.gz</c> can rewrite the one line
+    /// that records its hash. Restoring anyway after printing to stderr — inside a host process, or a
+    /// pipeline that discards it — reports success having proved nothing, and what a tampered restore
+    /// injects is an admin client, an overwritten password hash or a planted signing key.
+    /// <para>
+    /// Turn this on deliberately for a backup written before manifest signing existed, or one whose key
+    /// is genuinely unavailable, having decided that unauthenticated data is acceptable.
+    /// </para>
+    /// </remarks>
+    public bool AllowUnauthenticatedManifest { get; set; }
+
+    /// <summary>
     /// PartitionKey prefix that scopes a <see cref="RestoreMode.Clean"/> wipe, matching
     /// <c>EnvPartitioner</c>'s <c>{env}|</c> scheme (e.g. <c>"sandbox-3|"</c>). When set, Clean deletes
     /// only rows in that env; when null, Clean empties the whole physical table.
@@ -95,12 +113,18 @@ public sealed class RestoreOptions
 
     /// <summary>
     /// Verify each data file's SHA-256 against the manifest's recorded hash before applying any of
-    /// its entities. On (default) true a hash mismatch, or a data file absent from the manifest,
-    /// aborts the restore — preventing a tampered backup from injecting entities (e.g. an admin
-    /// client, a reset password hash, or an attacker-controlled signing key → token forgery).
-    /// Backups written before integrity hashing existed (no FileHashes in the manifest) cannot be
-    /// verified and are allowed through with a warning.
+    /// its entities. On (default) true a hash mismatch, a data file absent from the manifest, or a
+    /// manifest-listed file missing from the store aborts the restore — preventing a tampered backup
+    /// from injecting entities (e.g. an admin client, a reset password hash, or an
+    /// attacker-controlled signing key → token forgery), or from removing a file wholesale.
     /// </summary>
+    /// <remarks>
+    /// Hashes alone establish that the archive matches the manifest, not that either is authentic:
+    /// they sit on the same target as the data. <see cref="ManifestKey"/> is what turns this from a
+    /// corruption check into a tampering check. Backups written before integrity hashing existed carry
+    /// no <c>FileHashes</c> and cannot be verified at all; those are refused unless
+    /// <see cref="AllowUnverified"/> says otherwise.
+    /// </remarks>
     public bool VerifyIntegrity { get; set; } = true;
 
     /// <summary>

@@ -104,6 +104,17 @@ public static class EndSessionEndpoint
                 {
                     var c = await clientStore.GetAsync(clientIdGrant, ct);
                     if (c?.FrontChannelLogoutUri is null) continue;
+                    // Re-checked at use time, not only at write time. A client row can predate the
+                    // registration guard, arrive from a migration, or be written by an embedding host's
+                    // own IClientStore — and this URI is put in an iframe src by the logout page, so an
+                    // RFC1918 or link-local one turns any logout into a browser-side probe of whatever
+                    // private network the user's browser sits on.
+                    //
+                    // Loopback is the one exception, and only here: the fetch is made by the USER's
+                    // browser, so http://localhost:PORT is that user's own machine — which is how a
+                    // local-dev relying party legitimately receives front-channel logout. The
+                    // back-channel loop below is a server-side POST and gets no such exception.
+                    if (!Authagonal.Core.Services.OutboundUrl.IsSafe(c.FrontChannelLogoutUri, allowLoopback: true)) continue;
                     var uri = c.FrontChannelLogoutUri;
                     if (c.FrontChannelLogoutSessionRequired)
                     {
@@ -147,6 +158,9 @@ public static class EndSessionEndpoint
                     // pass through that check, so a stored http://169.254.169.254/... would be POSTed by
                     // the server from an anonymous, unauthenticated logout request. Validating where the
                     // POST is built covers every way the URI got into the store.
+                    //
+                    // No allowLoopback here, unlike the front-channel loop: this request is made BY the
+                    // server, so loopback is the server's own network namespace rather than the user's.
                     if (!Authagonal.Core.Services.OutboundUrl.IsSafe(c.BackChannelLogoutUri))
                     {
                         logger.LogWarning(

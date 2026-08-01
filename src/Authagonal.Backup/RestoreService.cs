@@ -43,12 +43,20 @@ public sealed class RestoreService(TableServiceClient serviceClient, IBackupSour
                     "backup. Restore without ManifestKey only if you accept unauthenticated data.");
             }
         }
-        else if (options.VerifyIntegrity)
+        else if (options.VerifyIntegrity && !options.AllowUnauthenticatedManifest)
         {
-            Console.Error.WriteLine(
-                "WARNING: no ManifestKey supplied, so the manifest is unauthenticated. File hashes " +
-                "detect corruption but not tampering — anyone who can rewrite a backup file can rewrite " +
-                "its recorded hash.");
+            // Refused, not warned — the same correction the AllowUnverified branch above already got.
+            // Authentication that fails open authenticates nothing: without a key the hashes only prove
+            // the archive matches a manifest that sits beside it on the same target, so an attacker who
+            // rewrites Clients.jsonl.gz rewrites its recorded hash in the same breath and the restore
+            // reports success. A Console.Error line inside a host process, or a pipeline that discards
+            // stderr, is not a decision anybody made.
+            throw new InvalidOperationException(
+                "No ManifestKey supplied, so the manifest is unauthenticated: its file hashes detect " +
+                "corruption but not tampering, because anyone who can rewrite a backup file can rewrite " +
+                "the hash recorded beside it. Supply the ManifestKey this backup was written with, or " +
+                "set AllowUnauthenticatedManifest if the backup predates manifest signing and " +
+                "unauthenticated data is acceptable.");
         }
 
         // Envelope: unwrap the content key, and refuse a downgrade.
@@ -108,6 +116,22 @@ public sealed class RestoreService(TableServiceClient serviceClient, IBackupSour
                     "or pass AllowCleanAllEnvs if these tables genuinely hold a single env.");
         }
 
+        // A file the manifest lists but the store does not hold is tampering too, and it was invisible:
+        // the loops below iterate what the SOURCE offers, so deleting Clients.jsonl.gz outright — or the
+        // tombstone file carrying a set of GDPR erasures — produced a restore that verified every file
+        // it found and reported success. Detecting removal needs the manifest to be the authority on
+        // what should be present.
+        if (canVerify)
+        {
+            var present = new HashSet<string>(files, StringComparer.OrdinalIgnoreCase);
+            var missing = manifest!.FileHashes.Keys.Where(f => !present.Contains(f)).ToList();
+            if (missing.Count > 0)
+                throw new InvalidOperationException(
+                    $"Backup integrity check failed: the manifest lists {missing.Count} file(s) that are not " +
+                    $"present in the backup ({string.Join(", ", missing.Take(5))}). The archive is incomplete " +
+                    "or has been tampered with.");
+        }
+
         foreach (var fileName in files)
         {
             if (fileName.StartsWith("_")) continue; // Skip metadata files (manifest, tombstones)
@@ -118,19 +142,17 @@ public sealed class RestoreService(TableServiceClient serviceClient, IBackupSour
             if (options.Tables is not null && !options.Tables.Contains(tableName, StringComparer.OrdinalIgnoreCase))
                 continue;
 
-            // Verify the entire file against the manifest BEFORE applying any of its entities, so a
-            // tampered backup can't inject an admin client, reset a password hash, or plant a
-            // signing key. A file absent from the manifest is treated as tampering.
-            if (canVerify)
-            {
-                if (!manifest!.FileHashes.TryGetValue(fileName, out var expectedHash))
-                    throw new InvalidOperationException(
-                        $"Backup integrity check failed: '{fileName}' is not listed in the manifest.");
-                var actualHash = await ComputeFileHashAsync(backupId, fileName, ct);
-                if (actualHash is null || !string.Equals(actualHash, expectedHash, StringComparison.OrdinalIgnoreCase))
-                    throw new InvalidOperationException(
-                        $"Backup integrity check failed: '{fileName}' hash does not match the manifest.");
-            }
+            // Verify the entire file against the manifest BEFORE applying any of its entities — and
+            // before the Clean wipe below — so a tampered backup can't inject an admin client, reset a
+            // password hash, or plant a signing key. A file absent from the manifest is treated as
+            // tampering.
+            string? expectedHash = null;
+            if (canVerify && !manifest!.FileHashes.TryGetValue(fileName, out expectedHash))
+                throw new InvalidOperationException(
+                    $"Backup integrity check failed: '{fileName}' is not listed in the manifest.");
+
+            var stream = await OpenVerifiedAsync(backupId, fileName, expectedHash, ct);
+            if (stream is null) continue;
 
             var physicalName = prefix + tableName;
             var tableClient = serviceClient.GetTableClient(physicalName);
@@ -143,9 +165,6 @@ public sealed class RestoreService(TableServiceClient serviceClient, IBackupSour
             {
                 await CleanTableAsync(tableClient, options.CleanEnvPrefix, ct);
             }
-
-            var stream = await source.OpenReadAsync(backupId, fileName, ct);
-            if (stream is null) continue;
 
             long restored = 0;
             long errors = 0;
@@ -225,31 +244,21 @@ public sealed class RestoreService(TableServiceClient serviceClient, IBackupSour
         if (fileName is null) return 0; // full backups (and empty incrementals) carry no tombstone file
 
         // A tampered tombstone file deletes attacker-chosen rows (e.g. a revocation record), so verify
-        // it like a data file when a hash is recorded. Backups written before the tombstone file was
-        // hashed can't be verified — warn loudly rather than making them unrestorable.
-        if (canVerify)
+        // it like a data file when a hash is recorded.
+        string? expectedHash = null;
+        if (canVerify && !manifest!.FileHashes.TryGetValue(fileName, out expectedHash))
         {
-            if (manifest!.FileHashes.TryGetValue(fileName, out var expectedHash))
-            {
-                var actualHash = await ComputeFileHashAsync(backupId, fileName, ct);
-                if (actualHash is null || !string.Equals(actualHash, expectedHash, StringComparison.OrdinalIgnoreCase))
-                    throw new InvalidOperationException(
-                        $"Backup integrity check failed: '{fileName}' hash does not match the manifest.");
-            }
-            else
-            {
-                // Fatal, matching the data-file rule. A tombstone file absent from the manifest is
-                // exactly as much evidence of tampering as an unlisted data file — and it is the more
-                // dangerous of the two, because its content is a list of rows to DELETE. Warning and
-                // proceeding meant an attacker who could write to the backup target could have a
-                // restore remove records of their choosing.
-                throw new InvalidOperationException(
-                    $"Backup integrity check failed: '{fileName}' has no hash recorded in the manifest. " +
-                    "Pass SkipIntegrityCheck to restore anyway, accepting unverified deletes.");
-            }
+            // Fatal, matching the data-file rule. A tombstone file absent from the manifest is
+            // exactly as much evidence of tampering as an unlisted data file — and it is the more
+            // dangerous of the two, because its content is a list of rows to DELETE. Warning and
+            // proceeding meant an attacker who could write to the backup target could have a
+            // restore remove records of their choosing.
+            throw new InvalidOperationException(
+                $"Backup integrity check failed: '{fileName}' has no hash recorded in the manifest. " +
+                "Pass SkipIntegrityCheck to restore anyway, accepting unverified deletes.");
         }
 
-        var stream = await source.OpenReadAsync(backupId, fileName, ct);
+        var stream = await OpenVerifiedAsync(backupId, fileName, expectedHash, ct);
         if (stream is null) return 0;
 
         long applied = 0;
@@ -292,14 +301,68 @@ public sealed class RestoreService(TableServiceClient serviceClient, IBackupSour
         return applied;
     }
 
-    private async Task<string?> ComputeFileHashAsync(string backupId, string fileName, CancellationToken ct)
+    /// <summary>
+    /// Opens a backup file ONCE and hands back a stream over exactly the bytes that were hashed.
+    /// </summary>
+    /// <remarks>
+    /// Verification used to hash the file and then reopen it to read the entities, so the bytes that
+    /// were checked and the bytes that were applied came from two separate reads of a target the
+    /// attacker is assumed to be able to write — which is the same attacker the hashes exist to stop.
+    /// Swapping the file between the two reads defeated the check entirely.
+    /// <para>
+    /// The verified copy is staged to a temp file rather than buffered in memory: a table file is
+    /// unbounded, and a restore that OOMs on a large deployment is a restore that does not happen. The
+    /// staging file is created owner-only and delete-on-close, because for the duration it holds the
+    /// same credential material the archive does.
+    /// </para>
+    /// <para>
+    /// With no <paramref name="expectedHash"/> there is nothing to check against, so the source stream
+    /// is returned directly and no copy is made.
+    /// </para>
+    /// </remarks>
+    private async Task<Stream?> OpenVerifiedAsync(
+        string backupId, string fileName, string? expectedHash, CancellationToken ct)
     {
         var stream = await source.OpenReadAsync(backupId, fileName, ct);
-        if (stream is null) return null;
-        await using (stream)
+        if (stream is null || expectedHash is null) return stream;
+
+        var staged = new FileStream(
+            Path.Combine(Path.GetTempPath(), $"authagonal-restore-{Guid.NewGuid():N}.tmp"),
+            new FileStreamOptions
+            {
+                Mode = FileMode.CreateNew,
+                Access = FileAccess.ReadWrite,
+                Share = FileShare.None,
+                Options = FileOptions.DeleteOnClose | FileOptions.Asynchronous,
+                UnixCreateMode = UnixFileMode.UserRead | UnixFileMode.UserWrite,
+            });
+
+        try
         {
-            var hash = await SHA256.HashDataAsync(stream, ct);
-            return Convert.ToHexStringLower(hash);
+            using var hasher = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+            var buffer = new byte[81920];
+            await using (stream)
+            {
+                int read;
+                while ((read = await stream.ReadAsync(buffer, ct)) > 0)
+                {
+                    hasher.AppendData(buffer, 0, read);
+                    await staged.WriteAsync(buffer.AsMemory(0, read), ct);
+                }
+            }
+
+            var actualHash = Convert.ToHexStringLower(hasher.GetHashAndReset());
+            if (!string.Equals(actualHash, expectedHash, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException(
+                    $"Backup integrity check failed: '{fileName}' hash does not match the manifest.");
+
+            staged.Position = 0;
+            return staged;
+        }
+        catch
+        {
+            await staged.DisposeAsync();
+            throw;
         }
     }
 

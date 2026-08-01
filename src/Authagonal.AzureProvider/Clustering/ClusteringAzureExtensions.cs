@@ -52,7 +52,8 @@ public static class ClusteringAzureExtensions
     private static void AddTableBus(
         ClusteringBuilder builder, TableServiceClient tableServiceClient, string eventTable, TimeSpan? pollInterval)
     {
-        var interval = pollInterval ?? TimeSpan.FromSeconds(3);
+        // Caller argument wins, then Cluster:PollIntervalSeconds, then the built-in default.
+        var interval = pollInterval ?? builder.PollInterval ?? TimeSpan.FromSeconds(3);
 
         builder.Services.RemoveAll<TableClusterEventBus>();
         builder.Services.AddSingleton(sp => new TableClusterEventBus(

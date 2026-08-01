@@ -68,10 +68,12 @@ public static class BackChannelLogoutEndpoint
 
             // Revalidated at SEND time, not only where the URI is written. Dynamic registration checks
             // it, but the store holds URIs that never went through that path — seeded clients, the Duende
-            // migration, admin writes, and anything registered before the DCR check existed. This is a
-            // server-initiated POST to a caller-chosen target whose response never reaches the caller, so
-            // an internal address here is a blind SSRF primitive; checking it at the sink is what makes
-            // that true of every URI in the store rather than of the ones one writer happened to police.
+            // migration, a restore, admin writes, an embedding host's own IClientStore, and anything
+            // registered before the DCR check existed. This is a server-initiated POST to a caller-chosen
+            // target whose response never reaches the caller, so an internal address here is a blind SSRF
+            // primitive; checking it at the sink is what makes that true of every URI in the store rather
+            // than of the ones one writer happened to police. No loopback exception: the request is made
+            // by the server, so loopback is the server's own network namespace.
             if (!OutboundUrl.IsSafe(client.BackChannelLogoutUri))
             {
                 failed++;

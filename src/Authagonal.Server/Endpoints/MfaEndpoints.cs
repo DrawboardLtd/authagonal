@@ -166,6 +166,30 @@ public static class MfaEndpoints
                 // F35: the stored code hash is encrypted at rest — resolve it before comparing.
                 // ResolveAsync passes legacy (pre-encryption) plaintext hashes through unchanged, so old
                 // recovery codes keep working without a backfill.
+                // Retire the unsalted-SHA-256 form the moment this path touches it, for the WHOLE set —
+                // not just the code being redeemed. Those digests are one SHA-256 of a 40-bit code with
+                // no salt, so a single GPU pass over a store read recovers every enrolled user's live
+                // recovery codes at once, and nothing was ever going to remove them because a user who
+                // does not exhaust their codes never regenerates. The KDF is applied to the digest, so
+                // the user's printed codes keep working; only the offline economics change. Best-effort:
+                // a failed rewrite must not stop the person in front of us from getting in.
+                foreach (var c in recoveryCreds)
+                {
+                    var current = await secretProvider.ResolveAsync(c.SecretProtected!, ct);
+                    if (recoveryCodeService.UpgradeLegacyHash(current) is not { } upgraded) continue;
+
+                    try
+                    {
+                        c.SecretProtected = await secretProvider.ProtectAsync(
+                            $"mfa-recovery-{user.Id}-{c.Id}", upgraded, ct);
+                        await mfaStore.UpdateCredentialAsync(c, ct);
+                    }
+                    catch (Exception ex)
+                    {
+                        logger.LogWarning(ex, "Could not upgrade the stored hash of recovery credential {CredentialId}", c.Id);
+                    }
+                }
+
                 MfaCredential? matchedCred = null;
                 foreach (var c in recoveryCreds)
                 {

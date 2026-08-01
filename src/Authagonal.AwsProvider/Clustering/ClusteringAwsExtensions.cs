@@ -52,7 +52,8 @@ public static class ClusteringAwsExtensions
     private static void AddDynamoBus(ClusteringBuilder builder, IAmazonDynamoDB db, string eventTable, TimeSpan? pollInterval)
     {
         DynamoTableProvisioner.EnsureTableAsync(db, eventTable).GetAwaiter().GetResult();
-        var interval = pollInterval ?? TimeSpan.FromSeconds(3);
+        // Caller argument wins, then Cluster:PollIntervalSeconds, then the built-in default.
+        var interval = pollInterval ?? builder.PollInterval ?? TimeSpan.FromSeconds(3);
 
         builder.Services.RemoveAll<DynamoClusterEventBus>();
         builder.Services.AddSingleton(sp => new DynamoClusterEventBus(

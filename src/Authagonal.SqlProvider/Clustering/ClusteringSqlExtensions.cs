@@ -58,7 +58,8 @@ public static class ClusteringSqlExtensions
     {
         source.EnsureTableAsync(eventTable).GetAwaiter().GetResult();
         var events = new SqlTable(source, eventTable);
-        var interval = pollInterval ?? TimeSpan.FromSeconds(3);
+        // Caller argument wins, then Cluster:PollIntervalSeconds, then the built-in default.
+        var interval = pollInterval ?? builder.PollInterval ?? TimeSpan.FromSeconds(3);
 
         builder.Services.RemoveAll<SqlClusterEventBus>();
         builder.Services.AddSingleton(sp => new SqlClusterEventBus(

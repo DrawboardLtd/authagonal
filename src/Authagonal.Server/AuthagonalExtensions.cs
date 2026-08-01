@@ -98,10 +98,31 @@ public static class AuthagonalExtensions
                  !storageConnectionString.Contains("devstoreaccount1", StringComparison.OrdinalIgnoreCase))
         {
             var blobServiceClient = new BlobServiceClient(storageConnectionString);
-            var container = blobServiceClient.GetBlobContainerClient("dataprotection");
+            var container = blobServiceClient.GetBlobContainerClient(DataProtectionBlobUri.ContainerName);
             container.CreateIfNotExists();
-            var blobClient = container.GetBlobClient("keys.xml");
+            var blobClient = container.GetBlobClient(DataProtectionBlobUri.BlobName);
             dataProtection.PersistKeysToAzureBlobStorage(blobClient);
+        }
+        else if (DataProtectionBlobUri.BlobServiceUriFor(tableServiceUri) is { } derivedBlobService)
+        {
+            // The managed-identity path — the one production is told to use — attached NO repository at
+            // all, because persistence keyed off DataProtection:BlobUri or a connection string and this
+            // configuration supplies neither. The result was the per-machine file store: a key ring
+            // destroyed on every restart and never shared between pods, so restarts signed everyone out
+            // and two replicas could not read each other's cookies. The blob endpoint is the table
+            // endpoint's sibling on the same account, so the URI follows from what is already configured
+            // rather than needing a second setting nobody knew to set.
+            var derivedContainer = new BlobServiceClient(derivedBlobService, new Azure.Identity.DefaultAzureCredential())
+                .GetBlobContainerClient(DataProtectionBlobUri.ContainerName);
+
+            // Best-effort, exactly as on the connection-string branch. An identity granted Blob Data
+            // Contributor but not Blob Container Contributor cannot create it and does not need to once
+            // it exists; a container that genuinely is not there surfaces as a hard failure on the first
+            // key write rather than as silence, which is the right way round for a key ring.
+            try { derivedContainer.CreateIfNotExists(); } catch (Azure.RequestFailedException) { }
+
+            dataProtection.PersistKeysToAzureBlobStorage(
+                derivedContainer.GetBlobClient(DataProtectionBlobUri.BlobName));
         }
 
         // Encrypt the key ring at rest when the operator supplies a key. Without this the ring is

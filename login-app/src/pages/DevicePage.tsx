@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { useSearchParams, useNavigate } from 'react-router';
+import { useSearchParams, useNavigate, useHref } from 'react-router';
 import { getSession } from '../api';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -37,6 +37,7 @@ function formatUserCode(raw: string): string {
 
 export default function DevicePage() {
   const navigate = useNavigate();
+  const devicePath = useHref('/device');
   const [searchParams] = useSearchParams();
   const [userCode, setUserCode] = useState(formatUserCode(searchParams.get('user_code') || ''));
   const [loading, setLoading] = useState(false);
@@ -137,9 +138,13 @@ export default function DevicePage() {
 
   // Not authenticated — redirect to login with returnUrl back to this page
   if (!authenticated) {
+    // returnUrl is consumed as an absolute browser LOCATION (window.location.href), not as a router
+    // navigation, so it has to carry the router's basename. A bare "/device" resolves outside
+    // basename="/login", where no route matches and the user_code is dropped. useHref applies the
+    // basename, so this stays correct if the app is ever mounted somewhere else.
     const returnUrl = userCode
-      ? `/device?user_code=${encodeURIComponent(userCode)}`
-      : '/device';
+      ? `${devicePath}?user_code=${encodeURIComponent(userCode)}`
+      : devicePath;
 
     return (
       <div className="text-center">
