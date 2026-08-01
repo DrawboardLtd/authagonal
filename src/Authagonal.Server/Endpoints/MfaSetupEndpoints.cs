@@ -275,7 +275,12 @@ public static class MfaSetupEndpoints
             return JsonResults.Error("invalid_code");
         }
 
-        // Confirm: name it active AND burn the accepted step so this code cannot be replayed at /verify.
+        // Burn the accepted step FIRST, and conditionally, so this code cannot be replayed at /verify —
+        // and so two confirmations racing on the same code cannot both mint a session cookie below.
+        if (!await mfaStore.TryClaimTotpStepAsync(userId, cred.Id, matchedStep.Value, ct))
+            return JsonResults.Error("invalid_code");
+
+        // Confirm: name it active. Carries the claimed step so this write cannot undo the claim.
         cred.Name = "Authenticator app";
         cred.LastTotpStep = matchedStep;
         cred.LastUsedAt = DateTimeOffset.UtcNow;

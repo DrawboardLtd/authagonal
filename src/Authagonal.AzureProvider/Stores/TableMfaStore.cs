@@ -54,6 +54,53 @@ public sealed class TableMfaStore(
         await credentialsTable.UpsertEntityAsync(entity, TableUpdateMode.Replace, ct);
     }
 
+    public Task<bool> TryClaimTotpStepAsync(string userId, string credentialId, long step, CancellationToken ct = default)
+        => ClaimAsync(userId, credentialId, e => (e.LastTotpStep ?? long.MinValue) < step, e => e.LastTotpStep = step, ct);
+
+    public Task<bool> TryConsumeRecoveryCodeAsync(string userId, string credentialId, CancellationToken ct = default)
+        => ClaimAsync(userId, credentialId, e => !e.IsConsumed, e => e.IsConsumed = true, ct);
+
+    /// <summary>
+    /// Re-reads the entity, re-tests the guard against what is actually stored, and writes back under
+    /// the ETag that read returned — so the transition happens for exactly one caller.
+    /// </summary>
+    /// <remarks>
+    /// A 412 is reported as a lost claim rather than retried. Contention on a single MFA credential row
+    /// means two requests are verifying the same credential at the same instant, which is the case this
+    /// exists to refuse; failing closed is the right answer for a second factor either way.
+    /// </remarks>
+    private async Task<bool> ClaimAsync(
+        string userId, string credentialId,
+        Func<MfaCredentialEntity, bool> guard, Action<MfaCredentialEntity> apply, CancellationToken ct)
+    {
+        MfaCredentialEntity entity;
+        try
+        {
+            var response = await credentialsTable.GetEntityAsync<MfaCredentialEntity>(
+                partitioner.PK(userId), credentialId, cancellationToken: ct);
+            entity = response.Value;
+        }
+        catch (Azure.RequestFailedException ex) when (ex.Status == 404)
+        {
+            return false;
+        }
+
+        if (!guard(entity)) return false;
+
+        apply(entity);
+        entity.LastUsedAt = DateTimeOffset.UtcNow;
+
+        try
+        {
+            await credentialsTable.UpdateEntityAsync(entity, entity.ETag, TableUpdateMode.Replace, ct);
+            return true;
+        }
+        catch (Azure.RequestFailedException ex) when (ex.Status == 412 || ex.Status == 404)
+        {
+            return false;
+        }
+    }
+
     public async Task DeleteCredentialAsync(string userId, string credentialId, CancellationToken ct = default)
     {
         var pk = partitioner.PK(userId);

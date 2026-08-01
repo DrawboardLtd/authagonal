@@ -125,6 +125,51 @@ public sealed class DynamoTable(IAmazonDynamoDB db, string name)
         }
     }
 
+    /// <summary>
+    /// Version CAS for tables whose items do not all carry <c>_v</c>: pass null for
+    /// <paramref name="expectedVersion"/> to require that the attribute is still ABSENT. Unlike
+    /// <see cref="PutIfVersionAsync"/> this never inserts, so a row deleted between the read and the
+    /// write is not resurrected.
+    /// </summary>
+    /// <remarks>
+    /// Needed for the single-use MFA transitions (spending a TOTP time step, consuming a recovery
+    /// code), where the guard lives inside the credential document and the row is versioned only from
+    /// the first claim onwards. Treating a missing <c>_v</c> as "no claim yet" is what keeps an
+    /// existing deployment's credentials usable instead of failing every conditional write forever.
+    /// </remarks>
+    public async Task<bool> UpdateIfVersionAsync(
+        Dictionary<string, AttributeValue> item, long? expectedVersion, CancellationToken ct = default)
+    {
+        var values = new Dictionary<string, AttributeValue>();
+        var condition = "attribute_exists(pk) AND ";
+        if (expectedVersion is { } v)
+        {
+            condition += "#v = :expected";
+            values[":expected"] = new AttributeValue { N = v.ToString(System.Globalization.CultureInfo.InvariantCulture) };
+        }
+        else
+        {
+            condition += "attribute_not_exists(#v)";
+        }
+
+        try
+        {
+            await db.PutItemAsync(new PutItemRequest
+            {
+                TableName = name,
+                Item = item,
+                ConditionExpression = condition,
+                ExpressionAttributeNames = new Dictionary<string, string> { ["#v"] = "_v" },
+                ExpressionAttributeValues = values.Count > 0 ? values : null,
+            }, ct).ConfigureAwait(false);
+            return true;
+        }
+        catch (ConditionalCheckFailedException)
+        {
+            return false;
+        }
+    }
+
     // ── queries ──
 
     /// <summary>

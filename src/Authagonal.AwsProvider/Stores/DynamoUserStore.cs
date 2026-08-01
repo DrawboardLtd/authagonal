@@ -106,13 +106,19 @@ public sealed class DynamoUserStore(
         return string.IsNullOrEmpty(local) ? null : local;
     }
 
+    /// <remarks>
+    /// Sliced on rune boundaries, not UTF-16 code units — see <see cref="TextPrefix"/>. The three
+    /// backends' prefix schemes have to agree key-for-key, so this has to slice where the SQL and
+    /// Azure stores slice.
+    /// </remarks>
     private static IReadOnlyList<string> NamePrefixesOf(string normalizedName)
     {
-        if (normalizedName.Length < NamePrefixMin) return PadToFixedCount([normalizedName], normalizedName);
-        var hi = Math.Min(normalizedName.Length, NamePrefixMax);
+        var boundaries = TextPrefix.Boundaries(normalizedName);
+        if (boundaries.Count < NamePrefixMin) return PadToFixedCount([normalizedName], normalizedName);
+        var hi = Math.Min(boundaries.Count, NamePrefixMax);
         var prefixes = new List<string>(NamePrefixCount);
-        for (var len = NamePrefixMin; len <= hi; len++)
-            prefixes.Add(normalizedName[..len]);
+        for (var runes = NamePrefixMin; runes <= hi; runes++)
+            prefixes.Add(normalizedName[..boundaries[runes - 1]]);
         return PadToFixedCount(prefixes, normalizedName);
     }
 
@@ -761,10 +767,12 @@ public sealed class DynamoUserStore(
             var batch = new TokenBatch(_tokenizer);
             Func<string>? localToken = null, nameToken = null;
             var local = LocalPartOf(prefix) ?? prefix;
-            if (userEmailLocalPrefixes is not null && local.Length >= NamePrefixMin)
-                localToken = batch.Add(local.Length > NamePrefixMax ? local[..NamePrefixMax] : local);
-            if ((userFirstNames ?? userLastNames) is not null && prefix.Length >= NamePrefixMin)
-                nameToken = batch.Add(prefix.Length > NamePrefixMax ? prefix[..NamePrefixMax] : prefix);
+            // Counted and cut in runes, exactly as NamePrefixesOf writes them (see TextPrefix); cutting
+            // at code unit 16 splits a surrogate pair and looks up a token the write side never made.
+            if (userEmailLocalPrefixes is not null && TextPrefix.RuneCount(local) >= NamePrefixMin)
+                localToken = batch.Add(TextPrefix.Take(local, NamePrefixMax));
+            if ((userFirstNames ?? userLastNames) is not null && TextPrefix.RuneCount(prefix) >= NamePrefixMin)
+                nameToken = batch.Add(TextPrefix.Take(prefix, NamePrefixMax));
             await batch.RunAsync(ct).ConfigureAwait(false);
             localPrefixPk = localToken is null ? null : partitioner.PK(localToken());
             namePrefixPk = nameToken is null ? null : partitioner.PK(nameToken());
@@ -835,7 +843,7 @@ public sealed class DynamoUserStore(
     // plus the legacy range scan for migration-window rows. Off: legacy scheme only.
     private async Task<List<string>> SearchNameIndexAsync(DynamoTable? table, string? tokenPk, string prefix, int maxResults, CancellationToken ct)
     {
-        if (table is null || prefix.Length < NamePrefixMin) return [];
+        if (table is null || TextPrefix.RuneCount(prefix) < NamePrefixMin) return [];
 
         var ids = new List<string>();
         var seen = new HashSet<string>(StringComparer.Ordinal);
@@ -1167,8 +1175,10 @@ public sealed class DynamoUserStore(
         await TryDeleteRowAsync(table, LegacyNamePk(normalizedName), $"{normalizedName}|{userId}", tombstoneTable, ct).ConfigureAwait(false);
     }
 
+    // Two runes, not two code units: a name whose second character is non-BMP ("A😀…") sliced at two
+    // code units yields a bare high surrogate as the partition key.
     private string LegacyNamePk(string normalizedName)
-        => partitioner.PK(normalizedName.Length >= NamePrefixMin ? normalizedName[..NamePrefixMin] : normalizedName);
+        => partitioner.PK(TextPrefix.Take(normalizedName, NamePrefixMin));
 
     // Tombstone-first (F24e), then an unconditional delete (succeeds even if the row is already gone).
     private async Task TryDeleteRowAsync(DynamoTable table, string pk, string sk, string tombstoneTable, CancellationToken ct)

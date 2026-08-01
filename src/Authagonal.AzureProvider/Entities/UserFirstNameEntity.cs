@@ -26,13 +26,16 @@ public sealed class UserFirstNameEntity : ITableEntity
 
     /// <summary>
     /// PartitionKey for a normalized name. Returns the first
-    /// <see cref="PartitionKeyLength"/> chars, or the whole name if shorter.
+    /// <see cref="PartitionKeyLength"/> Unicode scalar values, or the whole name if shorter.
     /// Caller is responsible for normalization (upper-cased trim).
     /// </summary>
+    /// <remarks>
+    /// Scalars rather than UTF-16 code units: a name whose second character is non-BMP ("A😀…") cut at
+    /// two code units yields a bare high surrogate, which Table Storage rejects as a PartitionKey — so
+    /// the index write for that user failed rather than the search merely missing.
+    /// </remarks>
     public static string GetPartitionKey(string normalizedName)
-        => normalizedName.Length >= PartitionKeyLength
-            ? normalizedName[..PartitionKeyLength]
-            : normalizedName;
+        => Authagonal.Core.Services.TextPrefix.Take(normalizedName, PartitionKeyLength);
 
     public static string MakeRowKey(string normalizedFirstName, string userId)
         => $"{normalizedFirstName}|{userId}";

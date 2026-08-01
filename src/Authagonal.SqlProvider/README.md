@@ -106,6 +106,11 @@ enough to mint access tokens and id_tokens for any subject, scope and client. Re
 what breaks that equivalence. Keys written before you did keep loading, and re-protect themselves at the
 next rotation.
 
+Passthrough stays the default — the quick start has no key management to hang a cipher off — but it is
+no longer silent: outside `Development`, startup logs a `Warning` naming the table and the remedy when
+no `IFieldCipher` is registered. The key ring below has always announced itself; the more valuable
+secret beside it did not.
+
 ## DataProtection keys
 
 `AddAuthagonalPostgres` / `AddAuthagonalSqlite` persist the ASP.NET DataProtection key ring to the same
