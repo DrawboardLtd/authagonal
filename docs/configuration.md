@@ -41,6 +41,7 @@ Storage can be configured one of two ways, supply **either** `Storage:Connection
 | `Auth:MaxPasswordResetsPerEmail` | `3` | Maximum password-reset emails per target address within the window (keyed on the email, not the caller IP, so one address can't be email-bombed) |
 | `Auth:MaxPasswordResetsPerIp` | `15` | Maximum forgot-password requests per source IP within the window. The per-email cap bounds mail to one victim; this bounds a caller working through an address list, which is otherwise unbounded anonymous mail from your verified sending domain plus a store read per address. |
 | `Auth:PasswordResetWindowMinutes` | `60` | Password-reset rate limiting window |
+| `Auth:DurableRateLimiting` | `false` | Keep rate-limit counters in the configured store so every replica shares one budget, instead of each node keeping its own. Costs a store round trip per check; a single-node deployment gains nothing. Requires a provider that supplies `IRateLimitCounterStore` (Azure, SQL, AWS) — the host refuses to start otherwise rather than silently reverting to per-node limits. See [Cluster-wide limits](#cluster-wide-limits-authdurableratelimiting). |
 | `Auth:AutoConfirmEmailDomains` | *(empty)* | Email domains (string array) whose self-service registrations are auto-confirmed, they skip the verification email. Empty (the default) means every registration must verify. Intended only for dev/test; never list a domain that can receive real mail. |
 | `Auth:EmailVerificationExpiryHours` | `24` | Email verification link lifetime |
 | `Auth:PasswordResetExpiryMinutes` | `60` | Password reset link lifetime |
@@ -511,7 +512,40 @@ Built-in rate limits protect the abuse-prone endpoints:
 | `POST /connect/register` (when enabled) | 10 | 1 hour | Client IP |
 | SCIM endpoints | 200 | 1 minute | SCIM client |
 
-Limits are enforced **in-process per node** (behind the `IRateLimiter` seam), so with N instances the effective ceiling is N× the configured value. Treat these as a backstop and enforce the authoritative global limit at the edge (WAF / ingress / CDN). See [Scaling](scaling#rate-limiting).
+Limits are enforced **in-process per node** by default (behind the `IRateLimiter` seam), so with N instances the effective ceiling is N× the configured value. Treat these as a backstop and enforce the authoritative global limit at the edge (WAF / ingress / CDN). See [Scaling](scaling#rate-limiting).
+
+### Cluster-wide limits (`Auth:DurableRateLimiting`)
+
+Set `Auth:DurableRateLimiting` to `true` to move the counters into the store the deployment already
+runs, so every replica shares one budget and the ceiling stops multiplying by instance count.
+
+| | in-process (default) | durable |
+|---|---|---|
+| Ceiling on N replicas | N× the configured value | the configured value |
+| Cost per check | none | one store round trip |
+| Survives a pod restart | no | yes |
+| Backends | any | Azure Table, SQL, DynamoDB |
+
+Worth turning on when a budget guards something guessable — the device-flow `user_code` above all, where
+the attempt limit is the only thing between an attacker and a code that grants a live session, and a
+budget that scales with replica count is the wrong shape. Less useful for the volume limits, where the
+edge is the authoritative bound anyway.
+
+Details that matter in production:
+
+- **It is not free.** Every rate-limit check becomes a store round trip, including on the login, token
+  and SCIM paths. A single-node deployment gains nothing (there, per-node *is* cluster-wide) and should
+  leave it off.
+- **Fixed windows, so bursts can straddle a boundary.** A budget of N is "N per window, and up to 2N
+  across a boundary" — the shipped budgets have that headroom. This is what lets the counter be a single
+  atomic increment on every backend, which is the property the correctness rests on.
+- **It fails open.** If the store is unreachable the request is allowed and an error is logged: the
+  limiter guards the login path and must not become a way to take it down. Keep the edge rule in place.
+- **The host will not start** if you set this without a provider that supplies `IRateLimitCounterStore`
+  — it refuses rather than quietly falling back to the per-node limiting you just turned off.
+- **Counter rows are collected automatically**: DynamoDB by native TTL, SQL by `SqlExpiryReaper`, Azure
+  Table by a leader-only sweep (Table Storage has neither TTL nor server-side arithmetic, so it is also
+  the backend where an increment costs a read plus a conditional write).
 
 ## CORS
 

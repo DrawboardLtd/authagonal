@@ -50,6 +50,7 @@ public static class ServiceCollectionExtensions
     private const string SsoDomainsTable = "SsoDomains";
     private const string ScimTokensTable = "ScimTokens";
     private const string ScimGroupsTable = "ScimGroups";
+    private const string RateLimitCountersTable = "RateLimitCounters";
     private const string ScimGroupExternalIdsTable = "ScimGroupExternalIds";
     private const string ScimGroupRoleMappingsTable = "ScimGroupRoleMappings";
     private const string MfaCredentialsTable = "MfaCredentials";
@@ -88,7 +89,7 @@ public static class ServiceCollectionExtensions
             OidcProvidersTable, SamlProvidersTable, SsoDomainsTable, UpstreamRefreshTokensTable,
             ScimTokensTable, ScimGroupsTable, ScimGroupExternalIdsTable, ScimGroupRoleMappingsTable,
             MfaCredentialsTable, MfaChallengesTable, MfaWebAuthnIndexTable,
-            SamlReplayCacheTable, OidcStateStoreTable,
+            SamlReplayCacheTable, OidcStateStoreTable, RateLimitCountersTable,
         };
         if (nameIndexesEnabled) names.AddRange([UserFirstNamesTable, UserLastNamesTable]);
 
@@ -152,12 +153,22 @@ public static class ServiceCollectionExtensions
         services.TryAddSingleton<ISamlReplayCache>(new SqlSamlReplayCache(T(SamlReplayCacheTable), SamlReplayTtl));
         services.TryAddSingleton<IOidcStateStore>(new SqlOidcStateStore(T(OidcStateStoreTable), OidcStateTtl));
 
+        // Counters for the cluster-wide rate limiter. The store is registered unconditionally; whether
+        // anything uses it is decided in AddAuthagonal, where durable limiting is opt-in.
+        services.TryAddSingleton<IRateLimitCounterStore>(
+            new SqlRateLimitCounterStore(T(RateLimitCountersTable), live));
+
         // Neither backend expires rows on its own, so the TTL-bearing tables need an explicit sweeper
         // (see SqlExpiryReaper for why grants are deliberately not in this list).
         SqlTable[] expiring =
         [
             T(SamlReplayCacheTable), T(OidcStateStoreTable), T(MfaChallengesTable),
             T(UpstreamRefreshTokensTable), T(RevokedTokensTable),
+            // Rate-limit buckets are never reused once their window passes, so every distinct key leaves
+            // a dead row behind — and keys carry caller-supplied values, so on an anonymous endpoint that
+            // is one row per attempt. Sweeping them is what keeps durable limiting from being a way to
+            // fill the database.
+            T(RateLimitCountersTable),
         ];
         services.AddSingleton<IHostedService>(sp => new SqlExpiryReaper(
             expiring, ExpirySweepInterval, sp.GetRequiredService<ILogger<SqlExpiryReaper>>()));

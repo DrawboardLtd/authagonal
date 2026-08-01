@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using Authagonal.Core.Models;
+using Authagonal.Core.Services;
 using Authagonal.Core.Stores;
 
 namespace Authagonal.Tests.Infrastructure;
@@ -881,5 +882,39 @@ public sealed class WritableScimGroupRoleMappingStore : IScimGroupRoleMappingSto
     {
         _map.TryRemove(Key(groupId, role), out _);
         return Task.CompletedTask;
+    }
+}
+
+/// <summary>
+/// In-memory <see cref="IRateLimitCounterStore"/>. Increments through
+/// <see cref="ConcurrentDictionary{TKey,TValue}.AddOrUpdate(TKey,System.Func{TKey,TValue},System.Func{TKey,TValue,TValue})"/>,
+/// which is atomic — a double that lost updates would let a test pass against a limiter that cannot count.
+/// </summary>
+public sealed class InMemoryRateLimitCounterStore : IRateLimitCounterStore
+{
+    private readonly ConcurrentDictionary<string, long> _counters = new(StringComparer.Ordinal);
+
+    /// <summary>Every bucket key incremented, in order, so a test can assert on the window arithmetic.</summary>
+    public ConcurrentBag<string> Keys { get; } = [];
+
+    /// <summary>The expiry each increment recorded, keyed by bucket.</summary>
+    public ConcurrentDictionary<string, DateTimeOffset> Expiries { get; } = new(StringComparer.Ordinal);
+
+    /// <summary>Set to make every increment throw, for the fail-open path.</summary>
+    public bool Fail { get; set; }
+
+    public async Task<long> IncrementAsync(string bucketKey, DateTimeOffset expiresAt, CancellationToken ct = default)
+    {
+        if (Fail) throw new InvalidOperationException("counter store is unavailable");
+
+        // Yields before touching the counter, so this double behaves like the round trip every real
+        // backend makes. Completing synchronously would serialise concurrent callers onto one thread and
+        // make any test of contention vacuous — a non-atomic increment would pass it.
+        await Task.Yield();
+        ct.ThrowIfCancellationRequested();
+
+        Keys.Add(bucketKey);
+        Expiries[bucketKey] = expiresAt;
+        return _counters.AddOrUpdate(bucketKey, 1, (_, current) => current + 1);
     }
 }

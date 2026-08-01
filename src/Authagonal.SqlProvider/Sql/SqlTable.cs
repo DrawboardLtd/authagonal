@@ -288,6 +288,38 @@ public sealed class SqlTable(SqlDataSource source, string name)
         return await cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false) == 1;
     }
 
+    /// <summary>
+    /// Adds one to a counter row and returns the value after the increment, creating the row at 1 if it
+    /// is not there. Single statement, so concurrent callers cannot lose each other's increments.
+    /// </summary>
+    /// <remarks>
+    /// Backs the cluster-wide rate limiter. The counter is the <c>version</c> column rather than a new
+    /// one — that is what version already is, a monotonic per-row counter the dialect maintains, and it
+    /// keeps this on the generic table shape every other store uses instead of needing its own schema.
+    /// <para>
+    /// <c>RETURNING</c> makes the read part of the write, which is the property that matters: a separate
+    /// SELECT after the UPDATE could observe another caller's increment and hand back a count that was
+    /// never this caller's, either of which turns the budget into an approximation.
+    /// </para>
+    /// </remarks>
+    public async Task<long> IncrementAsync(
+        string pk, string sk, DateTimeOffset expiresAt, CancellationToken ct = default)
+    {
+        await using var connection = await source.OpenAsync(ct).ConfigureAwait(false);
+        await using var cmd = connection.CreateCommand();
+        cmd.CommandText = $"""
+            INSERT INTO {_ref} AS c (pk, sk, data, attrs, version, expires_at)
+            VALUES (@pk, @sk, NULL, {source.Dialect.AttrsParameter}, 1, @expires)
+            ON CONFLICT (pk, sk) DO UPDATE
+               SET version = c.version + 1,
+                   expires_at = excluded.expires_at
+            RETURNING version
+            """;
+        BindRow(cmd, new SqlRow(pk, sk) { ExpiresAt = expiresAt });
+        var result = await cmd.ExecuteScalarAsync(ct).ConfigureAwait(false);
+        return result is null or DBNull ? 1 : Convert.ToInt64(result);
+    }
+
     // ── deletes ──────────────────────────────────────────────────────────────────
 
     /// <summary>Unconditional delete; succeeds even if the row is already gone.</summary>

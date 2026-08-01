@@ -51,7 +51,11 @@ These caches are acceptable for production use. All durations are configurable v
 
 Abuse-prone endpoints (registration per IP, password reset per target email, SCIM per client, dynamic client registration per IP, see [Configuration → Rate Limiting](configuration#rate-limiting)) are protected by a built-in rate limiter.
 
-Limits are enforced **in-process per node** behind the `IRateLimiter` seam, so with N instances the effective ceiling is N× the configured value. That's deliberate: the limiter is a backstop against runaway abuse of a single node, and the authoritative global limit belongs at the edge (WAF / ingress / CDN), which sees all traffic before it's load-balanced.
+By default, limits are enforced **in-process per node** behind the `IRateLimiter` seam, so with N instances the effective ceiling is N× the configured value. That's deliberate: the limiter is a backstop against runaway abuse of a single node, and the authoritative global limit belongs at the edge (WAF / ingress / CDN), which sees all traffic before it's load-balanced.
+
+That trade-off is right for the volume limits and wrong for one case: a budget guarding a **guessable secret**. The device flow's `user_code` is a short string from a small alphabet, and the attempt limit is the only thing standing between an attacker and a code that grants a live session — a ceiling that multiplies by replica count is the wrong shape there, and it makes the real bound a property of your ingress configuration rather than of the server.
+
+Set **`Auth:DurableRateLimiting=true`** to move the counters into the store you already run, so every replica shares one budget. It costs a store round trip per rate-limit check, uses fixed windows (a budget of N allows up to 2N across a window boundary), and fails open if the store is unreachable — so it layers on the edge rule rather than replacing it. Counter rows are collected automatically on all three backends. See [Configuration → Cluster-wide limits](configuration#cluster-wide-limits-authdurableratelimiting).
 
 ## Clustering
 

@@ -333,10 +333,45 @@ public static class AuthagonalExtensions
         // TryAdd that ran first would shadow this tenant-scoping decorator — turning a per-tenant budget
         // back into one shared budget, with nothing failing to say so. The ORDER IS LOAD-BEARING; do not
         // move this below the AddAuthagonalProtocol call.
+        //
+        // Auth:DurableRateLimiting moves the counters into the deployment's own store so every replica
+        // shares one budget. Opt-in, and in-process stays the default: it costs a store round trip on
+        // every rate-limit check — the login, token and SCIM paths included — and a single-node
+        // deployment gains nothing from it, since there per-node IS cluster-wide. What it buys a
+        // multi-replica deployment is a bound that does not multiply by replica count, which matters for
+        // the budgets guarding a guessable secret (a device user_code above all).
+        var durableRateLimiting = configuration.GetValue("Auth:DurableRateLimiting", false);
+
         services.TryAddSingleton<InProcessRateLimiter>();
-        services.TryAddSingleton<IRateLimiter>(sp => new TenantScopedRateLimiter(
-            sp.GetRequiredService<InProcessRateLimiter>(),
-            sp.GetRequiredService<IHttpContextAccessor>()));
+        services.TryAddSingleton<IRateLimiter>(sp =>
+        {
+            IRateLimiter inner = durableRateLimiting
+                ? new DurableRateLimiter(
+                    sp.GetService<IRateLimitCounterStore>()
+                        ?? throw new InvalidOperationException(
+                            "Auth:DurableRateLimiting is true but no IRateLimitCounterStore is registered. " +
+                            "It comes with the Azure, SQL and AWS providers — a host composing its own " +
+                            "container must register one, or set Auth:DurableRateLimiting to false. Refusing " +
+                            "to start rather than falling back to per-node limiting, which is what was " +
+                            "deliberately turned off."),
+                    sp.GetRequiredService<ILogger<DurableRateLimiter>>())
+                : sp.GetRequiredService<InProcessRateLimiter>();
+
+            return new TenantScopedRateLimiter(inner, sp.GetRequiredService<IHttpContextAccessor>());
+        });
+
+        if (durableRateLimiting)
+        {
+            // Resolve the limiter at boot so a missing counter store fails the host rather than the
+            // first login that happens to hit a throttle.
+            services.AddSingleton<IHostedService>(sp => new RateLimiterStartupCheck(
+                sp.GetRequiredService<IRateLimiter>()));
+
+            // Azure Table has neither server-side arithmetic nor TTL. DynamoDB expires buckets itself and
+            // SqlExpiryReaper collects the SQL rows, so this sweep is the Azure path's alone.
+            if (services.Any(d => d.IsKeyedService && (d.ServiceKey as string) == "RateLimitCounters"))
+                services.AddSingleton<IHostedService, RateLimitCounterSweepService>();
+        }
 
         // Auth:AllowInsecureHttp has to reach the protocol options too, not just the pipeline gate.
         // MapAuthagonalEndpoints maps Protocol's PAR endpoint directly, and that endpoint carries its own

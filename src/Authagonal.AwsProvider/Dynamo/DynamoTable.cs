@@ -196,6 +196,56 @@ public sealed class DynamoTable(IAmazonDynamoDB db, string name)
         }
     }
 
+    /// <summary>
+    /// Adds one to a numeric counter attribute and returns the value after the increment, treating a
+    /// missing item or attribute as zero.
+    /// </summary>
+    /// <remarks>
+    /// Backs the cluster-wide rate limiter. <c>ADD</c> is evaluated by DynamoDB itself, so unlike every
+    /// other conditional write in this class there is no expected-value guard and no retry loop: the
+    /// increment cannot be lost and cannot fail on contention, which is exactly the property a shared
+    /// budget needs. <c>UPDATED_NEW</c> returns the post-increment value in the same round trip, so the
+    /// count is never read separately from the write that produced it.
+    /// <para>
+    /// <c>_ttl</c> is DynamoDB's native expiry (epoch seconds), so buckets are reclaimed by the service
+    /// with no sweep of our own. It is set on every increment rather than only on create — refreshing it
+    /// costs nothing and keeps a bucket from expiring out from under a window still in use.
+    /// </para>
+    /// </remarks>
+    public async Task<long> IncrementAsync(
+        string pk, string sk, string counterAttribute, DateTimeOffset expiresAt, CancellationToken ct = default)
+    {
+        var response = await db.UpdateItemAsync(new UpdateItemRequest
+        {
+            TableName = name,
+            Key = new Dictionary<string, AttributeValue>
+            {
+                ["pk"] = new AttributeValue { S = pk },
+                ["sk"] = new AttributeValue { S = sk },
+            },
+            UpdateExpression = "ADD #c :one SET #ttl = :ttl",
+            ExpressionAttributeNames = new Dictionary<string, string>
+            {
+                ["#c"] = counterAttribute,
+                ["#ttl"] = "_ttl",
+            },
+            ExpressionAttributeValues = new Dictionary<string, AttributeValue>
+            {
+                [":one"] = new AttributeValue { N = "1" },
+                [":ttl"] = new AttributeValue
+                {
+                    N = expiresAt.ToUnixTimeSeconds().ToString(System.Globalization.CultureInfo.InvariantCulture),
+                },
+            },
+            ReturnValues = ReturnValue.UPDATED_NEW,
+        }, ct).ConfigureAwait(false);
+
+        return response.Attributes.TryGetValue(counterAttribute, out var value)
+            && long.TryParse(value.N, System.Globalization.CultureInfo.InvariantCulture, out var count)
+                ? count
+                : 1;
+    }
+
     // ── queries ──
 
     /// <summary>

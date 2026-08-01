@@ -41,6 +41,7 @@ public static class ServiceCollectionExtensions
     private const string UserRolesTableName = "UserRoles";
     private const string ScimTokensTableName = "ScimTokens";
     private const string ScimGroupsTableName = "ScimGroups";
+    private const string RateLimitCountersTableName = "RateLimitCounters";
     private const string ScimGroupExternalIdsTableName = "ScimGroupExternalIds";
     private const string ScimGroupRoleMappingsTableName = "ScimGroupRoleMappings";
     private const string RolesTableName = "Roles";
@@ -120,6 +121,7 @@ public static class ServiceCollectionExtensions
         var agentProfiles = EnsureTable(serviceClient, AgentProfilesTableName);
         var upstreamRefreshTokens = EnsureTable(serviceClient, UpstreamRefreshTokensTableName);
         var tombstones = EnsureTable(serviceClient, TombstonesTableName);
+        var rateLimitCounters = EnsureTable(serviceClient, RateLimitCountersTableName);
 
         // Register store implementations as singletons.
         // TryAdd allows multi-tenant hosts to register scoped stores first.
@@ -187,6 +189,14 @@ public static class ServiceCollectionExtensions
 
         // Register the OIDC state store TableClient as a named singleton.
         services.AddKeyedSingleton("OidcStateStore", oidcStateStore);
+
+        // Counters for the cluster-wide rate limiter. Registered unconditionally — the table costs
+        // nothing until an operator turns durable limiting on — but the limiter itself is opt-in, in
+        // AddAuthagonal. The keyed client is what the sweep service takes: Table Storage has no TTL, so
+        // unlike DynamoDB and SQL these rows need collecting by something of ours.
+        services.TryAddSingleton<IRateLimitCounterStore>(
+            new TableRateLimitCounterStore(rateLimitCounters, live));
+        services.AddKeyedSingleton("RateLimitCounters", rateLimitCounters);
 
         return services;
     }

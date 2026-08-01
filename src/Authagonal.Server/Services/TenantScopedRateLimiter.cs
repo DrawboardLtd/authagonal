@@ -20,9 +20,17 @@ namespace Authagonal.Server.Services;
 /// <see cref="IHttpContextAccessor"/> because <see cref="ITenantContext"/> is scoped on multi-tenant hosts
 /// while the limiter is a singleton — the same pattern the key-manager resolver uses.
 /// </para>
+///
+/// <para>
+/// <paramref name="inner"/> is the interface, not <c>InProcessRateLimiter</c>. Tenant scoping is a
+/// property of the KEY and is orthogonal to where the counter lives, so it has to hold over the durable
+/// limiter as well — and taking the concrete type meant a deployment that turned on cluster-wide limiting
+/// would have quietly dropped the tenant prefix, which is the cross-tenant denial of service this
+/// decorator exists to prevent, reintroduced by the act of hardening something else.
+/// </para>
 /// </remarks>
 public sealed class TenantScopedRateLimiter(
-    InProcessRateLimiter inner,
+    IRateLimiter inner,
     IHttpContextAccessor httpContextAccessor) : IRateLimiter
 {
     public Task<bool> IsRateLimitedAsync(

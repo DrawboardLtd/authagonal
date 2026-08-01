@@ -46,6 +46,7 @@ public static class ServiceCollectionExtensions
     private const string SsoDomainsTable = "SsoDomains";
     private const string ScimTokensTable = "ScimTokens";
     private const string ScimGroupsTable = "ScimGroups";
+    private const string RateLimitCountersTable = "RateLimitCounters";
     private const string ScimGroupExternalIdsTable = "ScimGroupExternalIds";
     private const string ScimGroupRoleMappingsTable = "ScimGroupRoleMappings";
     private const string MfaCredentialsTable = "MfaCredentials";
@@ -84,7 +85,7 @@ public static class ServiceCollectionExtensions
             OidcProvidersTable, SamlProvidersTable, SsoDomainsTable, UpstreamRefreshTokensTable,
             ScimTokensTable, ScimGroupsTable, ScimGroupExternalIdsTable, ScimGroupRoleMappingsTable,
             MfaCredentialsTable, MfaChallengesTable, MfaWebAuthnIndexTable,
-            SamlReplayCacheTable, OidcStateStoreTable,
+            SamlReplayCacheTable, OidcStateStoreTable, RateLimitCountersTable,
         };
         if (nameIndexesEnabled) tables.AddRange([UserFirstNamesTable, UserLastNamesTable]);
 
@@ -98,6 +99,10 @@ public static class ServiceCollectionExtensions
         var expiring = new HashSet<string>(StringComparer.Ordinal)
         {
             OidcStateStoreTable, MfaChallengesTable, RevokedTokensTable, UpstreamRefreshTokensTable,
+            // A rate-limit bucket is dead the moment its window passes and is never addressed again, so
+            // TTL is exactly right here — and necessary, since keys embed caller-supplied values and an
+            // anonymous endpoint would otherwise leave one permanent row per attempt.
+            RateLimitCountersTable,
         };
 
         foreach (var table in tables)
@@ -160,6 +165,11 @@ public static class ServiceCollectionExtensions
         // interfaces so Authagonal.Server's endpoints resolve them regardless of backend.
         services.TryAddSingleton<ISamlReplayCache>(new DynamoSamlReplayCache(new DynamoTable(db, SamlReplayCacheTable), SamlReplayTtl));
         services.TryAddSingleton<IOidcStateStore>(new DynamoOidcStateStore(new DynamoTable(db, OidcStateStoreTable), OidcStateTtl));
+
+        // Counters for the cluster-wide rate limiter. The store is registered unconditionally; whether
+        // anything uses it is decided in AddAuthagonal, where durable limiting is opt-in.
+        services.TryAddSingleton<IRateLimitCounterStore>(
+            new DynamoRateLimitCounterStore(new DynamoTable(db, RateLimitCountersTable), live));
 
         return services;
     }
