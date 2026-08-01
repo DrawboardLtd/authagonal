@@ -246,9 +246,20 @@ internal static class BffProxy
             }
 
             // Authority gate: the outgoing bearer (post-exchange, so the token that will
-            // actually be presented) must permit every declared type:action pair.
-            if (upstream.RequiredAuthority.Count > 0 && !PermitsRequiredAuthority(bearer, upstream.RequiredAuthority))
+            // actually be presented) must permit every declared type:action pair AT THIS UPSTREAM.
+            //
+            // The location is the request's own destination, which the proxy has already composed and
+            // proved stays inside the configured upstream. Without it a grant's `locations` narrowed
+            // nothing anywhere in the product: it was parsed, intersected and written into the token,
+            // and then every evaluator ignored it, so a token scoped to one resource server spent its
+            // authority at any other one the same BFF fronted.
+            if (upstream.RequiredAuthority.Count > 0
+                && !PermitsRequiredAuthority(
+                    bearer, upstream.RequiredAuthority,
+                    AuthorityLocationFor(upstream, forwardedPath), upstream.StrictAuthority))
+            {
                 return Results.StatusCode(StatusCodes.Status403Forbidden);
+            }
 
             upstreamReq.Headers.Authorization = new AuthenticationHeaderValue("Bearer", bearer);
         }
@@ -270,11 +281,29 @@ internal static class BffProxy
         return Results.Empty;
     }
 
+    /// <summary>The RFC 9396 location this request is spending authority at: the upstream's declared
+    /// location root (or its target base URL) with the proxied path appended, so a grant may pin
+    /// authority to a sub-tree and not merely to a host. Internal for unit testing.</summary>
+    internal static string AuthorityLocationFor(BffUpstream upstream, string forwardedPath)
+    {
+        var root = (string.IsNullOrWhiteSpace(upstream.AuthorityLocation)
+            ? upstream.TargetBaseUrl
+            : upstream.AuthorityLocation).TrimEnd('/');
+
+        if (forwardedPath.Length == 0) return root;
+        return forwardedPath[0] == '/' ? root + forwardedPath : root + "/" + forwardedPath;
+    }
+
     /// <summary>Evaluates the bearer's RFC 9396 authorization_details claim against the
     /// route's "type:action" requirements. No claim = unrestricted (legacy scope-based
     /// tokens); a garbled claim or a malformed requirement fails closed. Internal for unit
     /// testing.</summary>
-    internal static bool PermitsRequiredAuthority(string bearer, IEnumerable<string> requiredPairs)
+    /// <param name="location">Where the authority is being spent — a grant naming locations is
+    /// honoured only at those. Null skips the check (the pre-location behaviour).</param>
+    /// <param name="strict">Refuse a grant carrying a constraint the proxy supplies no context for,
+    /// rather than forwarding and leaving it to the upstream.</param>
+    internal static bool PermitsRequiredAuthority(
+        string bearer, IEnumerable<string> requiredPairs, string? location = null, bool strict = false)
     {
         AuthoritySet authority;
         try
@@ -296,7 +325,7 @@ internal static class BffProxy
             var separator = pair.LastIndexOf(':');
             if (separator <= 0 || separator == pair.Length - 1)
                 return false;
-            if (!authority.Permits(pair[..separator], pair[(separator + 1)..]))
+            if (!authority.Permits(pair[..separator], pair[(separator + 1)..], location, context: null, strict))
                 return false;
         }
         return true;

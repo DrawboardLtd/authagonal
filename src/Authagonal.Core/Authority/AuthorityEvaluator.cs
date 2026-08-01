@@ -74,11 +74,22 @@ public static class AuthorityEvaluator
             : ParseOrDeny(authorizationDetailsJson);
 
     /// <summary>Convenience for the common one-shot check. See
-    /// <see cref="AuthoritySet.Permits"/> for context semantics.</summary>
+    /// <see cref="AuthoritySet.Permits(string, string, string?, IReadOnlyDictionary{string, string}, bool)"/>
+    /// for context, location and strict semantics.</summary>
+    /// <remarks>
+    /// <paramref name="location"/> and <paramref name="strict"/> are surfaced here because this is the
+    /// documented resource-side entry point, and without them the two narrowing behaviours behind it
+    /// were unreachable: <c>locations</c> was parsed, intersected and emitted but no caller could ever
+    /// present a location for it to be checked against, and a resource server had no supported way to
+    /// say "deny anything I could not evaluate" — the default skips a constraint whose context key the
+    /// caller did not supply. Pair strict mode with
+    /// <see cref="AuthoritySet.UncheckedConstraints"/> to report WHICH constraint refused.
+    /// </remarks>
     public static bool Permits(
         ClaimsPrincipal principal, string type, string action,
-        IReadOnlyDictionary<string, string>? context = null) =>
-        FromPrincipal(principal).Permits(type, action, context);
+        IReadOnlyDictionary<string, string>? context = null,
+        string? location = null, bool strict = false) =>
+        FromPrincipal(principal).Permits(type, action, location, context, strict);
 
     // A present-but-unparseable claim is a deny, not an unrestricted fallback: a garbled
     // narrow token must never evaluate wider than it was minted.

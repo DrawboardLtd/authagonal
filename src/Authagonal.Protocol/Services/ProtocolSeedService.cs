@@ -31,8 +31,8 @@ internal sealed class ProtocolSeedService(
 
         foreach (var descriptor in protocolOptions.Clients)
         {
-            var client = ToOAuthClient(descriptor);
-            await clientStore.UpsertAsync(client, cancellationToken);
+            var existing = await clientStore.GetAsync(descriptor.ClientId, cancellationToken);
+            await clientStore.UpsertAsync(ApplySeed(existing, descriptor), cancellationToken);
             logger.LogInformation("Seeded OIDC client {ClientId}", descriptor.ClientId);
         }
 
@@ -72,37 +72,59 @@ internal sealed class ProtocolSeedService(
 
     public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
 
-    private static OAuthClient ToOAuthClient(OidcClientDescriptor d)
+    /// <summary>
+    /// Read-merge-write, matching the Server host's <c>ClientSeedService</c> and
+    /// <c>ScopeSeedService</c>: the seed states what it states, and every other field keeps the
+    /// stored value.
+    /// </summary>
+    /// <remarks>
+    /// This seeder used to build a fresh <see cref="OAuthClient"/> and upsert it over the stored row
+    /// on every pod start, so an embedder that configures <c>AuthagonalProtocolOptions.Clients</c> had
+    /// each restart revert everything the descriptor has no field for back to the model default.
+    /// <c>Enabled = true</c> was hard-set, so a client an operator deliberately disabled came back up
+    /// enabled; <c>RequirePushedAuthorizationRequests</c>, <c>JwksJson</c>/<c>JwksUri</c> (whose loss
+    /// kills <c>private_key_jwt</c> for an agent client), <c>AllowedCorsOrigins</c> and
+    /// <c>FrontChannelLogoutUri</c> were all silently cleared. The Server host was fixed for exactly
+    /// this and its sibling was left behind.
+    /// </remarks>
+    private static OAuthClient ApplySeed(OAuthClient? existing, OidcClientDescriptor d)
     {
+        var client = existing ?? new OAuthClient { ClientId = d.ClientId };
+
         var grantTypes = new List<string> { "authorization_code" };
         if (d.AllowRefreshToken) grantTypes.Add("refresh_token");
 
-        var secretHashes = new List<string>();
-        if (!string.IsNullOrEmpty(d.ClientSecret))
-            secretHashes.Add(BCrypt.Net.BCrypt.HashPassword(d.ClientSecret));
+        client.ClientId = d.ClientId;
+        client.ClientName = string.IsNullOrEmpty(d.DisplayName) ? d.ClientId : d.DisplayName;
 
-        return new OAuthClient
+        // Only overwritten when the descriptor actually carries a secret, so a rotation applied
+        // through the admin API survives the next restart. Enabled is not written at all.
+        if (!string.IsNullOrEmpty(d.ClientSecret))
+            client.ClientSecretHashes = [BCrypt.Net.BCrypt.HashPassword(d.ClientSecret)];
+
+        client.AllowedGrantTypes = grantTypes;
+        client.RedirectUris = d.RedirectUris;
+        client.PostLogoutRedirectUris = d.PostLogoutRedirectUris;
+        client.Audiences = d.Audiences;
+        client.AllowedScopes = d.AllowedScopes;
+        client.RequirePkce = d.RequirePkce;
+        client.AllowOfflineAccess = d.AllowRefreshToken;
+        client.RequireClientSecret = d.RequireClientSecret;
+        client.RequireConsent = d.RequireConsent;
+        client.AccessTokenLifetimeSeconds = d.AccessTokenLifetimeSeconds;
+        client.IdentityTokenLifetimeSeconds = d.IdentityTokenLifetimeSeconds;
+        client.AuthorizationCodeLifetimeSeconds = d.AuthorizationCodeLifetimeSeconds;
+        client.AbsoluteRefreshTokenLifetimeSeconds = d.AbsoluteRefreshTokenLifetimeSeconds;
+        client.SlidingRefreshTokenLifetimeSeconds = d.SlidingRefreshTokenLifetimeSeconds;
+
+        // The descriptor has no field for these two, so they are the seeder's opinion for a client it
+        // is CREATING — an existing row keeps whatever an operator set.
+        if (existing is null)
         {
-            ClientId = d.ClientId,
-            ClientName = string.IsNullOrEmpty(d.DisplayName) ? d.ClientId : d.DisplayName,
-            Enabled = true,
-            ClientSecretHashes = secretHashes,
-            AllowedGrantTypes = grantTypes,
-            RedirectUris = d.RedirectUris,
-            PostLogoutRedirectUris = d.PostLogoutRedirectUris,
-            Audiences = d.Audiences,
-            AllowedScopes = d.AllowedScopes,
-            RequirePkce = d.RequirePkce,
-            AllowOfflineAccess = d.AllowRefreshToken,
-            RequireClientSecret = d.RequireClientSecret,
-            RequireConsent = d.RequireConsent,
-            AccessTokenLifetimeSeconds = d.AccessTokenLifetimeSeconds,
-            IdentityTokenLifetimeSeconds = d.IdentityTokenLifetimeSeconds,
-            AuthorizationCodeLifetimeSeconds = d.AuthorizationCodeLifetimeSeconds,
-            AbsoluteRefreshTokenLifetimeSeconds = d.AbsoluteRefreshTokenLifetimeSeconds,
-            SlidingRefreshTokenLifetimeSeconds = d.SlidingRefreshTokenLifetimeSeconds,
-            RefreshTokenExpiration = RefreshTokenExpiration.Absolute,
-            RefreshTokenUsage = RefreshTokenUsage.OneTime,
-        };
+            client.RefreshTokenExpiration = RefreshTokenExpiration.Absolute;
+            client.RefreshTokenUsage = RefreshTokenUsage.OneTime;
+        }
+
+        return client;
     }
 }

@@ -117,8 +117,8 @@ public static class AuthorityJson
             if (obj["type"] is not JsonValue typeValue || typeValue.GetValueKind() != JsonValueKind.String)
                 return false;
 
-            var actions = ReadStringArray(obj["actions"]);
-            var locations = ReadStringArray(obj["locations"]);
+            if (!TryReadStringArray(obj["actions"], out var actions)) return false;
+            if (!TryReadStringArray(obj["locations"], out var locations)) return false;
 
             var policies = new Dictionary<string, ActionPolicy>(StringComparer.Ordinal);
             if (obj["action_policies"] is JsonObject policyObj)
@@ -192,16 +192,28 @@ public static class AuthorityJson
         }
     }
 
-    private static IReadOnlyList<string> ReadStringArray(JsonNode? node)
+    // A member that is PRESENT but is not an array of strings is refused, not read as absent.
+    //
+    // Empty means "unrestricted" for locations, so reading `"locations": "https://internal"` — a bare
+    // string, which is the shape a hand-written authorization_details most often gets wrong — as an
+    // empty list turned a grant the caller pinned to one resource server into one that applies
+    // everywhere. Dropping individual non-string elements had the same effect a slice at a time.
+    // RFC 9396 §5 has a code for exactly this case: authorization_details the AS cannot represent is
+    // invalid_authorization_details, which is what returning false becomes at every call site.
+    private static bool TryReadStringArray(JsonNode? node, out IReadOnlyList<string> values)
     {
-        if (node is not JsonArray array) return [];
-        var values = new List<string>(array.Count);
+        values = [];
+        if (node is null) return true; // absent (or JSON null) — genuinely unspecified
+        if (node is not JsonArray array) return false;
+
+        var parsed = new List<string>(array.Count);
         foreach (var element in array)
         {
-            if (element is JsonValue v && v.GetValueKind() == JsonValueKind.String)
-                values.Add(v.GetValue<string>());
+            if (element is not JsonValue v || v.GetValueKind() != JsonValueKind.String) return false;
+            parsed.Add(v.GetValue<string>());
         }
-        return values;
+        values = parsed;
+        return true;
     }
 
     private static bool TryParsePolicy(JsonNode? node, out ActionPolicy policy)

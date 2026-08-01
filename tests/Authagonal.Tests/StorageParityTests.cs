@@ -1,6 +1,9 @@
 using System.Text.Json;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 using Authagonal.Core.Models;
+using Authagonal.Protocol;
+using Authagonal.Protocol.Services;
 using Authagonal.Core.Services;
 using Authagonal.SqlProvider.Sql;
 using Authagonal.Tests.Infrastructure;
@@ -265,15 +268,38 @@ public class ClientSeedMergeTests
         Assert.Equal("Fresh", created!.ClientName);
     }
 
-    private static async Task RunSeederAsync(InMemoryClientStore store, string clientId, string clientName)
+    /// <summary>
+    /// AllowedScopes was the one field still assigned unconditionally, from a list that read as empty
+    /// when the seed said nothing about scopes — so a seed entry that only pins, say, a redirect URI
+    /// stripped every scope an operator had granted through the admin API.
+    /// </summary>
+    [Fact]
+    public async Task Reseeding_DoesNotClearScopesTheSeedSaysNothingAbout()
     {
+        var store = new InMemoryClientStore();
+        await store.UpsertAsync(new OAuthClient
+        {
+            ClientId = "seeded",
+            AllowedScopes = ["openid", "orders.read"],
+        });
+
+        await RunSeederAsync(store, clientId: "seeded", clientName: "Seeded", scope: null);
+
+        Assert.Equal(["openid", "orders.read"], (await store.GetAsync("seeded"))!.AllowedScopes);
+    }
+
+    private static async Task RunSeederAsync(
+        InMemoryClientStore store, string clientId, string clientName, string? scope = "openid")
+    {
+        var settings = new Dictionary<string, string?>
+        {
+            ["Clients:0:ClientId"] = clientId,
+            ["Clients:0:ClientName"] = clientName,
+        };
+        if (scope is not null) settings["Clients:0:AllowedScopes:0"] = scope;
+
         var configuration = new Microsoft.Extensions.Configuration.ConfigurationBuilder()
-            .AddInMemoryCollection(new Dictionary<string, string?>
-            {
-                ["Clients:0:ClientId"] = clientId,
-                ["Clients:0:ClientName"] = clientName,
-                ["Clients:0:AllowedScopes:0"] = "openid",
-            })
+            .AddInMemoryCollection(settings)
             .Build();
 
         var seeder = new Authagonal.Server.Services.ClientSeedService(
@@ -281,6 +307,111 @@ public class ClientSeedMergeTests
             CheapHasher.Password(),
             configuration,
             Microsoft.Extensions.Logging.Abstractions.NullLogger<Authagonal.Server.Services.ClientSeedService>.Instance);
+
+        await seeder.StartAsync(CancellationToken.None);
+    }
+}
+
+/// <summary>
+/// The same rule, in the other host. <see cref="ClientSeedMergeTests"/> fixed the Server host's
+/// <c>ClientSeedService</c> and its sibling in the Protocol host was left building a fresh
+/// <c>OAuthClient</c> and upserting it over the stored row on every start.
+/// </summary>
+/// <remarks>
+/// A Protocol-host embedder that configures <c>AuthagonalProtocolOptions.Clients</c> got the whole
+/// reported behaviour unchanged: <c>Enabled = true</c> hard-set on every boot, and every field the
+/// descriptor has no slot for — PAR, JWKS, CORS, front-channel logout — reset to the model default.
+/// </remarks>
+public class ProtocolSeedMergeTests
+{
+    [Fact]
+    public async Task Reseeding_DoesNotReEnableAClientAnOperatorDisabled()
+    {
+        var store = new InMemoryClientStore();
+        await store.UpsertAsync(new OAuthClient
+        {
+            ClientId = "embedded",
+            Enabled = false,                                    // disabled through the admin API
+            RequirePushedAuthorizationRequests = true,          // hardened through the admin API
+            JwksUri = "https://client.example/jwks",            // private_key_jwt for an agent client
+            AllowedCorsOrigins = ["https://spa.example"],
+            FrontChannelLogoutUri = "https://spa.example/logout",
+        });
+
+        await RunSeedAsync(store, new OidcClientDescriptor
+        {
+            ClientId = "embedded",
+            DisplayName = "Embedded",
+            RedirectUris = ["https://spa.example/callback"],
+        });
+
+        var after = await store.GetAsync("embedded");
+        Assert.NotNull(after);
+
+        // The sharpest of these: the seeder set Enabled = true outright, so a restart put a client an
+        // operator had deliberately disabled straight back into service.
+        Assert.False(after!.Enabled);
+        Assert.True(after.RequirePushedAuthorizationRequests);
+        Assert.Equal("https://client.example/jwks", after.JwksUri);
+        Assert.Equal(["https://spa.example"], after.AllowedCorsOrigins);
+        Assert.Equal("https://spa.example/logout", after.FrontChannelLogoutUri);
+
+        // What the descriptor DOES state is still authoritative.
+        Assert.Equal("Embedded", after.ClientName);
+        Assert.Equal(["https://spa.example/callback"], after.RedirectUris);
+    }
+
+    [Fact]
+    public async Task Reseeding_PreservesASecretRotatedThroughTheAdminApi()
+    {
+        var store = new InMemoryClientStore();
+        await store.UpsertAsync(new OAuthClient
+        {
+            ClientId = "embedded",
+            ClientSecretHashes = ["$2a$04$rotatedthroughtheadminapiXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"],
+        });
+
+        // The descriptor states no secret, so it has nothing to say about this field.
+        await RunSeedAsync(store, new OidcClientDescriptor { ClientId = "embedded" });
+
+        Assert.Equal(
+            ["$2a$04$rotatedthroughtheadminapiXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"],
+            (await store.GetAsync("embedded"))!.ClientSecretHashes);
+    }
+
+    [Fact]
+    public async Task Seeding_StillCreatesAClientThatDoesNotExistYet()
+    {
+        var store = new InMemoryClientStore();
+
+        await RunSeedAsync(store, new OidcClientDescriptor
+        {
+            ClientId = "fresh",
+            DisplayName = "Fresh",
+            AllowRefreshToken = true,
+        });
+
+        var created = await store.GetAsync("fresh");
+        Assert.NotNull(created);
+        Assert.True(created!.Enabled);
+        Assert.Equal("Fresh", created.ClientName);
+        Assert.Contains("refresh_token", created.AllowedGrantTypes);
+        Assert.Equal(RefreshTokenUsage.OneTime, created.RefreshTokenUsage);
+    }
+
+    private static async Task RunSeedAsync(InMemoryClientStore store, OidcClientDescriptor descriptor)
+    {
+        var services = new Microsoft.Extensions.DependencyInjection.ServiceCollection();
+        services.AddSingleton<Authagonal.Core.Stores.IClientStore>(store);
+        services.AddSingleton<Authagonal.Core.Stores.IScopeStore>(new InMemoryScopeStore());
+        await using var provider = services.BuildServiceProvider();
+
+        var seeder = new Authagonal.Protocol.Services.ProtocolSeedService(
+            provider.GetRequiredService<Microsoft.Extensions.DependencyInjection.IServiceScopeFactory>(),
+            Microsoft.Extensions.Options.Options.Create(
+                new Authagonal.Protocol.AuthagonalProtocolOptions { Clients = [descriptor] }),
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<
+                Authagonal.Protocol.Services.ProtocolSeedService>.Instance);
 
         await seeder.StartAsync(CancellationToken.None);
     }

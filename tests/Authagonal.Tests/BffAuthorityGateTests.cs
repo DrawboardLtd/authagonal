@@ -67,6 +67,59 @@ public sealed class BffAuthorityGateTests
         Assert.False(BffProxy.PermitsRequiredAuthority(bearer, ["mcp:tools.internal:deploy"]));
     }
 
+    /// <summary>
+    /// The gate now says WHERE as well as what. Until it did, `locations` was parsed, intersected and
+    /// written into the token and then ignored by every evaluator, so a token scoped to one resource
+    /// server spent its authority at any other upstream the same BFF fronted.
+    /// </summary>
+    [Fact]
+    public void TokenPinnedToAnotherResourceServer_IsRefusedAtThisUpstream()
+    {
+        var bearer = Mint("""[{"type":"email","actions":["send"],"locations":["https://mail.acme.example"]}]""");
+
+        Assert.True(BffProxy.PermitsRequiredAuthority(
+            bearer, ["email:send"], "https://mail.acme.example/v1/send"));
+        Assert.False(BffProxy.PermitsRequiredAuthority(
+            bearer, ["email:send"], "https://crm.acme.example/v1/send"));
+
+        // An unpinned grant is unaffected — the claim only ever narrows.
+        var unpinned = Mint("""[{"type":"email","actions":["send"]}]""");
+        Assert.True(BffProxy.PermitsRequiredAuthority(
+            unpinned, ["email:send"], "https://crm.acme.example/v1/send"));
+    }
+
+    /// <summary>
+    /// The proxy forwards blind, so a constraint it supplies no context for is skipped by default and
+    /// left to the upstream. For an upstream that does not read the claim itself, "the BFF is the
+    /// enforcement chokepoint" is only true if the chokepoint refuses what it cannot check.
+    /// </summary>
+    [Fact]
+    public void StrictAuthority_RefusesAConstraintTheProxyCannotEvaluate()
+    {
+        var bearer = Mint("""[{"type":"email","actions":["send"],"recipient_domains":["acme.example"]}]""");
+
+        Assert.True(BffProxy.PermitsRequiredAuthority(bearer, ["email:send"]));
+        Assert.False(BffProxy.PermitsRequiredAuthority(bearer, ["email:send"], location: null, strict: true));
+
+        // Strict is about UNEVALUATED constraints, not about having any: an unconstrained grant passes.
+        var plain = Mint("""[{"type":"email","actions":["send"]}]""");
+        Assert.True(BffProxy.PermitsRequiredAuthority(plain, ["email:send"], location: null, strict: true));
+    }
+
+    [Fact]
+    public void AuthorityLocation_IsTheUpstreamTheRequestWillActuallyReach()
+    {
+        var upstream = new BffUpstream { Prefix = "/orders", TargetBaseUrl = "https://api.internal.acme/" };
+
+        Assert.Equal("https://api.internal.acme/orders/17", BffProxy.AuthorityLocationFor(upstream, "/orders/17"));
+        Assert.Equal("https://api.internal.acme", BffProxy.AuthorityLocationFor(upstream, ""));
+
+        // Declared override, for authority minted against a public resource identifier that differs
+        // from the internal address the proxy dials.
+        upstream.AuthorityLocation = "https://api.acme.example";
+        Assert.Equal("https://api.acme.example/orders/17", BffProxy.AuthorityLocationFor(upstream, "/orders/17"));
+    }
+
     [Fact]
     public void MalformedInputs_FailClosed()
     {

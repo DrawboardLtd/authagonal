@@ -36,7 +36,23 @@ public sealed class ClientSeedService(
                 continue;
             }
 
-            var seededScopes = seed.Scopes ?? seed.AllowedScopes ?? [];
+            // Read-merge-write, matching ScopeSeedService ("a field omitted from the seed preserves
+            // the stored value") and RoleSeedService ("deliberately additive… an operator granting a
+            // role through the admin API must not have it taken away by the next restart").
+            //
+            // This seeder alone built a fresh OAuthClient and Replace-d the row, so every property the
+            // seed does not state reverted to the MODEL DEFAULT on each pod start — silently undoing
+            // admin hardening applied through PUT /api/v1/clients/{id}. Enabled is the sharpest: the
+            // seeder never sets it and the model defaults it to true, so restarting re-enabled a client
+            // an operator had deliberately disabled. RequireConsent, RequirePushedAuthorizationRequests,
+            // Audiences, JwksJson/JwksUri (which kills private_key_jwt for an agent client) and any
+            // secret rotated through the admin API went the same way.
+            var existing = await clientStore.GetAsync(clientId, ct);
+
+            // A seed silent about scopes preserves the stored list rather than clearing it, like every
+            // other field below. The reserved-scope checks run on the list that will actually be
+            // written, so a preserved list is checked on every boot too.
+            var seededScopes = seed.Scopes ?? seed.AllowedScopes ?? existing?.AllowedScopes ?? [];
 
             // The admin API and dynamic registration both refuse to grant a client the administrative
             // scope; seeding applied no check at all, so configuration could hand a client the very thing
@@ -69,19 +85,6 @@ public sealed class ClientSeedService(
             {
                 secretHashes = [passwordHasher.HashPassword(seed.ClientSecret)];
             }
-
-            // Read-merge-write, matching ScopeSeedService ("a field omitted from the seed preserves
-            // the stored value") and RoleSeedService ("deliberately additive… an operator granting a
-            // role through the admin API must not have it taken away by the next restart").
-            //
-            // This seeder alone built a fresh OAuthClient and Replace-d the row, so every property the
-            // seed does not state reverted to the MODEL DEFAULT on each pod start — silently undoing
-            // admin hardening applied through PUT /api/v1/clients/{id}. Enabled is the sharpest: the
-            // seeder never sets it and the model defaults it to true, so restarting re-enabled a client
-            // an operator had deliberately disabled. RequireConsent, RequirePushedAuthorizationRequests,
-            // Audiences, JwksJson/JwksUri (which kills private_key_jwt for an agent client) and any
-            // secret rotated through the admin API went the same way.
-            var existing = await clientStore.GetAsync(clientId, ct);
 
             var client = existing is null
                 ? new OAuthClient { ClientId = clientId }
