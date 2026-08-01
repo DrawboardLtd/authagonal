@@ -191,7 +191,13 @@ public static class ClientRegistrationEndpoint
                     new ErrorInfoResponse
                     {
                         Error = "invalid_client_metadata",
-                        ErrorDescription = "Logout URIs must be external https endpoints.",
+                        // Says what the guard actually enforces. It claimed "https endpoints" while
+                        // OutboundUrl.IsSafe permits http and does no DNS resolution, so the text
+                        // described a check the server does not make — the kind of overclaim that
+                        // gets a reviewer to stop looking.
+                        ErrorDescription =
+                            "Logout URIs must be external addresses (not loopback, link-local, private, " +
+                            "or a .localhost/.local/.internal name).",
                     },
                     AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 400);
         }

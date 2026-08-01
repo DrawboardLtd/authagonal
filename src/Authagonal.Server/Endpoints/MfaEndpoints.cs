@@ -243,7 +243,8 @@ public static class MfaEndpoints
                 try
                 {
                     (success, _, newSignCount) = await webAuthnService.CompleteAssertionAsync(
-                        assertionOptions, assertionResponse, storedPublicKey, matchedWebAuthnCred.SignCount, user.Id, ct);
+                        assertionOptions, assertionResponse, storedPublicKey, matchedWebAuthnCred.SignCount,
+                        user.Id, credData.RpId, ct);
                 }
                 catch (Fido2VerificationException)
                 {
@@ -410,7 +411,7 @@ public static class MfaEndpoints
         try
         {
             (success, _, newSignCount) = await webAuthnService.CompleteAssertionAsync(
-                assertionOptions, assertionResponse, storedPublicKey, cred.SignCount, userId, ct);
+                assertionOptions, assertionResponse, storedPublicKey, cred.SignCount, userId, credData.RpId, ct);
         }
         catch (Fido2VerificationException)
         {

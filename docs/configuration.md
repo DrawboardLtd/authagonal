@@ -39,6 +39,7 @@ Storage can be configured one of two ways, supply **either** `Storage:Connection
 | `Auth:MaxRegistrationsPerIp` | `5` | Maximum registrations per IP address within the window |
 | `Auth:RegistrationWindowMinutes` | `60` | Registration rate limiting window |
 | `Auth:MaxPasswordResetsPerEmail` | `3` | Maximum password-reset emails per target address within the window (keyed on the email, not the caller IP, so one address can't be email-bombed) |
+| `Auth:MaxPasswordResetsPerIp` | `15` | Maximum forgot-password requests per source IP within the window. The per-email cap bounds mail to one victim; this bounds a caller working through an address list, which is otherwise unbounded anonymous mail from your verified sending domain plus a store read per address. |
 | `Auth:PasswordResetWindowMinutes` | `60` | Password-reset rate limiting window |
 | `Auth:AutoConfirmEmailDomains` | *(empty)* | Email domains (string array) whose self-service registrations are auto-confirmed, they skip the verification email. Empty (the default) means every registration must verify. Intended only for dev/test; never list a domain that can receive real mail. |
 | `Auth:EmailVerificationExpiryHours` | `24` | Email verification link lifetime |
@@ -505,6 +506,7 @@ Built-in rate limits protect the abuse-prone endpoints:
 |---|---|---|---|
 | `POST /api/auth/register` | 5 (`Auth:MaxRegistrationsPerIp`) | 1 hour (`Auth:RegistrationWindowMinutes`) | Client IP |
 | `POST /api/auth/forgot-password` | 3 (`Auth:MaxPasswordResetsPerEmail`) | 1 hour (`Auth:PasswordResetWindowMinutes`) | Target email |
+| `POST /api/auth/forgot-password` | 15 (`Auth:MaxPasswordResetsPerIp`) | 1 hour (`Auth:PasswordResetWindowMinutes`) | Client IP |
 | `POST /connect/register` (when enabled) | 10 | 1 hour | Client IP |
 | SCIM endpoints | 200 | 1 minute | SCIM client |
 

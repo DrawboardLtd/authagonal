@@ -66,6 +66,21 @@ public static class BackChannelLogoutEndpoint
             if (client?.BackChannelLogoutUri is null)
                 continue;
 
+            // Revalidated at SEND time, not only where the URI is written. Dynamic registration checks
+            // it, but the store holds URIs that never went through that path — seeded clients, the Duende
+            // migration, admin writes, and anything registered before the DCR check existed. This is a
+            // server-initiated POST to a caller-chosen target whose response never reaches the caller, so
+            // an internal address here is a blind SSRF primitive; checking it at the sink is what makes
+            // that true of every URI in the store rather than of the ones one writer happened to police.
+            if (!OutboundUrl.IsSafe(client.BackChannelLogoutUri))
+            {
+                failed++;
+                logger.LogWarning(
+                    "Back-channel logout for client {ClientId} refused: the registered URI is not a " +
+                    "permitted outbound target", clientId);
+                continue;
+            }
+
             try
             {
                 var logoutToken = CreateLogoutToken(

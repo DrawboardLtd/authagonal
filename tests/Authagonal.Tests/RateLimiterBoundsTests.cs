@@ -144,3 +144,61 @@ public sealed class LoginRateLimitTests : IAsyncDisposable
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
     }
 }
+
+/// <summary>
+/// Forgot-password had a per-EMAIL cap and nothing per source.
+/// </summary>
+/// <remarks>
+/// The per-email cap bounds how much mail one victim gets; it says nothing about a caller working
+/// through an address list. From a single source that was unbounded anonymous mail delivery — one
+/// message per address, from the tenant's own verified sending domain, with the deliverability damage
+/// landing on the tenant — plus one user-store read per attempt whether or not the account exists.
+/// Register has carried a per-source cap all along; this endpoint is the same primitive and does not
+/// even need an account.
+/// </remarks>
+public sealed class ForgotPasswordRateLimitTests : IAsyncDisposable
+{
+    private readonly AuthagonalTestFactory _factory = new()
+    {
+        // Small enough to assert without sending dozens of mails; the default (15/hour) is a resting
+        // place for real NAT egress, not a value worth looping to in a test.
+        ConfigureAuthOptions = o => o.MaxPasswordResetsPerIp = 3,
+    };
+
+    public async ValueTask DisposeAsync() => await _factory.DisposeAsync();
+
+    [Fact]
+    public async Task Repeated_reset_requests_from_one_source_are_eventually_refused()
+    {
+        await _factory.SeedTestDataAsync();
+        var client = _factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+
+        // DISTINCT addresses, so the per-email cap cannot be what stops this — and none of them exist,
+        // so no account-level counter is involved either.
+        var sawTooMany = false;
+        for (var i = 0; i < 8 && !sawTooMany; i++)
+        {
+            var response = await client.PostAsJsonAsync("/api/auth/forgot-password",
+                new { email = $"victim-{i}@example.com" });
+            sawTooMany = response.StatusCode == HttpStatusCode.TooManyRequests;
+        }
+
+        Assert.True(sawTooMany, "unbounded password-reset mail from one source was accepted");
+    }
+
+    /// <summary>The bound must not break a real user asking for a reset.</summary>
+    [Fact]
+    public async Task A_single_reset_request_still_sends()
+    {
+        await _factory.SeedTestDataAsync();
+        await _factory.SeedTestUserAsync();
+        var client = _factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+
+        var response = await client.PostAsJsonAsync("/api/auth/forgot-password",
+            new { email = "test@example.com" });
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Contains(_factory.EmailService.SentEmails,
+            e => e.Email == "test@example.com" && e.Type == "password_reset");
+    }
+}

@@ -58,11 +58,18 @@ public sealed class VirtualAuthenticator(string rpId, string origin)
     /// <see langword="null"/> models an authenticator (or a client) that omits it, which WebAuthn §7.2
     /// step 6 forbids for a ceremony where the user was not identified beforehand.
     /// </param>
+    /// <param name="asRpId">
+    /// Sign for a DIFFERENT relying party with the same key. Models what a man-in-the-middle host gets
+    /// from an authenticator that will talk to it: material that is internally consistent and verifies
+    /// against the enrolled public key, but belongs to another RP than the one storage recorded.
+    /// </param>
     public AuthenticatorAssertionRawResponse Assertion(
-        byte[] challenge, uint signCount, bool tamperSignature = false, byte[]? userHandle = null)
+        byte[] challenge, uint signCount, bool tamperSignature = false, byte[]? userHandle = null,
+        string? asRpId = null, string? asOrigin = null)
     {
-        var clientData = ClientDataJson("webauthn.get", challenge, origin);
-        var authData = AuthData(includeAttestedCred: false, flags: 0x05 /* UP|UV */, signCount: signCount);
+        var clientData = ClientDataJson("webauthn.get", challenge, asOrigin ?? origin);
+        var authData = AuthData(includeAttestedCred: false, flags: 0x05 /* UP|UV */, signCount: signCount,
+            rpIdOverride: asRpId);
 
         var toSign = new byte[authData.Length + 32];
         authData.CopyTo(toSign, 0);
@@ -85,10 +92,10 @@ public sealed class VirtualAuthenticator(string rpId, string origin)
         };
     }
 
-    private byte[] AuthData(bool includeAttestedCred, byte flags, uint signCount)
+    private byte[] AuthData(bool includeAttestedCred, byte flags, uint signCount, string? rpIdOverride = null)
     {
         using var ms = new MemoryStream();
-        ms.Write(SHA256.HashData(Encoding.UTF8.GetBytes(rpId)));
+        ms.Write(SHA256.HashData(Encoding.UTF8.GetBytes(rpIdOverride ?? rpId)));
         ms.WriteByte(flags);
         Span<byte> count = stackalloc byte[4];
         BinaryPrimitives.WriteUInt32BigEndian(count, signCount);

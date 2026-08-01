@@ -62,7 +62,13 @@ public static class AgentEndpoints
         // client_id can present it), so attaching a profile to one makes that assertion unauthenticated:
         // the audit trail names an actor that any party could have impersonated, and approvals recorded
         // against it are meaningless.
-        if (!client.RequireClientSecret || client.ClientSecretHashes.Count == 0)
+        //
+        // Registering a JWKS counts, as the error text has always said it does. The check used to demand a
+        // secret hash specifically, which refused the private_key_jwt-only client this very message
+        // recommends — the strongest credential of the two, and the one an agent workload should hold.
+        // The exchange re-checks the same predicate at mint, because nothing here survives the client
+        // being flipped to public afterwards.
+        if (!client.IsConfidential)
             return BadRequest(
                 "an agent profile requires a confidential client: the agent's client_id is asserted in the " +
                 "act chain, so it must be authenticated. Set RequireClientSecret and register a secret " +

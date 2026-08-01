@@ -137,7 +137,9 @@ Users can register multiple passkeys (one per device). A credential ID already r
 
 ### Relying-party host
 
-The FIDO2 relying-party ID and origin are resolved per request from the host, so each tenant hostname is its own relying party. Set `Auth:WebAuthnAllowedHosts` to the hostnames you serve, so a host outside that list cannot act as a relying party. An empty list (the default) keeps the previous behaviour rather than locking out existing passkey users on upgrade, and is logged as a gap — it is not a safe resting place. Setting `AllowedHosts` in `appsettings.json` as well, so ASP.NET Core's host filtering rejects unrecognised `Host` headers before any handler runs, is the cheaper outer layer.
+The FIDO2 relying-party ID and origin are resolved per request from the host, so each tenant hostname is its own relying party. Set `Auth:WebAuthnAllowedHosts` to the hostnames you serve, so a host outside that list cannot act as a relying party. An empty list (the default) keeps the previous behaviour rather than locking out existing passkey users on upgrade, and is logged as a gap at first use — it is not a safe resting place. Setting `AllowedHosts` in `appsettings.json` as well, so ASP.NET Core's host filtering rejects unrecognised `Host` headers before any handler runs, is the cheaper outer layer.
+
+Independently of that list, every credential records the relying party it was enrolled under and is refused anywhere else. That is the part the request cannot influence: both ceremonies otherwise build their expectations from the same `Host` header they are verifying, so origin and `rpIdHash` were compared against a value the caller supplied — and an on-path host that forwards its own `Host` would have the origin binding, the property that makes a passkey phishing-resistant, verify it rather than prevent it. Credentials enrolled before the RP ID was recorded carry none and keep working; they gain the binding when re-enrolled.
 
 ### Recovery Codes
 

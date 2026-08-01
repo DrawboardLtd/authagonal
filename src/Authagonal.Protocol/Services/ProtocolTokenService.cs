@@ -1002,6 +1002,19 @@ public sealed class ProtocolTokenService(
         // one the method behaves exactly as it always has (plus optional RAR narrowing below).
         var agentProfile = agentProfileStore is null ? null : await agentProfileStore.GetAsync(clientId, ct);
 
+        // The profile makes this client's identity an ASSERTION — it becomes an entry in the `act` chain
+        // and the subject of every approval recorded against the agent. Token exchange deliberately does
+        // not require a confidential client in general (RFC 8693 imposes no such rule, and the BFF's
+        // context-bound exchange is a public client doing exactly this), so the admin endpoint refuses to
+        // attach a profile to a public client. That check does not survive the client: flip
+        // RequireClientSecret off afterwards, delete the last secret, or seed the client public, and the
+        // profile stays attached to a client_id anyone who knows it can present. Re-checking at mint binds
+        // the invariant to the moment the assertion is made, so no write path can leave it broken.
+        if (agentProfile is not null && !client.IsConfidential)
+            throw new ProtocolTokenException("invalid_client",
+                $"Client '{clientId}' carries an agent profile but is not a confidential client; the " +
+                "agent identity asserted in the act chain must be authenticated");
+
         if (actorToken is not null)
         {
             if (agentProfile is null)
