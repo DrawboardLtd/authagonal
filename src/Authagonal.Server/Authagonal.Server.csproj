@@ -16,9 +16,12 @@
     <PackageReference Include="BCrypt.Net-Next" Version="4.1.0" />
     <!-- Patch floor, not a pin. 9.0.0 admits runtimes carrying an unauthenticated request-smuggling
          bypass and three unauthenticated DoS CVEs; a net9.0 consumer restoring the old floor got them
-         silently. Bracketed above the fixed versions and below the next major. -->
-    <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="[9.0.14,10.0.0)" Condition="'$(TargetFramework)' == 'net9.0'" />
-    <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="10.0.5" Condition="'$(TargetFramework)' == 'net10.0'" />
+         silently. Bracketed above the current security patch and below the next major, and the two
+         numbers are deliberately the same ones RuntimeVersionFloor asserts — the floor is one
+         statement, not three. net10.0 was an exact 10.0.5, which is the opposite of a floor: it
+         forbade the five security releases that followed it rather than requiring them. -->
+    <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="[9.0.18,10.0.0)" Condition="'$(TargetFramework)' == 'net9.0'" />
+    <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="[10.0.10,11.0.0)" Condition="'$(TargetFramework)' == 'net10.0'" />
     <!-- The whole Microsoft.IdentityModel family on one version ($(IdentityModelVersion), set in
          Directory.Build.props). The last three were previously left transitive and resolved to
          8.0.1 behind JwtBearer's pin, alongside an 8.17.0 .Tokens in the same validation
@@ -41,9 +44,10 @@
          Microsoft.AspNetCore.App, so the SDK prunes the dependency out of the produced nuspec —
          verified absent from every published package back to 0.2.4 — and NU1510 was exactly the
          diagnostic reporting that. It also quietly downgraded the net10.0 graph to the 9.x package.
-         The guarantee that actually holds is the runtime floor: the fix ships in ASP.NET Core
-         9.0.15 / 10.0.6, and RuntimeVersionFloor asserts it at startup where a consumer can act on
-         it. A non-Web project that genuinely needs the standalone package should reference it itself. -->
+         The guarantee that actually holds is the runtime floor: RuntimeVersionFloor asserts it at
+         startup, at 9.0.18 / 10.0.10 — the current security patch of each supported major, not just
+         the release that carried the XML pair — where a consumer can act on it.
+         A non-Web project that genuinely needs the standalone package should reference it itself. -->
   </ItemGroup>
 
   <PropertyGroup>

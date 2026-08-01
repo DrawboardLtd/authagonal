@@ -55,6 +55,8 @@ docker compose up
 - .NET 10 SDK
 - Node.js 24+
 
+Authagonal targets `net9.0` and `net10.0`, and requires a **patched** shared framework at runtime: **9.0.18 or 10.0.10 at minimum**. See the [production security checklist](#production-security-checklist) for why, and `Auth:RequireMinimumRuntime` for turning the startup check into a refusal.
+
 ### Build
 
 ```bash
@@ -171,6 +173,7 @@ The package ships compiled JS and CSS, import components and styles directly in 
 
 Before exposing Authagonal to real traffic, confirm the following. Each item is detailed on the [Configuration](configuration) page.
 
+- **Run on a patched .NET runtime: 9.0.18 or 10.0.10 at minimum.** The fixes for GHSA-37gx-xxp4-5rgx and GHSA-w3x6-4m5h-cxqf — an infinite loop and an XXE / resource-exhaustion pair in `System.Security.Cryptography.Xml`, both reachable from the **anonymous** SAML ACS endpoint — ship in the shared framework, not in any package Authagonal can reference, so nothing in your dependency graph can guarantee them. Authagonal logs `Critical` at startup when the running runtime is below the floor; set `Auth:RequireMinimumRuntime = true` to make it refuse to start instead. The published container images are already on a runtime at or above the floor.
 - **Run behind a TLS-terminating proxy, and declare it.** Authagonal must sit behind a reverse proxy / ingress that terminates TLS (or terminate TLS itself). HSTS is only emitted on HTTPS and `/connect/*` refuses plaintext, so the proxy must forward `X-Forwarded-Proto: https` — and that header is ignored unless you set `ForwardedHeaders:KnownNetworks` (or `KnownProxies`) to your proxy's CIDR / address. Use `["0.0.0.0/0", "::/0"]` if the proxy has no fixed address and nothing else can reach the process. `ForwardedHeaders:ForwardLimit` defaults to `1` (trust only the last hop).
 - **Set `SecretProvider:VaultUri`.** The default secret provider is **plaintext**: without Key Vault, upstream OIDC client secrets and TOTP / MFA seeds are stored in cleartext in Table Storage (and in backups). Configure Key Vault for any production deployment.
 - **Lock down the admin API.** `AdminApi:Enabled` defaults to **true**. The admin scope (`AdminApi:Scope`, default `authagonal-admin`) grants full management and user impersonation. Network-restrict the `/api/v1/*` admin routes and tightly control who is issued the admin scope, or set `AdminApi:Enabled = false` if unused.

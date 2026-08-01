@@ -11,16 +11,23 @@ FROM mcr.microsoft.com/dotnet/sdk:10.0@sha256:ed034a8bf0b24ded0cbbac07e17825d8e9
 WORKDIR /src
 # Directory.Build.props, NuGet.Config and the lock files are part of the restore input, not
 # incidental repo furniture. Without them this stage restored a DIFFERENT graph from every other
-# build of the same commit: no lock file, no package-source mapping, and an empty
-# $(IdentityModelVersion) — so the Microsoft.IdentityModel family the token pipeline runs on lost its
-# single-version pin and fell back to whatever a transitive reference happened to ask for. The image
-# people actually pull was the one build in the repository not covered by any of it.
+# build of the same commit: no lock file, so nothing for --locked-mode to check; no package-source
+# mapping; and an empty $(IdentityModelVersion) — so the Microsoft.IdentityModel family the token
+# pipeline runs on lost its single-version pin and fell back to whatever a transitive reference
+# happened to ask for. The image people actually pull was the one build in the repository not covered
+# by any of it. Copied with the csprojs so the restore layer still caches on them alone.
 COPY *.slnx Directory.Build.props NuGet.Config ./
 COPY src/Authagonal.Core/*.csproj src/Authagonal.Core/packages.lock.json src/Authagonal.Core/
 COPY src/Authagonal.Protocol/*.csproj src/Authagonal.Protocol/packages.lock.json src/Authagonal.Protocol/
 COPY src/Authagonal.AzureProvider/*.csproj src/Authagonal.AzureProvider/packages.lock.json src/Authagonal.AzureProvider/
 COPY src/Authagonal.Server/*.csproj src/Authagonal.Server/packages.lock.json src/Authagonal.Server/
-RUN dotnet restore src/Authagonal.Server/
+# --locked-mode: this image is the identity provider people run. A plain restore re-resolves every
+# floating dependency (10.*, 12.*) at build time and rewrites the lock file to match, so the image
+# published under a release tag could contain a package graph that exists in no commit. Locked mode
+# makes a drifted graph a build failure instead of a silent substitution. Passed explicitly because a
+# docker build does not inherit the runner's CI=true, so the Directory.Build.props condition that
+# covers restores on the runner does not reach inside this stage.
+RUN dotnet restore src/Authagonal.Server/ --locked-mode
 COPY src/ src/
 RUN dotnet publish src/Authagonal.Server/ -f net10.0 -c Release -o /app/publish --no-restore
 

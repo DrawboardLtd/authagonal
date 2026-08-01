@@ -15,4 +15,7 @@ login-app/dist
 **/.env*
 **/appsettings.*.json
 !**/appsettings.json
-!**/appsettings.Development.json
+# appsettings.Development.json is NOT re-admitted. Nothing in any image needs it — no Dockerfile or
+# compose file here sets ASPNETCORE_ENVIRONMENT=Development — but shipping it means anyone who does
+# set that variable on a deployed container silently repoints Issuer at https://localhost:5001 and
+# Storage at the Azurite emulator, from a file they never wrote and cannot see in their own config.

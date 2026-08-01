@@ -37,25 +37,51 @@ jobs:
         id: version
         run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
 
-      # Restores here run in LOCKED mode: GitHub Actions sets CI=true and Directory.Build.props turns
-      # RestoreLockedMode on from it. A floating range that has moved since the lock file was committed
-      # now fails the release instead of silently re-resolving and rewriting the lock, which is what
-      # kept "the shipped package is reproducible from this commit" from being true. Fix a failure by
-      # running `dotnet restore` locally and committing the updated lock file — deliberately.
+      # Two things changed on every line below, on the one runner whose output the world installs.
+      #
+      # RestoreLockedMode: packages.lock.json is committed for every project, but nothing made a
+      # build honour it — a plain restore silently REWRITES the lock file when the resolved graph
+      # drifts, which is exactly the case the lock file exists to catch. Every project floats at
+      # least one dependency (10.*, 9.*, 4.*), so a newer — or replaced — Npgsql, AWSSDK or
+      # Azure.Storage.Blobs could resolve here and be packed into a release with no build failure and
+      # nothing in the diff to review. Locked mode makes that a build error, so a graph change has to
+      # arrive as a deliberate commit (dotnet restore --force-evaluate) rather than as a surprise
+      # between two builds of the same source. It is set per pack rather than on a whole-solution
+      # restore because demos/custom-server floats Authagonal.* at 0.*, which by design resolves to
+      # something new every release and would fail locked mode on every run.
+      #
+      # "$VERSION", not ${{ }}: the tag is attacker-supplied text — git check-ref-format permits $,
+      # (, ), backtick — and GitHub substitutes ${{ }} into the run block before the shell ever
+      # parses it, so a tag named v1.0.0$(curl…) executes on the runner that holds NUGET_API_KEY and
+      # both Docker Hub tokens. Through an env var it is data the shell expands, never code it parses.
+      #
+      # The flag is belt and braces with Directory.Build.props, which also turns RestoreLockedMode on
+      # from the CI=true that Actions sets. Fix a locked-mode failure by running `dotnet restore`
+      # locally and committing the updated lock file — deliberately.
       - name: Pack
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
-          dotnet pack src/Authagonal.Core/Authagonal.Core.csproj -c Release -p:Version=${{ steps.version.outputs.version }} -o nupkgs
-          dotnet pack src/Authagonal.Protocol/Authagonal.Protocol.csproj -c Release -p:Version=${{ steps.version.outputs.version }} -o nupkgs
-          dotnet pack src/Authagonal.AzureProvider/Authagonal.AzureProvider.csproj -c Release -p:Version=${{ steps.version.outputs.version }} -o nupkgs
-          dotnet pack src/Authagonal.AwsProvider/Authagonal.AwsProvider.csproj -c Release -p:Version=${{ steps.version.outputs.version }} -o nupkgs
-          dotnet pack src/Authagonal.SqlProvider/Authagonal.SqlProvider.csproj -c Release -p:Version=${{ steps.version.outputs.version }} -o nupkgs
-          dotnet pack src/Authagonal.Server/Authagonal.Server.csproj -c Release -p:Version=${{ steps.version.outputs.version }} -o nupkgs
-          dotnet pack src/Authagonal.Bff/Authagonal.Bff.csproj -c Release -p:Version=${{ steps.version.outputs.version }} -o nupkgs
-          dotnet pack src/Authagonal.Backup/Authagonal.Backup.csproj -c Release -p:Version=${{ steps.version.outputs.version }} -o nupkgs
-          dotnet pack src/Authagonal.Migration/Authagonal.Migration.csproj -c Release -p:Version=${{ steps.version.outputs.version }} -o nupkgs
+          dotnet pack src/Authagonal.Core/Authagonal.Core.csproj -c Release -p:RestoreLockedMode=true -p:Version="$VERSION" -o nupkgs
+          dotnet pack src/Authagonal.Protocol/Authagonal.Protocol.csproj -c Release -p:RestoreLockedMode=true -p:Version="$VERSION" -o nupkgs
+          dotnet pack src/Authagonal.AzureProvider/Authagonal.AzureProvider.csproj -c Release -p:RestoreLockedMode=true -p:Version="$VERSION" -o nupkgs
+          dotnet pack src/Authagonal.AwsProvider/Authagonal.AwsProvider.csproj -c Release -p:RestoreLockedMode=true -p:Version="$VERSION" -o nupkgs
+          dotnet pack src/Authagonal.SqlProvider/Authagonal.SqlProvider.csproj -c Release -p:RestoreLockedMode=true -p:Version="$VERSION" -o nupkgs
+          dotnet pack src/Authagonal.Server/Authagonal.Server.csproj -c Release -p:RestoreLockedMode=true -p:Version="$VERSION" -o nupkgs
+          dotnet pack src/Authagonal.Bff/Authagonal.Bff.csproj -c Release -p:RestoreLockedMode=true -p:Version="$VERSION" -o nupkgs
+          dotnet pack src/Authagonal.Backup/Authagonal.Backup.csproj -c Release -p:RestoreLockedMode=true -p:Version="$VERSION" -o nupkgs
+          dotnet pack src/Authagonal.Migration/Authagonal.Migration.csproj -c Release -p:RestoreLockedMode=true -p:Version="$VERSION" -o nupkgs
 
+      # The key reaches the step as an environment variable rather than being substituted into the
+      # run block, which is what GitHub writes to a script file on the runner's disk before executing
+      # it. It is still a long-lived static credential and it is still visible in the pushing
+      # process's own /proc/*/cmdline; the end state is NuGet Trusted Publishing (OIDC, short-lived,
+      # like the --provenance npm jobs below), which needs a publishing policy configured on
+      # nuget.org before this step can move to it.
       - name: Push to NuGet
-        run: dotnet nuget push nupkgs/*.nupkg --api-key ${{ secrets.NUGET_API_KEY }} --source https://api.nuget.org/v3/index.json --skip-duplicate
+        env:
+          NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
+        run: dotnet nuget push nupkgs/*.nupkg --api-key "$NUGET_API_KEY" --source https://api.nuget.org/v3/index.json --skip-duplicate
 
       # Hand the just-built nupkgs to the docker job so it can restore them
       # locally instead of waiting 4–6 min for nuget.org indexing.

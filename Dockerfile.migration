@@ -1,8 +1,9 @@
 FROM mcr.microsoft.com/dotnet/sdk:10.0@sha256:ed034a8bf0b24ded0cbbac07e17825d8e9ebfe21e308191d0f7421eaf5ad4664 AS build
 WORKDIR /src
 # Directory.Build.props, NuGet.Config and the lock files are restore input — without them this stage
-# restored a different graph from every other build of the same commit (no lock file, no package
-# source mapping, and an empty $(IdentityModelVersion), which unpins the token-validation family).
+# restored a different graph from every other build of the same commit: no lock file, so nothing for
+# --locked-mode to check; no package source mapping; and an empty $(IdentityModelVersion), which
+# unpins the token-validation family.
 COPY *.slnx Directory.Build.props NuGet.Config ./
 # The CLI now drives the shared Authagonal.Migration engine, which pulls in Server (+ Protocol) and the
 # AzureProvider — copy each csproj so restore can resolve the graph before the full source copy.
@@ -12,7 +13,12 @@ COPY src/Authagonal.AzureProvider/*.csproj src/Authagonal.AzureProvider/packages
 COPY src/Authagonal.Server/*.csproj src/Authagonal.Server/packages.lock.json src/Authagonal.Server/
 COPY src/Authagonal.Migration/*.csproj src/Authagonal.Migration/packages.lock.json src/Authagonal.Migration/
 COPY tools/Authagonal.Migration.Cli/*.csproj tools/Authagonal.Migration.Cli/packages.lock.json tools/Authagonal.Migration.Cli/
-RUN dotnet restore tools/Authagonal.Migration.Cli/
+# --locked-mode: this image is handed the storage connection string and rewrites the identity
+# provider's own tables. A plain restore re-resolves every floating dependency at build time and
+# rewrites the lock file to match, so the published image could carry a package graph that exists in
+# no commit. Locked mode makes a drifted graph a build failure instead of a silent substitution.
+# Passed explicitly because a docker build does not inherit the runner's CI=true.
+RUN dotnet restore tools/Authagonal.Migration.Cli/ --locked-mode
 COPY src/ src/
 COPY tools/ tools/
 RUN dotnet publish tools/Authagonal.Migration.Cli/ -c Release -o /app/publish --no-restore
