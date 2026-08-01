@@ -141,6 +141,34 @@ public sealed class SqlTable(SqlDataSource source, string name)
     }
 
     /// <summary>
+    /// Replaces the whole row — document included — only if it is still at
+    /// <paramref name="expectedVersion"/>. False when another writer got there first. Never inserts.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="UpdateAttrsAsync"/> already gives the promoted attributes optimistic concurrency, but
+    /// the document column had none: a full write built from a stale read put back every field as it
+    /// stood at that read, silently reverting whatever landed in between — a password reset, a
+    /// security-stamp rotation, a deactivation. This is the document-side equivalent, and the version
+    /// it is asked to match is the one the CALLER read, not one re-read just before writing.
+    /// </remarks>
+    public async Task<bool> PutIfVersionAsync(SqlRow row, long expectedVersion, CancellationToken ct = default)
+    {
+        await using var connection = await source.OpenAsync(ct).ConfigureAwait(false);
+        await using var cmd = connection.CreateCommand();
+        cmd.CommandText = $"""
+            UPDATE {_ref}
+               SET data = @data,
+                   attrs = {source.Dialect.AttrsParameter},
+                   expires_at = @expires,
+                   version = version + 1
+             WHERE pk = @pk AND sk = @sk AND version = @version
+            """;
+        BindRow(cmd, row);
+        Add(cmd, "@version", expectedVersion);
+        return await cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false) == 1;
+    }
+
+    /// <summary>
     /// Atomic compare-and-set on a guard attribute: writes the row only if it exists and the named
     /// attribute is currently absent/null. True for the one caller that made the transition — the
     /// refresh-rotation "mark consumed, exactly once" primitive. Never inserts.

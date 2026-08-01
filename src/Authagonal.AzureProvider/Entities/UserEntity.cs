@@ -73,7 +73,18 @@ public sealed class UserEntity : ITableEntity
         LastLoginAt = user.LastLoginAt,
     };
 
-    public AuthUser ToModel() => new()
+    public AuthUser ToModel()
+    {
+        var model = ToModelCore();
+        // The revision the caller is holding. TableUserStore.UpdateAsync refuses a write whose token no
+        // longer matches the stored state, so a stale snapshot cannot revert what landed in between.
+        // Stamped here rather than at each read site so no read path can forget it — a null token means
+        // "the caller built this instance", which is the only case the store writes unguarded.
+        model.ConcurrencyToken = Authagonal.Core.Services.UserRevision.Of(model);
+        return model;
+    }
+
+    private AuthUser ToModelCore() => new()
     {
         Id = PartitionKey,
         Email = Email,

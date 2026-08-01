@@ -90,6 +90,32 @@ public sealed class DynamoTable(IAmazonDynamoDB db, string name)
     }
 
     /// <summary>
+    /// Deletes the item only if the named attribute currently equals <paramref name="value"/> — the
+    /// "release only what I still hold" primitive, matching the SQL provider's
+    /// <c>DeleteIfAttrEqualsAsync</c>. False when the item is gone or someone else owns it.
+    /// </summary>
+    public async Task<bool> DeleteIfAttrEqualsAsync(
+        string pk, string sk, string attribute, string value, CancellationToken ct = default)
+    {
+        try
+        {
+            await db.DeleteItemAsync(new DeleteItemRequest
+            {
+                TableName = name,
+                Key = KeyOf(pk, sk),
+                ConditionExpression = "#a = :v",
+                ExpressionAttributeNames = new Dictionary<string, string> { ["#a"] = attribute },
+                ExpressionAttributeValues = new Dictionary<string, AttributeValue> { [":v"] = new() { S = value } },
+            }, ct).ConfigureAwait(false);
+            return true;
+        }
+        catch (ConditionalCheckFailedException)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
     /// Writes <paramref name="item"/> only if the stored row still carries <paramref name="expectedVersion"/>
     /// in its <c>_v</c> attribute. Returns false when another writer got there first.
     /// </summary>
