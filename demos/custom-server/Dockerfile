@@ -17,6 +17,12 @@ WORKDIR /src
 COPY NuGet.Config ./
 COPY nupkgs/ ./nupkgs/
 COPY demos/custom-server/CustomAuthServer.csproj demos/custom-server/
+# The one place the repo's signatureValidationMode=require has to be lifted. ./nupkgs holds the
+# Authagonal.* packages `dotnet pack` produced minutes ago in the same workflow run, and dotnet pack
+# does not sign, so a require-mode restore refuses them with NU3004. The exception is scoped to this
+# build stage rather than weakened in NuGet.Config, so every other restore in the repository — the
+# server image, the release pack, a developer's machine — still requires a signature.
+ENV DOTNET_NUGET_SIGNATURE_VERIFICATION=false
 RUN dotnet restore demos/custom-server/
 COPY demos/custom-server/*.cs demos/custom-server/
 COPY demos/custom-server/Services/ demos/custom-server/Services/
@@ -31,4 +37,11 @@ WORKDIR /app
 COPY --from=backend /app/publish .
 EXPOSE 8080
 ENV ASPNETCORE_URLS=http://+:8080
+# Runs as a non-root user, for the same reason the server image does. This one is an auth server
+# people are invited to point a browser at, so it is the most exposed image published here: without
+# this, a remote-code-execution bug in it begins with uid 0 inside the container, able to overwrite
+# the application binaries and read every mounted secret. The aspnet base image ships this uid; it
+# owns nothing, which is the point.
+USER $APP_UID
+
 ENTRYPOINT ["dotnet", "CustomAuthServer.dll"]

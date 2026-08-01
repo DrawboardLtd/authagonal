@@ -20,7 +20,10 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="Microsoft.IdentityModel.Tokens" Version="8.17.0" />
+    <!-- $(IdentityModelVersion) from Directory.Build.props, like every other project. This one was
+         still a literal 8.17.0 — the last copy of the number the property exists to remove, and the
+         one furthest down the graph, so bumping the family anywhere else pinned Core below it. -->
+    <PackageReference Include="Microsoft.IdentityModel.Tokens" Version="$(IdentityModelVersion)" />
     <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.3" />
   </ItemGroup>
 

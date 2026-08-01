@@ -22,6 +22,20 @@ public sealed class AuthOptions
     /// </remarks>
     public bool AllowInsecureHttp { get; set; }
 
+    /// <summary>
+    /// Refuse to start when the .NET shared framework is older than the security floor this server
+    /// requires (9.0.18 / 10.0.10). Default false: the mismatch is a Critical log and the server starts.
+    /// </summary>
+    /// <remarks>
+    /// The floor exists because the fixes for GHSA-37gx-xxp4-5rgx and GHSA-w3x6-4m5h-cxqf — both
+    /// reachable from the anonymous SAML ACS endpoint — ship in the runtime, not in a package this
+    /// library can pin, so no dependency of yours can guarantee them. Default false because refusing
+    /// would turn a version bump of this package into an outage on a fleet whose runtime is one patch
+    /// behind; set it true where not starting is preferable to serving unauthenticated XML on an
+    /// unpatched runtime.
+    /// </remarks>
+    public bool RequireMinimumRuntime { get; set; }
+
     // --- Account lockout ---
     public int MaxFailedAttempts { get; set; } = 5;
     public int LockoutDurationMinutes { get; set; } = 10;

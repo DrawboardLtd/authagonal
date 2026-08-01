@@ -15,7 +15,7 @@
         "type": "Direct",
         "requested": "[10.0.10, )",
         "resolved": "10.0.10",
-        "contentHash": "wFVNrRbbE5tPnKkZilamQmei9fQ1eETRHL5I0hDoLIJOt87v84AHNTvy6uY88/rTZdlW4B/6SMJt0yEGI5VCKA=="
+        "contentHash": "f5VCIE7AJpd5YvzNTeMGVzQIgyE9tX+AreTYwQF+REbu+DZo/2Ae+jNSwhPEYrVz6RRkd7y8ubXjk6Nn6Ka+Cg=="
       },
       "Azure.Core": {
         "type": "Transitive",

@@ -9,12 +9,20 @@ RUN npm run build:spa
 # Stage 2: Build .NET
 FROM mcr.microsoft.com/dotnet/sdk:10.0@sha256:ed034a8bf0b24ded0cbbac07e17825d8e9ebfe21e308191d0f7421eaf5ad4664 AS backend
 WORKDIR /src
-COPY *.slnx ./
-COPY src/Authagonal.Core/*.csproj src/Authagonal.Core/
-COPY src/Authagonal.Protocol/*.csproj src/Authagonal.Protocol/
-COPY src/Authagonal.AzureProvider/*.csproj src/Authagonal.AzureProvider/
-COPY src/Authagonal.Server/*.csproj src/Authagonal.Server/
-RUN dotnet restore src/Authagonal.Server/
+# Directory.Build.props, NuGet.Config and the lock files are part of the restore inputs, not
+# incidental repo files. Without the props file $(IdentityModelVersion) evaluates to empty and the
+# Microsoft.IdentityModel family has no version at all; without the lock files there is nothing for
+# --locked-mode to check. Copied with the csprojs so the restore layer still caches on them alone.
+COPY *.slnx Directory.Build.props NuGet.Config ./
+COPY src/Authagonal.Core/*.csproj src/Authagonal.Core/packages.lock.json src/Authagonal.Core/
+COPY src/Authagonal.Protocol/*.csproj src/Authagonal.Protocol/packages.lock.json src/Authagonal.Protocol/
+COPY src/Authagonal.AzureProvider/*.csproj src/Authagonal.AzureProvider/packages.lock.json src/Authagonal.AzureProvider/
+COPY src/Authagonal.Server/*.csproj src/Authagonal.Server/packages.lock.json src/Authagonal.Server/
+# --locked-mode: this image is the identity provider people run. A plain restore re-resolves every
+# floating dependency (10.*, 12.*) at build time and rewrites the lock file to match, so the image
+# published under a release tag could contain a package graph that exists in no commit. Locked mode
+# makes a drifted graph a build failure instead of a silent substitution.
+RUN dotnet restore src/Authagonal.Server/ --locked-mode
 COPY src/ src/
 RUN dotnet publish src/Authagonal.Server/ -f net10.0 -c Release -o /app/publish --no-restore
 

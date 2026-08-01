@@ -40,9 +40,10 @@
     <!-- Patch floor, not a pin — the same bracket Authagonal.Server carries. 9.0.0 admits runtimes
          with an unauthenticated request-smuggling bypass and three unauthenticated DoS CVEs, and
          this package is published to nuget.org, so a net9.0 consumer restoring the old floor got
-         them silently. -->
-    <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="[9.0.14,10.0.0)" Condition="'$(TargetFramework)' == 'net9.0'" />
-    <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="10.0.5" Condition="'$(TargetFramework)' == 'net10.0'" />
+         them silently. net10.0 was an exact 10.0.5, which is the opposite of a floor: it forbade the
+         five security releases that followed it rather than requiring them. -->
+    <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="[9.0.18,10.0.0)" Condition="'$(TargetFramework)' == 'net9.0'" />
+    <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="[10.0.10,11.0.0)" Condition="'$(TargetFramework)' == 'net10.0'" />
     <PackageReference Include="BCrypt.Net-Next" Version="4.1.0" />
   </ItemGroup>
 

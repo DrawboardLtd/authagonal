@@ -12,4 +12,9 @@ WORKDIR /app
 COPY --from=backend /app/publish .
 EXPOSE 8080
 ENV ASPNETCORE_URLS=http://+:8080
+# Runs as a non-root user, for the same reason the server image does: without this, code execution
+# in the demo API begins with uid 0 inside the container, able to overwrite the application binaries
+# and read every mounted secret. The aspnet base image ships this uid; it owns nothing.
+USER $APP_UID
+
 ENTRYPOINT ["dotnet", "SampleApp.Api.dll"]

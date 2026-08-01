@@ -10,9 +10,25 @@
       compromised upstream enters the build silently, with nothing in the repository recording what
       was actually used.
 
-      The lock files are committed. CI should restore in locked mode (the RestoreLockedMode
-      property, or the equivalent CLI switch) so a graph change has to arrive as a deliberate
-      commit rather than as a surprise between two builds of the same source.
+      The lock files are committed, and the builds that produce published artifacts now restore in
+      locked mode so a graph change has to arrive as a deliberate commit rather than as a surprise
+      between two builds of the same source: RestoreLockedMode is set on each pack in release.yml,
+      and the locked-mode switch is passed to restore in Dockerfile and Dockerfile.migration.
+      Saying "CI should" here was not enforcement — every one of those builds still re-resolved
+      and rewrote.
+
+      Locked mode is deliberately NOT applied to demos/custom-server: it floats Authagonal.* at
+      0.*, which resolves to something new on every release by design, so it would fail on every
+      run. Take an intended graph change with the restore switch that forces re-evaluation.
+
+      Regenerate lock files on a machine whose package cache does NOT hold the SDK's own copy of
+      Microsoft.NET.ILLink.Tasks. IsTrimmable pulls that package in, the SDK ships a copy of it in
+      library-packs, and NuGet.Config's packageSourceMapping does not map that folder — so a clean
+      machine takes it from nuget.org, whose .nupkg is a different file with a different content
+      hash. A lock file written against the SDK-local copy fails NU1403 on every clean restore,
+      which is a hard error even without locked mode, and that is precisely the machine every
+      release and every docker build runs on. Delete the cached entry and restore again if a lock
+      file starts disagreeing with CI about that package.
     -->
     <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
 
@@ -32,8 +48,13 @@
       Referencing $(IdentityModelVersion) everywhere makes that structural: the next advisory in
       this family is one edit, and no sibling can be forgotten and silently float back to whatever
       a transitive dependency asks for.
+
+      8.19.2 is the version ASP.NET Core 9.0.18 / 10.0.10 themselves depend on. The number moves
+      with the JwtBearer floor and for the same reason: holding the family below what JwtBearer
+      requires is a package downgrade, and holding it above what Microsoft shipped against means
+      running a validation pipeline Microsoft did not test. One edit here, both legs.
     -->
-    <IdentityModelVersion>8.17.0</IdentityModelVersion>
+    <IdentityModelVersion>8.19.2</IdentityModelVersion>
   </PropertyGroup>
 
 </Project>

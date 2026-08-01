@@ -270,9 +270,13 @@ public static class AuthagonalExtensions
         // which are precisely the ones the automatic upgrade cannot reach.
         services.AddSingleton<IHostedService, LegacySecretHashWarning>();
 
-        // The XML-crypto CVE fixes come from the shared framework, not from a package this library can
-        // pin — so the floor is asserted rather than assumed.
-        services.AddSingleton<IHostedService, RuntimeVersionFloor>();
+        // The shared framework's security fixes come from the runtime, not from a package this library
+        // can pin — so the floor is asserted rather than assumed. Auth:RequireMinimumRuntime turns the
+        // Critical log into a refusal to start, for the deployment that would rather be down than serve
+        // the anonymous SAML ACS endpoint on an unpatched runtime.
+        services.AddSingleton<IHostedService>(sp => new RuntimeVersionFloor(
+            sp.GetRequiredService<ILogger<RuntimeVersionFloor>>(),
+            configuration.GetValue("Auth:RequireMinimumRuntime", false)));
 
         // The private signing key is the one secret whose exposure is total, and its at-rest
         // protection is opt-in through IFieldCipher — so its absence is stated rather than assumed.
