@@ -1,4 +1,5 @@
 using Authagonal.Core.Models;
+using Authagonal.Core.Services;
 using Authagonal.Core.Stores;
 
 namespace Authagonal.Server.Endpoints.Admin;
@@ -39,6 +40,8 @@ public static class RoleEndpoints
     private static async Task<IResult> CreateRole(
         CreateRoleRequest request,
         IRoleStore roleStore,
+        IAuditLogger audit,
+        HttpContext http,
         CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(request.Name))
@@ -57,6 +60,10 @@ public static class RoleEndpoints
         };
 
         await roleStore.CreateAsync(role, ct);
+
+        // Entitlement is carried by the role NAME (see UpdateRole), so the definition of a role, who
+        // holds it and which scope gates name it are all privilege facts. None of them were audited.
+        await audit.LogAsync(AdminActor.Of(http), "role.created", "role", role.Id, role.Name, ct);
 
         return Results.Created($"/api/v1/roles/{role.Id}", role);
     }
@@ -81,6 +88,8 @@ public static class RoleEndpoints
         IRoleStore roleStore,
         IUserStore userStore,
         IScopeStore scopeStore,
+        IAuditLogger audit,
+        HttpContext http,
         ILoggerFactory loggerFactory,
         CancellationToken ct)
     {
@@ -136,6 +145,12 @@ public static class RoleEndpoints
         role.UpdatedAt = DateTimeOffset.UtcNow;
 
         await roleStore.UpdateAsync(role, ct);
+
+        // A rename rewrites every holder's entitlement string and every scope gate that named it — the
+        // widest privilege edit this API offers, and it left no record of who made it.
+        await audit.LogAsync(AdminActor.Of(http), "role.updated", "role", role.Id,
+            renaming ? $"renamed to {role.Name}" : role.Name, ct);
+
         return Results.Ok(role);
     }
 
@@ -158,6 +173,8 @@ public static class RoleEndpoints
         IRoleStore roleStore,
         IUserStore userStore,
         IScopeStore scopeStore,
+        IAuditLogger audit,
+        HttpContext http,
         ILoggerFactory loggerFactory,
         CancellationToken ct)
     {
@@ -188,6 +205,8 @@ public static class RoleEndpoints
 
             await RewriteScopeGatesAsync(scopeStore, existing.Name, null, ct);
             await roleStore.DeleteAsync(roleId, ct);
+            await audit.LogAsync(AdminActor.Of(http), "role.deleted", "role", roleId,
+                $"{existing.Name} (forced; holders unknown on this store and keep the entitlement)", ct);
             return Results.NoContent();
         }
 
@@ -216,6 +235,9 @@ public static class RoleEndpoints
 
         var gatesCleared = await RewriteScopeGatesAsync(scopeStore, existing.Name, null, ct);
         await roleStore.DeleteAsync(roleId, ct);
+
+        await audit.LogAsync(AdminActor.Of(http), "role.deleted", "role", roleId,
+            $"{existing.Name} (revoked from {revoked} holder(s), cleared from {gatesCleared} scope gate(s))", ct);
 
         if (holders.Count > 0 || gatesCleared > 0)
         {
@@ -278,6 +300,8 @@ public static class RoleEndpoints
         RoleAssignmentRequest request,
         IRoleStore roleStore,
         IUserStore userStore,
+        IAuditLogger audit,
+        HttpContext http,
         CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(request.UserId) || string.IsNullOrWhiteSpace(request.RoleName))
@@ -296,6 +320,11 @@ public static class RoleEndpoints
             user.Roles.Add(request.RoleName);
             user.UpdatedAt = DateTimeOffset.UtcNow;
             await userStore.UpdateAsync(user, ct);
+
+            // Granting a role is a privilege grant that lands in the next token's `roles` claim and passes
+            // every scope gate naming it. The audit trail recorded client renames but not this.
+            await audit.LogAsync(AdminActor.Of(http), "role.assigned", "user", user.Id, request.RoleName, ct);
+
         }
 
         return TypedResults.Json(new UserRolesResponse { UserId = user.Id, Roles = user.Roles }, AuthagonalJsonContext.Default.UserRolesResponse);
@@ -304,6 +333,8 @@ public static class RoleEndpoints
     private static async Task<IResult> UnassignRole(
         RoleAssignmentRequest request,
         IUserStore userStore,
+        IAuditLogger audit,
+        HttpContext http,
         CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(request.UserId) || string.IsNullOrWhiteSpace(request.RoleName))
@@ -317,6 +348,7 @@ public static class RoleEndpoints
         {
             user.UpdatedAt = DateTimeOffset.UtcNow;
             await userStore.UpdateAsync(user, ct);
+            await audit.LogAsync(AdminActor.Of(http), "role.unassigned", "user", user.Id, request.RoleName, ct);
         }
 
         return TypedResults.Json(new UserRolesResponse { UserId = user.Id, Roles = user.Roles }, AuthagonalJsonContext.Default.UserRolesResponse);

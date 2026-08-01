@@ -201,6 +201,9 @@ public static class AuthEndpoints
                 // race the counter and slip past the lockout threshold.
                 var opts = authOptions.Value;
                 var locked = await userStore.RecordFailedLoginAsync(user.Id, opts.MaxFailedAttempts, TimeSpan.FromMinutes(opts.LockoutDurationMinutes), ct);
+                // Addresses go through LogSafe.Email everywhere in this file (see its remarks): the login,
+                // registration, confirmation and reset paths are anonymous, so the value is caller-supplied
+                // text, and the log is the wrong place to keep the directory's login identifiers.
                 if (locked)
                     logger.LogWarning("Account locked out for user {UserId}", user.Id);
             }
@@ -360,7 +363,8 @@ public static class AuthEndpoints
         // application log became a store of user PII — replicated into whatever aggregator, retention
         // policy and access grant the log sink has, none of which is the user store's. The id resolves
         // to the account for anyone who is allowed to look it up; the domain is kept where the line has
-        // no id and would otherwise say nothing.
+        // no id and would otherwise say nothing, and goes through LogSafe there because it is still
+        // caller-controlled text.
         logger.LogInformation("User {UserId} signed in", user.Id);
 
         // If Enabled but user hasn't enrolled, hint that MFA is available (user is not enrolled here)
@@ -552,7 +556,7 @@ public static class AuthEndpoints
             catch (Exception ex)
             {
                 logger.LogError(ex, "Failed to send account-exists email to user {UserId} (domain {Domain})",
-                    existing.Id, EmailDomain.Of(existing.Email) ?? "(none)");
+                    existing.Id, LogSafe.Text(EmailDomain.Of(existing.Email)));
             }
             logger.LogInformation("Registration attempt for an existing credentialed email — neutral response returned");
             return TypedResults.Json(new RegistrationSuccess { Success = true, UserId = Guid.NewGuid().ToString("D") }, AuthagonalJsonContext.Default.RegistrationSuccess, statusCode: 201);
@@ -647,7 +651,7 @@ public static class AuthEndpoints
         if (user.EmailConfirmed && !isUpgrade)
         {
             logger.LogInformation("User registered (email pre-verified): {UserId} in domain {Domain}",
-                user.Id, EmailDomain.Of(user.Email) ?? "(none)");
+                user.Id, LogSafe.Text(EmailDomain.Of(user.Email)));
             return TypedResults.Json(new RegistrationSuccess { Success = true, UserId = user.Id, EmailVerified = true }, AuthagonalJsonContext.Default.RegistrationSuccess, statusCode: 201);
         }
 
@@ -688,11 +692,11 @@ public static class AuthEndpoints
         catch (Exception ex)
         {
             logger.LogError(ex, "Failed to send verification email to user {UserId} (domain {Domain})",
-                user.Id, EmailDomain.Of(user.Email) ?? "(none)");
+                user.Id, LogSafe.Text(EmailDomain.Of(user.Email)));
         }
 
         logger.LogInformation("User registered: {UserId} in domain {Domain}",
-            user.Id, EmailDomain.Of(user.Email) ?? "(none)");
+            user.Id, LogSafe.Text(EmailDomain.Of(user.Email)));
 
         // A throwaway id on the CLAIM path, matching the neutral duplicate-registration response.
         //
@@ -1077,10 +1081,11 @@ public static class AuthEndpoints
             // anonymous — so the log took arbitrary caller-controlled text (CR/LF for forged entries
             // in a line-oriented sink, control characters, unbounded length) and, for a real address,
             // recorded PII about someone who never used the service. Only the domain is kept, which
-            // is what the line is actually diagnostic for.
+            // is what the line is actually diagnostic for — and the domain is still caller-controlled
+            // text (everything after the last '@'), so it goes through LogSafe rather than raw.
             logger.LogInformation(
                 "Password reset requested for a non-existent account in domain {Domain}",
-                Authagonal.Core.Services.EmailDomain.Of(request.Email) ?? "(none)");
+                Authagonal.Core.Services.LogSafe.Text(Authagonal.Core.Services.EmailDomain.Of(request.Email)));
             // Artificial delay to prevent timing-based email enumeration
             await Task.Delay(TimeSpan.FromMilliseconds(100 + RandomNumberGenerator.GetInt32(200)), ct);
             return TypedResults.Json(new SuccessResponse(), AuthagonalJsonContext.Default.SuccessResponse);
@@ -1146,7 +1151,7 @@ public static class AuthEndpoints
         catch (Exception ex)
         {
             logger.LogError(ex, "Failed to send password reset email to user {UserId} (domain {Domain})",
-                user.Id, EmailDomain.Of(user.Email) ?? "(none)");
+                user.Id, LogSafe.Text(EmailDomain.Of(user.Email)));
         }
 
         return TypedResults.Json(new SuccessResponse(), AuthagonalJsonContext.Default.SuccessResponse);

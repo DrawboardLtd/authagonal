@@ -138,3 +138,60 @@ public sealed class TestTokenExchangeSubjectTransformer : Authagonal.Protocol.IT
         return Task.FromResult(result);
     }
 }
+
+/// <summary>
+/// Records every audit row an admin write produces, so a test can assert the write is attributable.
+/// </summary>
+/// <remarks>
+/// The factory registers this in place of <c>NullAuditLogger</c> — which is what AddAuthagonal
+/// TryAddSingletons — because the interesting property of an admin mutation is not only that it happened
+/// but that the trail names who did it. Several of the highest-impact writes (SCIM token mint, SSO
+/// connection create, role and scope edits) produced no row at all.
+/// </remarks>
+public sealed class RecordingAuditLogger : IAuditLogger
+{
+    public List<(string Actor, string Action, string EntityType, string? EntityId, string? Detail)> Entries { get; } = [];
+
+    public Task LogAsync(string actor, string action, string entityType, string? entityId = null, string? detail = null, CancellationToken ct = default)
+    {
+        Entries.Add((actor, action, entityType, entityId, detail));
+        return Task.CompletedTask;
+    }
+
+    public bool Has(string action) => Entries.Any(e => e.Action == action);
+}
+
+/// <summary>
+/// Captures every log record the host writes, so a test can assert what is NOT in the log.
+/// </summary>
+/// <remarks>
+/// "This value must never reach the log" is a guard like any other, and the only way to hold it is to
+/// read the log back. The SCIM bearer handler wrote the presented token's length and a hash prefix on
+/// every request, successes included — a per-token fingerprint for anyone with log read access.
+/// </remarks>
+public sealed class RecordingLoggerProvider : Microsoft.Extensions.Logging.ILoggerProvider
+{
+    private readonly System.Collections.Concurrent.ConcurrentQueue<string> _messages = new();
+
+    public IReadOnlyCollection<string> Messages => _messages;
+
+    public Microsoft.Extensions.Logging.ILogger CreateLogger(string categoryName) => new Sink(_messages);
+
+    public void Dispose() { }
+
+    private sealed class Sink(System.Collections.Concurrent.ConcurrentQueue<string> messages)
+        : Microsoft.Extensions.Logging.ILogger
+    {
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
+        public bool IsEnabled(Microsoft.Extensions.Logging.LogLevel logLevel) => true;
+
+        public void Log<TState>(
+            Microsoft.Extensions.Logging.LogLevel logLevel,
+            Microsoft.Extensions.Logging.EventId eventId,
+            TState state,
+            Exception? exception,
+            Func<TState, Exception?, string> formatter)
+            => messages.Enqueue(formatter(state, exception));
+    }
+}

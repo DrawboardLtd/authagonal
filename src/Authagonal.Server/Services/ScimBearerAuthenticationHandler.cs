@@ -36,13 +36,15 @@ public sealed class ScimBearerAuthenticationHandler(
         // Hash the token for lookup
         var tokenHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(rawToken))).ToLowerInvariant();
 
-        Logger.LogInformation("SCIM auth attempt: token length={Length}, hash prefix={HashPrefix}",
-            rawToken.Length, tokenHash[..12]);
-
+        // NOTHING derived from the presented token is logged. Every SCIM request used to write its exact
+        // length and the first 12 hex of its SHA-256 at Information, successes included — a per-token
+        // fingerprint that lets anyone with log read access correlate a stolen token to its traffic, plus a
+        // length oracle over failed attempts. The token is a bearer credential for the whole directory;
+        // application logs are a far wider audience than the credential store.
         var scimToken = await scimTokenStore.FindByHashAsync(tokenHash);
         if (scimToken is null)
         {
-            Logger.LogWarning("SCIM token not found for hash prefix {HashPrefix}", tokenHash[..12]);
+            Logger.LogWarning("SCIM authentication failed: unknown token");
             return AuthenticateResult.Fail("Invalid SCIM token");
         }
 
@@ -51,7 +53,7 @@ public sealed class ScimBearerAuthenticationHandler(
         var computedHashBytes = Encoding.UTF8.GetBytes(tokenHash);
         if (!CryptographicOperations.FixedTimeEquals(storedHashBytes, computedHashBytes))
         {
-            Logger.LogWarning("SCIM token hash mismatch (constant-time) for hash prefix {HashPrefix}", tokenHash[..12]);
+            Logger.LogWarning("SCIM authentication failed: token hash mismatch (constant-time)");
             return AuthenticateResult.Fail("Invalid SCIM token");
         }
 

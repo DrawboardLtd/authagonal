@@ -326,5 +326,163 @@ public sealed class ScimGroupEndpointTests : IAsyncDisposable
         Assert.Equal(2, json.GetProperty("totalResults").GetInt32());
     }
 
+    // -----------------------------------------------------------------------
+    // #44 / #147 — a group PATCH that could not be applied is not reported as applied
+    // -----------------------------------------------------------------------
+
+    /// <summary>
+    /// The user endpoint learned to answer 400 for an operation it dropped; the group endpoint kept
+    /// answering 200 with the unchanged resource. Group membership drives role assignment, so an operation
+    /// the IdP believes landed — and never retries — is a stale entitlement at the next token issuance.
+    /// </summary>
+    [Theory]
+    [InlineData("frobnicate", "members")]
+    [InlineData("replace", "description")]
+    [InlineData("remove", "displayName")]
+    public async Task PatchGroup_WithAnOperationItCannotApply_Returns400InvalidPath(string op, string path)
+    {
+        await _factory.SeedTestDataAsync();
+        var (_, rawToken) = await _factory.SeedScimClientAsync();
+        var client = _factory.CreateClient();
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", rawToken);
+
+        var created = await client.PostAsJsonAsync("/scim/v2/Groups", new { displayName = "Reported" });
+        var groupId = (await created.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetString();
+
+        var patch = new StringContent(
+            JsonSerializer.Serialize(new
+            {
+                schemas = new[] { "urn:ietf:params:scim:api:messages:2.0:PatchOp" },
+                Operations = new[] { new { op, path, value = "x" } },
+            }), Encoding.UTF8, "application/scim+json");
+
+        var response = await client.PatchAsync($"/scim/v2/Groups/{groupId}", patch);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("invalidPath", json.GetProperty("scimType").GetString());
+
+        // And the group is untouched — a refused PATCH must not half-apply.
+        var after = await (await client.GetAsync($"/scim/v2/Groups/{groupId}")).Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("Reported", after.GetProperty("displayName").GetString());
+    }
+
+    /// <summary>A remove with no path names nothing to remove (RFC 7644 §3.5.2).</summary>
+    [Fact]
+    public async Task PatchGroup_RemoveWithNoPath_Returns400NoTarget()
+    {
+        await _factory.SeedTestDataAsync();
+        var (_, rawToken) = await _factory.SeedScimClientAsync();
+        var client = _factory.CreateClient();
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", rawToken);
+
+        var created = await client.PostAsJsonAsync("/scim/v2/Groups", new { displayName = "NoTarget" });
+        var groupId = (await created.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetString();
+
+        var patch = new StringContent(
+            JsonSerializer.Serialize(new
+            {
+                schemas = new[] { "urn:ietf:params:scim:api:messages:2.0:PatchOp" },
+                Operations = new[] { new { op = "remove" } },
+            }), Encoding.UTF8, "application/scim+json");
+
+        var response = await client.PatchAsync($"/scim/v2/Groups/{groupId}", patch);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Equal("noTarget",
+            (await response.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("scimType").GetString());
+    }
+
+    /// <summary>Non-vacuity: a supported membership PATCH still answers 200 and still applies.</summary>
+    [Fact]
+    public async Task PatchGroup_WithASupportedOperation_StillSucceeds()
+    {
+        await _factory.SeedTestDataAsync();
+        var (_, rawToken) = await _factory.SeedScimClientAsync();
+        var client = _factory.CreateClient();
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", rawToken);
+
+        var created = await client.PostAsJsonAsync("/scim/v2/Groups", new { displayName = "Applied" });
+        var groupId = (await created.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetString();
+
+        var patch = new StringContent(
+            JsonSerializer.Serialize(new
+            {
+                schemas = new[] { "urn:ietf:params:scim:api:messages:2.0:PatchOp" },
+                Operations = new[] { new { op = "replace", path = "displayName", value = "Applied Twice" } },
+            }), Encoding.UTF8, "application/scim+json");
+
+        var response = await client.PatchAsync($"/scim/v2/Groups/{groupId}", patch);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal("Applied Twice",
+            (await response.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("displayName").GetString());
+    }
+
+    // -----------------------------------------------------------------------
+    // #347 — the listing asks the store for a page, not for everything
+    // -----------------------------------------------------------------------
+
+    /// <summary>
+    /// The handler read every group in the tenant (startIndex 0, count int.MaxValue) and serialised all of
+    /// them before paging in memory, on every request. It now pages at the store: count is clamped and
+    /// startIndex is honoured, so the page the caller asked for is the work the request does.
+    /// </summary>
+    [Fact]
+    public async Task ListGroups_PagesAtTheStore_AndClampsCount()
+    {
+        await _factory.SeedTestDataAsync();
+        var (_, rawToken) = await _factory.SeedScimClientAsync();
+        var client = _factory.CreateClient();
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", rawToken);
+
+        for (var i = 0; i < 5; i++)
+            await client.PostAsJsonAsync("/scim/v2/Groups", new { displayName = $"Paged {i}" });
+
+        var firstPage = await (await client.GetAsync("/scim/v2/Groups?startIndex=1&count=2"))
+            .Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(5, firstPage.GetProperty("totalResults").GetInt32());
+        Assert.Equal(2, firstPage.GetProperty("itemsPerPage").GetInt32());
+
+        var secondPage = await (await client.GetAsync("/scim/v2/Groups?startIndex=3&count=2"))
+            .Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(3, secondPage.GetProperty("startIndex").GetInt32());
+        Assert.Equal(2, secondPage.GetProperty("itemsPerPage").GetInt32());
+        Assert.NotEqual(
+            firstPage.GetProperty("Resources")[0].GetProperty("id").GetString(),
+            secondPage.GetProperty("Resources")[0].GetProperty("id").GetString());
+
+        // A caller asking for the whole world gets a bounded page, not the whole world. Asserted at the
+        // store, because with five groups seeded the response alone cannot tell a clamped request from an
+        // unclamped one — and the defect was the size of the request, not the size of the answer.
+        var huge = await (await client.GetAsync("/scim/v2/Groups?count=10000000"))
+            .Content.ReadFromJsonAsync<JsonElement>();
+        Assert.True(huge.GetProperty("itemsPerPage").GetInt32() <= 200);
+        Assert.All(_factory.ScimGroupStore.ListCalls, call => Assert.True(call.Count <= 200,
+            $"the listing asked the store for {call.Count} groups"));
+        Assert.Contains(_factory.ScimGroupStore.ListCalls, call => call is { StartIndex: 3, Count: 2 });
+    }
+
+    /// <summary>A filtered listing still pages, and still reports the true total once the scan completes.</summary>
+    [Fact]
+    public async Task ListGroups_FilteredPage_IsBounded()
+    {
+        await _factory.SeedTestDataAsync();
+        var (_, rawToken) = await _factory.SeedScimClientAsync();
+        var client = _factory.CreateClient();
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", rawToken);
+
+        for (var i = 0; i < 4; i++)
+            await client.PostAsJsonAsync("/scim/v2/Groups", new { displayName = "Matching", externalId = $"m-{i}" });
+        await client.PostAsJsonAsync("/scim/v2/Groups", new { displayName = "Other" });
+
+        var filter = Uri.EscapeDataString("displayName eq \"Matching\"");
+        var page = await (await client.GetAsync($"/scim/v2/Groups?filter={filter}&count=2"))
+            .Content.ReadFromJsonAsync<JsonElement>();
+
+        Assert.Equal(2, page.GetProperty("itemsPerPage").GetInt32());
+        Assert.Equal(4, page.GetProperty("totalResults").GetInt32());
+    }
+
     public ValueTask DisposeAsync() => _factory.DisposeAsync();
 }

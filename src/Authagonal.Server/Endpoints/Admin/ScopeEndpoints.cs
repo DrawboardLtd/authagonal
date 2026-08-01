@@ -1,4 +1,5 @@
 using Authagonal.Core.Models;
+using Authagonal.Core.Services;
 using Authagonal.Core.Stores;
 
 namespace Authagonal.Server.Endpoints.Admin;
@@ -35,6 +36,8 @@ public static class ScopeEndpoints
     private static async Task<IResult> CreateScope(
         CreateScopeRequest request,
         IScopeStore scopeStore,
+        IAuditLogger audit,
+        HttpContext http,
         CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(request.Name))
@@ -59,6 +62,11 @@ public static class ScopeEndpoints
         };
 
         await scopeStore.CreateAsync(scope, ct);
+
+        // AllowedRoles is the gate deciding who may be granted this scope, so a scope write is an
+        // authorization edit, not a catalogue edit — and none of the three were audited.
+        await audit.LogAsync(AdminActor.Of(http), "scope.created", "scope", scope.Name, GateDetail(scope), ct);
+
         return Results.Created($"/api/v1/scopes/{scope.Name}", scope);
     }
 
@@ -66,6 +74,8 @@ public static class ScopeEndpoints
         string name,
         UpdateScopeRequest request,
         IScopeStore scopeStore,
+        IAuditLogger audit,
+        HttpContext http,
         CancellationToken ct)
     {
         var scope = await scopeStore.GetAsync(name, ct);
@@ -84,17 +94,32 @@ public static class ScopeEndpoints
         scope.UpdatedAt = DateTimeOffset.UtcNow;
 
         await scopeStore.UpdateAsync(scope, ct);
+
+        // The gate can be cleared here — an empty AllowedRoles means "anyone may hold this scope" — which
+        // is a silent privilege widening unless someone can see who did it.
+        await audit.LogAsync(AdminActor.Of(http), "scope.updated", "scope", scope.Name, GateDetail(scope), ct);
+
         return TypedResults.Json(scope, AuthagonalJsonContext.Default.Scope);
     }
 
-    private static async Task<IResult> DeleteScope(string name, IScopeStore scopeStore, CancellationToken ct)
+    private static async Task<IResult> DeleteScope(
+        string name,
+        IScopeStore scopeStore,
+        IAuditLogger audit,
+        HttpContext http,
+        CancellationToken ct)
     {
         var existing = await scopeStore.GetAsync(name, ct);
         if (existing is null) return Results.NotFound();
 
         await scopeStore.DeleteAsync(name, ct);
+        await audit.LogAsync(AdminActor.Of(http), "scope.deleted", "scope", name, GateDetail(existing), ct);
         return Results.NoContent();
     }
+
+    /// <summary>The role gate as the audit row records it — "ungated" is the state worth spotting.</summary>
+    private static string GateDetail(Scope scope) =>
+        scope.AllowedRoles.Count == 0 ? "ungated" : "roles: " + string.Join(", ", scope.AllowedRoles);
 
     public sealed class CreateScopeRequest
     {

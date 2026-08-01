@@ -685,8 +685,13 @@ public sealed class InMemoryScimGroupStore : IScimGroupStore
         return Task.FromResult(group);
     }
 
+    /// <summary>Every (startIndex, count) the listing endpoint asked for — the endpoint used to ask for
+    /// (0, int.MaxValue) on every request, so the page it was given is worth asserting on.</summary>
+    public List<(int StartIndex, int Count)> ListCalls { get; } = [];
+
     public Task<(IReadOnlyList<ScimGroup> Groups, int TotalCount)> ListAsync(string? organizationId, int startIndex, int count, CancellationToken ct = default)
     {
+        ListCalls.Add((startIndex, count));
         var all = _groups.Values.AsEnumerable();
         if (organizationId is not null)
             all = all.Where(g => g.OrganizationId == organizationId);

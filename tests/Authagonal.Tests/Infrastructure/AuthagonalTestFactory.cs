@@ -65,6 +65,10 @@ public sealed class AuthagonalTestFactory : IAsyncDisposable
     public InMemoryAgentProfileStore AgentProfileStore { get; } = new();
     public TestEmailService EmailService { get; } = new();
     public TestAuthHook AuthHook { get; } = new();
+    public RecordingAuditLogger AuditLog { get; } = new();
+
+    /// <summary>Every log record the host wrote — for asserting that a secret is absent from it.</summary>
+    public RecordingLoggerProvider LogSink { get; } = new();
     public TestTokenExchangeSubjectTransformer ExchangeTransformer { get; } = new();
     public TestProvisioningOrchestrator Provisioning { get; } = new();
 
@@ -243,6 +247,7 @@ public sealed class AuthagonalTestFactory : IAsyncDisposable
         builder.Configuration["Oidc:Issuer"] = TestIssuer;
         builder.Configuration["AdminApi:Enabled"] = "true";
         builder.Configuration["Cluster:Enabled"] = "false";
+        builder.Services.AddSingleton<Microsoft.Extensions.Logging.ILoggerProvider>(LogSink);
 
         foreach (var (key, value) in Configuration)
             builder.Configuration[key] = value;
@@ -277,6 +282,9 @@ public sealed class AuthagonalTestFactory : IAsyncDisposable
         // Extensibility test doubles
         services.AddSingleton<IEmailService>(EmailService);
         services.AddSingleton<IAuthHook>(AuthHook);
+        // AddAuthagonal TryAddSingletons NullAuditLogger; the suite records instead, so an admin write
+        // can be asserted to leave an attributable trail.
+        services.AddSingleton<IAuditLogger>(AuditLog);
         services.AddSingleton<Authagonal.Protocol.ITokenExchangeSubjectTransformer>(ExchangeTransformer);
         services.AddSingleton<IProvisioningOrchestrator>(Provisioning);
         services.AddSingleton<ISecretProvider>(new PlaintextSecretProvider());

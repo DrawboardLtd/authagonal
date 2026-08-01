@@ -721,7 +721,11 @@ public sealed class DynamoUserStore(
 
         while (true)
         {
-            var (items, lastKey) = await users.ScanPageAsync(filter, values, startKey, Math.Max(count, 25), ct).ConfigureAwait(false);
+            // The caller's count is a page-size HINT (see IUserStore.ListPageAsync), and it became the scan
+            // page size verbatim — so a caller asking for ten million rows asked DynamoDB for them in one
+            // segment. Clamped at both ends: the floor keeps a filtered scan from crawling, the ceiling
+            // keeps one call's working set bounded regardless of what the caller asked for.
+            var (items, lastKey) = await users.ScanPageAsync(filter, values, startKey, Math.Clamp(count, 25, 500), ct).ConfigureAwait(false);
             foreach (var item in items)
             {
                 AuthUser user;
