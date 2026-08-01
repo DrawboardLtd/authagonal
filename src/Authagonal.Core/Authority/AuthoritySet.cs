@@ -163,7 +163,8 @@ public sealed class AuthoritySet
 
     /// <param name="location">
     /// The RFC 9396 <c>locations</c> value the caller is acting against, when it has one. A grant
-    /// that names locations permits only those.
+    /// that names locations permits only those (see <see cref="LocationCovers"/> for how a named
+    /// location is matched against the presented one).
     /// </param>
     /// <param name="strict">
     /// When true, a constraint the caller supplied no context for DENIES instead of being skipped.
@@ -197,7 +198,7 @@ public sealed class AuthoritySet
 
         // A grant that names locations applies only at those locations.
         if (grant.Locations.Count > 0 && location is not null
-            && !grant.Locations.Contains(location, StringComparer.Ordinal))
+            && !grant.Locations.Any(granted => LocationCovers(granted, location)))
         {
             return false;
         }
@@ -219,6 +220,56 @@ public sealed class AuthoritySet
             if (!Satisfies(constraint, contextValue)) return false;
         }
         return true;
+    }
+
+    /// <summary>
+    /// The constraint names on <paramref name="type"/>'s grant that <paramref name="context"/> carries
+    /// no value for — precisely the ones the non-strict <see cref="Permits(string, string, string?,
+    /// IReadOnlyDictionary{string, string}, bool)"/> skips.
+    /// </summary>
+    /// <remarks>
+    /// A resource server calls this to find out what it is being trusted with. Skipping an unmatched
+    /// constraint makes the guarantee "the caller knows which context keys matter", and nothing
+    /// anywhere reported when a caller simply did not know — a server that forgets to derive
+    /// <c>recipient_domains</c> spends a domain-restricted grant as an unrestricted one and no log
+    /// line says so. An empty result means the whole grant was evaluated; a non-empty one names the
+    /// restrictions nobody checked, so the caller can refuse, log, or re-check in strict mode.
+    /// </remarks>
+    public IReadOnlyList<string> UncheckedConstraints(
+        string type, IReadOnlyDictionary<string, string>? context = null)
+    {
+        var grant = GrantFor(type);
+        if (grant is null || grant.Constraints.Count == 0) return [];
+        return [.. grant.Constraints.Keys.Where(name => context is null || !context.ContainsKey(name))];
+    }
+
+    // A location is an RFC 9396 resource identifier, so it is compared as one when both sides parse as
+    // absolute URIs: scheme and authority case-insensitively (RFC 3986 §6.2.2.1), and the granted path
+    // as a containment root on a segment boundary — "https://api.example/orders" covers
+    // "https://api.example/orders/17" but never "https://api.example/orders-admin". Ordinal equality is
+    // still honoured first so an opaque, non-URI location (a connector id, a queue name) works.
+    //
+    // Containment, not equality, because the value the caller presents is the concrete thing it is
+    // acting on while the grant names the resource server: exact matching would have made every
+    // real presented location miss, which is the same fail-open as never checking.
+    private static bool LocationCovers(string granted, string presented)
+    {
+        if (string.Equals(granted, presented, StringComparison.Ordinal)) return true;
+
+        if (!Uri.TryCreate(granted, UriKind.Absolute, out var scope)
+            || !Uri.TryCreate(presented, UriKind.Absolute, out var target))
+        {
+            return false;
+        }
+        if (!string.Equals(scope.Scheme, target.Scheme, StringComparison.OrdinalIgnoreCase)) return false;
+        if (!string.Equals(scope.Authority, target.Authority, StringComparison.OrdinalIgnoreCase)) return false;
+
+        var scopePath = scope.AbsolutePath.TrimEnd('/');
+        if (scopePath.Length == 0) return true;
+
+        var targetPath = target.AbsolutePath;
+        return targetPath.StartsWith(scopePath, StringComparison.Ordinal)
+            && (targetPath.Length == scopePath.Length || targetPath[scopePath.Length] == '/');
     }
 
     private static bool Satisfies(ConstraintValue constraint, string contextValue) => constraint switch

@@ -174,6 +174,31 @@ public sealed class BffUpstream
     /// predate the authority model, and the claim only ever narrows.
     /// </summary>
     public IList<string> RequiredAuthority { get; set; } = new List<string>();
+
+    /// <summary>
+    /// The RFC 9396 <c>locations</c> root this upstream is known as. Defaults to
+    /// <see cref="TargetBaseUrl"/>; set it when authority is minted against a public resource
+    /// identifier that differs from the internal address the proxy actually dials.
+    /// </summary>
+    /// <remarks>
+    /// The proxied path is appended before the check, so a grant may pin authority to a sub-tree
+    /// ("https://api.example.com/orders") and not merely to the host. A grant that names no
+    /// locations is unpinned and applies here as before.
+    /// </remarks>
+    public string? AuthorityLocation { get; set; }
+
+    /// <summary>
+    /// When true, a constraint on the grant that the proxy cannot evaluate refuses the call instead
+    /// of passing it through.
+    /// </summary>
+    /// <remarks>
+    /// The proxy forwards blind — it derives no constraint context — so by default a grant narrowed
+    /// by, say, <c>recipient_domains</c> passes this gate and the upstream is trusted to apply it.
+    /// Turn this on for an upstream that does not read <c>authorization_details</c> itself, where
+    /// "the BFF is the enforcement chokepoint" is only true if the chokepoint refuses what it cannot
+    /// check.
+    /// </remarks>
+    public bool StrictAuthority { get; set; }
 }
 
 /// <summary>A proxy route bound to an RFC 8693 exchange. <see cref="PathPattern"/> is a segment

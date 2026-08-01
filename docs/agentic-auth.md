@@ -123,12 +123,22 @@ Service mode (`client_credentials`) has no user in the loop: the ceiling applies
 
 ## Resource-side enforcement
 
-- `AuthorityEvaluator.FromPrincipal(user).Permits(type, action, context)` in any resource
+- `AuthorityEvaluator.Permits(user, type, action, context, location, strict)` in any resource
   server (context keys are matched against constraint names — pass what you can derive,
   e.g. `recipient_domains` when sending mail). A token without the claim evaluates
   unrestricted (legacy compatibility); a garbled claim evaluates as deny-all.
+  - `location` is the RFC 9396 `locations` value you are acting at. A grant that names
+    locations is honoured only at those; a granted location is a **root**, so
+    `https://api.example.com/orders` covers `/orders/17` but not `/orders-admin`.
+  - `strict: true` denies when the caller supplied no context for a constraint, instead of
+    skipping it. Use it wherever you can enumerate every key you support —
+    `AuthoritySet.UncheckedConstraints(type, context)` names the ones you did not.
 - BFF chokepoint: `BffUpstream.RequiredAuthority = ["email:send"]` makes the proxy check the
-  outgoing bearer before forwarding — 403 on failure, no anonymous passage.
+  outgoing bearer before forwarding — 403 on failure, no anonymous passage. The location it
+  presents is the upstream the request will actually reach (`AuthorityLocation` overrides the
+  root when authority is minted against a public identifier rather than the internal address);
+  `StrictAuthority` makes the proxy refuse a constraint it cannot evaluate rather than leaving
+  it to the upstream.
 
 ## Capability tickets
 
