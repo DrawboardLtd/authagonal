@@ -1,6 +1,5 @@
 using System.Net;
 using System.Net.Http.Headers;
-using System.Security.Claims;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -17,12 +16,10 @@ using Authagonal.Server.Services.Cluster;
 using Authagonal.Server.Services.Oidc;
 using Authagonal.Server.Services.Saml;
 using Azure.Data.Tables;
-using Fido2NetLib;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Builder;
-using Microsoft.AspNetCore.Cors.Infrastructure;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.Http;
@@ -31,14 +28,34 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
-using Microsoft.IdentityModel.Tokens;
 
 namespace Authagonal.Tests.Infrastructure;
 
 /// <summary>
-/// Test server that mirrors AddAuthagonal/UseAuthagonal/MapAuthagonalEndpoints
-/// but uses in-memory stores instead of Azure Table Storage.
+/// Test server that CALLS the real registration — <c>AddAuthagonalCore</c>, <c>UseAuthagonal</c>,
+/// <c>MapAuthagonalEndpoints</c> — with in-memory stores and test doubles pre-registered ahead of it.
 /// </summary>
+/// <remarks>
+/// It used to MIRROR <c>AddAuthagonal</c>: some three hundred lines restating the options, the
+/// authentication schemes, the authorization policies, the rate limiter, the named outbound clients and the
+/// CORS wiring. That made every hardening added to the real registration invisible here until someone
+/// thought to repeat it — so a fix could land in production, the suite could stay green, and these tests
+/// were exercising the unfixed configuration. It is how a <c>typ</c>-validation test came to pass against
+/// unfixed code, how the tenant-scoping rate-limit decorator came to be exercised by nothing, and how five
+/// further divergences reached a pushed branch.
+/// <para>
+/// The measure of the difference: changing <c>ValidAlgorithms</c> in <c>AddAuthagonalCore</c> now fails 168
+/// tests. Against the mirrored factory it failed one — the comparison test that existed to notice, because
+/// the factory declared its own <c>ES256</c> and the test host kept validating exactly as before.
+/// </para>
+/// <para>
+/// <b>The contract, if you are adding to this file.</b> Registrations that replace a production default go
+/// ABOVE the <c>AddAuthagonalCore</c> call: it reaches its extensibility points through <c>TryAdd</c> and
+/// <c>if (!services.Any(T))</c>, so whatever lands first wins and the production default never appears.
+/// Anything placed below the call silently loses to that default instead. Only a deliberate deviation —
+/// something a test host cannot have — belongs below, and each one there says why.
+/// </para>
+/// </remarks>
 public sealed class AuthagonalTestFactory : IAsyncDisposable
 {
     public const string TestIssuer = "https://test.authagonal.local";
@@ -258,14 +275,42 @@ public sealed class AuthagonalTestFactory : IAsyncDisposable
         builder.Configuration["Oidc:Issuer"] = TestIssuer;
         builder.Configuration["AdminApi:Enabled"] = "true";
         builder.Configuration["Cluster:Enabled"] = "false";
+
+        // Two of the four deliberate deviations from production are already CONFIGURATION on the real
+        // registration, so they need no divergent code at all — which is the whole point of calling
+        // AddAuthagonalCore instead of reimplementing it.
+        //
+        // TestServer speaks plain http (BaseAddress is http://localhost), so without these the TLS gate
+        // over /connect/* would refuse every protocol request and CookieContainer would refuse to send a
+        // Secure __Host- cookie over http, breaking every cookie-dependent test. Set as configuration keys
+        // rather than by post-configuring options, because that is how an operator sets them and because
+        // Auth:AllowInsecureHttp has to reach AuthagonalProtocolOptions too — AddAuthagonalCore propagates
+        // it, and a test host that set the options object directly would leave /connect/par answering
+        // differently from the rest of the surface.
+        builder.Configuration["Auth:AllowInsecureHttp"] = "true";
+        builder.Configuration["Authentication:AllowInsecureCookie"] = "true";
+
         builder.Services.AddSingleton<Microsoft.Extensions.Logging.ILoggerProvider>(LogSink);
 
+        // Applied last so a test can override any of the above.
         foreach (var (key, value) in Configuration)
             builder.Configuration[key] = value;
 
         var services = builder.Services;
 
-        // In-memory stores (replacing Azure Table Storage)
+        // ---------------------------------------------------------------------------
+        // Everything below, up to the AddAuthagonalCore call, exists to be registered BEFORE it.
+        //
+        // AddAuthagonalCore reaches its extensibility points through TryAdd and through
+        // `if (!services.Any(T))` gates, so a registration that lands first WINS and the production default
+        // never appears. That is the documented contract ("register your implementations before calling
+        // this method"), and it is what lets this factory swap storage and doubles without reimplementing
+        // the container. Anything moved below the call silently loses to production's default instead.
+        // ---------------------------------------------------------------------------
+
+        // In-memory stores (replacing Azure Table Storage). These also skip AddAuthagonal's storage block
+        // entirely — it is gated on `!services.Any(IUserStore)` — which is why this host needs no
+        // connection string and no Azurite.
         services.AddSingleton<IUserStore>(UserStore);
         services.AddSingleton<IClientStore>(ClientStore);
         services.AddSingleton<IGrantStore>(GrantStore);
@@ -287,133 +332,100 @@ public sealed class AuthagonalTestFactory : IAsyncDisposable
         services.AddSingleton<Authagonal.Core.Services.ITenantContext>(
             new TestTenantContext(TestIssuer));
 
-        // Rate limiter — through the SAME tenant-scoping decorator the real registration installs.
-        //
-        // This used to register a bare InProcessRateLimiter as IRateLimiter, so TenantScopedRateLimiter was
-        // exercised by no test in the suite: every key reached the limiter WITHOUT its tenant prefix, which
-        // is precisely the cross-tenant denial of service the decorator exists to prevent. The registration
-        // ORDER that makes the decorator win in the real host was treated as load-bearing during the branch
-        // merge and verified only by reading, because nothing here could have caught getting it wrong.
-        services.AddSingleton<Authagonal.Core.Services.InProcessRateLimiter>();
-        services.AddSingleton<IRateLimiter>(sp => new TenantScopedRateLimiter(
-            sp.GetRequiredService<Authagonal.Core.Services.InProcessRateLimiter>(),
-            sp.GetRequiredService<IHttpContextAccessor>()));
-
-        // Extensibility test doubles
+        // Extensibility test doubles. Every one of these is a TryAdd or a gate in the real registration.
         services.AddSingleton<IEmailService>(EmailService);
         services.AddSingleton<IAuthHook>(AuthHook);
-        // AddAuthagonal TryAddSingletons NullAuditLogger; the suite records instead, so an admin write
+        // AddAuthagonalCore TryAddSingletons NullAuditLogger; the suite records instead, so an admin write
         // can be asserted to leave an attributable trail.
         services.AddSingleton<IAuditLogger>(AuditLog);
         services.AddSingleton<Authagonal.Protocol.ITokenExchangeSubjectTransformer>(ExchangeTransformer);
         services.AddSingleton<IProvisioningOrchestrator>(Provisioning);
         services.AddSingleton<ISecretProvider>(new PlaintextSecretProvider());
 
-        // Options (mirrors AddAuthagonal)
-        services.Configure<AuthOptions>(o =>
+        // DataProtection: AddAuthagonal attaches a durable, encrypted key ring keyed off the storage
+        // configuration this host does not have, so the ephemeral default is what a test host gets. Called
+        // here rather than left implicit because the cookie handler needs it.
+        services.AddDataProtection();
+
+        // ---------------------------------------------------------------------------
+        // THE REAL REGISTRATION.
+        //
+        // This factory used to MIRROR it — around 300 lines restating the options, the authentication
+        // schemes, the authorization policies, the rate limiter, the named outbound clients and the CORS
+        // wiring. Anything hardened in the real registration was then invisible to every test using this
+        // factory until someone thought to repeat it here, so a fix could land in production, the suite
+        // could stay green, and the tests were exercising the unfixed configuration. That is not
+        // hypothetical: it is how a `typ`-validation test came to pass against unfixed code, how the
+        // tenant-scoping rate-limit decorator came to be exercised by nothing, and how five more
+        // divergences reached a pushed branch.
+        //
+        // AddAuthagonalCore and not AddAuthagonal, deliberately. What AddAuthagonal adds on top is storage
+        // (replaced above), the DataProtection key ring (no store here), background/seed hosted services
+        // (a test host wants no timers), and the four registrations restated after this call. Every
+        // divergence that has actually caused a miss — the bearer scheme, the cookie policy, the rate
+        // limiter, the named clients, the outbound allowlist — lives in Core. TestFactoryMirrorsProduction
+        // Tests asserts the remainder against a container built from the full AddAuthagonal.
+        // ---------------------------------------------------------------------------
+        services.AddAuthagonalCore(builder.Configuration);
+
+        // ---------------------------------------------------------------------------
+        // Deliberate deviations, applied AFTER the real registration so they override it. Each one is
+        // here because a test host cannot have what production has; nothing else belongs in this section.
+        // ---------------------------------------------------------------------------
+
+        // 1. PBKDF2 cost.
+        //
+        // Production refuses to start below AuthOptions.MinimumPbkdf2Iterations (100,000) and validates it
+        // on start, which is right: a deployment quietly writing weaker hashes than its operator believes
+        // is worth failing for. But at any conforming cost the thousands of sign-ins in this suite spend
+        // minutes in the KDF and measure nothing but the KDF, so the floor's VALIDATOR is removed and the
+        // cost set below it. Removing the validator is the honest way to do that — the alternative is
+        // configuring 1,000 and having the host refuse to start, or leaving the suite unusably slow.
+        // Tests that care about the cost (format, recorded iterations, rehash-on-login) set it explicitly.
+        services.RemoveAll<IValidateOptions<AuthOptions>>();
+        services.PostConfigure<AuthOptions>(o =>
         {
-            // Deliberately far below AuthOptions.MinimumPbkdf2Iterations. The production floor is
-            // enforced where configuration is bound, not by the hasher, precisely so the suite can
-            // opt out: at the real 600,000 the thousands of sign-ins across these tests spend
-            // minutes in PBKDF2 and measure nothing but the KDF. Tests that care about the cost
-            // (format, recorded iterations, rehash-on-login) set it explicitly.
             o.Pbkdf2Iterations = 1_000;
-            // TestServer speaks plain http (its BaseAddress is http://localhost), so the TLS gate
-            // UseAuthagonal installs over /connect/* would refuse every protocol request here.
-            o.AllowInsecureHttp = true;
-            // Both set BEFORE the mutator, so a test can turn either back off — TransportSecurityTests
-            // does exactly that with AllowInsecureHttp.
             ConfigureAuthOptions?.Invoke(o);
         });
-        services.Configure<CacheOptions>(_ => { });
-        services.Configure<BackgroundServiceOptions>(_ => { });
 
-        // Core services (mirrors AddAuthagonal minus storage)
-        services.AddHttpContextAccessor();
-        services.AddLocalization();
-        services.AddDataProtection();
-        services.AddSingleton(new PasswordPolicy());
-        services.AddSingleton<PasswordHasher>();
-        services.AddSingleton<PasswordValidator>();
-        // Turnstile is opt-in; left unconfigured here so it's disabled (no token required).
-        // Must still be registered so the /login + /register handlers' TurnstileVerifier
-        // parameter resolves as a service rather than being inferred as a body param.
-        services.Configure<TurnstileOptions>(_ => { });
-        services.AddHttpClient<TurnstileVerifier>();
+        // Keeps the protocol surface in step with a test that turns AllowInsecureHttp back OFF through
+        // ConfigureAuthOptions rather than through configuration. AddAuthagonalCore propagates the
+        // CONFIGURATION value to AuthagonalProtocolOptions, which cannot see a later mutation of
+        // AuthOptions — and /connect/par carries the protocol's own TLS filter, so without this bridge that
+        // one endpoint would answer differently from the rest of the surface.
+        services.AddSingleton<IPostConfigureOptions<AuthagonalProtocolOptions>>(sp =>
+            new PostConfigureOptions<AuthagonalProtocolOptions>(Options.DefaultName, o =>
+                o.AllowInsecureHttp = sp.GetRequiredService<IOptions<AuthOptions>>().Value.AllowInsecureHttp));
 
-        // Protocol wiring — map AuthOptions onto AuthagonalProtocolOptions, plug in the
-        // PasswordHasher-backed secret verifier so bcrypt/pbkdf2 client secrets verify
-        // through the same pipeline as user passwords, then call AddAuthagonalProtocol.
-        services.AddSingleton<IConfigureOptions<AuthagonalProtocolOptions>>(sp =>
-        {
-            var auth = sp.GetRequiredService<IOptions<AuthOptions>>().Value;
-            return new ConfigureNamedOptions<AuthagonalProtocolOptions>(Options.DefaultName, o =>
-            {
-                o.SigningKeyLifetimeDays = auth.SigningKeyLifetimeDays;
-                o.SigningKeyCacheRefreshMinutes = auth.SigningKeyCacheRefreshMinutes;
-                o.RefreshTokenReuseGraceSeconds = auth.RefreshTokenReuseGraceSeconds;
-                o.AuthenticationScheme = CookieAuthenticationDefaults.AuthenticationScheme;
-                // Mirrors what AddAuthagonalCore does with Auth:AllowInsecureHttp. MapAuthagonalEndpoints
-                // maps Protocol's PAR endpoint, which carries its own TLS filter, so a test that turns the
-                // switch off has to turn it off for both or /connect/par would answer differently from the
-                // rest of the surface.
-                o.AllowInsecureHttp = auth.AllowInsecureHttp;
-            });
-        });
-        services.AddSingleton<IClientSecretVerifier, PasswordHasherClientSecretVerifier>();
-        services.AddAuthagonalProtocol(_ => { });
-        services.AddScoped<UserStoreOidcSubjectResolver>();
-        services.AddScoped<IOidcSubjectResolver>(sp => sp.GetRequiredService<UserStoreOidcSubjectResolver>());
-        services.AddSingleton<TotpService>();
-        services.AddSingleton<RecoveryCodeService>();
-        services.AddSingleton<WebAuthnService>();
-        services.AddFido2(options =>
-        {
-            options.ServerDomain = "test.authagonal.local";
-            options.ServerName = "Authagonal Test";
-            options.Origins = new HashSet<string> { TestIssuer };
-        });
-        // The operator's internal-destination allowlist (Auth:AllowedInternalTargets), built exactly as
-        // AddAuthagonalCore builds it. The services that consult it take it as an OPTIONAL dependency and
-        // fall back to the strict list when it is missing — safe, but it would mean no test here could
-        // observe an operator-configured internal target being reachable, which is half of what the
-        // allowlist is for.
-        services.AddSingleton(sp => new Authagonal.Core.Services.OutboundAllowlist(
-            sp.GetRequiredService<IOptions<AuthOptions>>().Value.AllowedInternalTargets));
-
-        // Named outbound clients, with the SAME handler policy the real registration applies: no redirect
-        // following and a bounded timeout.
+        // 2. Test handlers on the named outbound clients.
         //
-        // These were registered bare, so every test involving an outbound fetch ran against a
-        // redirect-following 100-second client while production refused redirects — which is the exact
-        // property findings #52 / #62 / #66 / #346 exist to enforce, and it was unobservable from here. A
-        // test handler still replaces the primary handler where one is supplied (that is the seam), but the
-        // DEFAULT for each name now matches production instead of the framework default.
-        //
-        // Every name is registered unconditionally, handler or not. A CreateClient on an unregistered name
-        // silently returns a default client, so a name missing here fails open in exactly the way the real
-        // registration was found to fail open.
+        // ConfigurePrimaryHttpMessageHandler LAST wins, so this replaces only the primary handler and keeps
+        // the production timeout and redirect policy for the name. Registering the whole client here
+        // instead would restate that policy and drift from it, which is what findings #52 / #62 / #66 /
+        // #346 exist to enforce and what this factory previously got wrong.
         foreach (var (name, handler) in new (string, HttpMessageHandler?)[]
                  {
-                     ("Provisioning", null),
                      ("SamlMetadata", SamlHttpHandler),
                      ("OidcDiscovery", OidcHttpHandler),
                      ("AuthagonalJwks", JwksHttpHandler),
                      ("BackChannelLogout", BackChannelLogoutHttpHandler),
-                     ("Resend", null),
                  })
         {
-            var httpBuilder = services.AddHttpClient(name)
-                .ConfigureHttpClient(c => c.Timeout = TimeSpan.FromSeconds(10));
-
             if (handler is not null)
-                httpBuilder.ConfigurePrimaryHttpMessageHandler(() => handler);
-            else
-                httpBuilder.ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AllowAutoRedirect = false });
+                services.AddHttpClient(name).ConfigurePrimaryHttpMessageHandler(() => handler);
         }
-        services.AddMemoryCache();
 
-        // SAML/OIDC services (state stores need real table storage for SSO tests)
+        // 3. The four things AddAuthagonal adds that this host still needs, restated because the rest of
+        // that method is storage and hosted services.
+
+        // The bearer scheme's signing-key resolver.
+        services.AddSingleton<IPostConfigureOptions<JwtBearerOptions>>(sp =>
+            new JwtBearerKeyResolverPostConfigure(sp));
+
+        // SAML replay cache + OIDC state store. Production wires these from the Azure keyed TableClients;
+        // registered here AFTER AddAuthagonalCore on purpose, so nothing gates on their presence — in
+        // particular OidcStateSweepService, a background timer this host does not want.
         var stateConnStr = AzuriteConnectionString ?? "UseDevelopmentStorage=true";
         var samlTable = new TableClient(stateConnStr, $"SamlReplay{Guid.NewGuid():N}"[..20]);
         var oidcTable = new TableClient(stateConnStr, $"OidcState{Guid.NewGuid():N}"[..20]);
@@ -424,148 +436,15 @@ public sealed class AuthagonalTestFactory : IAsyncDisposable
         }
         services.AddKeyedSingleton("SamlReplayCache", samlTable);
         services.AddKeyedSingleton("OidcStateStore", oidcTable);
-        services.AddSingleton<SamlMetadataParser>();
-        services.AddSingleton<SamlResponseParser>();
         services.AddSingleton<SamlReplayCache>(sp =>
             new SamlReplayCache(sp.GetRequiredKeyedService<TableClient>("SamlReplayCache"), sp.GetRequiredService<IOptions<CacheOptions>>()));
-        services.AddSingleton<OidcDiscoveryClient>();
         services.AddSingleton<OidcStateStore>(sp =>
             new OidcStateStore(sp.GetRequiredKeyedService<TableClient>("OidcStateStore"), sp.GetRequiredService<IOptions<CacheOptions>>()));
-        // The SSO endpoint handlers inject the interface seams (ISamlReplayCache / IOidcStateStore),
-        // which production wires via gated TryAdds keyed off the Azure TableClients. This bespoke test
-        // host builds its own graph, so register the seams against the concretes above — without these,
-        // minimal-API binding can't resolve the parameters and every /saml + /oidc/{conn}/login call 400s.
         services.AddSingleton<Authagonal.Core.Services.ISamlReplayCache>(sp => sp.GetRequiredService<SamlReplayCache>());
         services.AddSingleton<Authagonal.Core.Services.IOidcStateStore>(sp => sp.GetRequiredService<OidcStateStore>());
 
-        // Authentication
-        services.AddAuthentication(options =>
-        {
-            options.DefaultScheme = CookieAuthenticationDefaults.AuthenticationScheme;
-            options.DefaultChallengeScheme = CookieAuthenticationDefaults.AuthenticationScheme;
-        })
-        .AddCookie(CookieAuthenticationDefaults.AuthenticationScheme, options =>
-        {
-            options.LoginPath = "/login";
-            options.ExpireTimeSpan = TimeSpan.FromHours(48);
-            options.SlidingExpiration = true;
-            options.Cookie.HttpOnly = true;
-            options.Cookie.SameSite = SameSiteMode.Lax;
-            // Diverges from production on purpose.
-            //
-            // AddAuthagonalCore defaults to CookieSecurePolicy.Always plus a __Host- cookie name.
-            // TestServer speaks HTTP and CookieContainer refuses to send a Secure cookie over it, so
-            // mirroring production here would break every cookie-dependent test in the suite.
-            //
-            // This factory therefore duplicates the production cookie wiring rather than calling into
-            // it, and nothing about that wiring is exercised by a request made through this client.
-            // The attributes themselves are asserted directly against AddAuthagonalCore, without any
-            // HTTP, in CookiePolicyConfigurationTests — change them there too.
-            options.Cookie.SecurePolicy = CookieSecurePolicy.SameAsRequest;
-
-            options.Events.OnValidatePrincipal = async context =>
-            {
-                var stampClaim = context.Principal?.FindFirst("security_stamp")?.Value;
-                var userId = context.Principal?.FindFirst("sub")?.Value
-                    ?? context.Principal?.FindFirst(ClaimTypes.NameIdentifier)?.Value;
-                if (userId is null || stampClaim is null) return;
-
-                var lastValidated = context.Properties.GetString("stamp_validated");
-                if (lastValidated is not null &&
-                    DateTimeOffset.TryParse(lastValidated, out var lastTime) &&
-                    DateTimeOffset.UtcNow - lastTime < TimeSpan.FromMinutes(30))
-                    return;
-
-                var userStore = context.HttpContext.RequestServices.GetRequiredService<IUserStore>();
-                var user = await userStore.GetAsync(userId);
-                if (user is null || !user.IsActive || !string.Equals(user.SecurityStamp ?? "", stampClaim ?? "", StringComparison.Ordinal))
-                {
-                    context.RejectPrincipal();
-                    await context.HttpContext.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
-                    return;
-                }
-
-                context.Properties.SetString("stamp_validated", DateTimeOffset.UtcNow.ToString("O"));
-                context.ShouldRenew = true;
-            };
-        })
-        .AddJwtBearer(JwtBearerDefaults.AuthenticationScheme, options =>
-        {
-            options.TokenValidationParameters = new TokenValidationParameters
-            {
-                ValidIssuer = TestIssuer,
-                ValidateIssuer = true,
-                ValidateAudience = true,
-                AudienceValidator = (audiences, _, _) => audiences?.Any() == true,
-                ValidateLifetime = true,
-                // RFC 9068 §4. Mirrored from AddAuthagonal, which this factory copies rather than
-                // calls — so a hardening added to the real registration is invisible here until
-                // someone repeats it. That divergence is exactly why the id_token-as-bearer defect
-                // went unnoticed: production could have been fixed and every test using this factory
-                // would still have exercised the unfixed configuration.
-                ValidTypes = [Authagonal.Core.Constants.TokenTypes.AccessTokenJwt],
-                // Pins the signing algorithm, as the real registration does — defence in depth against
-                // algorithm confusion. Omitted here until the merge audit noticed, which meant every test
-                // asserting on the resource-server scheme ran against a configuration that would accept a
-                // token signed with an algorithm production refuses.
-                ValidAlgorithms = ["ES256"],
-                ClockSkew = TimeSpan.FromSeconds(60),
-                ValidateIssuerSigningKey = true
-            };
-
-            // Access-token revocation, as the real registration does: a token whose jti is in the revoked
-            // store is refused even though it is still cryptographically valid and unexpired. Without this
-            // the suite could not tell a working revocation path from a missing one on the bearer scheme.
-            options.Events = new JwtBearerEvents
-            {
-                OnTokenValidated = async ctx =>
-                {
-                    var jti = ctx.Principal?.FindFirst("jti")?.Value;
-                    if (!string.IsNullOrEmpty(jti))
-                    {
-                        var revoked = ctx.HttpContext.RequestServices.GetRequiredService<IRevokedTokenStore>();
-                        if (await revoked.IsRevokedAsync(jti, ctx.HttpContext.RequestAborted))
-                            ctx.Fail("Token has been revoked");
-                    }
-                }
-            };
-        })
-        .AddScheme<AuthenticationSchemeOptions, Authagonal.Server.Services.ScimBearerAuthenticationHandler>("ScimBearer", null);
-
-        services.AddSingleton<IPostConfigureOptions<JwtBearerOptions>>(sp =>
-            new JwtBearerKeyResolverPostConfigure(sp));
-
-        // Authorization
-        var adminScope = builder.Configuration["AdminApi:Scope"] ?? "authagonal-admin";
-        services.AddAuthorization(options =>
-        {
-            options.AddPolicy("IdentityAdmin", policy =>
-            {
-                policy.AuthenticationSchemes.Add(JwtBearerDefaults.AuthenticationScheme);
-                policy.RequireAuthenticatedUser();
-                policy.RequireAssertion(context =>
-                {
-                    var scopeClaim = context.User.FindFirst("scope") ?? context.User.FindFirst("scp");
-                    if (scopeClaim is null) return false;
-                    var scopes = scopeClaim.Value.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-                    return scopes.Contains(adminScope, StringComparer.OrdinalIgnoreCase);
-                });
-            });
-
-            options.AddPolicy("ScimProvisioning", policy =>
-            {
-                policy.AuthenticationSchemes.Add("ScimBearer");
-                policy.RequireAuthenticatedUser();
-                policy.RequireClaim("client_id");
-            });
-        });
-
-        services.AddCors();
-        // The provider subscribes to the cluster bus so a client write drops the cached origins on
-        // every node; AddAuthagonal supplies the in-process default, this host has to as well.
-        services.TryAddSingleton<Authagonal.Core.Clustering.IClusterEventBus,
-            Authagonal.Core.Clustering.InProcessClusterEventBus>();
-        services.AddSingleton<ICorsPolicyProvider, DynamicCorsPolicyProvider>();
+        // The storage health check.
+        services.TryAddSingleton<TableStorageHealthCheck>();
         services.AddHealthChecks().AddCheck<TableStorageHealthCheck>("table_storage");
 
         _app = builder.Build();
