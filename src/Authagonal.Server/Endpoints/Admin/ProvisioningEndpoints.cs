@@ -161,6 +161,7 @@ public static class ProvisioningEndpoints
         string appId,
         IProvisioningAppStore store,
         IHttpClientFactory httpClientFactory,
+        IAuditLogger audit,
         HttpContext httpContext,
         CancellationToken ct)
     {
@@ -199,6 +200,14 @@ public static class ProvisioningEndpoints
 
             using var response = await http.SendAsync(request, ct);
             var body = await response.Content.ReadAsStringAsync(ct);
+
+            // Audited even though it stores nothing. It makes THIS SERVER send a request to a configured
+            // URL carrying that app's API key, on an admin's say-so, and returns the response body to the
+            // caller — so it is both an outbound action worth attributing and a way to read what an internal
+            // endpoint says. "Who probed this app, when" is the fact an incident needs, and there was no row.
+            await audit.LogAsync(Actor(httpContext), "provisioning_app.tested", "provisioning_app", appId,
+                $"HTTP {(int)response.StatusCode}", ct);
+
             return TypedResults.Json(new ProvisioningTestResult
             {
                 Success = response.IsSuccessStatusCode,

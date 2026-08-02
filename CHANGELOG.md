@@ -207,6 +207,27 @@ adjacent defect the audit found while checking a finding it had already passed.
   by tests: it belongs on a target a *registrant* chose and needs an operator escape hatch on a target the
   *operator* chose.
 
+- **#205 — the highest-impact admin writes left no audit record.** Four groups produced no row at all: MFA
+  reset and credential removal (stripping a second factor is the first thing an attacker with an admin
+  credential does), `POST /api/v1/token` (which mints a token AS another user — the strongest impersonation
+  primitive in the product, on a subject who never agreed to it), nine writes on the user admin endpoints
+  including set-password, unlock, delete, confirm-email and identity linking, and the provisioning "test this
+  app" probe (which makes the server send a request carrying that app's API key and returns the response body
+  to the caller). Some logged a `Warning`, which is not a trail: the shipped log configuration decides whether
+  it survives, nothing indexes it by subject, and there is nowhere to query. All now record an attributable
+  row, and a convention test fails the build on the next admin write that does not.
+
+- **#192 — a `workflow_dispatch` free-text input was interpolated into a shell script.**
+  `rebuild-images.yml` did `ref="${{ inputs.ref }}"`, which substitutes before bash parses, so a value like
+  `v1.0.0"; curl … | sh; "` would run on a runner holding the registry credentials. It now travels through the
+  environment. The sibling workflows had been fixed; this one was missed. Every workflow was swept for the
+  same shape.
+
+- **#288 — the load-test harness defaulted to a literal client secret and a live host.** `tests/load/helpers.js`
+  fell back to `"load-test-secret"` and to the public demo deployment's URL, so an unparameterised run pointed
+  a load generator at a real service and authenticated to it with a credential published in a public
+  repository. The secret is now required with no default, and the base URL defaults to localhost.
+
 - **The Server host's `Clients:*:Audiences` seed setting is new, and both seeders now apply one policy.**
   There are two seeder classes because `ProtocolSeedService` ships in `Authagonal.Protocol`, which is embedded
   without `Authagonal.Server` — so the classes stay two and the rule became one (`ClientSeedPolicy`). Both now

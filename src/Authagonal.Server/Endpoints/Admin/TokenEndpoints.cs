@@ -37,6 +37,7 @@ public static class TokenEndpoints
         UserStoreOidcSubjectResolver subjectResolver,
         IScopeRoleGate scopeRoleGate,
         IEnumerable<IAuthHook> authHooks,
+        IAuditLogger audit,
         IConfiguration configuration,
         CancellationToken ct)
     {
@@ -129,6 +130,16 @@ public static class TokenEndpoints
         var mintedAt = DateTimeOffset.UtcNow;
         var effectiveExpiry = Authagonal.Protocol.Services.ProtocolTokenService.EffectiveAccessTokenExpiry(
             subject, client, null, mintedAt);
+
+        // Audited. This endpoint mints a token AS another user — the strongest impersonation primitive the
+        // product has, on a subject who never agreed to it — and it left no queryable record of who used it,
+        // for whom, or with what scopes. The IAuthHook call above tells a HOST, if one registered a hook;
+        // it is not a trail, and an incident that begins "someone minted a token for the CEO" had nothing to
+        // read. Recorded after every gate has passed, so the row means a token was actually issued, and it
+        // names the scopes finally granted rather than the ones asked for — the role gate above narrows them.
+        await audit.LogAsync(AdminActor.Of(httpContext), "token.minted_for_user", "user", user.Id,
+            $"client={client.ClientId}; scopes={string.Join(' ', scopes)}"
+            + $"; refresh={(refreshToken is not null ? "yes" : "no")}", ct);
 
         var response = new TokenResponse
         {

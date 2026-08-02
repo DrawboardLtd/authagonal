@@ -174,6 +174,8 @@ public static class UserEndpoints
         PasswordPolicy passwordPolicy,
         IEnumerable<IAuthHook> authHooks,
         IStringLocalizer<SharedMessages> localizer,
+        IAuditLogger audit,
+        HttpContext httpContext,
         CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(request.Password))
@@ -195,6 +197,8 @@ public static class UserEndpoints
         await grantStore.RemoveAllBySubjectAsync(user.Id, ct);
         await authHooks.RunOnPasswordChangedAsync(user.Id, user.Email, "admin", ct);
 
+        // Audited: an admin write on someone else's account, and this group produced no trail at all.
+        await audit.LogAsync(AdminActor.Of(httpContext), "user.password_set", "user", userId, null, ct);
         return Results.NoContent();
     }
 
@@ -205,6 +209,8 @@ public static class UserEndpoints
         IUserStore userStore,
         IEnumerable<IAuthHook> authHooks,
         IStringLocalizer<SharedMessages> localizer,
+        IAuditLogger audit,
+        HttpContext httpContext,
         CancellationToken ct)
     {
         var user = await userStore.GetAsync(userId, ct);
@@ -217,6 +223,8 @@ public static class UserEndpoints
         await userStore.UpdateAsync(user, ct);
         await authHooks.RunOnUserUpdatedAsync(user.Id, user.Email, "admin", ct);
 
+        // Audited: an admin write on someone else's account, and this group produced no trail at all.
+        await audit.LogAsync(AdminActor.Of(httpContext), "user.unlocked", "user", userId, null, ct);
         return Results.NoContent();
     }
 
@@ -298,6 +306,8 @@ public static class UserEndpoints
         IProvisioningOrchestrator provisioning,
         IOptions<AuthOptions> authOptions,
         IStringLocalizer<SharedMessages> localizer,
+        IAuditLogger audit,
+        HttpContext httpContext,
         CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(request.Email))
@@ -396,6 +406,8 @@ public static class UserEndpoints
             }
         }
 
+        // Audited: an admin write on someone else's account, and this group produced no trail at all.
+        await audit.LogAsync(AdminActor.Of(httpContext), "user.created", "user", userId, user.Email, ct);
         return Results.Created($"/api/v1/profile/{userId}", new
         {
             user.Id,
@@ -413,6 +425,8 @@ public static class UserEndpoints
         IGrantStore grantStore,
         IEnumerable<IAuthHook> authHooks,
         IStringLocalizer<SharedMessages> localizer,
+        IAuditLogger audit,
+        HttpContext httpContext,
         CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(request.UserId))
@@ -452,6 +466,8 @@ public static class UserEndpoints
         await userStore.UpdateAsync(user, ct);
         await authHooks.RunOnUserUpdatedAsync(user.Id, user.Email, "admin", ct);
 
+        // Audited: an admin write on someone else's account, and this group produced no trail at all.
+        await audit.LogAsync(AdminActor.Of(httpContext), "user.updated", "user", user.Id, null, ct);
         return TypedResults.Json(new UserUpdateResponse
         {
             Id = user.Id,
@@ -474,6 +490,8 @@ public static class UserEndpoints
         IProvisioningOrchestrator provisioningOrchestrator,
         IEnumerable<IAuthHook> authHooks,
         IStringLocalizer<SharedMessages> localizer,
+        IAuditLogger audit,
+        HttpContext httpContext,
         CancellationToken ct)
     {
         var user = await userStore.GetAsync(userId, ct);
@@ -489,6 +507,8 @@ public static class UserEndpoints
         await userStore.DeleteAsync(userId, ct);
         await authHooks.RunOnUserDeletedAsync(userId, user.Email, "admin", ct);
 
+        // Audited: an admin write on someone else's account, and this group produced no trail at all.
+        await audit.LogAsync(AdminActor.Of(httpContext), "user.deleted", "user", userId, null, ct);
         return Results.NoContent();
     }
 
@@ -496,6 +516,7 @@ public static class UserEndpoints
         HttpContext httpContext,
         IUserStore userStore,
         IStringLocalizer<SharedMessages> localizer,
+        IAuditLogger audit,
         CancellationToken ct)
     {
         var token = httpContext.Request.Query["token"].FirstOrDefault();
@@ -559,6 +580,8 @@ public static class UserEndpoints
 
         await userStore.UpdateAsync(user, ct);
 
+        // Audited: an admin write on someone else's account, and this group produced no trail at all.
+        await audit.LogAsync(AdminActor.Of(httpContext), "user.email_confirmed", "user", user.Id, user.Email, ct);
         return TypedResults.Json(new MessageResponse { Message = localizer["Auth_EmailConfirmed"].Value }, AuthagonalJsonContext.Default.MessageResponse);
     }
 
@@ -569,6 +592,8 @@ public static class UserEndpoints
         Authagonal.Core.Services.ITenantContext tenantContext,
         IOptions<AuthOptions> authOptions,
         IStringLocalizer<SharedMessages> localizer,
+        IAuditLogger audit,
+        HttpContext httpContext,
         CancellationToken ct)
     {
         var user = await userStore.GetAsync(userId, ct);
@@ -595,6 +620,8 @@ public static class UserEndpoints
 
         await emailService.SendVerificationEmailAsync(user.Email, callbackUrl, ct);
 
+        // Audited: an admin write on someone else's account, and this group produced no trail at all.
+        await audit.LogAsync(AdminActor.Of(httpContext), "user.verification_resent", "user", userId, null, ct);
         return TypedResults.Json(new MessageResponse { Message = localizer["Auth_VerificationSent"].Value }, AuthagonalJsonContext.Default.MessageResponse);
     }
 
@@ -603,6 +630,8 @@ public static class UserEndpoints
         LinkExternalIdentityRequest request,
         IUserStore userStore,
         IStringLocalizer<SharedMessages> localizer,
+        IAuditLogger audit,
+        HttpContext httpContext,
         CancellationToken ct)
     {
         var user = await userStore.GetAsync(userId, ct);
@@ -622,6 +651,8 @@ public static class UserEndpoints
 
         await userStore.AddLoginAsync(login, ct);
 
+        // Audited: an admin write on someone else's account, and this group produced no trail at all.
+        await audit.LogAsync(AdminActor.Of(httpContext), "user.identity_linked", "user", userId, $"{request.Provider}|{request.ProviderKey}", ct);
         return Results.Created($"/api/v1/profile/{userId}/identities", new
         {
             login.Provider,
@@ -636,6 +667,8 @@ public static class UserEndpoints
         string externalUserId,
         IUserStore userStore,
         IStringLocalizer<SharedMessages> localizer,
+        IAuditLogger audit,
+        HttpContext httpContext,
         CancellationToken ct)
     {
         var user = await userStore.GetAsync(userId, ct);
@@ -644,6 +677,8 @@ public static class UserEndpoints
 
         await userStore.RemoveLoginAsync(userId, provider, externalUserId, ct);
 
+        // Audited: an admin write on someone else's account, and this group produced no trail at all.
+        await audit.LogAsync(AdminActor.Of(httpContext), "user.identity_unlinked", "user", userId, $"{provider}|{externalUserId}", ct);
         return Results.NoContent();
     }
 

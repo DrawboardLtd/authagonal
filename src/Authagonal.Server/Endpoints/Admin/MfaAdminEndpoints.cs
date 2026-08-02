@@ -64,6 +64,7 @@ public static class MfaAdminEndpoints
         IUserStore userStore,
         IMfaStore mfaStore,
         IEnumerable<IAuthHook> authHooks,
+        IAuditLogger audit,
         ILogger<Program> logger,
         CancellationToken ct)
     {
@@ -91,6 +92,14 @@ public static class MfaAdminEndpoints
             "MFA reset for user {UserId} by admin {AdminSubject} via admin API; {Count} credential(s) removed and sessions invalidated",
             userId, ActingAdmin(httpContext), removed.Count);
 
+        // Audited, not merely logged. Stripping every second factor from an account is the strongest
+        // account-takeover lever this API offers — it is what an attacker who has an admin credential does
+        // FIRST — and it produced no queryable record at all. A Warning is not a trail: the shipped log
+        // configuration decides whether it survives, nothing indexes it by user, and an incident responder
+        // asking "who reset this account's MFA and when" had nowhere to look.
+        await audit.LogAsync(AdminActor.Of(httpContext), "mfa.reset", "user", userId,
+            $"{removed.Count} credential(s) removed; sessions invalidated", ct);
+
         return TypedResults.Json(new SuccessResponse(), AuthagonalJsonContext.Default.SuccessResponse);
     }
 
@@ -108,6 +117,7 @@ public static class MfaAdminEndpoints
         IUserStore userStore,
         IMfaStore mfaStore,
         IEnumerable<IAuthHook> authHooks,
+        IAuditLogger audit,
         ILogger<Program> logger,
         CancellationToken ct)
     {
@@ -141,6 +151,11 @@ public static class MfaAdminEndpoints
         logger.LogWarning(
             "MFA credential {CredentialId} ({Type}) removed from user {UserId} by admin {AdminSubject} via admin API",
             credentialId, cred.Type, userId, ActingAdmin(httpContext));
+
+        // Removing the LAST factor is a reset in all but name, which the branch above already treats as one;
+        // the detail records which it was so the trail distinguishes them.
+        await audit.LogAsync(AdminActor.Of(httpContext), "mfa.credential_removed", "user", userId,
+            $"{cred.Type} credential {credentialId}{(mfaDisabled ? "; MFA now disabled" : "")}", ct);
 
         return TypedResults.Json(new SuccessResponse(), AuthagonalJsonContext.Default.SuccessResponse);
     }

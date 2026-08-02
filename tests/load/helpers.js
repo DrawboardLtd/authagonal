@@ -5,10 +5,23 @@ import { SharedArray } from "k6/data";
 // ---------------------------------------------------------------------------
 // Config — override via environment variables
 // ---------------------------------------------------------------------------
-export const BASE_URL =
-  __ENV.BASE_URL || "https://sso.demo.authagonal.drawboard.com";
+// Defaults to LOCALHOST, not the public demo host. It used to default to the real deployment, so an
+// unparameterised `k6 run` pointed a load generator at a live service — and, with the secret below,
+// authenticated to it.
+export const BASE_URL = __ENV.BASE_URL || "http://localhost:5000";
 export const CLIENT_ID = __ENV.CLIENT_ID || "load-test";
-export const CLIENT_SECRET = __ENV.CLIENT_SECRET || "load-test-secret";
+
+// REQUIRED, with no default. It used to fall back to a literal "load-test-secret", which put a
+// client_credentials secret for a real host in a public repository — and made it the credential anyone
+// running this script against that host would present. A load test that cannot authenticate should say so
+// rather than quietly try a guessable secret.
+export const CLIENT_SECRET = __ENV.CLIENT_SECRET;
+if (!CLIENT_SECRET) {
+  throw new Error(
+    "CLIENT_SECRET is required: pass it with -e CLIENT_SECRET=… . There is deliberately no default — " +
+      "a secret with a default is a secret in the repository."
+  );
+}
 export const ADMIN_TOKEN = __ENV.ADMIN_TOKEN || ""; // JWT with authagonal-admin scope
 
 // ---------------------------------------------------------------------------

