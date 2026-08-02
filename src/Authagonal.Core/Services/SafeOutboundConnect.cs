@@ -136,22 +136,40 @@ public static class SafeOutboundConnect
             Exception? last = null;
             foreach (var address in allowed)
             {
-                var socket = new Socket(address.AddressFamily, SocketType.Stream, ProtocolType.Tcp)
-                {
-                    NoDelay = true,
-                };
-
+                // The socket is CONSTRUCTED inside the try, not before it. Creating one for an address
+                // family the host does not have throws — socket(AF_INET6) returns EAFNOSUPPORT on a host or
+                // container booted with ipv6.disable=1 — and constructing outside meant that throw escaped
+                // the loop instead of falling through, so the fallback promised below did not exist. DNS
+                // still returns the AAAA record on such a host and RFC 6724 ordering puts it first, so
+                // every outbound call to every dual-stack host failed permanently on the first candidate
+                // while a perfectly reachable A record sat next in the list. .NET's own connect path, which
+                // this callback replaces, falls through — so this was a regression, not inherited behaviour.
+                Socket? socket = null;
                 try
                 {
+                    socket = new Socket(address.AddressFamily, SocketType.Stream, ProtocolType.Tcp)
+                    {
+                        NoDelay = true,
+                    };
+
                     await socket.ConnectAsync(new IPEndPoint(address, port), ct).ConfigureAwait(false);
                     return new NetworkStream(socket, ownsSocket: true);
                 }
-                catch (Exception ex)
+                catch (Exception ex) when (ex is not OperationCanceledException)
                 {
-                    socket.Dispose();
+                    socket?.Dispose();
                     last = ex;
                     // Try the next validated address — a multi-homed host with one unreachable family is
                     // ordinary, and it is not a reason to fail the request.
+                }
+                catch (OperationCanceledException)
+                {
+                    // The caller gave up or the timeout fired. Retrying the remaining addresses would
+                    // ignore that and keep the request alive past its budget: every subsequent
+                    // ConnectAsync sees the same cancelled token, so the loop would spin through the whole
+                    // candidate list before reporting a failure that was already decided.
+                    socket?.Dispose();
+                    throw;
                 }
             }
 

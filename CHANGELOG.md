@@ -207,6 +207,64 @@ adjacent defect the audit found while checking a finding it had already passed.
   by tests: it belongs on a target a *registrant* chose and needs an operator escape hatch on a target the
   *operator* chose.
 
+- **The socket SSRF guard omitted 100.64.0.0/10, 198.18.0.0/15 and IPv6 `fec0::/10`.** The resolved-address
+  check is the last line of defence — no URL check runs against a resolved address — so whatever it omits is
+  the bypass list. RFC 6598 shared address space is not exotic: `100.100.100.200` is the Alibaba Cloud
+  metadata service, `100.64.0.0/10` is the pod/service CIDR on EKS clusters using secondary CIDRs, and it is
+  the whole of Tailscale's range. A registrant-supplied `jwks_uri` or back-channel logout URI on a hostname
+  resolving into any of those reached internal services. All three ranges are now refused.
+
+- **Every outbound call failed permanently on a host with IPv6 disabled.** The socket was constructed
+  *outside* the try block in the connect callback, so `socket(AF_INET6)` returning `EAFNOSUPPORT` — a host or
+  container booted with `ipv6.disable=1` — escaped the candidate loop instead of falling through to the next
+  validated address. DNS still returns the AAAA record on such a host and RFC 6724 ordering puts it first, so
+  every request to every dual-stack host died on the first candidate while a reachable A record sat next in
+  the list. .NET's own connect path, which this callback replaces, falls through; this was a regression
+  introduced with the guard, not inherited behaviour. Cancellation now also stops the loop rather than being
+  retried against every remaining address.
+
+- **`TurnstileVerifier` ran on the framework default handler.** 100-second timeout and up to 50 automatic
+  redirects, on a client reached from anonymous `POST /login` and `/register` that fails closed — so a stalled
+  connection to Cloudflare held a request slot for 100 seconds *and* rejected the login, which is exactly the
+  amplifier the 10-second timeouts elsewhere were added to remove. It is a *typed* client, registered through
+  a different overload, which is how it escaped a hardening test that enumerated only the named ones. Now
+  bounded and non-redirecting, and in that test's list.
+
+- **Token exchange kept its own copy of the resource rule, and the copy was the defective one.** Two in-code
+  comments asserted all three sites read `ResourceAudiencePolicy`; grep found two. The exchange path still
+  used the bare `Uri.TryCreate(…, UriKind.Absolute)` check that the shared policy exists to replace — and on
+  Unix that *succeeds* for a bare path, because the runtime infers a `file:` scheme. A client whose stored
+  `Audiences` held a bare path (a row predating the policy, or one a config seeder wrote without it) could
+  exchange with `resource=/admin` and receive a tenant-signed token whose `aud` was `/admin`. The RFC 8693
+  `audience` list got no shape check at all, only membership. Both now go through the policy.
+
+  Fixing that surfaced a second, pre-existing defect: `TokenGrantHandlers` derived the OAuth error *code* by
+  string-matching the exception message (`"Resource '"`), and the shared policy's message begins lowercase —
+  so the `client_credentials` path had already been silently answering `invalid_grant` where RFC 8707
+  requires `invalid_target`, with no test noticing. Both paths now throw a typed `ProtocolTokenException`, so
+  the code no longer depends on prose.
+
+- **A slow rate-limit counter store took logins down.** `DurableRateLimiter`'s documented posture — a store
+  failure must not take authentication with it — only ever covered a store that *throws*. There was no
+  timeout, and the login handler makes two of these checks on the hot path, so multi-second store latency
+  blocked every login for twice that while the fail-open never fired, because nothing had failed. The store
+  call is now bounded at two seconds, and exceeding it takes the same fail-open path as an unreachable store.
+
+- **A deleted account could be resurrected by a confirmation in flight.** `ConfirmEmailAsync` re-reads the
+  row after its provisioning round-trip and previously fell back to `?? user` — the pre-round-trip instance —
+  and `GetAsync` returns null only when the row is *gone*. So a delete landing during that round-trip (SCIM
+  deprovision, admin delete, GDPR erasure) made the handler write the stale instance, and `UpdateAsync`
+  CREATES the row when absent on all three persistent providers: the erased account came back with
+  `EmailConfirmed = true` and, on the claim path, the claimant's promoted password — no concurrency guard
+  consulted, nothing logged. Erasing an account while its owner had a verification link open un-erased it.
+  The handler now writes nothing and reports the link as no longer valid.
+
+- **A passwordless claim's staged profile was destroyed rather than applied.** The same rebase applied the
+  claimed first/last name and custom attributes to the in-memory user before the round-trip, then carried
+  only the credential fields onto the re-read row while nulling `PendingClaimJson` in the same breath — so
+  the claimed profile was unrecoverable afterwards. The failure path already reloaded a clean copy "so none
+  of the staged profile persists", which is only meaningful if the success path persists it. It now does.
+
 - **The device grant's approve and deny endpoints had no cross-origin protection.** Both are
   cookie-authenticated with antiforgery disabled, and `SameSite=Lax` withholds the session cookie from a
   cross-*site* request but not from a same-site cross-*origin* one — so on the ordinary `idp.acme.com` beside

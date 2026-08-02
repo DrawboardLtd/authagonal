@@ -13,8 +13,62 @@ public sealed class InMemoryUserStore : IUserStore
     private readonly ConcurrentDictionary<string, ExternalLoginInfo> _logins = new(); // key: provider|providerKey
     private readonly ConcurrentDictionary<string, string> _externalIds = new(); // key: clientId|externalId -> userId
 
+    /// <summary>
+    /// Reads hand back a detached copy, as every real store does — they deserialize a document or map a
+    /// table entity.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="InMemoryMfaStore"/> was given this for the same reason and this store was left as the
+    /// sibling that never got it, which had a specific cost: sharing the stored instance made
+    /// <c>ConfirmEmailAsync</c>'s rebase branch DEAD CODE under the suite. That handler re-reads the row
+    /// after its provisioning round-trip and guards the copy with <c>!ReferenceEquals(confirmed, user)</c>;
+    /// against this store the two were the same object, so the branch never ran and the claim tests passed
+    /// only because <c>user</c> had already been mutated in place — exactly as they would have against the
+    /// unfixed code. A test cannot observe a rebase that never happens.
+    /// <para>
+    /// Collections are copied too, not shared: a caller mutating <c>Roles</c> or <c>CustomAttributes</c> on
+    /// a read instance must not reach the stored row without a write.
+    /// </para>
+    /// <para>
+    /// <c>ConcurrencyToken</c> is still not enforced — that stays a documented fail-open for the
+    /// non-persistent stores, so no endpoint-level test can observe a REFUSED stale write. Detaching is what
+    /// makes the rebase observable; enforcing the token is a separate change.
+    /// </para>
+    /// </remarks>
+    private static AuthUser? Detach(AuthUser? u) => u is null ? null : new()
+    {
+        Id = u.Id,
+        Email = u.Email,
+        NormalizedEmail = u.NormalizedEmail,
+        PasswordHash = u.PasswordHash,
+        PendingPasswordHash = u.PendingPasswordHash,
+        PendingClaimJson = u.PendingClaimJson,
+        EmailConfirmed = u.EmailConfirmed,
+        FirstName = u.FirstName,
+        LastName = u.LastName,
+        CompanyName = u.CompanyName,
+        Phone = u.Phone,
+        Locale = u.Locale,
+        OrganizationId = u.OrganizationId,
+        AccessFailedCount = u.AccessFailedCount,
+        LockoutEnabled = u.LockoutEnabled,
+        LockoutEnd = u.LockoutEnd,
+        SecurityStamp = u.SecurityStamp,
+        MfaEnabled = u.MfaEnabled,
+        ExternalId = u.ExternalId,
+        IsActive = u.IsActive,
+        ScimProvisionedByClientId = u.ScimProvisionedByClientId,
+        ScimDeletedAt = u.ScimDeletedAt,
+        Roles = [.. u.Roles],
+        CustomAttributes = new Dictionary<string, string>(u.CustomAttributes),
+        CreatedAt = u.CreatedAt,
+        UpdatedAt = u.UpdatedAt,
+        LastLoginAt = u.LastLoginAt,
+        ConcurrencyToken = u.ConcurrencyToken,
+    };
+
     public Task<AuthUser?> GetAsync(string userId, CancellationToken ct = default)
-        => Task.FromResult(_users.GetValueOrDefault(userId));
+        => Task.FromResult(Detach(_users.GetValueOrDefault(userId)));
 
     public Task<AuthUser?> FindByEmailAsync(string email, CancellationToken ct = default)
     {
@@ -22,20 +76,23 @@ public sealed class InMemoryUserStore : IUserStore
         // to a user object can't change which user currently "owns" an email.
         var normalized = email.ToUpperInvariant();
         if (_emailToId.TryGetValue(normalized, out var id) && _users.TryGetValue(id, out var user))
-            return Task.FromResult<AuthUser?>(user);
+            return Task.FromResult(Detach(user));
         return Task.FromResult<AuthUser?>(null);
     }
 
     public Task CreateAsync(AuthUser user, CancellationToken ct = default)
     {
-        _users[user.Id] = user;
+        _users[user.Id] = Detach(user)!;
         _emailToId[user.NormalizedEmail] = user.Id;
         return Task.CompletedTask;
     }
 
     public Task UpdateAsync(AuthUser user, CancellationToken ct = default)
     {
-        _users[user.Id] = user;
+        // Stored detached as well: keeping the caller's instance would leave them holding a live handle on
+        // the row, so a later mutation would "persist" with no write — the same property the reads above
+        // exist to remove, arriving through the other door.
+        _users[user.Id] = Detach(user)!;
         // Re-home the email index: drop any stale mapping for this user, then claim the current one.
         foreach (var stale in _emailToId.Where(e => e.Value == user.Id && e.Key != user.NormalizedEmail).Select(e => e.Key).ToList())
             _emailToId.TryRemove(stale, out _);

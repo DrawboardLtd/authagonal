@@ -213,6 +213,62 @@ public sealed class TokenExchangeTests : IAsyncLifetime
 
     // -----------------------------------------------------------------------
 
+    /// <summary>
+    /// A bare path is not an absolute URI, whatever <c>Uri.TryCreate</c> says on Unix.
+    /// </summary>
+    /// <remarks>
+    /// The exchange path kept its own copy of the resource rule while two in-code comments asserted all
+    /// three sites read the shared one, and the copy was the defective version: on Unix
+    /// <c>Uri.TryCreate("/admin", UriKind.Absolute, out _)</c> SUCCEEDS, because the runtime infers a
+    /// <c>file:</c> scheme. So a client whose stored <c>Audiences</c> held a bare path — a row written before
+    /// the policy existed, or one a config seeder wrote without going through it — could exchange with
+    /// <c>resource=/admin</c>, satisfy both the shape check and the membership check, and receive a
+    /// tenant-signed token whose <c>aud</c> was <c>/admin</c>. The shared policy requires a written scheme.
+    /// </remarks>
+    [Fact]
+    public async Task Exchange_BarePathResource_IsRejectedEvenWhenRegistered()
+    {
+        // Registered, so membership cannot be what refuses it — the shape check has to.
+        var client = (await _factory.ClientStore.GetAsync(AuthagonalTestFactory.TestClientId))!;
+        client.Audiences = [.. client.Audiences, "/admin"];
+        await _factory.ClientStore.UpsertAsync(client);
+
+        var primary = await GetPrimaryAccessTokenAsync();
+        var form = BaseExchangeForm(primary);
+        form["resource"] = "/admin";
+
+        var response = await _client.PostAsync("/connect/token", new FormUrlEncodedContent(form));
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("invalid_target", body.GetProperty("error").GetString());
+    }
+
+    /// <summary>
+    /// The RFC 8693 <c>audience</c> list gets the same shape check as <c>resource</c>.
+    /// </summary>
+    /// <remarks>
+    /// It previously got no shape check at all, only membership — so the same bare path arrived through the
+    /// other parameter name. Naming a target is the client's declaration either way.
+    /// </remarks>
+    [Fact]
+    public async Task Exchange_BarePathAudience_IsRejectedEvenWhenRegistered()
+    {
+        var client = (await _factory.ClientStore.GetAsync(AuthagonalTestFactory.TestClientId))!;
+        client.Audiences = [.. client.Audiences, "/admin"];
+        await _factory.ClientStore.UpsertAsync(client);
+
+        var primary = await GetPrimaryAccessTokenAsync();
+        var form = BaseExchangeForm(primary);
+        form["audience"] = "/admin";
+
+        var response = await _client.PostAsync("/connect/token", new FormUrlEncodedContent(form));
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("invalid_target", body.GetProperty("error").GetString());
+    }
+
     [Fact]
     public async Task Exchange_UnregisteredAudience_IsRejectedAsInvalidTarget()
     {

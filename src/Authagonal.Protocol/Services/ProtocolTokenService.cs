@@ -899,8 +899,13 @@ public sealed class ProtocolTokenService(
             // predates AudiencesDeclared.
             foreach (var r in resourceList)
             {
+                // Typed, not a bare InvalidOperationException. TokenGrantHandlers used to derive the error
+                // CODE by string-matching the message prefix ("Resource '"), and ResourceAudiencePolicy's
+                // message begins with a lowercase "resource '" — so moving this site onto the shared policy
+                // had already silently downgraded RFC 8707's invalid_target to invalid_grant here, with no
+                // test to notice. Routing a protocol error code through prose is the defect; this removes it.
                 if (ResourceAudiencePolicy.RejectResource(client, r) is { } rejected)
-                    throw new InvalidOperationException(rejected);
+                    throw new ProtocolTokenException("invalid_target", rejected);
             }
         }
 
@@ -1116,22 +1121,24 @@ public sealed class ProtocolTokenService(
         // validator accepts any non-empty audience), so the value landed verbatim in the minted
         // token's `aud`. A client permitted to exchange tokens must declare the targets it may aim
         // them at.
-        var exchangeAudiencesDeclared = client.Audiences.Count > 0;
-
+        // Through ResourceAudiencePolicy, like the authorize and client_credentials paths.
+        //
+        // This kept its own copy of the rule, and the copy was the defective version: `Uri.TryCreate(r,
+        // UriKind.Absolute, …)` SUCCEEDS on a bare path on Unix, because the runtime infers a `file:`
+        // scheme — so `resource=/admin` passed the shape check, and a client whose stored Audiences held a
+        // bare path (a row written before the policy existed, or one a config seeder wrote without going
+        // through it) then passed the membership check too and received a tenant-signed token whose `aud`
+        // was `/admin`. The policy's IsAbsoluteUriWithWrittenScheme is what refuses that.
+        //
+        // The RFC 8693 `audience` values got no shape check at all here, only membership. Same rule now
+        // applies to both lists: naming a target is a client's declaration either way.
         var targetAudiences = new List<string>();
-        foreach (var r in resources?.Where(r => !string.IsNullOrWhiteSpace(r)) ?? [])
+        foreach (var value in (resources ?? []).Concat(audiences ?? [])
+                     .Where(v => !string.IsNullOrWhiteSpace(v)))
         {
-            if (!Uri.TryCreate(r, UriKind.Absolute, out var u) || !string.IsNullOrEmpty(u.Fragment))
-                throw new InvalidOperationException($"Resource '{r}' is not a valid absolute URI");
-            if (!exchangeAudiencesDeclared || !client.Audiences.Contains(r, StringComparer.Ordinal))
-                throw new InvalidOperationException($"Resource '{r}' is not registered for this client");
-            targetAudiences.Add(r);
-        }
-        foreach (var a in audiences?.Where(a => !string.IsNullOrWhiteSpace(a)) ?? [])
-        {
-            if (!exchangeAudiencesDeclared || !client.Audiences.Contains(a, StringComparer.Ordinal))
-                throw new InvalidOperationException($"Resource '{a}' is not registered for this client");
-            targetAudiences.Add(a);
+            if (Authagonal.Core.Services.ResourceAudiencePolicy.RejectResource(client, value) is { } why)
+                throw new ProtocolTokenException("invalid_target", why);
+            targetAudiences.Add(value);
         }
 
         // Rebuild the subject from the validated token rather than the user store: the exchange

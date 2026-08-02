@@ -103,10 +103,20 @@ public static class OutboundUrl
                 || (b[0] == 172 && b[1] >= 16 && b[1] <= 31)
                 || (b[0] == 192 && b[1] == 168)
                 || (b[0] == 169 && b[1] == 254)  // link-local, incl. 169.254.169.254 metadata
+                // RFC 6598 shared address space, 100.64.0.0/10. Routed internal in real deployments and
+                // omitted here while this became the LAST line of defence: 100.100.100.200 is the Alibaba
+                // Cloud metadata service, 100.64.0.0/10 is the pod/service CIDR on EKS clusters using
+                // secondary CIDRs, and it is the whole of Tailscale's address space. A hostname resolving
+                // into it reached internal services from inside any of those networks.
+                || (b[0] == 100 && b[1] >= 64 && b[1] <= 127)
+                // RFC 2544 benchmarking range, 198.18.0.0/15 — reserved, and used as internal transit.
+                || (b[0] == 198 && (b[1] == 18 || b[1] == 19))
                 || b[0] >= 224,                  // multicast / reserved
             AddressFamily.InterNetworkV6 =>
                 ip.IsIPv6LinkLocal
                 || ip.IsIPv6Multicast
+                // Deprecated by RFC 3879 and still configured, still routed, and never consulted here.
+                || ip.IsIPv6SiteLocal            // fec0::/10
                 || (b[0] & 0xFE) == 0xFC       // ULA fc00::/7
                 // The unspecified address, :: — the IPv6 sibling of the `b[0] == 0` rule on the IPv4 arm,
                 // which was there and had no counterpart here. A connect() to :: goes to the local host on

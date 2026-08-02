@@ -106,8 +106,19 @@ public sealed class TestProvisioningOrchestrator : IProvisioningOrchestrator
         return Task.CompletedTask;
     }
 
+    /// <summary>
+    /// Runs inside <see cref="ReprovisionAsync"/>, so a test can act while the round-trip is in flight.
+    /// </summary>
+    /// <remarks>
+    /// The provisioning call is the window that matters on the claim path: it is a network call to a
+    /// downstream app and takes seconds, and the handler re-reads the row afterwards precisely because
+    /// anything may have happened to it meanwhile. Without a seam here no test can put anything in that
+    /// window, which is why the rebase's own failure modes were unreachable from the suite.
+    /// </remarks>
+    public Func<Core.Models.AuthUser, Task>? DuringReprovision { get; set; }
+
     public Task ReprovisionAsync(Core.Models.AuthUser user, CancellationToken ct = default)
-        => Task.CompletedTask;
+        => DuringReprovision?.Invoke(user) ?? Task.CompletedTask;
 
     public Task DeprovisionAllAsync(string userId, CancellationToken ct = default)
         => Task.CompletedTask;

@@ -749,6 +749,110 @@ public sealed class AuthEndpointTests : IAsyncLifetime
     }
 
     /// <summary>
+    /// The claimed profile must actually reach the store, not be applied in memory and then dropped.
+    /// </summary>
+    /// <remarks>
+    /// <c>ApplyPendingClaim</c> puts the staged first/last name and custom attributes on the in-memory user
+    /// before the provisioning round-trip, so the downstream conversion sees the claim's signup context. The
+    /// rebase then re-reads the row and copies only the credential fields across — so the claimed profile was
+    /// dropped, and <c>PendingClaimJson</c> was nulled in the same breath, which makes it destroyed rather
+    /// than deferred. Nothing could recover it afterwards.
+    /// <para>
+    /// The failure path already reloads a clean copy "so none of the staged profile/attributes applied above
+    /// persist", which is only a meaningful precaution if the success path persists them. This asserts the
+    /// half that was missing.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task PasswordlessClaim_PersistsTheClaimedProfile()
+    {
+        await using var factory = new AuthagonalTestFactory { ConfigureAuthOptions = o => o.AllowPasswordlessAccountClaim = true };
+        var client = factory.CreateClient(new() { AllowAutoRedirect = false });
+        await factory.SeedTestDataAsync();
+
+        var federated = new Authagonal.Core.Models.AuthUser
+        {
+            Id = System.Guid.NewGuid().ToString("N"),
+            Email = "profile@example.com",
+            NormalizedEmail = "PROFILE@EXAMPLE.COM",
+            PasswordHash = null,
+            EmailConfirmed = true,
+            FirstName = "Placeholder",
+            LockoutEnabled = true,
+            SecurityStamp = System.Convert.ToBase64String(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32)),
+            CreatedAt = System.DateTimeOffset.UtcNow,
+        };
+        await factory.UserStore.CreateAsync(federated);
+
+        await client.PostAsJsonAsync("/api/auth/register",
+            new { email = "profile@example.com", password = "Claim1234!", firstName = "Ada", lastName = "Lovelace" });
+
+        var mail = factory.EmailService.SentEmails.Last(e => e.Email == "profile@example.com" && e.Type == "verification");
+        var token = System.Web.HttpUtility.ParseQueryString(new System.Uri(mail.CallbackUrl).Query)["token"];
+        await client.PostAsync("/api/auth/confirm-email",
+            new FormUrlEncodedContent([new KeyValuePair<string, string>("token", token!)]));
+
+        var after = await factory.UserStore.GetAsync(federated.Id);
+        Assert.Equal("Ada", after!.FirstName);
+        Assert.Equal("Lovelace", after.LastName);
+        // And the credential still promoted, so the profile fix did not displace the point of the claim.
+        Assert.NotNull(after.PasswordHash);
+        Assert.Null(after.PendingClaimJson);
+    }
+
+    /// <summary>
+    /// An account deleted while its confirmation is in flight must stay deleted.
+    /// </summary>
+    /// <remarks>
+    /// The rebase read the row back with <c>?? user</c>, and <c>GetAsync</c> returns null only when the row
+    /// is gone — so a delete landing during the provisioning round-trip (SCIM deprovision on offboarding, an
+    /// admin delete, a GDPR erasure) made the handler fall back to writing the pre-round-trip instance. That
+    /// is the exact stale write the rebase exists to eliminate, and worse: <c>UpdateAsync</c> CREATES the row
+    /// when it is absent on all three persistent providers, so the erased account came back with
+    /// <c>EmailConfirmed = true</c> and the claimant's promoted password, with no concurrency guard consulted
+    /// and nothing logged. Erasing an account while its owner had a verification link open un-erased it.
+    /// </remarks>
+    [Fact]
+    public async Task ConfirmEmail_DoesNotResurrectAnAccountDeletedMidFlight()
+    {
+        await using var factory = new AuthagonalTestFactory { ConfigureAuthOptions = o => o.AllowPasswordlessAccountClaim = true };
+        var client = factory.CreateClient(new() { AllowAutoRedirect = false });
+        await factory.SeedTestDataAsync();
+
+        var federated = new Authagonal.Core.Models.AuthUser
+        {
+            Id = System.Guid.NewGuid().ToString("N"),
+            Email = "erased@example.com",
+            NormalizedEmail = "ERASED@EXAMPLE.COM",
+            PasswordHash = null,
+            EmailConfirmed = true,
+            LockoutEnabled = true,
+            SecurityStamp = System.Convert.ToBase64String(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32)),
+            CreatedAt = System.DateTimeOffset.UtcNow,
+        };
+        await factory.UserStore.CreateAsync(federated);
+
+        await client.PostAsJsonAsync("/api/auth/register",
+            new { email = "erased@example.com", password = "Claim1234!" });
+
+        var mail = factory.EmailService.SentEmails.Last(e => e.Email == "erased@example.com" && e.Type == "verification");
+        var token = System.Web.HttpUtility.ParseQueryString(new System.Uri(mail.CallbackUrl).Query)["token"];
+
+        // The erasure lands inside the provisioning round-trip, which is the window the rebase was written
+        // for — the handler is holding an instance it read before this happened.
+        factory.Provisioning.DuringReprovision = async _ =>
+            await factory.UserStore.DeleteAsync(federated.Id);
+
+        var confirm = await client.PostAsync("/api/auth/confirm-email",
+            new FormUrlEncodedContent([new KeyValuePair<string, string>("token", token!)]));
+
+        Assert.Null(await factory.UserStore.GetAsync(federated.Id));
+        Assert.False(await factory.UserStore.ExistsAsync(federated.Id));
+        // And the caller is told the link is no longer valid rather than being shown a success.
+        Assert.NotEqual(HttpStatusCode.OK, confirm.StatusCode);
+    }
+
+    /// <summary>
     /// The verification link is bound to the credential that was staged when it was ISSUED. Without that
     /// binding the link asserted only "this address is verified", so it promoted whatever happened to be
     /// staged at click time — meaning a second claimant who staged after the first link was sent had THEIR

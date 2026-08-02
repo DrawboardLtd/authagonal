@@ -972,6 +972,9 @@ public static class AuthEndpoints
         // then promote the staged credential. Side effects run to completion regardless of the
         // caller's abort token (same shielding as registration).
         var promotedStagedCredential = false;
+        // The staged claim JSON, kept across the provisioning round-trip so the rebase below can re-apply
+        // the claimed profile onto the row it re-reads.
+        string? stagedClaimJson = null;
         if (!string.IsNullOrWhiteSpace(user.PendingPasswordHash))
         {
             // The link must be the one issued FOR this staged credential. If someone else staged a claim
@@ -1027,6 +1030,10 @@ public static class AuthEndpoints
             }
             user.PasswordHash = user.PendingPasswordHash;
             user.PendingPasswordHash = null;
+            // Kept for the rebase below, which re-applies the staged profile onto the re-read row. Nulling
+            // this here and nowhere retaining it is how the claimed name and attributes came to be
+            // destroyed rather than deferred.
+            stagedClaimJson = user.PendingClaimJson;
             user.PendingClaimJson = null;
             promotedStagedCredential = true;
             logger.LogInformation("Passwordless account claimed by {UserId} — credential promoted after fresh verification", user.Id);
@@ -1046,14 +1053,47 @@ public static class AuthEndpoints
         // Re-reading and re-applying only what THIS handler decides is the fix: a concurrent write that
         // moved the row survives, and a genuine conflict now surfaces from UpdateAsync instead of being
         // laundered past it.
-        var confirmed = await userStore.GetAsync(user.Id, CancellationToken.None) ?? user;
+        var confirmed = await userStore.GetAsync(user.Id, CancellationToken.None);
+        if (confirmed is null)
+        {
+            // The row is GONE — deleted during the provisioning round-trip by a SCIM deprovision, an admin
+            // delete, or a GDPR erasure. There is nothing to rebase onto and nothing to confirm.
+            //
+            // This used to be `?? user`, which fell back to writing the pre-round-trip instance: exactly the
+            // stale full-row write the rebase exists to eliminate, and worse than the original defect,
+            // because UpdateAsync CREATES the row when it is absent on all three persistent providers. A
+            // deleted account came back with EmailConfirmed = true and, on the claim path, the claimant's
+            // promoted password — no concurrency guard consulted, nothing logged. Erasing an account while
+            // its owner had a verification link open silently un-erased it.
+            logger.LogWarning(
+                "Email confirmation for user {UserId} found no stored row — the account was deleted while "
+                + "the confirmation was in flight. Nothing written.", user.Id);
+            return wantsHtml
+                ? Results.Redirect("/login?error=invalid_token")
+                : JsonResults.Error("invalid_token", "This verification link is no longer valid.");
+        }
+
         if (promotedStagedCredential && !ReferenceEquals(confirmed, user))
         {
-            // Only on the claim path, and only these three: promoting the staged credential is this
-            // handler's decision. Copying PasswordHash unconditionally would revert a password change that
-            // landed during the round-trip — the very thing this rebase exists to prevent.
+            // Only on the claim path, and only what this handler decides. Copying PasswordHash
+            // unconditionally would revert a password change that landed during the round-trip — the very
+            // thing this rebase exists to prevent.
             confirmed.PasswordHash = user.PasswordHash;
             confirmed.PendingPasswordHash = null;
+            confirmed.PendingClaimJson = null;
+
+            // The staged profile has to come across too. ApplyPendingClaim put it on `user` before the
+            // round-trip so the downstream conversion could see the claim's signup context, and the rebase
+            // then dropped it while nulling PendingClaimJson in the same breath — so the claimed name and
+            // attributes were not deferred, they were destroyed, unrecoverably. The failure path above
+            // reloads a clean copy specifically "so none of the staged profile/attributes applied above
+            // persist", which is only a meaningful precaution if the success path persists them.
+            //
+            // Re-applied from the staged JSON rather than copied off `user`, so only the fields the claim
+            // actually staged move — a first/last name the row already had, or one a concurrent write
+            // changed, is not overwritten by whatever `user` happened to be holding.
+            confirmed.PendingClaimJson = stagedClaimJson;
+            ApplyPendingClaim(confirmed);
             confirmed.PendingClaimJson = null;
         }
 

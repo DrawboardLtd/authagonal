@@ -41,6 +41,17 @@ public sealed class DurableRateLimiter(
     /// </summary>
     private const int RetainedWindows = 2;
 
+    /// <summary>
+    /// Longest a single counter round trip may take before it is treated as a store failure.
+    /// </summary>
+    /// <remarks>
+    /// Deliberately short. This sits on the login and token hot paths, twice per login, and the value it
+    /// protects is a bound that per-node limiting and the edge also enforce — so waiting is worth less than
+    /// answering. Exceeding it takes the fail-open branch: the cluster-wide bound is unavailable for that
+    /// call, which is the same situation as an unreachable store and gets the same answer.
+    /// </remarks>
+    private static readonly TimeSpan StoreTimeout = TimeSpan.FromSeconds(2);
+
     public async Task<bool> IsRateLimitedAsync(
         string key, int maxAttempts, TimeSpan window, CancellationToken ct = default)
     {
@@ -57,13 +68,26 @@ public sealed class DurableRateLimiter(
         var bucketKey = $"{key}|{window.Ticks}|{bucket}";
         var expiresAt = new DateTimeOffset((bucket + RetainedWindows) * windowTicks, TimeSpan.Zero);
 
+        // Bounded, because the documented posture — a store failure must not take authentication down with
+        // it — only ever covered a store that THROWS. A store that is merely slow converted straight into a
+        // login outage: the login handler makes two of these checks on the hot path, each a synchronous round
+        // trip, so multi-second store latency (an Azure hot-partition slowdown, a connection-pool stall, a
+        // Dynamo throttle with SDK-internal retries) blocked every login for twice that, and the fail-open
+        // below never fired because nothing had failed. A timeout is what turns "slow" into "failed" so the
+        // posture applies to it.
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        timeout.CancelAfter(StoreTimeout);
+
         long count;
         try
         {
-            count = await store.IncrementAsync(bucketKey, expiresAt, ct);
+            count = await store.IncrementAsync(bucketKey, expiresAt, timeout.Token);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
+            // The CALLER went away. Distinguished from our own timeout by whose token fired: the linked
+            // source cancels for either reason, so testing `ct` rather than the linked token is what keeps a
+            // timeout on the fail-open path instead of surfacing as a cancelled request.
             throw;
         }
         catch (RateLimitContentionException ex)

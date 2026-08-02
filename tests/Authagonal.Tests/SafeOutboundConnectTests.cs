@@ -35,6 +35,18 @@ public class SafeOutboundConnectTests
     [InlineData("::", false)]                // IPv6 unspecified
     [InlineData("fd00::1", false)]           // IPv6 ULA
     [InlineData("fe80::1", false)]           // IPv6 link-local
+    // RFC 6598 shared address space. Omitted while this was the last line of defence, and it is not an
+    // exotic range: 100.100.100.200 is the Alibaba Cloud metadata service, 100.64.0.0/10 is the pod CIDR
+    // on EKS clusters using secondary CIDRs, and it is all of Tailscale.
+    [InlineData("100.64.0.1", false)]
+    [InlineData("100.100.100.200", false)]   // Alibaba Cloud metadata
+    [InlineData("100.127.255.255", false)]
+    [InlineData("100.63.255.255", true)]     // just below the range — still public
+    [InlineData("100.128.0.0", true)]        // just above it
+    [InlineData("198.18.0.1", false)]        // RFC 2544 benchmarking / internal transit
+    [InlineData("198.19.255.255", false)]
+    [InlineData("198.20.0.1", true)]         // just above it
+    [InlineData("fec0::1", false)]           // IPv6 site-local, deprecated but still routed
     [InlineData("93.184.216.34", true)]      // ordinary public address
     [InlineData("2606:2800:220:1:248:1893:25c8:1946", true)]
     public void TheAddressRuleMatchesTheUrlRule(string address, bool allowed)

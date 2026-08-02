@@ -46,7 +46,14 @@ public sealed class OutboundRedirectHardeningTests
     /// Clients whose target is a compile-time constant. Nothing chooses it, so there is nothing for an
     /// address check to decide.
     /// </summary>
-    private static readonly string[] FixedTargetClients = ["Resend"];
+    /// <remarks>
+    /// TurnstileVerifier is a TYPED client, so its name is the type's. It was absent from this list and from
+    /// the registration's hardening both — on the framework default handler, 100-second timeout and 50
+    /// redirects — while this very test's purpose is that "a new one cannot be added without either
+    /// hardening it or failing here". A typed client is registered by a different overload, which is how it
+    /// escaped a list that only ever enumerated the named ones.
+    /// </remarks>
+    private static readonly string[] FixedTargetClients = ["Resend", "TurnstileVerifier"];
 
     /// <summary>
     /// Every named client the product creates. Keep in step with CreateClient call sites — and note that it
