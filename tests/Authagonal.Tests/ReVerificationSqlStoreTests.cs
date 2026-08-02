@@ -506,3 +506,146 @@ public sealed class MfaVerifySpendsTheCodeTests : IAsyncDisposable
         return verify.IsSuccessStatusCode;
     }
 }
+
+/// <summary>
+/// #115 — the caller-revision guard must not be handed a fresh revision by the code that just wrote.
+/// </summary>
+/// <remarks>
+/// The store-level guard for #115 was real on all three persistent providers.
+/// <c>TccProvisioningOrchestrator.PersistMergeAsync</c> then copied the post-merge revision onto the
+/// caller's instance, so the guard had nothing to object to while every other field on that instance was
+/// still the copy read BEFORE the provisioning round-trip — a network call to a downstream app. A write
+/// through it reverted whatever landed during that round-trip: an admin password reset, a lockout, a
+/// profile edit. The fix and the hole were in the same commit, which is why no branch caught it; an
+/// adversarial refuter in the third pass did.
+/// <para>
+/// Against SQLite rather than the in-memory double on purpose: <c>InMemoryUserStore</c> leaves
+/// <c>ConcurrencyToken</c> null — the documented fail-open for non-persistent stores — so through it a
+/// laundered revision is invisible and this test would assert nothing.
+/// </para>
+/// </remarks>
+public sealed class ProvisioningMergeRevisionTests : IAsyncLifetime
+{
+    private SqlDataSource _source = null!;
+
+    public Task InitializeAsync()
+    {
+        _source = SqlTestSource.Sqlite();
+        return Task.CompletedTask;
+    }
+
+    public async Task DisposeAsync() => await _source.DisposeAsync();
+
+    /// <summary>Answers /try with a merge payload, so PersistMergeAsync actually runs.</summary>
+    private sealed class MergingTryHandler : System.Net.Http.HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+            => Task.FromResult(request.RequestUri!.AbsolutePath == "/try"
+                ? new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+                {
+                    Content = new StringContent(
+                        """{"approved":true,"organizationId":"org-1"}""",
+                        System.Text.Encoding.UTF8, "application/json"),
+                }
+                : new HttpResponseMessage(System.Net.HttpStatusCode.OK));
+    }
+
+    private sealed class Factory(System.Net.Http.HttpMessageHandler handler) : IHttpClientFactory
+    {
+        public HttpClient CreateClient(string name) => new(handler, disposeHandler: false);
+    }
+
+    private sealed class OneApp : Authagonal.Core.Services.IProvisioningAppProvider
+    {
+        public Task<IReadOnlyList<Authagonal.Core.Services.ProvisioningApp>> GetAppsAsync(CancellationToken ct = default)
+            => Task.FromResult<IReadOnlyList<Authagonal.Core.Services.ProvisioningApp>>(
+                [new Authagonal.Core.Services.ProvisioningApp("app1", "https://app1.test", null)]);
+    }
+
+    [Fact]
+    public async Task PersistingAMergeDoesNotHandTheCallerAFreshRevision()
+    {
+        var userStore = await BuildUserStoreAsync();
+        await userStore.CreateAsync(new AuthUser
+        {
+            Id = "u1", Email = "ada@acme.test", NormalizedEmail = "ADA@ACME.TEST",
+            FirstName = "Ada", CreatedAt = DateTimeOffset.UtcNow,
+        });
+
+        // What a handler holds across the provisioning round-trip.
+        var caller = await userStore.GetAsync("u1");
+        var callerRevision = caller!.ConcurrencyToken;
+        Assert.False(string.IsNullOrEmpty(callerRevision), "the SQL store must stamp a revision on read");
+
+        await NewOrchestrator().ReprovisionAsync(caller);
+
+        // The merge really was persisted — otherwise the rest of this asserts nothing.
+        var stored = await userStore.GetAsync("u1");
+        Assert.Equal("org-1", stored!.OrganizationId);
+
+        // And the caller was NOT handed the revision that write produced.
+        Assert.Equal(callerRevision, caller.ConcurrencyToken);
+        Assert.NotEqual(stored.ConcurrencyToken, caller.ConcurrencyToken);
+    }
+
+    /// <summary>
+    /// The property the revision exists for: a write built from the pre-round-trip instance is refused
+    /// rather than silently reverting what landed during it.
+    /// </summary>
+    [Fact]
+    public async Task AWriteFromThePreRoundTripInstanceIsRefused()
+    {
+        var userStore = await BuildUserStoreAsync();
+        await userStore.CreateAsync(new AuthUser
+        {
+            Id = "u1", Email = "ada@acme.test", NormalizedEmail = "ADA@ACME.TEST",
+            FirstName = "Ada", PasswordHash = "old-hash", CreatedAt = DateTimeOffset.UtcNow,
+        });
+
+        var caller = await userStore.GetAsync("u1");
+
+        // An admin resets the password while the provisioning round-trip is in flight.
+        var admin = await userStore.GetAsync("u1");
+        admin!.PasswordHash = "reset-by-admin";
+        await userStore.UpdateAsync(admin);
+
+        await NewOrchestrator().ReprovisionAsync(caller!);
+
+        // Writing the stale instance would put "old-hash" back. It is refused instead.
+        caller!.FirstName = "Ada-updated";
+        await Assert.ThrowsAsync<InvalidOperationException>(() => userStore.UpdateAsync(caller));
+
+        Assert.Equal("reset-by-admin", (await userStore.GetAsync("u1"))!.PasswordHash);
+    }
+
+    private TccProvisioningOrchestrator NewOrchestrator()
+    {
+        var requestServices = new ServiceCollection()
+            .AddSingleton<Authagonal.Core.Stores.IUserProvisionStore>(new InMemoryUserProvisionStore())
+            .AddSingleton<Authagonal.Core.Stores.IUserStore>(_ => BuildUserStoreAsync().GetAwaiter().GetResult())
+            .BuildServiceProvider();
+
+        var accessor = new Microsoft.AspNetCore.Http.HttpContextAccessor
+        {
+            HttpContext = new Microsoft.AspNetCore.Http.DefaultHttpContext { RequestServices = requestServices },
+        };
+
+        return new TccProvisioningOrchestrator(
+            new Factory(new MergingTryHandler()),
+            accessor,
+            new OneApp(),
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<TccProvisioningOrchestrator>.Instance);
+    }
+
+    private async Task<SqlUserStore> BuildUserStoreAsync()
+    {
+        var tables = await _source.EnsureTablesAsync([
+            "Users", "UserEmails", "UserLogins", "UserExternalIds", "UserFirstNames", "UserLastNames",
+            "UserEmailDomains", "UserEmailLocalPrefixes",
+        ]);
+        return new SqlUserStore(
+            tables["Users"], tables["UserEmails"], tables["UserLogins"], tables["UserExternalIds"],
+            tables["UserFirstNames"], tables["UserLastNames"], EnvPartitioner.Live, null,
+            tables["UserEmailDomains"], tables["UserEmailLocalPrefixes"]);
+    }
+}
