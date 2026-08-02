@@ -100,6 +100,30 @@ public sealed class ClientSeedService(
             client.PostLogoutRedirectUris = seed.PostLogoutRedirectUris ?? existing?.PostLogoutRedirectUris ?? [];
             client.AllowedScopes = seededScopes;
             client.AllowedCorsOrigins = seed.CorsOrigins ?? seed.AllowedCorsOrigins ?? existing?.AllowedCorsOrigins ?? [];
+
+            // Audiences: this seeder had NO field for them, so the one thing the authorize path's own
+            // justification claims about seed configuration — that "every surface that creates a client
+            // (dynamic registration, the admin API, seed configuration) does accept audiences" — was not
+            // true of the Server host at all. An operator could not declare a client's audiences in
+            // configuration, only through the admin API, which meant a config-seeded client kept the legacy
+            // permissive "may name any absolute URI" reading with no way to tighten it.
+            //
+            // Validated on the list that will actually be written, and only overwritten when the seed states
+            // one, matching every other field here. Declaring by naming, as the admin API does.
+            if (seed.Audiences is { Count: > 0 } seededAudiences)
+            {
+                if (Core.Services.ResourceAudiencePolicy.RejectAudiences(seededAudiences) is { } audienceError)
+                {
+                    logger.LogError(
+                        "Refusing to seed client {Id}: {Error}. An audience becomes the `aud` of a signed "
+                        + "token, so it must be an absolute URI within the documented caps.",
+                        clientId, audienceError);
+                    continue;
+                }
+
+                client.Audiences = seededAudiences;
+                client.AudiencesDeclared = true;
+            }
             client.RequirePkce = seed.RequirePkce ?? existing?.RequirePkce ?? true;
             client.AllowOfflineAccess = seed.AllowOfflineAccess ?? existing?.AllowOfflineAccess ?? false;
             client.RequireClientSecret = seed.RequireSecret ?? seed.RequireClientSecret ?? existing?.RequireClientSecret ?? true;
@@ -136,6 +160,14 @@ public sealed class ClientSeedService(
         public string? ClientName { get; set; }
 
         // Secrets — either pre-hashed or plaintext (auto-hashed on startup)
+        /// <summary>
+        /// Resource identifiers this client may name as a <c>resource</c>, and what its tokens' <c>aud</c>
+        /// may be narrowed to. Absent preserves the stored list; naming any marks the client as having
+        /// DECLARED its audiences, which is what makes <c>ResourceAudiencePolicy</c> stop reading it as a
+        /// legacy client that may name anything absolute.
+        /// </summary>
+        public List<string>? Audiences { get; set; }
+
         public List<string>? SecretHashes { get; set; }
         public string? ClientSecret { get; set; }
 

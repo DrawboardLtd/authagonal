@@ -236,16 +236,23 @@ public class OutboundAllowlistTests
     }
 
     /// <summary>
-    /// A name the operator allowlisted that resolves to NOTHING still fails as a resolution failure, not as
-    /// a connection to an unchecked address.
+    /// A name the operator allowlisted that resolves to NOTHING still fails, and fails AS a resolution
+    /// failure rather than as a connection to an unchecked address.
     /// </summary>
+    /// <remarks>
+    /// This asserted the policy-refusal message when it was written, which was wrong for the same reason the
+    /// unallowlisted case was: an empty resolver answer is a DNS failure and telling an operator their host
+    /// "resolves to an address this server will not originate requests to" sends them looking for a firewall
+    /// rule. The allowlist changes nothing about that — being named by the operator does not conjure an
+    /// address — so what matters here is that the empty answer is still fatal.
+    /// </remarks>
     [Fact]
-    public async Task AnOperatorNamedHostThatResolvesToNothingIsRefused()
+    public async Task AnOperatorNamedHostThatResolvesToNothingStillFails()
     {
         var refused = await Assert.ThrowsAsync<HttpRequestException>(() => ConnectAsync(
             "idp.corp.internal", new OutboundAllowlist(["idp.corp.internal"])));
 
-        Assert.Contains("will not originate requests to", refused.Message, StringComparison.Ordinal);
+        Assert.Contains("Could not resolve", refused.Message, StringComparison.Ordinal);
     }
 
     private static async Task ConnectAsync(

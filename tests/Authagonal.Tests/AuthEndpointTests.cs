@@ -801,6 +801,62 @@ public sealed class AuthEndpointTests : IAsyncLifetime
     }
 
     /// <summary>
+    /// A confirmation link must not vouch for an address it was not issued for.
+    /// </summary>
+    /// <remarks>
+    /// The token proves control of ONE address — the one inside it — and the security-stamp check that
+    /// authorises the request is made against the row as it was BEFORE the provisioning round-trip. Neither
+    /// is re-evaluated by the re-read, so if an admin PATCH or a SCIM replace changed the account's address
+    /// during the round-trip (nothing in the tree sets EmailConfirmed=false on an address change),
+    /// <c>EmailConfirmed = true</c> was stamped onto an address nobody had proved, the email-confirmed hook
+    /// fired with it, and <c>/connect/userinfo</c> then asserted <c>email_verified=true</c> for it.
+    /// </remarks>
+    [Fact]
+    public async Task ConfirmEmail_DoesNotVouchForAnAddressChangedMidFlight()
+    {
+        await using var factory = new AuthagonalTestFactory { ConfigureAuthOptions = o => o.AllowPasswordlessAccountClaim = true };
+        var client = factory.CreateClient(new() { AllowAutoRedirect = false });
+        await factory.SeedTestDataAsync();
+
+        var federated = new Authagonal.Core.Models.AuthUser
+        {
+            Id = System.Guid.NewGuid().ToString("N"),
+            Email = "old@corp.test",
+            NormalizedEmail = "OLD@CORP.TEST",
+            PasswordHash = null,
+            EmailConfirmed = true,
+            LockoutEnabled = true,
+            SecurityStamp = System.Convert.ToBase64String(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32)),
+            CreatedAt = System.DateTimeOffset.UtcNow,
+        };
+        await factory.UserStore.CreateAsync(federated);
+
+        await client.PostAsJsonAsync("/api/auth/register",
+            new { email = "old@corp.test", password = "Claim1234!" });
+
+        var mail = factory.EmailService.SentEmails.Last(e => e.Email == "old@corp.test" && e.Type == "verification");
+        var token = System.Web.HttpUtility.ParseQueryString(new System.Uri(mail.CallbackUrl).Query)["token"];
+
+        // The address moves inside the provisioning round-trip — the window the rebase exists to survive.
+        factory.Provisioning.DuringReprovision = async _ =>
+        {
+            var row = (await factory.UserStore.GetAsync(federated.Id))!;
+            row.Email = "new@corp.test";
+            row.NormalizedEmail = "NEW@CORP.TEST";
+            await factory.UserStore.UpdateAsync(row);
+        };
+
+        var confirm = await client.PostAsync("/api/auth/confirm-email",
+            new FormUrlEncodedContent([new KeyValuePair<string, string>("token", token!)]));
+
+        // The new address is NOT vouched for, and the staged credential is not promoted onto it either.
+        var after = await factory.UserStore.GetAsync(federated.Id);
+        Assert.Equal("new@corp.test", after!.Email);
+        Assert.Null(after.PasswordHash);
+        Assert.NotEqual(HttpStatusCode.OK, confirm.StatusCode);
+    }
+
+    /// <summary>
     /// An account deleted while its confirmation is in flight must stay deleted.
     /// </summary>
     /// <remarks>

@@ -140,7 +140,37 @@ internal sealed class ProtocolSeedService(
         client.AllowedGrantTypes = grantTypes;
         client.RedirectUris = d.RedirectUris;
         client.PostLogoutRedirectUris = d.PostLogoutRedirectUris;
-        client.Audiences = d.Audiences;
+        // Validated and DECLARED, the same as every other write path that can set audiences.
+        //
+        // This wrote the list verbatim and never touched AudiencesDeclared, which had two consequences.
+        // Operator configuration was the one remaining way to put an unbounded, non-absolute or
+        // empty-string value into a signed token's `aud` — the DCR and admin paths both run
+        // RejectAudiences and this did not. And a seeded client kept AudiencesDeclared = false forever, so
+        // ResourceAudiencePolicy read it as the legacy "may name any absolute URI" client with no
+        // configuration able to tighten it, while the authorize path's own justification asserts that
+        // "every surface that creates a client (dynamic registration, the admin API, seed configuration)
+        // does accept audiences".
+        //
+        // Refused at seed time rather than clamped: a descriptor that names a bad audience is a
+        // configuration error, and the alternative is a client that quietly does not mean what its
+        // configuration says.
+        if (Core.Services.ResourceAudiencePolicy.RejectAudiences(d.Audiences) is { } audienceError)
+            throw new InvalidOperationException(
+                $"OidcClients:{d.ClientId} has an invalid audiences list: {audienceError}");
+
+        // Only when the descriptor actually names some. A descriptor with an empty list is indistinguishable
+        // from one that never mentioned audiences, so setting the flag there would silently forbid every
+        // seeded client from naming a resource — a behaviour change on upgrade for deployments that work
+        // today. Declaring by naming is the same rule the admin API applies.
+        // Only overwritten when the descriptor NAMES some, the same rule as the secret above. Writing the
+        // list unconditionally reverted an admin PUT on every restart — and because AudiencesDeclared is
+        // monotonic, the flag survived while the list did not, leaving a client that declares audiences and
+        // has none: one that may name no resource at all.
+        if (d.Audiences.Count > 0)
+        {
+            client.Audiences = d.Audiences;
+            client.AudiencesDeclared = true;
+        }
         client.AllowedScopes = d.AllowedScopes;
         client.RequirePkce = d.RequirePkce;
         client.AllowOfflineAccess = d.AllowRefreshToken;

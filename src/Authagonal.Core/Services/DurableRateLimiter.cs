@@ -42,6 +42,24 @@ public sealed class DurableRateLimiter(
     private const int RetainedWindows = 2;
 
     /// <summary>
+    /// Floor on how long past its end a bucket is retained, whatever the window length.
+    /// </summary>
+    /// <remarks>
+    /// Two windows is a generous margin for a one-minute budget and almost none for a short one. The poll
+    /// limiters use a five-second window, so retention was bucket_end + 5s — and the sweep that collects
+    /// these rows runs on the LEADER, whose clock is a different clock. A leader running more than five
+    /// seconds ahead, which is ordinary drift for pods without tight NTP, deleted buckets that were still
+    /// being incremented, and the budget restarted from zero with no error and no log line. The reset was
+    /// silent by construction and its tolerance scaled with the window, so the same drift against a
+    /// one-minute budget needed a minute of skew and against a five-second one needed five seconds.
+    /// <para>
+    /// A floor decouples the margin from the window. Retention costs one dead row for slightly longer, and
+    /// the sweep exists to collect them.
+    /// </para>
+    /// </remarks>
+    private static readonly TimeSpan MinimumRetention = TimeSpan.FromMinutes(10);
+
+    /// <summary>
     /// Longest a single counter round trip may take before it is treated as a store failure.
     /// </summary>
     /// <remarks>
@@ -51,6 +69,46 @@ public sealed class DurableRateLimiter(
     /// call, which is the same situation as an unreachable store and gets the same answer.
     /// </remarks>
     private static readonly TimeSpan StoreTimeout = TimeSpan.FromSeconds(2);
+
+    /// <summary>
+    /// Characters no backend will accept in a partition key, and a length every backend will.
+    /// </summary>
+    /// <remarks>
+    /// Bucket keys are built from unvalidated caller input at anonymous call sites and reached the backend
+    /// verbatim as a partition key: <c>saml-acs|{connectionId}|{peer}</c> takes a route value, and
+    /// <c>login|id|{email}</c> and <c>register|to|{recipient}</c> both run before any format validation.
+    /// Azure Table forbids <c>/ \ # ?</c> and control characters in a PartitionKey and caps it at 1024;
+    /// DynamoDB caps a partition key at 2048 bytes. So <c>POST /saml/a%23b/acs</c> produced a key the store
+    /// rejected with 400 InvalidInput on every attempt, forever — and a permanent, deterministic rejection
+    /// took the fail-open branch, logging at Error each time. An attacker-driven flood of store errors and
+    /// Error-level log lines, and proof that the fail-open needed no outage to reach.
+    /// <para>
+    /// A sanitised key keeps a short hash of the original appended whenever sanitising CHANGED anything, so
+    /// two different sources cannot be folded into one budget by the substitution itself — <c>a#b</c> and
+    /// <c>a_b</c> would otherwise collide and share a bucket.
+    /// </para>
+    /// </remarks>
+    private static string StorageSafe(string bucketKey)
+    {
+        const int maxLength = 512;
+        var needsRewrite = bucketKey.Length > maxLength;
+
+        var sanitised = new System.Text.StringBuilder(Math.Min(bucketKey.Length, maxLength));
+        foreach (var c in bucketKey)
+        {
+            var safe = c is not ('/' or '\\' or '#' or '?') && !char.IsControl(c);
+            if (!safe) needsRewrite = true;
+            if (sanitised.Length < maxLength)
+                sanitised.Append(safe ? c : '_');
+        }
+
+        if (!needsRewrite) return bucketKey;
+
+        // Derived from the ORIGINAL, so the disambiguator survives truncation as well as substitution.
+        var hash = Convert.ToHexString(
+            System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(bucketKey)))[..16];
+        return $"{sanitised}~{hash}";
+    }
 
     public async Task<bool> IsRateLimitedAsync(
         string key, int maxAttempts, TimeSpan window, CancellationToken ct = default)
@@ -65,8 +123,10 @@ public sealed class DurableRateLimiter(
         // key was first seen. Every replica therefore computes the same bucket for the same instant with
         // no coordination — which is the whole point, and is also why no node ever has to reset a counter.
         var bucket = now.UtcTicks / windowTicks;
-        var bucketKey = $"{key}|{window.Ticks}|{bucket}";
-        var expiresAt = new DateTimeOffset((bucket + RetainedWindows) * windowTicks, TimeSpan.Zero);
+        var bucketKey = StorageSafe($"{key}|{window.Ticks}|{bucket}");
+        var bucketEnd = new DateTimeOffset((bucket + 1) * windowTicks, TimeSpan.Zero);
+        var retention = TimeSpan.FromTicks(Math.Max((RetainedWindows - 1) * windowTicks, MinimumRetention.Ticks));
+        var expiresAt = bucketEnd + retention;
 
         // Bounded, because the documented posture — a store failure must not take authentication down with
         // it — only ever covered a store that THROWS. A store that is merely slow converted straight into a

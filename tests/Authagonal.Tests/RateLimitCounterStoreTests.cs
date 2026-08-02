@@ -17,10 +17,18 @@ namespace Authagonal.Tests;
 /// <para>
 /// SQLite is the backend under test because it runs in-process with no container. The statement it
 /// exercises — <c>INSERT … ON CONFLICT … DO UPDATE SET version = version + 1 … RETURNING version</c> — is
-/// the same one Postgres runs, and the Azure and DynamoDB implementations are held to the same contract by
-/// their own provider suites. The property being pinned is the contract on
+/// the same one Postgres runs. The property being pinned is the contract on
 /// <see cref="IRateLimitCounterStore.IncrementAsync"/>: N increments yield exactly the values 1..N, with
 /// none repeated and none skipped.
+/// <para>
+/// This used to claim "the Azure and DynamoDB implementations are held to the same contract by their own
+/// provider suites". No such test existed for either — so the ONE implementation whose increment is not a
+/// single atomic statement, the Azure ETag retry loop, was the one with no coverage at all, while the two
+/// that are atomic by construction were the ones exercised. A reader auditing coverage from that sentence
+/// would have concluded the opposite of the truth. <c>AzureRateLimitCounterStoreTests</c> now covers the
+/// Azure loop, including the contention exhaustion the loop reports and the limiter fails closed on.
+/// DynamoDB's <c>ADD</c> remains uncovered here and is atomic in the service, not in this code.
+/// </para>
 /// </para>
 /// </remarks>
 public sealed class RateLimitCounterStoreTests : IAsyncLifetime

@@ -1017,12 +1017,24 @@ public static class AuthEndpoints
                 // Claim fails cleanly: reload a CLEAN copy so none of the staged profile/attributes
                 // applied above persist, then drop the staged credential + claim. The account stays
                 // passwordless (federation login intact) and remains claimable — victim data untouched.
-                var clean = await userStore.FindByEmailAsync(email, CancellationToken.None) ?? user;
-                clean.PendingPasswordHash = null;
-                clean.PendingClaimJson = null;
-                clean.SecurityStamp = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
-                clean.UpdatedAt = DateTimeOffset.UtcNow;
-                await userStore.UpdateAsync(clean, CancellationToken.None);
+                //
+                // Re-read by ID, not by email. This resolved through FindByEmailAsync(email) — the
+                // attacker-supplied half of the token, through the MUTABLE email index — while the success
+                // path below had already been moved onto the stable key. If the account's address changed
+                // during the round-trip (an admin PATCH, a SCIM replace) and another account came to own the
+                // original one, this read returned THE OTHER USER: it then dropped their staged credential
+                // and rotated their security stamp, signing out every session they had and invalidating any
+                // claim link outstanding for them, while the account actually being operated on kept its
+                // staged credential. A null read means the row is gone, and there is nothing to clean up.
+                var clean = await userStore.GetAsync(user.Id, CancellationToken.None);
+                if (clean is not null)
+                {
+                    clean.PendingPasswordHash = null;
+                    clean.PendingClaimJson = null;
+                    clean.SecurityStamp = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
+                    clean.UpdatedAt = DateTimeOffset.UtcNow;
+                    await userStore.UpdateAsync(clean, CancellationToken.None);
+                }
                 logger.LogWarning(ex, "Passwordless-claim conversion rejected for user {UserId}", user.Id);
                 return wantsHtml
                     ? Results.Redirect($"/login?error=provisioning_rejected&error_description={Uri.EscapeDataString(ex.Message)}")
@@ -1095,6 +1107,22 @@ public static class AuthEndpoints
             confirmed.PendingClaimJson = stagedClaimJson;
             ApplyPendingClaim(confirmed);
             confirmed.PendingClaimJson = null;
+        }
+
+        // The token proved control of ONE address — parts[1], the value `email` holds — and the stamp check
+        // that authorised this request was made against the snapshot read before the provisioning round-trip.
+        // Neither is re-evaluated by the re-read, so if the account's address changed while the round-trip
+        // was in flight (an admin PATCH or a SCIM replace; nothing in the tree sets EmailConfirmed=false on
+        // an address change), EmailConfirmed=true was being stamped onto an address nobody had proved, and
+        // RunOnEmailConfirmedAsync fired with it. /connect/userinfo then asserts email_verified=true for it.
+        if (!string.Equals(confirmed.NormalizedEmail, email.ToUpperInvariant(), StringComparison.Ordinal))
+        {
+            logger.LogWarning(
+                "Email confirmation for user {UserId} was issued for a different address than the account now "
+                + "holds; refusing to mark the current address verified.", user.Id);
+            return wantsHtml
+                ? Results.Redirect("/login?error=invalid_token")
+                : JsonResults.Error("invalid_token", "This verification link is no longer valid.");
         }
 
         confirmed.EmailConfirmed = true;

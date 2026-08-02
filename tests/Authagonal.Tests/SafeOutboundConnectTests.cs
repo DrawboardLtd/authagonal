@@ -134,6 +134,49 @@ public class SafeOutboundConnectTests
         Assert.DoesNotContain("will not originate requests to", error!.Message, StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// A resolver that answers with an empty array — rather than throwing — is also a resolution failure.
+    /// </summary>
+    /// <remarks>
+    /// It failed closed, correctly, but reported the policy refusal: an operator chasing a DNS problem was
+    /// told their host resolved to a loopback or private address. The combined length test cannot distinguish
+    /// the cases — zero allowed out of zero candidates reads exactly like zero out of five — so the empty
+    /// answer has to be caught before it.
+    /// </remarks>
+    [Fact]
+    public async Task ANameResolvingToNoAddressesFailsAsResolutionNotAsRefusal()
+    {
+        var error = await Assert.ThrowsAsync<HttpRequestException>(() => ConnectAsync(
+            "empty.attacker.test",
+            resolver: (_, _) => Task.FromResult<IPAddress[]>([])));
+
+        Assert.Contains("Could not resolve", error.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("will not originate requests to", error.Message, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// A cancelled connect surfaces AS cancellation, not as a connection refusal.
+    /// </summary>
+    /// <remarks>
+    /// The retry loop caught every exception, so a cancelled connect was retried against each remaining
+    /// address — each throwing immediately on the already-cancelled token — and then reported as
+    /// <c>HttpRequestException("Could not connect")</c>. Inside <c>HttpClient</c> that was partly repaired by
+    /// chance, because the connection pool rewraps when the token is already cancelled; the public surface
+    /// these tests use got the wrong type, and the permissive-direction test above passed BECAUSE of the
+    /// swallowing rather than in spite of it.
+    /// </remarks>
+    [Fact]
+    public async Task ACancelledConnectSurfacesAsCancellation()
+    {
+        using var cts = new CancellationTokenSource();
+        await cts.CancelAsync();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => ConnectAsync(
+            "rp.example.test",
+            (_, _) => Task.FromResult<IPAddress[]>([IPAddress.Parse("203.0.113.9"), IPAddress.Parse("203.0.113.10")]),
+            cts.Token));
+    }
+
     [Fact]
     public async Task AnUnresolvableNameFailsAsResolutionNotAsRefusal()
     {

@@ -1,4 +1,5 @@
 using Authagonal.Core.Stores;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
@@ -20,8 +21,21 @@ namespace Authagonal.Server.Services;
 /// saying so.
 /// </para>
 /// </remarks>
+/// <remarks>
+/// Takes <see cref="IServiceProvider"/> and resolves the store inside a SCOPE, the same shape
+/// <c>PlaintextSigningKeyWarning</c> uses and <c>UseAuthagonal</c> uses for the tenant-scoped
+/// <c>IEmailService</c>. Taking <c>IClientStore</c> as a constructor dependency looked equivalent and was
+/// not: a hosted service is constructed from the ROOT provider during <c>Host.StartAsync</c>, so on a
+/// multi-tenant host whose stores are resolved per tenant-scoped request — which is what the Cloud does —
+/// the construction threw "Tenant context not available" and THE HOST COULD NOT START. The try/catch below
+/// could not help, because the failure happened before <c>StartAsync</c> was ever entered.
+/// <para>
+/// So a store that is unavailable at startup, for any reason including having no tenant to be scoped to,
+/// costs this diagnostic and nothing else.
+/// </para>
+/// </remarks>
 internal sealed class LegacySecretHashWarning(
-    IClientStore clientStore,
+    IServiceProvider services,
     ILogger<LegacySecretHashWarning> logger) : IHostedService
 {
     public async Task StartAsync(CancellationToken ct)
@@ -29,6 +43,8 @@ internal sealed class LegacySecretHashWarning(
         List<string> affected;
         try
         {
+            using var scope = services.CreateScope();
+            var clientStore = scope.ServiceProvider.GetRequiredService<IClientStore>();
             var clients = await clientStore.GetAllAsync(ct).ConfigureAwait(false);
             affected = clients
                 .Where(c => c.ClientSecretHashes.Any(PasswordHasher.IsUnsaltedDigestHash))

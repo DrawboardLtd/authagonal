@@ -237,6 +237,7 @@ public static class DeviceAuthorizationEndpoint
             HttpContext httpContext,
             IGrantStore grantStore,
             IRateLimiter rateLimiter,
+            ILogger<Program> logger,
             CancellationToken ct) =>
         {
             if (httpContext.User.Identity?.IsAuthenticated != true)
@@ -313,7 +314,38 @@ public static class DeviceAuthorizationEndpoint
             // lands in the SHA-256("") partition — see the approve path.
             deniedGrant.Key = $"device:{deniedDeviceCode}";
             deniedGrant.Data = JsonSerializer.Serialize(deniedData, AuthagonalJsonContext.Default.DeviceCodeData);
-            await grantStore.StoreAsync(deniedGrant, ct);
+
+            // The consume above is deliberate and stays — a deny landing after the code was spent must not
+            // erase the consumed marker. But it leaves a window: the user_code is already destroyed, so if
+            // this write fails (the store blips, the pod drains, the browser aborts and cancels `ct`) the
+            // device grant is never marked denied AND nobody can retry the deny or the approve. The device
+            // then polls authorization_pending for its full remaining lifetime, which is exactly the outcome
+            // this endpoint exists to prevent — the RFC 8628 §5.4 scenario in the comment above.
+            //
+            // So a failed denial is compensated by consuming the DEVICE grant instead. The device stops
+            // polling with a terminal error rather than pending until expiry, and the user's actual intent —
+            // do not authorise this device — holds either way. Best-effort and with its own token, because
+            // the ordinary cause of getting here is that `ct` was already cancelled.
+            try
+            {
+                await grantStore.StoreAsync(deniedGrant, ct);
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(ex,
+                    "Recording the device denial failed after the user_code was consumed; consuming the device "
+                    + "code so the device receives a terminal error instead of polling until expiry.");
+                try
+                {
+                    await grantStore.TryConsumeAsync($"device:{deniedDeviceCode}", CancellationToken.None);
+                }
+                catch (Exception cleanup)
+                {
+                    logger.LogError(cleanup,
+                        "Compensating consume of the device code also failed. The device will poll "
+                        + "authorization_pending until the code expires.");
+                }
+            }
 
             return TypedResults.Json(new SuccessResponse { Success = true }, AuthagonalJsonContext.Default.SuccessResponse);
         })

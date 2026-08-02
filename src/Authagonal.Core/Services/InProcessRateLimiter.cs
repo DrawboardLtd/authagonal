@@ -57,7 +57,18 @@ public sealed class InProcessRateLimiter : IRateLimiter
     private static readonly TimeSpan SweepInterval = TimeSpan.FromSeconds(30);
 
     private readonly object _lock = new();
-    private readonly Dictionary<string, Window> _windows = new(StringComparer.OrdinalIgnoreCase);
+    /// <remarks>
+    /// ORDINAL, matching every durable backend — Postgres <c>pk TEXT COLLATE "C"</c>, an Azure Table
+    /// PartitionKey, a DynamoDB S key. This was <c>OrdinalIgnoreCase</c>, so turning on
+    /// <c>Auth:DurableRateLimiting</c> silently changed what counts as the same budget: two keys differing
+    /// only in case shared one bucket before the switch and became two after it. Nothing was exploitable at
+    /// the current call sites, because each either lowercases its caller-supplied text or takes it from an
+    /// ordinal store read — but that made the safety of all of them an accident of a comparer two layers
+    /// away rather than a property of the limiter, and the first call site to key on unnormalised caller
+    /// input would have got a free budget multiplier that no test against the default limiter could show.
+    /// Callers that want case-folding do it themselves, visibly, at the call site.
+    /// </remarks>
+    private readonly Dictionary<string, Window> _windows = new(StringComparer.Ordinal);
     private DateTimeOffset _lastSweep = DateTimeOffset.MinValue;
 
     public Task<bool> IsRateLimitedAsync(string key, int maxAttempts, TimeSpan window, CancellationToken ct = default)

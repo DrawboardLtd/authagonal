@@ -207,6 +207,77 @@ adjacent defect the audit found while checking a finding it had already passed.
   by tests: it belongs on a target a *registrant* chose and needs an operator escape hatch on a target the
   *operator* chose.
 
+- **`LegacySecretHashWarning` prevented any multi-tenant host from starting.** It took `IClientStore` as a
+  constructor dependency, and a hosted service is constructed from the ROOT provider during
+  `Host.StartAsync` — so on a host whose stores are resolved per tenant-scoped request the construction threw
+  and the process never came up. Its own try/catch could not help, because the failure happened before
+  `StartAsync` was entered. It now resolves the store inside a scope, the shape `PlaintextSigningKeyWarning`
+  and `UseAuthagonal`'s email-sender diagnostic already used, so an unavailable store costs the diagnostic
+  and nothing else.
+
+- **The cluster rate-limit sweep could not keep up with what it was cleaning, and gave up at the first
+  throttle.** Only 404 and 412 were handled per row, so any other `RequestFailedException` — including the 429
+  the very flood being swept produces on that table — escaped and abandoned the whole pass until the next
+  tick: the one condition under which retention matters stopped the sweep. Deletes were also issued one round
+  trip at a time against a table an anonymous endpoint fills at request rate. Now the expiry predicate is
+  applied server-side, deletes run 16 at a time, a failing row is counted and skipped, and the interval is a
+  minute rather than five. A row carrying no `ExpiresAt` is no longer collected — the store writes that
+  property on every path, so no writer produces one.
+
+- **A rate-limit bucket key built from caller input could fail forever, and the fail-open needed no outage
+  to reach.** Keys reached the backend verbatim as a partition key, and Azure Table forbids `/ \ # ?` and
+  control characters there — so `POST /saml/a%23b/acs` produced a key the store rejected with 400 on every
+  attempt, permanently, each one logged at Error and allowed through. Keys are now sanitised, with a hash of
+  the original appended whenever the rewrite changed anything so two sources cannot be folded into one budget.
+
+- **Turning on `Auth:DurableRateLimiting` silently changed which keys share a budget.** The in-process
+  limiter matched keys case-INsensitively while every durable backend matches ordinally, so two keys differing
+  only in case were one budget before the switch and two after it. Nothing was exploitable at the current call
+  sites, but that made their safety an accident of a comparer two layers away. The in-process limiter is now
+  ordinal, matching the backends; callers that want case-folding do it at the call site.
+
+- **A rate-limit budget could silently reset itself.** Bucket retention was two windows, which for the
+  five-second poll limiters is five seconds of tolerance for clock skew between the sweeping leader and the
+  incrementing node — ordinary drift for pods without tight NTP. The leader collected live buckets and the
+  budget restarted from zero with no error and no log line. Retention now has a ten-minute floor whatever the
+  window, and the Azure store logs a warning if it ever has to recreate a swept-away bucket anyway.
+
+- **Seeded clients could not declare their audiences, and the Server host's seeder had no audiences field at
+  all.** `ResourceAudiencePolicy` reads a client that has declared none as the legacy "may name any absolute
+  URI" case, and configuration was the one write path that could neither set the flag nor run the validator —
+  so a config-seeded client kept the permissive reading with no way to tighten it, and operator config was the
+  only route left for putting an unbounded or non-absolute value into a signed token's `aud`. Both seeders now
+  validate the list and mark it declared, and `Clients:*:Audiences` exists. The protocol seeder also no longer
+  overwrites a stored list with an empty one, which used to revert an admin PUT on every restart while the
+  monotonic declared-flag survived — leaving a client that declares audiences and has none, able to name no
+  resource at all.
+
+- **A cancelled outbound connect was reported as a connection failure**, retried against every remaining
+  address on an already-cancelled token first; an empty DNS answer was reported as the SSRF refusal, sending
+  operators chasing a firewall rule for a resolution failure; and the `allowLoopback` parameter's
+  documentation named a caller that does not exist and does not use the class. All three corrected.
+
+- **`WWW-Authenticate` escaping did not hold the guarantee its comment claimed.** The challenge helpers
+  replaced only the double quote, under a comment saying escaping "keeps that true of the next one somebody
+  adds". A description ending in a backslash escapes the closing quote (RFC 9110 §5.6.4 quoted-pair) and a
+  CR/LF is refused by Kestrel's header validation, so a refusal would have answered 500. Every caller passes a
+  fixed literal today; the escaping now covers both cases, so the next one can rely on it.
+
+- **A failed device denial left the device polling until expiry.** The `user_code` is consumed before the
+  denial is recorded — deliberately, so a late deny cannot erase a consumed marker — but a failure between the
+  two destroyed the code without recording anything, and nobody could retry either the deny or the approve.
+  The device then polled `authorization_pending` for its full remaining lifetime, which is the outcome the
+  endpoint exists to prevent. A failed denial now consumes the device code instead, so the device gets a
+  terminal error.
+
+- **Two more sites in the confirm-email rebase.** The provisioning-rejection path still resolved its row
+  through `FindByEmailAsync` — the attacker-supplied half of the token, through the mutable email index — so
+  if the address moved during the round-trip and another account came to own it, that OTHER user had their
+  staged credential dropped and their security stamp rotated, signing out all their sessions. And
+  `EmailConfirmed = true` was stamped onto whatever address the re-read row held, though the token proved only
+  one; an address changed mid-flight was vouched for, and `/connect/userinfo` then asserted
+  `email_verified=true` for it. Both now use the stable key and refuse a mismatch.
+
 - **The socket SSRF guard omitted 100.64.0.0/10, 198.18.0.0/15 and IPv6 `fec0::/10`.** The resolved-address
   check is the last line of defence — no URL check runs against a resolved address — so whatever it omits is
   the bypass list. RFC 6598 shared address space is not exotic: `100.100.100.200` is the Alibaba Cloud

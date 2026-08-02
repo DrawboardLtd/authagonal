@@ -61,9 +61,19 @@ public static class SafeOutboundConnect
     /// address, whatever the name said.
     /// </summary>
     /// <param name="allowLoopback">
-    /// Permit 127.0.0.0/8 and ::1. Off for everything the server initiates; the one caller that passes
-    /// true is the front-channel logout path, where the fetch is made by the USER's browser rather than by
-    /// this server and a local development relying party is a supported configuration.
+    /// Permit 127.0.0.0/8 and ::1. <b>No caller passes true, and none should.</b> Every use of this class is
+    /// a connection THIS server opens, and loopback there is either a mistake or a probe of the server's own
+    /// admin surface.
+    /// <para>
+    /// This previously claimed "the one caller that passes true is the front-channel logout path". That was
+    /// false in a way worth recording, because it is the failure mode this review keeps hitting: the
+    /// front-channel logout path does not use this class at all. It calls
+    /// <c>OutboundUrl.IsSafe(..., allowLoopback: true)</c> on a URI handed to the USER's browser, where no
+    /// server socket is opened and a development relying party on localhost is legitimate. A reader trusting
+    /// the doc would conclude loopback delivery is supported somewhere here. The parameter is kept because
+    /// <see cref="OutboundUrl.IsAllowedAddress"/> takes one and the two must stay symmetrical, not because
+    /// anything sets it.
+    /// </para>
     /// </param>
     /// <param name="resolver">Override for tests. Defaults to the system resolver.</param>
     /// <param name="allowlist">
@@ -120,6 +130,17 @@ public static class SafeOutboundConnect
             // public address and an internal one is the rebinding attack expressed in a single response:
             // accepting it because one entry looked fine would let the attacker choose which the socket
             // gets, and the "choice" is whatever ordering the resolver happened to return.
+            // A resolver that answers with an EMPTY array rather than throwing has failed to resolve, and
+            // saying so is not cosmetic: the refusal message below names loopback, link-local and private
+            // addresses, so an operator debugging a DNS problem was told their host was blocked by policy.
+            // Checked before the policy test because the combined length condition below cannot tell the
+            // two apart — zero allowed out of zero candidates reads identically to zero out of five.
+            if (candidates.Length == 0)
+            {
+                throw new HttpRequestException(
+                    $"Could not resolve '{host}': the resolver returned no addresses.");
+            }
+
             var allowed = operatorNamedHost
                 ? candidates
                 : candidates.Where(ip => OutboundUrl.IsAllowedAddress(ip, allowLoopback, allowlist)).ToArray();

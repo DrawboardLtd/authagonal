@@ -188,3 +188,88 @@ public class AzureRateLimitCounterStoreTests(AzuriteFixture azurite)
         Assert.IsType<RateLimitContentionException>(error);
     }
 }
+
+/// <summary>
+/// The Azure counter sweep, whose whole pass turns on a server-side OData filter.
+/// </summary>
+/// <remarks>
+/// Two reasons this needs a real table. The filter is a string the service parses, so a predicate this code
+/// cannot render throws at query time — on the leader, inside a catch that logs and waits for the next tick,
+/// which is to say invisibly; only a real query proves it parses. And the pass previously abandoned itself on
+/// the first per-row error other than 404/412, including the 429 that the very flood being swept produces, so
+/// the condition under which retention matters most was the one that stopped it.
+/// </remarks>
+[Collection("Azurite")]
+public class RateLimitCounterSweepTests(AzuriteFixture azurite)
+{
+    private readonly TableServiceClient _svc = new(azurite.ConnectionString);
+
+    private sealed class AlwaysLeader : Authagonal.Core.Clustering.ILeaderElection
+    {
+        public bool IsLeader => true;
+        public string NodeId => "test-node";
+        public string? LeaderId => "test-node";
+    }
+
+    [Fact]
+    public async Task TheSweepCollectsExpiredRowsAndKeepsLiveOnes()
+    {
+        var table = _svc.GetTableClient($"sweep{Guid.NewGuid():N}"[..20]);
+        table.CreateIfNotExists();
+
+        var now = DateTimeOffset.UtcNow;
+        await table.AddEntityAsync(new TableEntity("dead-1", "counter")
+        {
+            ["Count"] = 5L, ["ExpiresAt"] = now.AddMinutes(-10),
+        });
+        await table.AddEntityAsync(new TableEntity("dead-2", "counter")
+        {
+            ["Count"] = 1L, ["ExpiresAt"] = now.AddSeconds(-1),
+        });
+        await table.AddEntityAsync(new TableEntity("live", "counter")
+        {
+            ["Count"] = 3L, ["ExpiresAt"] = now.AddMinutes(10),
+        });
+
+        var sweep = new Authagonal.Server.Services.RateLimitCounterSweepService(
+            table, new AlwaysLeader(),
+            NullLogger<Authagonal.Server.Services.RateLimitCounterSweepService>.Instance);
+
+        var (removed, failures) = await sweep.SweepOnceAsync(CancellationToken.None);
+
+        Assert.Equal(2, removed);
+        Assert.Equal(0, failures);
+
+        // The live row is still there, and it is the only one.
+        var survivors = new List<string>();
+        await foreach (var e in table.QueryAsync<TableEntity>(cancellationToken: CancellationToken.None))
+            survivors.Add(e.PartitionKey);
+
+        Assert.Equal(["live"], survivors);
+    }
+
+    /// <summary>
+    /// A pass over a table with nothing to collect is a no-op, not an error.
+    /// </summary>
+    /// <remarks>
+    /// The non-vacuity control on the filter: a predicate that matched nothing would also report zero
+    /// removed, so the test above has to be paired with one that shows zero is a real answer here.
+    /// </remarks>
+    [Fact]
+    public async Task TheSweepRemovesNothingWhenEveryRowIsLive()
+    {
+        var table = _svc.GetTableClient($"sweep{Guid.NewGuid():N}"[..20]);
+        table.CreateIfNotExists();
+
+        await table.AddEntityAsync(new TableEntity("live", "counter")
+        {
+            ["Count"] = 1L, ["ExpiresAt"] = DateTimeOffset.UtcNow.AddMinutes(10),
+        });
+
+        var sweep = new Authagonal.Server.Services.RateLimitCounterSweepService(
+            table, new AlwaysLeader(),
+            NullLogger<Authagonal.Server.Services.RateLimitCounterSweepService>.Instance);
+
+        Assert.Equal((0, 0), await sweep.SweepOnceAsync(CancellationToken.None));
+    }
+}

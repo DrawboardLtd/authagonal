@@ -175,7 +175,7 @@ internal static class UserinfoEndpoint
     /// </remarks>
     internal static IResult InsufficientScope(string description) =>
         new ChallengeHeader(
-            $"Bearer realm=\"userinfo\", error=\"insufficient_scope\", error_description=\"{description.Replace("\"", "'")}\"",
+            $"Bearer realm=\"userinfo\", error=\"insufficient_scope\", error_description=\"{QuotedString(description)}\"",
             JsonResults.OAuthError("insufficient_scope", description, statusCode: StatusCodes.Status403Forbidden));
 
     /// <summary>
@@ -195,8 +195,44 @@ internal static class UserinfoEndpoint
     /// </remarks>
     internal static IResult InvalidRequestWithChallenge(string description) =>
         new ChallengeHeader(
-            $"Bearer realm=\"userinfo\", error=\"invalid_request\", error_description=\"{description.Replace("\"", "'")}\"",
+            $"Bearer realm=\"userinfo\", error=\"invalid_request\", error_description=\"{QuotedString(description)}\"",
             JsonResults.OAuthError("invalid_request", description));
+
+    /// <summary>
+    /// A description rendered safe for the <c>quoted-string</c> of a <c>WWW-Authenticate</c> value.
+    /// </summary>
+    /// <remarks>
+    /// The three call sites did <c>description.Replace("\"", "'")</c> and a comment claimed escaping "keeps
+    /// that true of the next one somebody adds". It did not, in two ways that a fixed literal happens not to
+    /// exercise:
+    /// <list type="bullet">
+    /// <item>
+    /// A trailing backslash. RFC 9110 §5.6.4 makes <c>\</c> a quoted-pair, so a value ending in one escapes
+    /// the closing quote and merges the header terminator into the value.
+    /// </item>
+    /// <item>
+    /// CR or LF. Kestrel validates response headers and throws, so an endpoint whose entire purpose at that
+    /// moment is to return a well-formed refusal answers 500 from an unhandled exception instead.
+    /// </item>
+    /// </list>
+    /// <para>
+    /// So: backslash and quote are escaped as quoted-pairs, and anything that cannot appear in a header at
+    /// all — CR, LF, and the other control characters — becomes a space rather than being passed through.
+    /// The guarantee the comment asserted now holds, which matters because the next caller will rely on it.
+    /// </para>
+    /// </remarks>
+    internal static string QuotedString(string value)
+    {
+        var escaped = new System.Text.StringBuilder(value.Length + 8);
+        foreach (var c in value)
+        {
+            if (c is '\\' or '"') escaped.Append('\\').Append(c);
+            else if (char.IsControl(c)) escaped.Append(' ');
+            else escaped.Append(c);
+        }
+
+        return escaped.ToString();
+    }
 
     private sealed class ChallengeHeader(string challenge, IResult inner) : IResult
     {
@@ -213,11 +249,12 @@ internal static class UserinfoEndpoint
         {
             httpContext.Response.StatusCode = status;
             // error_description is quoted-string per RFC 6750 §3, so a stray quote would split the
-            // header. These are all fixed literals from this file, but escaping keeps that true of the
-            // next one somebody adds.
+            // header. These are all fixed literals from this file; QuotedString is what makes the claim
+            // that escaping "keeps that true of the next one somebody adds" actually true — see its remarks
+            // for the two cases the old single-character replace did not cover.
             var challenge = $"Bearer realm=\"userinfo\", error=\"{error}\"";
             if (description is not null)
-                challenge += $", error_description=\"{description.Replace("\"", "'")}\"";
+                challenge += $", error_description=\"{QuotedString(description)}\"";
 
             httpContext.Response.Headers.WWWAuthenticate = challenge;
             return Task.CompletedTask;

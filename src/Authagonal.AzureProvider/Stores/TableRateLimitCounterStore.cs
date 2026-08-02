@@ -1,4 +1,5 @@
 using Authagonal.Core.Services;
+using Microsoft.Extensions.Logging;
 using Azure;
 using Azure.Data.Tables;
 
@@ -43,7 +44,9 @@ namespace Authagonal.AzureProvider.Stores;
 /// </para>
 /// </remarks>
 public sealed class TableRateLimitCounterStore(
-    TableClient rateLimitCountersTable, EnvPartitioner partitioner) : IRateLimitCounterStore
+    TableClient rateLimitCountersTable,
+    EnvPartitioner partitioner,
+    ILogger<TableRateLimitCounterStore>? logger = null) : IRateLimitCounterStore
 {
     /// <summary>Attempts before giving up on a contended bucket.</summary>
     private const int MaxAttempts = 25;
@@ -82,6 +85,7 @@ public sealed class TableRateLimitCounterStore(
         string bucketKey, DateTimeOffset expiresAt, CancellationToken ct = default)
     {
         var partitionKey = partitioner.PK(bucketKey);
+        var resetAfterSweep = false;
 
         for (var attempt = 0; attempt < MaxAttempts; attempt++)
         {
@@ -117,6 +121,10 @@ public sealed class TableRateLimitCounterStore(
                 try
                 {
                     await rateLimitCountersTable.AddEntityAsync(created, ct).ConfigureAwait(false);
+                    if (resetAfterSweep)
+                        logger?.LogWarning(
+                            "Rate-limit bucket '{BucketKey}' was collected while still live and has restarted "
+                            + "at 1. The sweeping leader's clock is likely ahead of this node's.", bucketKey);
                     return 1;
                 }
                 catch (RequestFailedException ex) when (ex.Status == 409)
@@ -144,6 +152,15 @@ public sealed class TableRateLimitCounterStore(
             {
                 // 412: someone else incremented first. 404: the sweep collected the row underneath us.
                 // Either way the value this attempt computed is stale, so recompute rather than write it.
+                //
+                // The 404 case then re-reads, finds nothing, and inserts Count = 1 — which RESETS the
+                // budget. That is only ever correct if the row really was expired, and the sweep's clock is
+                // not this node's: a leader running ahead collects a live bucket and the budget silently
+                // restarts. DurableRateLimiter's retention floor is what makes that require implausible
+                // skew rather than ordinary drift; this says so when it happens anyway, because a rate limit
+                // that resets itself is not something to discover from a graph.
+                if (ex.Status == 404)
+                    resetAfterSweep = true;
                 continue;
             }
             catch (RequestFailedException ex) when (IsTransient(ex.Status))
