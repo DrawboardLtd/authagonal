@@ -66,6 +66,25 @@ public sealed class DurableRateLimiter(
         {
             throw;
         }
+        catch (RateLimitContentionException ex)
+        {
+            // Fails CLOSED, and this is the one case that does.
+            //
+            // Losing every compare-and-set on one counter does not mean the store is unwell; it means many
+            // callers are hitting THIS budget at this instant, which is the condition being measured. The
+            // backend used to report it as an ordinary store failure and land in the branch below, so the
+            // guarantee inverted under load: more concurrency meant more contention meant the bound was
+            // lifted rather than enforced, and an attacker with enough parallel connections against a device
+            // user_code or a client secret had the excess waved through un-counted.
+            //
+            // Warning rather than Error: refusing the request is the limiter working, not failing. The count
+            // is unknown, so this is not recorded against the budget — the caller is simply told to slow
+            // down, which is also what relieves the contention.
+            logger.LogWarning(ex,
+                "Durable rate limiter could not settle a counter under contention; refusing the request. " +
+                "Many callers are competing for one budget, which is what this limit exists to bound.");
+            return true;
+        }
         catch (Exception ex)
         {
             // Named at Error, not Warning: a limiter that is silently not limiting is the kind of thing

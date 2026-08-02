@@ -35,5 +35,12 @@ public interface IRateLimitCounterStore
     /// live — that is the limiter's job, from the bucket it asked for.
     /// </param>
     /// <returns>The counter's value after adding one.</returns>
+    /// <exception cref="RateLimitContentionException">
+    /// The increment could not be settled because too many callers were incrementing THIS counter at once —
+    /// as distinct from the store being unreachable, which is an ordinary exception. Only a backend that
+    /// implements the increment as a compare-and-set retry loop can raise it (Azure Table, which has no
+    /// server-side arithmetic); DynamoDB's <c>ADD</c> and the SQL upsert settle in one statement and never
+    /// contend. The two are separated because they fail in OPPOSITE directions: see the type's own remarks.
+    /// </exception>
     Task<long> IncrementAsync(string bucketKey, DateTimeOffset expiresAt, CancellationToken ct = default);
 }

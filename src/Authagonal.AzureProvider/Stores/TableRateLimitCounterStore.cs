@@ -16,8 +16,24 @@ namespace Authagonal.AzureProvider.Stores;
 /// impossible — a loser is told it lost and recomputes rather than overwriting.
 /// <para>
 /// The retry budget matters because a rate-limit bucket is the most contended row in the system by
-/// design: every request against one budget targets one row. It is generous, and exhausting it fails the
-/// increment (the limiter then allows the request and logs) rather than blocking the caller.
+/// design: every request against one budget targets one row. Two things follow, and the first version of
+/// this class got both wrong.
+/// </para>
+/// <para>
+/// Retries are spaced with jittered backoff. A tight loop of unsynchronised compare-and-set attempts
+/// against one row does not converge — the losers all re-read and collide again on the next tick — so
+/// under real contention the budget was consumed by callers stepping on each other rather than by callers
+/// making progress. Azure Table also throttles a hot single-entity partition with 429/503, and neither
+/// status was retried at all: the first throttled response propagated straight out.
+/// </para>
+/// <para>
+/// And exhausting the budget now throws <see cref="RateLimitContentionException"/>, which
+/// <see cref="DurableRateLimiter"/> fails CLOSED on. It previously threw a plain store exception, which
+/// that limiter read as "the store is unreachable" and answered by allowing the request. Contention on a
+/// rate-limit row is not an outage — it is many callers hitting one budget at once, which is the condition
+/// this whole mechanism exists to bound — so allowing the request meant raising attack concurrency removed
+/// the cluster-wide bound instead of tripping it. An attacker grinding a device <c>user_code</c> or a
+/// client secret with enough parallelism got the excess waved through UN-COUNTED.
 /// </para>
 /// <para>
 /// Table Storage also has no TTL, so nothing here reclaims a bucket. Collection is
@@ -32,7 +48,35 @@ public sealed class TableRateLimitCounterStore(
     /// <summary>Attempts before giving up on a contended bucket.</summary>
     private const int MaxAttempts = 25;
 
+    /// <summary>First backoff ceiling, in milliseconds. Doubles per attempt up to <see cref="MaxBackoffMs"/>.</summary>
+    private const int BaseBackoffMs = 2;
+
+    /// <summary>
+    /// Ceiling on one backoff. Bounds the worst case: four doublings then a flat cap over the remaining
+    /// attempts is a few hundred milliseconds of waiting, and only for a caller that keeps losing races on
+    /// one budget. Slowing that caller down is the correct behaviour for a rate limiter, not a cost.
+    /// </summary>
+    private const int MaxBackoffMs = 20;
+
     private const string CounterRowKey = "counter";
+
+    /// <summary>
+    /// Statuses worth another attempt rather than propagating: Azure throttling a hot partition, and the
+    /// transient server-side classes. A rate-limit bucket is the hottest single entity in the system, so
+    /// 429 here is an expected steady state under load and not an error.
+    /// </summary>
+    private static bool IsTransient(int status) => status is 408 or 429 or 500 or 502 or 503 or 504;
+
+    /// <summary>
+    /// Full-jitter backoff. The jitter is the load-bearing part: equal delays would keep the same set of
+    /// losers colliding on the same tick, which is how a generous retry budget gets spent making no
+    /// progress.
+    /// </summary>
+    private static Task BackoffAsync(int attempt, CancellationToken ct)
+    {
+        var ceiling = Math.Min(BaseBackoffMs << Math.Min(attempt, 4), MaxBackoffMs);
+        return Task.Delay(Random.Shared.Next(1, ceiling + 1), ct);
+    }
 
     public async Task<long> IncrementAsync(
         string bucketKey, DateTimeOffset expiresAt, CancellationToken ct = default)
@@ -41,6 +85,9 @@ public sealed class TableRateLimitCounterStore(
 
         for (var attempt = 0; attempt < MaxAttempts; attempt++)
         {
+            if (attempt > 0)
+                await BackoffAsync(attempt, ct).ConfigureAwait(false);
+
             TableEntity? existing = null;
             try
             {
@@ -51,6 +98,12 @@ public sealed class TableRateLimitCounterStore(
             catch (RequestFailedException ex) when (ex.Status == 404)
             {
                 // First hit in this window.
+            }
+            catch (RequestFailedException ex) when (IsTransient(ex.Status))
+            {
+                // Throttled or a transient server error. Previously propagated, and the limiter read that
+                // as an outage and allowed the request — on the read side of the hottest row in the system.
+                continue;
             }
 
             if (existing is null)
@@ -71,6 +124,10 @@ public sealed class TableRateLimitCounterStore(
                     // Another caller created it between the read and the insert; re-read and add to it.
                     continue;
                 }
+                catch (RequestFailedException ex) when (IsTransient(ex.Status))
+                {
+                    continue;
+                }
             }
 
             var count = existing.GetInt64("Count") ?? 0;
@@ -89,9 +146,17 @@ public sealed class TableRateLimitCounterStore(
                 // Either way the value this attempt computed is stale, so recompute rather than write it.
                 continue;
             }
+            catch (RequestFailedException ex) when (IsTransient(ex.Status))
+            {
+                continue;
+            }
         }
 
-        throw new RequestFailedException(
-            $"Could not increment rate-limit counter '{bucketKey}' after {MaxAttempts} attempts.");
+        // Contention, not an outage — see RateLimitContentionException. The limiter fails CLOSED on this,
+        // which is the whole reason it is a distinct type: throwing a plain store exception here made
+        // heavy concurrency on one budget REMOVE the bound instead of enforcing it.
+        throw new RateLimitContentionException(
+            $"Could not increment rate-limit counter '{bucketKey}' after {MaxAttempts} attempts: "
+            + "too many concurrent callers on the same budget.");
     }
 }

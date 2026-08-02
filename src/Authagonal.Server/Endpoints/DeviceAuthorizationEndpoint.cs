@@ -242,6 +242,19 @@ public static class DeviceAuthorizationEndpoint
             if (httpContext.User.Identity?.IsAuthenticated != true)
                 return JsonResults.Error("not_authenticated", 401);
 
+            // The third consent-granting interactive POST in this server, and the only one that did not
+            // carry this guard — ApprovalEndpoints and AgentConsentEndpoints both do, for exactly this
+            // threat. Cookie-only authentication, .DisableAntiforgery() below, and SameSite=Lax does NOT
+            // withhold the session cookie from a same-site CROSS-ORIGIN POST: on idp.acme.com beside
+            // app.acme.com — the normal deployment shape — any XSS or hostile script on a sibling origin
+            // could fetch() this endpoint with credentials:'include' and a user_code it chose, approving
+            // its own device as the visiting user and leaving a consent grant recorded in their name.
+            //
+            // Ahead of the rate limiter deliberately: a cross-origin script must not be able to spend the
+            // victim's device-approval budget on its way to being refused.
+            if (Services.InteractiveOriginGuard.Check(httpContext) is { } originError)
+                return originError;
+
             // The same budget as approve and info: refusing is also a code submission, so it must not be
             // a way to probe user codes on a fresh allowance.
             var denierSubject = httpContext.User.FindFirst("sub")?.Value ?? "anonymous";
@@ -319,6 +332,19 @@ public static class DeviceAuthorizationEndpoint
         {
             if (httpContext.User.Identity?.IsAuthenticated != true)
                 return JsonResults.Error("not_authenticated", 401);
+
+            // The third consent-granting interactive POST in this server, and the only one that did not
+            // carry this guard — ApprovalEndpoints and AgentConsentEndpoints both do, for exactly this
+            // threat. Cookie-only authentication, .DisableAntiforgery() below, and SameSite=Lax does NOT
+            // withhold the session cookie from a same-site CROSS-ORIGIN POST: on idp.acme.com beside
+            // app.acme.com — the normal deployment shape — any XSS or hostile script on a sibling origin
+            // could fetch() this endpoint with credentials:'include' and a user_code it chose, approving
+            // its own device as the visiting user and leaving a consent grant recorded in their name.
+            //
+            // Ahead of the rate limiter deliberately: a cross-origin script must not be able to spend the
+            // victim's device-approval budget on its way to being refused.
+            if (Services.InteractiveOriginGuard.Check(httpContext) is { } originError)
+                return originError;
 
             // RFC 8628 §5.1: rate-limit user_code entry. A user_code is ~39 bits and this endpoint
             // already demands an authenticated session, so guessing is impractical rather than merely

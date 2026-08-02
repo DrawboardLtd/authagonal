@@ -207,6 +207,37 @@ adjacent defect the audit found while checking a finding it had already passed.
   by tests: it belongs on a target a *registrant* chose and needs an operator escape hatch on a target the
   *operator* chose.
 
+- **The device grant's approve and deny endpoints had no cross-origin protection.** Both are
+  cookie-authenticated with antiforgery disabled, and `SameSite=Lax` withholds the session cookie from a
+  cross-*site* request but not from a same-site cross-*origin* one — so on the ordinary `idp.acme.com` beside
+  `app.acme.com` deployment, any XSS or hostile script on a sibling origin could `fetch()` these endpoints
+  with `credentials:'include'` and a `user_code` of its choosing. Approve grants the attacker's device in the
+  victim's name and records a consent grant; deny cancels the victim's own device authorizations. They are
+  the third consent-granting interactive POST in the server and were the only ones missing
+  `InteractiveOriginGuard` — the approvals and agent-consent endpoints have carried it since it was written,
+  for exactly this threat. Both now check it, ahead of their rate limiter so a cross-origin script cannot
+  spend the victim's approval budget on its way to being refused.
+
+- **The cluster-wide rate limiter failed open under the load it exists to bound, on Azure.** With
+  `Auth:DurableRateLimiting` on and the Azure backend, the increment is an ETag compare-and-set retried
+  against a single row — the most contended row in the system by design, since every request against one
+  budget targets it. Exhausting the retry budget threw an ordinary store exception, and `DurableRateLimiter`
+  treats a store it cannot reach as an outage and allows the request. So contention read as unavailability:
+  raising concurrency *lifted* the bound instead of tripping it, and an attacker grinding a device
+  `user_code` or a client secret with enough parallel connections had the excess waved through un-counted.
+  Azure Table also throttles a hot single-entity partition with 429/503, neither of which was retried, so the
+  first throttled response took the same path.
+
+  Three changes. Retries are now spaced with full-jitter backoff, so losers stop colliding on the same tick;
+  429/503 and the transient server-side classes are retried rather than propagated; and exhausting the budget
+  raises a distinct `RateLimitContentionException` that the limiter fails **closed** on. The fail-open posture
+  for a genuinely unreachable store is unchanged and deliberate — refusing every request would turn a storage
+  blip into a total authentication outage — which is precisely why the two cases had to be told apart. Note
+  that hundreds of simultaneous callers on one budget still cannot all settle (a single-row CAS admits one
+  winner per round trip, whatever the backoff); they are now refused, which is the limiter working. DynamoDB
+  (`ADD`) and SQL (single-statement upsert) settle in one statement and never had this path. The Azure
+  counter store also had no tests; it does now.
+
 - **A revoked second factor could be resurrected by the request that was being revoked.** Three MFA paths
   finished by writing a whole credential row back from a snapshot read earlier in the handler:
   TOTP enrolment confirm, WebAuthn during MFA verification, and passwordless passkey sign-in.

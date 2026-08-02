@@ -173,6 +173,89 @@ public sealed class RegistrationAndConsentBindingTests : IAsyncLifetime
     }
 
     // -----------------------------------------------------------------------
+    // The device grant's approve and deny — the third consent-granting interactive POST, and the
+    // only one that never got the origin guard.
+    //
+    // Both are cookie-only and .DisableAntiforgery(). SameSite=Lax withholds the session cookie from a
+    // cross-SITE request and NOT from a same-site cross-ORIGIN one, and idp.acme.com beside
+    // app.acme.com is the ordinary deployment — so an XSS or hostile script on any sibling origin could
+    // POST a user_code it chose and have the victim approve the attacker's device, leaving a consent
+    // grant recorded in the victim's name. Deny is the mirror image: cancel the victim's own device
+    // authorizations. Their two siblings (ApprovalEndpoints, AgentConsentEndpoints) carry the guard;
+    // these did not, which is the sibling-path miss in its usual shape.
+    // -----------------------------------------------------------------------
+
+    [Theory]
+    [InlineData("/api/auth/device/approve")]
+    [InlineData("/api/auth/device/deny")]
+    public async Task DeviceConsentPost_FromAnotherOrigin_IsRefused(string path)
+    {
+        await _factory.SeedTestUserAsync();
+        await _client.PostAsJsonAsync("/api/auth/login", new { email = "test@example.com", password = "Test1234!" });
+
+        var request = new HttpRequestMessage(HttpMethod.Post, path)
+        {
+            Content = new FormUrlEncodedContent(new Dictionary<string, string> { ["user_code"] = "ABCD1234" }),
+        };
+        request.Headers.Add("Origin", "https://app.test");
+
+        Assert.Equal(HttpStatusCode.Forbidden, (await _client.SendAsync(request)).StatusCode);
+    }
+
+    /// <summary>
+    /// Sec-Fetch-Site settles it before any string comparison — the browser sets it and script cannot.
+    /// </summary>
+    /// <remarks>
+    /// <c>same-site</c> is the value that matters here: it is exactly the sibling-origin case that Lax
+    /// does not stop, so a guard that only refused <c>cross-site</c> would miss the whole attack.
+    /// </remarks>
+    [Theory]
+    [InlineData("/api/auth/device/approve")]
+    [InlineData("/api/auth/device/deny")]
+    public async Task DeviceConsentPost_FromASameSiteSiblingOrigin_IsRefused(string path)
+    {
+        await _factory.SeedTestUserAsync();
+        await _client.PostAsJsonAsync("/api/auth/login", new { email = "test@example.com", password = "Test1234!" });
+
+        var request = new HttpRequestMessage(HttpMethod.Post, path)
+        {
+            Content = new FormUrlEncodedContent(new Dictionary<string, string> { ["user_code"] = "ABCD1234" }),
+        };
+        request.Headers.Add("Sec-Fetch-Site", "same-site");
+
+        Assert.Equal(HttpStatusCode.Forbidden, (await _client.SendAsync(request)).StatusCode);
+    }
+
+    /// <summary>
+    /// The control: the guard must not break the login app's own approval screen.
+    /// </summary>
+    /// <remarks>
+    /// A request carrying the server's own origin gets past the guard and fails on its own merits — here
+    /// an unknown user_code, which is a 400 and not a 403. Without this, "refuse everything" would satisfy
+    /// every assertion above.
+    /// </remarks>
+    [Theory]
+    [InlineData("/api/auth/device/approve")]
+    [InlineData("/api/auth/device/deny")]
+    public async Task DeviceConsentPost_FromTheIdpsOwnPages_IsNotRefusedByTheOriginCheck(string path)
+    {
+        await _factory.SeedTestUserAsync();
+        await _client.PostAsJsonAsync("/api/auth/login", new { email = "test@example.com", password = "Test1234!" });
+
+        var request = new HttpRequestMessage(HttpMethod.Post, path)
+        {
+            Content = new FormUrlEncodedContent(new Dictionary<string, string> { ["user_code"] = "ABCD1234" }),
+        };
+        request.Headers.Add("Origin", AuthagonalTestFactory.TestIssuer);
+        request.Headers.Add("Sec-Fetch-Site", "same-origin");
+
+        var response = await _client.SendAsync(request);
+
+        Assert.NotEqual(HttpStatusCode.Forbidden, response.StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    // -----------------------------------------------------------------------
     // F67 — the advertised device verification_uri resolves
     // -----------------------------------------------------------------------
 
