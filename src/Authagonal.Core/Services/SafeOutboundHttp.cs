@@ -71,9 +71,27 @@ public static class SafeOutboundHttp
             {
                 // Resolve relative Locations against the URL we actually requested, then re-validate on the
                 // next iteration. This is the check the automatic follower skipped.
-                current = location.IsAbsoluteUri
+                var next = location.IsAbsoluteUri
                     ? location.ToString()
                     : new Uri(new Uri(current), location).ToString();
+
+                // .NET refuses an https→http automatic redirect. Following hops by hand removed that
+                // refusal along with the behaviour it was replacing — nothing here re-imposed it, so a
+                // document fetched over https could hand back `Location: http://…` and the next hop was
+                // made in cleartext, on a path whose whole reason for requiring https is that the response
+                // is a trust anchor: SAML signing certificates, an OIDC issuer and jwks_uri. An on-path
+                // party then substitutes the document and everything downstream validates against their
+                // keys. Restored explicitly, and it is a refusal rather than an upgrade attempt because a
+                // redirect to plaintext is not a thing a legitimate metadata endpoint does.
+                if (IsSchemeDowngrade(current, next))
+                {
+                    logger?.LogWarning(
+                        "Refusing outbound fetch of {Url}: it redirected from https to plaintext http",
+                        current);
+                    throw new InvalidOperationException("The requested URL is not permitted.");
+                }
+
+                current = next;
                 response.Dispose();
                 continue;
             }
@@ -106,4 +124,18 @@ public static class SafeOutboundHttp
 
         throw new InvalidOperationException("Too many redirects.");
     }
+
+    /// <summary>
+    /// True when <paramref name="to"/> is plaintext http and <paramref name="from"/> was https.
+    /// </summary>
+    /// <remarks>
+    /// Unparseable inputs answer false: they are not downgrades, and the caller's own
+    /// <see cref="OutboundUrl.IsSafe"/> check on the next iteration is what refuses them. Two guards each
+    /// answering only their own question beats one that half-answers both.
+    /// </remarks>
+    private static bool IsSchemeDowngrade(string from, string to)
+        => Uri.TryCreate(from, UriKind.Absolute, out var previous)
+            && Uri.TryCreate(to, UriKind.Absolute, out var next)
+            && previous.Scheme == Uri.UriSchemeHttps
+            && next.Scheme == Uri.UriSchemeHttp;
 }

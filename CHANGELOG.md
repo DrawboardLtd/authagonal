@@ -194,6 +194,23 @@ adjacent defect the audit found while checking a finding it had already passed.
   by tests: it belongs on a target a *registrant* chose and needs an operator escape hatch on a target the
   *operator* chose.
 
+- **The https requirement on an OIDC connection stopped at the discovery URL.** The document is the trust
+  anchor, so it was required to be https and bound to its own `issuer` — and then the endpoints it *named*
+  were re-validated for SSRF only. The SSRF guard permits `http` by design, because scheme policy belongs to
+  the caller, so the document got to name a plaintext `jwks_uri` (the keys every upstream `id_token` is
+  validated against), `token_endpoint` (this connection's client secret and the authorization code),
+  `userinfo_endpoint` (the access token), or `authorization_endpoint` (where the user's own browser is sent).
+  Each is a full compromise of the connection to anyone on the network path, reached from a document served
+  over TLS. All four now require https, enumerated in one loop rather than checked three-at-a-time, since
+  three-of-four is how the sibling gets missed. An IdP that publishes a plaintext endpoint in an otherwise
+  https document will now fail to connect; that document was describing an insecure exchange.
+
+- **Resolving redirects by hand had silently dropped .NET's refusal of an https→http downgrade.**
+  `SafeOutboundHttp` follows hops itself so it can re-run the SSRF guard on each one — the whole point — but
+  it re-imposed only that guard, and the guard permits `http`. So an https metadata or JWKS URL answering
+  `302 Location: http://…` was followed onto the network in cleartext, on precisely the fetches whose
+  responses are trust anchors. A scheme downgrade mid-redirect is now refused outright.
+
 - **Any authenticated user could reach the full admin API by changing the case of a scope name.** Three
   components disagreed about scope-name comparison: the client allow-list matched case-INsensitively so
   `Admin` passed, `IScopeStore` point-reads the exact name so a case variant looked *unregistered* — and

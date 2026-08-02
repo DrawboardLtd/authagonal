@@ -82,6 +82,28 @@ public sealed class ClientJwksUriSsrfTests : IAsyncLifetime
         Assert.DoesNotContain(_jwks.Requested, u => u.Contains("169.254.169.254", StringComparison.Ordinal));
     }
 
+    /// <summary>
+    /// An https jwks_uri that redirects to plaintext http is refused, even though the host is public.
+    /// </summary>
+    /// <remarks>
+    /// .NET refuses an https→http automatic redirect. Following hops by hand — which is what makes the
+    /// per-hop SSRF check possible — removed that refusal along with the behaviour it replaced, and nothing
+    /// re-imposed it: <c>OutboundUrl.IsSafe</c> permits http BY DESIGN, because scheme policy belongs to the
+    /// caller. So the guard that exists to stop a redirect reaching an unchecked host would happily follow
+    /// one onto the network in cleartext, and this key set decides which assertions authenticate a client.
+    /// The target here is the same public host as the original, so nothing but the scheme change refuses it.
+    /// </remarks>
+    [Fact]
+    public async Task JwksUri_RedirectingToPlaintextHttp_IsRefused()
+    {
+        var clientId = await RegisterClientAsync($"{_origin}/redirect-to-plaintext");
+
+        var response = await AuthenticateAsync(clientId);
+
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        Assert.DoesNotContain(_jwks.Requested, u => u.StartsWith("http://", StringComparison.Ordinal));
+    }
+
     [Fact]
     public async Task JwksUri_RedirectingToAPublicHost_IsFollowed()
     {
@@ -154,6 +176,11 @@ public sealed class ClientJwksUriSsrfTests : IAsyncLifetime
 
             if (url.EndsWith("/redirect-to-metadata", StringComparison.Ordinal))
                 return Task.FromResult(Redirect("https://169.254.169.254/latest/meta-data/keys"));
+
+            if (url.EndsWith("/redirect-to-plaintext", StringComparison.Ordinal))
+                return Task.FromResult(Redirect(url
+                    .Replace("https://", "http://", StringComparison.Ordinal)
+                    .Replace("/redirect-to-plaintext", "/keys", StringComparison.Ordinal)));
 
             if (url.EndsWith("/redirect-to-keys", StringComparison.Ordinal))
                 return Task.FromResult(Redirect(url.Replace("/redirect-to-keys", "/keys", StringComparison.Ordinal)));

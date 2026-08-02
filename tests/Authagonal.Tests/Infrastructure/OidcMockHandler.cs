@@ -73,19 +73,37 @@ public sealed class OidcMockHandler : HttpMessageHandler
         return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound));
     }
 
+    /// <summary>
+    /// Replacements for individual discovery-document endpoints, by their JSON member name.
+    /// </summary>
+    /// <remarks>
+    /// Every endpoint is otherwise derived from <see cref="Issuer"/>, which is https — so without this
+    /// there is no way to express the document that names a PLAINTEXT endpoint. That document is the whole
+    /// of #163's residual: the metadata URL was required to be https and the endpoints it named were then
+    /// accepted at whatever scheme they said, including the jwks_uri that supplies the keys every upstream
+    /// id_token is validated against. Set a member to <c>null</c> to omit it entirely.
+    /// </remarks>
+    public Dictionary<string, string?> EndpointOverrides { get; } = new(StringComparer.Ordinal);
+
     private HttpResponseMessage DiscoveryResponse()
     {
-        var doc = new
+        var doc = new Dictionary<string, object?>(StringComparer.Ordinal)
         {
-            issuer = Issuer,
-            authorization_endpoint = $"{Issuer}/authorize",
-            token_endpoint = $"{Issuer}/token",
-            jwks_uri = $"{Issuer}/jwks",
-            userinfo_endpoint = $"{Issuer}/userinfo",
-            response_types_supported = new[] { "code" },
-            subject_types_supported = new[] { "public" },
-            id_token_signing_alg_values_supported = new[] { "RS256" },
+            ["issuer"] = Issuer,
+            ["authorization_endpoint"] = $"{Issuer}/authorize",
+            ["token_endpoint"] = $"{Issuer}/token",
+            ["jwks_uri"] = $"{Issuer}/jwks",
+            ["userinfo_endpoint"] = $"{Issuer}/userinfo",
+            ["response_types_supported"] = new[] { "code" },
+            ["subject_types_supported"] = new[] { "public" },
+            ["id_token_signing_alg_values_supported"] = new[] { "RS256" },
         };
+
+        foreach (var (member, value) in EndpointOverrides)
+        {
+            if (value is null) doc.Remove(member);
+            else doc[member] = value;
+        }
 
         return JsonResponse(doc);
     }

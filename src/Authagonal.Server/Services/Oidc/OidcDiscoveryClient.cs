@@ -103,6 +103,36 @@ public sealed class OidcDiscoveryClient(
             || (userinfoEndpoint is not null && !OutboundUrlValidator.IsSafe(userinfoEndpoint, allowlist)))
             throw new InvalidOperationException("OIDC discovery document referenced a disallowed endpoint URL.");
 
+        // And they must be https, which the SSRF guard deliberately does not decide — it permits http by
+        // design, because scheme policy belongs to the caller. That left this path requiring https on the
+        // metadata URL and then accepting whatever scheme the document named for everything else, which is
+        // the same defect one hop further down: jwks_uri supplies the keys every upstream id_token is
+        // validated against, so fetched over cleartext an on-path party substitutes the key set and the
+        // callback signs their assertion in as any user. token_endpoint carries this connection's client
+        // secret and the authorization code; userinfo_endpoint carries the access token; and
+        // authorization_endpoint is where the user's own browser is sent to authenticate. Every one of them
+        // is a full compromise of the connection in cleartext, and refusing three while accepting the
+        // fourth is how the sibling gets missed.
+        foreach (var (name, endpoint) in new (string, string?)[]
+                 {
+                     ("jwks_uri", jwksUri),
+                     ("token_endpoint", tokenEndpoint),
+                     ("userinfo_endpoint", userinfoEndpoint),
+                     ("authorization_endpoint", authorizationEndpoint),
+                 })
+        {
+            if (endpoint is null) continue;
+            if (Uri.TryCreate(endpoint, UriKind.Absolute, out var endpointUri)
+                && endpointUri.Scheme == Uri.UriSchemeHttps)
+                continue;
+
+            throw new InvalidOperationException(
+                $"OIDC discovery document declared a non-https {name} ('{endpoint}'). The document itself is "
+                + "required to be https because it is this connection's trust anchor; an endpoint it names "
+                + "that is reached over cleartext hands the same material — the signing keys, the client "
+                + "secret, the authorization code, the access token — to anyone on the network path.");
+        }
+
         // Fetch JWKS — same per-hop validation.
         var jwksJson = await SafeOutboundHttp.GetStringAsync(client, jwksUri, ct: ct, allowlist: allowlist);
         var jwks = JsonWebKeySet.Create(jwksJson);

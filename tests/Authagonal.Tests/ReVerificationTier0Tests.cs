@@ -79,6 +79,73 @@ public sealed class OidcDiscoveryTrustAnchorTests
         Assert.Equal("https://oidc-idp.test", doc.Issuer);
     }
 
+    /// <summary>
+    /// The https requirement landed on the discovery URL and stopped there.
+    /// </summary>
+    /// <remarks>
+    /// This is #163 one hop further down, and it is the same finding rather than a new one: the endpoints
+    /// were re-validated against the SSRF guard, which permits http BY DESIGN because scheme policy belongs
+    /// to the caller. So the document was required to be https and then got to name a plaintext
+    /// <c>jwks_uri</c> — the keys every upstream <c>id_token</c> is validated against — a plaintext
+    /// <c>token_endpoint</c> carrying this connection's client secret and the authorization code, a
+    /// plaintext <c>userinfo_endpoint</c> carrying the access token, or a plaintext
+    /// <c>authorization_endpoint</c>, which is where the user's own browser is sent. Enumerated rather than
+    /// written once per endpoint precisely because three of four is the shape this review keeps finding.
+    /// </remarks>
+    [Theory]
+    [InlineData("jwks_uri")]
+    [InlineData("token_endpoint")]
+    [InlineData("userinfo_endpoint")]
+    [InlineData("authorization_endpoint")]
+    public async Task APlaintextEndpointNamedByTheDocument_IsRefused(string member)
+    {
+        var handler = new OidcMockHandler { Issuer = "https://oidc-idp.test" };
+        handler.EndpointOverrides[member] = "http://oidc-idp.test/plaintext";
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            Client(handler).GetDiscoveryAsync("https://oidc-idp.test/.well-known/openid-configuration"));
+
+        Assert.Contains(member, ex.Message, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// An internal endpoint named by the document is still refused as SSRF, not merely on scheme.
+    /// </summary>
+    /// <remarks>
+    /// The scheme check is additional to the address rules, not a replacement for them — an
+    /// <c>https://169.254.169.254/</c> jwks_uri satisfies the new requirement and must still be refused.
+    /// </remarks>
+    [Fact]
+    public async Task AnInternalEndpointNamedByTheDocument_IsStillRefused()
+    {
+        var handler = new OidcMockHandler { Issuer = "https://oidc-idp.test" };
+        handler.EndpointOverrides["jwks_uri"] = "https://169.254.169.254/jwks";
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            Client(handler).GetDiscoveryAsync("https://oidc-idp.test/.well-known/openid-configuration"));
+
+        Assert.Contains("disallowed endpoint", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// <c>userinfo_endpoint</c> is optional, so a document that omits it is still valid.
+    /// </summary>
+    /// <remarks>
+    /// The control for the scheme loop above: a null-vs-plaintext confusion there would turn every IdP that
+    /// publishes no userinfo endpoint into a broken connection.
+    /// </remarks>
+    [Fact]
+    public async Task AnAbsentUserinfoEndpoint_IsAccepted()
+    {
+        var handler = new OidcMockHandler { Issuer = "https://oidc-idp.test" };
+        handler.EndpointOverrides["userinfo_endpoint"] = null;
+
+        var doc = await Client(handler).GetDiscoveryAsync(
+            "https://oidc-idp.test/.well-known/openid-configuration");
+
+        Assert.Null(doc.UserinfoEndpoint);
+    }
+
     private static OidcDiscoveryClient Client(HttpMessageHandler? handler = null) =>
         new(new StubHttpClientFactory(handler ?? new OidcMockHandler()),
             new MemoryCache(new MemoryCacheOptions()),
