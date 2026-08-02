@@ -476,7 +476,40 @@ public sealed class DynamoUserStore(
             // Write-before-delete, and the new binding is CLAIMED rather than written over: if another
             // user already holds this address the claim throws and the old binding is left alone, so the
             // caller's check-then-act gap cannot end in one user owning another's login identifier.
-            await ClaimEmailIndexAsync(partitioner.PK(newEmailToken!()), user.Id, ct).ConfigureAwait(false);
+            //
+            // The profile item is already committed by the time we get here, so a lost claim has to undo
+            // it — the same trade CreateAsync makes, and it was missing on this path. Without it the
+            // profile asserts an address whose index item names a DIFFERENT user: the account becomes
+            // findable only by its old address while claiming the new one, and every gate that reads
+            // user.Email rather than resolving through the index reads the address the claim just refused.
+            try
+            {
+                await ClaimEmailIndexAsync(partitioner.PK(newEmailToken!()), user.Id, ct).ConfigureAwait(false);
+            }
+            catch
+            {
+                try
+                {
+                    // Re-read for the current version rather than assuming: this write is the undo of a
+                    // failure, and a conditional put that loses is one more reason to stop, not to force.
+                    var currentItem = await users.GetAsync(partitioner.PK(user.Id), Profile, ct).ConfigureAwait(false);
+                    if (currentItem is not null)
+                    {
+                        var currentVersion = currentItem.GetN("_v");
+                        await users.PutIfVersionAsync(
+                            await UserItemAsync(old, currentVersion + 1, ct).ConfigureAwait(false),
+                            currentVersion, ct).ConfigureAwait(false);
+                    }
+                }
+                catch
+                {
+                    // Best effort. The claim failure is the one worth surfacing; reporting a cleanup
+                    // failure instead would hide why the write was refused.
+                }
+
+                throw;
+            }
+
             await DeleteEmailIndexAsync(old.NormalizedEmail, oldEmailToken!(), ct).ConfigureAwait(false);
 
             if (localChanged)

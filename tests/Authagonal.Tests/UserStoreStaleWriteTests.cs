@@ -138,6 +138,25 @@ public class AzureUserStoreStaleWriteTests(AzuriteFixture azurite)
         Assert.Equal("owner", (await store.FindByExternalIdAsync("conn", "ext-1"))?.Id);
     }
 
+    /// <summary>#247 on this backend — see the SQL twin for why the rollback matters.</summary>
+    [Fact]
+    public async Task ARenameThatLosesTheClaimLeavesTheProfileOnItsOldAddress()
+    {
+        var store = NewStore($"s{Guid.NewGuid():N}");
+        await store.CreateAsync(User("owner", "taken@example.com"));
+        await store.CreateAsync(User("mover", "mine@example.com"));
+
+        var mover = await store.GetAsync("mover");
+        mover!.Email = "taken@example.com";
+        mover.NormalizedEmail = "taken@example.com".ToUpperInvariant();
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => store.UpdateAsync(mover));
+
+        Assert.Equal("owner", (await store.FindByEmailAsync("taken@example.com"))?.Id);
+        Assert.Equal("mover", (await store.FindByEmailAsync("mine@example.com"))?.Id);
+        Assert.Equal("mine@example.com".ToUpperInvariant(), (await store.GetAsync("mover"))!.NormalizedEmail);
+    }
+
     [Fact]
     public async Task AnExternalIdAlreadyHeldCannotBeRepointed()
     {
@@ -258,6 +277,39 @@ public sealed class SqlUserStoreStaleWriteTests : IAsyncLifetime
         // The loser left nothing behind: a profile row no lookup can reach is the split-brain state the
         // claim exists to prevent.
         Assert.Null(await store.GetAsync("u2"));
+    }
+
+    /// <summary>
+    /// #247 — a rename that loses the claim must not leave the profile asserting the address.
+    /// </summary>
+    /// <remarks>
+    /// CreateAsync claims the index and rolls the profile back if it loses; the UPDATE path committed the
+    /// profile first and never rolled back, so a rename onto an address someone else owns left the account
+    /// findable only by its OLD address while its profile claimed the new one. That split matters beyond
+    /// tidiness: every gate that reads <c>user.Email</c> rather than resolving through the index — forced
+    /// SSO domain matching, auto-confirm domains, anything keyed on the address — would read the address
+    /// the claim had just refused. Found by an adversarial refuter in the third pass; the create path was
+    /// checked and the update path was not.
+    /// </remarks>
+    [Fact]
+    public async Task ARenameThatLosesTheClaimLeavesTheProfileOnItsOldAddress()
+    {
+        var store = await NewStoreAsync();
+        await store.CreateAsync(User("owner", "taken@example.com"));
+        await store.CreateAsync(User("mover", "mine@example.com"));
+
+        var mover = await store.GetAsync("mover");
+        mover!.Email = "taken@example.com";
+        mover.NormalizedEmail = "taken@example.com".ToUpperInvariant();
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => store.UpdateAsync(mover));
+
+        // The index is untouched: both addresses still resolve to who owned them.
+        Assert.Equal("owner", (await store.FindByEmailAsync("taken@example.com"))?.Id);
+        Assert.Equal("mover", (await store.FindByEmailAsync("mine@example.com"))?.Id);
+
+        // And the profile did not keep the address it failed to claim.
+        Assert.Equal("mine@example.com".ToUpperInvariant(), (await store.GetAsync("mover"))!.NormalizedEmail);
     }
 
     [Fact]
@@ -381,6 +433,25 @@ public class DynamoUserStoreStaleWriteTests(DynamoFixture dynamo)
 
         Assert.Equal("u1", (await store.FindByEmailAsync("shared@example.com"))?.Id);
         Assert.Null(await store.GetAsync("u2"));
+    }
+
+    /// <summary>#247 on this backend — see the SQL twin for why the rollback matters.</summary>
+    [Fact]
+    public async Task ARenameThatLosesTheClaimLeavesTheProfileOnItsOldAddress()
+    {
+        var store = await NewStoreAsync($"sw{Guid.NewGuid():N}");
+        await store.CreateAsync(User("owner", "taken@example.com"));
+        await store.CreateAsync(User("mover", "mine@example.com"));
+
+        var mover = await store.GetAsync("mover");
+        mover!.Email = "taken@example.com";
+        mover.NormalizedEmail = "taken@example.com".ToUpperInvariant();
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => store.UpdateAsync(mover));
+
+        Assert.Equal("owner", (await store.FindByEmailAsync("taken@example.com"))?.Id);
+        Assert.Equal("mover", (await store.FindByEmailAsync("mine@example.com"))?.Id);
+        Assert.Equal("mine@example.com".ToUpperInvariant(), (await store.GetAsync("mover"))!.NormalizedEmail);
     }
 
     [Fact]

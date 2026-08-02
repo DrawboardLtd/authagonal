@@ -483,7 +483,33 @@ public sealed class SqlUserStore(
             // Write-before-delete, and the new binding is CLAIMED rather than written over: if another
             // user already holds this address the claim throws and the old binding is left alone, so the
             // caller's check-then-act gap cannot end in one user owning another's login identifier.
-            await ClaimEmailIndexAsync(partitioner.PK(newEmailToken!()), user.Id, ct).ConfigureAwait(false);
+            //
+            // The profile row is already committed by the time we get here, so a lost claim has to undo
+            // it — the same trade CreateAsync makes, and it was missing on this path. Without it the
+            // profile asserts an address whose index row names a DIFFERENT user: the account becomes
+            // findable only by its old address while claiming the new one, and every gate that reads
+            // user.Email rather than resolving through the index (forced-SSO domain matching,
+            // AutoConfirmEmailDomains, anything keyed on the address) reads the address the claim just
+            // refused. Losing the whole update is correct — the update failed, so none of it should stand.
+            try
+            {
+                await ClaimEmailIndexAsync(partitioner.PK(newEmailToken!()), user.Id, ct).ConfigureAwait(false);
+            }
+            catch
+            {
+                try
+                {
+                    await users.PutAsync(await UserRowAsync(old, ct).ConfigureAwait(false), ct).ConfigureAwait(false);
+                }
+                catch
+                {
+                    // Best effort. The claim failure is the one worth surfacing; reporting a cleanup
+                    // failure instead would hide why the write was refused.
+                }
+
+                throw;
+            }
+
             await DeleteEmailIndexAsync(old.NormalizedEmail, oldEmailToken!(), ct).ConfigureAwait(false);
 
             if (localChanged)

@@ -967,7 +967,35 @@ public sealed class TableUserStore(
                 // The new binding is CLAIMED, not written over: if another user already holds this
                 // address the claim throws and the old binding is left alone, so the caller's
                 // check-then-act gap cannot end in one user owning another's login identifier.
-                await ClaimEmailIndexAsync(_partitioner.PK(newEmailToken!()), newNormalizedEmail, user.Id, ct);
+                //
+                // The profile row is already committed by the time we get here, so a lost claim has to
+                // undo it — the same trade CreateAsync makes, and it was missing on this path. Without it
+                // the profile asserts an address whose index row names a DIFFERENT user: the account
+                // becomes findable only by its old address while claiming the new one, and every gate
+                // that reads user.Email rather than resolving through the index reads the address the
+                // claim just refused.
+                try
+                {
+                    await ClaimEmailIndexAsync(_partitioner.PK(newEmailToken!()), newNormalizedEmail, user.Id, ct);
+                }
+                catch
+                {
+                    try
+                    {
+                        var revert = UserEntity.FromModel(storedModel);
+                        revert.PartitionKey = _partitioner.PK(revert.PartitionKey);
+                        await EncryptEntityAsync(revert, ct);
+                        await usersTable.UpsertEntityAsync(revert, TableUpdateMode.Replace, ct);
+                    }
+                    catch
+                    {
+                        // Best effort. The claim failure is the one worth surfacing; reporting a cleanup
+                        // failure instead would hide why the write was refused.
+                    }
+
+                    throw;
+                }
+
                 await DeleteEmailIndexAsync(oldNormalizedEmail, oldEmailToken!(), ct);
 
                 // Local-part prefix index: keyed on the bit before '@', so rewrite when THAT changed
