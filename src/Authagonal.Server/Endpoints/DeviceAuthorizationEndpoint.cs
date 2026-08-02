@@ -140,14 +140,18 @@ public static class DeviceAuthorizationEndpoint
 
             var verificationUri = $"{tenantContext.Issuer}/device";
 
-            return TypedResults.Json(new DeviceAuthorizationResponse
+            // no-store: this body IS the credential pair. device_code redeems for tokens and user_code is
+            // what the user types to approve, so an intermediary caching it hands the next caller a live
+            // authorization. RFC 8628 does not restate RFC 6749 §5.1 here, but the reason for that rule
+            // applies unchanged.
+            return JsonResults.NoStore(TypedResults.Json(new DeviceAuthorizationResponse
             {
                 DeviceCode = deviceCode,
                 UserCode = userCode,
                 VerificationUri = verificationUri,
                 VerificationUriComplete = $"{verificationUri}?user_code={userCode}",
                 ExpiresIn = expiresIn,
-            }, AuthagonalJsonContext.Default.DeviceAuthorizationResponse);
+            }, AuthagonalJsonContext.Default.DeviceAuthorizationResponse));
         })
         .AllowAnonymous()
         .DisableAntiforgery()

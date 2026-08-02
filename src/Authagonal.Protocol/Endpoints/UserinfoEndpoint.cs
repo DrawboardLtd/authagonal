@@ -97,8 +97,10 @@ internal static class UserinfoEndpoint
             var scopeClaim = result.Claims.TryGetValue("scope", out var scObj) ? scObj?.ToString() ?? "" : "";
             var scopes = scopeClaim.Split(' ', StringSplitOptions.RemoveEmptyEntries);
 
+            // 403 insufficient_scope, not 401 invalid_token: the token is valid and refreshing it will
+            // return one with exactly these scopes again. Matches the Server host.
             if (!scopes.Contains("openid", StringComparer.Ordinal))
-                return UnauthorizedWithChallenge();
+                return InsufficientScope("The access token does not carry the openid scope.");
 
             var claims = new Dictionary<string, object?>();
 
@@ -147,15 +149,77 @@ internal static class UserinfoEndpoint
     /// distinguishes several causes internally (wrong token type, revoked, missing scope), and some
     /// of those would report on state the caller has not proved it may know.
     /// </remarks>
-    internal static IResult UnauthorizedWithChallenge() => new BearerChallenge();
+    internal static IResult UnauthorizedWithChallenge() =>
+        new BearerChallenge(StatusCodes.Status401Unauthorized, "invalid_token");
 
-    private sealed class BearerChallenge : IResult
+    /// <summary>
+    /// A 403 saying the token is genuine but does not carry the scope this endpoint needs.
+    /// </summary>
+    /// <remarks>
+    /// RFC 6750 §3.1 gives this its own code precisely so a client can tell it apart from
+    /// <c>invalid_token</c>, and the distinction is the difference between two very different reactions:
+    /// <c>invalid_token</c> means refresh and retry, <c>insufficient_scope</c> means asking for the same
+    /// thing again will fail forever and a new authorization with a wider scope is required.
+    /// <para>
+    /// The two hosts disagreed here, which is worse than either answer alone: this one returned 401
+    /// <c>invalid_token</c> for a missing <c>openid</c> scope, so a conforming client refreshed, got a token
+    /// with exactly the same scopes, and looped; the Server host returned a bare 403 with no challenge at
+    /// all, so a client could not tell a scope refusal from any other 403. Same condition, same product,
+    /// two wrong answers.
+    /// </para>
+    /// </remarks>
+    /// <remarks>
+    /// Wraps the JSON error body rather than replacing it. The Server host already answered this case with
+    /// <c>{"error":"insufficient_scope"}</c> and a caller may be reading it, so the header is added
+    /// alongside — dropping the body to "improve conformance" would be a silent contract change.
+    /// </remarks>
+    internal static IResult InsufficientScope(string description) =>
+        new ChallengeHeader(
+            $"Bearer realm=\"userinfo\", error=\"insufficient_scope\", error_description=\"{description.Replace("\"", "'")}\"",
+            JsonResults.OAuthError("insufficient_scope", description, statusCode: StatusCodes.Status403Forbidden));
+
+    /// <summary>
+    /// A 400 for a malformed request, still carrying the challenge.
+    /// </summary>
+    /// <remarks>
+    /// RFC 6750 §3 attaches the header to the protected resource's refusal, not specifically to a 401 —
+    /// and this one is reachable before any token has been evaluated (a request presenting credentials in
+    /// two places at once). Added because closing the §2.2 dual-credential hole introduced a fresh
+    /// challenge-less rejection on the very endpoint these findings exist to fix.
+    /// </remarks>
+    /// <remarks>
+    /// Wraps the existing error BODY rather than replacing it: a caller that was reading
+    /// <c>{"error":"invalid_request"}</c> keeps getting it, and the header is added alongside. Swapping
+    /// the body for a bare header would have been a silent contract change made in the name of
+    /// conformance.
+    /// </remarks>
+    internal static IResult InvalidRequestWithChallenge(string description) =>
+        new ChallengeHeader(
+            $"Bearer realm=\"userinfo\", error=\"invalid_request\", error_description=\"{description.Replace("\"", "'")}\"",
+            JsonResults.OAuthError("invalid_request", description));
+
+    private sealed class ChallengeHeader(string challenge, IResult inner) : IResult
     {
         public Task ExecuteAsync(HttpContext httpContext)
         {
-            httpContext.Response.StatusCode = StatusCodes.Status401Unauthorized;
-            httpContext.Response.Headers.WWWAuthenticate =
-                "Bearer realm=\"userinfo\", error=\"invalid_token\"";
+            httpContext.Response.Headers.WWWAuthenticate = challenge;
+            return inner.ExecuteAsync(httpContext);
+        }
+    }
+
+    private sealed class BearerChallenge(int status, string error, string? description = null) : IResult
+    {
+        public Task ExecuteAsync(HttpContext httpContext)
+        {
+            httpContext.Response.StatusCode = status;
+            // error_description is quoted-string per RFC 6750 §3, so a stray quote would split the
+            // header. These are all fixed literals from this file, but escaping keeps that true of the
+            // next one somebody adds.
+            var challenge = $"Bearer realm=\"userinfo\", error=\"{error}\"";
+            if (description is not null)
+                challenge += $", error_description=\"{description.Replace("\"", "'")}\"";
+
+            httpContext.Response.Headers.WWWAuthenticate = challenge;
             return Task.CompletedTask;
         }
     }
@@ -191,8 +255,11 @@ internal static class BearerToken
 
         if (!string.IsNullOrWhiteSpace(headerToken) && !string.IsNullOrWhiteSpace(formToken))
         {
-            return (null, JsonResults.OAuthError(
-                "invalid_request",
+            // A challenge-bearing 400, not JsonResults.OAuthError. That helper writes the OAuth
+            // TOKEN-endpoint error body, which is the wrong shape here — userinfo is a protected
+            // resource, and RFC 6750 §3 wants its refusals to carry WWW-Authenticate so the caller
+            // learns the scheme. Both hosts route through this reader, so the omission was on both.
+            return (null, UserinfoEndpoint.InvalidRequestWithChallenge(
                 "The access token must be presented once, by one method (RFC 6750 §2)."));
         }
 

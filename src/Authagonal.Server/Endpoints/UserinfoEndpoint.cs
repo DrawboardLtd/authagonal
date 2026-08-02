@@ -92,10 +92,13 @@ public static class UserinfoEndpoint
             // gates below meant the residue was subject disclosure rather than PII, but the endpoint
             // contract is the thing being fixed: this is the Protocol host's F197 defect, in the host
             // that finding did not name.
+            // 403 with the RFC 6750 §3.1 challenge, not a bare JSON 403. The status was right and the
+            // header was missing, so a client could not tell a scope refusal from any other 403 — and its
+            // twin in the Protocol host answered the identical condition with 401 invalid_token, which is
+            // actively misleading (refresh, get the same scopes, loop). Both now say the same thing.
             if (!scopes.Contains(StandardScopes.OpenId, StringComparer.Ordinal))
-                return Results.Json(
-                    new { error = "insufficient_scope", error_description = "The access token does not carry the openid scope." },
-                    statusCode: StatusCodes.Status403Forbidden);
+                return Authagonal.Protocol.Endpoints.UserinfoEndpoint.InsufficientScope(
+                    "The access token does not carry the openid scope.");
 
             var claims = new Dictionary<string, object?> { ["sub"] = user.Id };
 

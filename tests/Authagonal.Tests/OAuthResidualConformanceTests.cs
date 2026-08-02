@@ -77,6 +77,14 @@ public sealed class ProtocolHostOAuthResidualTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
         var body = await response.Content.ReadFromJsonAsync<JsonElement>();
         Assert.Equal("invalid_request", body.GetProperty("error").GetString());
+
+        // …and it carries the challenge. Closing the §2.2 hole introduced a rejection path that answered
+        // with the OAuth token-endpoint error body and no WWW-Authenticate — a fresh challenge-less
+        // refusal on the very endpoint #216/#341 exist to fix. The body is unchanged; the header is added
+        // alongside it.
+        var challenge = Assert.Single(response.Headers.WwwAuthenticate);
+        Assert.Equal("Bearer", challenge.Scheme);
+        Assert.Contains("error=\"invalid_request\"", challenge.Parameter);
     }
 
     [Theory]
@@ -215,7 +223,61 @@ public sealed class ProtocolHostOAuthResidualTests : IAsyncLifetime
     }
 
     /// <summary>Full authorization-code flow so the token is a real one with jti, aud and scope.</summary>
-    private async Task<string> MintAccessTokenAsync()
+    /// <summary>
+    /// A token that is valid but lacks <c>openid</c> gets 403 <c>insufficient_scope</c>, with the challenge.
+    /// </summary>
+    /// <remarks>
+    /// The two hosts disagreed on this exact condition, which is worse than either answer alone. This host
+    /// returned 401 <c>invalid_token</c>, so a conforming client refreshes, receives a token with the same
+    /// scopes, and loops; the Server host returned a bare 403 with no challenge, so a client could not tell
+    /// a scope refusal from any other 403. RFC 6750 §3.1 separates the two codes precisely so the client
+    /// knows whether retrying can ever work.
+    /// </remarks>
+    [Fact]
+    public async Task Userinfo_TokenWithoutOpenidScope_Is403InsufficientScope()
+    {
+        var accessToken = await MintAccessTokenAsync(scope: "profile");
+
+        var request = new HttpRequestMessage(HttpMethod.Get, "/connect/userinfo");
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
+        var response = await _client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        var challenge = Assert.Single(response.Headers.WwwAuthenticate);
+        Assert.Equal("Bearer", challenge.Scheme);
+        Assert.Contains("error=\"insufficient_scope\"", challenge.Parameter);
+    }
+
+    /// <summary>
+    /// PAR's success response carries no-store.
+    /// </summary>
+    /// <remarks>
+    /// The one response in either host that serialises straight to <c>Response.Body</c> rather than
+    /// returning an <c>IResult</c>, so it never passes through <c>JsonResults</c> — and therefore could not
+    /// be seen by the survey of <c>Results.Ok</c> / <c>Results.Json</c> / <c>TypedResults</c> call sites
+    /// that #217 was verified with. The body holds the <c>request_uri</c> handle standing in for the whole
+    /// authorization request; RFC 9126 §2.2's own example response carries the header.
+    /// </remarks>
+    [Fact]
+    public async Task Par_SuccessResponse_CarriesNoStore()
+    {
+        var response = await _client.PostAsync("/connect/par", new FormUrlEncodedContent(new Dictionary<string, string>
+        {
+            ["client_id"] = ProtocolTestHost.SpaClientId,
+            ["response_type"] = "code",
+            ["redirect_uri"] = ProtocolTestHost.SpaRedirectUri,
+            ["scope"] = "openid",
+            ["code_challenge"] = "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM",
+            ["code_challenge_method"] = "S256",
+        }));
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        Assert.Equal("no-store", response.Headers.CacheControl?.ToString());
+    }
+
+    private Task<string> MintAccessTokenAsync() => MintAccessTokenAsync("openid profile email");
+
+    private async Task<string> MintAccessTokenAsync(string scope)
     {
         var login = await _client.GetAsync("/test-login");
         Assert.Equal(HttpStatusCode.NoContent, login.StatusCode);
@@ -228,7 +290,7 @@ public sealed class ProtocolHostOAuthResidualTests : IAsyncLifetime
         var authorizeUrl =
             $"/connect/authorize?client_id={ProtocolTestHost.SpaClientId}&response_type=code" +
             $"&redirect_uri={Uri.EscapeDataString(ProtocolTestHost.SpaRedirectUri)}" +
-            $"&scope={Uri.EscapeDataString("openid profile email")}&state=xyz" +
+            $"&scope={Uri.EscapeDataString(scope)}&state=xyz" +
             $"&code_challenge={challenge}&code_challenge_method=S256";
 
         var authorizeResponse = await _client.GetAsync(authorizeUrl);
@@ -460,6 +522,95 @@ public sealed class ServerHostOAuthResidualTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.OK, revokeResponse.StatusCode);
 
         Assert.True(await _factory.RevokedTokenStore.IsRevokedAsync(accessJti));
+    }
+
+    /// <summary>
+    /// This host's scope refusal carries the challenge, and agrees with the Protocol host.
+    /// </summary>
+    /// <remarks>
+    /// The status was already right; the header was missing, so a client could not tell a scope refusal
+    /// from any other 403 — while the Protocol host answered the identical condition with 401
+    /// <c>invalid_token</c>. Same product, same condition, two wrong answers, and the divergence was the
+    /// part neither finding named.
+    /// </remarks>
+    [Fact]
+    public async Task Userinfo_TokenWithoutOpenidScope_Is403InsufficientScope()
+    {
+        // A token for a real subject, minted with a scope set that omits openid. The admin
+        // client-credentials token will not do: it has no subject, so userinfo refuses it with 401
+        // before the scope gate is reached, and the test would pass on the wrong rejection.
+        var adminToken = await _factory.GetAdminTokenAsync(_client);
+        var user = await _factory.SeedTestUserAsync(email: "no-openid@example.com");
+
+        var mintRequest = new HttpRequestMessage(
+            HttpMethod.Post,
+            $"/api/v1/token?clientId={AuthagonalTestFactory.TestClientId}&userId={user.Id}" +
+            $"&scopes={Uri.EscapeDataString("profile")}");
+        mintRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", adminToken);
+        var mintResponse = await _client.SendAsync(mintRequest);
+        Assert.Equal(HttpStatusCode.OK, mintResponse.StatusCode);
+        var accessToken = (await mintResponse.Content.ReadFromJsonAsync<JsonElement>())
+            .GetProperty("access_token").GetString()!;
+
+        var request = new HttpRequestMessage(HttpMethod.Get, "/connect/userinfo");
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
+        var response = await _client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+        var challenge = Assert.Single(response.Headers.WwwAuthenticate);
+        Assert.Equal("Bearer", challenge.Scheme);
+        Assert.Contains("error=\"insufficient_scope\"", challenge.Parameter);
+    }
+
+    /// <summary>
+    /// The device-authorization response is a credential pair, so it is uncacheable.
+    /// </summary>
+    /// <remarks>
+    /// <c>device_code</c> redeems for tokens and <c>user_code</c> is what the user types to approve, so an
+    /// intermediary caching this hands the next caller a live authorization. RFC 8628 does not restate
+    /// RFC 6749 §5.1, which is presumably why the sweep for #217 passed over it.
+    /// </remarks>
+    [Fact]
+    public async Task DeviceAuthorization_Response_CarriesNoStore()
+    {
+        var response = await PostDeviceAuthorizationAsync();
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.True(response.Headers.CacheControl!.NoStore);
+    }
+
+    /// <summary>
+    /// The dynamic-registration response carries the only plaintext copy of the client secret.
+    /// </summary>
+    /// <remarks>
+    /// RFC 7591 §3.2.1 makes <c>Cache-Control: no-store</c> a MUST on this response for that reason. It is
+    /// the same class as the token-endpoint responses #217 named, on a response nobody classified as a
+    /// token response.
+    /// </remarks>
+    [Fact]
+    public async Task DynamicRegistration_Response_CarriesNoStore()
+    {
+        await using var factory = new AuthagonalTestFactory
+        {
+            ConfigureAuthOptions = o => o.DynamicClientRegistrationEnabled = true,
+        };
+        await factory.SeedTestDataAsync();
+        var client = factory.CreateClient(new() { AllowAutoRedirect = false });
+
+        var response = await client.PostAsJsonAsync("/connect/register", new
+        {
+            client_name = "Cache Test App",
+            redirect_uris = new[] { "https://app.example/cb" },
+            grant_types = new[] { "authorization_code" },
+            token_endpoint_auth_method = "client_secret_basic",
+            scope = "openid",
+        });
+
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        // Non-vacuity: the response really does carry a secret, which is why the header matters.
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.False(string.IsNullOrEmpty(body.GetProperty("client_secret").GetString()));
+        Assert.True(response.Headers.CacheControl!.NoStore);
     }
 
     // ── Helpers ─────────────────────────────────────────────────────

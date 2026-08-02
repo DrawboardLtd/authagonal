@@ -46,12 +46,28 @@ internal static class JsonResults
     /// </remarks>
     public static IResult NoStore(IResult inner) => new NoStoreResult(inner);
 
+    /// <summary>
+    /// The same headers, for a handler that writes to the response itself instead of returning an
+    /// <see cref="IResult"/>.
+    /// </summary>
+    /// <remarks>
+    /// One such handler exists — the PAR success path serialises straight to <c>Response.Body</c> — and it
+    /// is the reason this overload does: a response built without the helpers is invisible to any survey
+    /// of them, which is how it kept its missing <c>no-store</c> through a fix that was verified by
+    /// grepping for <c>Results.Ok</c> / <c>Results.Json</c> / <c>TypedResults</c>. Prefer
+    /// <see cref="NoStore(IResult)"/>; reach for this only when there is no result to wrap.
+    /// </remarks>
+    public static void ApplyNoStore(HttpResponse response)
+    {
+        response.Headers.CacheControl = "no-store";
+        response.Headers.Pragma = "no-cache";
+    }
+
     private sealed class NoStoreResult(IResult inner) : IResult
     {
         public Task ExecuteAsync(HttpContext httpContext)
         {
-            httpContext.Response.Headers.CacheControl = "no-store";
-            httpContext.Response.Headers.Pragma = "no-cache";
+            ApplyNoStore(httpContext.Response);
             return inner.ExecuteAsync(httpContext);
         }
     }

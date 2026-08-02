@@ -386,7 +386,12 @@ public static class ClientRegistrationEndpoint
             TokenEndpointAuthMethod = authMethod,
         };
 
-        return TypedResults.Json(response, AuthagonalJsonContext.Default.ClientRegistrationResponse, statusCode: 201);
+        // no-store, because this body carries the generated client_secret in plaintext — the only time it
+        // is ever transmitted. RFC 7591 §3.2.1 makes the header a MUST on the registration response for
+        // exactly that reason, and it was the same omission as the token-endpoint responses #217 named,
+        // on a response nobody thought of as a token response.
+        return JsonResults.NoStore(
+            TypedResults.Json(response, AuthagonalJsonContext.Default.ClientRegistrationResponse, statusCode: 201));
     }
 
     /// <summary>

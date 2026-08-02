@@ -106,6 +106,14 @@ internal static class PushedAuthorizationEndpoint
 
             httpContext.Response.StatusCode = StatusCodes.Status201Created;
             httpContext.Response.ContentType = "application/json";
+            // No-store, and set here because this path writes to the response stream directly instead of
+            // returning an IResult — so it never passes through JsonResults, and a survey of
+            // Results.Ok / Results.Json / TypedResults call sites cannot see it. That is exactly how it
+            // was missed: the fix for #217 was verified by grepping for the helpers, and the one PAR
+            // response that matters is not built with them. RFC 9126 §2.2's own example carries
+            // Cache-Control: no-cache, no-store, because the body holds the request_uri handle that
+            // stands in for the whole authorization request.
+            JsonResults.ApplyNoStore(httpContext.Response);
             await JsonSerializer.SerializeAsync(
                 httpContext.Response.Body,
                 response,
