@@ -41,25 +41,13 @@ internal sealed class ProtocolSeedService(
 
         foreach (var descriptor in protocolOptions.Clients)
         {
-            // Skip the whole entry rather than silently dropping the scope: a seed asking for this is
-            // a misconfiguration the operator needs to see, not one to paper over.
-            if (AdminScopeReservation.Grants(descriptor.AllowedScopes, adminScope))
+            // One policy, shared with the Server host's ClientSeedService — see ClientSeedPolicy for why the
+            // classes stay two and the rule becomes one. Skip the whole entry rather than silently dropping
+            // the offending field: a seed asking for this is a misconfiguration the operator needs to see.
+            if (Core.Services.ClientSeedPolicy.Reject(
+                    descriptor.AllowedScopes, descriptor.Audiences, adminScope) is { } refusal)
             {
-                logger.LogError(
-                    "Refusing to seed OIDC client {ClientId}: it requests the reserved administrative scope " +
-                    "'{Scope}'. No client may hold it — a client that did could mint admin tokens indefinitely.",
-                    descriptor.ClientId, adminScope);
-                continue;
-            }
-
-            // A scope entry containing whitespace is not one scope: it expands into several in the
-            // space-delimited `scope` claim, which is exactly how the reservation above gets bypassed.
-            if (AdminScopeReservation.FindMalformedScope(descriptor.AllowedScopes) is { } malformed)
-            {
-                logger.LogError(
-                    "Refusing to seed OIDC client {ClientId}: scope entry '{Scope}' is not a single scope " +
-                    "token. Scope names cannot contain whitespace — list each scope separately.",
-                    descriptor.ClientId, malformed);
+                logger.LogError("Refusing to seed OIDC client {ClientId}: {Reason}.", descriptor.ClientId, refusal);
                 continue;
             }
 
@@ -151,22 +139,12 @@ internal sealed class ProtocolSeedService(
         // "every surface that creates a client (dynamic registration, the admin API, seed configuration)
         // does accept audiences".
         //
-        // Refused at seed time rather than clamped: a descriptor that names a bad audience is a
-        // configuration error, and the alternative is a client that quietly does not mean what its
-        // configuration says.
-        if (Core.Services.ResourceAudiencePolicy.RejectAudiences(d.Audiences) is { } audienceError)
-            throw new InvalidOperationException(
-                $"OidcClients:{d.ClientId} has an invalid audiences list: {audienceError}");
-
-        // Only when the descriptor actually names some. A descriptor with an empty list is indistinguishable
-        // from one that never mentioned audiences, so setting the flag there would silently forbid every
-        // seeded client from naming a resource — a behaviour change on upgrade for deployments that work
-        // today. Declaring by naming is the same rule the admin API applies.
-        // Only overwritten when the descriptor NAMES some, the same rule as the secret above. Writing the
-        // list unconditionally reverted an admin PUT on every restart — and because AudiencesDeclared is
-        // monotonic, the flag survived while the list did not, leaving a client that declares audiences and
-        // has none: one that may name no resource at all.
-        if (d.Audiences.Count > 0)
+        // Validated already, by ClientSeedPolicy before this descriptor was accepted — so this is only the
+        // write. Only overwritten when the descriptor NAMES some, the same rule as the secret above: writing
+        // the list unconditionally reverted an admin PUT on every restart, and because AudiencesDeclared is
+        // monotonic the flag survived while the list did not, leaving a client that declares audiences and
+        // has none — one that may name no resource at all.
+        if (Core.Services.ClientSeedPolicy.Declares(d.Audiences))
         {
             client.Audiences = d.Audiences;
             client.AudiencesDeclared = true;

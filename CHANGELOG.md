@@ -207,6 +207,18 @@ adjacent defect the audit found while checking a finding it had already passed.
   by tests: it belongs on a target a *registrant* chose and needs an operator escape hatch on a target the
   *operator* chose.
 
+- **The Server host's `Clients:*:Audiences` seed setting is new, and both seeders now apply one policy.**
+  There are two seeder classes because `ProtocolSeedService` ships in `Authagonal.Protocol`, which is embedded
+  without `Authagonal.Server` — so the classes stay two and the rule became one (`ClientSeedPolicy`). Both now
+  refuse the administrative scope, a scope entry that is not a single token, and an audience list that is not
+  within the documented caps and absolute; both mark a client as having declared its audiences when it names
+  any. Previously the audience half existed in one seeder and not the other, and the Server host's had no
+  audiences field at all, which made configuration the one write path that could still put an unbounded or
+  non-absolute value into a signed token's `aud`.
+
+  A malformed audiences list is now logged at `Error` and that client is SKIPPED, rather than throwing and
+  taking the host down — matching what both seeders already did for the two scope rules.
+
 - **`/connect/userinfo` answered the same request two different ways depending on which host served it.** A
   valid access token without the `openid` scope got `403 insufficient_scope` from `Authagonal.Protocol` and
   `401 invalid_token` from `Authagonal.Server`, because the Server host resolved the subject and looked up the

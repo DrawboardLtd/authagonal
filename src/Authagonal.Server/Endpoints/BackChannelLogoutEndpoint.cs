@@ -74,15 +74,11 @@ public static class BackChannelLogoutEndpoint
             // primitive; checking it at the sink is what makes that true of every URI in the store rather
             // than of the ones one writer happened to police. No loopback exception: the request is made
             // by the server, so loopback is the server's own network namespace.
-            if (!OutboundUrl.IsSafe(client.BackChannelLogoutUri))
-            {
-                failed++;
-                logger.LogWarning(
-                    "Back-channel logout for client {ClientId} refused: the registered URI is not a " +
-                    "permitted outbound target", clientId);
-                continue;
-            }
-
+            //
+            // The check is no longer written here as a separate statement. It travels inside
+            // SafeOutboundHttp.SendAsync below, so it cannot be left behind by an edit that moves or adds a
+            // send — which is what every finding in this area turned out to be. A refusal surfaces as the
+            // InvalidOperationException the catch already handles.
             try
             {
                 var logoutToken = CreateLogoutToken(
@@ -99,7 +95,10 @@ public static class BackChannelLogoutEndpoint
                     ["logout_token"] = logoutToken
                 });
 
-                var response = await httpClient.PostAsync(client.BackChannelLogoutUri, content, ct);
+                using var logoutRequest = new HttpRequestMessage(
+                    HttpMethod.Post, client.BackChannelLogoutUri) { Content = content };
+                var response = await Services.SafeOutboundHttp.SendAsync(
+                    httpClient, logoutRequest, logger, ct);
 
                 if (response.IsSuccessStatusCode)
                 {

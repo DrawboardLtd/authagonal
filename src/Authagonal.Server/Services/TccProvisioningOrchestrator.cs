@@ -421,7 +421,6 @@ public sealed class TccProvisioningOrchestrator(
     {
         var client = httpClientFactory.CreateClient("Provisioning");
         var url = app.CallbackUrl.TrimEnd('/') + $"/users/{Uri.EscapeDataString(userId)}";
-        RefuseUnsafeCallback(url);
 
         using var request = new HttpRequestMessage(HttpMethod.Delete, url);
         if (!string.IsNullOrWhiteSpace(app.ApiKey))
@@ -429,7 +428,12 @@ public sealed class TccProvisioningOrchestrator(
 
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         cts.CancelAfter(TimeSpan.FromSeconds(ShortPhaseTimeoutSeconds));
-        using var response = await client.SendAsync(request, cts.Token);
+        // Through SafeOutboundHttp, so the guard and the send are one call. This was
+        // RefuseUnsafeCallback(url) several lines above a raw client.SendAsync — a shape where nothing
+        // says the check was meant to cover this send, and where adding a second send or changing which
+        // url it uses silently leaves the guard behind. That is what every finding in this area was.
+        using var response = await SafeOutboundHttp.SendAsync(
+            client, request, logger, cts.Token, allowlist);
         logger.LogInformation(
             "Deprovision user {UserId}: HTTP {StatusCode}", userId, (int)response.StatusCode);
     }
@@ -449,25 +453,9 @@ public sealed class TccProvisioningOrchestrator(
 
     // ── HTTP helpers ──────────────────────────────────────────────────
 
-    /// <summary>
-    /// Applies the SSRF guard to the URL this process is about to request, every time it requests one.
-    /// </summary>
-    /// <remarks>
-    /// The admin endpoint validates a callbackUrl on the way in, which covers only the values that
-    /// arrive that way. A restore, a storage migration, a hand-edited table row or a
-    /// <c>ProvisioningApps:*</c> configuration entry all reach <c>IProvisioningAppProvider</c> without
-    /// passing it — and these calls fire on the signup path with no operator watching, against
-    /// <c>/try</c>, <c>/confirm</c>, <c>/cancel</c> and deprovision alike. Validating where the request
-    /// is actually made is what makes the guard independent of how the value got here.
-    /// </remarks>
-    private void RefuseUnsafeCallback(string url)
-    {
-        if (!OutboundUrl.IsSafe(url, allowlist: allowlist))
-            throw new HttpRequestException(
-                "Provisioning callback URL is not permitted: it is not an http(s) URL, or it names an " +
-                "internal address. Reconfigure the app's callbackUrl, or — if the target is an internal " +
-                "destination you deploy on purpose — list it in Auth:AllowedInternalTargets.");
-    }
+    // There is deliberately no separate "check this callback URL" method any more. It existed, every send
+    // site called it, and that was still the wrong shape: a checker that can be called is a checker that can
+    // be forgotten, and the guard now travels inside SafeOutboundHttp.SendAsync where no send can miss it.
 
     [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("Trimming", "IL2026", Justification = "Provisioning payloads are polymorphic external contracts")]
     private async Task<T?> PostAsync<T>(
@@ -501,7 +489,6 @@ public sealed class TccProvisioningOrchestrator(
     private async Task<HttpResponseMessage> SendPostAsync(
         AppConfig app, string url, object payload, TimeSpan timeout, CancellationToken ct)
     {
-        RefuseUnsafeCallback(url);
         var client = httpClientFactory.CreateClient("Provisioning");
         using var request = new HttpRequestMessage(HttpMethod.Post, url)
         {
@@ -516,7 +503,8 @@ public sealed class TccProvisioningOrchestrator(
 
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         cts.CancelAfter(timeout);
-        return await client.SendAsync(request, cts.Token);
+        // As on the deprovision path: the guard travels with the send.
+        return await SafeOutboundHttp.SendAsync(client, request, logger, cts.Token, allowlist);
     }
 
     // ── DTOs ──────────────────────────────────────────────────────────

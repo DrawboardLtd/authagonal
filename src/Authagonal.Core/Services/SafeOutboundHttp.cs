@@ -126,6 +126,38 @@ public static class SafeOutboundHttp
     }
 
     /// <summary>
+    /// Sends a prepared request with <see cref="OutboundUrl"/> applied to its target — so the check and the
+    /// send are ONE call and cannot be separated.
+    /// </summary>
+    /// <remarks>
+    /// The GET helper above exists because a document fetch has to re-validate every redirect hop. A POST does
+    /// not follow redirects at all (the guarded handlers set <c>AllowAutoRedirect = false</c>, and silently
+    /// re-aiming a POST at a new target would be wrong regardless), so this is the narrower job: refuse the
+    /// URL, then send.
+    /// <para>
+    /// It exists so that the delivery paths — provisioning callbacks, back-channel logout — stop being
+    /// <c>IsSafe(url)</c> followed some lines later by <c>client.PostAsync(url, …)</c>. That shape is what
+    /// lets the two drift: a later edit moves the send, adds a second send, or changes which url the send
+    /// uses, and nothing about the code says the check was meant to cover it. Every one of the four findings
+    /// in this area was an instance of exactly that. One call cannot come apart.
+    /// </para>
+    /// </remarks>
+    /// <exception cref="InvalidOperationException">The request's target failed the SSRF guard.</exception>
+    public static Task<HttpResponseMessage> SendAsync(
+        HttpClient client, HttpRequestMessage request, ILogger? logger = null,
+        CancellationToken ct = default, OutboundAllowlist? allowlist = null)
+    {
+        var target = request.RequestUri?.ToString();
+        if (!OutboundUrl.IsSafe(target, allowlist: allowlist))
+        {
+            logger?.LogWarning("Refusing outbound request to {Url}: blocked by the SSRF guard", target);
+            throw new InvalidOperationException("The requested URL is not permitted.");
+        }
+
+        return client.SendAsync(request, ct);
+    }
+
+    /// <summary>
     /// True when <paramref name="to"/> is plaintext http and <paramref name="from"/> was https.
     /// </summary>
     /// <remarks>

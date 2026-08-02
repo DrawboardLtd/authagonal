@@ -161,6 +161,12 @@ public static class EndSessionEndpoint
                     //
                     // No allowLoopback here, unlike the front-channel loop: this request is made BY the
                     // server, so loopback is the server's own network namespace rather than the user's.
+                    // A DIAGNOSTIC, not the guard. Its value is attribution: here the client id is still in
+                    // scope, so a refusal names the client whose registration is wrong. The guard itself now
+                    // travels with the send below — which matters because the send happens in a
+                    // fire-and-forget task, in another scope, at another time. That is the most separated
+                    // form of check-here-send-there in the tree, and deleting this filter can no longer
+                    // create a hole.
                     if (!Authagonal.Core.Services.OutboundUrl.IsSafe(c.BackChannelLogoutUri))
                     {
                         logger.LogWarning(
@@ -194,7 +200,13 @@ public static class EndSessionEndpoint
                         {
                             var client = httpClientFactory.CreateClient("BackChannelLogout");
                             client.Timeout = TimeSpan.FromSeconds(10);
-                            await client.PostAsync(uri, new FormUrlEncodedContent(new Dictionary<string, string> { ["logout_token"] = token }));
+                            using var logoutRequest = new HttpRequestMessage(HttpMethod.Post, uri)
+                            {
+                                Content = new FormUrlEncodedContent(
+                                    new Dictionary<string, string> { ["logout_token"] = token }),
+                            };
+                            using var _ = await Services.SafeOutboundHttp.SendAsync(
+                                client, logoutRequest, logger, CancellationToken.None);
                         }
                         catch (Exception ex)
                         {

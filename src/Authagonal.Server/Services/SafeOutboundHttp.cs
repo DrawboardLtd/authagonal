@@ -14,6 +14,12 @@ public static class SafeOutboundHttp
     /// <inheritdoc cref="Authagonal.Core.Services.SafeOutboundHttp.MaxResponseBytes"/>
     public const int MaxResponseBytes = Authagonal.Core.Services.SafeOutboundHttp.MaxResponseBytes;
 
+    /// <inheritdoc cref="Authagonal.Core.Services.SafeOutboundHttp.SendAsync"/>
+    public static Task<HttpResponseMessage> SendAsync(
+        HttpClient client, HttpRequestMessage request, ILogger? logger = null,
+        CancellationToken ct = default, Authagonal.Core.Services.OutboundAllowlist? allowlist = null) =>
+        Authagonal.Core.Services.SafeOutboundHttp.SendAsync(client, request, logger, ct, allowlist);
+
     /// <inheritdoc cref="Authagonal.Core.Services.SafeOutboundHttp.GetStringAsync"/>
     public static Task<string> GetStringAsync(
         HttpClient client, string url, ILogger? logger = null, CancellationToken ct = default,

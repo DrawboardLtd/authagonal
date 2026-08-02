@@ -54,28 +54,15 @@ public sealed class ClientSeedService(
             // written, so a preserved list is checked on every boot too.
             var seededScopes = seed.Scopes ?? seed.AllowedScopes ?? existing?.AllowedScopes ?? [];
 
-            // The admin API and dynamic registration both refuse to grant a client the administrative
-            // scope; seeding applied no check at all, so configuration could hand a client the very thing
-            // those two paths exist to withhold. Skip the whole entry rather than silently dropping the
-            // scope — a seed that asks for this is a misconfiguration the operator needs to see.
+            // One policy, shared with Authagonal.Protocol's ProtocolSeedService — see ClientSeedPolicy for
+            // why the classes stay two and the rule becomes one. Both the scope rules and the audience rules
+            // live there now; this seeder had none of the audience half, and configuration was therefore the
+            // one write path that could still put an unbounded or non-absolute value into a signed `aud`.
             var adminScope = configuration["AdminApi:Scope"] ?? AdminScopeReservation.DefaultAdminScope;
-            if (AdminScopeReservation.Grants(seededScopes, adminScope))
+            var seededAudiences = seed.Audiences ?? existing?.Audiences;
+            if (ClientSeedPolicy.Reject(seededScopes, seededAudiences, adminScope) is { } refusal)
             {
-                logger.LogError(
-                    "Refusing to seed client {Id}: it requests the reserved administrative scope '{Scope}'. " +
-                    "No client may hold it — a client_credentials client that did could mint admin tokens indefinitely.",
-                    clientId, adminScope);
-                continue;
-            }
-
-            // A scope entry containing whitespace expands into several scopes downstream, which is how the
-            // reservation above was bypassed. Reject rather than normalize: the intent is ambiguous.
-            if (AdminScopeReservation.FindMalformedScope(seededScopes) is { } malformed)
-            {
-                logger.LogError(
-                    "Refusing to seed client {Id}: scope entry '{Scope}' is not a single scope token. " +
-                    "Scope names cannot contain whitespace — list each scope separately.",
-                    clientId, malformed);
+                logger.LogError("Refusing to seed client {Id}: {Reason}.", clientId, refusal);
                 continue;
             }
 
@@ -110,18 +97,11 @@ public sealed class ClientSeedService(
             //
             // Validated on the list that will actually be written, and only overwritten when the seed states
             // one, matching every other field here. Declaring by naming, as the admin API does.
-            if (seed.Audiences is { Count: > 0 } seededAudiences)
+            // Validated already, by ClientSeedPolicy above. Only overwritten when the seed states one, like
+            // every other field here — so an admin PUT survives the next restart.
+            if (ClientSeedPolicy.Declares(seed.Audiences))
             {
-                if (Core.Services.ResourceAudiencePolicy.RejectAudiences(seededAudiences) is { } audienceError)
-                {
-                    logger.LogError(
-                        "Refusing to seed client {Id}: {Error}. An audience becomes the `aud` of a signed "
-                        + "token, so it must be an absolute URI within the documented caps.",
-                        clientId, audienceError);
-                    continue;
-                }
-
-                client.Audiences = seededAudiences;
+                client.Audiences = seed.Audiences!;
                 client.AudiencesDeclared = true;
             }
             client.RequirePkce = seed.RequirePkce ?? existing?.RequirePkce ?? true;
