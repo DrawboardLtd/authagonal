@@ -42,32 +42,54 @@ public static class InternalEndpointGuard
     public const string ProxyTrustDeclaredItem = "Authagonal.ProxyTrustDeclared";
 
     /// <summary>
-    /// The client address a per-source quota may be keyed on: the forwarded client IP when the operator
-    /// declared the proxy that supplies it, and the raw peer address otherwise.
+    /// The one key every per-source quota in this server is keyed on: the forwarded client IP when the
+    /// operator declared the proxy that supplies it, and the raw peer address otherwise.
     /// </summary>
     /// <remarks>
-    /// <c>Connection.RemoteIpAddress</c> is not that address. With no proxy declared, <c>UseAuthagonal</c>
+    /// <c>Connection.RemoteIpAddress</c> is not that key. With no proxy declared, <c>UseAuthagonal</c>
     /// still honours <c>X-Forwarded-For</c> from the loopback/private ranges — a deliberate guess that
-    /// beats the framework's honour-it-from-anybody default for logging — so any caller whose immediate
-    /// peer sits in those ranges and does not append its own XFF (an L4 load balancer, a docker bridge,
-    /// pod-to-pod) writes the value the rewrite lands on. A limiter keyed on it therefore hands the
-    /// attacker a fresh bucket per request, which is the same as having no limiter: registration flooding
-    /// and DCR client-record flooding become unbounded from one host.
+    /// beats the framework's honour-it-from-anybody default for logging — so a caller whose immediate peer
+    /// sits in those ranges and behind which nothing appends its own XFF (an L4 load balancer, a docker
+    /// bridge, pod-to-pod, or the attacker being on that network) writes the value the rewrite lands on. A
+    /// limiter keyed on it hands that caller a fresh bucket per request, which is the same as having no
+    /// limiter: registration flooding and DCR client-record flooding become unbounded from one host.
     /// <para>
     /// The declared case is different in kind, not in degree: there the header can only have been set by
-    /// the named proxy, so it is evidence rather than a guess. That is the same line
-    /// <c>UseAuthagonal</c> already draws for <c>X-Forwarded-Proto</c>, and the reason the fallback ranges
-    /// are documented as never load-bearing for a security decision — a quota is one.
+    /// the named proxy, so it is evidence rather than a guess. That is the same line <c>UseAuthagonal</c>
+    /// already draws for <c>X-Forwarded-Proto</c>, and the reason the fallback ranges are documented as
+    /// never load-bearing for a security decision — a quota is one.
+    /// </para>
+    ///
+    /// <para>
+    /// <b>What the undeclared case costs, and why it is not fixed here.</b> Behind an L7 proxy with nothing
+    /// declared, the raw peer is that proxy for every request, so every client in the world shares one
+    /// bucket and any anonymous caller can spend the whole budget for everybody. That is a real
+    /// availability defect and it is tempting to fix it by folding the forwarded value back into the key —
+    /// which reopens the bypass above exactly, because behind an L4 path the forwarded value is the
+    /// attacker's own header. The two requirements are in genuine conflict and NOTHING OBSERVABLE
+    /// DISTINGUISHES THEM: whether the rightmost forwarded hop was written by a proxy or by the caller is
+    /// precisely what the operator's declaration states and what the server cannot otherwise know. So the
+    /// resolution is configuration, not code — <c>UseAuthagonal</c> warns at startup, naming this
+    /// consequence, and a declared proxy makes the quota per-client and correct. Do not "fix" this by
+    /// re-keying; fix the deployment.
+    /// </para>
+    ///
+    /// <para>
+    /// Every source-keyed limiter must come through here. Three of them did not, and each was wrong in its
+    /// own way: login and the SAML ACS read <c>RawPeerAddress</c> unconditionally, so they collapsed into
+    /// one global bucket even for an operator who HAD declared their proxy — a 30-per-5-minutes login
+    /// budget for an entire deployment, spendable by anyone — and forgot-password read
+    /// <c>Connection.RemoteIpAddress</c> unconditionally, so at that site the bypass above was never closed
+    /// at all. Sibling call sites of one fix, which is why there is now one function and no alternatives.
     /// </para>
     /// </remarks>
-    public static string TrustedClientAddress(HttpContext httpContext)
+    public static string SourceQuotaKey(HttpContext httpContext)
     {
         if (httpContext.Items.TryGetValue(ProxyTrustDeclaredItem, out var declared) && declared is true)
             return httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
 
-        // Undeclared: fall back to the peer we actually observed. Behind an L7 proxy every client
-        // collapses into one bucket, which throttles harder than intended rather than not at all — and
-        // the operator fixes it by declaring the proxy, which is what makes the header trustworthy.
+        // Undeclared: fall back to the peer we actually observed. See the remarks — this is the shared
+        // bucket, and declaring the proxy is what resolves it.
         return RawPeerAddress(httpContext)?.ToString() ?? "unknown";
     }
 

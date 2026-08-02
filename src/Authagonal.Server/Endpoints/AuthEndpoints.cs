@@ -85,10 +85,16 @@ public static class AuthEndpoints
         // request costs a full PBKDF2, making this endpoint a CPU amplifier as well as an unthrottled
         // credential oracle.
         //
-        // Keyed on the RAW peer address, captured before forwarded headers are applied, so a spoofed
+        // Keyed through SourceQuotaKey, the one place that decides what "source" means, so a spoofed
         // X-Forwarded-For cannot mint a fresh budget per request.
+        //
+        // This read RawPeerAddress directly, which is the TCP peer ALWAYS — so behind any reverse proxy,
+        // declared or not, every client in the deployment shared one bucket. Thirty failed logins from
+        // anyone bought a 429 for every user of the server, repeatable forever, on a correctly configured
+        // deployment. The sibling call sites of the forged-address fix each got this wrong differently;
+        // there is now one function and no alternatives.
         var lo = authOptions.Value;
-        var peer = Services.Cluster.InternalEndpointGuard.RawPeerAddress(httpContext)?.ToString() ?? "unknown";
+        var peer = Services.Cluster.InternalEndpointGuard.SourceQuotaKey(httpContext);
         if (await rateLimiter.IsRateLimitedAsync(
                 $"login|ip|{peer}", lo.MaxLoginAttemptsPerIp, TimeSpan.FromMinutes(lo.LoginWindowMinutes), ct))
         {
@@ -481,7 +487,7 @@ public static class AuthEndpoints
         // cannot choose: Connection.RemoteIpAddress carries whatever X-Forwarded-For said whenever the
         // immediate peer falls in the default-trusted private ranges, so keying on it let one host mint
         // a fresh bucket per request and the cap never bound anything.
-        var ip = Services.Cluster.InternalEndpointGuard.TrustedClientAddress(httpContext);
+        var ip = Services.Cluster.InternalEndpointGuard.SourceQuotaKey(httpContext);
         var ao = authOptions.Value;
         var rateLimited = await rateLimiter.IsRateLimitedAsync($"register|{ip}", ao.MaxRegistrationsPerIp, TimeSpan.FromMinutes(ao.RegistrationWindowMinutes), ct);
         if (rateLimited)
@@ -1123,7 +1129,11 @@ public static class AuthEndpoints
         // not the missing bound either; it is also an outbound HTTP call per request, which is itself
         // worth throttling in front of. Register has always had this cap; forgot-password is the same
         // primitive without even needing an account.
-        var sourceIp = httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+        // Through SourceQuotaKey, not Connection.RemoteIpAddress. That value is whatever X-Forwarded-For
+        // said whenever the immediate peer falls in the default-trusted private ranges, so this cap — the
+        // only bound on walking an address list — was mintable per request by varying one header. The
+        // registration and DCR limiters were fixed for exactly that; this site was missed.
+        var sourceIp = Services.Cluster.InternalEndpointGuard.SourceQuotaKey(httpContext);
         var resetOpts = authOptions.Value;
         if (await rateLimiter.IsRateLimitedAsync(
                 $"pwreset|from|{sourceIp}", resetOpts.MaxPasswordResetsPerIp,

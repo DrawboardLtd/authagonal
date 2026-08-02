@@ -133,8 +133,11 @@ public static class SamlEndpoints
         // amplifier and the request budget an adaptive chosen-ciphertext attack spends — the padding-oracle
         // and Bleichenbacher attacks on the EncryptedAssertion path need ~10^4-10^5 probes, so a per-source
         // ceiling is a real cost increase even with the error responses now collapsed to one constant.
-        // Keyed on the raw peer, not a forwarded header, so it cannot be evaded by spoofing X-Forwarded-For.
-        var acsPeer = Services.Cluster.InternalEndpointGuard.RawPeerAddress(httpContext)?.ToString() ?? "unknown";
+        // Keyed through SourceQuotaKey, so it cannot be evaded by spoofing X-Forwarded-For — and so it is
+        // per-client wherever the operator declared their proxy. Reading RawPeerAddress directly, as this
+        // did, yields the TCP peer always: behind any reverse proxy the whole deployment shared one 60/min
+        // bucket per connection, so 60 probes from anyone locked every user of that connection out of SSO.
+        var acsPeer = Services.Cluster.InternalEndpointGuard.SourceQuotaKey(httpContext);
         if (await rateLimiter.IsRateLimitedAsync($"saml-acs|{connectionId}|{acsPeer}", 60, TimeSpan.FromMinutes(1), ct))
         {
             logger.LogWarning("SAML ACS rate limit hit for connection {ConnectionId}", connectionId);

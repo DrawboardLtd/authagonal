@@ -62,7 +62,7 @@ public static class ClientRegistrationEndpoint
         // Rate-limit anonymous registration to prevent client-record flooding. Keyed on the address the
         // caller cannot choose — Connection.RemoteIpAddress is the forwarded value whenever the immediate
         // peer sits in the default-trusted private ranges, which made this bucket per-request.
-        var ip = Services.Cluster.InternalEndpointGuard.TrustedClientAddress(httpContext);
+        var ip = Services.Cluster.InternalEndpointGuard.SourceQuotaKey(httpContext);
         if (await rateLimiter.IsRateLimitedAsync($"dcr|{ip}", 10, TimeSpan.FromMinutes(60), ct))
             return TypedResults.Json(
                 new ErrorInfoResponse { Error = "rate_limited", ErrorDescription = "Too many registration attempts. Try again later." },

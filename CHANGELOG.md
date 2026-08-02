@@ -194,6 +194,29 @@ adjacent defect the audit found while checking a finding it had already passed.
   by tests: it belongs on a target a *registrant* chose and needs an operator escape hatch on a target the
   *operator* chose.
 
+- **Every per-source quota was shared by the whole deployment on three of five endpoints.** Login and the
+  SAML ACS keyed their rate limiter on the raw TCP peer address, which behind a reverse proxy is that proxy
+  for every request — so the login cap (30 attempts per 5 minutes by default) was a single budget for every
+  user of the server, and any anonymous caller could spend it and hold everyone at `429`, repeatably. This
+  was true whether or not the proxy was declared, i.e. on a correctly configured deployment. Forgot-password
+  had the opposite defect: it keyed on `Connection.RemoteIpAddress`, which is whatever `X-Forwarded-For` said
+  whenever the immediate peer sits in the default-trusted private ranges, so its cap — the only bound on a
+  caller walking an address list and having this server mail each one from your verified sending domain —
+  could be minted afresh per request by varying one header. Registration and dynamic client registration
+  already did the right thing; these three were sibling call sites of that fix.
+
+  All five now key through `InternalEndpointGuard.SourceQuotaKey`, which decides on one rule: the forwarded
+  client IP when the operator declared the proxy that supplies it, and the raw peer otherwise. A convention
+  test fails the build on the next site that derives a quota source any other way, because no behavioural
+  test can catch it — the correct and the broken key are indistinguishable in a host with no
+  forwarded-headers pipeline.
+
+  **If you have not declared your proxy, those quotas are still shared, and that is not fixable in code.**
+  Whether the rightmost forwarded hop was written by a proxy or by the caller is exactly what
+  `ForwardedHeaders:KnownNetworks` / `KnownProxies` states and what nothing else can reveal; folding the
+  forwarded value in regardless would restore the per-request bypass above. The startup warning for an
+  undeclared proxy now names this consequence explicitly instead of talking only about `X-Forwarded-Proto`.
+
 - **The https requirement on an OIDC connection stopped at the discovery URL.** The document is the trust
   anchor, so it was required to be https and bound to its own `issuer` — and then the endpoints it *named*
   were re-validated for SSRF only. The SSRF guard permits `http` by design, because scheme policy belongs to

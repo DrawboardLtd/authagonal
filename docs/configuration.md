@@ -505,6 +505,12 @@ Authagonal keys rate limiting and account lockout on the client IP, and only emi
 
 That is safe exactly when nothing but the proxy can reach the process, which is the assumption such a deployment is already relying on. Writing it down puts it somewhere it can be reviewed, rather than leaving the library to infer it. If other workloads *can* reach Kestrel directly, they can spoof the scheme and the client IP under this setting — pin the real CIDR instead.
 
+### Undeclared proxy: every per-source quota is shared
+
+Rate limits keyed on the caller's address — login, registration, forgot-password, dynamic client registration, the SAML ACS — need to know which client made the request. Behind a reverse proxy that is the forwarded client IP, and the forwarded client IP is only evidence if you declared the proxy that wrote it. With nothing declared, Authagonal keys those quotas on the peer it actually observes, which behind a proxy is the proxy: **every client shares one budget, and any single caller can spend it for everybody** (the login default is 30 attempts per 5 minutes).
+
+That is deliberate rather than a bug, and it cannot be fixed in the server. The alternative — keying on the forwarded value anyway — hands a caller a fresh budget per request by varying one header, because behind an L4 load balancer the rightmost forwarded hop *is* the caller's own header. Which of the two situations you are in is exactly what the declaration tells the server and nothing else can. Declare the proxy and the quotas become per-client.
+
 > ⚠️ **TLS-terminating proxy required, and it must be declared.** Authagonal must run behind a TLS-terminating reverse proxy (or terminate TLS itself). HSTS (`Strict-Transport-Security`) is only emitted on HTTPS requests, and the OAuth endpoints refuse plaintext requests outright unless `Auth:AllowInsecureHttp` is set — so the proxy must forward `X-Forwarded-Proto: https` **and** be named in `ForwardedHeaders:KnownNetworks` / `ForwardedHeaders:KnownProxies` for HSTS to be sent and `/connect/*` to answer at all. Declaring nothing is the common upgrade failure: the header arrives, nothing is entitled to act on it, and every `/connect/*` request answers 400 on a deployment that genuinely is on TLS. The startup log says so, and so does the refusal body.
 
 ## Outbound fetches (SSRF guard)

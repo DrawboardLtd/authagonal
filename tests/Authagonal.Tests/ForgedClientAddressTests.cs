@@ -26,7 +26,7 @@ public sealed class ForgedClientAddressTests
     /// the peer that was actually observed.
     /// </summary>
     [Fact]
-    public void TrustedClientAddress_withNoDeclaredProxy_usesTheRawPeer()
+    public void SourceQuotaKey_withNoDeclaredProxy_usesTheRawPeer()
     {
         var ctx = new DefaultHttpContext();
         ctx.Items[InternalEndpointGuard.RawPeerAddressItem] = IPAddress.Parse("10.4.0.9");
@@ -34,7 +34,7 @@ public sealed class ForgedClientAddressTests
         // What UseForwardedHeaders left behind after honouring the header.
         ctx.Connection.RemoteIpAddress = IPAddress.Parse("203.0.113.9");
 
-        Assert.Equal("10.4.0.9", InternalEndpointGuard.TrustedClientAddress(ctx));
+        Assert.Equal("10.4.0.9", InternalEndpointGuard.SourceQuotaKey(ctx));
     }
 
     /// <summary>
@@ -42,14 +42,14 @@ public sealed class ForgedClientAddressTests
     /// evidence — and keying on it is what keeps one client from throttling every other client.
     /// </summary>
     [Fact]
-    public void TrustedClientAddress_withADeclaredProxy_usesTheForwardedClient()
+    public void SourceQuotaKey_withADeclaredProxy_usesTheForwardedClient()
     {
         var ctx = new DefaultHttpContext();
         ctx.Items[InternalEndpointGuard.RawPeerAddressItem] = IPAddress.Parse("10.4.0.9");
         ctx.Items[InternalEndpointGuard.ProxyTrustDeclaredItem] = true;
         ctx.Connection.RemoteIpAddress = IPAddress.Parse("203.0.113.9");
 
-        Assert.Equal("203.0.113.9", InternalEndpointGuard.TrustedClientAddress(ctx));
+        Assert.Equal("203.0.113.9", InternalEndpointGuard.SourceQuotaKey(ctx));
     }
 
     /// <summary>
@@ -58,13 +58,13 @@ public sealed class ForgedClientAddressTests
     /// throttles too hard rather than not at all.
     /// </summary>
     [Fact]
-    public void TrustedClientAddress_withNoMiddlewareAndAForgedHeader_failsClosed()
+    public void SourceQuotaKey_withNoMiddlewareAndAForgedHeader_failsClosed()
     {
         var ctx = new DefaultHttpContext();
         ctx.Request.Headers["X-Forwarded-For"] = "203.0.113.9";
         ctx.Connection.RemoteIpAddress = IPAddress.Parse("203.0.113.9");
 
-        Assert.Equal("unknown", InternalEndpointGuard.TrustedClientAddress(ctx));
+        Assert.Equal("unknown", InternalEndpointGuard.SourceQuotaKey(ctx));
     }
 
     // ── End to end, through the real pipeline ────────────────────────

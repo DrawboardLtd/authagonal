@@ -1003,10 +1003,17 @@ public static class AuthagonalExtensions
                     "honoured from the loopback and private ranges ({Networks}) so a public caller cannot forge " +
                     "the client IP — but X-Forwarded-Proto will be honoured from NOBODY, because the scheme " +
                     "decides whether /connect/* answers at all (RFC 6749 §3.1/§3.2), whether cookies are marked " +
-                    "Secure, and whether the absolute URLs this server generates are https. Declare the proxy " +
-                    "that terminates TLS in ForwardedHeaders:KnownNetworks (its CIDR) or " +
-                    "ForwardedHeaders:KnownProxies (its address) — or [\"0.0.0.0/0\", \"::/0\"] if nothing but " +
-                    "that proxy can reach this process, which states the assumption instead of inferring it.",
+                    "Secure, and whether the absolute URLs this server generates are https. AND EVERY " +
+                    "PER-SOURCE QUOTA IS SHARED: with no declared proxy this server cannot tell whether the " +
+                    "forwarded client IP was written by a proxy or by the caller, so it keys login, " +
+                    "registration, forgot-password, dynamic client registration and the SAML ACS on the peer " +
+                    "it actually observes — which behind a reverse proxy is that proxy, for everyone. One " +
+                    "caller can then spend the whole budget for every user (the login default is 30 attempts " +
+                    "per 5 minutes). Declaring the proxy makes those quotas per-client, and is the only thing " +
+                    "that can. Declare the proxy that terminates TLS in ForwardedHeaders:KnownNetworks (its " +
+                    "CIDR) or ForwardedHeaders:KnownProxies (its address) — or [\"0.0.0.0/0\", \"::/0\"] if " +
+                    "nothing but that proxy can reach this process, which states the assumption instead of " +
+                    "inferring it.",
                     string.Join(", ", DefaultTrustedProxyNetworks));
         }
 
