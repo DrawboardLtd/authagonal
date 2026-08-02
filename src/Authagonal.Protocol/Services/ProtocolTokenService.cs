@@ -888,7 +888,14 @@ public sealed class ProtocolTokenService(
         foreach (var scope in scopeList)
         {
             if (!client.AllowedScopes.Contains(scope))
-                throw new InvalidOperationException($"Scope '{scope}' is not allowed for client '{clientId}'");
+                // Typed, so the OAuth error code does not depend on this sentence starting with "Scope '".
+                // It did: TokenGrantHandlers maps the code by matching the message prefix, and only the
+                // token-EXCHANGE handler carried that match — so an undeclared scope on client_credentials
+                // answered invalid_grant where RFC 6749 §5.2 requires invalid_scope, telling a client its
+                // grant was bad when the truth was that it had asked for a scope it does not hold. The
+                // exchange path had the mapping and its sibling did not, which is how it went unnoticed.
+                throw new ProtocolTokenException("invalid_scope",
+                    $"Scope '{scope}' is not allowed for client '{clientId}'");
         }
 
         var resourceList = resources?.Where(r => !string.IsNullOrWhiteSpace(r)).ToList();
@@ -1096,9 +1103,11 @@ public sealed class ProtocolTokenService(
             foreach (var s in requestedScopes)
             {
                 if (!subjectScopes.Contains(s))
-                    throw new InvalidOperationException($"Scope '{s}' exceeds the subject token's scopes");
+                    throw new ProtocolTokenException("invalid_scope",
+                        $"Scope '{s}' exceeds the subject token's scopes");
                 if (!client.AllowedScopes.Contains(s))
-                    throw new InvalidOperationException($"Scope '{s}' is not allowed for client '{clientId}'");
+                    throw new ProtocolTokenException("invalid_scope",
+                        $"Scope '{s}' is not allowed for client '{clientId}'");
             }
             grantedScopes = requestedScopes;
         }

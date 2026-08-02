@@ -229,7 +229,14 @@ public sealed class TokenCustomClaimsTests
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
 
         var body = await response.Content.ReadFromJsonAsync<JsonElement>();
-        Assert.Equal("invalid_grant", body.GetProperty("error").GetString());
+        // invalid_scope, per RFC 6749 §5.2 — not invalid_grant, which this asserted and thereby pinned.
+        //
+        // The code was derived by string-matching the exception message, and only the token-EXCHANGE handler
+        // carried the match for scope failures, so client_credentials fell through to the generic answer.
+        // invalid_grant tells a client its grant is bad; the truth is that the grant is fine and it asked for
+        // a scope it does not hold, which is a different thing to do about it. Found by asserting the same
+        // request against both hosts (BothHostsProtocolTests), where they agreed — on the wrong code.
+        Assert.Equal("invalid_scope", body.GetProperty("error").GetString());
     }
 
     [Fact]

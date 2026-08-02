@@ -67,6 +67,27 @@ public static class UserinfoEndpoint
                     result.Claims.ContainsKey))
                 return UnauthorizedWithChallenge();
 
+            // Scope-gate claims (OIDC §5.3.2): `sub` is always returned; profile/email/phone claims
+            // are released only when the corresponding scope was granted to the access token.
+            var scopeClaim = result.Claims.TryGetValue("scope", out var scObj) ? scObj?.ToString() ?? "" : "";
+            var scopes = scopeClaim.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+
+            // OIDC Core §5.3.1: userinfo is reached with an access token issued for an OpenID Connect
+            // request. The comment above the validation parameters has always asserted "with the openid
+            // scope" while nothing checked it, so a pure-OAuth token — a client_credentials token, or
+            // one minted for an API-only scope — read this endpoint and got `sub` back.
+            //
+            // Checked BEFORE the subject and the user lookup, which is where its twin in Authagonal.Protocol
+            // checks it. That ordering is the whole answer, not a detail: a client_credentials token has no
+            // `sub` at all, so resolving the subject first meant this host answered 401 invalid_token where
+            // the Protocol host answered 403 insufficient_scope — the same request, two different answers,
+            // and the misleading one of the two. `invalid_token` tells a client its token is bad, so a
+            // conforming client refreshes, gets a token with the same scopes, and loops. It also spends a
+            // user-store read on a token that was never entitled to this endpoint.
+            if (!scopes.Contains(StandardScopes.OpenId, StringComparer.Ordinal))
+                return Authagonal.Protocol.Endpoints.UserinfoEndpoint.InsufficientScope(
+                    "The access token does not carry the openid scope.");
+
             var subjectId = result.Claims.TryGetValue("sub", out var sub) ? sub?.ToString() : null;
             if (string.IsNullOrWhiteSpace(subjectId))
                 return UnauthorizedWithChallenge();
@@ -79,26 +100,6 @@ public static class UserinfoEndpoint
             var user = await userStore.GetAsync(subjectId, ct);
             if (user is null)
                 return UnauthorizedWithChallenge();
-
-            // Scope-gate claims (OIDC §5.3.2): `sub` is always returned; profile/email/phone claims
-            // are released only when the corresponding scope was granted to the access token.
-            var scopeClaim = result.Claims.TryGetValue("scope", out var scObj) ? scObj?.ToString() ?? "" : "";
-            var scopes = scopeClaim.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-
-            // OIDC Core §5.3.1: userinfo is reached with an access token issued for an OpenID Connect
-            // request. The comment above the validation parameters has always asserted "with the openid
-            // scope" while nothing checked it, so a pure-OAuth token — a client_credentials token, or
-            // one minted for an API-only scope — read this endpoint and got `sub` back. The per-claim
-            // gates below meant the residue was subject disclosure rather than PII, but the endpoint
-            // contract is the thing being fixed: this is the Protocol host's F197 defect, in the host
-            // that finding did not name.
-            // 403 with the RFC 6750 §3.1 challenge, not a bare JSON 403. The status was right and the
-            // header was missing, so a client could not tell a scope refusal from any other 403 — and its
-            // twin in the Protocol host answered the identical condition with 401 invalid_token, which is
-            // actively misleading (refresh, get the same scopes, loop). Both now say the same thing.
-            if (!scopes.Contains(StandardScopes.OpenId, StringComparer.Ordinal))
-                return Authagonal.Protocol.Endpoints.UserinfoEndpoint.InsufficientScope(
-                    "The access token does not carry the openid scope.");
 
             var claims = new Dictionary<string, object?> { ["sub"] = user.Id };
 

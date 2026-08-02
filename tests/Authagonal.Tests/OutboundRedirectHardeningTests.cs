@@ -352,4 +352,117 @@ public sealed class OutboundRedirectHardeningTests
     }
 
     public static TheoryData<string> FixedTargetClientNames() => [.. FixedTargetClients];
+
+    // ── Structural piece 3: an unregistered name must fail loudly ────────────────────────────────────
+    //
+    // CreateClient on a name nobody registered does not throw. It silently returns a default-configured
+    // client: 100-second timeout, 50 automatic redirects, no address guard. That is invisible at the call
+    // site, invisible in review, and it caused FOUR separate findings — "AuthagonalJwks" and
+    // "BackChannelLogout" were both asked for by name and registered by nobody, on paths reachable from
+    // anonymous requests.
+    //
+    // Every assertion in this file already covers that, for the names somebody remembered to list. The list
+    // is the weak part, so it is now DERIVED: the source is scanned for CreateClient("...") literals and each
+    // one must appear in a group above. A new outbound client cannot be added without deciding who chooses
+    // its target, and cannot be added without being hardened, because the per-name theories below then run
+    // against it automatically.
+    //
+    // A runtime startup check cannot do this job: nothing at runtime knows which names the CODE asks for —
+    // only which were registered. The literals are a compile-time fact, so this is where the check belongs.
+
+    /// <summary>
+    /// Every <c>CreateClient("...")</c> literal in the product source, found rather than listed.
+    /// </summary>
+    private static IReadOnlyList<string> CreateClientNamesInSource()
+    {
+        var src = Path.Combine(RepositoryRoot(), "src");
+        Assert.True(Directory.Exists(src), $"Expected the source tree at '{src}'.");
+
+        var found = new SortedSet<string>(StringComparer.Ordinal);
+        var pattern = new System.Text.RegularExpressions.Regex(
+            @"CreateClient\(\s*""(?<name>[^""]+)""\s*\)", System.Text.RegularExpressions.RegexOptions.Compiled);
+
+        foreach (var file in Directory.EnumerateFiles(src, "*.cs", SearchOption.AllDirectories))
+        {
+            foreach (var line in File.ReadAllLines(file))
+            {
+                var trimmed = line.TrimStart();
+                if (trimmed.StartsWith("//", StringComparison.Ordinal) || trimmed.StartsWith('*')) continue;
+
+                foreach (System.Text.RegularExpressions.Match m in pattern.Matches(line))
+                    found.Add(m.Groups["name"].Value);
+            }
+        }
+
+        Assert.NotEmpty(found);
+        return [.. found];
+    }
+
+    [Fact]
+    public void EveryNameTheSourceAsksForIsClassifiedAndTherebyAsserted()
+    {
+        string[] classified =
+        [
+            .. OperatorConfiguredClients, .. RegistrantSuppliedClients, .. FixedTargetClients,
+            "AuthagonalBff", "AuthagonalBffProxy",
+        ];
+
+        var unclassified = CreateClientNamesInSource()
+            .Where(n => !classified.Contains(n, StringComparer.Ordinal))
+            .ToList();
+
+        Assert.True(unclassified.Count == 0,
+            "These names are asked of IHttpClientFactory in the product source but appear in no group in this "
+            + "file, so nothing asserts their timeout, their redirect policy, or whether they carry the "
+            + "address guard — and CreateClient on an unregistered name returns a default client silently "
+            + "rather than throwing. Add each to the group matching who chooses its target: "
+            + Environment.NewLine + string.Join(Environment.NewLine, unclassified));
+    }
+
+    /// <summary>
+    /// The other direction: a name this file lists must actually be asked for somewhere.
+    /// </summary>
+    /// <remarks>
+    /// Without this, deleting the last call site leaves the assertions passing over a client nothing uses,
+    /// and the next reader takes the list as the inventory it no longer is. The BFF names are excluded
+    /// because they live in a package this scan covers but whose call sites it also covers — they are here
+    /// for symmetry with the server groups, not as a separate case.
+    /// </remarks>
+    [Fact]
+    public void EveryNameThisFileListsIsActuallyUsed()
+    {
+        var inSource = CreateClientNamesInSource();
+
+        string[] listed =
+        [
+            .. OperatorConfiguredClients, .. RegistrantSuppliedClients, .. FixedTargetClients,
+            "AuthagonalBff", "AuthagonalBffProxy",
+        ];
+
+        // TurnstileVerifier is a TYPED client: it is resolved by type, never by a CreateClient literal, so it
+        // cannot appear in the scan. Named explicitly rather than silently skipped.
+        var unused = listed
+            .Where(n => n != "TurnstileVerifier")
+            .Where(n => !inSource.Contains(n, StringComparer.Ordinal))
+            .ToList();
+
+        Assert.True(unused.Count == 0,
+            "These names are listed here but no longer asked for anywhere in the source, so the groups above "
+            + "have stopped being an inventory of the product's outbound clients: "
+            + Environment.NewLine + string.Join(Environment.NewLine, unused));
+    }
+
+    /// <summary>
+    /// Walks up from the test assembly to the directory holding the solution file. Fails loudly rather than
+    /// skipping: a lint that quietly finds nothing to scan is worse than no lint.
+    /// </summary>
+    private static string RepositoryRoot()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir is not null && !File.Exists(Path.Combine(dir.FullName, "Authagonal.slnx")))
+            dir = dir.Parent;
+
+        Assert.NotNull(dir);
+        return dir!.FullName;
+    }
 }

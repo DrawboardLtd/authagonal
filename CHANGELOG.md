@@ -207,6 +207,21 @@ adjacent defect the audit found while checking a finding it had already passed.
   by tests: it belongs on a target a *registrant* chose and needs an operator escape hatch on a target the
   *operator* chose.
 
+- **`/connect/userinfo` answered the same request two different ways depending on which host served it.** A
+  valid access token without the `openid` scope got `403 insufficient_scope` from `Authagonal.Protocol` and
+  `401 invalid_token` from `Authagonal.Server`, because the Server host resolved the subject and looked up the
+  user BEFORE checking the scope — and a `client_credentials` token has no subject at all. `invalid_token`
+  tells a client its token is bad, so a conforming client refreshes, receives a token with the same scopes,
+  and loops. The scope check now runs first on both, which also stops a user-store read for a token that was
+  never entitled to the endpoint.
+
+- **An undeclared scope on `client_credentials` answered `invalid_grant` instead of `invalid_scope`.** RFC 6749
+  §5.2 distinguishes them for a reason: `invalid_grant` says the grant is bad, `invalid_scope` says the grant
+  is fine but the client asked for something it does not hold, and only the second tells the client what to
+  change. The code was derived by string-matching the exception message and only the token-exchange handler
+  carried the match, so its sibling fell through to the generic answer. Scope rejections now carry the code
+  explicitly. A test had asserted `invalid_grant` and thereby pinned it.
+
 - **`LegacySecretHashWarning` prevented any multi-tenant host from starting.** It took `IClientStore` as a
   constructor dependency, and a hosted service is constructed from the ROOT provider during
   `Host.StartAsync` — so on a host whose stores are resolved per tenant-scoped request the construction threw
