@@ -77,7 +77,13 @@ internal static class ClientAuthentication
     /// on each one, which it can only do if the handler hands it the 3xx instead of chasing it.
     /// </summary>
     private static readonly HttpClient FallbackHttpClient =
-        new(new SocketsHttpHandler { AllowAutoRedirect = false }) { Timeout = TimeSpan.FromSeconds(10) };
+        new(new SocketsHttpHandler
+            {
+                AllowAutoRedirect = false,
+                // Refuses an internal address at the socket, per connection and therefore per
+                // redirect hop, whatever the hostname resolved to. See SafeOutboundConnect.
+                ConnectCallback = Authagonal.Core.Services.SafeOutboundConnect.Callback(),
+            }) { Timeout = TimeSpan.FromSeconds(10) };
     public static (string? ClientId, string? ClientSecret) ExtractClientCredentials(
         HttpContext httpContext, IFormCollection form)
     {

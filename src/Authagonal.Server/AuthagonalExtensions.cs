@@ -269,7 +269,13 @@ public static class AuthagonalExtensions
             // every other outbound client in the codebase; these two were left at the 100-second default,
             // which made a slow remote host a request-slot amplifier on anonymous endpoints.
             .ConfigureHttpClient(c => c.Timeout = TimeSpan.FromSeconds(10))
-            .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AllowAutoRedirect = false });
+            .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
+            {
+                AllowAutoRedirect = false,
+                // Refuses an internal address at the socket, per connection and therefore per
+                // redirect hop, whatever the hostname resolved to. See SafeOutboundConnect.
+                ConnectCallback = Authagonal.Core.Services.SafeOutboundConnect.Callback(),
+            });
 
         // The two clients that were named at their call sites and registered nowhere, so the factory
         // handed each one the default handler — 100-second timeout, up to 50 redirects followed.
@@ -281,10 +287,22 @@ public static class AuthagonalExtensions
         // path change keeps it.
         services.AddHttpClient("BackChannelLogout")
             .ConfigureHttpClient(c => c.Timeout = TimeSpan.FromSeconds(10))
-            .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AllowAutoRedirect = false });
+            .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
+            {
+                AllowAutoRedirect = false,
+                // Refuses an internal address at the socket, per connection and therefore per
+                // redirect hop, whatever the hostname resolved to. See SafeOutboundConnect.
+                ConnectCallback = Authagonal.Core.Services.SafeOutboundConnect.Callback(),
+            });
         services.AddHttpClient("Resend")
             .ConfigureHttpClient(c => c.Timeout = TimeSpan.FromSeconds(10))
-            .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AllowAutoRedirect = false });
+            .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
+            {
+                AllowAutoRedirect = false,
+                // Refuses an internal address at the socket, per connection and therefore per
+                // redirect hop, whatever the hostname resolved to. See SafeOutboundConnect.
+                ConnectCallback = Authagonal.Core.Services.SafeOutboundConnect.Callback(),
+            });
 
         // Protocol — token service, key manager (when not pre-registered), auth-code
         // service. Server maps AuthOptions into AuthagonalProtocolOptions so there's one
@@ -445,7 +463,13 @@ public static class AuthagonalExtensions
             // every other outbound client in the codebase; these two were left at the 100-second default,
             // which made a slow remote host a request-slot amplifier on anonymous endpoints.
             .ConfigureHttpClient(c => c.Timeout = TimeSpan.FromSeconds(10))
-            .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AllowAutoRedirect = false });
+            .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
+            {
+                AllowAutoRedirect = false,
+                // Refuses an internal address at the socket, per connection and therefore per
+                // redirect hop, whatever the hostname resolved to. See SafeOutboundConnect.
+                ConnectCallback = Authagonal.Core.Services.SafeOutboundConnect.Callback(),
+            });
         services.AddMemoryCache();
         services.AddSingleton<SamlMetadataParser>();
         services.AddSingleton<SamlResponseParser>();
@@ -459,7 +483,13 @@ public static class AuthagonalExtensions
             // every other outbound client in the codebase; these two were left at the 100-second default,
             // which made a slow remote host a request-slot amplifier on anonymous endpoints.
             .ConfigureHttpClient(c => c.Timeout = TimeSpan.FromSeconds(10))
-            .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AllowAutoRedirect = false });
+            .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
+            {
+                AllowAutoRedirect = false,
+                // Refuses an internal address at the socket, per connection and therefore per
+                // redirect hop, whatever the hostname resolved to. See SafeOutboundConnect.
+                ConnectCallback = Authagonal.Core.Services.SafeOutboundConnect.Callback(),
+            });
         services.AddSingleton<OidcDiscoveryClient>();
 
         // The client jwks_uri fetch on the private_key_jwt path (ClientAuthentication). It asked the
@@ -468,7 +498,13 @@ public static class AuthagonalExtensions
         // host the guard never saw. That fetch is reachable from an anonymous /connect/token request.
         services.AddHttpClient("AuthagonalJwks")
             .ConfigureHttpClient(c => c.Timeout = TimeSpan.FromSeconds(10))
-            .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AllowAutoRedirect = false });
+            .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
+            {
+                AllowAutoRedirect = false,
+                // Refuses an internal address at the socket, per connection and therefore per
+                // redirect hop, whatever the hostname resolved to. See SafeOutboundConnect.
+                ConnectCallback = Authagonal.Core.Services.SafeOutboundConnect.Callback(),
+            });
 
         // ---------------------------------------------------------------------------
         // Authentication

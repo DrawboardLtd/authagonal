@@ -9,10 +9,18 @@ namespace Authagonal.Core.Services;
 /// (loopback, link-local incl. the cloud metadata address, RFC1918/ULA literals, multicast/reserved,
 /// and <c>localhost</c>/<c>.local</c>/<c>.internal</c> hostnames).
 /// <para>
-/// It does not resolve DNS — that would block legitimate external hosts in offline/test environments
-/// and add resolve-time coupling — so a hostname that resolves to an internal address is not caught
-/// here. The high-value oracles (literal metadata/loopback/private IPs and the common internal
-/// hostnames) are blocked, which is the realistic SSRF surface for these admin-configured URLs.
+/// It deliberately does NOT resolve DNS, and that is no longer the gap it used to be. A URL check runs
+/// where a URL is accepted — at an admin write, at registration — and resolving there would both couple
+/// that path to a working resolver and prove nothing, since the answer can differ by the time anything
+/// is fetched. So a hostname that resolves to an internal address is not caught here, ON PURPOSE: it is
+/// caught at the socket by <see cref="SafeOutboundConnect"/>, which resolves at connect time, refuses
+/// every internal address, and pins the connection to an address it actually checked — on every redirect
+/// hop, because each hop is a new connection.
+/// </para>
+/// <para>
+/// The division of labour is worth keeping straight. This function refuses a bad URL early, where the
+/// error is attributable to the person who typed it. That one refuses a bad ADDRESS late, where no lie
+/// about DNS can help. Neither replaces the other.
 /// </para>
 /// </summary>
 public static class OutboundUrl
@@ -52,6 +60,18 @@ public static class OutboundUrl
 
         return true;
     }
+
+    /// <summary>
+    /// True when this server may originate a request to <paramref name="ip"/>.
+    /// </summary>
+    /// <remarks>
+    /// The same judgement <see cref="IsSafe"/> applies to a literal host, exposed so
+    /// <see cref="SafeOutboundConnect"/> can apply it to a RESOLVED address at connect time. One
+    /// definition of "internal", used by both the URL check and the socket check — two lists would drift,
+    /// and the drift would be a hole in whichever one was consulted second.
+    /// </remarks>
+    public static bool IsAllowedAddress(IPAddress ip, bool allowLoopback = false)
+        => !IsBlockedIp(ip, allowLoopback);
 
     private static bool IsBlockedIp(IPAddress ip, bool allowLoopback)
     {

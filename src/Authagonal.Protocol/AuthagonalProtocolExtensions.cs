@@ -120,7 +120,13 @@ public static class AuthagonalProtocolExtensions
         // Protocol-only host must not be the one that misses it.
         services.AddHttpClient("AuthagonalJwks")
             .ConfigureHttpClient(c => c.Timeout = TimeSpan.FromSeconds(10))
-            .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AllowAutoRedirect = false });
+            .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
+            {
+                AllowAutoRedirect = false,
+                // Refuses an internal address at the socket, per connection and therefore per
+                // redirect hop, whatever the hostname resolved to. See SafeOutboundConnect.
+                ConnectCallback = Authagonal.Core.Services.SafeOutboundConnect.Callback(),
+            });
 
         // Seeds clients/scopes from AuthagonalProtocolOptions on startup.
         services.AddHostedService<ProtocolSeedService>();

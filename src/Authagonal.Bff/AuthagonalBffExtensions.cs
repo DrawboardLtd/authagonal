@@ -58,9 +58,21 @@ public static class AuthagonalBffExtensions
         // to the configured issuer, where a redirect would move the client_secret and the authorization
         // code off it.
         services.AddHttpClient("AuthagonalBff")
-            .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AllowAutoRedirect = false });
+            .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
+            {
+                AllowAutoRedirect = false,
+                // Refuses an internal address at the socket, per connection and therefore per
+                // redirect hop, whatever the hostname resolved to. See SafeOutboundConnect.
+                ConnectCallback = Authagonal.Core.Services.SafeOutboundConnect.Callback(),
+            });
         services.AddHttpClient("AuthagonalBffProxy")
-            .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AllowAutoRedirect = false });
+            .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
+            {
+                AllowAutoRedirect = false,
+                // Refuses an internal address at the socket, per connection and therefore per
+                // redirect hop, whatever the hostname resolved to. See SafeOutboundConnect.
+                ConnectCallback = Authagonal.Core.Services.SafeOutboundConnect.Callback(),
+            });
 
         services.TryAddSingleton<BffOidcConfig>();
         services.TryAddSingleton<ICookieProtector, DataProtectionCookieProtector>();
