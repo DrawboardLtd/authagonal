@@ -649,8 +649,21 @@ public static class AuthEndpoints
             }
         }
 
-        user.UpdatedAt = DateTimeOffset.UtcNow;
-        await userStore.UpdateAsync(user, ct);
+        // Rebase before writing, for the same reason ConfirmEmailAsync does: provisioning above is a
+        // network round-trip to a downstream app, and PersistMergeAsync has already re-read this row and
+        // written the merge to it. The instance in hand is therefore stale in every field it did not
+        // merge, and writing it whole would put those back.
+        //
+        // This caller is the one the orchestrator's own comment names — "Exactly ONE caller saved
+        // afterwards — self-service registration" — and it is why PersistMergeAsync used to copy the
+        // fresh revision onto the caller. That copy defeated the concurrency guard rather than
+        // satisfying it (#115), so it is gone, and the callers it was covering for have to re-read.
+        // Missing this one broke registration outright: the write below is refused whenever provisioning
+        // merged anything.
+        var registered = await userStore.GetAsync(user.Id, ct) ?? user;
+        registered.UpdatedAt = DateTimeOffset.UtcNow;
+        await userStore.UpdateAsync(registered, ct);
+        user = registered;
 
         // Already confirmed — provisioning vouched for the address (invite redemption) or the
         // domain is auto-confirmed. No verification email: the user can sign straight in.

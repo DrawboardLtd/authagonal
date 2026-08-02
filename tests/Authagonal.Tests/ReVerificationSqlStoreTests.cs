@@ -562,6 +562,45 @@ public sealed class ProvisioningMergeRevisionTests : IAsyncLifetime
                 [new Authagonal.Core.Services.ProvisioningApp("app1", "https://app1.test", null)]);
     }
 
+    /// <summary>
+    /// Every caller that writes after a provisioning merge must re-read first.
+    /// </summary>
+    /// <remarks>
+    /// Removing the revision copy (the #115 fix) broke self-service registration and the whole suite
+    /// stayed green, because <c>AuthagonalTestFactory</c> substitutes a <c>TestProvisioningOrchestrator</c>
+    /// — so no endpoint test ever runs the real one, and the merge that makes the caller's instance stale
+    /// never happens. The orchestrator's own comment named the caller: "Exactly ONE caller saved
+    /// afterwards — self-service registration."
+    /// <para>
+    /// This pins the invariant at the orchestrator rather than at one endpoint: after a merge, the
+    /// caller's instance is refused by the store. Any future caller that writes without re-reading fails
+    /// here instead of in production.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task AnInstanceHeldAcrossAMergeIsRefusedByTheStore()
+    {
+        var userStore = await BuildUserStoreAsync();
+        await userStore.CreateAsync(new AuthUser
+        {
+            Id = "u1", Email = "ada@acme.test", NormalizedEmail = "ADA@ACME.TEST",
+            FirstName = "Ada", CreatedAt = DateTimeOffset.UtcNow,
+        });
+
+        var caller = await userStore.GetAsync("u1");
+        await NewOrchestrator().ReprovisionAsync(caller!);
+
+        // The write a caller would make if it did NOT re-read. This is the failure registration hit.
+        caller!.UpdatedAt = DateTimeOffset.UtcNow;
+        await Assert.ThrowsAsync<InvalidOperationException>(() => userStore.UpdateAsync(caller));
+
+        // Re-reading first is the supported shape, and it works.
+        var fresh = await userStore.GetAsync("u1");
+        fresh!.UpdatedAt = DateTimeOffset.UtcNow;
+        await userStore.UpdateAsync(fresh);
+        Assert.Equal("org-1", (await userStore.GetAsync("u1"))!.OrganizationId);
+    }
+
     [Fact]
     public async Task PersistingAMergeDoesNotHandTheCallerAFreshRevision()
     {
