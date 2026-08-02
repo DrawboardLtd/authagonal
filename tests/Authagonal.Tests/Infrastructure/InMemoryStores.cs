@@ -534,6 +534,14 @@ public sealed class InMemoryMfaStore : IMfaStore
     public Task<bool> TryConsumeRecoveryCodeAsync(string userId, string credentialId, CancellationToken ct = default)
         => Task.FromResult(Claim(userId, credentialId, c => !c.IsConsumed, c => c.IsConsumed = true));
 
+    public Task<bool> TryRecordWebAuthnUseAsync(
+        string userId, string credentialId, uint signCount, CancellationToken ct = default)
+        => Task.FromResult(Claim(userId, credentialId, c => c.SignCount <= signCount, c => c.SignCount = signCount));
+
+    public Task<bool> TryActivateCredentialAsync(
+        string userId, string credentialId, string name, CancellationToken ct = default)
+        => Task.FromResult(Claim(userId, credentialId, _ => true, c => c.Name = name));
+
     public Task<bool> TryUpgradeRecoverySecretAsync(
         string userId, string credentialId, string secretProtected, CancellationToken ct = default)
         => Task.FromResult(Claim(userId, credentialId, c => !c.IsConsumed,

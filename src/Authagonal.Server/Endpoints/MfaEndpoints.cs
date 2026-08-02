@@ -298,9 +298,14 @@ public static class MfaEndpoints
                     return await FailAttemptAsync("webauthn", "assertion_failed");
                 }
 
-                matchedWebAuthnCred.SignCount = newSignCount;
-                matchedWebAuthnCred.LastUsedAt = DateTimeOffset.UtcNow;
-                await mfaStore.UpdateCredentialAsync(matchedWebAuthnCred, ct);
+                // Conditionally, not as a full-row upsert of a snapshot read before the assertion was
+                // verified. The sign counter is clone detection and must only ever rise: writing back a
+                // captured value could move it down past a concurrent assertion's higher one, and the
+                // upsert re-created a credential an administrator had revoked mid-request. A lost claim is
+                // refused rather than retried — contention on one credential means two assertions for it
+                // at the same instant, which is the case this exists to reject.
+                if (!await mfaStore.TryRecordWebAuthnUseAsync(user.Id, matchedWebAuthnCred.Id, newSignCount, ct))
+                    return JsonResults.Error("assertion_failed", 401);
 
                 await authHooks.RunOnMfaVerifiedAsync(user.Id, user.Email, "webauthn", ct);
                 break;
@@ -464,9 +469,11 @@ public static class MfaEndpoints
             return JsonResults.Error("assertion_failed", 401);
         }
 
-        cred.SignCount = newSignCount;
-        cred.LastUsedAt = DateTimeOffset.UtcNow;
-        await mfaStore.UpdateCredentialAsync(cred, ct);
+        // As on the MFA-verification leg above: conditional, so the counter cannot regress and a revoked
+        // credential cannot be resurrected by the assertion that was using it. This leg matters more — it
+        // is passwordless sign-in, so the assertion is the WHOLE authentication.
+        if (!await mfaStore.TryRecordWebAuthnUseAsync(userId, cred.Id, newSignCount, ct))
+            return JsonResults.Error("assertion_failed", 401);
 
         // Enforcement hook before the session (an enforced onUserAuthenticated can reject the login).
         await authHooks.RunOnUserAuthenticatedAsync(user.Id, user.Email, "passkey", challenge.ClientId, ct);

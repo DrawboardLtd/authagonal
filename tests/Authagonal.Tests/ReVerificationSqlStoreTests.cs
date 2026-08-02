@@ -345,6 +345,112 @@ public sealed class MfaSingleUseClaimTests : IAsyncLifetime
         Assert.True(await store.TryConsumeRecoveryCodeAsync("u1", "r2"));
     }
 
+    // ── #99's surviving siblings: the other two blind full-row writes ────────────────────────────
+
+    /// <summary>
+    /// Completing an enrolment must not resurrect a credential an administrator revoked mid-request.
+    /// </summary>
+    /// <remarks>
+    /// The TOTP confirm handler claimed its time step conditionally and then wrote the whole row back from
+    /// a snapshot taken before the claim, under a comment asserting that carrying the claimed step made the
+    /// write safe. <c>UpdateCredentialAsync</c> is an unconditional upsert on every provider, so the write
+    /// re-CREATED the row if <c>DeleteAllCredentialsAsync</c> had removed it in between — and the handler
+    /// then set <c>MfaEnabled</c> and issued a session cookie. The revoke was undone by the request being
+    /// revoked.
+    /// </remarks>
+    [Fact]
+    public async Task ActivatingACredentialCannotResurrectARevokedOne()
+    {
+        var store = await BuildStoreAsync();
+        await store.CreateCredentialAsync(Credential("cred-totp", MfaCredentialType.Totp));
+
+        // The enrolment is under way: the step is claimed, and the handler holds a snapshot from before it.
+        Assert.True(await store.TryClaimTotpStepAsync("u1", "cred-totp", 58_000_000L));
+
+        // An administrator revokes everything.
+        await store.DeleteAllCredentialsAsync("u1");
+
+        Assert.False(await store.TryActivateCredentialAsync("u1", "cred-totp", "Authenticator app"));
+        Assert.Null(await store.GetCredentialAsync("u1", "cred-totp"));
+    }
+
+    /// <summary>The control: activation names a live pending credential, and touches nothing else.</summary>
+    [Fact]
+    public async Task ActivatingALiveCredentialNamesItAndLeavesTheClaimedStepAlone()
+    {
+        var store = await BuildStoreAsync();
+        await store.CreateCredentialAsync(Credential("cred-totp", MfaCredentialType.Totp));
+        Assert.True(await store.TryClaimTotpStepAsync("u1", "cred-totp", 58_000_000L));
+
+        Assert.True(await store.TryActivateCredentialAsync("u1", "cred-totp", "Authenticator app"));
+
+        var after = await store.GetCredentialAsync("u1", "cred-totp");
+        Assert.Equal("Authenticator app", after!.Name);
+        // The step the claim advanced is still there. The blind write persisted the PRE-claim value, so a
+        // concurrent verification's later step could be rolled back and its code put back in play.
+        Assert.Equal(58_000_000L, after.LastTotpStep);
+        Assert.Equal("secret", after.SecretProtected);
+    }
+
+    /// <summary>
+    /// A WebAuthn sign counter only ever goes up, and recording a use cannot resurrect a revoked key.
+    /// </summary>
+    /// <remarks>
+    /// The counter is clone detection (WebAuthn §6.1.1): if an authenticator's counter ever goes backwards,
+    /// something is replaying. Both assertion paths wrote it back with a full-row upsert of a snapshot read
+    /// BEFORE verification, so a captured value could move it down past a concurrent assertion's higher one
+    /// — and the upsert re-created a revoked credential, on the passwordless leg where the assertion is the
+    /// whole of the authentication.
+    /// </remarks>
+    [Fact]
+    public async Task AWebAuthnSignCounterNeverGoesBackwardsAndNeverResurrects()
+    {
+        var store = await BuildStoreAsync();
+        await store.CreateCredentialAsync(Credential("cred-fido", MfaCredentialType.WebAuthn));
+
+        Assert.True(await store.TryRecordWebAuthnUseAsync("u1", "cred-fido", 5));
+        // A stale request carrying a lower count is refused rather than rolling the counter back.
+        Assert.False(await store.TryRecordWebAuthnUseAsync("u1", "cred-fido", 4));
+        Assert.Equal(5u, (await store.GetCredentialAsync("u1", "cred-fido"))!.SignCount);
+        // Forward still works.
+        Assert.True(await store.TryRecordWebAuthnUseAsync("u1", "cred-fido", 6));
+
+        await store.DeleteAllCredentialsAsync("u1");
+        Assert.False(await store.TryRecordWebAuthnUseAsync("u1", "cred-fido", 7));
+        Assert.Null(await store.GetCredentialAsync("u1", "cred-fido"));
+    }
+
+    /// <summary>
+    /// An authenticator that implements no counter reports zero forever, and must still authenticate.
+    /// </summary>
+    /// <remarks>
+    /// The non-vacuity control on the guard above. WebAuthn §6.1.1 makes the sign count optional and a
+    /// zero means "not supported", so a strictly-increasing guard would refuse every assertion from such an
+    /// authenticator — turning a replay defence into a lockout for a whole class of hardware keys.
+    /// </remarks>
+    [Fact]
+    public async Task AZeroSignCounterAuthenticatorIsStillRecorded()
+    {
+        var store = await BuildStoreAsync();
+        await store.CreateCredentialAsync(Credential("cred-zero", MfaCredentialType.WebAuthn));
+
+        Assert.True(await store.TryRecordWebAuthnUseAsync("u1", "cred-zero", 0));
+        Assert.True(await store.TryRecordWebAuthnUseAsync("u1", "cred-zero", 0));
+
+        var after = await store.GetCredentialAsync("u1", "cred-zero");
+        Assert.Equal(0u, after!.SignCount);
+        // Recorded as a use, which is what the caller needs — the LastUsedAt stamp is the claim's job.
+        Assert.NotNull(after.LastUsedAt);
+    }
+
+    [Fact]
+    public async Task TheNewClaimsAgainstAMissingCredential_Fail()
+    {
+        var store = await BuildStoreAsync();
+        Assert.False(await store.TryRecordWebAuthnUseAsync("u1", "nope", 1));
+        Assert.False(await store.TryActivateCredentialAsync("u1", "nope", "name"));
+    }
+
     private async Task<SqlMfaStore> BuildStoreAsync()
     {
         var tables = await _source.EnsureTablesAsync(

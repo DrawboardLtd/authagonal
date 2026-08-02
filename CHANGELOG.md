@@ -21,6 +21,19 @@
   expression) and return `false` on a lost race rather than retrying. It must not stamp `LastUsedAt` — the
   upgrade sweeps the user's whole recovery set, so stamping marks every code as used because one of them was.
 
+- **`IMfaStore` gains `TryRecordWebAuthnUseAsync` and `TryActivateCredentialAsync`.** Source-breaking for an
+  external implementer; every bundled backend (Azure Table, SQL, DynamoDB) implements both, so a deployment
+  using one of those is unaffected.
+
+  Both are conditional writes that replace a blind `UpdateCredentialAsync` of a snapshot, and both must
+  return `false` rather than inserting when the credential is gone — an unconditional upsert re-creates a
+  row an administrator revoked mid-request, and the handler then completes the sign-in it was revoking.
+  `TryRecordWebAuthnUseAsync` raises the sign counter and stamps `LastUsedAt` only while the stored counter
+  has not already passed the value; implement the comparison as `<=`, not `<`, because a sign count of zero
+  means the authenticator implements no counter (WebAuthn §6.1.1) and reports zero forever, so a strict
+  increase would refuse every assertion from that hardware. `TryActivateCredentialAsync` writes the name and
+  nothing else: a conditional write that carries fields it does not own is a blind write wearing a guard.
+
 - **`/connect/*` now returns HTTP 400 `invalid_request` with `"TLS is required at the OAuth endpoints"`.**
   If your deployment started answering that after upgrading, this is why, and there are two one-line fixes.
 
@@ -193,6 +206,34 @@ adjacent defect the audit found while checking a finding it had already passed.
   and what a proxy does to it, is a per-client decision documented in the Breaking section above and pinned
   by tests: it belongs on a target a *registrant* chose and needs an operator escape hatch on a target the
   *operator* chose.
+
+- **A revoked second factor could be resurrected by the request that was being revoked.** Three MFA paths
+  finished by writing a whole credential row back from a snapshot read earlier in the handler:
+  TOTP enrolment confirm, WebAuthn during MFA verification, and passwordless passkey sign-in.
+  `UpdateCredentialAsync` is an unconditional upsert on every provider, so if an administrator called
+  `DeleteAllCredentialsAsync` in between, the write re-created the deleted credential — and each handler
+  then went on to set `MfaEnabled` and issue a session cookie. The TOTP path had a second defect in the
+  same line: it persisted the snapshot's `LastTotpStep`, which is the value from *before* the conditional
+  step claim above it, so it could move the step back past a concurrent verification and return a spent
+  code to play for the rest of its window. The WebAuthn paths had the analogous one — the sign counter is
+  clone detection and must only rise, and a captured value could move it down past a concurrent
+  assertion's. All three now go through conditional store operations that refuse rather than insert.
+
+  The comment above the TOTP write asserted that carrying the claimed step made it safe. It is worth
+  recording that a fix's own comment is not evidence: this was the third time in this review that a defect
+  and its cause arrived in the same commit.
+
+- **On the Azure provider, no non-live environment enforced the MFA attempt cap or challenge anti-replay.**
+  `MfaChallengeEntity.ToModel` set `ChallengeId` from `PartitionKey`, and the stored partition key is
+  `EnvPartitioner.PK(challengeId)` — so a challenge read back on an environment named anything other than
+  live carried `env|challengeId`. Both things the verify handler does with that value re-apply the prefix:
+  the failed-attempt increment landed at `env|env|challengeId`, a row nothing reads, so the five-attempt
+  ceiling on a 10^6 TOTP space never fired; and `ConsumeChallengeAsync` deleted that same phantom and left
+  the real challenge in place, so a challenge stayed redeemable for its full lifetime after a successful
+  verification. `MfaCredentialEntity.ToModel` had the same shape, one consequence milder — a lost write
+  rather than a lost guarantee. Invisible on the live environment, where the prefix is empty and
+  `PK(x) == x`, which is why every test passed over it. The store now strips the prefix on the way out, the
+  way `TableUserStore` already did.
 
 - **Every per-source quota was shared by the whole deployment on three of five endpoints.** Login and the
   SAML ACS keyed their rate limiter on the raw TCP peer address, which behind a reverse proxy is that proxy

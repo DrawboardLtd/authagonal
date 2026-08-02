@@ -57,6 +57,16 @@ public sealed class SqlMfaStore(
         => ClaimAsync(userId, credentialId, c => !c.IsConsumed, c => c.IsConsumed = true, ct);
 
     /// <inheritdoc />
+    public Task<bool> TryRecordWebAuthnUseAsync(
+        string userId, string credentialId, uint signCount, CancellationToken ct = default)
+        => ClaimAsync(userId, credentialId, c => c.SignCount <= signCount, c => c.SignCount = signCount, ct);
+
+    /// <inheritdoc />
+    public Task<bool> TryActivateCredentialAsync(
+        string userId, string credentialId, string name, CancellationToken ct = default)
+        => ClaimAsync(userId, credentialId, _ => true, c => c.Name = name, ct);
+
+    /// <inheritdoc />
     public Task<bool> TryUpgradeRecoverySecretAsync(
         string userId, string credentialId, string secretProtected, CancellationToken ct = default)
         => ClaimAsync(userId, credentialId, c => !c.IsConsumed,

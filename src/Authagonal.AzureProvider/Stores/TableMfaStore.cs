@@ -21,7 +21,7 @@ public sealed class TableMfaStore(
         await foreach (var entity in credentialsTable.QueryAsync<MfaCredentialEntity>(
             e => e.PartitionKey == pk, cancellationToken: ct))
         {
-            results.Add(entity.ToModel());
+            results.Add(ToModel(entity));
         }
         return results;
     }
@@ -32,7 +32,7 @@ public sealed class TableMfaStore(
         {
             var response = await credentialsTable.GetEntityAsync<MfaCredentialEntity>(
                 partitioner.PK(userId), credentialId, cancellationToken: ct);
-            return response.Value.ToModel();
+            return ToModel(response.Value);
         }
         catch (Azure.RequestFailedException ex) when (ex.Status == 404)
         {
@@ -61,10 +61,61 @@ public sealed class TableMfaStore(
         => ClaimAsync(userId, credentialId, e => !e.IsConsumed, e => e.IsConsumed = true, ct);
 
     /// <inheritdoc />
+    public Task<bool> TryRecordWebAuthnUseAsync(
+        string userId, string credentialId, uint signCount, CancellationToken ct = default)
+        => ClaimAsync(userId, credentialId, e => e.SignCount <= signCount, e => e.SignCount = signCount, ct);
+
+    /// <inheritdoc />
+    public Task<bool> TryActivateCredentialAsync(
+        string userId, string credentialId, string name, CancellationToken ct = default)
+        => ClaimAsync(userId, credentialId, _ => true, e => e.Name = name, ct);
+
+    /// <inheritdoc />
     public Task<bool> TryUpgradeRecoverySecretAsync(
         string userId, string credentialId, string secretProtected, CancellationToken ct = default)
         => ClaimAsync(userId, credentialId, e => !e.IsConsumed,
             e => e.SecretProtected = secretProtected, ct, touchLastUsed: false);
+
+    /// <summary>
+    /// Entity to model, with the environment prefix taken back off the key that carries it.
+    /// </summary>
+    /// <remarks>
+    /// <c>MfaCredentialEntity.ToModel</c> sets <c>UserId</c> from <c>PartitionKey</c>, and the stored
+    /// partition key is <c>partitioner.PK(userId)</c> — so on any non-live environment the model came back
+    /// carrying <c>env|userId</c> as its user id. Every write path then re-applies the prefix
+    /// (<c>FromModel</c> puts <c>UserId</c> in <c>PartitionKey</c> and the store PKs it again), so the row
+    /// landed at <c>env|env|userId</c>: a phantom the reader never looks at. Invisible on the live
+    /// environment, where the prefix is empty and <c>PK(x) == x</c>, which is exactly why it survived.
+    /// <para>
+    /// Same shape as <c>TableUserStore</c>, which strips in the store for the same reason. The entity types
+    /// have no partitioner, and giving them one would put the environment's identity in a DTO.
+    /// </para>
+    /// </remarks>
+    private MfaCredential ToModel(MfaCredentialEntity entity)
+    {
+        var model = entity.ToModel();
+        model.UserId = partitioner.Strip(model.UserId);
+        return model;
+    }
+
+    /// <summary>
+    /// As <see cref="ToModel(MfaCredentialEntity)"/>, for a challenge — where the consequence was worse
+    /// than a phantom row.
+    /// </summary>
+    /// <remarks>
+    /// <c>ChallengeId</c> comes from <c>PartitionKey</c> here, and both callers of a fetched challenge feed
+    /// that id straight back in: <c>StoreChallengeAsync</c> for the attempt counter and
+    /// <c>ConsumeChallengeAsync</c> for anti-replay. Doubly prefixed, the increment landed in a row nothing
+    /// reads — so the five-attempt cap on MFA verification never bound — and the consume deleted that
+    /// phantom while leaving the real challenge intact, so a verified challenge stayed replayable for its
+    /// whole lifetime. Both on any non-live environment, on the Azure provider.
+    /// </remarks>
+    private MfaChallenge ToModel(MfaChallengeEntity entity)
+    {
+        var model = entity.ToModel();
+        model.ChallengeId = partitioner.Strip(model.ChallengeId);
+        return model;
+    }
 
     /// <summary>
     /// Re-reads the entity, re-tests the guard against what is actually stored, and writes back under
@@ -142,7 +193,7 @@ public sealed class TableMfaStore(
         {
             keys.Add((entity.PartitionKey, entity.RowKey));
             // Remove the matching WebAuthn index row so no stale lookup survives the reset.
-            await DeleteWebAuthnIndexForAsync(entity.ToModel(), ct);
+            await DeleteWebAuthnIndexForAsync(ToModel(entity), ct);
         }
 
         if (tombstoneWriter is not null && keys.Count > 0)
@@ -243,7 +294,7 @@ public sealed class TableMfaStore(
             if (entity.IsConsumed || entity.ExpiresAt <= DateTimeOffset.UtcNow)
                 return null;
 
-            return entity.ToModel();
+            return ToModel(entity);
         }
         catch (Azure.RequestFailedException ex) when (ex.Status == 404)
         {
@@ -267,7 +318,7 @@ public sealed class TableMfaStore(
             if (entity.IsConsumed || entity.ExpiresAt <= DateTimeOffset.UtcNow)
                 return null;
 
-            return entity.ToModel();
+            return ToModel(entity);
         }
         catch (Azure.RequestFailedException ex) when (ex.Status == 404)
         {

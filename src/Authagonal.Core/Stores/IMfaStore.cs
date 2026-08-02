@@ -61,6 +61,49 @@ public interface IMfaStore
     Task<bool> TryUpgradeRecoverySecretAsync(
         string userId, string credentialId, string secretProtected, CancellationToken ct = default);
 
+    /// <summary>
+    /// Records a WebAuthn assertion: raises the stored sign counter to <paramref name="signCount"/> and
+    /// stamps <c>LastUsedAt</c>, but only while the credential still exists and its counter has not already
+    /// passed that value. Returns false otherwise, and the caller MUST then refuse the assertion.
+    /// </summary>
+    /// <remarks>
+    /// Replaces a blind <see cref="UpdateCredentialAsync"/> of a snapshot read before the assertion was
+    /// verified, which was wrong twice over. The counter is clone detection: it must only ever go up, and
+    /// writing back a value captured before verification could move it DOWN past a concurrent assertion's
+    /// higher one, re-arming the replay Fido2's own regression check exists to catch. And an unconditional
+    /// upsert re-CREATES a row that <see cref="DeleteAllCredentialsAsync"/> removed in the meantime, so an
+    /// administrator revoking a user's second factor mid-assertion had it resurrected — by the request they
+    /// were revoking — and the handler then signed the session in.
+    /// <para>
+    /// The guard permits equality, because a sign counter of zero means "this authenticator does not
+    /// implement one" (WebAuthn §6.1.1) and such an authenticator reports 0 forever. Requiring a strict
+    /// increase would refuse every assertion from it. Monotonicity is what matters, not motion.
+    /// </para>
+    /// </remarks>
+    Task<bool> TryRecordWebAuthnUseAsync(
+        string userId, string credentialId, uint signCount, CancellationToken ct = default);
+
+    /// <summary>
+    /// Names a pending credential, completing its enrolment — but only while it still exists. Returns false
+    /// when it is gone, and the caller MUST then abandon the enrolment rather than continue.
+    /// </summary>
+    /// <remarks>
+    /// The TOTP confirm path claimed its time step conditionally (<see cref="TryClaimTotpStepAsync"/>) and
+    /// then persisted a full-row snapshot read BEFORE that claim, with a comment asserting the write could
+    /// not undo it. It could, in two ways. The snapshot's <c>LastTotpStep</c> is whatever was stored before
+    /// the claim, so writing the row back could move the step behind a concurrent verification's — putting a
+    /// spent code back in play for the rest of its window. And the upsert re-created a credential an
+    /// administrator had revoked between the read and the write, after which the same handler set
+    /// <c>MfaEnabled</c> and issued a session cookie.
+    /// <para>
+    /// So this writes the name and nothing else. The step is already claimed and already stamped by the
+    /// claim; there is no second value to persist, which is the point — a conditional write that carries
+    /// fields it does not own is a blind write wearing a guard.
+    /// </para>
+    /// </remarks>
+    Task<bool> TryActivateCredentialAsync(
+        string userId, string credentialId, string name, CancellationToken ct = default);
+
     // WebAuthn credential ID index
     Task<(string UserId, string CredentialId)?> FindByWebAuthnCredentialIdAsync(byte[] webAuthnCredentialId, CancellationToken ct = default);
 

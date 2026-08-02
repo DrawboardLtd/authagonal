@@ -280,11 +280,20 @@ public static class MfaSetupEndpoints
         if (!await mfaStore.TryClaimTotpStepAsync(userId, cred.Id, matchedStep.Value, ct))
             return JsonResults.Error("invalid_code");
 
-        // Confirm: name it active. Carries the claimed step so this write cannot undo the claim.
-        cred.Name = "Authenticator app";
-        cred.LastTotpStep = matchedStep;
-        cred.LastUsedAt = DateTimeOffset.UtcNow;
-        await mfaStore.UpdateCredentialAsync(cred, ct);
+        // Confirm: name it active, conditionally, writing NOTHING else.
+        //
+        // This was a full-row UpdateCredentialAsync of `cred` — a snapshot read before the claim above —
+        // under a comment asserting that carrying the claimed step made it safe. It did not. The snapshot's
+        // other fields are equally stale, and UpdateCredentialAsync is an unconditional upsert on every
+        // provider, so it re-CREATED the credential if an administrator revoked it between the read and
+        // here — and the code below then sets MfaEnabled and signs a cookie, i.e. the revoked second factor
+        // came back by way of the request being revoked. Writing LastTotpStep back was its own hazard:
+        // TryClaimTotpStepAsync has already advanced it, and re-persisting the pre-claim value could only
+        // move it backwards, past a concurrent verification, putting a spent code back in play.
+        //
+        // A false return means the credential is gone. Abandon the enrolment rather than complete it.
+        if (!await mfaStore.TryActivateCredentialAsync(userId, cred.Id, "Authenticator app", ct))
+            return JsonResults.Error("setup_expired");
 
         // Set MfaEnabled on user
         var user = await userStore.GetAsync(userId, ct);
