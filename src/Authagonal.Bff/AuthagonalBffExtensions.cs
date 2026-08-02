@@ -57,21 +57,27 @@ public static class AuthagonalBffExtensions
         // upstream actually sent instead of a body fetched from somewhere else. The token client talks
         // to the configured issuer, where a redirect would move the client_secret and the authorization
         // code off it.
+        //
+        // Neither carries the SSRF address guard (Core's SafeOutboundConnect), and that is the correct
+        // answer for both rather than an omission. That guard refuses every private, loopback and
+        // link-local address, and it belongs on a client whose target a REGISTRANT chose, where naming an
+        // internal host is the attack. Here the operator chose the target and an internal host is the
+        // deployment: BffUpstream.TargetBaseUrl is a URL from this host's own configuration whose own
+        // documented example is https://api.internal.acme.com, and a BFF sitting in front of an API in the
+        // same cluster is the ordinary case rather than the exotic one. The token client is the same story
+        // one step removed — it posts to the endpoints published by the authority this host configured, and
+        // an identity server reachable on a private address is a supported topology. There is also nothing
+        // for an address check to add: BffProxy re-composes the target as a URI and refuses it if it left
+        // the configured upstream authority, so the caller cannot steer the request at all.
         services.AddHttpClient("AuthagonalBff")
             .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
             {
                 AllowAutoRedirect = false,
-                // Refuses an internal address at the socket, per connection and therefore per
-                // redirect hop, whatever the hostname resolved to. See SafeOutboundConnect.
-                ConnectCallback = Authagonal.Core.Services.SafeOutboundConnect.Callback(),
             });
         services.AddHttpClient("AuthagonalBffProxy")
             .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
             {
                 AllowAutoRedirect = false,
-                // Refuses an internal address at the socket, per connection and therefore per
-                // redirect hop, whatever the hostname resolved to. See SafeOutboundConnect.
-                ConnectCallback = Authagonal.Core.Services.SafeOutboundConnect.Callback(),
             });
 
         services.TryAddSingleton<BffOidcConfig>();

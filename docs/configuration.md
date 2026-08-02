@@ -58,6 +58,8 @@ Storage can be configured one of two ways, supply **either** `Storage:Connection
 | `Auth:KeyRotationCheckIntervalMinutes` | `360` | How often to check if the active key needs rotation |
 | `Auth:KeyRotationLeadTimeDays` | `14` | Rotate when the active key expires within this many days |
 | `Auth:SecurityStampRevalidationMinutes` | `30` | Interval between cookie security stamp checks |
+| `Auth:AllowedInternalTargets` | *(empty)* | Internal destinations Authagonal may fetch from on the paths where **you** supplied the URL: upstream SAML metadata, upstream OIDC discovery, provisioning callbacks. Empty means every internal address is refused. See [Outbound fetches](#outbound-fetches-ssrf-guard). |
+| `Auth:AllowOutboundProxy` | `false` | Send those same operator-configured fetches through the ambient HTTP proxy, accepting that the address check cannot see through it. Never applies to a client-registered `jwks_uri` or back-channel logout URI. See [Outbound fetches](#outbound-fetches-ssrf-guard). |
 
 ## Data Protection
 
@@ -329,7 +331,7 @@ Define SAML identity providers in configuration. These are seeded on startup:
 | `ConnectionId` | Yes | Stable identifier (used in URLs like `/saml/{connectionId}/login`) |
 | `ConnectionName` | No | Display name (defaults to ConnectionId) |
 | `EntityId` | Yes | **This server's** SP entity ID, the identifier you register at the IdP, not the IdP's own entity ID |
-| `MetadataLocation` | Yes | URL to the IdP's SAML metadata XML |
+| `MetadataLocation` | Yes | URL to the IdP's SAML metadata XML. Must be https, and publicly routable unless the host is named in [`Auth:AllowedInternalTargets`](#outbound-fetches-ssrf-guard) — this document carries the certificates every assertion is validated against. Paste the XML into `MetadataXml` instead if your IdP publishes no https metadata endpoint. |
 | `AllowedDomains` | No | Email domains routed to this provider via SSO |
 
 ## OIDC Providers
@@ -504,6 +506,53 @@ Authagonal keys rate limiting and account lockout on the client IP, and only emi
 That is safe exactly when nothing but the proxy can reach the process, which is the assumption such a deployment is already relying on. Writing it down puts it somewhere it can be reviewed, rather than leaving the library to infer it. If other workloads *can* reach Kestrel directly, they can spoof the scheme and the client IP under this setting — pin the real CIDR instead.
 
 > ⚠️ **TLS-terminating proxy required, and it must be declared.** Authagonal must run behind a TLS-terminating reverse proxy (or terminate TLS itself). HSTS (`Strict-Transport-Security`) is only emitted on HTTPS requests, and the OAuth endpoints refuse plaintext requests outright unless `Auth:AllowInsecureHttp` is set — so the proxy must forward `X-Forwarded-Proto: https` **and** be named in `ForwardedHeaders:KnownNetworks` / `ForwardedHeaders:KnownProxies` for HSTS to be sent and `/connect/*` to answer at all. Declaring nothing is the common upgrade failure: the header arrives, nothing is entitled to act on it, and every `/connect/*` request answers 400 on a deployment that genuinely is on TLS. The startup log says so, and so does the refusal body.
+
+## Outbound fetches (SSRF guard)
+
+Authagonal makes server-initiated HTTP requests to URLs it did not choose: an upstream IdP's SAML metadata or OIDC discovery document, a client's `jwks_uri` during `private_key_jwt` authentication, a back-channel logout URI, a provisioning callback. Some of those URLs are supplied by whoever registered a client, and a URL naming `169.254.169.254` or a host inside your cluster is then a request Authagonal makes on an attacker's behalf.
+
+Every one of those fetches is guarded twice. The **URL check** refuses non-http(s) schemes, literal internal addresses, and `localhost` / `.local` / `.internal` names, at the point the URL is accepted — an admin write, a dynamic client registration — where the error is attributable to whoever typed it. The **address check** runs at the socket: it resolves the host, refuses every returned address that is internal, and connects to an address it actually checked rather than handing the name back to the OS. That second one is what a text check cannot do, because a hostname is not text the attacker has to be honest about: `logout.attacker.test` passes every suffix and literal rule and then answers with the cloud metadata address. Because a redirect is a new connection, the address check re-runs on every hop.
+
+Both are on by default and most deployments never notice them. Two things make them visible.
+
+### Reaching an internal destination on purpose
+
+Federating with an IdP that is only reachable over your private network, or provisioning an app that runs in the same cluster, is refused by exactly the same rule that stops the attack. Name those destinations:
+
+```json
+{
+  "Auth": {
+    "AllowedInternalTargets": ["idp.corp.internal", "*.svc.corp.internal", "10.4.0.0/16"]
+  }
+}
+```
+
+| Entry form | Permits |
+|---|---|
+| `idp.corp.internal` | That exact host, and every address it resolves to |
+| `*.corp.internal` | Any host under the suffix, and every address those resolve to |
+| `10.4.0.0/16`, `fd00:1234::/48` | That network, under any name |
+| `10.4.1.7` | That single address, under any name |
+
+Env-variable form is `Auth__AllowedInternalTargets__0`, `__1`, and so on. A malformed CIDR entry fails at startup rather than silently permitting nothing.
+
+**This list only reaches the URLs you supplied.** The upstream SAML metadata fetch, upstream OIDC discovery — including the `token_endpoint`, `userinfo_endpoint` and `jwks_uri` that document names — and provisioning callbacks. It deliberately does **not** reach a client-registered `jwks_uri` or back-channel logout URI, where an internal host is never a deployment, so opening a federation target cannot also open the metadata service to an anonymous `/connect/token` request. There is no global "off".
+
+Note that https is still required on both federation metadata URLs regardless of this list. That document carries the keys and certificates every upstream assertion is validated against, and a private network is not a secure channel.
+
+> ⚠️ **Multi-tenant hosts: check who writes the metadata URL before you list anything.** This list is scoped to targets *you* configured, and in a single-tenant deployment the connection admin is you. If you run Authagonal for other people — a SaaS where tenant admins configure their own SAML/OIDC connections through the portal or admin API — then `MetadataLocation` is **customer**-supplied, and every entry you add here is reachable by any tenant who points a connection at it. Leave it empty on such a host (the default), and if one tenant genuinely needs an on-premises IdP, give them an egress path that terminates outside your network rather than opening one from inside it.
+
+### If your egress requires an HTTP proxy
+
+The address check is attached to `SocketsHttpHandler.ConnectCallback`, and with a proxy in effect .NET invokes that callback with the **proxy's** endpoint and never the target's — so the check would inspect the proxy, find it perfectly routable, and permit everything. It would fail open in precisely the networks most likely to have a proxy. So the guarded clients set `UseProxy = false`, and in a proxy-only network their fetches fail.
+
+`Auth:AllowOutboundProxy` sends the operator-configured fetches (SAML metadata, OIDC discovery, provisioning callbacks) back through the proxy. You keep the URL check and lose the address check for them: a hostname resolving to an internal address is no longer caught. It does **not** reach the client `jwks_uri` fetch or back-channel logout delivery — those targets are registrant-chosen and reachable from anonymous requests, so there is no switch for them. A network that must proxy those needs an SSRF-filtering egress gateway in front of them.
+
+`UseAuthagonal()` logs a warning at startup when it finds `HTTPS_PROXY`, `HTTP_PROXY` or `ALL_PROXY` set, naming which clients bypass it — otherwise the symptom is "SSO stopped working" with nothing pointing at the cause.
+
+### What is not guarded
+
+The BFF's outbound clients and email delivery. `AuthagonalBffOptions.Upstreams[].TargetBaseUrl` is your own configuration whose documented example is an internal address, the BFF's token client talks to the authority you configured, and the proxy already refuses any composed target that left the configured upstream authority — so a caller cannot steer those requests. `Resend` posts to a compile-time constant. All three use the ambient proxy normally.
 
 ## Rate Limiting
 

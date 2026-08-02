@@ -36,6 +36,17 @@ namespace Authagonal.Core.Services;
 /// error is attributable to the admin who typed it; this one refuses a bad ADDRESS late, where no lie
 /// about DNS can help. Keep both.
 /// </para>
+///
+/// <para>
+/// Two things about WHERE this is attached, both of which were got wrong once and are easy to get wrong
+/// again. It belongs on clients whose target is chosen by a REGISTRANT (a <c>jwks_uri</c>, a DCR-registered
+/// back-channel logout URI, a provisioning callback), because there an internal host is the attack. On a
+/// client whose target the OPERATOR configured, an internal host is frequently the deployment, and the
+/// guard has to be given an <see cref="OutboundAllowlist"/> or it becomes the outage — see that type. And
+/// wherever it IS attached, the handler must set <c>UseProxy = false</c>: with a proxy in effect
+/// <c>SocketsHttpHandler</c> invokes the callback with the PROXY's endpoint and never the target's, so the
+/// guard inspects the proxy, finds it perfectly routable, and waves everything through.
+/// </para>
 /// </remarks>
 public static class SafeOutboundConnect
 {
@@ -55,13 +66,18 @@ public static class SafeOutboundConnect
     /// this server and a local development relying party is a supported configuration.
     /// </param>
     /// <param name="resolver">Override for tests. Defaults to the system resolver.</param>
+    /// <param name="allowlist">
+    /// Internal destinations the operator configured this server to reach. Pass one only on a client whose
+    /// target comes from operator configuration; leave it null on every registrant-supplied target, where
+    /// there is deliberately no way to widen the guard. See <see cref="OutboundAllowlist"/>.
+    /// </param>
     public static Func<SocketsHttpConnectionContext, CancellationToken, ValueTask<Stream>> Callback(
-        bool allowLoopback = false, HostResolver? resolver = null)
+        bool allowLoopback = false, HostResolver? resolver = null, OutboundAllowlist? allowlist = null)
     {
         var resolve = resolver ?? SystemResolver;
 
         return async (context, ct) => await ConnectAsync(
-            context.DnsEndPoint.Host, context.DnsEndPoint.Port, allowLoopback, resolve, ct)
+            context.DnsEndPoint.Host, context.DnsEndPoint.Port, allowLoopback, resolve, ct, allowlist)
             .ConfigureAwait(false);
     }
 
@@ -74,9 +90,15 @@ public static class SafeOutboundConnect
     /// logic in order to reach it would be asserting about a copy. Public for that reason and no other.
     /// </remarks>
     public static async Task<Stream> ConnectAsync(
-        string host, int port, bool allowLoopback, HostResolver resolve, CancellationToken ct)
+        string host, int port, bool allowLoopback, HostResolver resolve, CancellationToken ct,
+        OutboundAllowlist? allowlist = null)
     {
         {
+            // A host the operator named is permitted whatever it resolves to, including the all-addresses
+            // rule below. That is not a hole in the rebinding defence: the defence exists to stop an
+            // ATTACKER choosing this server's destination, and here the operator already chose it by name.
+            var operatorNamedHost = allowlist?.PermitsHost(host) == true;
+
             IPAddress[] candidates;
             if (IPAddress.TryParse(host, out var literal))
             {
@@ -98,12 +120,15 @@ public static class SafeOutboundConnect
             // public address and an internal one is the rebinding attack expressed in a single response:
             // accepting it because one entry looked fine would let the attacker choose which the socket
             // gets, and the "choice" is whatever ordering the resolver happened to return.
-            var allowed = candidates.Where(ip => OutboundUrl.IsAllowedAddress(ip, allowLoopback)).ToArray();
+            var allowed = operatorNamedHost
+                ? candidates
+                : candidates.Where(ip => OutboundUrl.IsAllowedAddress(ip, allowLoopback, allowlist)).ToArray();
             if (allowed.Length == 0 || allowed.Length != candidates.Length)
             {
                 throw new HttpRequestException(
                     $"Refusing to connect to '{host}': it resolves to an address this server will not " +
-                    "originate requests to (loopback, link-local, private, or otherwise internal).");
+                    "originate requests to (loopback, link-local, private, or otherwise internal). If this " +
+                    "is an internal destination you deploy on purpose, list it in Auth:AllowedInternalTargets.");
             }
 
             // Connect to the ADDRESS that was checked, never back to the name — re-resolving here is the

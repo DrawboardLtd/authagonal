@@ -71,6 +71,44 @@
   set the opt-in explicitly. `dotnet run --project src/Authagonal.Server` now defaults to the `https` launch
   profile; the `http` profile carries the opt-in.
 
+- **Server-initiated outbound fetches no longer use the ambient HTTP proxy, and refuse internal addresses
+  at the socket.** Two config keys exist for the deployments this affects: `Auth:AllowedInternalTargets` and
+  `Auth:AllowOutboundProxy`.
+
+  The outbound SSRF guard now resolves the target and refuses every private, loopback, link-local and
+  otherwise internal ADDRESS at connect time, on every redirect hop (see the Security section below for
+  why a URL check cannot do this). Two consequences an operator can see:
+
+  - **An internal destination you fetch on purpose is now refused.** An IdP reachable only over a private
+    network, a provisioning app in the same cluster. List it in `Auth:AllowedInternalTargets`:
+    `idp.corp.internal` (that host and whatever it resolves to), `*.corp.internal` (any host under the
+    suffix), `10.4.0.0/16` or `10.4.1.7` (that network or address, under any name). It applies to the
+    upstream SAML metadata fetch, upstream OIDC discovery — including the `token`, `userinfo` and `jwks_uri`
+    endpoints that document names — and provisioning callbacks: the paths where the URL came from *your*
+    configuration or admin API. It deliberately does **not** reach a client-registered `jwks_uri` or
+    back-channel logout URI, where an internal host is never a deployment, so widening a federation target
+    cannot also open the cloud metadata service to an anonymous `/connect/token` request. A malformed CIDR
+    entry fails at startup rather than silently permitting nothing.
+
+  - **If your egress requires a proxy, those fetches now fail.** The guard is attached to
+    `SocketsHttpHandler.ConnectCallback`, and with a proxy in effect .NET invokes that callback with the
+    *proxy's* endpoint and never the target's — so the check would pass on the proxy every time and permit
+    everything. It would fail open in precisely the networks most likely to have a proxy, so the clients
+    that carry the guard set `UseProxy = false`. `Auth:AllowOutboundProxy` sends the operator-configured
+    fetches (SAML metadata, OIDC discovery, provisioning callbacks) back through the proxy, accepting that
+    only the URL check remains for them. It does **not** reach the client `jwks_uri` fetch or back-channel
+    logout delivery: those targets are registrant-chosen and reachable from anonymous requests, so there is
+    no switch. A network that must proxy those needs an SSRF-filtering egress gateway, not a bypass.
+    `UseAuthagonal()` logs a warning at startup when it finds `HTTPS_PROXY`/`HTTP_PROXY`/`ALL_PROXY` set,
+    because otherwise the symptom is "SSO stopped working" with nothing pointing at the cause.
+
+  The BFF's two clients (`AuthagonalBff`, `AuthagonalBffProxy`) are **not** guarded and use the proxy as
+  before. `BffUpstream.TargetBaseUrl` is host configuration whose own documented example is
+  `https://api.internal.acme.com`, the token client talks to the authority that host configured, and
+  `BffProxy` already refuses any composed target that left the configured upstream authority — so a caller
+  cannot steer those requests and there is nothing for an address check to add. Email delivery (`Resend`)
+  is likewise unguarded and unaffected: its target is a compile-time constant.
+
 ### Security — audit remainder
 
 An independent audit of the info-severity fixes found ten of twenty-eight only partially closed. Two
@@ -133,6 +171,28 @@ adjacent defect the audit found while checking a finding it had already passed.
   subject disclosure rather than PII.
 
 ### Security
+
+- **Every outbound SSRF guard was a text check, and a hostname is not text the attacker has to be honest
+  about.** `logout.attacker.test` passes every literal-address and internal-suffix rule and then answers
+  with `169.254.169.254`. The guards ran where a URL was accepted — an admin write, a dynamic client
+  registration — and the name was resolved later, by something else, on behalf of whoever owns it.
+
+  Resolving at the write would not have fixed it, in two directions at once: an attacker can answer
+  truthfully at registration and differently at delivery, and pinning what was resolved then goes stale for
+  entirely ordinary reasons (failover, autoscaling, a CDN, a reclaimed address), at which point this server
+  would be POSTing logout tokens carrying `sub` and `sid` to whoever inherited the address.
+
+  So the check now runs at the socket, per connection: resolve, refuse **every** returned address that is
+  internal — not merely the first, because a name answering with one public and one private address is the
+  rebinding attack compressed into a single response — and then connect to an address that was actually
+  checked rather than handing the name back to the socket, which would reopen the window between the two
+  lookups. Because a redirect is a new connection, it re-runs on every hop for free.
+
+  The URL checks stay. One refuses a bad URL early, where the error is attributable to whoever typed it; the
+  other refuses a bad address late, where no lie about DNS can help. Which clients carry the socket check,
+  and what a proxy does to it, is a per-client decision documented in the Breaking section above and pinned
+  by tests: it belongs on a target a *registrant* chose and needs an operator escape hatch on a target the
+  *operator* chose.
 
 - **Any authenticated user could reach the full admin API by changing the case of a scope name.** Three
   components disagreed about scope-name comparison: the client allow-list matched case-INsensitively so

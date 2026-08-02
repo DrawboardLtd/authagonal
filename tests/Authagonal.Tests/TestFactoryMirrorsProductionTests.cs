@@ -187,6 +187,10 @@ public class TestFactoryMirrorsProductionTests
             typeof(IRevokedTokenStore),
             typeof(PasswordHasher),
             typeof(PasswordValidator),
+            // Not a guard — the operator's escape from one. Its absence here is fail-CLOSED (every internal
+            // outbound target refused), which is why it would go unnoticed: the suite would stay green while
+            // no test could observe Auth:AllowedInternalTargets doing anything at all.
+            typeof(OutboundAllowlist),
         ];
 
         foreach (var type in required)

@@ -8,11 +8,19 @@ using Authagonal.Core.Stores;
 
 namespace Authagonal.Server.Services;
 
+/// <param name="allowlist">
+/// The operator's internal-destination allowlist (<c>Auth:AllowedInternalTargets</c>). A provisioning app
+/// that runs inside the operator's own network is an ordinary deployment, and the callback URL comes from
+/// configuration or the admin API rather than from a registrant — so unlike a jwks_uri it can be permitted.
+/// Optional, and absent means every internal callback is refused, which is what this did before the
+/// allowlist existed. Must be the same list the "Provisioning" client's connect callback was given.
+/// </param>
 public sealed class TccProvisioningOrchestrator(
     IHttpClientFactory httpClientFactory,
     IHttpContextAccessor httpContextAccessor,
     IProvisioningAppProvider appProvider,
-    ILogger<TccProvisioningOrchestrator> logger) : IProvisioningOrchestrator
+    ILogger<TccProvisioningOrchestrator> logger,
+    OutboundAllowlist? allowlist = null) : IProvisioningOrchestrator
 {
     // Try can do real work (routing slips, org provisioning) so tolerate
     // seconds of latency. Confirm and Cancel must be cheap — hold them to a
@@ -452,12 +460,13 @@ public sealed class TccProvisioningOrchestrator(
     /// <c>/try</c>, <c>/confirm</c>, <c>/cancel</c> and deprovision alike. Validating where the request
     /// is actually made is what makes the guard independent of how the value got here.
     /// </remarks>
-    private static void RefuseUnsafeCallback(string url)
+    private void RefuseUnsafeCallback(string url)
     {
-        if (!OutboundUrl.IsSafe(url))
+        if (!OutboundUrl.IsSafe(url, allowlist: allowlist))
             throw new HttpRequestException(
                 "Provisioning callback URL is not permitted: it is not an http(s) URL, or it names an " +
-                "internal address. Reconfigure the app's callbackUrl.");
+                "internal address. Reconfigure the app's callbackUrl, or — if the target is an internal " +
+                "destination you deploy on purpose — list it in Auth:AllowedInternalTargets.");
     }
 
     [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("Trimming", "IL2026", Justification = "Provisioning payloads are polymorphic external contracts")]

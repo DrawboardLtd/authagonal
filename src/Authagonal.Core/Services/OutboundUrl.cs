@@ -34,7 +34,13 @@ public static class OutboundUrl
     /// from an embedding host's own store, and re-litigating loopback there would break a flow that
     /// nothing in the write path is even trying to stop.
     /// </param>
-    public static bool IsSafe(string? url, bool allowLoopback = false)
+    /// <param name="allowlist">
+    /// Internal destinations the OPERATOR configured this server to reach. Pass one ONLY where the URL
+    /// itself came from operator configuration — an upstream IdP's metadata URL, a provisioning callback.
+    /// Leave it null (the default) on every URL a registrant or a client supplied: there, naming an
+    /// internal host is the attack rather than the deployment. See <see cref="OutboundAllowlist"/>.
+    /// </param>
+    public static bool IsSafe(string? url, bool allowLoopback = false, OutboundAllowlist? allowlist = null)
     {
         if (string.IsNullOrWhiteSpace(url)) return false;
         if (!Uri.TryCreate(url, UriKind.Absolute, out var uri)) return false;
@@ -46,6 +52,10 @@ public static class OutboundUrl
         // nor the ".local" suffix test. One trailing character defeated the whole guard.
         var host = uri.DnsSafeHost.TrimEnd('.');
         if (host.Length == 0) return false;
+
+        // Asked before the rules rather than after them, so an operator-named destination is permitted
+        // whichever rule would have refused it — the suffix tests below and the address test alike.
+        if (allowlist?.PermitsHost(host) == true) return true;
 
         var isLoopbackName = host.Equals("localhost", StringComparison.OrdinalIgnoreCase)
             || host.EndsWith(".localhost", StringComparison.OrdinalIgnoreCase);
@@ -70,8 +80,13 @@ public static class OutboundUrl
     /// definition of "internal", used by both the URL check and the socket check — two lists would drift,
     /// and the drift would be a hole in whichever one was consulted second.
     /// </remarks>
-    public static bool IsAllowedAddress(IPAddress ip, bool allowLoopback = false)
-        => !IsBlockedIp(ip, allowLoopback);
+    /// <param name="allowlist">
+    /// As on <see cref="IsSafe"/>: operator-configured internal networks, and null on every
+    /// registrant-supplied target.
+    /// </param>
+    public static bool IsAllowedAddress(
+        IPAddress ip, bool allowLoopback = false, OutboundAllowlist? allowlist = null)
+        => !IsBlockedIp(ip, allowLoopback) || allowlist?.PermitsAddress(ip) == true;
 
     private static bool IsBlockedIp(IPAddress ip, bool allowLoopback)
     {

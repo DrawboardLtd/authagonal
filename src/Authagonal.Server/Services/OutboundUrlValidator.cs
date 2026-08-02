@@ -12,5 +12,7 @@ namespace Authagonal.Server.Services;
 /// </remarks>
 public static class OutboundUrlValidator
 {
-    public static bool IsSafe(string? url) => Authagonal.Core.Services.OutboundUrl.IsSafe(url);
+    /// <inheritdoc cref="Authagonal.Core.Services.OutboundUrl.IsSafe"/>
+    public static bool IsSafe(string? url, Authagonal.Core.Services.OutboundAllowlist? allowlist = null) =>
+        Authagonal.Core.Services.OutboundUrl.IsSafe(url, allowlist: allowlist);
 }

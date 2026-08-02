@@ -126,6 +126,12 @@ public static class AuthagonalProtocolExtensions
                 // Refuses an internal address at the socket, per connection and therefore per
                 // redirect hop, whatever the hostname resolved to. See SafeOutboundConnect.
                 ConnectCallback = Authagonal.Core.Services.SafeOutboundConnect.Callback(),
+                // Without this the guard above is decoration. With a proxy in effect SocketsHttpHandler
+                // invokes ConnectCallback with the PROXY's endpoint and never the target's, so the check
+                // passes on the proxy's own perfectly routable address and the request goes wherever
+                // jwks_uri said — failing open in the deployments most likely to have a proxy. There is no
+                // switch: this target is registrant-chosen and reachable from an anonymous /connect/token.
+                UseProxy = false,
             });
 
         // Seeds clients/scopes from AuthagonalProtocolOptions on startup.

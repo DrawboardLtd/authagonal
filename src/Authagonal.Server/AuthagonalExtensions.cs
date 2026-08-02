@@ -262,6 +262,16 @@ public static class AuthagonalExtensions
         // ---------------------------------------------------------------------------
         services.AddSingleton<PasswordHasher>();
         services.AddSingleton<PasswordValidator>();
+
+        // The operator's list of internal destinations this server may reach on the paths where the target
+        // came from configuration or an admin API. Built once from Auth:AllowedInternalTargets — a
+        // malformed CIDR entry throws here, at startup, rather than quietly permitting nothing.
+        services.TryAddSingleton(sp => new Authagonal.Core.Services.OutboundAllowlist(
+            sp.GetRequiredService<IOptions<AuthOptions>>().Value.AllowedInternalTargets));
+
+        // A provisioning callback is admin-API- or configuration-supplied, and a provisioning target inside
+        // the operator's own network is an ordinary deployment — so this one consults the allowlist. It is
+        // still refused by default: an empty allowlist leaves the guard at full strength.
         services.AddHttpClient("Provisioning")
             // No automatic redirect following, and a bounded timeout. The SSRF guard only ever inspected the
             // URL the caller supplied, so an automatic 302 reached a host it never saw — see
@@ -269,13 +279,7 @@ public static class AuthagonalExtensions
             // every other outbound client in the codebase; these two were left at the 100-second default,
             // which made a slow remote host a request-slot amplifier on anonymous endpoints.
             .ConfigureHttpClient(c => c.Timeout = TimeSpan.FromSeconds(10))
-            .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
-            {
-                AllowAutoRedirect = false,
-                // Refuses an internal address at the socket, per connection and therefore per
-                // redirect hop, whatever the hostname resolved to. See SafeOutboundConnect.
-                ConnectCallback = Authagonal.Core.Services.SafeOutboundConnect.Callback(),
-            });
+            .ConfigurePrimaryHttpMessageHandler(OperatorConfiguredOutboundHandler);
 
         // The two clients that were named at their call sites and registered nowhere, so the factory
         // handed each one the default handler — 100-second timeout, up to 50 redirects followed.
@@ -285,24 +289,20 @@ public static class AuthagonalExtensions
         // nothing validated: for back-channel logout that host is chosen by whoever registered the
         // client, and .NET only strips Authorization when the redirect crosses origins — a same-origin
         // path change keeps it.
+        // Back-channel logout delivers to a URI whoever registered the client chose, so it is strict with no
+        // opt-out: no allowlist, and no proxy that could hide the target from the address check.
         services.AddHttpClient("BackChannelLogout")
             .ConfigureHttpClient(c => c.Timeout = TimeSpan.FromSeconds(10))
-            .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
-            {
-                AllowAutoRedirect = false,
-                // Refuses an internal address at the socket, per connection and therefore per
-                // redirect hop, whatever the hostname resolved to. See SafeOutboundConnect.
-                ConnectCallback = Authagonal.Core.Services.SafeOutboundConnect.Callback(),
-            });
+            .ConfigurePrimaryHttpMessageHandler(RegistrantSuppliedOutboundHandler);
+        // Resend posts to a compile-time constant (api.resend.com) — no configuration, no registrant input,
+        // nothing for an address check to decide. So no ConnectCallback, and the ambient proxy is left
+        // alone: attaching the socket guard here would buy nothing and would need UseProxy = false to mean
+        // anything, which is how a deployment that egresses through a mandatory proxy loses all its email.
+        // The redirect refusal is what matters on this client and it stays — the request carries the mail
+        // API key in an Authorization header, and .NET only strips that when a redirect crosses origins.
         services.AddHttpClient("Resend")
             .ConfigureHttpClient(c => c.Timeout = TimeSpan.FromSeconds(10))
-            .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
-            {
-                AllowAutoRedirect = false,
-                // Refuses an internal address at the socket, per connection and therefore per
-                // redirect hop, whatever the hostname resolved to. See SafeOutboundConnect.
-                ConnectCallback = Authagonal.Core.Services.SafeOutboundConnect.Callback(),
-            });
+            .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AllowAutoRedirect = false });
 
         // Protocol — token service, key manager (when not pre-registered), auth-code
         // service. Server maps AuthOptions into AuthagonalProtocolOptions so there's one
@@ -456,6 +456,9 @@ public static class AuthagonalExtensions
         // ---------------------------------------------------------------------------
         // SAML services
         // ---------------------------------------------------------------------------
+        // An upstream IdP's metadata URL is operator/admin-configured, and an IdP reachable only over a
+        // private network is a first-class deployment for an auth product — so the allowlist applies here.
+        // Empty by default, which leaves this exactly as strict as it was.
         services.AddHttpClient("SamlMetadata")
             // No automatic redirect following, and a bounded timeout. The SSRF guard only ever inspected the
             // URL the caller supplied, so an automatic 302 reached a host it never saw — see
@@ -463,19 +466,16 @@ public static class AuthagonalExtensions
             // every other outbound client in the codebase; these two were left at the 100-second default,
             // which made a slow remote host a request-slot amplifier on anonymous endpoints.
             .ConfigureHttpClient(c => c.Timeout = TimeSpan.FromSeconds(10))
-            .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
-            {
-                AllowAutoRedirect = false,
-                // Refuses an internal address at the socket, per connection and therefore per
-                // redirect hop, whatever the hostname resolved to. See SafeOutboundConnect.
-                ConnectCallback = Authagonal.Core.Services.SafeOutboundConnect.Callback(),
-            });
+            .ConfigurePrimaryHttpMessageHandler(OperatorConfiguredOutboundHandler);
         services.AddMemoryCache();
         services.AddSingleton<SamlMetadataParser>();
         services.AddSingleton<SamlResponseParser>();
         // ---------------------------------------------------------------------------
         // OIDC services
         // ---------------------------------------------------------------------------
+        // As SamlMetadata, and this client carries more than the discovery fetch: the token, userinfo and
+        // JWKS requests for an upstream connection all go through it, so an on-premises upstream needs the
+        // allowlist to cover the whole exchange rather than only the first hop.
         services.AddHttpClient("OidcDiscovery")
             // No automatic redirect following, and a bounded timeout. The SSRF guard only ever inspected the
             // URL the caller supplied, so an automatic 302 reached a host it never saw — see
@@ -483,28 +483,18 @@ public static class AuthagonalExtensions
             // every other outbound client in the codebase; these two were left at the 100-second default,
             // which made a slow remote host a request-slot amplifier on anonymous endpoints.
             .ConfigureHttpClient(c => c.Timeout = TimeSpan.FromSeconds(10))
-            .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
-            {
-                AllowAutoRedirect = false,
-                // Refuses an internal address at the socket, per connection and therefore per
-                // redirect hop, whatever the hostname resolved to. See SafeOutboundConnect.
-                ConnectCallback = Authagonal.Core.Services.SafeOutboundConnect.Callback(),
-            });
+            .ConfigurePrimaryHttpMessageHandler(OperatorConfiguredOutboundHandler);
         services.AddSingleton<OidcDiscoveryClient>();
 
         // The client jwks_uri fetch on the private_key_jwt path (ClientAuthentication). It asked the
         // factory for this name and the name was registered nowhere, so it got a default handler: 100
         // second timeout, and 50 automatic redirects that carried the request past the SSRF guard to a
         // host the guard never saw. That fetch is reachable from an anonymous /connect/token request.
+        // jwks_uri is registrant-settable and the fetch is reachable anonymously, so this is the strict
+        // handler: no allowlist, and no proxy. Naming an internal host here is never a deployment.
         services.AddHttpClient("AuthagonalJwks")
             .ConfigureHttpClient(c => c.Timeout = TimeSpan.FromSeconds(10))
-            .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
-            {
-                AllowAutoRedirect = false,
-                // Refuses an internal address at the socket, per connection and therefore per
-                // redirect hop, whatever the hostname resolved to. See SafeOutboundConnect.
-                ConnectCallback = Authagonal.Core.Services.SafeOutboundConnect.Callback(),
-            });
+            .ConfigurePrimaryHttpMessageHandler(RegistrantSuppliedOutboundHandler);
 
         // ---------------------------------------------------------------------------
         // Authentication
@@ -764,6 +754,57 @@ public static class AuthagonalExtensions
     }
 
     /// <summary>
+    /// The primary handler for an outbound client whose target came from OPERATOR configuration or an
+    /// admin API: upstream SAML metadata, upstream OIDC discovery, provisioning callbacks.
+    /// </summary>
+    /// <remarks>
+    /// The address guard applies, and <c>Auth:AllowedInternalTargets</c> is how an operator names the
+    /// internal destinations that are theirs — an on-premises IdP, a provisioning app in the same cluster.
+    /// Empty by default, so the default posture is identical to the strict handler; the difference is that
+    /// there IS a way to say otherwise, which is what an operator-configured target needs and a
+    /// registrant-supplied one must not have.
+    /// <para>
+    /// <c>UseProxy</c> follows <c>Auth:AllowOutboundProxy</c>, default false, because a proxied connection
+    /// never shows <c>ConnectCallback</c> the real target — the callback is handed the PROXY's endpoint, so
+    /// the guard would inspect the proxy, find it routable, and permit everything. Leaving the ambient proxy
+    /// on would make this guard fail open in exactly the networks most likely to have one. An operator whose
+    /// egress requires a proxy can accept that trade explicitly; nobody gets it by accident.
+    /// </para>
+    /// </remarks>
+    private static SocketsHttpHandler OperatorConfiguredOutboundHandler(IServiceProvider sp)
+    {
+        var auth = sp.GetRequiredService<IOptions<AuthOptions>>().Value;
+        return new SocketsHttpHandler
+        {
+            AllowAutoRedirect = false,
+            UseProxy = auth.AllowOutboundProxy,
+            // Refuses an internal address at the socket, per connection and therefore per redirect hop,
+            // whatever the hostname resolved to — except for the destinations the operator named.
+            ConnectCallback = Authagonal.Core.Services.SafeOutboundConnect.Callback(
+                allowlist: sp.GetRequiredService<Authagonal.Core.Services.OutboundAllowlist>()),
+        };
+    }
+
+    /// <summary>
+    /// The primary handler for an outbound client whose target was chosen by a REGISTRANT or a client: a
+    /// <c>jwks_uri</c>, a back-channel logout URI.
+    /// </summary>
+    /// <remarks>
+    /// No allowlist and no proxy, neither configurable. These fetches are reachable from anonymous requests
+    /// and the target is picked by whoever registered the client, so an internal address is never the
+    /// deployment — it is the probe. The address check is the only thing between those requests and the
+    /// internal network, and a switch that turned it off would be the first thing an operator flipped while
+    /// debugging something else. A deployment that must egress through a proxy needs an SSRF-filtering
+    /// gateway on these paths, not a bypass here.
+    /// </remarks>
+    private static SocketsHttpHandler RegistrantSuppliedOutboundHandler() => new()
+    {
+        AllowAutoRedirect = false,
+        UseProxy = false,
+        ConnectCallback = Authagonal.Core.Services.SafeOutboundConnect.Callback(),
+    };
+
+    /// <summary>
     /// Adds Authagonal middleware to the pipeline: exception handling, security headers,
     /// CORS, rate limiting, authentication, authorization, and static file serving.
     /// Call this before <see cref="MapAuthagonalEndpoints"/>.
@@ -842,6 +883,31 @@ public static class AuthagonalExtensions
                     "codes are readable by anyone who can read the store or a backup of it. Set " +
                     "SecretProvider:VaultUri for Azure Key Vault, call AddSecretsManager for AWS Secrets " +
                     "Manager, or register your own ISecretProvider before AddAuthagonal.");
+        }
+
+        // Outbound guard vs. an egress proxy. The named outbound clients set UseProxy = false, because a
+        // proxied connection hands ConnectCallback the PROXY's endpoint and the address guard would inspect
+        // that instead of the target — the guard would pass on the proxy every time and permit everything.
+        // The consequence is that in a network where egress REQUIRES a proxy, those fetches now fail, and
+        // the symptom (SAML federation stopped working; back-channel logout times out) points nowhere near
+        // the cause. Say it at startup instead, once, naming the escape hatches.
+        var ambientProxy = new[] { "HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy", "ALL_PROXY", "all_proxy" }
+            .FirstOrDefault(v => !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable(v)));
+        if (ambientProxy is not null)
+        {
+            var authOptions = app.Services.GetService<IOptions<AuthOptions>>()?.Value ?? new AuthOptions();
+            app.Logger.LogWarning(
+                "{ProxyVariable} is set, but Authagonal's outbound clients bypass it: a proxied connection " +
+                "hides the real target from the SSRF address guard, which would then permit every internal " +
+                "address. Upstream SAML metadata, OIDC discovery and provisioning callbacks {OperatorState}. " +
+                "The client jwks_uri fetch and back-channel logout delivery never use a proxy — put an " +
+                "SSRF-filtering egress gateway in front of those if your network requires one. Internal " +
+                "destinations you deploy on purpose belong in Auth:AllowedInternalTargets, which is the " +
+                "per-destination alternative to turning the guard off.",
+                ambientProxy,
+                authOptions.AllowOutboundProxy
+                    ? "DO use it (Auth:AllowOutboundProxy is set), so their address guard is inactive"
+                    : "also bypass it; set Auth:AllowOutboundProxy to send them through it instead");
         }
 
         // Forwarded-header trust. Two different questions ride on these headers, and they do not

@@ -48,7 +48,7 @@ public static class ProvisioningEndpoints
         HttpContext http,
         CancellationToken ct)
     {
-        if (ValidateRequest(request) is { } error)
+        if (ValidateRequest(request, http) is { } error)
             return error;
 
         var max = await quota.GetMaxAsync(ct);
@@ -122,7 +122,7 @@ public static class ProvisioningEndpoints
         HttpContext http,
         CancellationToken ct)
     {
-        if (ValidateRequest(request) is { } error)
+        if (ValidateRequest(request, http) is { } error)
             return error;
 
         var existing = await store.GetAsync(appId, ct);
@@ -161,13 +161,18 @@ public static class ProvisioningEndpoints
         string appId,
         IProvisioningAppStore store,
         IHttpClientFactory httpClientFactory,
+        HttpContext httpContext,
         CancellationToken ct)
     {
         var app = await store.GetAsync(appId, ct);
         if (app is null)
             return TypedResults.Json(new ErrorInfoResponse { Error = "app_not_found" }, AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 404);
 
-        if (!OutboundUrlValidator.IsSafe(app.CallbackUrl))
+        // Same allowlist the orchestrator's own per-request check consults, so "test" answers the question
+        // the signup path will actually be asked rather than a stricter one.
+        if (!OutboundUrlValidator.IsSafe(
+                app.CallbackUrl,
+                httpContext.RequestServices.GetService<Authagonal.Core.Services.OutboundAllowlist>()))
             return TypedResults.Json(new ProvisioningTestResult { Success = false, StatusCode = 0, Body = "Callback URL is not an allowed external host." }, AuthagonalJsonContext.Default.ProvisioningTestResult);
 
         var http = httpClientFactory.CreateClient("Provisioning");
@@ -211,16 +216,26 @@ public static class ProvisioningEndpoints
         }
     }
 
-    private static IResult? ValidateRequest(ProvisioningAppRequest request)
+    /// <param name="http">
+    /// Only for the operator's internal-destination allowlist (<c>Auth:AllowedInternalTargets</c>) — a
+    /// provisioning app inside the operator's own network is an ordinary deployment, and refusing the URL
+    /// here while the orchestrator would have posted to it happily is one guard disagreeing with itself.
+    /// Resolved from the request container rather than taken as a handler parameter: an unregistered service
+    /// in a minimal-API signature is inferred as a BODY parameter, so a host that composes its own container
+    /// would see every create/update 400 with nothing saying why. Absent means the strict list.
+    /// </param>
+    private static IResult? ValidateRequest(ProvisioningAppRequest request, HttpContext http)
     {
+        var allowlist = http.RequestServices.GetService<Authagonal.Core.Services.OutboundAllowlist>();
+
         if (string.IsNullOrWhiteSpace(request.Name))
             return TypedResults.Json(new ErrorInfoResponse { Error = "invalid_request", ErrorDescription = "name is required" }, AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 400);
         if (string.IsNullOrWhiteSpace(request.CallbackUrl))
             return TypedResults.Json(new ErrorInfoResponse { Error = "invalid_request", ErrorDescription = "callbackUrl is required" }, AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 400);
         if (!Uri.TryCreate(request.CallbackUrl, UriKind.Absolute, out var uri) || (uri.Scheme != "https" && uri.Scheme != "http"))
             return TypedResults.Json(new ErrorInfoResponse { Error = "invalid_request", ErrorDescription = "callbackUrl must be an absolute http(s) URL" }, AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 400);
-        if (!OutboundUrlValidator.IsSafe(request.CallbackUrl))
-            return TypedResults.Json(new ErrorInfoResponse { Error = "invalid_request", ErrorDescription = "callbackUrl must be an external host (internal/loopback addresses are not allowed)" }, AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 400);
+        if (!OutboundUrlValidator.IsSafe(request.CallbackUrl, allowlist))
+            return TypedResults.Json(new ErrorInfoResponse { Error = "invalid_request", ErrorDescription = "callbackUrl must be an external host (internal/loopback addresses are not allowed unless listed in Auth:AllowedInternalTargets)" }, AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 400);
         return null;
     }
 

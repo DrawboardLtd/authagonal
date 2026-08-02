@@ -37,18 +37,26 @@ public static class SafeOutboundHttp
     /// <summary>
     /// GETs <paramref name="url"/> as a string, validating the initial URL and every redirect target.
     /// </summary>
+    /// <param name="allowlist">
+    /// Operator-configured internal destinations, applied to the initial URL and to every redirect target
+    /// alike. Null — the default — on every registrant-supplied URL. See <see cref="OutboundAllowlist"/>.
+    /// It must be the same allowlist the fetching client's <see cref="SafeOutboundConnect"/> callback was
+    /// given, or one layer refuses what the other permits and the deployment fails in the layer nobody
+    /// configured.
+    /// </param>
     /// <exception cref="InvalidOperationException">
     /// The URL, or a host it redirected to, failed the SSRF guard; or the response exceeded
     /// <see cref="MaxResponseBytes"/>.
     /// </exception>
     public static async Task<string> GetStringAsync(
-        HttpClient client, string url, ILogger? logger = null, CancellationToken ct = default)
+        HttpClient client, string url, ILogger? logger = null, CancellationToken ct = default,
+        OutboundAllowlist? allowlist = null)
     {
         var current = url;
 
         for (var hop = 0; hop <= MaxHops; hop++)
         {
-            if (!OutboundUrl.IsSafe(current))
+            if (!OutboundUrl.IsSafe(current, allowlist: allowlist))
             {
                 logger?.LogWarning("Refusing outbound fetch of {Url}: blocked by the SSRF guard", current);
                 throw new InvalidOperationException("The requested URL is not permitted.");

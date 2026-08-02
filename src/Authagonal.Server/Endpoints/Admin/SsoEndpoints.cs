@@ -71,7 +71,7 @@ public static class SsoEndpoints
         if (hasUrl == hasXml)
             return Results.BadRequest(new { error = "invalid_request", error_description = "Provide exactly one of MetadataLocation (a metadata URL) or MetadataXml (pasted IdP metadata)." });
 
-        if (hasUrl && ValidateMetadataLocation(request.MetadataLocation!) is { } urlError)
+        if (hasUrl && ValidateMetadataLocation(request.MetadataLocation!, http) is { } urlError)
             return urlError;
 
         string? condensedXml = null;
@@ -185,7 +185,7 @@ public static class SsoEndpoints
         // two are mutually exclusive sources); NameIdFormat "" resets to the default.
         if (!string.IsNullOrWhiteSpace(request.MetadataLocation))
         {
-            if (ValidateMetadataLocation(request.MetadataLocation) is { } urlError)
+            if (ValidateMetadataLocation(request.MetadataLocation, http) is { } urlError)
                 return urlError;
             config.MetadataLocation = request.MetadataLocation;
             config.MetadataXml = null;
@@ -289,7 +289,7 @@ public static class SsoEndpoints
         //
         // Create is the only verb that needed it: this group exposes MapPost/MapGet/MapDelete, with no
         // update route for an OIDC connection.
-        if (ValidateMetadataLocation(request.MetadataLocation!) is { } oidcMetadataError)
+        if (ValidateMetadataLocation(request.MetadataLocation!, http) is { } oidcMetadataError)
             return oidcMetadataError;
 
         if (string.IsNullOrWhiteSpace(request.ClientId))
@@ -436,11 +436,25 @@ public static class SsoEndpoints
     /// is debugging SSO rather than reading a message about TLS. The SSRF guard is applied for the same
     /// reason it is applied to provisioning callbacks: a metadata URL is a server-fetched URL.
     /// </remarks>
-    private static IResult? ValidateMetadataLocation(string metadataLocation)
+    /// <param name="http">
+    /// Only for the operator's internal-destination allowlist. Resolved from the request container rather
+    /// than taken as a handler parameter: an unregistered service in a minimal-API signature is inferred as
+    /// a BODY parameter, and a host that composes its own container and never registers one would see every
+    /// create/update 400 with nothing explaining why. Absent means the strict list, which is the posture
+    /// this check has always had.
+    /// </param>
+    private static IResult? ValidateMetadataLocation(string metadataLocation, HttpContext http)
     {
+        var allowlist = http.RequestServices.GetService<Authagonal.Core.Services.OutboundAllowlist>();
+
+        // The allowlist is consulted for the same reason the fetch consults it: federating with an IdP
+        // reachable only over a private network is a first-class deployment, and refusing the URL here
+        // while SamlMetadataParser would have fetched it happily would be the two halves of one guard
+        // disagreeing. https is still required with no exception — this document carries the signing
+        // certificates every assertion is checked against, and a private network is not a secure channel.
         if (Uri.TryCreate(metadataLocation, UriKind.Absolute, out var uri)
             && uri.Scheme == Uri.UriSchemeHttps
-            && Authagonal.Core.Services.OutboundUrl.IsSafe(metadataLocation))
+            && Authagonal.Core.Services.OutboundUrl.IsSafe(metadataLocation, allowlist: allowlist))
         {
             return null;
         }
@@ -451,7 +465,8 @@ public static class SsoEndpoints
             error_description = "MetadataLocation must be an absolute https URL on a publicly routable host. " +
                 "The metadata document carries the signing certificates every assertion is validated against, " +
                 "so it cannot be fetched over plaintext http. Paste the document into MetadataXml instead if " +
-                "the IdP publishes no https metadata endpoint."
+                "the IdP publishes no https metadata endpoint. An IdP on your own internal network can be " +
+                "reached by listing it in Auth:AllowedInternalTargets."
         });
     }
 

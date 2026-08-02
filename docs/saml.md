@@ -49,6 +49,8 @@ Providers are seeded on startup. SSO domain mappings are registered automaticall
 
 `EntityId` is **your SP entity ID** (the identifier you register at the IdP), not the IdP's entity ID.
 
+> **An IdP on your own private network.** `MetadataLocation` must be https and, by default, must resolve to a publicly routable address — the metadata document carries the certificates every assertion is validated against, and Authagonal refuses internal targets on every URL it fetches. To federate with an on-premises IdP, name it in [`Auth:AllowedInternalTargets`](configuration#outbound-fetches-ssrf-guard). If the IdP publishes no https metadata endpoint at all, paste the document into `MetadataXml` via the Admin API instead.
+
 **Option B: Admin API (for runtime management)**
 
 ```bash

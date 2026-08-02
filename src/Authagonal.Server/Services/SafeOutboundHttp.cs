@@ -16,6 +16,7 @@ public static class SafeOutboundHttp
 
     /// <inheritdoc cref="Authagonal.Core.Services.SafeOutboundHttp.GetStringAsync"/>
     public static Task<string> GetStringAsync(
-        HttpClient client, string url, ILogger? logger = null, CancellationToken ct = default) =>
-        Authagonal.Core.Services.SafeOutboundHttp.GetStringAsync(client, url, logger, ct);
+        HttpClient client, string url, ILogger? logger = null, CancellationToken ct = default,
+        Authagonal.Core.Services.OutboundAllowlist? allowlist = null) =>
+        Authagonal.Core.Services.SafeOutboundHttp.GetStringAsync(client, url, logger, ct, allowlist);
 }

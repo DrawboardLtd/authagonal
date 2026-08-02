@@ -373,6 +373,14 @@ public sealed class AuthagonalTestFactory : IAsyncDisposable
             options.ServerName = "Authagonal Test";
             options.Origins = new HashSet<string> { TestIssuer };
         });
+        // The operator's internal-destination allowlist (Auth:AllowedInternalTargets), built exactly as
+        // AddAuthagonalCore builds it. The services that consult it take it as an OPTIONAL dependency and
+        // fall back to the strict list when it is missing — safe, but it would mean no test here could
+        // observe an operator-configured internal target being reachable, which is half of what the
+        // allowlist is for.
+        services.AddSingleton(sp => new Authagonal.Core.Services.OutboundAllowlist(
+            sp.GetRequiredService<IOptions<AuthOptions>>().Value.AllowedInternalTargets));
+
         // Named outbound clients, with the SAME handler policy the real registration applies: no redirect
         // following and a bounded timeout.
         //

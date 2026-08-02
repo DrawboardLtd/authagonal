@@ -40,7 +40,17 @@ public sealed record SamlIdpMetadata(
     DateTimeOffset? ValidUntil = null,
     TimeSpan? CacheDuration = null);
 
-public sealed class SamlMetadataParser(IHttpClientFactory httpClientFactory)
+/// <param name="allowlist">
+/// The operator's internal-destination allowlist (<c>Auth:AllowedInternalTargets</c>), applied to the
+/// metadata URL and every redirect it takes. Optional, and its absence is the strict posture: a host that
+/// composes its own container and never registers one simply refuses every internal target, which is what
+/// the guard did before the allowlist existed. It has to be the SAME list the "SamlMetadata" client's
+/// connect callback was given — the URL check and the socket check both have to permit an on-premises IdP
+/// or the fetch fails in whichever layer was left out.
+/// </param>
+public sealed class SamlMetadataParser(
+    IHttpClientFactory httpClientFactory,
+    Authagonal.Core.Services.OutboundAllowlist? allowlist = null)
 {
     private static readonly XNamespace Md = "urn:oasis:names:tc:SAML:2.0:metadata";
     private static readonly XNamespace Ds = "http://www.w3.org/2000/09/xmldsig#";
@@ -66,7 +76,7 @@ public sealed class SamlMetadataParser(IHttpClientFactory httpClientFactory)
         }
 
         var client = httpClientFactory.CreateClient("SamlMetadata");
-        var response = await SafeOutboundHttp.GetStringAsync(client, metadataUrl, ct: ct);
+        var response = await SafeOutboundHttp.GetStringAsync(client, metadataUrl, ct: ct, allowlist: allowlist);
 
         // A metadata document that carries its own <ds:Signature> is verified against the key inside
         // it. That is self-referential on its own — it proves internal consistency, not provenance —

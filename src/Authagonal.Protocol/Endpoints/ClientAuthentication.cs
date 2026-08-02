@@ -83,6 +83,10 @@ internal static class ClientAuthentication
                 // Refuses an internal address at the socket, per connection and therefore per
                 // redirect hop, whatever the hostname resolved to. See SafeOutboundConnect.
                 ConnectCallback = Authagonal.Core.Services.SafeOutboundConnect.Callback(),
+                // The guard above only sees the target when there is no proxy in the way: with one,
+                // ConnectCallback is handed the PROXY's endpoint instead, so it inspects the proxy and
+                // permits the fetch. Not configurable here — jwks_uri is registrant-chosen.
+                UseProxy = false,
             }) { Timeout = TimeSpan.FromSeconds(10) };
     public static (string? ClientId, string? ClientSecret) ExtractClientCredentials(
         HttpContext httpContext, IFormCollection form)

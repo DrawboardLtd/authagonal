@@ -14,7 +14,19 @@ public sealed record OidcDiscoveryDocument(
     string? UserinfoEndpoint,
     List<JsonWebKey> SigningKeys);
 
-public sealed class OidcDiscoveryClient(IHttpClientFactory httpClientFactory, IMemoryCache memoryCache, IOptions<CacheOptions> cacheOptions)
+/// <param name="allowlist">
+/// The operator's internal-destination allowlist (<c>Auth:AllowedInternalTargets</c>). Applied to the
+/// metadata URL, to every redirect, and to the endpoints the document names — an on-premises IdP publishes
+/// its jwks_uri and token_endpoint on the same private network the discovery URL is on, so permitting only
+/// the first of those would leave every connection failing one hop later. Optional, and absent means
+/// strict: every internal target refused, which is what this did before the allowlist existed. It must be
+/// the same list the "OidcDiscovery" client's connect callback was given.
+/// </param>
+public sealed class OidcDiscoveryClient(
+    IHttpClientFactory httpClientFactory,
+    IMemoryCache memoryCache,
+    IOptions<CacheOptions> cacheOptions,
+    Authagonal.Core.Services.OutboundAllowlist? allowlist = null)
 {
 
     public async Task<OidcDiscoveryDocument> GetDiscoveryAsync(string metadataUrl, CancellationToken ct = default)
@@ -46,7 +58,8 @@ public sealed class OidcDiscoveryClient(IHttpClientFactory httpClientFactory, IM
         // the guard here previously ran once and the client then followed redirects on its own, which is the
         // hop it never inspected. This file already understood the principle (see the comment below about
         // re-validating document-derived endpoints); it just could not enforce it across a redirect.
-        var discoveryJson = await SafeOutboundHttp.GetStringAsync(client, metadataUrl, ct: ct);
+        var discoveryJson = await SafeOutboundHttp.GetStringAsync(
+            client, metadataUrl, ct: ct, allowlist: allowlist);
         using var discoveryDoc = JsonDocument.Parse(discoveryJson);
         var root = discoveryDoc.RootElement;
 
@@ -81,13 +94,17 @@ public sealed class OidcDiscoveryClient(IHttpClientFactory httpClientFactory, IM
             userinfoEndpoint = userinfoElement.GetString();
 
         // The discovery document is attacker-influenced (it comes from whatever the metadata URL
-        // resolves to), so the endpoints WE later fetch must also pass the SSRF guard.
-        if (!OutboundUrlValidator.IsSafe(jwksUri) || !OutboundUrlValidator.IsSafe(tokenEndpoint)
-            || (userinfoEndpoint is not null && !OutboundUrlValidator.IsSafe(userinfoEndpoint)))
+        // resolves to), so the endpoints WE later fetch must also pass the SSRF guard. The operator's
+        // allowlist applies to these too: the document that named them was fetched from a URL the operator
+        // configured and bound to its own issuer above, and an on-premises IdP publishes all of its
+        // endpoints on the private network its discovery URL is on. Permitting the discovery URL and then
+        // refusing the jwks_uri beside it would be a guard that only ever half-worked.
+        if (!OutboundUrlValidator.IsSafe(jwksUri, allowlist) || !OutboundUrlValidator.IsSafe(tokenEndpoint, allowlist)
+            || (userinfoEndpoint is not null && !OutboundUrlValidator.IsSafe(userinfoEndpoint, allowlist)))
             throw new InvalidOperationException("OIDC discovery document referenced a disallowed endpoint URL.");
 
         // Fetch JWKS — same per-hop validation.
-        var jwksJson = await SafeOutboundHttp.GetStringAsync(client, jwksUri, ct: ct);
+        var jwksJson = await SafeOutboundHttp.GetStringAsync(client, jwksUri, ct: ct, allowlist: allowlist);
         var jwks = JsonWebKeySet.Create(jwksJson);
 
         var document = new OidcDiscoveryDocument(

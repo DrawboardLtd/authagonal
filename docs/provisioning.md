@@ -175,6 +175,8 @@ builder.Services.AddAuthagonal(builder.Configuration);
 
 The provider returns a list of apps and their callback URLs. The `TccProvisioningOrchestrator` calls Try/Confirm/Cancel on each.
 
+> **`CallbackUrl` must be publicly routable by default.** Authagonal validates it when it is written and again on every request it makes, refusing loopback, RFC1918, link-local and `.internal`/`.local` targets — a provisioning callback is a server-fetched URL. A provisioning app that runs inside your own network is a supported deployment: name it in [`Auth:AllowedInternalTargets`](configuration#outbound-fetches-ssrf-guard).
+
 For runtime CRUD without a custom provider, the library ships `StoreProvisioningAppProvider`, backed by `IProvisioningAppStore`. Register it explicitly (same pattern as above) and manage apps through the admin API at `/api/v1/provisioning/apps` (list/create/update/delete, plus `POST /{appId}/test` to probe an app's Try endpoint).
 
 ## Deprovisioning

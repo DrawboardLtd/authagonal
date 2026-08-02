@@ -36,6 +36,53 @@ public sealed class AuthOptions
     /// </remarks>
     public bool RequireMinimumRuntime { get; set; }
 
+    /// <summary>
+    /// Internal destinations this server may fetch from on the OPERATOR-configured outbound paths: upstream
+    /// SAML metadata, upstream OIDC discovery (and the token / userinfo / JWKS endpoints that document
+    /// names), and provisioning callbacks. Empty by default — every internal address is refused.
+    /// </summary>
+    /// <remarks>
+    /// Server-initiated fetches refuse loopback, link-local, RFC1918 and ULA targets, at the URL and again
+    /// at the socket, because a URL an attacker chose that names an internal host is SSRF. But federating
+    /// with an IdP that is only reachable over a private network, or provisioning an app that runs in the
+    /// same cluster, is an ordinary deployment for an auth product and it is refused by exactly the same
+    /// rule. This is how an operator says which internal destinations are theirs.
+    /// <para>
+    /// It applies ONLY to targets that came from configuration or an admin API. A <c>jwks_uri</c>, a
+    /// DCR-registered back-channel logout URI and every other registrant-supplied URL stay strict and
+    /// cannot be widened by this or anything else, so opening a federation target does not also open the
+    /// cloud metadata service to an anonymous <c>/connect/token</c> request.
+    /// </para>
+    /// <para>
+    /// Entries: <c>idp.corp.internal</c> (that host and whatever it resolves to), <c>*.corp.internal</c>
+    /// (any host under the suffix), <c>10.4.0.0/16</c> or <c>10.4.1.7</c> (that network or address, under
+    /// any name). A malformed CIDR entry fails at startup rather than silently permitting nothing.
+    /// </para>
+    /// </remarks>
+    public List<string> AllowedInternalTargets { get; set; } = [];
+
+    /// <summary>
+    /// Let the ambient HTTP proxy carry the operator-configured outbound fetches (SAML metadata, OIDC
+    /// discovery, provisioning callbacks). Default false, because a proxied connection cannot be
+    /// address-checked.
+    /// </summary>
+    /// <remarks>
+    /// With a proxy in effect <c>SocketsHttpHandler</c> hands its <c>ConnectCallback</c> the PROXY's
+    /// endpoint and never the target's, so the socket guard inspects the proxy, finds it routable, and
+    /// permits everything — it fails OPEN, silently, in precisely the networks most likely to have a
+    /// proxy. So the proxy is off on these clients unless an operator asks for it, and asking for it means
+    /// accepting that only the URL check remains (scheme, literal addresses, internal name suffixes) and
+    /// that a hostname resolving to an internal address is no longer caught.
+    /// <para>
+    /// This switch does not reach the registrant-supplied clients — the client <c>jwks_uri</c> fetch and
+    /// back-channel logout delivery. Those targets are chosen by whoever registered the client, the
+    /// address check is the only thing standing between an anonymous request and the internal network, and
+    /// there is deliberately no configuration that turns it off. A deployment that must egress through a
+    /// proxy needs an SSRF-filtering gateway for those, not a bypass here.
+    /// </para>
+    /// </remarks>
+    public bool AllowOutboundProxy { get; set; }
+
     // --- Account lockout ---
     public int MaxFailedAttempts { get; set; } = 5;
     public int LockoutDurationMinutes { get; set; } = 10;
