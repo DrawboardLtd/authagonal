@@ -446,7 +446,23 @@ public static class AuthagonalExtensions
         services.TryAddSingleton<IProvisioningAppQuota, UnlimitedProvisioningAppQuota>();
         // SCIM group → role mappings (empty default; the cloud registers a per-tenant store).
         services.TryAddSingleton<IScimGroupRoleMappingStore, InMemoryScimGroupRoleMappingStore>();
-        services.TryAddScoped<IProvisioningAppProvider, ConfigProvisioningAppProvider>();
+        // The store wins when there is one, because the ADMIN API writes to the store.
+        //
+        // This was TryAddScoped<IProvisioningAppProvider, ConfigProvisioningAppProvider>() and nothing else,
+        // and ConfigProvisioningAppProvider reads the ProvisioningApps:* configuration section. Meanwhile
+        // /api/v1/provisioning/apps (list/create/update/delete/test) reads and writes IProvisioningAppStore,
+        // and TccProvisioningOrchestrator resolves apps ONLY through IProvisioningAppProvider. So every app an
+        // operator created or edited through the admin API was persisted and then never consulted by anything
+        // — provisioning ran against config alone. StoreProvisioningAppProvider exists precisely to bridge
+        // the two and was registered nowhere in the repository.
+        //
+        // Registered per-request rather than by TryAdd-ing a concrete type, so a host that registers its own
+        // IProvisioningAppProvider still wins (TryAdd), and so the choice is made against the store actually
+        // present in the container rather than at composition time.
+        services.TryAddScoped<IProvisioningAppProvider>(sp =>
+            sp.GetService<IProvisioningAppStore>() is { } store
+                ? new StoreProvisioningAppProvider(store)
+                : new ConfigProvisioningAppProvider(sp.GetRequiredService<IConfiguration>()));
         services.TryAddScoped<IProvisioningOrchestrator, TccProvisioningOrchestrator>();
         // Auth hooks — multiple IAuthHook implementations can be registered and all will run.
         // NullAuthHook is only added if no hooks are registered by the host.

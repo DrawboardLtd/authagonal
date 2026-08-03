@@ -71,6 +71,7 @@ public sealed class AuthagonalTestFactory : IAsyncDisposable
     public InMemorySigningKeyStore SigningKeyStore { get; } = new();
     public InMemorySsoDomainStore SsoDomainStore { get; } = new();
     public InMemorySamlProviderStore SamlProviderStore { get; } = new();
+    internal InMemoryProvisioningAppStore ProvisioningAppStore { get; } = new();
     public InMemoryOidcProviderStore OidcProviderStore { get; } = new();
     public InMemoryUserProvisionStore UserProvisionStore { get; } = new();
     public InMemoryMfaStore MfaStore { get; } = new();
@@ -319,6 +320,11 @@ public sealed class AuthagonalTestFactory : IAsyncDisposable
         services.AddSingleton<ISamlProviderStore>(SamlProviderStore);
         services.AddSingleton<IOidcProviderStore>(OidcProviderStore);
         services.AddSingleton<IUserProvisionStore>(UserProvisionStore);
+        // Every provider package registers one, and without it the admin provisioning endpoints cannot be
+        // reached at all — minimal-API binding treats the unregistered interface parameter as an inferred
+        // body parameter and 400s before the handler. Its absence here is also why the store-backed
+        // IProvisioningAppProvider was never exercised by this host.
+        services.AddSingleton<IProvisioningAppStore>(ProvisioningAppStore);
         services.AddSingleton<IMfaStore>(MfaStore);
         services.AddSingleton<IScimTokenStore>(ScimTokenStore);
         services.AddSingleton<IScimGroupStore>(ScimGroupStore);
