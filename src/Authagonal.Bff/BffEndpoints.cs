@@ -57,6 +57,21 @@ internal static class BffEndpoints
         // tab's 401→login restart; a user pausing on the IdP's interstitial page) overwrote the
         // first flow's correlation, and the completing callback died with state_mismatch. State is
         // self-generated base64url, so it is cookie-name-safe.
+        // Evict the oldest outstanding correlation cookies before adding another.
+        //
+        // /bff/login is an unauthenticated GET and each call appends a cookie with a FRESH name (the per-login
+        // state), while the callback deletes only the one whose state it presented. Nothing pruned the rest, so
+        // they accumulated for their full 15-minute expiry at roughly 400 bytes each. Kestrel's
+        // MaxRequestHeadersTotalSize defaults to 32 KB, so on the order of 80 outstanding cookies make every
+        // subsequent request to the SPA origin fail with 431 — a cookie-bomb denial of service against the
+        // origin, self-inflicted by repeatedly hitting a public endpoint, and not clearable by the user without
+        // manually deleting cookies.
+        //
+        // Concurrent logins are the reason these are per-login in the first place (another tab's 401 restart, a
+        // user pausing on the IdP's interstitial), so the cap has to leave room for several. Evicting oldest-first
+        // keeps the newest flows — the ones most likely to still complete.
+        PruneCorrelationCookies(ctx, o);
+
         ctx.Response.Cookies.Append(CorrelationCookieFor(o, state), payload, TransientCookieOptions(ctx, o));
 
         var authorizeParams = new Dictionary<string, string?>
@@ -619,6 +634,39 @@ internal static class BffEndpoints
 
     private static string CorrelationCookieFor(AuthagonalBffOptions o, string state)
         => $"{o.CorrelationCookieName}.{state}";
+
+    /// <summary>
+    /// How many in-flight logins one browser may have against this origin at once.
+    /// </summary>
+    /// <remarks>
+    /// Generous for the legitimate case — concurrent logins are why these cookies are per-login — and far below
+    /// the point where the accumulated header breaks the origin.
+    /// </remarks>
+    internal const int MaxOutstandingCorrelationCookies = 8;
+
+    /// <summary>
+    /// Deletes the oldest outstanding correlation cookies so at most
+    /// <see cref="MaxOutstandingCorrelationCookies"/> - 1 survive alongside the one about to be written.
+    /// </summary>
+    /// <remarks>
+    /// The request's cookie order is the browser's, which is not a reliable age ordering — so this deletes by
+    /// position and accepts that "oldest" is approximate. What matters is the bound: the number of these cookies
+    /// cannot grow without limit, whatever order they are pruned in. Deleting a correlation cookie only costs
+    /// whoever holds that flow a restart of their login, which is already the outcome when one expires.
+    /// </remarks>
+    private static void PruneCorrelationCookies(HttpContext ctx, AuthagonalBffOptions o)
+    {
+        var prefix = o.CorrelationCookieName + ".";
+        var outstanding = ctx.Request.Cookies.Keys
+            .Where(k => k.StartsWith(prefix, StringComparison.Ordinal))
+            .ToList();
+
+        var excess = outstanding.Count - (MaxOutstandingCorrelationCookies - 1);
+        if (excess <= 0) return;
+
+        foreach (var stale in outstanding.Take(excess))
+            ctx.Response.Cookies.Delete(stale, TransientCookieOptions(ctx, o));
+    }
 
     // Our states are base64url(32 bytes) = 43 chars; anything else in the callback query is not a
     // state we issued and must not end up inside a cookie name (header-injection surface).

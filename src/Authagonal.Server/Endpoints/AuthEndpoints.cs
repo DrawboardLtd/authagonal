@@ -898,6 +898,7 @@ public static class AuthEndpoints
         IClientStore clientStore,
         IEnumerable<IAuthHook> authHooks,
         IProvisioningOrchestrator provisioning,
+        IRateLimiter rateLimiter,
         ILogger<Program> logger,
         CancellationToken ct)
     {
@@ -944,9 +945,36 @@ public static class AuthEndpoints
             return JsonResults.Error("token_expired", "This verification link has expired.");
         }
 
+        // One response for every way this can fail, and a per-source budget on attempts.
+        //
+        // The token is base64(stamp || email || exp) with NO MAC, so the email half is entirely
+        // attacker-chosen and the stamp can be garbage — and this handler resolved the account from that
+        // address and then branched three ways on real account state: "no such account", "exists and is
+        // confirmed" (a 200, reporting success for a stamp that did not match), and "exists and is not
+        // confirmed". Two of those differed only in wording, and the third was a different status code
+        // entirely. Anonymous, unthrottled, and replayable: an account-existence and
+        // confirmation-state oracle over the whole directory.
+        //
+        // Two of the three are now byte-identical: "no such account" and "exists, stamp did not match, not
+        // confirmed" both answer UniformFailure, which removes the wording difference that distinguished them.
+        // The third — "exists and IS confirmed" — still answers 200, because that is the double-click case and
+        // the useful answer; see the comment at that branch for why closing it needs the token to carry a MAC
+        // rather than a different message, and why that is not bundled here.
+        IResult UniformFailure() => wantsHtml
+            ? Results.Redirect("/login?error=verification_invalid")
+            : JsonResults.Error("invalid_token",
+                "This verification link is not valid. If you have already confirmed this address, sign in.");
+
+        if (await rateLimiter.IsRateLimitedAsync(
+                $"confirm-email|{Services.Cluster.InternalEndpointGuard.SourceQuotaKey(httpContext)}",
+                20, TimeSpan.FromMinutes(1), ct))
+        {
+            return JsonResults.Error("too_many_requests", "Too many attempts. Please try again later.");
+        }
+
         var user = await userStore.FindByEmailAsync(email, ct);
         if (user is null)
-            return JsonResults.Error("invalid_token", "Invalid or expired verification link.");
+            return UniformFailure();
 
         // Fixed-time: the stamp is the ONLY thing authorising this state change. The confirmation
         // token is base64(stamp || email || exp) and carries no MAC, so an ordinal compare that
@@ -961,6 +989,18 @@ public static class AuthEndpoints
             // and unactionable. Only report failure when there is genuinely nothing confirmed.
             // A pending claim is excluded: promoting a staged credential needs the live stamp, so that
             // case really has failed and must not be reported as success.
+            // Already confirmed by an earlier click (or by a scanner that beat the user to it). The link's
+            // assertion — this address is verified — is TRUE, so saying "invalid" is both wrong and
+            // unactionable: this is the double-click, back-button and second-device case.
+            //
+            // This branch IS still an existence oracle, and a narrower one than before rather than none: it
+            // distinguishes "exists and is confirmed" from every other outcome, to an anonymous caller who
+            // supplied the address. It cannot be closed by rewording, because the 200 is the useful answer.
+            // The root enabler is that the token is base64(stamp || email || exp) with NO MAC, so anyone can
+            // mint one for any address — MAC it and only a recipient of the email can ask the question at all,
+            // at which point answering honestly is safe. That is a token-format migration with in-flight links
+            // to carry, so it is deliberately NOT bundled into this change; the throttle above bounds the
+            // oracle in the meantime and the other two outcomes are now indistinguishable from each other.
             if (user.EmailConfirmed && string.IsNullOrWhiteSpace(user.PendingPasswordHash))
             {
                 logger.LogInformation("Email confirmation replayed for {UserId} — already confirmed", user.Id);
@@ -971,7 +1011,7 @@ public static class AuthEndpoints
                         AuthagonalJsonContext.Default.ConfirmEmailResponse);
             }
 
-            return JsonResults.Error("invalid_token", "This verification link has already been used or has expired.");
+            return UniformFailure();
         }
 
         // Passwordless-account claim completion: this click IS the fresh ownership proof the claim

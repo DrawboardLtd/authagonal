@@ -122,6 +122,44 @@
   cannot steer those requests and there is nothing for an address check to add. Email delivery (`Resend`)
   is likewise unguarded and unaffected: its target is a compile-time constant.
 
+### Security — four medium findings from the diff-scoped pass
+
+- **The admin audit trail was a no-op in every default deployment, silently.** Every admin write calls
+  `audit.LogAsync(...)` and a convention test keeps it that way — but `IAuditLogger` binds to `NullAuditLogger`
+  by default, no implementation is bundled, and no provider package supplies one. So on a self-hosted install
+  none of those rows exist: MFA reset and credential removal, minting a token as another user, set-password,
+  deletion, identity linking, SCIM token creation, SSO connection changes, role and scope edits. The comments at
+  those call sites assert the opposite as accomplished fact. A startup warning now says so at boot rather than
+  leaving it to be discovered during an incident. A warning and not a refusal to start: running without an audit
+  sink is legitimate for an evaluation or single-operator deployment.
+
+- **`PATCH /scim/v2/Groups` paid an unbounded quadratic cost before refusing it.** The membership cap was
+  enforced on the *result*, so the work was already done. `AddGroupMembers` does Contains-then-Add against a
+  `List` per element and `RemoveGroupMembers` does a linear `Remove`, both quadratic in the ids the caller
+  supplies — and nothing bounded the operation count either. One authenticated request could pin a core and the
+  refusal at the end cost the caller nothing. Both the operation count and the supplied member count are now
+  checked first.
+
+- **Correlation cookies accumulated without limit (cookie-bomb DoS against the SPA origin).** `/bff/login` is an
+  unauthenticated GET that appends a cookie with a fresh per-login name, and the callback deletes only the one
+  whose state it presented. The rest lived out their 15-minute expiry at ~400 bytes each; Kestrel's 32 KB header
+  limit means on the order of 80 outstanding cookies make every subsequent request to the origin fail with 431 —
+  self-inflicted by hitting a public endpoint repeatedly, and not clearable without manually deleting cookies.
+  Capped at 8 in flight, oldest evicted first, which still leaves room for the concurrent logins these
+  per-login cookies exist for.
+
+- **`POST /api/auth/confirm-email` was an unthrottled account-existence oracle (partially closed).** The token is
+  `base64(stamp || email || exp)` with no MAC, so the address is attacker-chosen and the stamp can be garbage —
+  and the handler branched three ways on real account state, two of them differing only in wording. Those two are
+  now byte-identical, and the endpoint is throttled per source.
+
+  **Not fully closed, deliberately.** The third outcome — "this address exists and is already confirmed" — still
+  answers 200, because that is the double-click / back-button / second-device case and the useful answer; an
+  earlier round closed the same oracle on the GET page and left this one. It cannot be fixed by rewording, since
+  the 200 *is* the information. The root enabler is the missing MAC: sign the token and only a recipient of the
+  email can pose the question at all, after which answering honestly is safe. That is a token-format migration
+  with in-flight links to carry, so it is not bundled here.
+
 ### Security — MFA after a federated login threw away every federation binding
 
 - **Enabling MFA on a federated tenant quietly disabled single logout for its enrolled users (high).**

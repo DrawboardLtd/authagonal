@@ -359,6 +359,7 @@ public static class AuthagonalExtensions
         // protection is opt-in through IFieldCipher — so its absence is stated rather than assumed.
         services.AddSingleton<IHostedService, PlaintextSigningKeyWarning>();
         services.AddSingleton<IHostedService, Services.Cluster.InternalEndpointAccessWarning>();
+        services.AddSingleton<IHostedService, NullAuditLoggerWarning>();
 
         // Rate limiting is in-process per node; the authoritative global limit is enforced at the edge.
         // The concrete limiter, plus a decorator that scopes every key to the current tenant. Without the

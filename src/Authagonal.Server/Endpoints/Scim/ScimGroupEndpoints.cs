@@ -48,6 +48,25 @@ public static class ScimGroupEndpoints
     /// user store on write, so an unbounded array is both an unbounded row and an unbounded number of
     /// point reads inside a single request.
     /// </remarks>
+    /// <summary>
+    /// How many PATCH operations one request may carry.
+    /// </summary>
+    /// <remarks>
+    /// RFC 7644 sets no limit, and neither did this: an unbounded operation list multiplied whatever per-operation
+    /// cost the applier has, and the membership applier is quadratic in the ids supplied. A real provisioning
+    /// connector sends a handful of operations per resource.
+    /// </remarks>
+    private const int MaxPatchOperations = 100;
+
+    /// <summary>
+    /// How many member ids an operation's <c>value</c> names, so the cost can be bounded before it is paid.
+    /// </summary>
+    private static int CountSuppliedMembers(ScimPatchApplier.PatchOperation operation)
+    {
+        if (operation.Value is not { } value) return 0;
+        return value.ValueKind == System.Text.Json.JsonValueKind.Array ? value.GetArrayLength() : 1;
+    }
+
     private static IResult? RefuseOversizedMembership(IReadOnlyCollection<string> memberIds, AuthOptions options) =>
         memberIds.Count > options.MaxScimGroupMembers
             ? ScimResults.Error(400, "invalidValue",
@@ -359,6 +378,24 @@ public static class ScimGroupEndpoints
         var operations = request.Operations
             .Select(o => new ScimPatchApplier.PatchOperation(o.Op, o.Path, o.Value))
             .ToList();
+
+        // Bounded BEFORE the applier runs, not after.
+        //
+        // The membership cap was enforced on the RESULT (see RefuseOversizedMembership below), so the work was
+        // already done by the time the request was refused. AddGroupMembers does a Contains-then-Add against a
+        // List per element and RemoveGroupMembers does a linear Remove, so both are quadratic in the number of
+        // ids the caller supplies — and the caller supplies them. Nothing bounded the operation count either,
+        // so one authenticated SCIM request could pin a core for a long time and the refusal at the end cost
+        // the attacker nothing.
+        if (operations.Count > MaxPatchOperations)
+            return ScimResults.Error(400, "tooLarge",
+                $"At most {MaxPatchOperations} PATCH operations are accepted per request.");
+
+        var suppliedMembers = operations.Sum(CountSuppliedMembers);
+        if (suppliedMembers > authOptions.Value.MaxScimGroupMembers)
+            return ScimResults.Error(400, "tooLarge",
+                $"A PATCH may not name more than {authOptions.Value.MaxScimGroupMembers} members "
+                + "(Auth:MaxScimGroupMembers).");
 
         // Report what could not be applied instead of answering 200 regardless — the same contract the
         // user endpoint got. A membership change the applier dropped but reported as done leaves the
