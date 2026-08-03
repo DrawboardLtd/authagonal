@@ -251,6 +251,50 @@ public sealed class EndSessionTests : IAsyncLifetime
 
     /// <summary>Runs the PKCE flow and returns an id_token usable as an <c>id_token_hint</c>.</summary>
     private async Task<string> SignInAndGetIdTokenAsync()
+        => (await SignInAndGetTokensAsync()).GetProperty("id_token").GetString()!;
+
+    // ---------------------------------------------------------------------------------------------
+    // Cross-JWT confusion: the hint must be an ID token, not merely something this server signed
+    // ---------------------------------------------------------------------------------------------
+
+    /// <summary>
+    /// An access token is not an <c>id_token_hint</c>, even though this server signed it.
+    /// </summary>
+    /// <remarks>
+    /// The validator checked issuer, signature and algorithm and then read <c>client_id</c> — an
+    /// access-token claim. Every JWT this server issues shares one issuer and one ES256 key, so an access
+    /// token (and a back-channel logout token) was accepted here. That is not cosmetic: the hint is what
+    /// sets <c>hintMatchesSession</c>, the only thing that lets a request skip the confirmation
+    /// interstitial, and the session cookie is <c>SameSite=Lax</c>, which DOES ride a cross-site top-level
+    /// GET navigation. So a page holding any JWT the server minted for the victim could sign them out
+    /// silently — and the access token is the one JWT an RP routinely hands to third parties.
+    /// </remarks>
+    [Fact]
+    public async Task EndSession_WithAnAccessTokenAsHint_ConfirmsAndLeavesSessionIntact()
+    {
+        var tokens = await SignInAndGetTokensAsync();
+        var accessToken = tokens.GetProperty("access_token").GetString()!;
+
+        var response = await _client.GetAsync(
+            $"/connect/endsession?id_token_hint={Uri.EscapeDataString(accessToken)}" +
+            $"&post_logout_redirect_uri={Uri.EscapeDataString("https://app.test")}");
+
+        // The interstitial, not a redirect: the hint bought nothing.
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        // And the session is still there — a silent cross-site logout is the payload of this bug.
+        var session = await _client.GetAsync("/api/auth/session");
+        Assert.Equal(HttpStatusCode.OK, session.StatusCode);
+
+        // The control: the real id_token from the SAME flow does skip it.
+        var withIdToken = await _client.GetAsync(
+            $"/connect/endsession?id_token_hint={Uri.EscapeDataString(tokens.GetProperty("id_token").GetString()!)}" +
+            $"&post_logout_redirect_uri={Uri.EscapeDataString("https://app.test")}");
+        Assert.Equal(HttpStatusCode.Redirect, withIdToken.StatusCode);
+    }
+
+    /// <summary>Runs the PKCE flow and returns the whole token response.</summary>
+    private async Task<JsonElement> SignInAndGetTokensAsync()
     {
         await _factory.SeedTestUserAsync();
         await _client.PostAsJsonAsync("/api/auth/login", new { email = "test@example.com", password = "Test1234!" });
@@ -272,8 +316,7 @@ public sealed class EndSessionTests : IAsyncLifetime
                 ["code_verifier"] = verifier,
                 ["client_id"] = AuthagonalTestFactory.TestClientId,
             }));
-        var tokens = await tokenResponse.Content.ReadFromJsonAsync<JsonElement>();
-        return tokens.GetProperty("id_token").GetString()!;
+        return await tokenResponse.Content.ReadFromJsonAsync<JsonElement>();
     }
 
     [Fact]

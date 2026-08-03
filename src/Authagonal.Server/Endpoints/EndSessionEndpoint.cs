@@ -210,6 +210,19 @@ public static class EndSessionEndpoint
                 ValidateAudience = false,
                 ValidateLifetime = false, // token may be expired
                 ValidAlgorithms = ["ES256"],
+                // An id_token, and nothing else this server signs.
+                //
+                // Every JWT the server issues shares one issuer and one ES256 key, so issuer + signature
+                // alone accepted an ACCESS token or a back-channel LOGOUT token here — cross-JWT confusion.
+                // That mattered because the hint is what decides `hintMatchesSession`, the only thing that
+                // lets a request skip the confirmation interstitial, and the session cookie is SameSite=Lax,
+                // which does ride a cross-site top-level GET. So a page holding any token this server minted
+                // for the victim could log them out silently — and an access token is the one JWT an RP
+                // routinely hands to third parties.
+                //
+                // Access tokens carry typ at+jwt (RFC 9068) and logout tokens typ logout+jwt; the id_token
+                // descriptor sets no TokenType, so its typ is JWT.
+                ValidTypes = ["JWT"],
                 IssuerSigningKeys = keys,
                 ValidateIssuerSigningKey = true
             });
@@ -217,9 +230,18 @@ public static class EndSessionEndpoint
             if (!result.IsValid)
                 return null;
 
-            var clientId = result.Claims.TryGetValue("client_id", out var cid) ? cid?.ToString()
-                : result.Claims.TryGetValue("aud", out var aud) ? aud?.ToString()
-                : null;
+            // Shape checks behind the typ pin, because the typ header is one line away from being changed
+            // by whoever mints the next token kind. `client_id` is an access-token claim (RFC 9068 §2.2)
+            // and `events` a logout-token one (OIDC Back-Channel Logout §2.4); an id_token carries neither.
+            if (result.Claims.ContainsKey("client_id") || result.Claims.ContainsKey("events"))
+                return null;
+
+            // The audience IS the client for an id_token. It used to prefer `client_id` — the claim only a
+            // non-id_token has — and a hint naming no audience at all was accepted with a null client.
+            var clientId = SingleAudience(result.Claims);
+            if (string.IsNullOrWhiteSpace(clientId))
+                return null;
+
             var subject = result.Claims.TryGetValue("sub", out var sub) ? sub?.ToString() : null;
 
             return new IdTokenHint(clientId, subject);
@@ -228,6 +250,36 @@ public static class EndSessionEndpoint
         {
             return null;
         }
+    }
+
+    /// <summary>
+    /// The single client named by <c>aud</c>, or null when the token names none or several.
+    /// </summary>
+    /// <remarks>
+    /// A multi-audience token is not a hint about which RP is asking, and this value selects the RP whose
+    /// <c>post_logout_redirect_uri</c> the request is allowed to be sent back to. <c>aud</c> arrives as a
+    /// string for one audience and a collection for many, so a plain <c>ToString()</c> on the claim yielded
+    /// <c>System.String[]</c> — a client id that matches nothing, silently.
+    /// </remarks>
+    private static string? SingleAudience(IDictionary<string, object> claims)
+    {
+        if (!claims.TryGetValue("aud", out var aud) || aud is null) return null;
+
+        if (aud is string single) return single;
+
+        if (aud is System.Collections.IEnumerable many and not string)
+        {
+            string? only = null;
+            foreach (var item in many)
+            {
+                if (item?.ToString() is not { Length: > 0 } value) continue;
+                if (only is not null) return null; // more than one audience
+                only = value;
+            }
+            return only;
+        }
+
+        return aud.ToString();
     }
 
     /// <summary>Purpose string for the confirmation token's protector. Changing it invalidates outstanding tokens.</summary>
