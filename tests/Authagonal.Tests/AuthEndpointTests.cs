@@ -2,6 +2,8 @@ using System.Diagnostics;
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
+using Authagonal.Core.Constants;
+using Authagonal.Core.Models;
 using Authagonal.Tests.Infrastructure;
 
 namespace Authagonal.Tests;
@@ -280,6 +282,61 @@ public sealed class AuthEndpointTests : IAsyncLifetime
         var response = await _client.PostAsync("/api/auth/logout", null);
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+    }
+
+    /// <summary>
+    /// The everyday sign-out revokes the session's grants, exactly as <c>/connect/endsession</c> does.
+    /// </summary>
+    /// <remarks>
+    /// This endpoint used to drop the cookie and nothing else — no Logout Tokens, no front-channel URIs, no
+    /// grant revocation — while <c>/connect/endsession</c> did all three. It is the path the OP's own login app
+    /// invokes, so it is the one most users traverse: every relying party went on believing the user was
+    /// present, and the refresh tokens minted for that session stayed usable after the user had, as far as they
+    /// could tell, logged out.
+    /// <para>
+    /// The consent grant is asserted to SURVIVE in the same test. Ending a session is not revoking consent —
+    /// there is a separate Authorized Apps page for that — and the broader <c>RemoveAllBySubjectAsync</c> would
+    /// discard preferences the user never asked to discard. Both halves in one test because the fix is the
+    /// distinction between them.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task Logout_RevokesSessionBoundGrants_ButNotRecordedConsent()
+    {
+        var user = await _factory.SeedTestUserAsync();
+        await _client.PostAsJsonAsync("/api/auth/login",
+            new { email = "test@example.com", password = "Test1234!" });
+
+        await _factory.GrantStore.StoreAsync(new PersistedGrant
+        {
+            Key = $"rt-{Guid.NewGuid():N}",
+            Type = PersistedGrantTypes.RefreshToken,
+            Data = "{}",
+            SubjectId = user.Id,
+            ClientId = AuthagonalTestFactory.TestClientId,
+            CreatedAt = DateTimeOffset.UtcNow,
+            ExpiresAt = DateTimeOffset.UtcNow.AddDays(30),
+        });
+        await _factory.GrantStore.StoreAsync(new PersistedGrant
+        {
+            Key = $"consent-{Guid.NewGuid():N}",
+            Type = PersistedGrantTypes.Consent,
+            Data = "{}",
+            SubjectId = user.Id,
+            ClientId = AuthagonalTestFactory.TestClientId,
+            CreatedAt = DateTimeOffset.UtcNow,
+            ExpiresAt = DateTimeOffset.UtcNow.AddYears(1),
+        });
+
+        var before = await _factory.GrantStore.GetBySubjectAsync(user.Id);
+        Assert.Contains(before, g => g.Type == PersistedGrantTypes.RefreshToken);
+
+        var response = await _client.PostAsync("/api/auth/logout", null);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        var after = await _factory.GrantStore.GetBySubjectAsync(user.Id);
+        Assert.DoesNotContain(after, g => g.Type == PersistedGrantTypes.RefreshToken);
+        Assert.Contains(after, g => g.Type == PersistedGrantTypes.Consent);
     }
 
     // -----------------------------------------------------------------------

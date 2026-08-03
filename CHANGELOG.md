@@ -122,6 +122,31 @@
   cannot steer those requests and there is nothing for an address check to add. Email delivery (`Resend`)
   is likewise unguarded and unaffected: its target is a compile-time constant.
 
+### Security — the two sign-out paths disagreed about what "logged out" means
+
+- **`POST /api/auth/logout` notified no relying party and revoked no grant (high).** Its entire body was an
+  upstream-session cleanup and a cookie `SignOutAsync`. It built no Logout Token, rendered no front-channel URI,
+  and never called `RemoveBySubjectAsync(subjectId, PersistedGrantTypes.SessionBound, …)`.
+  `/connect/endsession` did all three.
+
+  This is the path that matters most, because it is the one the OP's own login app's Sign out button invokes —
+  so for most users, signing out left every relying party believing they were still present, and left the
+  refresh tokens, authorization codes, device codes and pushed-authorization requests minted for that session
+  in the store and usable. Meanwhile discovery advertises `backchannel_logout_supported`,
+  `frontchannel_logout_supported` and both `*_session_supported` flags unconditionally, and
+  `docs/configuration.md` promises "a signed logout token (JWT) to each client's registered URI" — describing
+  the path that did it and not the one users take.
+
+  The collect-notify-revoke block is now `SessionTermination`, called by both. Extracted rather than duplicated
+  for the reason this review keeps rediscovering: a rule implemented twice is a rule about to be fixed once.
+  Every hardening already in that block now applies to both paths by construction — the outbound-URL check on
+  both URI kinds (loopback permitted for the browser-side iframe fetch, refused for the server-side POST), the
+  two-minute token lifetime, the explicit `TokenType` so a logout token cannot be presented as a subject token,
+  and session-bound-only revocation so signing out does not silently discard the user's stored consents.
+
+  `POST /api/auth/logout` now returns `frontchannel_logout_uris` for the caller to load, because a front-channel
+  logout is by definition performed by the user's browser and a JSON endpoint has no page to render them into.
+
 ### Security — an agent could switch off its own approval gate
 
 - **A client-supplied `action_policies` entry counted as an administrator's decision (high).**

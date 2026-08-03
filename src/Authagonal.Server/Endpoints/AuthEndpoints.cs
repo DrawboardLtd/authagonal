@@ -1174,12 +1174,49 @@ public static class AuthEndpoints
             AuthagonalJsonContext.Default.ConfirmEmailResponse);
     }
 
-    private static async Task<IResult> LogoutAsync(HttpContext httpContext, CancellationToken ct)
+    /// <summary>
+    /// The sign-out the OP's own login app calls.
+    /// </summary>
+    /// <remarks>
+    /// This used to drop the cookie and nothing else — no Logout Tokens, no front-channel URIs, and no
+    /// revocation of session-bound grants — while <c>/connect/endsession</c> did all three. Two sign-out paths
+    /// in one product disagreeing about what "logged out" means, and this is the path most users traverse,
+    /// because it is the one the login app's own Sign out button invokes.
+    /// <para>
+    /// So every relying party went on believing the user was present, and the refresh tokens and authorization
+    /// codes minted for that session stayed in the store and stayed usable — after the user had, as far as they
+    /// could tell, logged out. Discovery advertises <c>backchannel_logout_supported</c> and
+    /// <c>frontchannel_logout_supported</c> unconditionally, and the configuration docs promise a signed logout
+    /// token to each client's registered URI, so the documented behaviour was the one this endpoint did not
+    /// implement.
+    /// </para>
+    /// </remarks>
+    private static async Task<IResult> LogoutAsync(
+        HttpContext httpContext,
+        IClientStore clientStore,
+        IGrantStore grantStore,
+        IKeyManager keyManager,
+        ITenantContext tenantContext,
+        IHttpClientFactory httpClientFactory,
+        CancellationToken ct)
     {
+        // Read off the live principal, before anything is dropped.
+        var subjectId = httpContext.User.FindFirstValue(ClaimTypes.NameIdentifier)
+            ?? httpContext.User.FindFirstValue("sub");
+        var sessionId = httpContext.User.FindFirstValue("sid");
+
+        // Same termination as /connect/endsession, by construction rather than by duplication.
+        var termination = await SessionTermination.NotifyAndRevokeAsync(
+            httpContext, subjectId, sessionId, clientStore, grantStore, keyManager,
+            tenantContext, httpClientFactory, ct);
+
         // Before the cookie goes: the principal is where the (user, connection, sid) key lives.
         await UpstreamSessionCleanup.RemoveForPrincipalAsync(httpContext, ct);
         await httpContext.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
-        return TypedResults.Json(new SuccessResponse(), AuthagonalJsonContext.Default.SuccessResponse);
+
+        return TypedResults.Json(
+            new LogoutResponse { FrontChannelLogoutUris = termination.FrontChannelUris },
+            AuthagonalJsonContext.Default.LogoutResponse);
     }
 
     private static async Task<IResult> ForgotPasswordAsync(

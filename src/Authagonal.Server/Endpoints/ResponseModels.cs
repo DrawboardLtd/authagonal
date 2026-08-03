@@ -10,6 +10,25 @@ public sealed class SuccessResponse
     [JsonPropertyName("success")] public bool Success { get; set; } = true;
 }
 
+/// <summary>Response for <c>POST /api/auth/logout</c>.</summary>
+public sealed class LogoutResponse
+{
+    [JsonPropertyName("success")] public bool Success { get; set; } = true;
+
+    /// <summary>
+    /// Front-channel logout URIs the caller should load (hidden iframes) to complete sign-out at the relying
+    /// parties that registered one.
+    /// </summary>
+    /// <remarks>
+    /// Returned rather than acted on because a front-channel logout is, by definition, performed by the user's
+    /// browser — a JSON endpoint has no page to render them into. The back-channel notifications and the
+    /// session-bound grant revocation are done server-side before this responds; this list is the part only the
+    /// caller can finish.
+    /// </remarks>
+    [JsonPropertyName("frontchannel_logout_uris")]
+    public IReadOnlyList<string> FrontChannelLogoutUris { get; set; } = [];
+}
+
 public sealed class SuccessMessageResponse
 {
     [JsonPropertyName("success")] public bool Success { get; set; } = true;

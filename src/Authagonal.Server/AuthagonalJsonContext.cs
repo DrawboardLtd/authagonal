@@ -41,6 +41,7 @@ namespace Authagonal.Server;
 [JsonSerializable(typeof(ScimError))]
 // Endpoint response DTOs (trim-safe replacements for anonymous types)
 [JsonSerializable(typeof(SuccessResponse))]
+[JsonSerializable(typeof(LogoutResponse))]
 [JsonSerializable(typeof(SuccessMessageResponse))]
 [JsonSerializable(typeof(MessageResponse))]
 [JsonSerializable(typeof(RedirectResponse))]

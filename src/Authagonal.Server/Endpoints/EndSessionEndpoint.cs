@@ -93,41 +93,14 @@ public static class EndSessionEndpoint
             return RenderConfirmation(httpContext, idTokenHint, postLogoutRedirectUri, state, localizer);
         }
 
-        // Collect front-channel logout URIs before signing out (grant lookup needs subject)
-        var frontChannelUris = new List<string>();
-        if (!string.IsNullOrEmpty(subjectId))
-        {
-            try
-            {
-                var grants = await grantStore.GetBySubjectAsync(subjectId);
-                foreach (var clientIdGrant in grants.Select(g => g.ClientId).Distinct())
-                {
-                    var c = await clientStore.GetAsync(clientIdGrant, ct);
-                    if (c?.FrontChannelLogoutUri is null) continue;
-                    // Re-checked at use time, not only at write time. A client row can predate the
-                    // registration guard, arrive from a migration, or be written by an embedding host's
-                    // own IClientStore — and this URI is put in an iframe src by the logout page, so an
-                    // RFC1918 or link-local one turns any logout into a browser-side probe of whatever
-                    // private network the user's browser sits on.
-                    //
-                    // Loopback is the one exception, and only here: the fetch is made by the USER's
-                    // browser, so http://localhost:PORT is that user's own machine — which is how a
-                    // local-dev relying party legitimately receives front-channel logout. The
-                    // back-channel loop below is a server-side POST and gets no such exception.
-                    if (!Authagonal.Core.Services.OutboundUrl.IsSafe(c.FrontChannelLogoutUri, allowLoopback: true)) continue;
-                    var uri = c.FrontChannelLogoutUri;
-                    if (c.FrontChannelLogoutSessionRequired)
-                    {
-                        var sep = uri.Contains('?') ? '&' : '?';
-                        uri = $"{uri}{sep}iss={Uri.EscapeDataString(tenantContext.Issuer)}";
-                        if (!string.IsNullOrEmpty(sessionId))
-                            uri += $"&sid={Uri.EscapeDataString(sessionId)}";
-                    }
-                    frontChannelUris.Add(uri);
-                }
-            }
-            catch { /* fall through */ }
-        }
+        // Notify the relying parties and drop the session-bound grants — BEFORE the cookie goes, because the
+        // grant lookup needs the subject and the sid comes off the live principal. Shared with
+        // POST /api/auth/logout so the two sign-out paths cannot disagree about what "logged out" means. See
+        // SessionTermination.
+        var termination = await SessionTermination.NotifyAndRevokeAsync(
+            httpContext, subjectId, sessionId, clientStore, grantStore, keyManager,
+            tenantContext, httpClientFactory, ct);
+        var frontChannelUris = termination.FrontChannelUris;
 
         // The upstream IdP's refresh token for this federated session is a live credential for
         // another provider, and nothing removed it — read the key off the principal before the cookie
@@ -135,86 +108,6 @@ public static class EndSessionEndpoint
         await Services.UpstreamSessionCleanup.RemoveForPrincipalAsync(httpContext, ct);
 
         await httpContext.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
-
-        // Back-channel logout. Resolve everything that needs the request's tenant scope NOW — grants,
-        // clients, and the SIGNED logout tokens — because these stores are per-tenant and bind to the
-        // request's tenant context; a background scope has no tenant, so its store resolution throws
-        // (which is why the previous fire-and-forget-with-a-fresh-scope silently emitted nothing). Only
-        // the HTTP POSTs run in the background — they need just the singleton IHttpClientFactory and the
-        // already-built tokens, no tenant scope.
-        if (!string.IsNullOrEmpty(subjectId))
-        {
-            var logger = httpContext.RequestServices.GetRequiredService<ILoggerFactory>().CreateLogger("BackChannelLogout");
-            List<(string Uri, string Token)> notifications = [];
-            try
-            {
-                var grants = await grantStore.GetBySubjectAsync(subjectId);
-                foreach (var clientIdGrant in grants.Select(g => g.ClientId).Distinct())
-                {
-                    var c = await clientStore.GetAsync(clientIdGrant, ct);
-                    if (c?.BackChannelLogoutUri is null) continue;
-                    // Same sink guard as /_internal/backchannel-logout: dynamic registration validates
-                    // this URI when it is written, but seeded, migrated and admin-written clients never
-                    // pass through that check, so a stored http://169.254.169.254/... would be POSTed by
-                    // the server from an anonymous, unauthenticated logout request. Validating where the
-                    // POST is built covers every way the URI got into the store.
-                    //
-                    // No allowLoopback here, unlike the front-channel loop: this request is made BY the
-                    // server, so loopback is the server's own network namespace rather than the user's.
-                    // A DIAGNOSTIC, not the guard. Its value is attribution: here the client id is still in
-                    // scope, so a refusal names the client whose registration is wrong. The guard itself now
-                    // travels with the send below — which matters because the send happens in a
-                    // fire-and-forget task, in another scope, at another time. That is the most separated
-                    // form of check-here-send-there in the tree, and deleting this filter can no longer
-                    // create a hole.
-                    if (!Authagonal.Core.Services.OutboundUrl.IsSafe(c.BackChannelLogoutUri))
-                    {
-                        logger.LogWarning(
-                            "Back-channel logout for client {ClientId} refused: the registered URI is not " +
-                            "a permitted outbound target", clientIdGrant);
-                        continue;
-                    }
-                    var tokenSid = c.BackChannelLogoutSessionRequired ? sessionId : null;
-                    notifications.Add((c.BackChannelLogoutUri,
-                        CreateBackChannelLogoutToken(tenantContext.Issuer, clientIdGrant, subjectId, tokenSid, keyManager)));
-                }
-
-                // Session-bound grants only. This was RemoveAllBySubjectAsync, whose contract is EVERY grant
-                // for the subject: it deleted the user's recorded `consent` and `agent_consent` records and
-                // every pending approval along with the tokens. Ending a session is not revoking consent —
-                // the user has a separate Authorized Apps page for that — so logging out silently discarded
-                // preferences the user never asked to discard, and re-prompted them at every client.
-                await grantStore.RemoveBySubjectAsync(subjectId, PersistedGrantTypes.SessionBound, ct: ct);
-            }
-            catch (Exception ex)
-            {
-                logger.LogWarning(ex, "Back-channel logout preparation failed for subject {SubjectId}", subjectId);
-            }
-
-            if (notifications.Count > 0)
-                _ = Task.Run(async () =>
-                {
-                    foreach (var (uri, token) in notifications)
-                    {
-                        try
-                        {
-                            var client = httpClientFactory.CreateClient("BackChannelLogout");
-                            client.Timeout = TimeSpan.FromSeconds(10);
-                            using var logoutRequest = new HttpRequestMessage(HttpMethod.Post, uri)
-                            {
-                                Content = new FormUrlEncodedContent(
-                                    new Dictionary<string, string> { ["logout_token"] = token }),
-                            };
-                            using var _ = await Services.SafeOutboundHttp.SendAsync(
-                                client, logoutRequest, logger, CancellationToken.None);
-                        }
-                        catch (Exception ex)
-                        {
-                            logger.LogWarning(ex, "Back-channel logout POST failed for {Uri}", uri);
-                        }
-                    }
-                });
-        }
 
         // Resolve the final redirect target (if any) by validating post_logout_redirect_uri against the
         // client named by the (already validated) id_token_hint.
@@ -448,40 +341,10 @@ public static class EndSessionEndpoint
             $"script-src 'none'; object-src 'none'; frame-ancestors 'none'; frame-src {frameSrc}";
     }
 
+    // One implementation, in SessionTermination — this was a second copy of it.
     private static string CreateBackChannelLogoutToken(
         string issuer, string clientId, string subjectId, string? sessionId,
         Authagonal.Core.Services.IKeyManager keyManager)
-    {
-        var claims = new Dictionary<string, object>
-        {
-            ["sub"] = subjectId,
-            // Must be JSON-serializable — an anonymous type throws IDX11025 at CreateToken (silent RP-notify failure).
-            ["events"] = new Dictionary<string, object>
-            {
-                ["http://schemas.openid.net/event/backchannel-logout"] = new Dictionary<string, object>()
-            },
-            ["jti"] = Guid.NewGuid().ToString("N")
-        };
-
-        if (!string.IsNullOrEmpty(sessionId))
-            claims["sid"] = sessionId;
-
-        var descriptor = new SecurityTokenDescriptor
-        {
-            Issuer = issuer,
-            Audience = clientId,
-            IssuedAt = DateTime.UtcNow,
-            // A logout token is delivered immediately and consumed once. With Expires unset IdentityModel
-            // stamps exp = iat + 60 minutes, so a captured token stayed usable for an hour. Two minutes is
-            // ample for the back-channel POST and bounds the replay window.
-            Expires = DateTime.UtcNow.AddMinutes(2),
-            // Make the kind explicit, so this token cannot be presented anywhere an access token is
-            // expected — the token-exchange endpoint accepted exactly this token as a subject_token.
-            TokenType = TokenTypes.LogoutJwt,
-            Claims = claims,
-            SigningCredentials = keyManager.GetSigningCredentials()
-        };
-
-        return new JsonWebTokenHandler().CreateToken(descriptor);
-    }
+        => SessionTermination.CreateBackChannelLogoutToken(
+            issuer, clientId, subjectId, sessionId, keyManager);
 }
