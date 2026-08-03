@@ -77,7 +77,13 @@ jobs:
       # digest without moving the risk.
       - name: Scan server image
         uses: aquasecurity/trivy-action@dc5a429b52fcf669ce959baa2c2dd26090d2a6c4 # v0.32.0
+        # Trivy version pinned EXPLICITLY, because setup-trivy's own default resolved to v0.64.1 — a tag
+        # that does not exist as a release. Every run then failed in "installing Trivy binary", after
+        # printing "found version: 0.64.1", with no scan and no CVE involved. It broke the v0.22.0 release
+        # twice, identically, so it is not transient: an upstream default pointing at a withdrawn release
+        # cannot fix itself. Pinning here means the scanner version moves when someone changes this line.
         with:
+          version: v0.73.0
           image-ref: authagonal-server:rebuild
           format: table
           exit-code: '1'
