@@ -367,6 +367,54 @@ public sealed class AgenticDelegationTests : IAsyncLifetime
         Assert.Equal("unauthorized_client", body.GetProperty("error").GetString());
     }
 
+    /// <summary>
+    /// The consent screen is told what the user already granted, so it does not re-offer the whole ceiling.
+    /// </summary>
+    /// <remarks>
+    /// <c>POST /consent/agents</c> overwrites the stored floor rather than narrowing it, so re-consent can
+    /// only move the floor UP toward the ceiling. The UI made that the DEFAULT outcome:
+    /// <c>/consent/agents/{clientId}/info</c> returned the ceiling and nothing about the existing grant, and
+    /// the page pre-ticks <c>granted ?? everything</c> with <c>granted</c> as purely local state starting
+    /// null. So a user who had granted <c>email:read</c> only, returning to the same screen, saw
+    /// <c>email:read</c> AND <c>email:send</c> both ticked, and one Allow restored the full ceiling silently.
+    /// <para>
+    /// The page already preferred the granted set when it had one — the server simply never sent it.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task ConsentInfo_ReportsWhatIsAlreadyGranted()
+    {
+        // The screen is only ever rendered to a signed-in user; this establishes that session, as the
+        // sibling consent test does.
+        await GetPrimaryAccessTokenAsync();
+
+        // No standing consent yet: nothing to pre-tick, and the page falls back to the ceiling.
+        var before = await _client.GetFromJsonAsync<JsonElement>($"/consent/agents/{AgentClientId}/info");
+        Assert.False(before.TryGetProperty("granted", out var absent)
+                     && absent.ValueKind is not JsonValueKind.Null,
+            "with no standing consent there is nothing to report as granted");
+
+        // The user narrows deliberately: read only, not the agent's whole email ceiling.
+        var grant = await _client.PostAsJsonAsync("/consent/agents", new
+        {
+            clientId = AgentClientId,
+            authority = JsonDocument.Parse("""[{"type":"email","actions":["read"]}]""").RootElement,
+        });
+        Assert.Equal(HttpStatusCode.OK, grant.StatusCode);
+
+        // Coming back to the screen, the server states the floor.
+        var after = await _client.GetFromJsonAsync<JsonElement>($"/consent/agents/{AgentClientId}/info");
+        var granted = after.GetProperty("granted");
+        Assert.Equal(JsonValueKind.Array, granted.ValueKind);
+
+        var entry = Assert.Single(granted.EnumerateArray());
+        Assert.Equal("email", entry.GetProperty("type").GetString());
+        Assert.Equal("read", Assert.Single(entry.GetProperty("actions").EnumerateArray()).GetString());
+
+        // ...and the ceiling is still reported in full, since that is what bounds any widening.
+        Assert.Equal(JsonValueKind.Array, after.GetProperty("ceiling").ValueKind);
+    }
+
     [Fact]
     public async Task ConsentEndpoint_GrantsFloor_PreIntersectedWithCeiling()
     {

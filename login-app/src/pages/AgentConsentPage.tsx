@@ -85,11 +85,31 @@ export default function AgentConsentPage() {
     () => new Set(offered.flatMap((c) => c.actions.map((a) => key(c.type, a.name)))),
     [offered],
   );
-  const selected = granted ?? everything;
+  /**
+   * What the previous consent already covers, or null when there is none.
+   *
+   * Pre-ticking THIS rather than the whole ceiling is the difference between "confirm what you have"
+   * and "restore the maximum". The server sends it now; against a server that does not, the fallback
+   * below is the old behaviour.
+   */
+  const previouslyGranted = useMemo(() => {
+    if (!info?.granted) return null;
+    const set = new Set<string>();
+    for (const grant of info.granted)
+      for (const action of grant.actions ?? []) set.add(key(grant.type, action));
+    return set;
+  }, [info]);
+
+  const selected = granted ?? previouslyGranted ?? everything;
+
+  // Deliberately NOT surfacing "N newly added permissions" here: that needs a new translation key, and
+  // this app has a locale-parity gate in CI, so a raw English string would either fail it or ship
+  // untranslated to every other locale. Pre-ticking the real floor is what stops the silent widening;
+  // labelling the delta is a separate, purely presentational change.
 
   function toggle(type: string, action: string) {
     setGranted((current) => {
-      const next = new Set(current ?? everything);
+      const next = new Set(current ?? previouslyGranted ?? everything);
       const k = key(type, action);
       if (next.has(k)) next.delete(k);
       else next.add(k);

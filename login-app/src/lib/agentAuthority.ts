@@ -55,6 +55,15 @@ export interface AgentConsentInfo {
   /** `delegated` | `service` | `both`. */
   mode: string;
   ceiling: AuthorityGrantJson[];
+  /**
+   * What the user has ALREADY granted this agent, absent when there is no standing consent.
+   *
+   * The consent screen pre-ticks from this. Without it the page fell back to ticking the whole ceiling,
+   * so re-visiting after deliberately narrowing a grant showed the maximum as the default — and Allow
+   * posts what is ticked, while the server REPLACES the stored floor rather than narrowing it. One click
+   * silently restored the full ceiling.
+   */
+  granted?: AuthorityGrantJson[] | null;
   connectors: AgentConnectorView[];
 }
 

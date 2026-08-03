@@ -73,12 +73,45 @@ public static class ScimGroupEndpoints
                 $"A group may carry at most {options.MaxScimGroupMembers} members.")
             : null;
 
+    /// <summary>Opaque page token for the Groups collection.</summary>
+    /// <remarks>
+    /// The store pages by index, and a cursor is opaque by contract — the client's only obligation is to hand
+    /// back what it was given — so the token carries the next start index. Prefixed and base64'd so a client
+    /// cannot construct one by guessing an integer, and so a malformed value is refused rather than silently
+    /// treated as page one.
+    /// </remarks>
+    private const string GroupCursorPrefix = "gi:";
+
+    private static string WriteGroupCursor(int nextStart)
+        => Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes($"{GroupCursorPrefix}{nextStart}"));
+
+    private static bool TryReadGroupCursor(string? cursor, out int? start)
+    {
+        start = null;
+        if (string.IsNullOrEmpty(cursor)) return true;
+
+        try
+        {
+            var decoded = System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(cursor));
+            if (!decoded.StartsWith(GroupCursorPrefix, StringComparison.Ordinal)) return false;
+            if (!int.TryParse(decoded[GroupCursorPrefix.Length..], out var parsed) || parsed < 1) return false;
+
+            start = parsed;
+            return true;
+        }
+        catch (FormatException)
+        {
+            return false;
+        }
+    }
+
     private static async Task<IResult> ListGroupsAsync(
         HttpContext httpContext,
         IScimGroupStore groupStore,
         Authagonal.Core.Services.ITenantContext tenantContext,
         int? startIndex,
         int? count,
+        string? cursor,
         string? filter,
         string? attributes,
         string? excludedAttributes,
@@ -97,8 +130,16 @@ public static class ScimGroupEndpoints
             return ScimResults.Error(400, "invalidValue", projectionError);
 
         var baseUrl = GetBaseUrl(tenantContext);
-        var start = Math.Max(startIndex ?? 1, 1);
         var pageSize = Math.Clamp(count ?? 100, 1, 200);
+
+        // Cursor pagination, because ServiceProviderConfig advertises it for the provider and this
+        // collection did not offer it — so a client built against the advertisement could never read past the
+        // first page of groups. The store is index-based, and a cursor is opaque by definition, so the token
+        // carries the next start index. `startIndex` keeps working for clients already using it.
+        if (!TryReadGroupCursor(cursor, out var cursorStart))
+            return ScimResults.Error(400, "invalidValue", "cursor is not a cursor this server issued.");
+
+        var start = cursorStart ?? Math.Max(startIndex ?? 1, 1);
 
         // Enumeration is scoped to groups owned by the calling SCIM client. No backend indexes the owner,
         // so a list is a scan; bounding it by the requested page (and, under a filter, by a fixed number of
@@ -118,12 +159,15 @@ public static class ScimGroupEndpoints
         {
             var (page, total) = await groupStore.ListAsync(clientId, start, pageSize, ct);
             var pageResources = page.Select(g => ScimGroupResource.FromGroup(g, baseUrl)).ToList();
+            var nextStart = start + pageResources.Count;
             return ScimResults.Success(new ScimListResponse<object>
             {
                 TotalResults = total,
                 StartIndex = start,
                 ItemsPerPage = pageResources.Count,
                 Resources = ScimProjection.ApplyAll(pageResources, projection),
+                // Present only while there is another page, so a cursor-following client stops.
+                NextCursor = nextStart <= total ? WriteGroupCursor(nextStart) : null,
             });
         }
 

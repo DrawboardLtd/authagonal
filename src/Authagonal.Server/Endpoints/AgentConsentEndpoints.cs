@@ -21,6 +21,7 @@ public static class AgentConsentEndpoints
         app.MapGet("/consent/agents/{clientId}/info", async (
             string clientId,
             IClientStore clientStore,
+            IGrantStore grantStore,
             HttpContext httpContext,
             CancellationToken ct) =>
         {
@@ -34,6 +35,34 @@ public static class AgentConsentEndpoints
             if (client is null || profile is null)
                 return (IResult)TypedResults.Json(new ErrorInfoResponse { Error = "agent_not_found" },
                     AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 404);
+
+            // What the user has ALREADY granted, so the screen can show it.
+            //
+            // This response carried the ceiling and nothing else, and the page pre-ticked every ceiling
+            // action (`selected = granted ?? everything`, with `granted` purely local UI state that starts
+            // null). So a user who had previously granted `email:read` only, returning to the same screen,
+            // was shown `email:read` AND `email:send` both ticked — and Allow posts the whole ceiling. One
+            // click silently widened a deliberately narrowed consent back to the maximum, because
+            // POST /consent/agents overwrites the stored floor rather than narrowing it.
+            //
+            // The page already prefers `granted` when it has it; the server simply never sent it.
+            var floorElement = (JsonElement?)null;
+            var subjectId = httpContext.User.FindFirstValue(ClaimTypes.NameIdentifier)
+                ?? httpContext.User.FindFirstValue("sub");
+            if (!string.IsNullOrWhiteSpace(subjectId))
+            {
+                var consentGrant = await grantStore.GetAsync(AgentConsent.Key(subjectId, clientId), ct);
+                // Same re-checks the token path makes: the key alone is not the authority.
+                if (consentGrant is not null
+                    && consentGrant.Type == AgentConsent.GrantType
+                    && consentGrant.ExpiresAt > DateTimeOffset.UtcNow
+                    && string.Equals(consentGrant.SubjectId, subjectId, StringComparison.Ordinal)
+                    && string.Equals(consentGrant.ClientId, clientId, StringComparison.Ordinal)
+                    && AgentConsent.TryParse(consentGrant.Data, out var storedFloor, out _))
+                {
+                    floorElement = ToElement(storedFloor);
+                }
+            }
 
             var connectors = new List<AgentConsentConnectorView>();
             foreach (var grant in profile.Ceiling.Grants)
@@ -64,6 +93,7 @@ public static class AgentConsentEndpoints
                 LogoUri = client.LogoUri,
                 Mode = AgentModes.Name(profile.Mode),
                 Ceiling = ToElement(profile.Ceiling),
+                Granted = floorElement,
                 Connectors = connectors,
             }, AuthagonalJsonContext.Default.AgentConsentInfoResponse);
         })
@@ -240,6 +270,17 @@ public sealed class AgentConsentInfoResponse
     public string? LogoUri { get; set; }
     public string Mode { get; set; } = "delegated";
     public JsonElement Ceiling { get; set; }
+
+    /// <summary>
+    /// The authority this subject has ALREADY granted this agent, or null when there is no standing consent.
+    /// </summary>
+    /// <remarks>
+    /// The consent screen pre-ticks from this. Without it the page fell back to ticking the whole ceiling, so
+    /// re-visiting the screen after deliberately narrowing a grant presented the maximum as the default and a
+    /// single Allow restored it — the write path replaces the floor rather than narrowing it.
+    /// </remarks>
+    public JsonElement? Granted { get; set; }
+
     public List<AgentConsentConnectorView> Connectors { get; set; } = [];
 }
 

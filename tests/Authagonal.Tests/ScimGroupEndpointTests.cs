@@ -72,6 +72,70 @@ public sealed class ScimGroupEndpointTests : IAsyncDisposable
         Assert.True(json.GetProperty("totalResults").GetInt32() >= 2);
     }
 
+    /// <summary>
+    /// A cursor-only client can page all the way through /Groups.
+    /// </summary>
+    /// <remarks>
+    /// ServiceProviderConfig advertises <c>pagination = { cursor = true, index = false }</c> for the whole
+    /// provider — <c>draft-ietf-scim-cursor-pagination</c> §4 has no per-endpoint qualifier. <c>/Users</c>
+    /// honours exactly that. <c>/Groups</c> was the inverse: it bound <c>startIndex</c>/<c>count</c> only,
+    /// never <c>cursor</c>, and never set <c>nextCursor</c> — so the advertised model did not exist on this
+    /// collection and the unadvertised one was the only one that worked. An integrator building against the
+    /// advertisement could never read past the first page of groups.
+    /// </remarks>
+    [Fact]
+    public async Task ListGroups_PagesByCursor_AsTheServiceProviderConfigAdvertises()
+    {
+        await _factory.SeedTestDataAsync();
+        var (_, rawToken) = await _factory.SeedScimClientAsync();
+        var client = _factory.CreateClient();
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", rawToken);
+
+        for (var i = 0; i < 5; i++)
+            await client.PostAsJsonAsync("/scim/v2/Groups", new { displayName = $"Cursor Group {i}" });
+
+        var seen = new List<string>();
+        string? cursor = null;
+
+        for (var page = 0; page < 10; page++)
+        {
+            var url = cursor is null
+                ? "/scim/v2/Groups?count=2"
+                : $"/scim/v2/Groups?count=2&cursor={Uri.EscapeDataString(cursor)}";
+
+            var response = await client.GetAsync(url);
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+            var json = await response.Content.ReadFromJsonAsync<JsonElement>();
+            foreach (var resource in json.GetProperty("Resources").EnumerateArray())
+                seen.Add(resource.GetProperty("id").GetString()!);
+
+            cursor = json.TryGetProperty("nextCursor", out var next) && next.ValueKind is JsonValueKind.String
+                ? next.GetString()
+                : null;
+
+            if (cursor is null) break;
+        }
+
+        Assert.Null(cursor);
+        Assert.Equal(5, seen.Count);
+        Assert.Equal(5, seen.Distinct().Count());
+    }
+
+    /// <summary>A cursor this server did not issue is refused, not treated as page one.</summary>
+    [Fact]
+    public async Task ListGroups_RejectsACursorItDidNotIssue()
+    {
+        await _factory.SeedTestDataAsync();
+        var (_, rawToken) = await _factory.SeedScimClientAsync();
+        var client = _factory.CreateClient();
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", rawToken);
+
+        var response = await client.GetAsync("/scim/v2/Groups?cursor=not-a-cursor");
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
     [Fact]
     public async Task ListGroups_WithFilter_ReturnsFiltered()
     {
