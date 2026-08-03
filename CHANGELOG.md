@@ -122,6 +122,35 @@
   cannot steer those requests and there is nothing for an address check to add. Email delivery (`Resend`)
   is likewise unguarded and unaffected: its target is a compile-time constant.
 
+### Security — federated account squatting, closed at the step that actually mattered
+
+- **Adoption inherited the squatter's login binding (high).** Both hosts gated JIT and adoption on whether the
+  connection owns the email's domain. That is a real check and it never fires during the attack:
+
+  1. The attacker configures a connection they operate, `AllowedDomains` left empty so nothing restricts the
+     address it may assert, JIT on.
+  2. They federate once asserting `ceo@acme.com` with `email_verified: true` — a claim chosen by whoever runs
+     the upstream, which here is them. The unverified-email gate passes. The domain-routing gate passes too,
+     because Acme has not onboarded and the domain has no row. An account is minted bearing that address with
+     `EmailConfirmed = true` and the attacker's `(provider, subject)` binding attached.
+  3. Acme onboards. Their connection genuinely *is* the authority for `acme.com`, so on the real user's first
+     login every gate agrees and the account is adopted — carrying the squatter's binding with it. The
+     attacker signs in through their own connection and is the CEO.
+
+  The unasked question was never "does this connection own the domain" but "who else can already sign in to
+  this account". `FederationAdoptionPolicy` asks it, for both hosts: a connection that is the established
+  authority for the domain (routing table, or an administrator's `AllowedDomains`) **evicts** foreign
+  connection bindings instead of inheriting them; a connection that is not the authority is refused rather
+  than allowed to evict a rival's binding.
+
+  Eviction rather than refusal, deliberately — refusing would hand an attacker a permanent denial of service
+  over any address they squatted first. Social logins (`google`, `github`, …) are never evicted: they are not
+  connection-scoped, nobody can make Google assert an address they do not control, and removing a user's own
+  social login because their employer later onboarded SSO would be a self-inflicted lockout.
+
+  Comments on both hosts asserted this was already closed. They have been corrected, since a comment claiming
+  a gate closes an attack it cannot see is how this survived two rounds of review.
+
 ### Security — an authority that permitted nothing minted a token that permitted everything
 
 - **`authorization_details: []` evaluated as UNRESTRICTED at every resource server (critical).** Five links,

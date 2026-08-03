@@ -446,6 +446,39 @@ public static class OidcEndpoints
                         "This email domain is managed by a different identity provider. Contact your administrator.");
                 }
 
+                // The check above asks whether this connection owns the domain. It cannot ask who else can
+                // already sign in to this account — which is the question the squat actually turns on, because
+                // at squat time the domain has no row at all and every gate passes. See
+                // FederationAdoptionPolicy.
+                var adoptAuthority = domainAllowed
+                    || (adoptOwner is not null
+                        && string.Equals(adoptOwner.ConnectionId, stateData.ConnectionId, StringComparison.Ordinal));
+                var foreignBindings = FederationAdoptionPolicy.ForeignBindings(
+                    await userStore.GetLoginsAsync(existingByEmail.Id, ct), provider);
+
+                switch (FederationAdoptionPolicy.Evaluate(adoptAuthority, foreignBindings.Count))
+                {
+                    case FederationAdoptionPolicy.Decision.Refuse:
+                        logger.LogWarning(
+                            "OIDC adoption rejected: account {Email} carries {Count} federation binding(s) from "
+                            + "other connection(s) and {ConnectionId} is not the authority for domain {Domain}",
+                            email, foreignBindings.Count, stateData.ConnectionId, adoptDomain);
+                        return RedirectWithError(returnUrl, "access_denied",
+                            "This email already belongs to an account linked to a different identity provider. "
+                            + "Contact your administrator.");
+
+                    case FederationAdoptionPolicy.Decision.EvictForeignBindingsThenAdopt:
+                        foreach (var stale in foreignBindings)
+                        {
+                            logger.LogWarning(
+                                "OIDC adoption evicting federation binding {Provider} from account {Email}: "
+                                + "connection {ConnectionId} is the authority for domain {Domain}",
+                                stale.Provider, email, stateData.ConnectionId, adoptDomain);
+                            await userStore.RemoveLoginAsync(stale.UserId, stale.Provider, stale.ProviderKey, ct);
+                        }
+                        break;
+                }
+
                 user = existingByEmail;
             }
         }
@@ -471,11 +504,14 @@ public static class OidcEndpoints
                     return RedirectWithError(returnUrl, "access_denied", "This login requires an invitation. Contact your administrator.");
             }
 
-            // An upstream that will not vouch for the address must not mint an account bearing it. Without
-            // this, anyone able to configure a self-service IdP could JIT-create `ceo@acme.com` before Acme's
-            // real connection existed; when it was added, the genuine user's first login found that account
-            // by email and — under a domain-vouched connection — adopted it, together with the attacker's
-            // still-valid (issuer, subject) login binding. That is nOAuth-shaped account takeover.
+            // An upstream that will not vouch for the address must not mint an account bearing it. This stops
+            // a MISCONFIGURED upstream, and nothing more: `email_verified` is a claim chosen by whoever
+            // operates the OP, so an attacker who configured the connection simply sets it true.
+            //
+            // It was previously described here as closing nOAuth-shaped takeover by squatting. It does not,
+            // and neither does the domain-routing check below — at squat time the victim domain has not
+            // onboarded, so it has no row and the check passes. What closes the takeover is that adoption no
+            // longer inherits another connection's login binding; see FederationAdoptionPolicy.
             if (!emailVerified)
             {
                 logger.LogWarning(

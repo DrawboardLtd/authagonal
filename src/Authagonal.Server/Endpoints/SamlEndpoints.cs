@@ -423,6 +423,39 @@ public static class SamlEndpoints
                         "This email domain is managed by a different identity provider. Contact your administrator.");
                 }
 
+                // The check above asks whether this connection owns the domain. The squat turns on a different
+                // question — who else can already sign in to this account — and at squat time the domain has no
+                // row, so every gate here passes. Same decision as the OIDC host; see
+                // FederationAdoptionPolicy.
+                var adoptAuthority = domainAllowed
+                    || (adoptOwner is not null
+                        && string.Equals(adoptOwner.ConnectionId, connectionId, StringComparison.Ordinal));
+                var foreignBindings = FederationAdoptionPolicy.ForeignBindings(
+                    await userStore.GetLoginsAsync(existingByEmail.Id, ct), provider);
+
+                switch (FederationAdoptionPolicy.Evaluate(adoptAuthority, foreignBindings.Count))
+                {
+                    case FederationAdoptionPolicy.Decision.Refuse:
+                        logger.LogWarning(
+                            "SAML adoption rejected: account {Email} carries {Count} federation binding(s) from "
+                            + "other connection(s) and {ConnectionId} is not the authority for domain {Domain}",
+                            email, foreignBindings.Count, connectionId, adoptDomain);
+                        return RedirectWithError(relayState, "access_denied",
+                            "This email already belongs to an account linked to a different identity provider. "
+                            + "Contact your administrator.");
+
+                    case FederationAdoptionPolicy.Decision.EvictForeignBindingsThenAdopt:
+                        foreach (var stale in foreignBindings)
+                        {
+                            logger.LogWarning(
+                                "SAML adoption evicting federation binding {Provider} from account {Email}: "
+                                + "connection {ConnectionId} is the authority for domain {Domain}",
+                                stale.Provider, email, connectionId, adoptDomain);
+                            await userStore.RemoveLoginAsync(stale.UserId, stale.Provider, stale.ProviderKey, ct);
+                        }
+                        break;
+                }
+
                 user = existingByEmail;
             }
         }
@@ -446,16 +479,18 @@ public static class SamlEndpoints
             }
 
             // The domain must not already belong to a DIFFERENT connection, or a permissive connection
-            // can squat addresses in a domain another connection is the authority for. The OIDC host
-            // has had this since the nOAuth work; this one did not, so the whole takeover survived by
-            // simply arriving over SAML instead: JIT-create `ceo@acme.com` through a connection with an
-            // empty AllowedDomains, wait for Acme's real connection to be added, and the genuine user's
-            // first login finds that account by email, adopts it under the domain-vouched connection,
-            // and inherits the squatter's still-attached external login.
+            // can squat addresses in a domain another connection is the authority for.
+            //
+            // This closes the squat only once the victim domain is ROUTED here. It was previously described
+            // as closing the takeover outright, matching the OIDC host — it does not, on either host: the
+            // attack squats `ceo@acme.com` BEFORE Acme onboards, so the domain has no row, this check passes,
+            // and the genuine user's first login later adopts the account under their own domain-vouched
+            // connection and inherits the squatter's still-attached external login. What closes it is that
+            // adoption no longer inherits a foreign binding; see FederationAdoptionPolicy.
             //
             // Note this account is created with EmailConfirmed = true — the SAML assertion is the
-            // vouching — which is exactly why the connection's authority over the domain has to be
-            // established before the assertion is allowed to mean that.
+            // vouching — which is why the connection's authority over the domain has to be established
+            // before the assertion is allowed to mean that.
             var jitEmailDomain = email.Split('@').Last().ToLowerInvariant();
             var jitDomainOwner = await ssoDomainStore.GetAsync(jitEmailDomain, ct);
             if (jitDomainOwner is not null && !string.Equals(jitDomainOwner.ConnectionId, connectionId, StringComparison.Ordinal))
