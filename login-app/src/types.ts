@@ -93,6 +93,11 @@ export interface MfaStatusResponse {
   /** Whether MFA is offered for this tenant at all (some client policy != Disabled). Absent on older
    *  servers — treat only an explicit false as "not offered". */
   offered?: boolean;
+
+  /** Whether this is a FORCED enrolment: the caller reached the endpoints with an enrolment token
+   *  rather than a session, so it has no session until it enrols. The server decides — this used to be
+   *  inferred from a `setupToken` query parameter, which is why the token was in the URL. */
+  forced?: boolean;
 }
 
 export interface MfaMethod {

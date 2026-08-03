@@ -5,6 +5,7 @@ import { login, logout, ssoCheck, getProviders, getSession, getApps, passkeyLogi
 import { toRequestOptions, serializeAssertion } from '../webauthn';
 import { Turnstile } from '../components/Turnstile';
 import { useBranding } from '../branding';
+import { rememberMfaSetupToken } from '@/lib/mfaSetupToken';
 import type { ExternalProvider } from '../types';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -225,12 +226,20 @@ export default function LoginPage() {
       }
 
       if (result.mfaSetupRequired) {
-        // Redirect to MFA setup page with setup token
-        const params = new URLSearchParams({
-          ...(returnUrl ? { returnUrl } : {}),
-          ...(result.setupToken ? { setupToken: result.setupToken } : {}),
+        // The setup token stays OUT of the URL. It is a credential, not a handle: it is the sole identity
+        // the enrolment endpoints require, and completing an enrolment it accepted signs a full session
+        // cookie for this user. In a query string it lands in browser history, in the Referer of any
+        // cross-origin subresource the page loads, and in any log that records the request line.
+        //
+        // Router state carries it across the navigation; sessionStorage is the reload fallback, since
+        // history state does not survive F5 and losing it would strand the user mid-enrolment. Same-origin
+        // and tab-scoped, and MfaSetupPage clears it when enrolment completes.
+        rememberMfaSetupToken(result.setupToken);
+        const params = new URLSearchParams(returnUrl ? { returnUrl } : {});
+        const query = params.toString();
+        navigate(`/mfa-setup${query ? `?${query}` : ''}`, {
+          state: { setupToken: result.setupToken },
         });
-        navigate(`/mfa-setup?${params.toString()}`);
         return;
       }
 

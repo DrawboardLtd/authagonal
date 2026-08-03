@@ -198,6 +198,17 @@ public sealed class MfaStatusResponse
     /// Disabled, so the self-service setup UI can hide itself. Distinct from <see cref="Enabled"/>, which
     /// means the user has already set MFA up.</summary>
     [JsonPropertyName("offered")] public bool Offered { get; set; }
+
+    /// <summary>
+    /// Whether the caller is in a FORCED enrolment — it reached these endpoints with an enrolment token
+    /// rather than a session, so it has no session until it enrols.
+    /// </summary>
+    /// <remarks>
+    /// The setup page needs to know this to decide whether to show a way out and where to send the user
+    /// afterwards. It used to infer it from a <c>setupToken</c> query parameter, which is why the token was
+    /// in the URL at all. The server already knows, so it says.
+    /// </remarks>
+    [JsonPropertyName("forced")] public bool Forced { get; set; }
 }
 
 public sealed class MfaMethodInfo

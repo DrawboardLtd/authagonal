@@ -693,7 +693,8 @@ public static class SamlEndpoints
         if (config.ChallengeMfaAfterLogin)
         {
             var mfaRedirect = await FederatedMfaFlow.MaybeChallengeAsync(
-                user, relayState, loginAppBase, clientStore, mfaStore, webAuthnService, authHooks, authOptions.Value, logger, ct,
+                user,
+                httpContext, relayState, loginAppBase, clientStore, mfaStore, webAuthnService, authHooks, authOptions.Value, logger, ct,
                 grantStore, federationClaims, parseResult.SessionNotOnOrAfter);
             if (mfaRedirect is not null)
                 return mfaRedirect;

@@ -694,7 +694,8 @@ public static class OidcEndpoints
         if (config.ChallengeMfaAfterLogin)
         {
             var mfaRedirect = await FederatedMfaFlow.MaybeChallengeAsync(
-                user, returnUrl, loginAppBase, clientStore, mfaStore, webAuthnService, authHooks, authOptions.Value, logger, ct,
+                user,
+                httpContext, returnUrl, loginAppBase, clientStore, mfaStore, webAuthnService, authHooks, authOptions.Value, logger, ct,
                 grantStore, federationClaims, idpSessionBound, sessionId);
             if (mfaRedirect is not null)
                 return mfaRedirect;

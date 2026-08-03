@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { useSearchParams, Link } from 'react-router';
+import { useSearchParams, useLocation, Link } from 'react-router';
 import { useTranslation } from 'react-i18next';
 import { mfaStatus, mfaTotpSetup, mfaTotpConfirm, mfaWebAuthnSetup, mfaWebAuthnConfirm, mfaRecoveryGenerate, mfaDeleteCredential, ApiRequestError } from '../api';
 import type { MfaMethod } from '../types';
@@ -9,6 +9,7 @@ import { Label } from '@/components/ui/label';
 import { Alert } from '@/components/ui/alert';
 import { CardTitle, CardDescription, CardFooter } from '@/components/ui/card';
 import { resolveRedirect, isSameOriginPath } from '@/lib/returnUrl';
+import { readMfaSetupToken, forgetMfaSetupToken } from '@/lib/mfaSetupToken';
 
 // Helper: Base64URL decode to Uint8Array
 function base64UrlToBuffer(base64url: string): ArrayBuffer {
@@ -31,12 +32,20 @@ function bufferToBase64Url(buffer: ArrayBuffer): string {
 export default function MfaSetupPage() {
   const { t } = useTranslation();
   const [searchParams] = useSearchParams();
-  const mfaSetupToken = searchParams.get('setupToken') || undefined;
+  // NOT from the query string. The token is a credential — see lib/mfaSetupToken — so it arrives in
+  // router state, with sessionStorage covering a reload. On the federated path it arrives in neither:
+  // the server holds it in an HttpOnly cookie and `status.forced` is what marks the enrolment.
+  const location = useLocation();
+  const mfaSetupToken =
+    (location.state as { setupToken?: string } | null)?.setupToken ?? readMfaSetupToken();
   const returnUrl = searchParams.get('returnUrl') || '';
   const backUrl = searchParams.get('backUrl') || '';
   const [enabled, setEnabled] = useState(false);
   const [methods, setMethods] = useState<MfaMethod[]>([]);
   const [offered, setOffered] = useState(true);
+  // Whether the server says this caller has no session until it enrols. On the federated path the token
+  // is in an HttpOnly cookie the SPA cannot see, so its presence can no longer be the signal.
+  const [forced, setForced] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
 
@@ -62,6 +71,9 @@ export default function MfaSetupPage() {
       setEnabled(status.enabled);
       setMethods(status.methods);
       setOffered(status.offered !== false);
+      // `forced` is absent against an older server; fall back to holding a token ourselves, which is what
+      // the page used to infer it from.
+      setForced(status.forced ?? mfaSetupToken !== undefined);
     } catch {
       setError(t('errorUnexpected'));
     } finally {
@@ -69,9 +81,12 @@ export default function MfaSetupPage() {
     }
   }
 
-  // When using a setup token, redirect after MFA is successfully set up
+  // When this was a forced enrolment, redirect after MFA is successfully set up
   async function handleSetupComplete() {
-    if (mfaSetupToken) {
+    // Whatever happens next, the token has been spent: the server consumed the challenge and signed a
+    // session cookie. Leaving a copy in sessionStorage would leave a usable enrolment credential behind.
+    forgetMfaSetupToken();
+    if (forced) {
       // Server signed the cookie — redirect to the original destination (same-origin OR a registered
       // app's absolute URL).
       window.location.href = await resolveRedirect(returnUrl, () => '/');
@@ -208,7 +223,7 @@ export default function MfaSetupPage() {
 
   // MFA is turned off for this tenant (every client's policy is Disabled) and this isn't a forced setup,
   // so don't offer enrolment. Forced setup carries a setupToken and always proceeds.
-  if (!offered && !mfaSetupToken) {
+  if (!offered && !forced) {
     return (
       <div>
         <CardTitle>{t('mfaSetupTitle')}</CardTitle>
@@ -345,8 +360,11 @@ export default function MfaSetupPage() {
         </Button>
       )}
 
-      {/* Skip button — only when not in forced setup mode (user has cookie session) */}
-      {!mfaSetupToken && (
+      {/* Skip button — only when not in forced setup mode (user has cookie session). Keyed on the
+          server's `forced`, not on holding a token: the federated path holds the token in an HttpOnly
+          cookie, so offering a way out on token-absence would have let exactly those users skip a
+          required enrolment. */}
+      {!forced && (
         <CardFooter className="mt-4">
           <button
             type="button"

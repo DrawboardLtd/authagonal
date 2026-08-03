@@ -15,6 +15,34 @@ public static class MfaSetupEndpoints
 {
     private const string SetupTokenHeader = "X-MFA-Setup-Token";
 
+    /// <summary>
+    /// Cookie carrying the enrolment token for a federated login that must enrol before it gets a session.
+    /// </summary>
+    /// <remarks>
+    /// The token used to travel as a query parameter: <c>Results.Redirect(".../mfa-setup?setupToken=…")</c>,
+    /// so it appeared in a <c>Location</c> response header and then in a real <c>GET</c> request line — in
+    /// the browser's history, in the <c>Referer</c> of anything the page loaded cross-origin, and in every
+    /// access log and proxy log along the way. That is not a low-value handle: it is the sole identity gate
+    /// in front of the enrolment endpoints (see <see cref="ResolveUserIdAsync"/>), and completing an
+    /// enrolment it accepted signs a full session cookie for the user. Anyone who read it off a log could
+    /// enrol their own authenticator on the account and sign in as them, needing nothing from the victim.
+    /// <para>
+    /// A cookie instead: <c>HttpOnly</c> so no script (or logging SDK) can read it, path-wide so it reaches
+    /// both the login app and the API, and cleared the moment enrolment completes. The SPA never sees it —
+    /// it simply calls the enrolment endpoints with no header and the server resolves identity from here.
+    /// </para>
+    /// </remarks>
+    internal const string SetupCookieName = "mfa_setup";
+
+    /// <summary>Options for <see cref="SetupCookieName"/>; also used to delete it.</summary>
+    internal static CookieOptions SetupCookieOptions(HttpContext httpContext) => new()
+    {
+        HttpOnly = true,
+        Secure = httpContext.Request.IsHttps,
+        SameSite = SameSiteMode.Lax,
+        Path = "/",
+    };
+
     /// <summary>Name marking a TOTP row that has been created but not yet proved by the user.</summary>
     internal const string PendingTotpName = "TOTP (pending)";
 
@@ -88,8 +116,11 @@ public static class MfaSetupEndpoints
         if (userId is not null)
             return (userId, null);
 
-        // Fall back to setup token
+        // Fall back to the setup token: the header the SPA sends, or — for a federated login that was
+        // redirected here by the server — the cookie set in its place, so the token never rides a URL.
         var token = httpContext.Request.Headers[SetupTokenHeader].FirstOrDefault();
+        if (string.IsNullOrWhiteSpace(token))
+            token = httpContext.Request.Cookies[SetupCookieName];
         if (string.IsNullOrWhiteSpace(token))
             return (null, null);
 
@@ -116,7 +147,7 @@ public static class MfaSetupEndpoints
         IClientStore clientStore,
         CancellationToken ct)
     {
-        var (userId, _) = await ResolveUserIdAsync(httpContext, mfaStore, ct);
+        var (userId, setupChallenge) = await ResolveUserIdAsync(httpContext, mfaStore, ct);
         if (userId is null) return Results.Unauthorized();
 
         // Is MFA offered for this tenant at all? False when every client's policy is Disabled — lets the
@@ -144,7 +175,18 @@ public static class MfaSetupEndpoints
 
         var enabled = confirmed.Any(c => c.Type != MfaCredentialType.RecoveryCode);
 
-        return TypedResults.Json(new MfaStatusResponse { Enabled = enabled, Offered = offered, Methods = methods }, AuthagonalJsonContext.Default.MfaStatusResponse);
+        // Forced when identity came from an enrolment token rather than a session: this caller has no
+        // session until it enrols. The page used to read that off a `setupToken` query parameter, which is
+        // the reason the token was in the URL at all.
+        return TypedResults.Json(
+            new MfaStatusResponse
+            {
+                Enabled = enabled,
+                Offered = offered,
+                Methods = methods,
+                Forced = setupChallenge is not null,
+            },
+            AuthagonalJsonContext.Default.MfaStatusResponse);
     }
 
     private static async Task<IResult> TotpSetupAsync(
@@ -322,6 +364,11 @@ public static class MfaSetupEndpoints
             await authHooks.RunOnUserAuthenticatedAsync(user.Id, user.Email, "password", setupChallenge.ClientId, ct);
             await CookieSignInHelper.SignInAsync(httpContext, user);
             await mfaStore.ConsumeChallengeAsync(setupChallenge.ChallengeId, ct);
+
+            // The enrolment token has done its job and the session cookie has replaced it. Clearing this
+            // matters because it is accepted as an identity by itself: a copy left in the browser stays a
+            // usable enrolment credential for the rest of the challenge's lifetime.
+            httpContext.Response.Cookies.Delete(SetupCookieName, SetupCookieOptions(httpContext));
         }
 
         return TypedResults.Json(new SuccessResponse(), AuthagonalJsonContext.Default.SuccessResponse);
@@ -498,6 +545,11 @@ public static class MfaSetupEndpoints
             await authHooks.RunOnUserAuthenticatedAsync(user.Id, user.Email, "password", setupChallenge.ClientId, ct);
             await CookieSignInHelper.SignInAsync(httpContext, user);
             await mfaStore.ConsumeChallengeAsync(setupChallenge.ChallengeId, ct);
+
+            // The enrolment token has done its job and the session cookie has replaced it. Clearing this
+            // matters because it is accepted as an identity by itself: a copy left in the browser stays a
+            // usable enrolment credential for the rest of the challenge's lifetime.
+            httpContext.Response.Cookies.Delete(SetupCookieName, SetupCookieOptions(httpContext));
         }
 
         return TypedResults.Json(new WebAuthnConfirmResponse { CredentialId = credential.Id }, AuthagonalJsonContext.Default.WebAuthnConfirmResponse);

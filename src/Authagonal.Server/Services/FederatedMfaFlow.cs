@@ -30,6 +30,9 @@ public static class FederatedMfaFlow
     /// </summary>
     public static async Task<IResult?> MaybeChallengeAsync(
         AuthUser user,
+        // Required, not optional-with-default: the enrolment branch sets a cookie on it, and a caller that
+        // forgot to pass it would silently go back to putting the token in the URL.
+        HttpContext httpContext,
         string returnUrl,
         string loginAppBase,
         IClientStore clientStore,
@@ -169,9 +172,24 @@ public static class FederatedMfaFlow
 
             logger.LogInformation("Federated login for user {UserId} requires MFA enrolment — redirecting to setup", user.Id);
 
-            var query = new QueryString().Add("setupToken", setupChallenge.ChallengeId);
-            if (!string.IsNullOrEmpty(returnUrl))
-                query = query.Add("returnUrl", returnUrl);
+            // The enrolment token goes in an HttpOnly cookie, NOT the URL.
+            //
+            // It used to ride the redirect as ?setupToken=…, which put a credential in a Location header,
+            // in a real GET request line, in the browser's history, in the Referer of anything that page
+            // loaded cross-origin, and in every access and proxy log in between. And it is a credential:
+            // MfaSetupEndpoints.ResolveUserIdAsync accepts it as the sole identity for the enrolment
+            // endpoints, and completing an enrolment it accepted signs a full session cookie. Anyone who
+            // read it out of a log could enrol their own authenticator and sign in as the user.
+            //
+            // Expiry follows the challenge, so a stale cookie cannot outlive the token it carries.
+            var setupCookie = MfaSetupEndpoints.SetupCookieOptions(httpContext);
+            setupCookie.Expires = setupChallenge.ExpiresAt;
+            httpContext.Response.Cookies.Append(
+                MfaSetupEndpoints.SetupCookieName, setupChallenge.ChallengeId, setupCookie);
+
+            var query = string.IsNullOrEmpty(returnUrl)
+                ? QueryString.Empty
+                : new QueryString().Add("returnUrl", returnUrl);
 
             return Results.Redirect($"{loginBase}/mfa-setup{query}");
         }
