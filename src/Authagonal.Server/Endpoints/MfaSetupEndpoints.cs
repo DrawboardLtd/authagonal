@@ -46,7 +46,14 @@ public static class MfaSetupEndpoints
     {
         // No .RequireAuthorization() — endpoints accept either cookie auth or setup token.
         // Each endpoint validates identity via ResolveUserIdAsync.
-        var group = app.MapGroup("/api/auth/mfa");
+        //
+        // RequireOwnOrigin on the GROUP. Every route here disables antiforgery, and two of them bind NO
+        // request body — so a body-less POST with credentials:'include' is a CORS-simple request that the
+        // browser delivers without a preflight, whatever the CORS policy says. `POST /recovery/generate`
+        // was therefore callable from any origin: it deletes the victim's recovery codes and returns ten
+        // fresh ones, each of which satisfies /api/auth/mfa/verify and yields an mfa_authenticated cookie.
+        // Destroying the real recovery path is damage on its own even when the response cannot be read.
+        var group = app.MapGroup("/api/auth/mfa").RequireOwnOrigin();
 
         group.MapGet("/status", GetStatusAsync);
         group.MapPost("/totp/setup", TotpSetupAsync).DisableAntiforgery();

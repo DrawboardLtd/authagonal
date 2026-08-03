@@ -207,6 +207,39 @@ adjacent defect the audit found while checking a finding it had already passed.
   by tests: it belongs on a target a *registrant* chose and needs an operator escape hatch on a target the
   *operator* chose.
 
+- **The origin guard covered four routes, not the whole interactive surface — and this file said otherwise.**
+  The device-grant entry above originally asserted the device endpoints were the only interactive POSTs
+  missing `InteractiveOriginGuard`. A diff-scoped review pass found that was false. Also unguarded, and all
+  cookie-authenticated with antiforgery disabled: **`POST /consent`** — the primary OAuth consent grant, which
+  writes the grant *and* the offered-scope set that suppresses future prompts — `DELETE /consent/grants/{id}`,
+  `DELETE /consent/agents/{id}`, `POST /api/auth/logout`, `PATCH /api/auth/profile`, both session-revocation
+  routes, and the entire `/api/auth/mfa/*` setup group.
+
+  The sharpest is `POST /api/auth/mfa/recovery/generate`. It binds **no request body**, so a
+  `fetch(url, {method:'POST', credentials:'include'})` sends no `Content-Type` and is a *CORS-simple* request:
+  the browser issues no preflight and the request **executes whatever the CORS policy says** — only the
+  response is withheld. It deletes the victim's recovery codes and issues ten new ones. Destroying the
+  recovery path is the damage even unread; with a credentialed CORS grant the attacker reads the codes, and
+  each satisfies `/api/auth/mfa/verify`.
+
+  The guard is now an endpoint filter (`RequireOwnOrigin`) applied to groups rather than a call to remember,
+  and a convention test fails the build on any cookie-authenticated state-changing route without it — with
+  anonymous and client-authenticated routes listed explicitly, and reasons. `DELETE /consent/grants/{id}` was
+  confirmed live before the fix: the cross-origin DELETE returned `204 No Content`.
+
+- **`AllowedCorsOrigins` granted a credentialed cross-origin policy on every path, and the shipped image
+  seeded it.** Client-registered origins were correctly scoped to `/connect/` and `/.well-known/`; the
+  operator's list was returned verbatim for every path, with `AllowCredentials` — so the exact sink that
+  scoping exists to protect, `POST /api/auth/mfa/recovery/generate` returning plaintext recovery codes, stayed
+  readable by any listed origin. And `src/Authagonal.Server/appsettings.json` shipped
+  `"AllowedCorsOrigins": ["http://localhost:3000"]`, which `.dockerignore` re-admits into the published
+  image — so a deployment that never set the key granted a credentialed origin to anything the victim's
+  browser reached on port 3000.
+
+  `AllowCredentials` is now granted per path and never on `/api/auth/`, `/api/v1/`, `/scim/`, `/consent` or
+  `/approvals`; those surfaces are first-party and need no CORS grant. The shipped default is empty, with the
+  localhost origin moved to `appsettings.Development.json`, which is excluded from the image.
+
 - **#205 — the highest-impact admin writes left no audit record.** Four groups produced no row at all: MFA
   reset and credential removal (stripping a second factor is the first thing an attacker with an admin
   credential does), `POST /api/v1/token` (which mints a token AS another user — the strongest impersonation
@@ -390,8 +423,8 @@ adjacent defect the audit found while checking a finding it had already passed.
   `app.acme.com` deployment, any XSS or hostile script on a sibling origin could `fetch()` these endpoints
   with `credentials:'include'` and a `user_code` of its choosing. Approve grants the attacker's device in the
   victim's name and records a consent grant; deny cancels the victim's own device authorizations. They are
-  the third consent-granting interactive POST in the server and were the only ones missing
-  `InteractiveOriginGuard` — the approvals and agent-consent endpoints have carried it since it was written,
+  the third consent-granting interactive POST in the server and were — as first claimed here, wrongly —
+  "the only ones missing" `InteractiveOriginGuard` — the approvals and agent-consent endpoints have carried it since it was written,
   for exactly this threat. Both now check it, ahead of their rate limiter so a cross-origin script cannot
   spend the victim's approval budget on its way to being refused.
 

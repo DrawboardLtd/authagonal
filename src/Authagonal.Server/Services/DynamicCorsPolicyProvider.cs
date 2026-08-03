@@ -112,6 +112,34 @@ public sealed class DynamicCorsPolicyProvider : ICorsPolicyProvider
         "/.well-known/",    // discovery, jwks
     ];
 
+    /// <summary>
+    /// Path prefixes no CREDENTIALED cross-origin policy may cover, whoever configured the origin.
+    /// </summary>
+    /// <remarks>
+    /// The scoping above was applied to client-registered origins and NOT to the operator's
+    /// <c>AllowedCorsOrigins</c>, which were returned verbatim for every path — so the exact sink the
+    /// comment above names as the thing being protected, <c>POST /api/auth/mfa/recovery/generate</c>
+    /// returning plaintext recovery codes, stayed fully readable by any origin an operator listed. That is
+    /// not a hypothetical list: the shipped <c>appsettings.json</c> seeded it with
+    /// <c>http://localhost:3000</c>, and <c>.dockerignore</c> re-admits <c>appsettings.json</c> into the
+    /// published image, so a deployment that never set the key granted a credentialed origin to anything the
+    /// victim's browser could reach on port 3000.
+    /// <para>
+    /// An operator origin is still honoured here WITHOUT credentials, because a relying party legitimately
+    /// reads public metadata cross-origin and `AllowCredentials` is the part that makes an ambient session
+    /// readable. The interactive surface is first-party by construction: it is driven by the login app on
+    /// this same origin, which needs no CORS grant at all.
+    /// </para>
+    /// </remarks>
+    private static readonly string[] NeverCredentialedPathPrefixes =
+    [
+        "/api/auth/",   // account, session, profile, and the MFA setup group
+        "/api/v1/",     // admin API
+        "/scim/",       // provisioning
+        "/consent",     // consent grants and their revocation
+        "/approvals",   // just-in-time agent approvals
+    ];
+
     public async Task<CorsPolicy?> GetPolicyAsync(HttpContext context, string? policyName)
     {
         var path = context.Request.Path.Value ?? "";
@@ -122,6 +150,10 @@ public sealed class DynamicCorsPolicyProvider : ICorsPolicyProvider
 
         if (origins.Length == 0)
             return null;
+
+        // Whether this path may carry credentials at all. See NeverCredentialedPathPrefixes.
+        var allowCredentials = !NeverCredentialedPathPrefixes.Any(
+            p => path.StartsWith(p, StringComparison.OrdinalIgnoreCase));
 
         var requestOrigin = context.Request.Headers.Origin.ToString();
 
@@ -136,8 +168,14 @@ public sealed class DynamicCorsPolicyProvider : ICorsPolicyProvider
         policyBuilder
             .WithOrigins(origins)
             .AllowAnyHeader()
-            .AllowAnyMethod()
-            .AllowCredentials();
+            .AllowAnyMethod();
+
+        // AllowCredentials is what turns a cross-origin read into a read of the VICTIM's session, so it is
+        // granted per path rather than unconditionally. Without it the browser withholds the cookie and
+        // refuses to surface the response, which is the right answer for the interactive surface: that
+        // surface is driven by the first-party login app on this same origin and needs no CORS grant.
+        if (allowCredentials)
+            policyBuilder.AllowCredentials();
 
         return policyBuilder.Build();
     }

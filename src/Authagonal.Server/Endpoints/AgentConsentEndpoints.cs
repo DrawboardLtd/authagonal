@@ -186,6 +186,14 @@ public static class AgentConsentEndpoints
             IEnumerable<IAuthHook> authHooks,
             CancellationToken ct) =>
         {
+            // The POST that GRANTS agent consent has carried this since the guard was written; this DELETE,
+            // which revokes it, did not. Same ambient cookie, same same-site cross-origin reach — a sibling
+            // miss. Revocation is the milder direction, but a page that can silently revoke a user's agent
+            // consent can break automation they depend on and re-prompt them until they accept something
+            // wider, so it is not a read.
+            if (Services.InteractiveOriginGuard.Check(httpContext) is { } originError)
+                return originError;
+
             var subjectId = SubjectId(httpContext);
             if (subjectId is null)
                 return Results.Unauthorized();

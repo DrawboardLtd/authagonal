@@ -5,6 +5,7 @@ using Authagonal.Core.Models;
 using Authagonal.Core.Services;
 using Authagonal.Core.Stores;
 using Authagonal.Protocol.Services;
+using Authagonal.Server.Services;
 
 namespace Authagonal.Server.Endpoints;
 
@@ -60,7 +61,7 @@ public static class ConsentEndpoint
         // client-enumeration oracle over the whole registry — names, descriptions, logo and home URIs
         // — which is reconnaissance for a consent-phishing page that impersonates a real client the
         // user has seen before. Its three sibling endpoints already require authorization.
-        .RequireAuthorization();
+        .RequireAuthorization().RequireOwnOrigin();
 
         app.MapPost("/consent", async (
             HttpContext httpContext,
@@ -185,7 +186,7 @@ public static class ConsentEndpoint
             return TypedResults.Json(
                 new RedirectResponse { Redirect = Authagonal.Core.Services.LocalRedirect.Sanitize(request.ReturnUrl) },
                 AuthagonalJsonContext.Default.RedirectResponse);
-        }).RequireAuthorization();
+        }).RequireAuthorization().RequireOwnOrigin();
 
         // List all consent grants for the current user
         app.MapGet("/consent/grants", async (
@@ -239,6 +240,15 @@ public static class ConsentEndpoint
             ILoggerFactory loggerFactory,
             CancellationToken ct) =>
         {
+            // This route carries no .RequireAuthorization() at all — it authenticates by reading the
+            // cookie's subject claim directly below, which is why a fix applied across the
+            // RequireAuthorization sites missed it. Revoking a user's consent grants also revokes the access
+            // tokens issued under them, so a cross-origin page could sign the victim out of every
+            // consenting application. Verified live before this line existed: the cross-origin DELETE
+            // returned 204 No Content.
+            if (Services.InteractiveOriginGuard.Check(httpContext) is { } originError)
+                return originError;
+
             var subjectId = httpContext.User.FindFirstValue(ClaimTypes.NameIdentifier)
                 ?? httpContext.User.FindFirstValue("sub");
             if (string.IsNullOrWhiteSpace(subjectId))

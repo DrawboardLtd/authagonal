@@ -34,16 +34,23 @@ public static class AuthEndpoints
         // on emailed URLs, and a GET that consumed the token burned the link before the human clicked.
         group.MapGet("/confirm-email", ConfirmEmailPageAsync).AllowAnonymous();
         group.MapPost("/confirm-email", ConfirmEmailAsync).AllowAnonymous().DisableAntiforgery();
-        group.MapPost("/logout", LogoutAsync).RequireAuthorization().DisableAntiforgery();
+        // Every cookie-authenticated, state-changing route below carries RequireOwnOrigin. SameSite=Lax does
+        // not withhold the session cookie from a same-site CROSS-ORIGIN request, and these all disable
+        // antiforgery; two of them bind no body, which makes them CORS-simple and therefore delivered
+        // without a preflight whatever the CORS policy says. Anonymous routes (login, register,
+        // forgot-password, reset-password, confirm-email) are deliberately NOT guarded: they carry no
+        // ambient credential to abuse, and an Origin check on them would break a legitimate cross-origin
+        // sign-in from a first-party SPA.
+        group.MapPost("/logout", LogoutAsync).RequireAuthorization().DisableAntiforgery().RequireOwnOrigin();
         group.MapPost("/forgot-password", ForgotPasswordAsync).AllowAnonymous().DisableAntiforgery();
         group.MapPost("/reset-password", ResetPasswordAsync).AllowAnonymous().DisableAntiforgery();
         group.MapGet("/session", GetSessionAsync).RequireAuthorization();
         group.MapGet("/apps", GetAppsAsync).RequireAuthorization();
         group.MapGet("/profile", GetProfileAsync).RequireAuthorization();
-        group.MapPatch("/profile", UpdateProfileAsync).RequireAuthorization().DisableAntiforgery();
+        group.MapPatch("/profile", UpdateProfileAsync).RequireAuthorization().DisableAntiforgery().RequireOwnOrigin();
         group.MapGet("/sessions", GetSessionsAsync).RequireAuthorization();
-        group.MapDelete("/sessions/{sessionId}", RevokeSessionAsync).RequireAuthorization().DisableAntiforgery();
-        group.MapPost("/sessions/revoke-others", RevokeOtherSessionsAsync).RequireAuthorization().DisableAntiforgery();
+        group.MapDelete("/sessions/{sessionId}", RevokeSessionAsync).RequireAuthorization().DisableAntiforgery().RequireOwnOrigin();
+        group.MapPost("/sessions/revoke-others", RevokeOtherSessionsAsync).RequireAuthorization().DisableAntiforgery().RequireOwnOrigin();
         group.MapGet("/sso-check", SsoCheckAsync).AllowAnonymous();
         group.MapGet("/providers", GetProvidersAsync).AllowAnonymous();
         group.MapGet("/password-policy", GetPasswordPolicy).AllowAnonymous();

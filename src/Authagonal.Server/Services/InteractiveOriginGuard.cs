@@ -27,6 +27,43 @@ namespace Authagonal.Server.Services;
 internal static class InteractiveOriginGuard
 {
     /// <summary>
+    /// Applies <see cref="Check"/> to every state-changing route in a group, so a route cannot be added
+    /// without it.
+    /// </summary>
+    /// <remarks>
+    /// Written as a filter because the per-call-site version did not hold. It was applied at four sites and
+    /// the CHANGELOG asserted those were "the only ones missing it" — while <c>POST /consent</c>, the PRIMARY
+    /// OAuth consent-granting POST, had none, nor did the whole <c>/api/auth/mfa/*</c> setup group, logout,
+    /// the profile PATCH, or the session-revocation routes. A guard you have to remember to call is a guard
+    /// that documents its own coverage wrongly.
+    /// <para>
+    /// Safe reads are skipped so a GET-heavy group can carry the filter wholesale: GET, HEAD and OPTIONS
+    /// change nothing, and OPTIONS in particular must survive for CORS preflight to work at all.
+    /// </para>
+    /// <para>
+    /// This is not redundant with CORS. A body-less <c>POST</c> with <c>credentials:'include'</c> sends no
+    /// <c>Content-Type</c>, which makes it a CORS-SIMPLE request: the browser issues no preflight and the
+    /// request EXECUTES regardless of policy — only the response is withheld. So
+    /// <c>POST /api/auth/mfa/recovery/generate</c> (no bound body, antiforgery disabled) was reachable
+    /// cross-origin from anywhere, whatever the CORS configuration said.
+    /// </para>
+    /// </remarks>
+    public static TBuilder RequireOwnOrigin<TBuilder>(this TBuilder builder)
+        where TBuilder : IEndpointConventionBuilder
+    {
+        builder.AddEndpointFilter(async (context, next) =>
+        {
+            var method = context.HttpContext.Request.Method;
+            if (HttpMethods.IsGet(method) || HttpMethods.IsHead(method) || HttpMethods.IsOptions(method))
+                return await next(context);
+
+            return Check(context.HttpContext) is { } refusal ? refusal : await next(context);
+        });
+
+        return builder;
+    }
+
+    /// <summary>
     /// Null when the request may proceed, or the result to return instead.
     /// </summary>
     public static IResult? Check(HttpContext httpContext)
