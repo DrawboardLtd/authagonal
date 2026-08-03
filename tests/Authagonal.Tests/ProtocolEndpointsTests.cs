@@ -166,6 +166,77 @@ public sealed class ProtocolEndpointsTests : IAsyncLifetime
         Assert.False(string.IsNullOrEmpty(tokens.GetProperty("access_token").GetString()));
     }
 
+    // ── Userinfo ────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Userinfo returns the scope-released standard claims, not just <c>sub</c>.
+    /// </summary>
+    /// <remarks>
+    /// This host's userinfo answers from the presented ACCESS token by design — "userinfo returns whatever
+    /// claims the access token carried … relying parties should call userinfo for a snapshot, not fresh
+    /// re-resolution" — and it scope-gates what it copies with <c>CopyIfScoped("email", …)</c> and
+    /// <c>CopyIfScoped("profile", …)</c>. But <c>MintAccessTokenAsync</c> never wrote any of those: its claim
+    /// set was <c>client_id</c>, <c>scope</c>, <c>jti</c>, <c>iat</c>, <c>sub</c>, <c>roles</c>, <c>groups</c>
+    /// and scope-gated custom attributes. So there was nothing to copy — the endpoint returned <c>sub</c>
+    /// alone, while discovery advertised email, name, given_name, family_name, phone_number and org_id.
+    /// <para>
+    /// Those <c>CopyIfScoped</c> lines only make sense if the claims are on the token, which is the design
+    /// this restores by sharing one §5.4 projection between the id_token and the access token.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task Userinfo_ReturnsTheScopeReleasedClaims()
+    {
+        await SignInAsync();
+        var (verifier, challenge) = NewPkcePair();
+
+        var code = await AuthorizeAndExtractCodeAsync(AuthorizeUrl(challenge, "openid email"));
+        var tokens = await RedeemCodeAsync(code, verifier);
+        var accessToken = tokens.GetProperty("access_token").GetString()!;
+
+        var request = new HttpRequestMessage(HttpMethod.Get, "/connect/userinfo");
+        request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", accessToken);
+        var response = await _client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var claims = await response.Content.ReadFromJsonAsync<JsonElement>();
+
+        Assert.Equal(ProtocolTestHost.TestSubjectId, claims.GetProperty("sub").GetString());
+        Assert.Equal(ProtocolTestHost.TestEmail, claims.GetProperty("email").GetString());
+    }
+
+    /// <summary>
+    /// A token without the <c>email</c> scope gets no email — from the token or from userinfo.
+    /// </summary>
+    /// <remarks>
+    /// The control, and the one that matters most: putting the §5.4 sets on the access token must not release
+    /// them beyond the scopes the client was granted, because an access token goes to resource servers.
+    /// </remarks>
+    [Fact]
+    public async Task Userinfo_WithoutTheEmailScope_ReleasesNoEmail()
+    {
+        await SignInAsync();
+        var (verifier, challenge) = NewPkcePair();
+
+        var code = await AuthorizeAndExtractCodeAsync(AuthorizeUrl(challenge, "openid"));
+        var tokens = await RedeemCodeAsync(code, verifier);
+        var accessToken = tokens.GetProperty("access_token").GetString()!;
+
+        // Not on the token itself.
+        var payload = DecodeJwtPayload(accessToken);
+        Assert.False(payload.TryGetProperty("email", out _));
+
+        // ...and therefore not from userinfo.
+        var request = new HttpRequestMessage(HttpMethod.Get, "/connect/userinfo");
+        request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", accessToken);
+        var response = await _client.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var claims = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(ProtocolTestHost.TestSubjectId, claims.GetProperty("sub").GetString());
+        Assert.False(claims.TryGetProperty("email", out _));
+    }
+
     // ── Client credentials ──────────────────────────────────────────
 
     [Fact]
@@ -213,11 +284,11 @@ public sealed class ProtocolEndpointsTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.NoContent, response.StatusCode);
     }
 
-    private static string AuthorizeUrl(string codeChallenge) =>
+    private static string AuthorizeUrl(string codeChallenge, string scope = "openid profile offline_access") =>
         $"/connect/authorize?client_id={ProtocolTestHost.SpaClientId}" +
         $"&response_type=code" +
         $"&redirect_uri={Uri.EscapeDataString(ProtocolTestHost.SpaRedirectUri)}" +
-        $"&scope={Uri.EscapeDataString("openid profile offline_access")}" +
+        $"&scope={Uri.EscapeDataString(scope)}" +
         $"&state=xyz" +
         $"&code_challenge={codeChallenge}" +
         $"&code_challenge_method=S256";

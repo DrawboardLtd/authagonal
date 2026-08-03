@@ -151,6 +151,13 @@ public sealed class ProtocolTokenService(
 
             if (subject.Groups is { Count: > 0 })
                 claims["groups"] = subject.Groups.ToArray();
+
+            // The same §5.4 sets the id_token carries, under the same scope gates — because this host's
+            // userinfo answers from the access token by design and had nothing to answer with.
+            // AlwaysIncludeUserClaimsInIdToken is deliberately NOT honoured here: it is an id_token opt-out
+            // whose name says so, and letting it widen an ACCESS token would release claims to resource
+            // servers on a setting that never mentioned them.
+            AddScopedIdentityClaims(claims, subject, scopeList, always: false);
         }
 
         // Scope-gated custom attributes — emitted only when a requested scope's UserClaims
@@ -329,44 +336,7 @@ public sealed class ProtocolTokenService(
         // operators had a knob that implied this was already gated.
         var always = client.AlwaysIncludeUserClaimsInIdToken;
 
-        if (always || scopeList.Contains(StandardScopes.Email))
-        {
-            if (!string.IsNullOrEmpty(subject.Email))
-                claims["email"] = subject.Email;
-
-            claims["email_verified"] = subject.EmailVerified;
-        }
-
-        if (always || scopeList.Contains(StandardScopes.Profile))
-        {
-            if (!string.IsNullOrEmpty(subject.GivenName))
-                claims["given_name"] = subject.GivenName;
-
-            if (!string.IsNullOrEmpty(subject.FamilyName))
-                claims["family_name"] = subject.FamilyName;
-
-            var fullName = subject.Name ?? BuildFullName(subject.GivenName, subject.FamilyName);
-            if (!string.IsNullOrEmpty(fullName))
-                claims["name"] = fullName;
-
-            if (!string.IsNullOrEmpty(subject.Locale))
-                claims["locale"] = subject.Locale;
-        }
-
-        // §5.4 assigns the phone claims their own scope. They rode `profile` before, which is both
-        // the wrong binding and one the user was never shown.
-        if (always || scopeList.Contains(StandardScopes.Phone))
-        {
-            if (!string.IsNullOrEmpty(subject.Phone))
-                claims["phone_number"] = subject.Phone;
-        }
-
-        // org_id describes the account's placement, so it travels with the profile set.
-        if ((always || scopeList.Contains(StandardScopes.Profile))
-            && !string.IsNullOrEmpty(subject.OrganizationId))
-        {
-            claims["org_id"] = subject.OrganizationId;
-        }
+        AddScopedIdentityClaims(claims, subject, scopeList, always);
 
         if ((always || scopeList.Contains(StandardScopes.Roles)) && subject.Roles is { Count: > 0 })
             claims["roles"] = subject.Roles.ToArray();
@@ -1980,6 +1950,63 @@ public sealed class ProtocolTokenService(
             .TrimEnd('=')
             .Replace('+', '-')
             .Replace('/', '_');
+    }
+
+    /// <summary>
+    /// The OIDC Core §5.4 standard claim sets, gated on the scopes that release them.
+    /// </summary>
+    /// <remarks>
+    /// Shared by the id_token and the access token, because <c>/connect/userinfo</c> in this host answers from
+    /// the ACCESS token — "userinfo returns whatever claims the access token carried … relying parties should
+    /// call userinfo for a snapshot, not fresh re-resolution" — and the mint path never wrote any of them. So
+    /// its <c>CopyIfScoped("email", …)</c> / <c>CopyIfScoped("profile", …)</c> lines had nothing to copy: the
+    /// endpoint returned <c>sub</c> and nothing else, while discovery advertised the full set. Those lines only
+    /// make sense if the claims are on the token, which is the design this restores.
+    /// <para>
+    /// One projection rather than two, so the id_token and userinfo cannot answer differently about the same
+    /// subject and scopes — a client comparing them would otherwise see a name in the id_token and silence
+    /// from userinfo with no way to tell which was authoritative.
+    /// </para>
+    /// <para>
+    /// The gating is unchanged and is what bounds the exposure: nothing is released for a scope the client was
+    /// not granted, so a resource server sees exactly what the user consented to and no more.
+    /// </para>
+    /// </remarks>
+    private static void AddScopedIdentityClaims(
+        Dictionary<string, object> claims, OidcSubject subject, IReadOnlyList<string> scopeList, bool always)
+    {
+        if (always || scopeList.Contains(StandardScopes.Email))
+        {
+            if (!string.IsNullOrEmpty(subject.Email))
+                claims["email"] = subject.Email;
+
+            claims["email_verified"] = subject.EmailVerified;
+        }
+
+        if (always || scopeList.Contains(StandardScopes.Profile))
+        {
+            if (!string.IsNullOrEmpty(subject.GivenName))
+                claims["given_name"] = subject.GivenName;
+
+            if (!string.IsNullOrEmpty(subject.FamilyName))
+                claims["family_name"] = subject.FamilyName;
+
+            var fullName = subject.Name ?? BuildFullName(subject.GivenName, subject.FamilyName);
+            if (!string.IsNullOrEmpty(fullName))
+                claims["name"] = fullName;
+
+            if (!string.IsNullOrEmpty(subject.Locale))
+                claims["locale"] = subject.Locale;
+
+            // org_id describes the account's placement, so it travels with the profile set.
+            if (!string.IsNullOrEmpty(subject.OrganizationId))
+                claims["org_id"] = subject.OrganizationId;
+        }
+
+        // §5.4 assigns the phone claims their own scope. They rode `profile` before, which is both the wrong
+        // binding and one the user was never shown.
+        if ((always || scopeList.Contains(StandardScopes.Phone)) && !string.IsNullOrEmpty(subject.Phone))
+            claims["phone_number"] = subject.Phone;
     }
 
     private static string? BuildFullName(string? firstName, string? lastName)
