@@ -18,7 +18,27 @@ public sealed class ProtocolPushedAuthorizationService(
 {
     // Per RFC 9126 §4 the lifetime is server-chosen; 90s matches the reference IdPs in the
     // wild and is tight enough to contain replay without tripping up slow redirects.
+    //
+    // This bounds the push → FIRST /connect/authorize hop only. It cannot bound the whole flow: the record
+    // is deliberately not consumed until the authorization code is issued, so that the user can round-trip
+    // through login (see LoadAsync), and both hosts keep request_uri on the returnUrl they hand to the login
+    // app. Everything the user has to do sits between those two points — load the SPA, enter credentials,
+    // clear MFA (a TOTP code, or one emailed to them), possibly a step-up that signs the session out and
+    // starts again, then read and answer the consent screen. Ninety seconds from the POST for all of that
+    // meant an interactive PAR flow broke whenever a human took as long as a human takes.
     public const int RequestUriLifetimeSeconds = 90;
+
+    /// <summary>
+    /// Total life of the record, measured from the push, once it has actually been picked up.
+    /// </summary>
+    /// <remarks>
+    /// Extended ONCE, on the first successful load, to an absolute deadline computed from
+    /// <see cref="PushedAuthorizationRequest.CreatedAt"/> — not slid forward on each load. So the extension
+    /// is idempotent, repeated loads cannot keep the row alive indefinitely, and the whole flow is still
+    /// bounded from the moment the client pushed it. Matches the interactive window an authorization code
+    /// gets, because it covers the same user journey.
+    /// </remarks>
+    public const int InteractiveLifetimeSeconds = 15 * 60;
     public const string RequestUriPrefix = "urn:ietf:params:oauth:request_uri:";
     public const string GrantType = "pushed_authorization_request";
 
@@ -99,7 +119,33 @@ public sealed class ProtocolPushedAuthorizationService(
 
         try
         {
-            return JsonSerializer.Deserialize(grant.Data, ProtocolJsonContext.Default.PushedAuthorizationRequest);
+            var record = JsonSerializer.Deserialize(grant.Data, ProtocolJsonContext.Default.PushedAuthorizationRequest);
+            if (record is null)
+                return null;
+
+            // The record has been picked up, so it now has to survive the interactive leg. Extended once, to
+            // an absolute deadline from the push — see InteractiveLifetimeSeconds. A read that writes, but
+            // only on the first load of each record: after this the condition is false.
+            var deadline = record.CreatedAt.AddSeconds(InteractiveLifetimeSeconds);
+            if (grant.ExpiresAt < deadline)
+            {
+                record.ExpiresAt = deadline;
+                grant.ExpiresAt = deadline;
+                grant.Data = JsonSerializer.Serialize(record, ProtocolJsonContext.Default.PushedAuthorizationRequest);
+
+                // Re-set explicitly: a grant read back from storage carries NO Key — the handle is hashed
+                // into the partition and not recoverable — so re-storing the fetched object as-is writes into
+                // the SHA-256("") partition on the real stores. IGrantStore says so, and the in-memory double
+                // throws to make it impossible to miss. Which it did, on the first run of this.
+                grant.Key = requestUri;
+                await grantStore.StoreAsync(grant, ct);
+
+                logger.LogDebug(
+                    "Pushed authorization request {RequestUri} extended to {ExpiresAt} for its interactive leg",
+                    requestUri, deadline);
+            }
+
+            return record;
         }
         catch (JsonException ex)
         {

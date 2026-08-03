@@ -4,6 +4,7 @@ using Authagonal.Core.Stores;
 using Authagonal.Protocol.Services;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -28,7 +29,40 @@ internal static class PushedAuthorizationEndpoint
             if (!httpContext.Request.HasFormContentType)
                 return JsonResults.OAuthError("invalid_request", "application/x-www-form-urlencoded required");
 
-            var form = await httpContext.Request.ReadFormAsync(ct);
+            // Bounded BEFORE the body is read, because reading it is the cost.
+            //
+            // Every accepted request serialises the whole form into one grant row, and nothing bounded the
+            // body, the field count or the value lengths: no RequestSizeLimit, no FormOptions tuning and no
+            // MaxRequestBodySize override anywhere in src/, so the ceiling was Kestrel's 30 MB default body
+            // and ASP.NET's default 1024 form values. The only bound was the per-client throttle, which
+            // counts REQUESTS, not bytes — 300/minute of 30 MB is 9 GB a minute of stored rows, from a
+            // public client that authenticates on a bare client_id readable from any SPA's network traffic.
+            //
+            // Not an allowlist of parameter names, deliberately: both hosts read parameters this endpoint
+            // does not know about — `idp_hint` in the Protocol authorize endpoint, and whatever a
+            // connection's ProvisioningAttributeParams names in the Server host — so dropping unknown
+            // fields here would silently break those. Bounding the size is the part that can be done
+            // without knowing the vocabulary.
+            if (SetRequestBounds(httpContext) is { } boundsError)
+                return boundsError;
+
+            IFormCollection form;
+            try
+            {
+                form = await httpContext.Request.ReadFormAsync(ct);
+            }
+            catch (BadHttpRequestException)
+            {
+                // The body exceeded MaxRequestBodySize.
+                return JsonResults.OAuthError(
+                    "invalid_request", "the pushed authorization request is too large", 413);
+            }
+            catch (InvalidDataException)
+            {
+                // Too many fields, or a key/value over the per-field bound.
+                return JsonResults.OAuthError(
+                    "invalid_request", "the pushed authorization request has too many or too large fields", 413);
+            }
 
             // RFC 9126 client-auth failures are all 401 here (unlike the token endpoint,
             // where only invalid_client is), and every one of them carries the RFC 6749 §5.2
@@ -126,5 +160,42 @@ internal static class PushedAuthorizationEndpoint
         .WithTags("OAuth");
 
         return app;
+    }
+
+    /// <summary>
+    /// Caps the request body and the form shape for this endpoint, before anything is read.
+    /// </summary>
+    /// <remarks>
+    /// An authorization request is small — a handful of short parameters — so these bounds are generous by
+    /// an order of magnitude and still turn a 30 MB write into a 32 KB one. Applied through the features
+    /// rather than an attribute because this package maps its own endpoints into a host it does not own, and
+    /// an attribute's enforcement depends on that host's server; both features are null-checked for the same
+    /// reason.
+    /// </remarks>
+    private static IResult? SetRequestBounds(HttpContext httpContext)
+    {
+        const long maxBodyBytes = 32 * 1024;
+
+        var bodySize = httpContext.Features.Get<IHttpMaxRequestBodySizeFeature>();
+        if (bodySize is { IsReadOnly: false })
+            bodySize.MaxRequestBodySize = maxBodyBytes;
+
+        // Content-Length, when the client declares one, so an oversized request is refused without reading
+        // a single byte of it.
+        if (httpContext.Request.ContentLength > maxBodyBytes)
+            return JsonResults.OAuthError(
+                "invalid_request", "the pushed authorization request is too large", 413);
+
+        // Form limits are separate from body size: 1024 fields of 100 bytes is a small body and a large
+        // dictionary, and it is the dictionary that gets serialised into the row.
+        httpContext.Features.Set<IFormFeature>(new FormFeature(httpContext.Request, new FormOptions
+        {
+            ValueCountLimit = 64,
+            KeyLengthLimit = 256,
+            ValueLengthLimit = 8 * 1024,
+            BufferBodyLengthLimit = maxBodyBytes,
+        }));
+
+        return null;
     }
 }
