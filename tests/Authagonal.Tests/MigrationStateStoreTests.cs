@@ -57,7 +57,24 @@ public class MigrationStateStoreTests(AzuriteFixture azurite)
         Assert.True((await store.GetAsync(version))!.BlocksRerun);
     }
 
+    /// <summary>
+    /// A run whose passes reported errors does not block a retry.
+    /// </summary>
+    /// <remarks>
+    /// <c>DuendeMigrationEngine.RunPass</c> swallows every pass exception into <c>report.Errors</c> so one
+    /// failure does not abort the copy, and the hosted runner wrote <c>Completed</c> on ANY return from the
+    /// engine. <c>BlocksRerun</c> then reads that as done, and <c>AlreadyDoneAsync</c> short-circuits — so a
+    /// run in which the Users pass threw was indistinguishable from a clean one and would never be retried:
+    /// the missing users never arrived, permanently. The CLI got this right
+    /// (<c>return report.Errors.Count == 0 ? 0 : 2</c>); the hosted runner did not.
+    /// <para>
+    /// Every pass is documented as idempotent report-and-skip, so a retry is safe. This status records what
+    /// happened without pretending it was clean.
+    /// </para>
+    /// </remarks>
     [Theory]
+    [InlineData(MigrationStateEntity.StatusCompletedWithErrors, false)]
+    [InlineData(MigrationStateEntity.StatusCompletedWithErrors, true)]
     [InlineData(MigrationStateEntity.StatusCompleted, true)]   // dry run completed → does NOT block
     [InlineData(MigrationStateEntity.StatusStarted, false)]
     [InlineData(MigrationStateEntity.StatusFailed, false)]

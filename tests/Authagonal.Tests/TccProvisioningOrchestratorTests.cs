@@ -222,6 +222,46 @@ public class TccProvisioningOrchestratorTests
         Assert.Empty(await _provisions.GetByUserAsync("user-1"));
     }
 
+    /// <summary>
+    /// Compensation undoes THIS transaction, not everything the user was ever provisioned into.
+    /// </summary>
+    /// <remarks>
+    /// The confirm-failure path called <c>DeprovisionAllAsync</c>, which is not scoped to a transaction: it
+    /// reads every provision row the user has, from every earlier transaction, issues
+    /// <c>DELETE {CallbackUrl}/users/{userId}</c> against each, and removes each row whether or not the delete
+    /// succeeded. So the ordinary incremental case — a user already live in app0, apps app1 and app2 now being
+    /// added, app2's confirm fails — deleted the user's app0 account downstream too, and every
+    /// <c>ReprovisionAsync</c> ran the same risk. The comment above the call says the compensation is for the
+    /// apps that confirmed "in this transaction"; the code deprovisioned the user everywhere.
+    /// </remarks>
+    [Fact]
+    public async Task ConfirmFailure_DoesNotDeprovisionAppsFromEarlierTransactions()
+    {
+        // Provisioned into app0 by an earlier transaction, and still live.
+        await _provisions.StoreAsync(new UserProvision
+        {
+            UserId = "user-1",
+            AppId = "app0",
+            ProvisionedAt = DateTimeOffset.UtcNow.AddDays(-7),
+        });
+
+        _handler.Responders["app2:/confirm"] = () => new HttpResponseMessage(HttpStatusCode.InternalServerError);
+        var orchestrator = NewOrchestrator(App("app0"), App("app1"), App("app2"));
+
+        await Assert.ThrowsAsync<ProvisioningException>(() => orchestrator.ProvisionAsync(User()));
+
+        // app0 was never part of this transaction, so it is neither called nor deleted.
+        Assert.DoesNotContain("app0:/users/user-1", CallSequence);
+        Assert.DoesNotContain("app0:/try", CallSequence);
+
+        // ...and its provision row survives, because the user still has that account.
+        var remaining = await _provisions.GetByUserAsync("user-1");
+        Assert.Equal("app0", Assert.Single(remaining).AppId);
+
+        // app1 confirmed in THIS transaction, so it is compensated.
+        Assert.Contains("app1:/users/user-1", CallSequence);
+    }
+
     // ── Try-response merge semantics ─────────────────────────────────
 
     [Fact]

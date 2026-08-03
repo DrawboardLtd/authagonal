@@ -116,16 +116,31 @@ public sealed class DuendeMigrationHostedRunner(
         {
             var report = await engine.RunAsync(options, linked.Token);
 
+            // A pass that threw must not be recorded as a clean completion.
+            //
+            // RunPass swallows every pass exception into report.Errors so one failure does not abort the copy,
+            // and this wrote StatusCompleted regardless — which BlocksRerun reads as "done", so the migration
+            // was never retried and the missing rows never arrived. Every pass is idempotent report-and-skip,
+            // so a retry is safe; CompletedWithErrors records what happened without blocking one.
+            var hadErrors = report.Errors.Count > 0;
+
             await stateStore.UpsertAsync(new MigrationStateEntity
             {
                 RowKey = options.Version,
-                Status = MigrationStateEntity.StatusCompleted,
+                Status = hadErrors
+                    ? MigrationStateEntity.StatusCompletedWithErrors
+                    : MigrationStateEntity.StatusCompleted,
                 StartedAt = started.StartedAt,
                 CompletedAt = DateTimeOffset.UtcNow,
                 NodeId = leaderService.NodeId,
                 DryRun = options.DryRun,
                 StatsJson = JsonSerializer.Serialize(report),
             }, stoppingToken);
+
+            if (hadErrors)
+                logger.LogError(
+                    "Duende migration '{Version}' finished with {ErrorCount} pass error(s) and will be retried: "
+                    + "{Errors}", options.Version, report.Errors.Count, string.Join(" | ", report.Errors.Take(5)));
 
             logger.LogInformation(
                 "Duende migration '{Version}' complete (dryRun={DryRun}): users +{Users}/~{Updated}/-{Skipped}, " +

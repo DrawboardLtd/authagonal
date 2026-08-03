@@ -170,7 +170,20 @@ public sealed class TccProvisioningOrchestrator(
 
                     try
                     {
-                        await DeprovisionAllAsync(user.Id, ct);
+                        // Exactly the apps that confirmed in THIS transaction.
+                        //
+                        // This called DeprovisionAllAsync, which is not scoped to a transaction: it reads
+                        // every provision row the user has, from every earlier transaction, issues
+                        // DELETE {CallbackUrl}/users/{userId} against each, and removes each row whether or
+                        // not the delete succeeded. So the ordinary incremental case — a user already
+                        // provisioned into A, apps B and C now being added, C's confirm fails — deleted the
+                        // user from A downstream as well, and every ReprovisionAsync ran the same risk. The
+                        // comment above says the compensation is for the apps that confirmed "in this
+                        // transaction"; the code deprovisioned the user everywhere.
+                        //
+                        // DeprovisionAllAsync keeps its whole-user scope for account deletion, where that is
+                        // exactly right.
+                        await CompensateConfirmedAsync(user.Id, confirmedApps, apps, transactionId);
                     }
                     catch (Exception compensationEx)
                     {
@@ -208,6 +221,46 @@ public sealed class TccProvisioningOrchestrator(
         logger.LogInformation(
             "User {UserId} provisioned into apps [{Apps}], transaction {TransactionId}",
             user.Id, string.Join(", ", appsToProvision), transactionId);
+    }
+
+    /// <summary>
+    /// Undoes the confirms of ONE transaction, leaving provisioning from other transactions alone.
+    /// </summary>
+    /// <remarks>
+    /// Runs on <see cref="CancellationToken.None"/>: the request that triggered this has already failed, and a
+    /// cancelled compensation leaves app accounts behind that nothing will come back for — the outcome the
+    /// rollback exists to prevent.
+    /// </remarks>
+    private async Task CompensateConfirmedAsync(
+        string userId,
+        IReadOnlyCollection<string> confirmedApps,
+        IReadOnlyDictionary<string, AppConfig> apps,
+        string transactionId)
+    {
+        foreach (var appId in confirmedApps)
+        {
+            if (!apps.TryGetValue(appId, out var appConfig))
+            {
+                logger.LogError(
+                    "Cannot compensate app {AppId} for transaction {TransactionId}: no configuration in scope",
+                    appId, transactionId);
+                continue;
+            }
+
+            try
+            {
+                await DeprovisionAsync(appConfig, userId, CancellationToken.None);
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(ex,
+                    "Failed to deprovision user {UserId} from app {AppId} while compensating transaction "
+                    + "{TransactionId}; that app account may need manual removal",
+                    userId, appId, transactionId);
+            }
+
+            await GetProvisionStore().RemoveAsync(userId, appId, CancellationToken.None);
+        }
     }
 
     public async Task DeprovisionAllAsync(string userId, CancellationToken ct = default)
