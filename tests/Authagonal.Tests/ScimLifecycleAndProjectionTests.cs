@@ -64,6 +64,72 @@ public sealed class ScimLifecycleAndProjectionTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.OK, (await SendAsync(HttpMethod.Get, $"/scim/v2/Users/{recreatedId}")).StatusCode);
     }
 
+    /// <summary>
+    /// A re-provisioned address is a NEW resource: new <c>id</c>, hence new OIDC <c>sub</c>.
+    /// </summary>
+    /// <remarks>
+    /// The reclaim kept the tombstoned row's id, so the resource created for whoever next held the address was
+    /// issued the departed employee's identifier. RFC 7643 §3.1 requires <c>id</c> to be "a stable,
+    /// non-reassignable identifier", and here it is the OIDC subject — so at every relying party the new person
+    /// WAS the old one, inheriting their documents, permissions and audit identity, with nothing in the IdP
+    /// recording that the human had changed.
+    /// <para>
+    /// Nothing asserted the reuse, which is why it survived: the existing re-creation test checks only that the
+    /// create succeeds.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task ReProvisioningAnAddress_IssuesANewSubject_NotTheDepartedUsers()
+    {
+        var first = await CreateUserAsync("rehire@example.com", "ext-rehire");
+        var firstId = (await ReadJsonAsync(first)).GetProperty("id").GetString()!;
+
+        Assert.Equal(HttpStatusCode.NoContent,
+            (await SendAsync(HttpMethod.Delete, $"/scim/v2/Users/{firstId}")).StatusCode);
+
+        var second = await CreateUserAsync("rehire@example.com", "ext-rehire");
+        Assert.Equal(HttpStatusCode.Created, second.StatusCode);
+        var secondId = (await ReadJsonAsync(second)).GetProperty("id").GetString()!;
+
+        Assert.NotEqual(firstId, secondId);
+
+        // The new resource is readable at its own id, and the old identifier is gone for good.
+        Assert.Equal(HttpStatusCode.OK, (await SendAsync(HttpMethod.Get, $"/scim/v2/Users/{secondId}")).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await SendAsync(HttpMethod.Get, $"/scim/v2/Users/{firstId}")).StatusCode);
+    }
+
+    /// <summary>
+    /// A deleted account's second factors do not survive to authenticate the next account.
+    /// </summary>
+    /// <remarks>
+    /// <c>IMfaStore.DeleteAllCredentialsAsync</c> had exactly one caller in the product — the admin MFA-reset
+    /// endpoint — so neither delete path removed a thing. Credentials are keyed on the user id, and the
+    /// passwordless sign-in path resolves the account from the credential without ever consulting
+    /// <c>MfaEnabled</c>: an attacker who had enrolled a passkey therefore kept a way in across the exact
+    /// remedy an incident responder reaches for, needing no password, no email and no session.
+    /// </remarks>
+    [Fact]
+    public async Task DeletingAUser_RemovesTheirMfaCredentials()
+    {
+        var id = (await ReadJsonAsync(await CreateUserAsync("mfa-leaver@example.com")))
+            .GetProperty("id").GetString()!;
+
+        await _factory.MfaStore.CreateCredentialAsync(new Authagonal.Core.Models.MfaCredential
+        {
+            Id = Guid.NewGuid().ToString("N"),
+            UserId = id,
+            Type = Authagonal.Core.Models.MfaCredentialType.Totp,
+            SecretProtected = "seed",
+            CreatedAt = DateTimeOffset.UtcNow,
+        });
+        Assert.NotEmpty(await _factory.MfaStore.GetCredentialsAsync(id));
+
+        Assert.Equal(HttpStatusCode.NoContent,
+            (await SendAsync(HttpMethod.Delete, $"/scim/v2/Users/{id}")).StatusCode);
+
+        Assert.Empty(await _factory.MfaStore.GetCredentialsAsync(id));
+    }
+
     [Fact]
     public async Task DeactivationIsStillReversible()
     {

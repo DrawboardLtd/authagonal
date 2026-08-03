@@ -213,11 +213,36 @@ public sealed class DynamoUserStore(
         if (item.ContainsKey("failedCount"))
         {
             user.AccessFailedCount = (int)item.GetN("failedCount");
+
+            // lockoutEnd is read unconditionally on purpose: the success stamp REMOVEs it to clear a lockout,
+            // so absence genuinely means "not locked".
             user.LockoutEnd = item.GetDateOrNull("lockoutEnd");
-            user.LastLoginAt = item.GetDateOrNull("lastLogin");
+
+            // lastLogin is NOT written by the failed-login stamp, so its absence alongside a materialised
+            // group means "unknown", not "never" — reading it unconditionally discarded the document's value.
+            if (item.GetDateOrNull("lastLogin") is { } lastLogin) user.LastLoginAt = lastLogin;
             if (item.GetDateOrNull("updated") is { } updated) user.UpdatedAt = updated;
-            user.PasswordHash = item.GetS("pwd");
-            user.PendingPasswordHash = item.GetS("pwdPending");
+
+            // PER ATTRIBUTE for the two password fields, not on the failedCount marker.
+            //
+            // The marker was treated as proof that the whole promoted group was authoritative, and both
+            // login stamps CREATE failedCount on a row that lacks it while writing no `pwd`: the failed-login
+            // stamp materialises the group deliberately (see its !hasCount branch) and the success stamp adds
+            // `pwd` only when a rehash was supplied. So one login attempt against a row missing the group
+            // published `PasswordHash = null`, and AuthEndpoints forces a Failed verify whenever the stored
+            // hash is empty — the account could never log in again, and forgot-password issues no reset for an
+            // account with no local password, so self-service recovery was closed too. A restore is the way
+            // rows arrive without the group, which makes this reachable in exactly the situation where an
+            // operator is least able to absorb it.
+            //
+            // A full write is a PutItem, so it replaces the whole item: `pwd` absent there genuinely means
+            // "no password". Falling back to the document when the attribute is absent is therefore correct in
+            // both cases — and it REPAIRS rows already damaged, rather than only preventing new damage.
+            //
+            // SqlUserStore refuses the partial stamp instead, with a comment naming this exact failure. The
+            // two providers now both handle it; this one also heals.
+            if (item.ContainsKey("pwd")) user.PasswordHash = item.GetS("pwd");
+            if (item.ContainsKey("pwdPending")) user.PendingPasswordHash = item.GetS("pwdPending");
         }
 
         // The revision the caller is holding. UpdateAsync refuses a write whose token no longer matches
@@ -593,6 +618,12 @@ public sealed class DynamoUserStore(
             values[":pwd"] = new AttributeValue { S = rehashedPassword };
         }
 
+        // This stamp CREATES failedCount on a row that lacks it and carries `pwd` only on a rehash, which is
+        // how a successful login published PasswordHash = null and locked the account out of itself for good.
+        // The fix is in the read overlay, which now consults each attribute rather than trusting the
+        // failedCount marker for the whole group — so this stays a plain stamp and keeps recording lastLogin on
+        // every row, including one whose group does not exist yet.
+
         try
         {
             await users.Client.UpdateItemAsync(new UpdateItemRequest
@@ -667,6 +698,25 @@ public sealed class DynamoUserStore(
             {
                 set += ", lockoutEnd = :end";
                 values[":end"] = new AttributeValue { S = Iso(lockoutEnd.Value) };
+            }
+
+            // Materialising the group means materialising ALL of it. Writing failedCount without `pwd` made
+            // the read overlay publish PasswordHash = null for that account — see ReadUserAsync. The overlay
+            // now checks each attribute, so this is belt and braces, but a half-written group is a trap for
+            // the next reader and the values are already in hand on this branch.
+            if (!hasCount)
+            {
+                var document = await ReadUserAsync(item, ct).ConfigureAwait(false);
+                if (document.PasswordHash is { } hash)
+                {
+                    set += ", pwd = :pwd";
+                    values[":pwd"] = new AttributeValue { S = hash };
+                }
+                if (document.PendingPasswordHash is { } pending)
+                {
+                    set += ", pwdPending = :pwdPending";
+                    values[":pwdPending"] = new AttributeValue { S = pending };
+                }
             }
             // Optimistic concurrency on the counter itself: a concurrent failed login that wrote first
             // fails the condition — re-read and retry so no increment is lost.

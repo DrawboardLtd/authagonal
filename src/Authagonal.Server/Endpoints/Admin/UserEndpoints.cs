@@ -492,6 +492,8 @@ public static class UserEndpoints
         IStringLocalizer<SharedMessages> localizer,
         IAuditLogger audit,
         HttpContext httpContext,
+        IMfaStore? mfaStore,
+        IScimGroupStore? scimGroupStore,
         CancellationToken ct)
     {
         var user = await userStore.GetAsync(userId, ct);
@@ -503,6 +505,14 @@ public static class UserEndpoints
 
         // Deprovision from all downstream apps (best-effort)
         await provisioningOrchestrator.DeprovisionAllAsync(userId, ct);
+
+        // Second factors and group memberships are keyed on the user id, and the id can come back — the admin
+        // create endpoint accepts a caller-supplied UserId, and SCIM reclaims a tombstoned row in place. A
+        // passkey left behind is a way back into the NEXT account at this id, and the passwordless sign-in path
+        // resolves the account from the credential without consulting MfaEnabled. See AccountArtefactPurge.
+        //
+        // Before the delete, so a failure here leaves the account intact rather than deleted-but-credentialed.
+        await AccountArtefactPurge.PurgeAsync(userId, mfaStore, scimGroupStore, ct);
 
         await userStore.DeleteAsync(userId, ct);
         await authHooks.RunOnUserDeletedAsync(userId, user.Email, "admin", ct);

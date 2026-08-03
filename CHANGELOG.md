@@ -122,6 +122,52 @@
   cannot steer those requests and there is nothing for an address check to add. Email delivery (`Resend`)
   is likewise unguarded and unaffected: its target is a compile-time constant.
 
+### Security — a deleted account's identity and credentials did not die with it
+
+- **A deleted account's second factors authenticated the next account at that id (high).**
+  `IMfaStore.DeleteAllCredentialsAsync` had exactly one caller in the whole product — the admin MFA-reset
+  endpoint. Neither `DELETE /api/v1/profile/{userId}` nor SCIM `DELETE /scim/v2/Users/{id}` touched the MFA
+  store, so a deleted account's TOTP secret, recovery-code hashes, WebAuthn public keys and WebAuthn
+  credential-id index rows all survived, keyed on the user id.
+
+  The id comes back two ways: the admin create endpoint accepts a caller-supplied `UserId`, and the SCIM create
+  path reclaimed a tombstoned row. The reclaim asserted in a comment that "nothing the deleted account held
+  survives" — false for the second factor, and `POST /api/auth/mfa/passwordless/complete` never consults
+  `MfaEnabled`: it resolves the account from the credential. So an attacker who had enrolled a passkey kept a
+  way in across the exact remedy an incident responder reaches for — delete the account, re-create it — with no
+  password, no email and no session. `AccountArtefactPurge` now removes credentials and group memberships on
+  every delete path, and again on reclaim for rows tombstoned by an earlier version.
+
+- **SCIM group membership survived the delete too (high, no attacker required).** `DeleteUserAsync` never
+  removed the departing user from any group, and `RetainOwnedMembersAsync` deliberately *keeps* tombstoned
+  members because they still carry the owning client id. An offboarded address re-issued months later to a
+  different person therefore inherited every group the departed employee still occupied, including role-mapped
+  ones — so the new user silently received roles no administrator granted, with no record of the assignment.
+
+- **A re-provisioned address inherited the departed user's OIDC `sub` (high).** The reclaim kept the tombstoned
+  row's `id`, which RFC 7643 §3.1 requires to be "a stable, non-reassignable identifier" and which this server
+  uses as the subject. At every relying party the new person *was* the old one — their documents, their
+  permissions, their audit identity — with nothing in the IdP recording that the human had changed. A reclaim
+  now deletes the tombstone (which releases the email-index entry it owned) and creates a fresh resource with a
+  new id. Nothing asserted the reuse, which is why it survived: the existing re-creation test checked only that
+  the create succeeded.
+
+- **One wrong password permanently destroyed a DynamoDB account's password hash (high).** `ReadUserAsync`
+  treated the presence of the single `failedCount` marker as proof that the entire promoted login-state group
+  was authoritative, including `pwd` — and both login stamps CREATE `failedCount` on a row that lacks it while
+  writing no `pwd`: the failed-login stamp materialises the group deliberately, and the success stamp carries
+  `pwd` only on a rehash. So one login attempt published `PasswordHash = null`, and the login path forces a
+  failed verify whenever the stored hash is empty. The account could never log in again, and forgot-password
+  issues no reset for an account with no local password, so self-service recovery was closed as well —
+  unauthenticated, one request per victim, permanent. The user's own *correct* password was equally sufficient
+  to trigger it.
+
+  Rows arrive without the promoted group from a restore, which writes raw rows, so this lands precisely when an
+  operator can least absorb it. `SqlUserStore` refuses the partial stamp with a comment naming this exact
+  failure mode; the Dynamo store never learned it. The overlay now consults each attribute individually, which
+  also **repairs** rows already damaged rather than only preventing new damage, and the failed-login stamp
+  completes the group instead of half-writing it.
+
 ### Breaking — `IClientStore` gains `TryUpgradeSecretHashAsync`
 
 Not source-breaking: the default returns `false`, so an external implementer keeps compiling and simply leaves

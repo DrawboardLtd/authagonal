@@ -287,6 +287,8 @@ public static class ScimUserEndpoints
         IRateLimiter rateLimiter,
         IConfiguration configuration,
         ILogger<Program> logger,
+        IMfaStore? mfaStore,
+        IScimGroupStore? scimGroupStore,
         CancellationToken ct)
     {
         var clientId = GetClientId(httpContext);
@@ -359,11 +361,20 @@ public static class ScimUserEndpoints
 
         var user = new AuthUser
         {
-            // Reclaiming keeps the row's identity so the email index it owns stays consistent; every
-            // other field is set from the request, so the result is the new resource, not a revived
-            // old one. Credentials are deliberately not carried over — a fresh SecurityStamp and no
-            // password hash mean nothing the deleted account held survives the reclaim.
-            Id = reclaiming ? existing!.Id : Guid.NewGuid().ToString("N"),
+            // A FRESH id, even when reclaiming. RFC 7643 §3.1 requires `id` to be "a stable, non-reassignable
+            // identifier", and this one is the OIDC `sub`: reusing it issued the departed employee's subject to
+            // whoever next held the address, so at every relying party the new person WAS the old one —
+            // inheriting their documents, permissions and audit identity, with nothing in the IdP recording a
+            // change of human.
+            //
+            // Reclaim-in-place existed to keep the email index consistent, and the comment here claimed that a
+            // fresh SecurityStamp and no password hash meant "nothing the deleted account held survives". That
+            // was false in three ways: MFA credentials are keyed on the id and were never deleted, SCIM group
+            // membership is a list of ids on the group row that the delete never touched, and the passwordless
+            // sign-in path resolves the account from the credential without consulting MfaEnabled. The
+            // credentials and memberships are purged on delete now (AccountArtefactPurge) and again below for
+            // rows tombstoned by an earlier version; the identifier itself is no longer recycled.
+            Id = Guid.NewGuid().ToString("N"),
             Email = email,
             NormalizedEmail = email.ToUpperInvariant(),
             EmailConfirmed = true, // SCIM-provisioned users are pre-confirmed (SSO-only)
@@ -380,9 +391,22 @@ public static class ScimUserEndpoints
         };
 
         if (reclaiming)
-            await userStore.UpdateAsync(user, ct);
-        else
+        {
+            // Purge again before the old row goes: a row tombstoned by a version that did not clean up still
+            // carries the previous holder's passkeys and group memberships, and this is the moment they would
+            // otherwise become the new resource's.
+            await AccountArtefactPurge.PurgeAsync(existing!.Id, mfaStore, scimGroupStore, ct);
+
+            // The tombstone is removed rather than updated in place, because the new resource has its own id
+            // and the old row owns the email index entry the new one needs. Delete clears that entry (and the
+            // external logins); the create below writes it against the new id.
+            await userStore.DeleteAsync(existing.Id, ct);
             await userStore.CreateAsync(user, ct);
+        }
+        else
+        {
+            await userStore.CreateAsync(user, ct);
+        }
 
         // Store externalId index
         if (!string.IsNullOrEmpty(request.ExternalId))
@@ -630,6 +654,8 @@ public static class ScimUserEndpoints
         IProvisioningOrchestrator provisioning,
         IRateLimiter rateLimiter,
         ILogger<Program> logger,
+        IMfaStore? mfaStore,
+        IScimGroupStore? scimGroupStore,
         CancellationToken ct)
     {
         var clientId = GetClientId(httpContext);
@@ -640,6 +666,13 @@ public static class ScimUserEndpoints
         if (!IsVisibleTo(user, clientId))
             return ScimResults.NotFound($"User '{id}' not found");
         user = user!;
+
+        // Second factors and group memberships do not survive the delete. Both are keyed on the user id, the
+        // create path reclaims this row, and RetainOwnedMembersAsync deliberately keeps tombstoned members —
+        // so without this a re-provision inherited the departed user's passkeys AND every role-mapped group
+        // they occupied. See AccountArtefactPurge. Done before the tombstone so a failure leaves the account
+        // intact rather than tombstoned-but-credentialed.
+        await AccountArtefactPurge.PurgeAsync(user.Id, mfaStore, scimGroupStore, ct);
 
         // Soft delete: deactivate AND tombstone. The deactivation is what kills the sessions; the
         // tombstone is what makes the resource gone, which deactivation on its own never did.

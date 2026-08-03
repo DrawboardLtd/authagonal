@@ -273,4 +273,56 @@ public class DynamoUserStoreTests(DynamoFixture dynamo)
         await store.UpdateAsync(SampleUser("u1", "up@example.com"));
         Assert.Equal("u1", (await store.FindByEmailAsync("up@example.com"))?.Id);
     }
+    /// <summary>
+    /// A row that predates the promoted login-state group keeps its password through a login stamp.
+    /// </summary>
+    /// <remarks>
+    /// <c>ReadUserAsync</c> treated the presence of the single <c>failedCount</c> marker as proof that the whole
+    /// promoted group was authoritative, and BOTH stamps create <c>failedCount</c> on a row that lacks it while
+    /// writing no <c>pwd</c>: the failed-login stamp materialises the group deliberately, and the success stamp
+    /// carries <c>pwd</c> only on a rehash. So one login attempt published <c>PasswordHash = null</c>, and
+    /// <c>AuthEndpoints</c> forces a Failed verify whenever the stored hash is empty — the account could never
+    /// log in again, and forgot-password issues no reset for an account with no local password, so self-service
+    /// recovery was closed too. One request per victim, unauthenticated, permanent.
+    /// <para>
+    /// Rows arrive without the group from a restore, which writes raw rows — so this lands in exactly the
+    /// situation where an operator is least able to absorb it. <c>SqlUserStore</c> refuses the partial stamp,
+    /// with a comment naming this failure; the Dynamo store never learned it.
+    /// </para>
+    /// <para>
+    /// The overlay now consults each attribute, so the document's hash survives — which also REPAIRS rows
+    /// already damaged in production rather than only preventing new damage.
+    /// </para>
+    /// </remarks>
+    [Theory]
+    [InlineData(true)]   // a failed login materialises the group
+    [InlineData(false)]  // …and so does a successful one
+    public async Task LoginStampOnARowWithoutThePromotedGroup_KeepsThePasswordHash(bool failedLogin)
+    {
+        var prefix = $"ls{Guid.NewGuid():N}".Substring(0, 12);
+        var store = await NewStoreAsync(prefix);
+
+        var user = SampleUser("legacy-1", "legacy@example.com");
+        await store.CreateAsync(user);
+
+        // Strip the promoted group, leaving only the document — the shape a raw-row restore produces.
+        var table = new DynamoTable(_db, $"{prefix}Users");
+        var item = await table.GetAsync(EnvPartitioner.Live.PK("legacy-1"), "profile");
+        Assert.NotNull(item);
+        foreach (var attr in new[] { "failedCount", "pwd", "pwdPending", "lastLogin", "lockEnabled" })
+            item!.Remove(attr);
+        await table.PutAsync(item!);
+
+        // Sanity: the document still carries the hash, so the overlay is the only thing that can lose it.
+        Assert.Equal("hash-legacy-1", (await store.GetAsync("legacy-1"))!.PasswordHash);
+
+        if (failedLogin)
+            await store.RecordFailedLoginAsync("legacy-1", maxAttempts: 5, lockoutDuration: TimeSpan.FromMinutes(5));
+        else
+            await store.RecordSuccessfulLoginAsync("legacy-1");
+
+        var after = await store.GetAsync("legacy-1");
+        Assert.NotNull(after);
+        Assert.Equal("hash-legacy-1", after!.PasswordHash);
+    }
 }
