@@ -1,4 +1,6 @@
 using System.Security.Claims;
+using System.Text.Json;
+using System.Text.Json.Nodes;
 using Authagonal.Core.Models;
 using Authagonal.Core.Services;
 using Authagonal.Core.Stores;
@@ -111,9 +113,60 @@ public static class ClientEndpoints
         return Results.Created($"/api/v1/clients/{client.ClientId}", Redacted(client));
     }
 
+    /// <summary>
+    /// Applies only the properties the request body actually carries, over the stored record.
+    /// </summary>
+    /// <remarks>
+    /// The handler used to bind a whole <see cref="OAuthClient"/> and write it, so every JSON property the body
+    /// omitted arrived at its declared default and was persisted. Two fields were special-cased —
+    /// <c>ClientSecretHashes</c> and <c>AudiencesDeclared</c>, the latter with a comment explaining precisely
+    /// this hazard — and about forty were not. A PUT that meant to change one field therefore reset
+    /// <c>Enabled</c> to <b>true</b>, <c>MfaPolicy</c> to Disabled, <c>RequireConsent</c> and
+    /// <c>RequirePushedAuthorizationRequests</c> to false, <c>JwksJson</c>/<c>JwksUri</c> to null (killing
+    /// private_key_jwt), and every URI/scope/origin list to empty.
+    /// <para>
+    /// The operational consequence needs no attacker: an operator disables a compromised client, and the next
+    /// two-field maintenance PUT — a rename, a logo URL, an admin console posting only the fields it renders, a
+    /// scripted bulk update — silently re-enables it and drops its MFA requirement. Nothing in the response or
+    /// the audit row said so.
+    /// </para>
+    /// <para>
+    /// Absent and explicitly-default are indistinguishable once JSON has been bound to a non-nullable record,
+    /// so the fix has to happen before binding. Merging at the node level keeps every existing validation
+    /// working on a complete <see cref="OAuthClient"/> and needs no per-property list to fall out of date — the
+    /// failure mode of a hand-written merge being exactly the one this replaces.
+    /// </para>
+    /// <para>
+    /// This makes PUT a merge rather than a replace. That is the same choice <c>ClientSeedService</c> makes
+    /// ("a field the seed omits preserves the stored value") and for the same reason: on this resource the
+    /// omitted-field default is a security downgrade, and no caller has ever been able to rely on the reset
+    /// behaviour deliberately.
+    /// </para>
+    /// </remarks>
+    private static OAuthClient MergeOntoStored(OAuthClient existing, JsonElement body)
+    {
+        var merged = JsonSerializer.SerializeToNode(existing, AuthagonalJsonContext.Default.OAuthClient)!.AsObject();
+
+        foreach (var supplied in body.EnumerateObject())
+        {
+            // Drop any key that differs only by case before setting, so a caller using PascalCase does not
+            // leave the serialized camelCase key behind for the deserializer to pick between.
+            foreach (var existingKey in merged.Select(p => p.Key)
+                         .Where(k => string.Equals(k, supplied.Name, StringComparison.OrdinalIgnoreCase))
+                         .ToList())
+            {
+                merged.Remove(existingKey);
+            }
+
+            merged[supplied.Name] = JsonNode.Parse(supplied.Value.GetRawText());
+        }
+
+        return merged.Deserialize(AuthagonalJsonContext.Default.OAuthClient)!;
+    }
+
     private static async Task<IResult> UpdateClient(
         string clientId,
-        OAuthClient client,
+        JsonElement body,
         IClientStore store,
         IClientScopeGuard scopeGuard,
         IAuditLogger audit,
@@ -123,6 +176,22 @@ public static class ClientEndpoints
     {
         var existing = await store.GetAsync(clientId, ct);
         if (existing is null) return Results.NotFound();
+
+        if (body.ValueKind != JsonValueKind.Object)
+            return TypedResults.Json(
+                new ErrorInfoResponse { Error = "invalid_request", ErrorDescription = "A JSON object body is required." },
+                AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 400);
+
+        var client = MergeOntoStored(existing, body);
+
+        // Which properties the caller actually sent. The merge means `client` now carries STORED values for
+        // everything else, and running the format validators over those would refuse an update because of a
+        // field the caller never touched — a client whose stored hash or redirect URI predates the validator
+        // that now rejects it could not be edited at all, and the error would name a field the operator did not
+        // send. So each validator below is gated on its own input having been supplied.
+        var supplied = new HashSet<string>(
+            body.EnumerateObject().Select(p => p.Name), StringComparer.OrdinalIgnoreCase);
+        bool Sent(params string[] names) => names.Any(supplied.Contains);
 
         // Only block escalation on scopes newly added by this update — leaving
         // existing scopes alone is safe even if the caller couldn't grant them today.
@@ -145,34 +214,32 @@ public static class ClientEndpoints
         if (IsAdminScopeRequested(client.AllowedScopes, configuration))
             return TypedResults.Json(new ErrorInfoResponse { Error = "forbidden_scope", ErrorDescription = "The administrative scope cannot be granted to a client" }, AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 403);
 
-        if (MalformedScope(client.AllowedScopes) is { } updateMalformed)
+        if (Sent("allowedScopes", "scopes") && MalformedScope(client.AllowedScopes) is { } updateMalformed)
             return TypedResults.Json(new ErrorInfoResponse { Error = "invalid_request", ErrorDescription = updateMalformed }, AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 400);
 
-        if (InvalidSecretHashes(client) is { } hashError)
+        if (Sent("clientSecretHashes", "secretHashes") && InvalidSecretHashes(client) is { } hashError)
             return TypedResults.Json(new ErrorInfoResponse { Error = "invalid_request", ErrorDescription = hashError }, AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 400);
 
-        if (Authagonal.Core.Services.ResourceAudiencePolicy.RejectAudiences(client.Audiences) is { } audienceError)
+        if (Sent("audiences") && Authagonal.Core.Services.ResourceAudiencePolicy.RejectAudiences(client.Audiences) is { } audienceError)
             return TypedResults.Json(new ErrorInfoResponse { Error = "invalid_request", ErrorDescription = audienceError }, AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 400);
 
-        // Monotonic: an update may SET the declaration but never clear it. The handler binds a whole
-        // OAuthClient, so a body that omits the flag deserialises it as false — and a PUT that changed one
-        // unrelated field would otherwise silently return the client to the permissive reading of an empty
-        // audience list. Setting it is the retrofit path for a client that predates the flag; there is
-        // deliberately no way to unset it, because that direction only ever loosens.
+        // Monotonic even against an EXPLICIT false: an update may set the declaration but never clear it.
+        // Omission is already handled by the merge; this is the stronger rule, because unsetting only ever
+        // returns the client to the permissive reading of an empty audience list.
         client.AudiencesDeclared = existing.AudiencesDeclared || client.AudiencesDeclared;
 
         client.ClientId = clientId;
-        // Preserve the stored secret when the update omits hashes; never echo them back. (A rotation
-        // that explicitly supplies new hashes is still honoured.)
+        // Belt and braces on top of the merge: an explicitly empty hash list is not a way to erase the stored
+        // secret. (A rotation that supplies new hashes is still honoured.) Hashes are never echoed back.
         if (client.ClientSecretHashes is not { Count: > 0 })
             client.ClientSecretHashes = existing.ClientSecretHashes;
-        if (InvalidRedirectUris(client) is { } redirectError)
+        if (Sent("redirectUris", "postLogoutRedirectUris") && InvalidRedirectUris(client) is { } redirectError)
             return TypedResults.Json(new ErrorInfoResponse { Error = "invalid_request", ErrorDescription = redirectError }, AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 400);
-        if (InvalidHomeUri(client) is { } uriError)
+        if (Sent("clientUri", "initiateLoginUri") && InvalidHomeUri(client) is { } uriError)
             return TypedResults.Json(new ErrorInfoResponse { Error = "invalid_request", ErrorDescription = uriError }, AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 400);
-        if (InvalidLogoutUris(client) is { } logoutUriError)
+        if (Sent("backChannelLogoutUri", "frontChannelLogoutUri") && InvalidLogoutUris(client) is { } logoutUriError)
             return TypedResults.Json(new ErrorInfoResponse { Error = "invalid_request", ErrorDescription = logoutUriError }, AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 400);
-        if (InvalidPublicClientGrants(client) is { } grantError)
+        if (Sent("allowedGrantTypes", "grantTypes", "requireClientSecret") && InvalidPublicClientGrants(client) is { } grantError)
             return TypedResults.Json(new ErrorInfoResponse { Error = "invalid_request", ErrorDescription = grantError }, AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 400);
         if (client.IsDefaultApplication && !existing.IsDefaultApplication)
             await ClearOtherDefaultsAsync(store, clientId, ct);

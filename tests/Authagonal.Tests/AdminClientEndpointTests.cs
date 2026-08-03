@@ -665,6 +665,83 @@ public sealed class AdminClientEndpointTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
     }
 
+    /// <summary>
+    /// A two-field maintenance PUT does not silently re-enable a disabled client or drop its hardening.
+    /// </summary>
+    /// <remarks>
+    /// The handler bound a whole <c>OAuthClient</c> and wrote it, so every property the body omitted arrived at
+    /// its declared default and was persisted: <c>Enabled</c> back to <b>true</b>, <c>MfaPolicy</c> to Disabled,
+    /// <c>RequireConsent</c> and <c>RequirePushedAuthorizationRequests</c> to false, the JWKS to null. Two
+    /// fields were special-cased and about forty were not.
+    /// <para>
+    /// No attacker needed. An operator disables a compromised client to cut it off; the next rename, logo-URL
+    /// change, admin-console save that posts only the fields it renders, or scripted bulk update turns it back
+    /// on and removes the second-factor requirement from its users. Nothing in the response or the audit row
+    /// recorded that any of it had changed.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task UpdateClient_OmittedFields_DoNotRevertToModelDefaults()
+    {
+        await _host.ClientStore.UpsertAsync(new OAuthClient
+        {
+            ClientId = "hardened",
+            ClientName = "Hardened",
+            Enabled = false,                                  // deliberately cut off
+            MfaPolicy = MfaPolicy.Required,
+            RequireConsent = true,
+            RequirePushedAuthorizationRequests = true,
+            AllowedScopes = ["openid", "profile"],
+            RedirectUris = ["https://app.test/cb"],
+            JwksUri = "https://app.test/jwks",
+        });
+
+        // The maintenance PUT: a rename, and nothing else.
+        var response = await _client.PutAsync("/api/v1/clients/hardened",
+            Json(new { clientId = "hardened", clientName = "Hardened v2" }));
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        var stored = await _host.ClientStore.GetAsync("hardened");
+        Assert.NotNull(stored);
+        Assert.Equal("Hardened v2", stored!.ClientName);
+
+        Assert.False(stored.Enabled);
+        Assert.Equal(MfaPolicy.Required, stored.MfaPolicy);
+        Assert.True(stored.RequireConsent);
+        Assert.True(stored.RequirePushedAuthorizationRequests);
+        Assert.Equal(["openid", "profile"], stored.AllowedScopes);
+        Assert.Equal(["https://app.test/cb"], stored.RedirectUris);
+        Assert.Equal("https://app.test/jwks", stored.JwksUri);
+    }
+
+    /// <summary>
+    /// The control: a property the caller DOES send is applied, including turning a flag off.
+    /// </summary>
+    /// <remarks>
+    /// Without this, "preserve everything" would satisfy the assertions above while making the endpoint unable
+    /// to disable a client or relax a policy — the merge has to be a merge, not a freeze.
+    /// </remarks>
+    [Fact]
+    public async Task UpdateClient_SuppliedFields_AreApplied_IncludingFalse()
+    {
+        await _host.ClientStore.UpsertAsync(new OAuthClient
+        {
+            ClientId = "toggle",
+            ClientName = "Toggle",
+            Enabled = true,
+            RequireConsent = true,
+        });
+
+        var response = await _client.PutAsync("/api/v1/clients/toggle",
+            Json(new { clientId = "toggle", enabled = false, requireConsent = false }));
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        var stored = await _host.ClientStore.GetAsync("toggle");
+        Assert.False(stored!.Enabled);
+        Assert.False(stored.RequireConsent);
+        Assert.Equal("Toggle", stored.ClientName);   // untouched
+    }
+
     [Fact]
     public async Task UpdateClient_OmittedSecretHashes_PreservesStoredSecret()
     {

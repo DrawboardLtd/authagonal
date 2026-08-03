@@ -122,6 +122,44 @@
   cannot steer those requests and there is nothing for an address check to add. Email delivery (`Resend`)
   is likewise unguarded and unaffected: its target is a compile-time constant.
 
+### Security — two more places a write reverted someone else's decision
+
+- **`PUT /api/v1/clients/{id}` reset every omitted field to the model default (high).** The handler bound a
+  whole `OAuthClient` and wrote it, so any JSON property the body left out arrived at its declared default and
+  was persisted: `Enabled` back to **true**, `MfaPolicy` to Disabled, `RequireConsent` and
+  `RequirePushedAuthorizationRequests` to false, `JwksJson`/`JwksUri` to null (killing private_key_jwt), and
+  every URI, scope and origin list to empty. Exactly two fields were special-cased — `ClientSecretHashes` and
+  `AudiencesDeclared`, the latter with a comment explaining this very hazard — and about forty were not.
+
+  No attacker required: an operator disables a compromised client to cut it off, and the next rename, logo-URL
+  change, admin-console save that posts only the fields it renders, or scripted bulk update turns it back on and
+  removes the MFA requirement from its users. Nothing in the response or the audit row said anything had changed.
+
+  Absent and explicitly-default are indistinguishable once JSON is bound to a non-nullable record, so the merge
+  happens at the node level, before binding — which also means no per-property list to fall out of date, that
+  being the failure mode it replaces. PUT is now a merge rather than a replace, the same choice
+  `ClientSeedService` makes and for the same reason. The format validators are each gated on their own input
+  having been supplied, so a client whose STORED hash or redirect URI predates the validator that now rejects it
+  is still editable — otherwise the fix would have made those clients unmaintainable, with an error naming a
+  field the operator never sent.
+
+- **The Azure store left the security stamp in cleartext (high).** `TableUserStore` encrypts a hard-coded
+  column list, and `SecurityStamp`, `PendingPasswordHash` and `RolesJson` were not on it. The SQL and AWS
+  providers encrypt the whole serialized document, so the shared provider-parity tests could never have caught
+  it, and the existing PII coverage asserted only the Tier-1 fields.
+
+  The stamp is not ordinary PII. The email-confirmation / passwordless-claim token is
+  `base64("{stamp}||{email}||{exp}[||pc=…]")` and carries **no MAC** — the confirm-email handler's own comment
+  says the stamp is the only thing authorising the state change. So the adversary `IFieldCipher` exists to stop
+  (read access to the store, no Vault key: a leaked read-only role, a copied backup, a snapshot, a support
+  export) could mint one: set `EmailConfirmed` on any account without ever holding the mailbox — the gate JIT
+  federation and `email_verified` rely on — and complete a staged self-service claim on a passwordless
+  SSO/SCIM-provisioned account. `RolesJson` is authorization state, useful for choosing whom to target.
+
+  `ExternalId`, `OrganizationId` and `Locale` stay in cleartext deliberately: the first two are query and index
+  keys, which would need blind indexes as `Email` has, and the third is a language tag. Legacy plaintext rows
+  keep reading and are re-written encrypted on their owner's next profile write.
+
 ### Security — a deleted account's identity and credentials did not die with it
 
 - **A deleted account's second factors authenticated the next account at that id (high).**

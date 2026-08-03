@@ -122,6 +122,53 @@ public class PiiEncryptionTests(AzuriteFixture azurite)
         Assert.DoesNotContain("Research", raw.CustomAttributesJson);
     }
 
+    /// <summary>
+    /// The security-stamp column is encrypted, because read access to it forges tokens.
+    /// </summary>
+    /// <remarks>
+    /// The email-confirmation / passwordless-claim token is <c>base64("{stamp}||{email}||{exp}[||pc=…]")</c>
+    /// and carries no MAC — the confirm-email handler's own comment says the stamp is the only thing
+    /// authorising the state change. So the adversary <c>IFieldCipher</c> is written for (read access to the
+    /// store, no Vault key: a leaked read-only role, a copied backup, a snapshot, a support export) could MINT
+    /// one: set <c>EmailConfirmed</c> on any account without ever holding the mailbox — the gate JIT federation
+    /// and <c>email_verified</c> rely on — and complete a staged claim on a passwordless SSO/SCIM account.
+    /// <para>
+    /// The encrypted set is a hard-coded column list, and the existing coverage asserted only the Tier-1 PII
+    /// fields, which is how three columns stayed in cleartext. This pins the security-relevant ones by name and
+    /// asserts the round trip, since encrypting a column the code later compares by value breaks logins.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task SecurityStampAndPendingSecrets_AreEncryptedAtRest_AndRoundTrip()
+    {
+        var prefix = $"piienc{Guid.NewGuid():N}";
+        var store = NewStore(prefix, new FakeCipher());
+
+        var user = SampleUser("u1", "ada@acme.test");
+        user.SecurityStamp = "the-stamp-that-authorises-confirm-email";
+        user.PendingPasswordHash = "PBKDF2v2$pending";
+        user.Roles = ["admin", "auditor"];
+        await store.CreateAsync(user);
+
+        var raw = await RawProfile(prefix, "u1");
+
+        Assert.StartsWith(FakeCipher.Prefix, raw.SecurityStamp);
+        Assert.DoesNotContain("the-stamp-that-authorises-confirm-email", raw.SecurityStamp);
+        Assert.StartsWith(FakeCipher.Prefix, raw.PendingPasswordHash);
+        Assert.DoesNotContain("pending", raw.PendingPasswordHash);
+        Assert.StartsWith(FakeCipher.Prefix, raw.RolesJson);
+        Assert.DoesNotContain("auditor", raw.RolesJson);
+
+        // …and every one of them comes back intact. The stamp is compared by value on the
+        // confirm-email path, so a column that encrypts but does not round-trip is worse than one that
+        // never encrypted.
+        var read = await store.GetAsync("u1");
+        Assert.NotNull(read);
+        Assert.Equal("the-stamp-that-authorises-confirm-email", read!.SecurityStamp);
+        Assert.Equal("PBKDF2v2$pending", read.PendingPasswordHash);
+        Assert.Equal(["admin", "auditor"], read.Roles);
+    }
+
     [Fact]
     public async Task Get_RoundTripsDecryptedValues()
     {

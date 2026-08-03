@@ -507,7 +507,7 @@ public sealed class TableUserStore(
     // through untouched (and ResolveMany passes legacy plaintext through, so reads over un-migrated rows
     // still work).
     private static bool ShouldProtect(string? value)
-        => !string.IsNullOrEmpty(value) && value != "{}";
+        => !string.IsNullOrEmpty(value) && value != "{}" && value != "[]";
 
     // Encrypt the at-rest PII fields on a freshly-mapped entity, just before a table write. Email and
     // names are encrypted alongside phone/company/attrs; the blind indexes (keyed on the plaintext, via
@@ -518,7 +518,7 @@ public sealed class TableUserStore(
         // Batch the fields that need protection into ONE Vault round-trip (vs 7 sequential). Fields that
         // don't need protecting (empty, or the "{}" attrs default) are left untouched, preserving the
         // exact per-field semantics of the old ProtectFieldAsync path.
-        var fields = new[] { e.Email, e.NormalizedEmail, e.FirstName, e.LastName, e.Phone, e.CompanyName, e.CustomAttributesJson, e.PendingClaimJson };
+        var fields = new[] { e.Email, e.NormalizedEmail, e.FirstName, e.LastName, e.Phone, e.CompanyName, e.CustomAttributesJson, e.PendingClaimJson, e.SecurityStamp, e.PendingPasswordHash, e.RolesJson };
         var idx = new List<int>(fields.Length);
         var toProtect = new List<string>(fields.Length);
         for (var i = 0; i < fields.Length; i++)
@@ -544,6 +544,25 @@ public sealed class TableUserStore(
         // because they encrypt the whole serialized document, which is also why the shared
         // provider-parity tests could never have caught it.
         e.PendingClaimJson = fields[7];
+
+        // SecurityStamp is not PII, and it is the most dangerous column on the row.
+        //
+        // The email-confirmation / passwordless-claim token is base64("{stamp}||{email}||{exp}[||pc=…]") and
+        // carries NO MAC — the code comment at the confirm-email handler says the stamp is the only thing
+        // authorising the state change. So read access to this table was enough to MINT one: set
+        // EmailConfirmed on any account without ever holding the mailbox (the gate JIT federation and
+        // `email_verified` rely on), and, for a passwordless SSO/SCIM account, complete a staged self-service
+        // claim. PendingPasswordHash is the other half of that flow. IFieldCipher's whole threat model is an
+        // adversary with read access to the store and not the Vault key — a leaked read-only role, a copied
+        // backup, a snapshot, a support export — which is exactly the adversary this handed a forgery oracle.
+        //
+        // RolesJson is authorization state: disclosing it maps out who to target.
+        //
+        // ExternalId, OrganizationId and Locale stay in cleartext deliberately: the first two are query and
+        // index keys (encrypting them would need blind indexes, as Email has), and Locale is a language tag.
+        e.SecurityStamp = fields[8] ?? e.SecurityStamp;
+        e.PendingPasswordHash = fields[9];
+        e.RolesJson = fields[10] ?? "[]";
     }
 
     // Decrypt the at-rest PII fields on an entity read from the table, before ToModel() (or before its
@@ -551,7 +570,7 @@ public sealed class TableUserStore(
     // through untouched (ResolveManyAsync handles per-item passthrough).
     private async Task DecryptEntityAsync(UserEntity e, CancellationToken ct)
     {
-        var fields = new[] { e.Email, e.NormalizedEmail, e.FirstName, e.LastName, e.Phone, e.CompanyName, e.CustomAttributesJson, e.PendingClaimJson };
+        var fields = new[] { e.Email, e.NormalizedEmail, e.FirstName, e.LastName, e.Phone, e.CompanyName, e.CustomAttributesJson, e.PendingClaimJson, e.SecurityStamp, e.PendingPasswordHash, e.RolesJson };
         var idx = new List<int>(fields.Length);
         var toResolve = new List<string>(fields.Length);
         for (var i = 0; i < fields.Length; i++)
@@ -577,6 +596,13 @@ public sealed class TableUserStore(
         // because they encrypt the whole serialized document, which is also why the shared
         // provider-parity tests could never have caught it.
         e.PendingClaimJson = fields[7];
+
+        // See EncryptEntityAsync for why these three are on the list. Legacy plaintext passes through
+        // untouched (ResolveManyAsync is per-item), so rows written before this keep working and are
+        // re-written encrypted on their owner's next profile write.
+        e.SecurityStamp = fields[8] ?? e.SecurityStamp;
+        e.PendingPasswordHash = fields[9];
+        e.RolesJson = fields[10] ?? "[]";
     }
 
     /// <summary>
