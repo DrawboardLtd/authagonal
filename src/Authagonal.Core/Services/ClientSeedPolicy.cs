@@ -23,6 +23,12 @@ namespace Authagonal.Core.Services;
 /// rules — a single bad descriptor should not take the host down, and an operator who reads Error is told
 /// exactly which client did not come up and why.
 /// </para>
+/// <para>
+/// Skipping is also why the set of rules here has to stay narrow. A refusal is invisible unless someone reads
+/// Error-level logs, so every rule added here is a way for a documented, previously working configuration to
+/// stop being applied while the host comes up healthy. That is how the administrative-scope refusal became a
+/// silent admin lockout — see <see cref="Reject"/>.
+/// </para>
 /// </remarks>
 public static class ClientSeedPolicy
 {
@@ -34,20 +40,35 @@ public static class ClientSeedPolicy
     /// The audiences that will be written, or null/empty when the descriptor names none — in which case there
     /// is nothing to validate and nothing to declare.
     /// </param>
-    /// <param name="adminScope">
-    /// The deployment's administrative scope name. No client may hold it, however it is being created: a
-    /// <c>client_credentials</c> client that did could mint admin tokens indefinitely, and the admin API and
-    /// dynamic registration both already refuse it.
-    /// </param>
-    public static string? Reject(
-        IReadOnlyList<string>? scopes, IReadOnlyList<string>? audiences, string adminScope)
+    /// <remarks>
+    /// The administrative scope is NOT refused here, and that is deliberate. It is reserved on the three
+    /// paths an unprivileged caller can reach — the admin API, dynamic registration, and
+    /// <c>POST /api/v1/token</c> — but configuration seeding is the trust root, not a caller: whoever writes
+    /// the <c>Clients:</c> section can already set <c>AdminApi:Scope</c>, replace the signing keys, or point
+    /// the host at another store, so refusing them the scope buys nothing and costs the product its only
+    /// bootstrap.
+    /// <para>
+    /// Refusing it here locked every deployment out of its own admin API. <c>docs/admin-api.md</c>
+    /// ("Bootstrapping the first admin token") documents a config-seeded <c>client_credentials</c> client
+    /// carrying this scope as THE way to obtain an admin token, and the <c>IdentityAdmin</c> policy admits
+    /// only a token whose <c>scope</c> claim holds it — issued solely by <c>/connect/token</c> against
+    /// <c>AllowedScopes</c>. With the seeders refusing the descriptor, a fresh install could never reach
+    /// <c>/api/v1/*</c> at all. Worse for an existing one: the seeders log at Error and SKIP, so rotating a
+    /// suspected-compromised admin secret ("a config change + restart", per the same doc) silently wrote no
+    /// new hash and the old secret kept authenticating — a rotation that reports success everywhere the
+    /// operator looks, because the admin API keeps answering to the credential they believe they revoked.
+    /// </para>
+    /// <para>
+    /// No test caught it: the only coverage of the admin surface writes its client straight into
+    /// <c>IClientStore</c>, bypassing the seeder, so the documented bootstrap path was never exercised.
+    /// </para>
+    /// </remarks>
+    public static string? Reject(IReadOnlyList<string>? scopes, IReadOnlyList<string>? audiences)
     {
-        if (AdminScopeReservation.Grants(scopes, adminScope))
-            return $"it requests the reserved administrative scope '{adminScope}'. No client may hold it — "
-                + "a client_credentials client that did could mint admin tokens indefinitely";
-
-        // A scope entry containing whitespace expands into several scopes downstream, which is how the
-        // reservation above came to be bypassed. Refused rather than normalised: the intent is ambiguous.
+        // A scope entry containing whitespace expands into several scopes downstream. Still refused, and
+        // still on its own merit — an entry that is one string here and two scopes on the wire means the
+        // stored client does not say what it appears to say. Refused rather than normalised: intent is
+        // ambiguous.
         if (AdminScopeReservation.FindMalformedScope(scopes) is { } malformed)
             return $"scope entry '{malformed}' is not a single scope token. Scope names cannot contain "
                 + "whitespace — list each scope separately";

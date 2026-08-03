@@ -19,7 +19,6 @@ namespace Authagonal.Protocol.Services;
 internal sealed class ProtocolSeedService(
     IServiceScopeFactory scopeFactory,
     IOptions<AuthagonalProtocolOptions> options,
-    IConfiguration configuration,
     ILogger<ProtocolSeedService> logger) : IHostedService
 {
     public async Task StartAsync(CancellationToken cancellationToken)
@@ -32,20 +31,13 @@ internal sealed class ProtocolSeedService(
         var clientStore = scope.ServiceProvider.GetRequiredService<IClientStore>();
         var scopeStore = scope.ServiceProvider.GetRequiredService<IScopeStore>();
 
-        // The administrative scope is unholdable by any client — see AdminScopeReservation. The
-        // Server's own seeder enforces that; this one wrote AllowedScopes verbatim, and AddAuthagonal
-        // registers THIS seeder inside every Server host too, so a host that binds
-        // AuthagonalProtocolOptions from configuration had a second, unguarded route to the same
-        // store. A seeded "authagonal-admin" client is permanent admin persistence.
-        var adminScope = configuration["AdminApi:Scope"] ?? AdminScopeReservation.DefaultAdminScope;
-
         foreach (var descriptor in protocolOptions.Clients)
         {
             // One policy, shared with the Server host's ClientSeedService — see ClientSeedPolicy for why the
             // classes stay two and the rule becomes one. Skip the whole entry rather than silently dropping
             // the offending field: a seed asking for this is a misconfiguration the operator needs to see.
             if (Core.Services.ClientSeedPolicy.Reject(
-                    descriptor.AllowedScopes, descriptor.Audiences, adminScope) is { } refusal)
+                    descriptor.AllowedScopes, descriptor.Audiences) is { } refusal)
             {
                 logger.LogError("Refusing to seed OIDC client {ClientId}: {Reason}.", descriptor.ClientId, refusal);
                 continue;

@@ -16,6 +16,11 @@ namespace Authagonal.Tests;
 /// seeder, then in one, and the Server host's had no audiences field at all — so configuration was the one
 /// write path that could still put an unbounded or non-absolute value into a signed token's <c>aud</c>.
 /// </para>
+/// <para>
+/// The table also records what configuration MAY do, which is the half that was wrong: the administrative
+/// scope is reserved against callers, not against the trust root, and refusing it in the seeders left every
+/// fresh deployment unable to mint the admin token its own docs describe.
+/// </para>
 /// </remarks>
 public sealed class ClientSeedPolicyTests
 {
@@ -24,37 +29,51 @@ public sealed class ClientSeedPolicyTests
     [Fact]
     public void AnOrdinaryDescriptorIsAccepted()
         => Assert.Null(ClientSeedPolicy.Reject(
-            ["openid", "profile"], ["https://api.example.com"], AdminScope));
+            ["openid", "profile"], ["https://api.example.com"]));
 
     /// <summary>
-    /// No client may hold the administrative scope, however it is being created.
+    /// Configuration MAY seed the administrative scope. It is the documented bootstrap, and refusing it
+    /// locked deployments out of their own admin API.
     /// </summary>
     /// <remarks>
-    /// The admin API and dynamic registration both refuse it. A <c>client_credentials</c> client that held it
-    /// could mint admin tokens indefinitely, so configuration must not be the way in.
+    /// The reservation stands on every path a caller can reach — the admin API, dynamic registration and
+    /// <c>POST /api/v1/token</c> all answer <c>403 forbidden_scope</c> — but configuration is the trust root,
+    /// not a caller. <c>docs/admin-api.md</c> names a config-seeded <c>client_credentials</c> client carrying
+    /// this scope as the only way to mint the first admin token, so a seeder that refuses it means a fresh
+    /// install can never reach <c>/api/v1/*</c>.
+    /// <para>
+    /// The second consequence was worse than the first. The seeders log at Error and SKIP the descriptor, so
+    /// an operator rotating a compromised admin secret — "a config change + restart", per that same doc —
+    /// wrote no new hash, and the credential they believed they had revoked kept authenticating. Every signal
+    /// they could check said the rotation worked, including the admin API answering, because it was still
+    /// answering to the old secret.
+    /// </para>
+    /// <para>
+    /// This test is written as the assertion that would have failed BEFORE the fix, because a rule whose
+    /// removal nothing pins is a rule that comes back.
+    /// </para>
     /// </remarks>
     [Fact]
-    public void TheAdministrativeScopeIsRefused()
+    public void ConfigurationMaySeedTheAdministrativeScope()
     {
-        var why = ClientSeedPolicy.Reject(["openid", AdminScope], null, AdminScope);
+        Assert.Null(ClientSeedPolicy.Reject(["openid", AdminScope], null));
 
-        Assert.NotNull(why);
-        Assert.Contains("administrative scope", why, StringComparison.Ordinal);
+        // The documented appsettings example, verbatim.
+        Assert.Null(ClientSeedPolicy.Reject([AdminScope], null));
     }
 
     /// <summary>
     /// A scope entry containing whitespace is refused rather than normalised.
     /// </summary>
     /// <remarks>
-    /// It expands into several scopes in the space-delimited <c>scope</c> claim downstream, which is how the
-    /// reservation above came to be bypassed. Refused because the intent is ambiguous.
+    /// It expands into several scopes in the space-delimited <c>scope</c> claim downstream, so a stored client
+    /// does not say what it appears to say. That is also how the administrative-scope reservation came to be
+    /// bypassed on the runtime paths, which still enforce it. Refused because the intent is ambiguous.
     /// </remarks>
     [Fact]
     public void AScopeEntryThatIsNotOneTokenIsRefused()
     {
-        // Deliberately NOT containing the admin scope: that rule splits on whitespace too and would fire
-        // first, so an input carrying both proves only the earlier check.
-        var why = ClientSeedPolicy.Reject(["openid profile"], null, AdminScope);
+        var why = ClientSeedPolicy.Reject(["openid profile"], null);
 
         Assert.NotNull(why);
         Assert.Contains("single scope token", why, StringComparison.Ordinal);
@@ -66,7 +85,7 @@ public sealed class ClientSeedPolicyTests
     [InlineData("https://api.example.com/#frag")] // a fragment has no meaning in an aud
     public void AnAudienceThatIsNotAnAbsoluteUriIsRefused(string audience)
     {
-        var why = ClientSeedPolicy.Reject(["openid"], [audience], AdminScope);
+        var why = ClientSeedPolicy.Reject(["openid"], [audience]);
 
         Assert.NotNull(why);
         Assert.Contains("aud", why, StringComparison.Ordinal);
@@ -79,7 +98,7 @@ public sealed class ClientSeedPolicyTests
             .Select(i => $"https://api{i}.example.com")
             .ToArray();
 
-        Assert.NotNull(ClientSeedPolicy.Reject(["openid"], tooMany, AdminScope));
+        Assert.NotNull(ClientSeedPolicy.Reject(["openid"], tooMany));
     }
 
     /// <summary>
@@ -109,7 +128,7 @@ public sealed class ClientSeedPolicyTests
     [Fact]
     public void NoAudiencesIsFine()
     {
-        Assert.Null(ClientSeedPolicy.Reject(["openid"], null, AdminScope));
-        Assert.Null(ClientSeedPolicy.Reject(["openid"], [], AdminScope));
+        Assert.Null(ClientSeedPolicy.Reject(["openid"], null));
+        Assert.Null(ClientSeedPolicy.Reject(["openid"], []));
     }
 }

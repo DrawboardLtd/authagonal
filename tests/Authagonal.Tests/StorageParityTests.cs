@@ -410,9 +410,6 @@ public class ProtocolSeedMergeTests
             provider.GetRequiredService<Microsoft.Extensions.DependencyInjection.IServiceScopeFactory>(),
             Microsoft.Extensions.Options.Options.Create(
                 new Authagonal.Protocol.AuthagonalProtocolOptions { Clients = [descriptor] }),
-            // Empty, so AdminApi:Scope falls back to the default reserved scope — these cases are about
-            // the seed MERGE, and the reservation guard has its own tests.
-            new Microsoft.Extensions.Configuration.ConfigurationBuilder().Build(),
             Microsoft.Extensions.Logging.Abstractions.NullLogger<
                 Authagonal.Protocol.Services.ProtocolSeedService>.Instance);
 

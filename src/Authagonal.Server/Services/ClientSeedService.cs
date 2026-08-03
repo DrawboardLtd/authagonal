@@ -58,9 +58,12 @@ public sealed class ClientSeedService(
             // why the classes stay two and the rule becomes one. Both the scope rules and the audience rules
             // live there now; this seeder had none of the audience half, and configuration was therefore the
             // one write path that could still put an unbounded or non-absolute value into a signed `aud`.
-            var adminScope = configuration["AdminApi:Scope"] ?? AdminScopeReservation.DefaultAdminScope;
+            //
+            // The administrative scope is NOT among those rules: this is the documented way to bootstrap the
+            // first admin token, and refusing it here left a fresh deployment unable to reach /api/v1/* at
+            // all. See ClientSeedPolicy.Reject.
             var seededAudiences = seed.Audiences ?? existing?.Audiences;
-            if (ClientSeedPolicy.Reject(seededScopes, seededAudiences, adminScope) is { } refusal)
+            if (ClientSeedPolicy.Reject(seededScopes, seededAudiences) is { } refusal)
             {
                 logger.LogError("Refusing to seed client {Id}: {Reason}.", clientId, refusal);
                 continue;

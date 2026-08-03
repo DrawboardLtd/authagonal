@@ -6,9 +6,16 @@ namespace Authagonal.Core.Services;
 /// the admin who created it losing their own access.
 /// </summary>
 /// <remarks>
-/// Every path that writes a client's <c>AllowedScopes</c> must consult this — the admin API, dynamic
-/// client registration, and configuration seeding. The seeder previously wrote scopes with no check at
-/// all, so a seeded client could hold the scope the two API paths refuse to grant.
+/// Every path a CALLER can reach must consult this: the admin API, dynamic client registration, and
+/// <c>POST /api/v1/token</c>.
+/// <para>
+/// Configuration seeding must NOT. It is the trust root rather than a caller — whoever writes the
+/// <c>Clients:</c> section can already set <c>AdminApi:Scope</c>, replace the signing keys or repoint the
+/// store — and a config-seeded <c>client_credentials</c> client holding this scope is the documented, sole
+/// way to bootstrap the first admin token (<c>docs/admin-api.md</c>). Enforcing the reservation in the two
+/// seeders locked fresh deployments out of their own admin API and turned admin-secret rotation into a
+/// silent no-op; see <see cref="ClientSeedPolicy.Reject"/> for the full account.
+/// </para>
 /// </remarks>
 public static class AdminScopeReservation
 {

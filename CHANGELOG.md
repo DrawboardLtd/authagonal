@@ -122,6 +122,32 @@
   cannot steer those requests and there is nothing for an address check to add. Email delivery (`Resend`)
   is likewise unguarded and unaffected: its target is a compile-time constant.
 
+### Fixed — the admin API was unreachable, and admin-secret rotation was a silent no-op
+
+- **Configuration may seed the administrative scope again.** Reserving `authagonal-admin` against *every*
+  write path — including the two config seeders — locked deployments out of their own admin API.
+  `docs/admin-api.md` ("Bootstrapping the first admin token") documents a config-seeded
+  `client_credentials` client carrying that scope as the only way to mint an admin token, and the
+  `IdentityAdmin` policy admits nothing else; with the seeders refusing that descriptor, a fresh install
+  could never reach `/api/v1/*` at all.
+
+  The second consequence was worse than the first, because it looked like success. The seeders log at
+  `Error` and **skip** the descriptor, so an operator rotating a suspected-compromised admin secret — "a
+  config change + restart", per that same page — wrote no new hash, and the credential they believed they
+  had revoked went on authenticating indefinitely. Every signal they could check agreed the rotation had
+  worked, including the admin API still answering, because it was still answering to the old secret.
+
+  The reservation is real and unchanged on every path a *caller* can reach: the admin API, dynamic client
+  registration and `POST /api/v1/token` all still answer `403 forbidden_scope`. Configuration is the trust
+  root rather than a caller — whoever writes the `Clients:` section can already set `AdminApi:Scope`,
+  replace the signing keys or repoint the store, so refusing it there bought nothing. A scope entry
+  containing whitespace is still refused everywhere, on its own merit: one stored entry that becomes two
+  scopes on the wire means the client does not say what it appears to say.
+
+  Two tests asserted the lockout as intended behaviour, which is why it shipped — and the only coverage of
+  the admin surface writes its client straight into `IClientStore`, bypassing the seeder, so the documented
+  bootstrap was never exercised end to end. It is now, through a real host.
+
 ### Security — audit remainder
 
 An independent audit of the info-severity fixes found ten of twenty-eight only partially closed. Two

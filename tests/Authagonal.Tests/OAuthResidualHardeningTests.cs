@@ -402,10 +402,23 @@ public sealed class ProtocolHostClientSecretThrottleTests : IAsyncDisposable
 /// that binds AuthagonalProtocolOptions from configuration had a second route into IClientStore that
 /// applied none of the checks the Server's own seeder does.
 /// </summary>
+/// <remarks>
+/// This class asserted the ADMIN LOCKOUT as intended behaviour. Both seeders refused a descriptor carrying
+/// the administrative scope, and this test pinned it — while <c>docs/admin-api.md</c> names a config-seeded
+/// <c>client_credentials</c> client holding exactly that scope as the only way to mint the first admin token.
+/// So a fresh deployment could never reach <c>/api/v1/*</c>, and because the seeders log at Error and SKIP,
+/// rotating a compromised admin secret wrote nothing and the old credential kept working.
+/// <para>
+/// The reservation is real and stays on every path a caller can reach. Configuration is not a caller — see
+/// <c>ClientSeedPolicy.Reject</c>. The two halves are now asserted together, in one test, because they were
+/// only ever separable on paper: what makes the malformed entry a defect is that it smuggles the scope past a
+/// whole-string comparison, and what makes the plain entry legitimate is that config already holds the keys.
+/// </para>
+/// </remarks>
 public sealed class ProtocolSeedReservationTests
 {
     [Fact]
-    public async Task ProtocolSeeder_RefusesReservedAndMalformedScopes()
+    public async Task ProtocolSeeder_SeedsTheAdminScope_AndStillRefusesAMalformedEntry()
     {
         var clientStore = new InMemoryClientStore();
 
@@ -420,9 +433,10 @@ public sealed class ProtocolSeedReservationTests
         {
             o.Clients =
             [
+                // The documented bootstrap client, as docs/admin-api.md writes it.
                 new OidcClientDescriptor
                 {
-                    ClientId = "reserved-scope-client",
+                    ClientId = "admin-cli",
                     AllowedScopes = ["openid", AdminScopeReservation.DefaultAdminScope],
                 },
                 new OidcClientDescriptor
@@ -442,8 +456,16 @@ public sealed class ProtocolSeedReservationTests
         await app.StartAsync();
         try
         {
-            Assert.Null(await clientStore.GetAsync("reserved-scope-client"));
+            // The admin API is reachable on a fresh install: the seeded client holds the scope, and
+            // /connect/token issues it against AllowedScopes. Refusing this is what locked deployments out.
+            var admin = await clientStore.GetAsync("admin-cli");
+            Assert.NotNull(admin);
+            Assert.Contains(AdminScopeReservation.DefaultAdminScope, admin!.AllowedScopes);
+
+            // Still refused: one stored entry, two scopes on the wire. A client that does not say what it
+            // appears to say is a misconfiguration whichever scope it smuggles.
             Assert.Null(await clientStore.GetAsync("joint-scope-client"));
+
             // A well-formed entry still seeds — the guard refuses the misconfiguration, not the feature.
             Assert.NotNull(await clientStore.GetAsync("wellformed-client"));
         }
