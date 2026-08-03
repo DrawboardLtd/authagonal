@@ -95,7 +95,42 @@ public static class ProtocolSigningKeyOps
                     return activeKey!;
             }
 
-            logger.LogInformation("Active signing key missing/expired/unsupported algorithm. Generating new ES256 key");
+            // Promote the successor that was published ahead, if there is one.
+            //
+            // This deactivated the old key and generated its replacement in the same breath, and
+            // BuildSigningCredentials then made that brand-new key the signer immediately — so a kid first
+            // appeared in JWKS at the exact instant it started signing. Peers cache keys for
+            // SigningKeyCacheRefreshMinutes and both JWKS endpoints send `max-age=3600`, so every token minted
+            // under the new key was rejected by peer nodes and by any shared cache until their TTL lapsed.
+            // Both endpoints' comments assert the opposite — "the next key is published days ahead of use, so
+            // a short shared cache is always safe" — and SigningKeyRotationTests
+            // .Rotation_PublishAhead_NewKeyActive_OldKeyStillInJwks is named for a publish-ahead that did not
+            // exist.
+            //
+            // PublishSuccessorIfDueAsync puts the successor in the store INACTIVE well before this point, and
+            // BuildJwksAsync publishes every unexpired key regardless of IsActive — so by the time it is
+            // promoted here, every peer and every cache has already seen it.
+            var successor = await FindPublishedSuccessorAsync(keyStore, DateTimeOffset.UtcNow, keyLifetimeDays, ct);
+            if (successor is not null)
+            {
+                logger.LogInformation(
+                    "Promoting pre-published signing key {KeyId} (published {Age:F0}h ago) to active",
+                    successor.KeyId, (DateTimeOffset.UtcNow - successor.CreatedAt).TotalHours);
+
+                if (activeKey is not null)
+                    await keyStore.DeactivateKeyAsync(activeKey.KeyId, ct);
+
+                successor.IsActive = true;
+                await keyStore.StoreAsync(successor, ct);
+                return successor;
+            }
+
+            // Nothing was published ahead — first boot, or a key that expired faster than the publish-ahead
+            // window. Mint one now and accept the cache lag, which is the old behaviour and the only option.
+            logger.LogInformation(
+                "Active signing key missing/expired/unsupported algorithm and no successor was published "
+                + "ahead. Generating a new ES256 key, which peers will not know until their key cache "
+                + "refreshes.");
 
             if (activeKey is not null)
                 await keyStore.DeactivateKeyAsync(activeKey.KeyId, ct);
@@ -103,6 +138,129 @@ public static class ProtocolSigningKeyOps
             activeKey = GenerateNewKey(DateTimeOffset.UtcNow, keyLifetimeDays);
             await keyStore.StoreAsync(activeKey, ct);
             return activeKey;
+        }
+        finally
+        {
+            if (holdsLease && lease is not null && nodeId is not null)
+            {
+                try { await lease.ReleaseAsync(KeyGenerationLease, nodeId, CancellationToken.None); }
+                catch { /* best effort — the lease expires on its own */ }
+            }
+        }
+    }
+
+    /// <summary>
+    /// How long before an active key's expiry its successor is generated and published.
+    /// </summary>
+    /// <remarks>
+    /// Has to exceed the longest window in which another party could still be holding a stale key set: the
+    /// JWKS <c>max-age</c> both endpoints send (1 hour) and the in-process
+    /// <c>SigningKeyCacheRefreshMinutes</c>. A day is generously past both and costs only one extra published
+    /// key, which is what a JWKS is for.
+    /// </remarks>
+    private static readonly TimeSpan PublishAheadWindow = TimeSpan.FromDays(1);
+
+    /// <summary>
+    /// An unexpired, inactive key already in the store — the successor published ahead of promotion.
+    /// </summary>
+    /// <remarks>
+    /// Newest first, so a store that somehow holds several inactive keys promotes the freshest rather than one
+    /// about to expire. Keys past their own expiry are skipped: they are retained in JWKS for verification
+    /// (see <c>JwksRetentionGrace</c>) but must never be promoted to signer.
+    /// </remarks>
+    private static async Task<SigningKeyInfo?> FindPublishedSuccessorAsync(
+        ISigningKeyStore keyStore, DateTimeOffset now, int keyLifetimeDays, CancellationToken ct)
+    {
+        // More than half its life left is what separates a PUBLISHED SUCCESSOR from a RETIRED key.
+        //
+        // Both are inactive and unexpired, and the first version of this looked only at IsActive — so
+        // immediately after CheckAndRotateAsync deactivated the outgoing key, this found that very key and
+        // promoted it straight back. The suite caught it: Rotation_PublishAhead_NewKeyActive_OldKeyStillInJwks
+        // failed with fresh.KeyId == old.KeyId.
+        //
+        // A key is retired because it came within the rotation lead time of expiry, so it has little life
+        // left; a successor is minted with a full lifetime. Half is comfortably between the two and needs no
+        // new column on SigningKeyInfo — and refusing to promote a key that is itself nearly due for rotation
+        // is the right rule regardless of how it came to be inactive.
+        var minimumRemaining = TimeSpan.FromDays(keyLifetimeDays) / 2;
+
+        var all = await keyStore.GetAllAsync(ct);
+        return all
+            .Where(k => !k.IsActive
+                        && k.ExpiresAt > now
+                        && k.ExpiresAt - now > minimumRemaining
+                        && IsSupportedAlgorithm(k.Algorithm))
+            .OrderByDescending(k => k.CreatedAt)
+            .FirstOrDefault();
+    }
+
+    /// <summary>
+    /// Publishes the next signing key ahead of its use, so no verifier meets it for the first time in a token.
+    /// </summary>
+    /// <remarks>
+    /// Stored INACTIVE: <see cref="BuildJwksAsync"/> advertises every unexpired key whatever its IsActive
+    /// state, while signing is chosen by <c>GetActiveKeyAsync</c>. So the successor is published and unused
+    /// until <see cref="EnsureActiveKeyAsync"/> promotes it, which is exactly what both JWKS endpoints already
+    /// told callers happens.
+    /// <para>
+    /// Idempotent, and lease-guarded like generation is: a cluster must publish ONE successor, not one per
+    /// node. Returns true when it published, so the caller can log it.
+    /// </para>
+    /// </remarks>
+    public static async Task<bool> PublishSuccessorIfDueAsync(
+        ISigningKeyStore keyStore,
+        int keyLifetimeDays,
+        ILogger logger,
+        CancellationToken ct = default,
+        Authagonal.Core.Clustering.ILeaseProvider? lease = null,
+        string? nodeId = null)
+    {
+        var now = DateTimeOffset.UtcNow;
+        var activeKey = await keyStore.GetActiveKeyAsync(ct);
+
+        // No active key at all is EnsureActiveKeyAsync's job, not this one.
+        if (activeKey is null || activeKey.ExpiresAt - now > PublishAheadWindow)
+            return false;
+
+        // Already published — nothing to do. Checked before taking the lease so the common case is one read.
+        if (await FindPublishedSuccessorAsync(keyStore, now, keyLifetimeDays, ct) is not null)
+            return false;
+
+        var holdsLease = false;
+        if (lease is not null && !string.IsNullOrEmpty(nodeId))
+        {
+            try
+            {
+                holdsLease = await lease.TryAcquireOrRenewAsync(KeyGenerationLease, nodeId, KeyGenerationLeaseTtl, ct);
+            }
+            catch (Exception ex)
+            {
+                // Unlike generation, publishing ahead is not urgent: if the lease backend is down, skip this
+                // pass and try again on the next refresh rather than risk every node publishing its own.
+                logger.LogWarning(ex, "Signing-key publish-ahead lease unavailable; skipping this pass");
+                return false;
+            }
+
+            if (!holdsLease) return false;
+        }
+
+        try
+        {
+            // Re-read under the lease: another node may have published between the check above and here.
+            if (await FindPublishedSuccessorAsync(keyStore, DateTimeOffset.UtcNow, keyLifetimeDays, ct) is not null)
+                return false;
+
+            var successor = GenerateNewKey(DateTimeOffset.UtcNow, keyLifetimeDays);
+            successor.IsActive = false;
+            await keyStore.StoreAsync(successor, ct);
+
+            logger.LogInformation(
+                "Published successor signing key {KeyId} ahead of use; active key {ActiveKeyId} expires in "
+                + "{Hours:F0}h. It will be promoted to signer only after every verifier has had the chance to "
+                + "see it.",
+                successor.KeyId, activeKey.KeyId, (activeKey.ExpiresAt - now).TotalHours);
+
+            return true;
         }
         finally
         {

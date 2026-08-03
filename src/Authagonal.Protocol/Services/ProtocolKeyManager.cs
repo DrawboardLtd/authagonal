@@ -116,6 +116,12 @@ public sealed class ProtocolKeyManager : IKeyManager, IHostedService, IDisposabl
 
             var activeKey = await ProtocolSigningKeyOps.EnsureActiveKeyAsync(
                 keyStore, lifetimeDays, _logger, ct, lease, nodeId);
+
+            // Publish the NEXT key before it is needed, so no verifier meets it for the first time inside a
+            // token. Runs after the active key is settled and before the JWKS document is rebuilt below, so a
+            // successor published on this pass is advertised on this pass.
+            await ProtocolSigningKeyOps.PublishSuccessorIfDueAsync(
+                keyStore, lifetimeDays, _logger, ct, lease, nodeId);
             _signingCredentials = ProtocolSigningKeyOps.BuildSigningCredentials(activeKey);
             _signingKeyExpiresAt = activeKey.ExpiresAt;
             _allJsonWebKeys = await ProtocolSigningKeyOps.BuildJwksAsync(keyStore, ct);

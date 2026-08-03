@@ -93,6 +93,119 @@ public class SigningKeyRotationTests
         Assert.Contains(jwks, k => k.Kid == fresh.KeyId);
     }
 
+    // ── Publish-ahead ────────────────────────────────────────────────
+
+    /// <summary>
+    /// The successor is published, inactive, before it is ever used to sign.
+    /// </summary>
+    /// <remarks>
+    /// <c>EnsureActiveKeyAsync</c> deactivated the old key and generated the replacement in the same breath,
+    /// and <c>BuildSigningCredentials</c> made that brand-new key the signer immediately — so a <c>kid</c> first
+    /// appeared in JWKS at the exact instant it started signing. Peers cache keys for
+    /// <c>SigningKeyCacheRefreshMinutes</c> and both JWKS endpoints send <c>max-age=3600</c>, so every token
+    /// minted under the new key was rejected by peer nodes and by any shared cache until their TTL lapsed.
+    /// <para>
+    /// Both endpoints' comments assert the opposite — "the next key is published days ahead of use, so a short
+    /// shared cache is always safe" — and the test named for publish-ahead did not test it.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task SuccessorIsPublishedBeforeItSigns()
+    {
+        // Inside the publish-ahead window (1 day) but not yet due for rotation.
+        var active = KeyCreatedDaysAgo(LifetimeDays - 1);
+        await _store.StoreAsync(active);
+
+        Assert.True(await ProtocolSigningKeyOps.PublishSuccessorIfDueAsync(
+            _store, LifetimeDays, NullLogger.Instance));
+
+        // Two keys: the signer, and a successor that is published but NOT active.
+        var all = await _store.GetAllAsync();
+        Assert.Equal(2, all.Count);
+        Assert.Equal(active.KeyId, (await _store.GetActiveKeyAsync())!.KeyId);
+
+        var successor = Assert.Single(all, k => k.KeyId != active.KeyId);
+        Assert.False(successor.IsActive);
+
+        // Published in JWKS while unused, which is the whole point: verifiers see it before any token carries it.
+        var jwks = await ProtocolSigningKeyOps.BuildJwksAsync(_store);
+        Assert.Contains(jwks, k => k.Kid == successor.KeyId);
+        Assert.Contains(jwks, k => k.Kid == active.KeyId);
+    }
+
+    /// <summary>Publishing is idempotent — a cluster publishes one successor, not one per refresh.</summary>
+    [Fact]
+    public async Task PublishingIsIdempotent()
+    {
+        await _store.StoreAsync(KeyCreatedDaysAgo(LifetimeDays - 1));
+
+        Assert.True(await ProtocolSigningKeyOps.PublishSuccessorIfDueAsync(_store, LifetimeDays, NullLogger.Instance));
+        Assert.False(await ProtocolSigningKeyOps.PublishSuccessorIfDueAsync(_store, LifetimeDays, NullLogger.Instance));
+
+        Assert.Equal(2, (await _store.GetAllAsync()).Count);
+    }
+
+    /// <summary>Nothing is published while the active key is nowhere near expiry.</summary>
+    /// <remarks>
+    /// The control for the window: publishing on every refresh regardless of expiry would fill JWKS with keys
+    /// and defeat the point of a bounded key set.
+    /// </remarks>
+    [Fact]
+    public async Task NothingIsPublishedForAFreshKey()
+    {
+        await _store.StoreAsync(KeyCreatedDaysAgo(1));
+
+        Assert.False(await ProtocolSigningKeyOps.PublishSuccessorIfDueAsync(_store, LifetimeDays, NullLogger.Instance));
+        Assert.Single(await _store.GetAllAsync());
+    }
+
+    /// <summary>
+    /// The published successor is what gets promoted — no new key is minted at rotation.
+    /// </summary>
+    /// <remarks>
+    /// The property that makes the cache header true: by the time this key signs, every verifier has already
+    /// had it in their key set.
+    /// </remarks>
+    [Fact]
+    public async Task ThePublishedSuccessorIsPromotedRatherThanANewKeyMinted()
+    {
+        var active = KeyCreatedDaysAgo(LifetimeDays - 1);
+        await _store.StoreAsync(active);
+        await ProtocolSigningKeyOps.PublishSuccessorIfDueAsync(_store, LifetimeDays, NullLogger.Instance);
+
+        var published = Assert.Single(await _store.GetAllAsync(), k => k.KeyId != active.KeyId);
+
+        // Rotation retires the active key; the next refresh settles on a signer.
+        Assert.True(await CheckAndRotateAsync());
+        var signer = await ProtocolSigningKeyOps.EnsureActiveKeyAsync(_store, LifetimeDays, NullLogger.Instance);
+
+        // The already-published key, not a third one.
+        Assert.Equal(published.KeyId, signer.KeyId);
+        Assert.True(signer.IsActive);
+        Assert.Equal(2, (await _store.GetAllAsync()).Count);
+    }
+
+    /// <summary>
+    /// A RETIRED key is never promoted back, even though it is also inactive and unexpired.
+    /// </summary>
+    /// <remarks>
+    /// The bug the first version of this change had: the successor search looked only at <c>IsActive</c>, so
+    /// straight after rotation deactivated the outgoing key it found that key and promoted it again. A retired
+    /// key is within the rotation lead time of expiry; a successor has a full lifetime. The suite caught it.
+    /// </remarks>
+    [Fact]
+    public async Task ARetiredKeyIsNotPromotedBack()
+    {
+        var old = KeyCreatedDaysAgo(85); // ~5 days left, inside the 14-day lead time
+        await _store.StoreAsync(old);
+
+        Assert.True(await CheckAndRotateAsync());
+        var signer = await ProtocolSigningKeyOps.EnsureActiveKeyAsync(_store, LifetimeDays, NullLogger.Instance);
+
+        Assert.NotEqual(old.KeyId, signer.KeyId);
+        Assert.True(signer.IsActive);
+    }
+
     // ── Idempotence ──────────────────────────────────────────────────
 
     [Fact]
