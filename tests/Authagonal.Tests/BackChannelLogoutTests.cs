@@ -339,11 +339,49 @@ public sealed class InternalEndpointGuardTests
         => Assert.True(InternalEndpointGuard.IsAuthorized(
             Context(rawPeer: "203.0.113.7", headerValue: Secret), Secret));
 
+    /// <summary>
+    /// CHANGED BEHAVIOUR: with no secret configured, loopback authorizes NOTHING by default.
+    /// </summary>
+    /// <remarks>
+    /// This class previously asserted the opposite, and the assertion was the vulnerability. Loopback is what a
+    /// same-host reverse proxy presents — nginx or Caddy with <c>proxy_pass http://127.0.0.1:8080</c>,
+    /// IIS/ANCM, <c>network_mode: host</c> — and the installation docs REQUIRE a TLS-terminating proxy in front
+    /// of Authagonal. The raw-peer capture faithfully records that real peer, so the guard saw 127.0.0.1 for
+    /// every request the proxy forwarded, internet-originated ones included. The route is anonymous,
+    /// antiforgery-disabled, and revokes every grant for an arbitrary subject.
+    /// <para>
+    /// The earlier fix stopped trusting forwarded headers and stopped accepting RFC1918 on the stated reasoning
+    /// that "a source address is not a credential" — and then kept one source address as a credential.
+    /// </para>
+    /// </remarks>
     [Theory]
     [InlineData("127.0.0.1")] // IPv4 loopback
     [InlineData("::1")]       // IPv6 loopback
-    public void NoSecret_Loopback_Authorized(string ip)
-        => Assert.True(InternalEndpointGuard.IsAuthorized(Context(rawPeer: ip), secret: null));
+    public void NoSecret_Loopback_RejectedByDefault(string ip)
+        => Assert.False(InternalEndpointGuard.IsAuthorized(Context(rawPeer: ip), secret: null));
+
+    /// <summary>
+    /// The development opt-in restores the loopback path, and nothing else does.
+    /// </summary>
+    /// <remarks>
+    /// Kept as an explicit switch rather than deleted, because a single-process local setup with nothing
+    /// proxying to it is a legitimate use — and because an operator who was relying on the old behaviour needs
+    /// a named thing to turn on, which the startup diagnostic points them at.
+    /// </remarks>
+    [Theory]
+    [InlineData("127.0.0.1")]
+    [InlineData("::1")]
+    public void NoSecret_Loopback_AuthorizedOnlyWithTheExplicitOptIn(string ip)
+    {
+        Assert.True(InternalEndpointGuard.IsAuthorized(
+            Context(rawPeer: ip), secret: null, allowLoopbackWithoutSecret: true));
+
+        // The opt-in does not widen beyond loopback.
+        Assert.False(InternalEndpointGuard.IsAuthorized(
+            Context(rawPeer: "203.0.113.7"), secret: null, allowLoopbackWithoutSecret: true));
+        Assert.False(InternalEndpointGuard.IsAuthorized(
+            Context(rawPeer: "10.1.2.3"), secret: null, allowLoopbackWithoutSecret: true));
+    }
 
     /// <summary>
     /// CHANGED BEHAVIOUR: a private-range peer no longer authorizes on its own. Previously every address
@@ -403,9 +441,22 @@ public sealed class InternalEndpointGuardTests
             Context(effectivePeer: "127.0.0.1", forwardedFor: "127.0.0.1", stashRawPeer: false),
             secret: null));
 
-    /// <summary>Without any forwarded header the live connection address is still trustworthy.</summary>
+    /// <summary>
+    /// Without any forwarded header the live connection address is still the trustworthy one — but it only
+    /// authorizes anything under the explicit opt-in.
+    /// </summary>
+    /// <remarks>
+    /// The fallback itself is unchanged and still worth pinning: what changed is that a loopback address is no
+    /// longer a credential on its own. Both halves are asserted so a future edit cannot quietly restore either.
+    /// </remarks>
     [Fact]
     public void NoSecret_MissingRawPeerNoForwardedHeader_FallsBackToConnection()
-        => Assert.True(InternalEndpointGuard.IsAuthorized(
+    {
+        Assert.False(InternalEndpointGuard.IsAuthorized(
             Context(effectivePeer: "127.0.0.1", stashRawPeer: false), secret: null));
+
+        Assert.True(InternalEndpointGuard.IsAuthorized(
+            Context(effectivePeer: "127.0.0.1", stashRawPeer: false),
+            secret: null, allowLoopbackWithoutSecret: true));
+    }
 }

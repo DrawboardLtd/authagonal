@@ -358,6 +358,7 @@ public static class AuthagonalExtensions
         // The private signing key is the one secret whose exposure is total, and its at-rest
         // protection is opt-in through IFieldCipher — so its absence is stated rather than assumed.
         services.AddSingleton<IHostedService, PlaintextSigningKeyWarning>();
+        services.AddSingleton<IHostedService, Services.Cluster.InternalEndpointAccessWarning>();
 
         // Rate limiting is in-process per node; the authoritative global limit is enforced at the edge.
         // The concrete limiter, plus a decorator that scopes every key to the current tenant. Without the

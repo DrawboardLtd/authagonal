@@ -159,4 +159,39 @@ public class MfaEnvPrefixTests(AzuriteFixture azurite)
         UserId = "user-42",
         ExpiresAt = DateTimeOffset.UtcNow.AddMinutes(5),
     };
+    /// <summary>
+    /// A challenge is consumable exactly once, even by eight callers at the same moment.
+    /// </summary>
+    /// <remarks>
+    /// <c>ConsumeChallengeAsync</c> read the entity and then issued an UNCONDITIONAL delete. The Azure SDK
+    /// documents that overload as "should not fail because the entity does not exist", so every concurrent
+    /// caller that got past its own read also got a successful delete and the challenge back — measured at SIX
+    /// of eight before the fix. A single-use MFA challenge that six callers can spend is not single-use: it is
+    /// the anti-replay guard on the second factor.
+    /// <para>
+    /// The SQL and DynamoDB stores were already atomic (both use a delete-if-exists returning the row, the
+    /// Dynamo one under a condition expression) and the SQL suite already asserted exactly this. The Azure
+    /// store is the odd one out, again, so the assertion is now made against all three.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task AChallengeIsConsumedExactlyOnce_UnderConcurrency()
+    {
+        var store = NewStore(Prefix());
+
+        await store.StoreChallengeAsync(new MfaChallenge
+        {
+            ChallengeId = "ch-1",
+            UserId = "u1",
+            CreatedAt = DateTimeOffset.UtcNow,
+            ExpiresAt = DateTimeOffset.UtcNow.AddMinutes(5),
+        });
+        Assert.NotNull(await store.GetChallengeAsync("ch-1"));
+
+        var consumed = await Task.WhenAll(
+            Enumerable.Range(0, 8).Select(_ => store.ConsumeChallengeAsync("ch-1")));
+
+        Assert.Equal(1, consumed.Count(c => c is not null));
+        Assert.Null(await store.GetChallengeAsync("ch-1"));
+    }
 }

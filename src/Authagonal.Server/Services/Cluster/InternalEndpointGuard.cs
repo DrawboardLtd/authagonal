@@ -93,7 +93,11 @@ public static class InternalEndpointGuard
         return RawPeerAddress(httpContext)?.ToString() ?? "unknown";
     }
 
-    public static bool IsAuthorized(HttpContext httpContext, string? secret)
+    /// <param name="allowLoopbackWithoutSecret">
+    /// <see cref="ClusterOptions.AllowLoopbackWithoutSecret"/> — a development opt-in, off by default.
+    /// </param>
+    public static bool IsAuthorized(
+        HttpContext httpContext, string? secret, bool allowLoopbackWithoutSecret = false)
     {
         if (!string.IsNullOrEmpty(secret))
         {
@@ -103,9 +107,15 @@ public static class InternalEndpointGuard
                     Encoding.UTF8.GetBytes(provided), Encoding.UTF8.GetBytes(secret));
         }
 
-        // No secret: loopback only, and only against the pre-forwarding peer address. Private-range
-        // addresses are NOT accepted — in a shared cluster network that would trust every neighbouring
-        // workload, and it is exactly what the forged-header bypass impersonated.
+        // No secret and no opt-in: nobody is authorized. A source address is not a credential — including
+        // loopback, which is what a same-host reverse proxy (the deployment shape the docs REQUIRE) presents
+        // for every request it forwards, internet-originated ones included. See
+        // ClusterOptions.AllowLoopbackWithoutSecret for the full account.
+        if (!allowLoopbackWithoutSecret) return false;
+
+        // Opted in: loopback only, and only against the pre-forwarding peer address. Private-range addresses
+        // are NOT accepted — in a shared cluster network that would trust every neighbouring workload, and it
+        // is exactly what the forged-header bypass impersonated.
         var raw = RawPeerAddress(httpContext);
         return raw is not null && IPAddress.IsLoopback(raw);
     }

@@ -312,11 +312,43 @@ public sealed class TableMfaStore(
 
             var entity = response.Value;
 
-            // Delete immediately to prevent replay (same pattern as OidcStateStore)
-            await challengesTable.DeleteEntityAsync(pk, MfaChallengeEntity.ChallengeRowKey, cancellationToken: ct);
-
             if (entity.IsConsumed || entity.ExpiresAt <= DateTimeOffset.UtcNow)
                 return null;
+
+            // The winner is decided by a compare-and-set on the EXISTING row, not by the delete.
+            //
+            // This used to read the entity and then issue an unconditional delete, and the Azure SDK documents
+            // that overload as "should not fail because the entity does not exist" — so every concurrent caller
+            // that got past its own read also got a successful delete and the challenge back. Measured against
+            // Azurite: 8 concurrent consumes of one challenge returned SIX non-null. A single-use MFA challenge
+            // six callers can spend is not single-use, and it is the anti-replay guard on the second factor.
+            //
+            // A CONDITIONAL delete is not sufficient either, and this is the part worth remembering: Azurite
+            // answers a conditional delete of an already-deleted row with success rather than 404, so the
+            // delete's status cannot be the arbiter. (A stale-ETag delete against a row that still exists IS
+            // refused with 412 — verified — so the precondition works; it is the missing-row case that does
+            // not.) Marking consumed via UpdateEntityAsync fails unambiguously with 412 for every loser,
+            // because the row is still there to compare against. Same shape as
+            // TableGrantStore.TryMarkConsumedAsync.
+            entity.IsConsumed = true;
+            try
+            {
+                await challengesTable.UpdateEntityAsync(entity, entity.ETag, TableUpdateMode.Replace, ct);
+            }
+            catch (Azure.RequestFailedException ex) when (ex.Status is 412 or 404)
+            {
+                // 412: another caller claimed it first. 404: already gone. Either way, not ours to spend.
+                return null;
+            }
+
+            // Claimed. The row is now redundant — delete it so it cannot be re-read, best effort: the claim
+            // above is what makes this single-use, so a failed delete leaves a consumed row that
+            // GetChallengeAsync and this method both already refuse.
+            try
+            {
+                await challengesTable.DeleteEntityAsync(pk, MfaChallengeEntity.ChallengeRowKey, cancellationToken: ct);
+            }
+            catch (Azure.RequestFailedException) { /* consumed already; expiry sweeps the row */ }
 
             return ToModel(entity);
         }

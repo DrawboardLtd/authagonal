@@ -122,6 +122,58 @@
   cannot steer those requests and there is nothing for an address check to add. Email delivery (`Resend`)
   is likewise unguarded and unaffected: its target is a compile-time constant.
 
+### Security — four more highs: an MFA bypass, an unauthenticated logout endpoint, a spendable challenge, a resettable throttle
+
+- **`/_internal/backchannel-logout` treated loopback as a credential (high).** With `Cluster:Secret` unset — the
+  shipped default — the guard authorised on a loopback source address, and loopback is exactly what this
+  project's own **mandatory** deployment shape produces: the installation and configuration docs require a
+  TLS-terminating reverse proxy in front of Authagonal, and a proxy on the same host (`proxy_pass
+  http://127.0.0.1:8080`, IIS/ANCM, `network_mode: host`) connects to Kestrel *from* 127.0.0.1. The raw-peer
+  capture faithfully records that real peer, so the guard saw 127.0.0.1 for every request the proxy forwarded,
+  internet-originated ones included. The route is anonymous, antiforgery-disabled, and revokes every grant for
+  an arbitrary subject — so unauthenticated mass session revocation for any user, plus a probe for whether a
+  subject had sessions at all. The earlier fix stopped trusting forwarded headers and stopped accepting RFC1918
+  on the reasoning that "a source address is not a credential", then kept one source address as a credential.
+
+  It now fails closed: no `Cluster:Secret` means 404 for everyone, with `Cluster:AllowLoopbackWithoutSecret` as
+  an explicit development opt-in and a startup diagnostic naming whichever state applies. Nothing in the product
+  calls these endpoints, so the closed default breaks no shipped flow — pod-to-pod callers are on different
+  addresses and already needed the secret.
+
+- **`MfaPolicy.Required` was never enforced at `/connect/authorize` (high).** It was evaluated in exactly two
+  places, the password-login handler and the federated MFA flow, and both derived the client — and therefore
+  the policy — from the `returnUrl` **query parameter**. Absent or naming another client, the policy fell back
+  to Disabled and a full session cookie was signed with no second factor. The authorize endpoint had a step-up
+  guard, but it keyed only on `MfaEnabled: true` and never read `client.MfaPolicy`. So the enrolled case was
+  covered regardless of `returnUrl`, and the enrolment-forcing case — the documented "force enrollment for
+  users without MFA" — rested entirely on an attacker-controllable value: an unenrolled user reached a Required
+  client with a password-only session by arriving without the parameter. Now enforced at the authorize endpoint,
+  where the client comes from the validated request rather than a query string, with `interaction_required`
+  under `prompt=none`.
+
+- **An MFA challenge could be spent six times over (high).** `TableMfaStore.ConsumeChallengeAsync` read the
+  entity then issued an unconditional delete, and the Azure SDK documents that overload as "should not fail
+  because the entity does not exist" — so every concurrent caller that got past its own read also got a
+  successful delete and the challenge back. Eight concurrent consumes returned **six** non-null. That is the
+  anti-replay guard on the second factor. SQL and DynamoDB were already atomic.
+
+  Worth recording precisely, because the obvious fix is wrong: a *conditional* delete does not close it either.
+  Azurite answers a conditional delete of an already-deleted row with success, so the delete's status cannot be
+  the arbiter — while a stale-ETag delete against a row that still exists **is** refused with 412, so the
+  precondition itself works. The claim is now a compare-and-set `UpdateEntityAsync` marking the challenge
+  consumed, which every loser fails with 412 because the row is still there to compare against; the delete
+  follows as best-effort cleanup. Eight concurrent consumes now return one.
+
+- **Every security throttle on a node could be reset remotely (high).** `InProcessRateLimiter` is one
+  process-wide dictionary with a hard entry cap, and at the cap it evicted the oldest tenth **ordered by window
+  Start** — while eviction hands the evicted key a fresh budget. Window lengths differ by call site, so a
+  one-hour password-reset-per-IP window that began five minutes ago sorted older than a one-minute SAML-ACS
+  window created a second ago, with 55 minutes still to run: a flood of short-lived keys evicted the long
+  security windows and kept itself. The flood was reachable unauthenticated, because `POST
+  /saml/{connectionId}/acs` built its limiter key from the raw route segment *before* looking the connection up.
+  Eviction now prefers windows closest to lapsing naturally, so an actively-held limit is the last thing
+  dropped, and the ACS handler resolves the connection first — bounding the key space to connections that exist.
+
 ### Security — two more places a write reverted someone else's decision
 
 - **`PUT /api/v1/clients/{id}` reset every omitted field to the model default (high).** The handler bound a

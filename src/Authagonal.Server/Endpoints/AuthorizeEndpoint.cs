@@ -33,6 +33,9 @@ public static class AuthorizeEndpoint
             // Explicit for the same reason as IScopeRoleGate above: unresolvable services on a GET bind
             // as a body parameter and fail as an opaque 400.
             [FromServices] ITenantContext tenantContext,
+            // Explicit for the same reason as the two above. Needed for MfaPolicy resolution, which a host
+            // may override through IAuthHook.
+            [FromServices] IEnumerable<IAuthHook> authHooks,
             ILogger<ProtocolAuthorizationCodeService> logger,
             CancellationToken ct) =>
         {
@@ -273,6 +276,40 @@ public static class AuthorizeEndpoint
                 var stepUpLoginUrl = configuration["LoginAppUrl"] ?? "/login";
                 var stepUpReturn = $"{httpContext.Request.Path}{httpContext.Request.QueryString}";
                 return Results.Redirect($"{stepUpLoginUrl}?returnUrl={Uri.EscapeDataString(stepUpReturn)}");
+            }
+
+            // MfaPolicy.Required — "force enrolment for users without MFA" — enforced HERE, which is the only
+            // place both the subject and the client are known for certain.
+            //
+            // It was previously evaluated in exactly two places, the password-login handler and the federated
+            // MFA flow, and both derived the client (and therefore the policy) from the `returnUrl` QUERY
+            // PARAMETER. When that was absent or named a different client the policy fell back to Disabled and
+            // a full session cookie was signed with no second factor. The check above closes the ENROLLED case
+            // regardless of returnUrl — an enrolled user is always challenged — but the enrolment-forcing case
+            // rested entirely on an attacker-controllable value, so an unenrolled user reached a Required
+            // client with a password-only session simply by arriving without the parameter.
+            //
+            // `client` here came from the validated authorization request, not from a query string.
+            if (authenticatedUser is { MfaEnabled: false })
+            {
+                var effectivePolicy = await authHooks.RunResolveMfaPolicyAsync(
+                    authenticatedUser.Id, authenticatedUser.Email, client.MfaPolicy, client.ClientId, ct);
+
+                if (effectivePolicy == Core.Models.MfaPolicy.Required)
+                {
+                    // Enrolment is interaction, so prompt=none cannot have it — same reasoning as the step-up
+                    // above, and the same code, because the RP's correct response is to retry interactively.
+                    if (request.NoInteractionAllowed)
+                        return AuthorizeRequestSupport.BuildErrorRedirect(
+                            redirectUri, "interaction_required",
+                            "Multi-factor authentication enrolment is required and prompt=none forbids interaction",
+                            state, tenantContext.Issuer);
+
+                    await httpContext.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
+                    var enrolLoginUrl = configuration["LoginAppUrl"] ?? "/login";
+                    var enrolReturn = $"{httpContext.Request.Path}{httpContext.Request.QueryString}";
+                    return Results.Redirect($"{enrolLoginUrl}?returnUrl={Uri.EscapeDataString(enrolReturn)}");
+                }
             }
 
             // Per-user scope entitlement (Scope.AllowedRoles). Runs here because it is the first point

@@ -43,7 +43,8 @@ public static class BackChannelLogoutEndpoint
     {
         // Internal-only: this endpoint revokes every grant for a subject. Without a guard, anyone
         // who can reach it could force-logout arbitrary users (session DoS) and probe their sessions.
-        if (!InternalEndpointGuard.IsAuthorized(httpContext, clusterOptions.Value.Secret))
+        if (!InternalEndpointGuard.IsAuthorized(
+                httpContext, clusterOptions.Value.Secret, clusterOptions.Value.AllowLoopbackWithoutSecret))
             return Results.NotFound();
 
         if (string.IsNullOrEmpty(request.SubjectId))

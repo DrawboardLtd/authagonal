@@ -127,15 +127,25 @@ public sealed class InProcessRateLimiter : IRateLimiter
         if (_windows.Count < MaxTrackedWindows) return;
 
         // Still full: every tracked window is live, which means this is a flood of distinct keys rather
-        // than accumulated garbage. Evict the oldest tenth so the cost is paid once per batch instead of
-        // once per insert.
+        // than accumulated garbage. Evict a tenth so the cost is paid once per batch instead of once per
+        // insert — but evict the ones CLOSEST TO EXPIRING NATURALLY, not the ones that started earliest.
+        //
+        // Eviction hands the evicted key a fresh budget, so it is a throttle reset. Ordering by Start made
+        // that reset land on the wrong windows, because window LENGTHS differ by call site: a one-hour
+        // password-reset-per-IP window that began five minutes ago has an older Start than a one-minute
+        // SAML-ACS window created a second ago, and 55 minutes still to run. So a flood of short-lived keys
+        // evicted the long security windows and kept itself.
+        //
+        // The flood is reachable unauthenticated, which is what made this more than a memory trade-off.
+        // Ordering by remaining time inverts it: the cheapest window to drop is the one that was about to
+        // lapse anyway, and an actively-held limit is the last thing to go.
         var evictCount = Math.Max(1, MaxTrackedWindows / 10);
-        var oldest = _windows
-            .OrderBy(kvp => kvp.Value.Start)
+        var soonestToLapse = _windows
+            .OrderBy(kvp => kvp.Value.Start + kvp.Value.Length)
             .Take(evictCount)
             .Select(kvp => kvp.Key)
             .ToList();
-        foreach (var k in oldest)
+        foreach (var k in soonestToLapse)
             _windows.Remove(k);
     }
 

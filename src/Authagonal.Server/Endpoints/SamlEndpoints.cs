@@ -137,6 +137,18 @@ public static class SamlEndpoints
         // per-client wherever the operator declared their proxy. Reading RawPeerAddress directly, as this
         // did, yields the TCP peer always: behind any reverse proxy the whole deployment shared one 60/min
         // bucket per connection, so 60 probes from anyone locked every user of that connection out of SSO.
+        // The connection is resolved BEFORE the limiter is consulted, because connectionId is a raw route
+        // segment on an anonymous, antiforgery-disabled POST and it was going straight into the limiter key.
+        // Every request with a fresh random id therefore minted a new tracked window, and the in-process
+        // limiter is one process-wide dictionary with a hard entry cap — so an unauthenticated caller could
+        // push it to capacity and force evictions, and an eviction hands the evicted key a fresh budget. That
+        // is a remote reset of every security throttle on the node, across tenants. The eviction ORDER is fixed
+        // too (see InProcessRateLimiter.MaintainCapacity); this bounds the key space to connections that
+        // actually exist, which is the half an attacker controls.
+        var config = await samlStore.GetAsync(connectionId, ct);
+        if (config is null)
+            return Results.NotFound(new { error = "not_found", error_description = $"SAML connection '{connectionId}' not found" });
+
         var acsPeer = Services.Cluster.InternalEndpointGuard.SourceQuotaKey(httpContext);
         if (await rateLimiter.IsRateLimitedAsync($"saml-acs|{connectionId}|{acsPeer}", 60, TimeSpan.FromMinutes(1), ct))
         {
@@ -152,11 +164,6 @@ public static class SamlEndpoints
 
         if (string.IsNullOrEmpty(samlResponse))
             return Results.BadRequest(new { error = "missing_saml_response" });
-
-        // Load config
-        var config = await samlStore.GetAsync(connectionId, ct);
-        if (config is null)
-            return Results.NotFound(new { error = "not_found", error_description = $"SAML connection '{connectionId}' not found" });
 
         // Parse IdP metadata (cached)
         var metadata = await GetCachedMetadataAsync(config, metadataParser, memoryCache, cacheOptions.Value, ct);
