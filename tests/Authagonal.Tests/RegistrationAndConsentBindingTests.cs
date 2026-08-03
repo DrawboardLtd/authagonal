@@ -38,6 +38,12 @@ public sealed class RegistrationAndConsentBindingTests : IAsyncLifetime
         // scope used to become the recorded "already asked about" set — and AuthorizeEndpoint
         // suppresses the consent prompt for anything inside it, so this was a way to never be asked
         // about `email` or `profile` again.
+        //
+        // The first fix made the offered set come from the server's record instead of this field, and this
+        // test then pinned the residue: with no record at all the POST still wrote a grant, recording the
+        // granted set as offered. That is the same shape as a crafted consent link — a five-year grant for
+        // a (subject, client) pair with no authorization request behind it — so the offer is now required
+        // and the whole POST is refused.
         var response = await _client.PostAsJsonAsync("/consent", new
         {
             clientId = ConsentClientId,
@@ -46,11 +52,8 @@ public sealed class RegistrationAndConsentBindingTests : IAsyncLifetime
             returnUrl = "/connect/authorize?client_id=" + ConsentClientId + "&scope=openid%20profile%20email",
         });
 
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-
-        var stored = await ReadConsentAsync(user.Id);
-        Assert.NotNull(stored);
-        Assert.Equal(["openid"], stored!.OfferedScopes ?? []);
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Null(await ReadConsentAsync(user.Id));
     }
 
     [Fact]

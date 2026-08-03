@@ -49,7 +49,7 @@ public sealed class OpenRedirectSinkTests : IAsyncDisposable
     public async Task Consent_allow_does_not_echo_an_offsite_return_url()
     {
         await _factory.SeedTestDataAsync();
-        await _factory.SeedTestUserAsync();
+        var user = await _factory.SeedTestUserAsync();
         var client = _factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
 
         await client.PostAsJsonAsync("/api/auth/login",
@@ -57,6 +57,11 @@ public sealed class OpenRedirectSinkTests : IAsyncDisposable
 
         foreach (var hostile in new[] { "https://evil.example/", "//evil.example/", "/\t/evil.example/" })
         {
+            // The POST now requires a live offer from the authorize endpoint, and consumes it. Seeded per
+            // iteration rather than skipped on failure: a `continue` here would have quietly turned this
+            // into a test that asserts nothing the moment the offer became mandatory.
+            await SeedConsentOfferAsync(user.Id, AuthagonalTestFactory.TestClientId);
+
             var response = await client.PostAsJsonAsync("/consent", new
             {
                 clientId = AuthagonalTestFactory.TestClientId,
@@ -65,13 +70,26 @@ public sealed class OpenRedirectSinkTests : IAsyncDisposable
                 returnUrl = hostile,
             });
 
-            if (!response.IsSuccessStatusCode) continue;
+            Assert.True(response.IsSuccessStatusCode, $"unexpected {response.StatusCode} for {hostile}");
 
             var body = await response.Content.ReadFromJsonAsync<JsonElement>();
             var redirect = body.TryGetProperty("redirect", out var r) ? r.GetString() ?? "" : "";
             Assert.DoesNotContain("evil.example", redirect);
         }
     }
+
+    /// <summary>Records what the authorize endpoint would have offered, so the consent POST has an offer.</summary>
+    private Task SeedConsentOfferAsync(string subjectId, string clientId)
+        => _factory.GrantStore.StoreAsync(new Authagonal.Core.Models.PersistedGrant
+        {
+            Key = $"{Authagonal.Core.Constants.PersistedGrantTypes.ConsentOffer}:{subjectId}:{clientId}",
+            Type = Authagonal.Core.Constants.PersistedGrantTypes.ConsentOffer,
+            SubjectId = subjectId,
+            ClientId = clientId,
+            Data = "openid",
+            CreatedAt = DateTimeOffset.UtcNow,
+            ExpiresAt = DateTimeOffset.UtcNow.AddMinutes(15),
+        });
 
     /// <summary>
     /// Consent Deny parsed a redirect_uri out of the attacker's returnUrl and emitted an OAuth error to it

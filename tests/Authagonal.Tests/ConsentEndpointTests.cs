@@ -17,6 +17,10 @@ namespace Authagonal.Tests;
 public sealed class ConsentEndpointTests : IAsyncLifetime
 {
     private const string ConsentClientId = "consent-client";
+
+    /// <summary>The default shape: <c>RequireConsent</c> is false unless dynamic registration set it.</summary>
+    private const string NoConsentClientId = "no-consent-client";
+
     private const string ConsentRedirectUri = "https://consent.test/callback";
 
     private readonly AuthagonalTestFactory _factory = new();
@@ -41,6 +45,20 @@ public sealed class ConsentEndpointTests : IAsyncLifetime
             AllowedScopes = ["openid", "profile", "email"],
             AccessTokenLifetimeSeconds = 3600,
         });
+
+        // The same client with RequireConsent left at its default. This is what every admin-created and
+        // config-seeded client looks like, and it is the one for which prompt=consent did nothing at all.
+        await _factory.ClientStore.UpsertAsync(new OAuthClient
+        {
+            ClientId = NoConsentClientId,
+            ClientName = "No-Consent SPA",
+            RequireClientSecret = false,
+            RequirePkce = true,
+            AllowedGrantTypes = ["authorization_code"],
+            RedirectUris = [ConsentRedirectUri],
+            AllowedScopes = ["openid", "profile", "email"],
+            AccessTokenLifetimeSeconds = 3600,
+        });
     }
 
     public Task DisposeAsync() => _factory.DisposeAsync().AsTask();
@@ -55,9 +73,11 @@ public sealed class ConsentEndpointTests : IAsyncLifetime
         // Signed in first: the consent screen is only ever rendered to an authenticated user, and
         // anonymous access made this a client-enumeration oracle over the whole registry.
         await LoginAsync();
+        var (_, challenge) = GeneratePkce();
+        await BeginConsentFlowAsync(challenge);
 
-        var response = await _client.GetAsync(
-            $"/consent/info?client_id={ConsentClientId}&scope=openid%20profile");
+        // No `scope` parameter: the scopes come from the offer the authorize request above recorded.
+        var response = await _client.GetAsync($"/consent/info?client_id={ConsentClientId}");
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var json = await response.Content.ReadFromJsonAsync<JsonElement>();
@@ -102,7 +122,7 @@ public sealed class ConsentEndpointTests : IAsyncLifetime
     {
         var user = await LoginAsync();
         var (verifier, challenge) = GeneratePkce();
-        var authorizeUrl = BuildAuthorizeUrl(challenge);
+        var authorizeUrl = await BeginConsentFlowAsync(challenge);
 
         // Approve consent for the requested scopes
         var approveResponse = await _client.PostAsJsonAsync("/consent", new
@@ -151,13 +171,15 @@ public sealed class ConsentEndpointTests : IAsyncLifetime
     public async Task ConsentApprove_FiltersScopesOutsideClientAllowedScopes()
     {
         var user = await LoginAsync();
+        var (_, challenge) = GeneratePkce();
+        var returnUrl = await BeginConsentFlowAsync(challenge);
 
         var response = await _client.PostAsJsonAsync("/consent", new
         {
             clientId = ConsentClientId,
             decision = "approve",
             scopes = new[] { "openid", "profile", "sneaky-admin-scope" },
-            returnUrl = "/somewhere",
+            returnUrl,
         });
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
@@ -255,6 +277,174 @@ public sealed class ConsentEndpointTests : IAsyncLifetime
     }
 
     // -----------------------------------------------------------------------
+    // The screen and the grant are bound to a pending authorization request
+    // -----------------------------------------------------------------------
+
+    /// <summary>
+    /// With no pending authorization request, the consent screen has nothing to render.
+    /// </summary>
+    /// <remarks>
+    /// This endpoint used to build its whole answer from the caller's own <c>client_id</c> and <c>scope</c>
+    /// query parameters, so a crafted link rendered the IdP's own consent card — its origin, its styling, a
+    /// real registered client's name, description and logo — above an attacker-chosen permission list.
+    /// </remarks>
+    [Fact]
+    public async Task ConsentInfo_WithNoPendingRequest_IsRefusedAndDisclosesNothing()
+    {
+        await LoginAsync();
+
+        var response = await _client.GetAsync($"/consent/info?client_id={ConsentClientId}");
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        var body = await response.Content.ReadAsStringAsync();
+        Assert.Contains("no_pending_consent_request", body, StringComparison.Ordinal);
+        // Not even the client's display name: this was reconnaissance for a consent-phishing page.
+        Assert.DoesNotContain("Consent SPA", body, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// A consent POST with no offer behind it writes no grant.
+    /// </summary>
+    /// <remarks>
+    /// The offer record was read but treated as optional, so this endpoint would write a real five-year
+    /// consent grant for any (subject, client) pair on request — the half of the crafted-link problem that
+    /// survives closing the browser.
+    /// </remarks>
+    [Fact]
+    public async Task ConsentApprove_WithNoPendingRequest_IsRefusedAndStoresNothing()
+    {
+        var user = await LoginAsync();
+
+        var response = await _client.PostAsJsonAsync("/consent", new
+        {
+            clientId = ConsentClientId,
+            decision = "approve",
+            scopes = new[] { "openid", "profile" },
+            returnUrl = "/somewhere",
+        });
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Null(await _factory.GrantStore.GetAsync($"consent:{user.Id}:{ConsentClientId}"));
+    }
+
+    /// <summary>
+    /// The offer is single-use: replaying the same approval writes nothing further.
+    /// </summary>
+    [Fact]
+    public async Task ConsentApprove_ReplayedAfterSuccess_IsRefused()
+    {
+        await LoginAsync();
+        var (_, challenge) = GeneratePkce();
+        var returnUrl = await BeginConsentFlowAsync(challenge);
+
+        var body = new { clientId = ConsentClientId, decision = "approve", scopes = new[] { "openid" }, returnUrl };
+
+        Assert.Equal(HttpStatusCode.OK, (await _client.PostAsJsonAsync("/consent", body)).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, (await _client.PostAsJsonAsync("/consent", body)).StatusCode);
+    }
+
+    /// <summary>
+    /// A scope the user was never shown cannot be granted by hand-editing the POST body.
+    /// </summary>
+    /// <remarks>
+    /// The granted set was filtered against the client's <c>AllowedScopes</c> only, so any scope the client
+    /// was registered for could be recorded as consented without ever appearing on the screen — including
+    /// one the role-entitlement filter had just dropped from this request.
+    /// </remarks>
+    [Fact]
+    public async Task ConsentApprove_CannotGrantAScopeThatWasNotOffered()
+    {
+        var user = await LoginAsync();
+        var (_, challenge) = GeneratePkce();
+
+        // The authorize request offers openid+profile. `email` is registered on the client but not offered.
+        var returnUrl = await BeginConsentFlowAsync(challenge);
+
+        var response = await _client.PostAsJsonAsync("/consent", new
+        {
+            clientId = ConsentClientId,
+            decision = "approve",
+            scopes = new[] { "openid", "email" },
+            returnUrl,
+        });
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        var grant = await _factory.GrantStore.GetAsync($"consent:{user.Id}:{ConsentClientId}");
+        Assert.NotNull(grant);
+        Assert.Contains("openid", grant.Data);
+        Assert.DoesNotContain("email", grant.Data);
+    }
+
+    // -----------------------------------------------------------------------
+    // prompt=consent
+    // -----------------------------------------------------------------------
+
+    /// <summary>
+    /// <c>prompt=consent</c> reaches the consent screen even when the client does not require consent.
+    /// </summary>
+    /// <remarks>
+    /// <c>AuthorizeRequestSupport.Validate</c> admits <c>prompt=consent</c> deliberately — an unrecognised
+    /// prompt value is refused right beside it — but <c>DemandsConsent</c> was read at exactly one place,
+    /// inside <c>if (client.RequireConsent)</c>. That property defaults to false and only dynamic
+    /// registration sets it, so for every admin-created and config-seeded client the parameter was parsed,
+    /// accepted, and dropped: no screen, and no <c>consent_required</c> either.
+    /// </remarks>
+    [Fact]
+    public async Task Authorize_PromptConsent_ShowsTheScreenForAClientThatDoesNotRequireConsent()
+    {
+        await LoginAsync();
+        var (_, challenge) = GeneratePkce();
+
+        // The control first: without the parameter this client issues a code with no screen at all, so the
+        // assertion below is about prompt=consent and nothing else.
+        var control = await _client.GetAsync(BuildAuthorizeUrl(challenge, clientId: NoConsentClientId));
+        Assert.StartsWith(ConsentRedirectUri, control.Headers.Location!.ToString());
+
+        var response = await _client.GetAsync(
+            BuildAuthorizeUrl(challenge, clientId: NoConsentClientId, extra: "&prompt=consent"));
+
+        Assert.Equal(HttpStatusCode.Redirect, response.StatusCode);
+        Assert.StartsWith("/login/consent?", response.Headers.Location!.ToString());
+    }
+
+    /// <summary>
+    /// Having shown the screen once, <c>prompt=consent</c> does not demand it again on the return trip.
+    /// </summary>
+    /// <remarks>
+    /// The consent POST sends the user-agent back to the same authorize URL with <c>prompt</c> still on it.
+    /// An unconditional re-prompt is therefore an infinite redirect loop between the two endpoints — which
+    /// is what a RequireConsent client asking for prompt=consent already got, before this was single-use.
+    /// </remarks>
+    [Fact]
+    public async Task Authorize_PromptConsent_DoesNotLoopAfterTheUserDecides()
+    {
+        await LoginAsync();
+        var (_, challenge) = GeneratePkce();
+        var authorizeUrl = BuildAuthorizeUrl(challenge, extra: "&prompt=consent");
+
+        var first = await _client.GetAsync(authorizeUrl);
+        Assert.StartsWith("/login/consent?", first.Headers.Location!.ToString());
+
+        var approve = await _client.PostAsJsonAsync("/consent", new
+        {
+            clientId = ConsentClientId,
+            decision = "approve",
+            scopes = new[] { "openid", "profile" },
+            returnUrl = authorizeUrl,
+        });
+        Assert.Equal(HttpStatusCode.OK, approve.StatusCode);
+
+        // Same URL, prompt included: the decision has been made, so this must issue a code.
+        var second = await _client.GetAsync(authorizeUrl);
+        Assert.Equal(HttpStatusCode.Redirect, second.StatusCode);
+        Assert.StartsWith(ConsentRedirectUri, second.Headers.Location!.ToString());
+
+        // ...and the demand is single-use, so a NEW prompt=consent request asks again.
+        var third = await _client.GetAsync(authorizeUrl);
+        Assert.StartsWith("/login/consent?", third.Headers.Location!.ToString());
+    }
+
+    // -----------------------------------------------------------------------
     // GET /consent/grants
     // -----------------------------------------------------------------------
 
@@ -262,6 +452,8 @@ public sealed class ConsentEndpointTests : IAsyncLifetime
     public async Task ConsentGrants_ListsOnlyCallingSubjectsConsentGrants()
     {
         var user = await LoginAsync();
+        var (_, challenge) = GeneratePkce();
+        var returnUrl = await BeginConsentFlowAsync(challenge);
 
         // The caller's consent grant, via the real approve path
         var approve = await _client.PostAsJsonAsync("/consent", new
@@ -269,7 +461,7 @@ public sealed class ConsentEndpointTests : IAsyncLifetime
             clientId = ConsentClientId,
             decision = "approve",
             scopes = new[] { "openid", "profile" },
-            returnUrl = "/somewhere",
+            returnUrl,
         });
         Assert.Equal(HttpStatusCode.OK, approve.StatusCode);
 
@@ -326,6 +518,8 @@ public sealed class ConsentEndpointTests : IAsyncLifetime
     public async Task DeleteConsentGrant_RemovesOnlyTheCallersGrantForThatClient()
     {
         var user = await LoginAsync();
+        var (_, challenge) = GeneratePkce();
+        var returnUrl = await BeginConsentFlowAsync(challenge);
 
         // Caller's consent for the client, via the real approve path
         var approve = await _client.PostAsJsonAsync("/consent", new
@@ -333,7 +527,7 @@ public sealed class ConsentEndpointTests : IAsyncLifetime
             clientId = ConsentClientId,
             decision = "approve",
             scopes = new[] { "openid" },
-            returnUrl = "/somewhere",
+            returnUrl,
         });
         Assert.Equal(HttpStatusCode.OK, approve.StatusCode);
 
@@ -358,6 +552,24 @@ public sealed class ConsentEndpointTests : IAsyncLifetime
     // Helpers
     // -----------------------------------------------------------------------
 
+    /// <summary>
+    /// Drives the authorize request a real consent screen is always reached from, and returns that URL.
+    /// </summary>
+    /// <remarks>
+    /// Both halves of the consent surface require a pending offer now: <c>GET /consent/info</c> renders from
+    /// it and <c>POST /consent</c> refuses without it. These tests used to POST straight to <c>/consent</c>
+    /// with no authorization request behind it, which is precisely the shape a crafted consent link has —
+    /// so going through authorize is not ceremony, it is the thing that makes the test faithful.
+    /// </remarks>
+    private async Task<string> BeginConsentFlowAsync(string challenge, string state = "test")
+    {
+        var authorizeUrl = BuildAuthorizeUrl(challenge, state);
+        var response = await _client.GetAsync(authorizeUrl);
+        Assert.Equal(HttpStatusCode.Redirect, response.StatusCode);
+        Assert.StartsWith("/login/consent?", response.Headers.Location!.ToString());
+        return authorizeUrl;
+    }
+
     private async Task<AuthUser> LoginAsync(
         string email = "test@example.com", string password = "Test1234!")
     {
@@ -379,11 +591,15 @@ public sealed class ConsentEndpointTests : IAsyncLifetime
             ExpiresAt = DateTimeOffset.UtcNow.AddYears(5),
         });
 
-    private static string BuildAuthorizeUrl(string challenge, string state = "test")
-        => $"/connect/authorize?client_id={ConsentClientId}" +
+    private static string BuildAuthorizeUrl(
+        string challenge,
+        string state = "test",
+        string clientId = ConsentClientId,
+        string extra = "")
+        => $"/connect/authorize?client_id={clientId}" +
            $"&redirect_uri={Uri.EscapeDataString(ConsentRedirectUri)}" +
            $"&response_type=code&scope=openid+profile" +
-           $"&state={state}&code_challenge={challenge}&code_challenge_method=S256";
+           $"&state={state}&code_challenge={challenge}&code_challenge_method=S256{extra}";
 
     private static (string Verifier, string Challenge) GeneratePkce()
     {

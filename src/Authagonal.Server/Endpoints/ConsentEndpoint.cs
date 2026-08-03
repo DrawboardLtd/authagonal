@@ -17,15 +17,36 @@ public static class ConsentEndpoint
             HttpContext httpContext,
             IClientStore clientStore,
             IScopeStore scopeStore,
+            IGrantStore grantStore,
             string client_id,
-            string? scope,
             CancellationToken ct) =>
         {
+            var subjectId = httpContext.User.FindFirstValue(ClaimTypes.NameIdentifier)
+                ?? httpContext.User.FindFirstValue("sub");
+            if (string.IsNullOrWhiteSpace(subjectId))
+                return (IResult)Results.Unauthorized();
+
             var client = await clientStore.GetAsync(client_id, ct);
             if (client is null)
                 return (IResult)TypedResults.Json(new ErrorInfoResponse { Error = "client_not_found" }, AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 404);
 
-            var requestedScopes = (scope ?? "openid").Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            // The scopes come from the OFFER the authorize endpoint recorded, never from the caller.
+            //
+            // This endpoint used to render entirely from two query parameters, `client_id` and `scope`,
+            // which the login app took straight off its own query string. So the consent card — the IdP's
+            // own origin, the IdP's own styling, a real registered client's name, description and logo —
+            // was a function of the link the user clicked rather than of any authorization request the
+            // server was holding. A crafted link could show a trusted client's identity above an
+            // attacker-chosen permission list, and the POST behind it recorded a real five-year grant.
+            //
+            // Requiring the offer record collapses that: with no pending request there is nothing to
+            // render, and the scope list is the one the server itself computed (after role entitlement
+            // filtering) rather than one asserted by whoever composed the URL.
+            var requestedScopes = await ReadLiveOfferAsync(grantStore, subjectId, client_id, ct);
+            if (requestedScopes is null)
+                return (IResult)TypedResults.Json(
+                    new ErrorInfoResponse { Error = "no_pending_consent_request" },
+                    AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 400);
 
             // Resolved from the registry so the screen shows the wording whoever registered the scope
             // chose. An unregistered scope yields nulls and the login app falls back — better than this
@@ -122,14 +143,6 @@ public static class ConsentEndpoint
                 return TypedResults.Json(new RedirectResponse { Redirect = "/" }, AuthagonalJsonContext.Default.RedirectResponse);
             }
 
-            // Persist consent — store only scopes the client is actually allowed to request, so a
-            // tampered consent body can't record (and later silently satisfy) scopes beyond the
-            // client's AllowedScopes.
-            var consentKey = $"consent:{subjectId}:{request.ClientId}";
-            var grantedScopes = (request.Scopes ?? [])
-                .Where(s => client.AllowedScopes.Contains(s, StringComparer.OrdinalIgnoreCase))
-                .ToList();
-
             // What the user was OFFERED, read from the record the AUTHORIZE endpoint wrote before it
             // sent the user-agent here.
             //
@@ -142,22 +155,48 @@ public static class ConsentEndpoint
             // "already asked about" and suppresses the consent prompt for anything inside it, so a
             // wide offered set is a way to never be asked about those scopes again.
             //
-            // Unioned with the granted set so a flow whose offer record has lapsed still records at
-            // least what was approved, and intersected with AllowedScopes so a stale record cannot
-            // outlive a narrowing of the client's registration.
-            var offerRecord = await grantStore.GetAsync($"consent_offer:{subjectId}:{request.ClientId}", ct);
-            var offeredFromServer = offerRecord is not null && offerRecord.ExpiresAt > DateTimeOffset.UtcNow
-                ? offerRecord.Data.Split(' ', StringSplitOptions.RemoveEmptyEntries)
-                : [];
+            // The record is now REQUIRED rather than best-effort. Treating it as optional meant this
+            // endpoint would write a real five-year grant for any (subject, client) pair on request,
+            // with no authorization request behind it at all — the other half of the crafted-consent-link
+            // problem, and the half that persists after the browser is closed.
+            var offeredFromServer = await ReadLiveOfferAsync(grantStore, subjectId, request.ClientId, ct);
+            if (offeredFromServer is null)
+                return TypedResults.Json(
+                    new ErrorInfoResponse { Error = "no_pending_consent_request" },
+                    AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 400);
 
+            // Persist consent — store only scopes that were both OFFERED and ones the client is allowed
+            // to request, so a tampered consent body can neither record (and later silently satisfy) a
+            // scope beyond the client's AllowedScopes nor one the user was never shown.
+            var consentKey = $"consent:{subjectId}:{request.ClientId}";
+            var grantedScopes = (request.Scopes ?? [])
+                .Where(s => offeredFromServer.Contains(s, StringComparer.Ordinal))
+                .Where(s => client.AllowedScopes.Contains(s, StringComparer.OrdinalIgnoreCase))
+                .ToList();
+
+            // Intersected with AllowedScopes so a stale record cannot outlive a narrowing of the
+            // client's registration, and unioned with the granted set so the two can never disagree.
             var offeredScopes = offeredFromServer
                 .Where(s => client.AllowedScopes.Contains(s, StringComparer.OrdinalIgnoreCase))
                 .Union(grantedScopes, StringComparer.Ordinal)
                 .ToList();
 
             // Single-use: the offer belongs to the authorize request that created it.
-            if (offerRecord is not null)
-                await grantStore.RemoveAsync($"consent_offer:{subjectId}:{request.ClientId}", ct);
+            await grantStore.RemoveAsync(AuthorizeEndpoint.ConsentOfferKey(subjectId, request.ClientId), ct);
+
+            // ...and record that the screen was shown and answered, so a `prompt=consent` request does not
+            // demand it again on the very next pass through the authorize endpoint. Short-lived: it exists
+            // only to carry this decision back across the redirect that follows.
+            await grantStore.StoreAsync(new PersistedGrant
+            {
+                Key = AuthorizeEndpoint.ConsentPromptKey(subjectId, request.ClientId),
+                Type = PersistedGrantTypes.ConsentPrompt,
+                SubjectId = subjectId,
+                ClientId = request.ClientId,
+                Data = "",
+                CreatedAt = DateTimeOffset.UtcNow,
+                ExpiresAt = DateTimeOffset.UtcNow.AddMinutes(5),
+            }, ct);
 
             var consentData = new AuthorizeEndpoint.ConsentData
             {
@@ -272,6 +311,25 @@ public static class ConsentEndpoint
         });
 
         return app;
+    }
+
+    /// <summary>
+    /// The scopes the authorize endpoint recorded as offered to this subject for this client, or
+    /// <see langword="null"/> when there is no live offer.
+    /// </summary>
+    /// <remarks>
+    /// Both halves of the consent surface hang off this: the screen renders the record's contents, and the
+    /// POST refuses outright without one. Expiry is checked here rather than trusted to the store, because
+    /// the four providers differ on whether an expired row is still readable.
+    /// </remarks>
+    private static async Task<string[]?> ReadLiveOfferAsync(
+        IGrantStore grantStore, string subjectId, string clientId, CancellationToken ct)
+    {
+        var record = await grantStore.GetAsync(AuthorizeEndpoint.ConsentOfferKey(subjectId, clientId), ct);
+        if (record is null || record.ExpiresAt <= DateTimeOffset.UtcNow)
+            return null;
+
+        return record.Data.Split(' ', StringSplitOptions.RemoveEmptyEntries);
     }
 
     /// <summary>

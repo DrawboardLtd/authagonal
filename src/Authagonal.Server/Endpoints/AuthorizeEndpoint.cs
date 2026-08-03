@@ -1,4 +1,5 @@
 using System.Security.Claims;
+using Authagonal.Core.Constants;
 using Authagonal.Core.Services;
 using Authagonal.Core.Stores;
 using Authagonal.Protocol;
@@ -336,8 +337,15 @@ public static class AuthorizeEndpoint
                 request.RequestedScopes = requestedScopes;
             }
 
-            // Check consent (if required by this client)
-            if (client.RequireConsent)
+            // Check consent — because this client requires it, or because the RP asked for it.
+            //
+            // `prompt=consent` used to be accepted by Validate (it is in the OIDC registry, and an
+            // unrecognised prompt is refused two lines away) and then read at exactly ONE place: inside
+            // this block. `OAuthClient.RequireConsent` defaults to false and only dynamic registration
+            // sets it, so for every admin-created or config-seeded client the parameter was parsed,
+            // validated, and dropped — no screen, and no `consent_required` either. An RP whose whole
+            // reason for sending it is to make the user re-affirm a permission got a silent code.
+            if (client.RequireConsent || request.DemandsConsent)
             {
                 var consentKey = $"consent:{subjectId}:{clientId}";
 
@@ -361,8 +369,8 @@ public static class AuthorizeEndpoint
                     // by the caller.
                     await grantStore.StoreAsync(new Authagonal.Core.Models.PersistedGrant
                     {
-                        Key = $"consent_offer:{subjectId}:{clientId}",
-                        Type = "consent_offer",
+                        Key = ConsentOfferKey(subjectId, clientId),
+                        Type = PersistedGrantTypes.ConsentOffer,
                         ClientId = clientId,
                         SubjectId = subjectId,
                         Data = string.Join(" ", requestedScopes),
@@ -381,8 +389,21 @@ public static class AuthorizeEndpoint
                 // prompt=consent: the RP asks for the screen regardless of what is stored. Combined
                 // with none it is already refused as invalid_request, so this cannot reach the UI on a
                 // no-interaction request.
+                //
+                // Satisfied ONCE per authorization request, not once per pass through this endpoint. The
+                // consent POST sends the user-agent back to this same URL with `prompt` still on it, so an
+                // unconditional re-prompt is an infinite redirect loop between the two endpoints — which is
+                // what a RequireConsent client asking for prompt=consent already got.
                 if (request.DemandsConsent)
-                    return await RedirectToConsentAsync();
+                {
+                    var promptKey = ConsentPromptKey(subjectId, clientId);
+                    var promptSatisfied = await grantStore.GetAsync(promptKey, ct);
+                    if (promptSatisfied is null || promptSatisfied.ExpiresAt <= DateTimeOffset.UtcNow)
+                        return await RedirectToConsentAsync();
+
+                    // Single-use: the next prompt=consent request is a new demand and gets its own screen.
+                    await grantStore.RemoveAsync(promptKey, ct);
+                }
 
                 var existingConsent = await grantStore.GetAsync(consentKey, ct);
                 if (existingConsent is null)
@@ -521,6 +542,20 @@ public static class AuthorizeEndpoint
             ? DateTimeOffset.FromUnixTimeSeconds(seconds)
             : null;
     }
+
+    /// <summary>
+    /// Key of the record naming what this subject is currently being offered for this client.
+    /// </summary>
+    /// <remarks>
+    /// Written here, read and consumed by <see cref="ConsentEndpoint"/>. Shared as a builder because the
+    /// two endpoints agreeing on the format is what binds the consent screen to a pending request.
+    /// </remarks>
+    internal static string ConsentOfferKey(string subjectId, string clientId)
+        => $"{PersistedGrantTypes.ConsentOffer}:{subjectId}:{clientId}";
+
+    /// <summary>Key of the one-shot marker that a <c>prompt=consent</c> demand has been satisfied.</summary>
+    internal static string ConsentPromptKey(string subjectId, string clientId)
+        => $"{PersistedGrantTypes.ConsentPrompt}:{subjectId}:{clientId}";
 
     internal sealed class ConsentData
     {

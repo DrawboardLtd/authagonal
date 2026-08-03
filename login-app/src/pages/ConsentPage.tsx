@@ -47,7 +47,6 @@ export default function ConsentPage() {
   const { t } = useTranslation();
   const [searchParams] = useSearchParams();
   const clientId = searchParams.get('client_id') ?? '';
-  const scope = searchParams.get('scope') ?? 'openid';
   const returnUrl = searchParams.get('returnUrl') ?? '/';
 
   const [info, setInfo] = useState<ConsentInfo | null>(null);
@@ -57,23 +56,25 @@ export default function ConsentPage() {
   const [granted, setGranted] = useState<Set<string>>(new Set());
   const [openGroups, setOpenGroups] = useState<Set<string>>(new Set());
 
-  // Prefer what the server says about each scope. Falling back to bare names covers an older host and
-  // the case where /consent/info failed outright.
+  // Only ever what the server says. The bare `scope` query parameter used to be the fallback, which
+  // meant a crafted link could put its own permission list on this screen whenever /consent/info was
+  // unavailable — under a real client's name and the IdP's own origin. The server now answers from the
+  // offer it recorded when it redirected here, so there is nothing local worth falling back to.
   const offered = useMemo<ConsentScopeInfo[]>(() => {
     if (info?.scopeDetails?.length) return info.scopeDetails;
-    const names = info?.scopes ?? scope.split(' ').filter(Boolean);
-    return names.map((name) => ({ name }));
-  }, [info, scope]);
+    return (info?.scopes ?? []).map((name) => ({ name }));
+  }, [info]);
 
   useEffect(() => {
-    fetch(`/consent/info?client_id=${encodeURIComponent(clientId)}&scope=${encodeURIComponent(scope)}`)
+    // No `scope`: the server ignores it and reads the pending offer instead.
+    fetch(`/consent/info?client_id=${encodeURIComponent(clientId)}`)
       .then(async (res) => {
         if (!res.ok) throw new Error('Failed to load');
         setInfo(await res.json());
       })
       .catch(() => setError(t('consent.loadError')))
       .finally(() => setLoading(false));
-  }, [clientId, scope, t]);
+  }, [clientId, t]);
 
   // Everything starts ticked: this screen is an opportunity to grant LESS than the app asked for, not
   // a form the user has to fill in before they can continue.
@@ -237,6 +238,13 @@ export default function ConsentPage() {
     return (
       <p className="text-sm text-gray-500 dark:text-gray-400 text-center">{t('consent.loading')}</p>
     );
+  }
+
+  // No pending request, no card. The server answers 400 when nothing is on offer for this user and
+  // client, and rendering a consent prompt anyway — heading, client id, Allow button — would put the
+  // IdP's own authority behind a screen it is holding no authorization request for.
+  if (!info) {
+    return <Alert variant="error">{error || t('consent.loadError')}</Alert>;
   }
 
   return (

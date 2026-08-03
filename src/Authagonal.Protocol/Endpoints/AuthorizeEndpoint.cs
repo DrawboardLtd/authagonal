@@ -99,6 +99,21 @@ internal static class AuthorizeEndpoint
             if (AuthorizeRequestSupport.Validate(client, request, tenantContext.Issuer) is { } validationError)
                 return validationError;
 
+            // This host has no consent surface, so it says so instead of pretending the demand was met.
+            //
+            // Validate accepts `prompt=consent` because it is in the OIDC registry, and the Server host
+            // honours it — but nothing in this package reads `DemandsConsent`, and `client.RequireConsent`
+            // is inert here: this endpoint challenges whatever scheme the embedding application registered
+            // and then issues a code. An RP sending prompt=consent is making a demand about what the user
+            // is shown, and answering with a silent authorization code is the same class of quiet
+            // non-compliance as the dropped `max_age` two commits ago. `consent_required` is the registered
+            // error for "consent is required and could not be obtained".
+            if (request.DemandsConsent)
+                return AuthorizeRequestSupport.BuildErrorRedirect(
+                    request.RedirectUri, "consent_required",
+                    "This authorization server has no consent interface; prompt=consent cannot be satisfied",
+                    request.State, tenantContext.Issuer);
+
             // Authenticate — if the caller isn't already, either route them through the
             // hinted upstream IdP (for federation) or challenge the host's registered scheme.
             // The registered scheme may not be the HOST's default scheme (e.g. an API host whose
