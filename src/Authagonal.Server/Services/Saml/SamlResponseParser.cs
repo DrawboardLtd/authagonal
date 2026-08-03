@@ -946,8 +946,36 @@ public sealed class SamlResponseParser(ILogger<SamlResponseParser> logger)
         // exactly what Entra emits). CheckSignature(AsymmetricAlgorithm) verifies the
         // signature only (no chain) — trust is already established by pinning the IdP's
         // metadata signing certificates.
+        var now = DateTimeOffset.UtcNow;
+        var expiredCandidates = 0;
+
+
         foreach (var cert in trustedCertificates)
         {
+            // Expiry is a statement the certificate makes about itself, and it was being discarded.
+            //
+            // Skipping chain building and revocation is deliberate and correct — trust here comes from
+            // pinning the IdP's metadata signing certificates, not from a CA — but NotBefore/NotAfter are a
+            // different thing, and nothing consulted them at load time either. Verified: a signature made
+            // with a certificate that expired two years ago validated. The only other expiry control on this
+            // path is metadata @validUntil, which SAML 2.0 Metadata makes optional, several major IdPs omit,
+            // and a pasted connection never re-fetches — so for those connections the certificate set was
+            // frozen with no expiry at all.
+            //
+            // Same skew the assertion time checks allow, so a few seconds of clock disagreement around a
+            // rollover boundary is not a hard failure.
+            if (now < cert.NotBefore.ToUniversalTime() - CertificateValiditySkew
+                || now > cert.NotAfter.ToUniversalTime() + CertificateValiditySkew)
+            {
+                expiredCandidates++;
+                logger.LogWarning(
+                    "Skipping IdP signing certificate {Thumbprint}: outside its validity window "
+                    + "({NotBefore:o} – {NotAfter:o}). Refresh the connection's metadata to pick up the "
+                    + "rollover.",
+                    cert.Thumbprint, cert.NotBefore.ToUniversalTime(), cert.NotAfter.ToUniversalTime());
+                continue;
+            }
+
             try
             {
                 using var publicKey = (System.Security.Cryptography.AsymmetricAlgorithm?)cert.GetRSAPublicKey()
@@ -973,9 +1001,26 @@ public sealed class SamlResponseParser(ILogger<SamlResponseParser> logger)
             }
         }
 
-        logger.LogWarning("Signature could not be validated against any trusted certificate");
+        if (expiredCandidates > 0)
+            logger.LogWarning(
+                "Signature could not be validated: {Expired} of {Total} trusted certificate(s) are outside "
+                + "their validity window. Failing here is what lets the metadata refetch pick up a rollover.",
+                expiredCandidates, trustedCertificates.Count);
+        else
+            logger.LogWarning("Signature could not be validated against any trusted certificate");
+
         return false;
     }
+
+    /// <summary>
+    /// Clock tolerance applied to an IdP signing certificate's validity window.
+    /// </summary>
+    /// <remarks>
+    /// Matches the default assertion skew, so a few seconds of disagreement around a rollover boundary is
+    /// not a hard failure. Taken as a constant rather than from the validation context because
+    /// <c>ValidateElementSignature</c> is also called for the logout legs, which have no context.
+    /// </remarks>
+    private static readonly TimeSpan CertificateValiditySkew = TimeSpan.FromMinutes(5);
 
     private static SamlParseResult Fail(string error) => new() { Success = false, Error = error };
 

@@ -316,7 +316,7 @@ internal static class ClientAuthentication
             // See SupportedAssertionAlgorithms — the same list discovery advertises, so what a client
             // is told it may sign with is what this validator will accept.
             ValidAlgorithms = SupportedAssertionAlgorithms,
-            ClockSkew = TimeSpan.FromSeconds(60),
+            ClockSkew = AssertionClockSkew,
         });
         if (!validated.IsValid)
             return (null, error("invalid_client", "client_assertion validation failed"));
@@ -362,12 +362,47 @@ internal static class ClientAuthentication
             // containing '/', '\\', '#', '?', a control character, or over 1024 characters is a 400
             // that neither store path handled. Hashing makes the key fixed-width and charset-safe on
             // every backend, and gives up nothing — the value is never read back, only matched.
-            if (!await replayCache.TryClaimOnceAsync(ReplayKey(clientId, jti), expiresAt, clientId, ct))
+            // The ledger entry outlives the assertion, because the VALIDATOR does.
+            //
+            // This passed the assertion's own `exp`, and every bundled IRevokedTokenStore treats an entry
+            // past its expiry as reclaimable — SqlRevokedTokenStore says so in as many words ("an entry past
+            // its own expiry protects nothing"), and TryClaimOnceAsync returns true in that case. But the
+            // validator above accepts the JWT for AssertionClockSkew past `exp`, since IdentityModel's
+            // lifetime check rejects only when exp < now - skew. So acceptance covered [nbf, exp + 60s] while
+            // single use protected only [claim, exp], and in that 60-second overlap the assertion validated
+            // AND the jti read as unused — repeatedly, because each reclaim just rewrote the same expired
+            // row. A captured assertion was replayable for a minute after it nominally died.
+            //
+            // The reclaim rule is right for its original purpose (a revoked access-token jti past its own exp
+            // is refused by the token's own lifetime check anyway); it is the ledger lifetime here that was
+            // measuring the wrong window.
+            var replayWindowEnd = expiresAt + AssertionClockSkew + ReplayLedgerMargin;
+            if (!await replayCache.TryClaimOnceAsync(ReplayKey(clientId, jti), replayWindowEnd, clientId, ct))
                 return (null, error("invalid_client", "client_assertion has already been used"));
         }
 
         return (client, null);
     }
+
+    /// <summary>
+    /// Clock tolerance applied to a client assertion's lifetime.
+    /// </summary>
+    /// <remarks>
+    /// Named because the single-use ledger entry has to be derived from it: the validator accepts an
+    /// assertion for this long past its <c>exp</c>, so a ledger entry that expires at <c>exp</c> stops
+    /// protecting a token that is still accepted. Whoever changes one must change both, and now has to see
+    /// the other to do it.
+    /// </remarks>
+    private static readonly TimeSpan AssertionClockSkew = TimeSpan.FromSeconds(60);
+
+    /// <summary>
+    /// Extra life on the single-use ledger entry beyond the validator's acceptance window.
+    /// </summary>
+    /// <remarks>
+    /// Covers the gap between this process's clock and the store's when the entry is reclaimed — the
+    /// reclaim decision is made against the store's own notion of now, and the two need not agree.
+    /// </remarks>
+    private static readonly TimeSpan ReplayLedgerMargin = TimeSpan.FromMinutes(1);
 
     /// <summary>
     /// The single-use ledger key for one client's assertion jti: fixed-width lowercase hex, so no

@@ -1024,7 +1024,11 @@ public static class SamlEndpoints
             // carries no state from the attacker.
             var responseSignatureValid = isPost
                 ? SamlResponseParser.ValidateElementSignature(logoutResponse, responseMetadata.SigningCertificates, logger)
-                : SamlRedirectBinding.Verify(httpContext.Request.QueryString.Value ?? "", responseMetadata.SigningCertificates);
+                // "SAMLResponse": this leg decoded Query["SAMLResponse"], and the verifier used to prefer a
+                // SAMLRequest if one was present — so an attacker could append a forged SAMLResponse to a
+                // captured, correctly-signed SAMLRequest triple and have it honoured.
+                : SamlRedirectBinding.Verify(
+                    httpContext.Request.QueryString.Value ?? "", "SAMLResponse", responseMetadata.SigningCertificates);
 
             var statusCode = logoutResponse
                 .GetElementsByTagName("StatusCode", SamlConstants.Saml2Protocol)
@@ -1083,7 +1087,8 @@ public static class SamlEndpoints
         // refusing an unsigned one costs no conformant IdP anything.
         var signatureValid = isPost
             ? SamlResponseParser.ValidateElementSignature(logoutRequest, metadata.SigningCertificates, logger)
-            : SamlRedirectBinding.Verify(httpContext.Request.QueryString.Value ?? "", metadata.SigningCertificates);
+            : SamlRedirectBinding.Verify(
+                httpContext.Request.QueryString.Value ?? "", "SAMLRequest", metadata.SigningCertificates);
         if (!signatureValid)
         {
             logger.LogWarning("SAML SLO: unsigned or unverifiable LogoutRequest for {ConnectionId} — ignored", connectionId);

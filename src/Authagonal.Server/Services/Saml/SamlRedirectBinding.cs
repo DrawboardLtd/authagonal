@@ -43,14 +43,56 @@ public static class SamlRedirectBinding
     /// the signature covers the sender's exact percent-encoding). Returns false when no Signature
     /// parameter is present or nothing validates against the trusted certs.
     /// </summary>
-    public static bool Verify(string rawQuery, IReadOnlyList<X509Certificate2> trustedCertificates)
+    /// <param name="expectedMessageParameter">
+    /// <c>SAMLRequest</c> or <c>SAMLResponse</c> — the parameter the CALLER decoded and is about to act on.
+    /// </param>
+    /// <remarks>
+    /// The caller has to name it, because this used to choose for itself:
+    /// <c>Find("SAMLRequest") ?? Find("SAMLResponse")</c>. The LogoutResponse leg decodes
+    /// <c>Query["SAMLResponse"]</c> and then handed the whole query string to a verifier that preferred
+    /// <c>SAMLRequest</c> whenever one was present.
+    /// <para>
+    /// The parameter NAME is inside the signed bytes, so a captured signature cannot be moved from one
+    /// parameter to the other — but it never had to be. An attacker keeps a captured
+    /// <c>SAMLRequest=…&amp;SigAlg=…&amp;Signature=…</c> triple intact and simply APPENDS a forged
+    /// <c>SAMLResponse=</c>. Verification succeeded over the captured triple, and the handler then processed
+    /// the appended, entirely attacker-authored message. Verified against the shipped code:
+    /// <c>Verify(captured)</c> and <c>Verify(captured + "&amp;SAMLResponse=" + forged)</c> both returned true.
+    /// </para>
+    /// <para>
+    /// So: verify only the parameter the caller says it acted on, refuse a query carrying both (SAML
+    /// Bindings §3.4.4.1 permits exactly one), and refuse a duplicate of the parameter itself — otherwise
+    /// <c>Find</c> matches the first occurrence while the caller's own query parser may have taken the last.
+    /// </para>
+    /// </remarks>
+    public static bool Verify(
+        string rawQuery,
+        string expectedMessageParameter,
+        IReadOnlyList<X509Certificate2> trustedCertificates)
     {
+        if (expectedMessageParameter is not ("SAMLRequest" or "SAMLResponse"))
+            throw new ArgumentOutOfRangeException(nameof(expectedMessageParameter),
+                "The redirect binding carries either a SAMLRequest or a SAMLResponse.");
+
         var query = rawQuery.TrimStart('?');
         var parts = query.Split('&', StringSplitOptions.RemoveEmptyEntries);
 
-        string? Find(string name) => parts.FirstOrDefault(p => p.StartsWith(name + "=", StringComparison.Ordinal));
+        bool Named(string p, string name) => p.StartsWith(name + "=", StringComparison.Ordinal);
+        string? Find(string name) => parts.FirstOrDefault(p => Named(p, name));
+        int CountOf(string name) => parts.Count(p => Named(p, name));
 
-        var message = Find("SAMLRequest") ?? Find("SAMLResponse");
+        // Exactly one message, and it must be the one the caller decoded. A second message parameter of
+        // either name means the signature covers something other than what will be acted on.
+        var other = expectedMessageParameter == "SAMLRequest" ? "SAMLResponse" : "SAMLRequest";
+        if (CountOf(expectedMessageParameter) != 1 || CountOf(other) != 0)
+            return false;
+
+        // Duplicated SigAlg/Signature/RelayState has the same problem from the other end: this picks the
+        // first, ASP.NET's parser may hand the handler the last.
+        if (CountOf("SigAlg") > 1 || CountOf("Signature") > 1 || CountOf("RelayState") > 1)
+            return false;
+
+        var message = Find(expectedMessageParameter);
         var sigAlgPart = Find("SigAlg");
         var signaturePart = Find("Signature");
         if (message is null || sigAlgPart is null || signaturePart is null)

@@ -44,11 +44,11 @@ public class SamlSpKeyTests
         Assert.Contains("Signature=", signed);
 
         var query = new Uri(signed).Query;
-        Assert.True(SamlRedirectBinding.Verify(query, [cert]));
+        Assert.True(SamlRedirectBinding.Verify(query, "SAMLRequest", [cert]));
         // Wrong cert refuses
-        Assert.False(SamlRedirectBinding.Verify(query, [SamlTestHelper.TestCertificate]));
+        Assert.False(SamlRedirectBinding.Verify(query, "SAMLRequest", [SamlTestHelper.TestCertificate]));
         // Unsigned refuses
-        Assert.False(SamlRedirectBinding.Verify(new Uri(url).Query, [cert]));
+        Assert.False(SamlRedirectBinding.Verify(new Uri(url).Query, "SAMLRequest", [cert]));
     }
 
     [Fact]
@@ -351,7 +351,7 @@ public sealed class SamlSpKeySloEndpointTests(AzuriteFixture azurite) : IAsyncLi
             .Element(ds + "KeyInfo")!.Element(ds + "X509Data")!.Element(ds + "X509Certificate")!.Value.Trim();
         var signingCert = X509CertificateLoader.LoadCertificate(Convert.FromBase64String(signingCertB64));
 
-        Assert.True(SamlRedirectBinding.Verify(new Uri(url).Query, [signingCert]));
+        Assert.True(SamlRedirectBinding.Verify(new Uri(url).Query, "SAMLRequest", [signingCert]));
     }
 
     /// <summary>

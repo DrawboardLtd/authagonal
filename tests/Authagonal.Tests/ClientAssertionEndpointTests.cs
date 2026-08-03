@@ -221,7 +221,59 @@ public sealed class ClientAssertionEndpointTests : IAsyncLifetime
     /// A fresh jti each time — assertions are single-use, so a shared one would make the second call
     /// in any test fail for the wrong reason.
     /// </summary>
-    private static string BuildAssertion(ECDsa key, string? jti = null)
+    /// <summary>
+    /// An assertion whose <c>exp</c> has already passed but is still inside the validator's clock skew
+    /// cannot be replayed.
+    /// </summary>
+    /// <remarks>
+    /// The single-use ledger entry was written with the assertion's own <c>exp</c> as its expiry, and every
+    /// bundled <c>IRevokedTokenStore</c> treats an entry past its expiry as RECLAIMABLE — Sql, Table and
+    /// Dynamo all return true from <c>TryClaimOnceAsync</c> in that case, and the in-memory double
+    /// deliberately mirrors it. But the validator accepts an assertion for 60 seconds past <c>exp</c>
+    /// (IdentityModel's lifetime check rejects only when <c>exp &lt; now - skew</c>).
+    /// <para>
+    /// So acceptance covered <c>[nbf, exp + 60s]</c> while single use protected only <c>[claim, exp]</c>, and
+    /// in that overlap the assertion validated AND its jti read as unused — repeatedly, because each reclaim
+    /// merely rewrote the same already-expired row. A captured assertion stayed replayable for a minute
+    /// after it nominally died, which is the whole window an attacker who captured one needs.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task AnAssertionInsideTheClockSkewCannotBeReplayed()
+    {
+        // exp 30s in the past: still accepted (60s skew), and already "expired" as far as the ledger's
+        // reclaim rule is concerned.
+        var assertion = BuildAssertion(_signingKey, expiresIn: TimeSpan.FromSeconds(-30));
+
+        var first = await PostAssertionAsync(assertion);
+        Assert.Equal(HttpStatusCode.OK, first.StatusCode);
+
+        var replay = await PostAssertionAsync(assertion);
+        Assert.NotEqual(HttpStatusCode.OK, replay.StatusCode);
+        Assert.Contains("already been used", await replay.Content.ReadAsStringAsync(), StringComparison.Ordinal);
+    }
+
+    /// <summary>The control: an ordinary unexpired assertion is accepted once and refused on replay.</summary>
+    [Fact]
+    public async Task AnOrdinaryAssertionIsStillAcceptedOnceAndRefusedOnReplay()
+    {
+        var assertion = BuildAssertion(_signingKey);
+
+        Assert.Equal(HttpStatusCode.OK, (await PostAssertionAsync(assertion)).StatusCode);
+        Assert.NotEqual(HttpStatusCode.OK, (await PostAssertionAsync(assertion)).StatusCode);
+    }
+
+    private async Task<HttpResponseMessage> PostAssertionAsync(string assertion)
+        => await _client.PostAsync("/connect/token", new FormUrlEncodedContent(new Dictionary<string, string>
+        {
+            ["grant_type"] = "client_credentials",
+            ["scope"] = "openid",
+            ["client_id"] = KeyClientId,
+            ["client_assertion_type"] = "urn:ietf:params:oauth:client-assertion-type:jwt-bearer",
+            ["client_assertion"] = assertion,
+        }));
+
+    private static string BuildAssertion(ECDsa key, string? jti = null, TimeSpan? expiresIn = null)
     {
         var securityKey = new ECDsaSecurityKey(key) { KeyId = KeyId };
         var now = DateTime.UtcNow;
@@ -235,8 +287,9 @@ public sealed class ClientAssertionEndpointTests : IAsyncLifetime
                 new System.Security.Claims.Claim("sub", KeyClientId),
                 new System.Security.Claims.Claim("jti", jti ?? Guid.NewGuid().ToString("N")),
             ]),
-            NotBefore = now,
-            Expires = now.AddMinutes(2),
+            // Backdated when the caller asks, so nbf cannot sit after exp.
+            NotBefore = expiresIn is { Ticks: < 0 } ? now.AddMinutes(-5) : now,
+            Expires = now.Add(expiresIn ?? TimeSpan.FromMinutes(2)),
             SigningCredentials = new SigningCredentials(securityKey, SecurityAlgorithms.EcdsaSha256),
         });
     }
