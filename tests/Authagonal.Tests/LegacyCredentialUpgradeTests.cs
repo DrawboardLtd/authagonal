@@ -89,6 +89,51 @@ public sealed class LegacyCredentialUpgradeTests
         Assert.True(await verifier.VerifyAsync(client, Secret));
     }
 
+    /// <summary>
+    /// A SCOPED <c>IClientStore</c> — how every multi-tenant host registers it — still upgrades, and above all
+    /// does not fault the authentication.
+    /// </summary>
+    /// <remarks>
+    /// The verifier is registered <c>TryAddSingleton</c>, so the provider it holds is the ROOT provider, and
+    /// <c>GetService&lt;IClientStore&gt;()</c> against the root THROWS for a scoped registration. That
+    /// resolution sat outside the try/catch, so the exception escaped <c>VerifyAsync</c> after the presented
+    /// secret had already verified: correct <c>client_credentials</c> answered 500 instead of a token, on
+    /// <c>/connect/token</c>, <c>/par</c>, <c>/introspect</c>, <c>/revocation</c> and
+    /// <c>/deviceauthorization</c> — permanently, because the upgrade could never complete, and triggered by
+    /// the legitimate credential rather than by an attacker.
+    /// <para>
+    /// Nothing in the suite registered the store as scoped, which is precisely why it shipped: every existing
+    /// test here uses <c>AddSingleton</c>, where root resolution happens to work. This is the same defect
+    /// <c>LegacySecretHashWarning</c> had — it stopped tenant-scoped hosts from starting at all until it
+    /// resolved inside a scope — reintroduced one file over.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task AScopedClientStore_IsReachedThroughAScope_AndDoesNotFaultAuthentication()
+    {
+        var hasher = CheapHasher.Password();
+        var store = new InMemoryClientStore();
+        await store.UpsertAsync(new OAuthClient
+        {
+            ClientId = ClientId,
+            ClientSecretHashes = [LegacySha256(Secret)],
+        });
+
+        // Scoped, and with scope validation on — exactly what a tenant-scoped host does.
+        var services = new ServiceCollection()
+            .AddScoped<IClientStore>(_ => store)
+            .BuildServiceProvider(new ServiceProviderOptions { ValidateScopes = true });
+
+        var verifier = new PasswordHasherClientSecretVerifier(hasher, services);
+        var client = (await store.GetAsync(ClientId))!;
+
+        Assert.True(await verifier.VerifyAsync(client, Secret));
+
+        // And the upgrade actually reached the store, rather than being swallowed as a failed resolution.
+        var stored = Assert.Single((await store.GetAsync(ClientId))!.ClientSecretHashes);
+        Assert.False(PasswordHasher.IsUnsaltedDigestHash(stored), $"still on the legacy format: {stored}");
+    }
+
     [Fact]
     public async Task WithNoClientStore_StillVerifies()
     {
@@ -137,6 +182,23 @@ public sealed class LegacyCredentialUpgradeTests
             _clients.Remove(clientId);
             return Task.CompletedTask;
         }
+
+        /// <summary>
+        /// Compare-and-set on the one entry, still detached — the double's whole point is that the verifier
+        /// cannot "upgrade" by mutating an instance it already holds.
+        /// </summary>
+        public Task<bool> TryUpgradeSecretHashAsync(
+            string clientId, int index, string expectedHash, string newHash, CancellationToken ct = default)
+        {
+            if (!_clients.TryGetValue(clientId, out var c)) return Task.FromResult(false);
+            if (index >= c.ClientSecretHashes.Count) return Task.FromResult(false);
+            if (!string.Equals(c.ClientSecretHashes[index], expectedHash, StringComparison.Ordinal))
+                return Task.FromResult(false);
+
+            var upgraded = new List<string>(c.ClientSecretHashes) { [index] = newHash };
+            _clients[clientId] = c with { ClientSecretHashes = upgraded };
+            return Task.FromResult(true);
+        }
     }
 
     private sealed class ThrowingClientStore : IClientStore
@@ -151,6 +213,15 @@ public sealed class LegacyCredentialUpgradeTests
             throw new InvalidOperationException("store unavailable");
 
         public Task DeleteAsync(string clientId, CancellationToken ct = default) =>
+            throw new InvalidOperationException("store unavailable");
+
+        /// <summary>
+        /// Throws too, so the "a failed upgrade must not reject a valid credential" test still exercises the
+        /// catch. Left on the interface default it would return false instead, and the test would pass because
+        /// nothing was attempted rather than because the failure was handled.
+        /// </summary>
+        public Task<bool> TryUpgradeSecretHashAsync(
+            string clientId, int index, string expectedHash, string newHash, CancellationToken ct = default) =>
             throw new InvalidOperationException("store unavailable");
     }
 }

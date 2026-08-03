@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Azure;
 using Azure.Data.Tables;
 using Authagonal.Core.Models;
@@ -49,6 +50,43 @@ public sealed class TableClientStore(TableClient clientsTable, EnvPartitioner pa
         var entity = ClientEntity.FromModel(client);
         entity.PartitionKey = partitioner.PK(entity.PartitionKey);
         await clientsTable.UpsertEntityAsync(entity, TableUpdateMode.Replace, ct);
+    }
+
+    /// <summary>
+    /// ETag compare-and-set over the whole row, so an administrative write landing mid-upgrade wins.
+    /// </summary>
+    /// <remarks>
+    /// The ETag covers the ENTIRE entity, which is exactly the property needed here: the upgrade rewrites one
+    /// hash entry, and any concurrent change to any other column — <c>Enabled</c>, scopes, a secret rotation —
+    /// moves the ETag and loses the race, leaving the legacy hash in place for the next attempt. See
+    /// <see cref="IClientStore.TryUpgradeSecretHashAsync"/> for what the unconditional write cost.
+    /// </remarks>
+    public async Task<bool> TryUpgradeSecretHashAsync(
+        string clientId, int index, string expectedHash, string newHash, CancellationToken ct = default)
+    {
+        try
+        {
+            var response = await clientsTable.GetEntityAsync<ClientEntity>(
+                partitioner.PK(clientId), ClientEntity.ConfigRowKey, cancellationToken: ct);
+            var entity = response.Value;
+
+            var hashes = entity.ToModel().ClientSecretHashes;
+            if (index >= hashes.Count) return false;
+            if (!string.Equals(hashes[index], expectedHash, StringComparison.Ordinal)) return false;
+
+            var upgraded = new List<string>(hashes) { [index] = newHash };
+            entity.ClientSecretHashesJson = JsonSerializer.Serialize(
+                upgraded, AzureJsonContext.Default.ListString);
+
+            // The ETag from the read above: any write in between makes this fail rather than overwrite.
+            await clientsTable.UpdateEntityAsync(entity, entity.ETag, TableUpdateMode.Replace, ct);
+            return true;
+        }
+        catch (RequestFailedException ex) when (ex.Status is 404 or 412)
+        {
+            // 404: the client was deleted. 412: someone else wrote first — theirs stands.
+            return false;
+        }
     }
 
     public async Task DeleteAsync(string clientId, CancellationToken ct = default)

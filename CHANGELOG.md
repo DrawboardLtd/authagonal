@@ -122,6 +122,76 @@
   cannot steer those requests and there is nothing for an address check to add. Email delivery (`Resend`)
   is likewise unguarded and unaffected: its target is a compile-time constant.
 
+### Breaking — `IClientStore` gains `TryUpgradeSecretHashAsync`
+
+Not source-breaking: the default returns `false`, so an external implementer keeps compiling and simply leaves
+legacy client-secret hashes on their legacy format (which `LegacySecretHashWarning` already reports).
+
+It rewrites ONE entry of `ClientSecretHashes` to a stronger format, and only while the stored entry is still the
+one that was verified and nothing else about the record has changed. The upgrade previously re-read the client,
+mutated the hash list, and wrote the WHOLE record back with an unconditional upsert, comparing only the entry at
+`index` as it stood at the re-read — so any administrative write landing between that read and the write was
+reverted wholesale: the hash list (undoing a secret rotation, so a rotated-out secret kept working), `Enabled`
+(re-enabling a client an admin had just disabled), scopes, redirect URIs. The losing write was always the
+administrator's, and the attacker did not need to observe the rotation: the throttle permits 30 authentications
+a minute per client, which is enough to hold the window open.
+
+Implement it with your backend's conditional primitive and return `false` on a lost race rather than retrying —
+authentication has already succeeded, so a skipped upgrade costs nothing but a repeat attempt next call. Azure
+Table implements it with ETag CAS over the whole row. The SQL and DynamoDB client stores do **not**: their rows
+carry no version attribute, so they stay on the default and leave legacy hashes in place. That is strictly safer
+than the unconditional write they did before, but it is not parity.
+
+### Security — the client-secret verification path
+
+- **A correct credential answered HTTP 500 on any tenant-scoped host (high).**
+  `PasswordHasherClientSecretVerifier` is registered `TryAddSingleton`, so the provider it holds is the ROOT
+  provider — and `GetService<IClientStore>()` against the root throws for a store registered `AddScoped`, which
+  is how every multi-tenant host registers it. The resolution sat *outside* the `try`, so the exception escaped
+  `VerifyAsync` after the presented secret had already verified: correct `client_credentials` answered 500
+  instead of a token, on `/connect/token`, `/par`, `/introspect`, `/revocation` and `/deviceauthorization`. It
+  was permanent (the upgrade could never complete, so every retry repeated it) and triggered by the legitimate
+  credential rather than by an attacker. This is the defect `LegacySecretHashWarning` had — it stopped
+  tenant-scoped hosts from starting until it resolved inside a scope — reintroduced one file over. Nothing in
+  the suite registered the store as scoped, which is why it shipped; now something does.
+
+- **An unbounded bcrypt cost factor was an anonymous, uncancellable CPU burn (high).** Every other
+  imported-cost lever was bounded and bcrypt had none: recognition was a four-character prefix test, so
+  `$2a$31$…` passed the admin API's hash validator and reached `BCrypt.Verify`. Cost is a base-2 exponent and
+  the library accepts up to 31 — 2^31 key expansions, pinning one thread-pool thread per request for days. Any
+  unauthenticated caller who knows the `client_id` triggers it; a few dozen requests take the provider down for
+  every tenant. Bounded at cost 15 now, checked at the write *and* at verification, so a hash stored before the
+  bound existed fails closed instead of burning the CPU.
+
+- **A malformed bcrypt hash was a permanent 500 for that principal (medium).** Both verifiers caught only
+  `SaltParseException`, and against the pinned library `$2a$1` and `$2b$` throw `IndexOutOfRangeException`,
+  `$2a$xy$…` throws `FormatException`, and `$2a$11$short` throws `ArgumentOutOfRangeException`. None was caught,
+  so every authentication for that client — including its own legitimate one — returned 500 forever, with a
+  stack trace to an anonymous caller wherever developer exception pages are on. The validator's own doc comment
+  described fixing exactly this for the empty-string case while the bcrypt-shaped variants passed. Now
+  structurally validated, and the catch is broad because a stored hash that cannot be parsed must never fault a
+  request.
+
+  `BcryptHashFormat` in Core is the single rule, shared by the Protocol package's `BCryptClientSecretVerifier`
+  and the Server host's `PasswordHasher`. They had the identical defect and could not see each other, which is
+  how a fix to one would have left the other.
+
+- **The number of secret hashes was unbounded (medium).** The format of each entry was validated and the count
+  was not, while the verifier derives every entry on each failed authentication with no early exit. Work per
+  request is `count × per-hash cost` with `count` caller-chosen: 1,000 entries at the permitted 1,000,000
+  PBKDF2 iterations is minutes of thread-pinning CPU per anonymous token request, 30 of which are allowed per
+  minute per client. Capped at 8 — well past what rotation needs.
+
+- **`Auth:Pbkdf2Iterations` above 1,000,000 silently wrote unverifiable hashes (high).** The write path was
+  uncapped and the verify path capped, at different values: `VerifyPbkdf2V2` refuses a recorded count above
+  1,000,000, correctly, since that value drives an uncancellable derivation reachable from an anonymous
+  request — but the bound applied to this server's own fresh hashes too. Only a floor was validated at startup,
+  so `Auth__Pbkdf2Iterations=2000000` (or a fat-fingered `6000000` for the documented 600,000) came up healthy
+  and then wrote hashes it rejects on read: those users could never log in and each attempt incremented the
+  lockout counter, and every DCR-issued and seeded client secret became permanently `invalid_client`. Fixing
+  the configuration afterwards does not repair it — the cost lives in each stored blob. A validated ceiling now
+  makes it a refusal to start, naming the value.
+
 ### Security — the retention path: what a rollup may read, what it must sign, what a scoped restore may delete
 
 Three defects with one shape — a check that existed on one path and not on its sibling.

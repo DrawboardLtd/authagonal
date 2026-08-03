@@ -249,6 +249,16 @@ public static class AuthagonalExtensions
                 $"Auth:Pbkdf2Iterations must be at least {AuthOptions.MinimumPbkdf2Iterations}. " +
                 "Raising it is safe: each hash records the cost it was derived at, so existing hashes " +
                 "keep verifying and are re-written on their owner's next successful login.")
+            // And a CEILING, because only a floor was validated: the write path was uncapped while the verify
+            // path refuses a recorded cost above this, so a value past it produced hashes this server rejects
+            // the moment it reads them back — silently, from a host that started healthy, and irreversibly,
+            // because the cost lives in each stored blob. See AuthOptions.MaximumPbkdf2Iterations.
+            .Validate(
+                o => o.Pbkdf2Iterations <= AuthOptions.MaximumPbkdf2Iterations,
+                $"Auth:Pbkdf2Iterations must be at most {AuthOptions.MaximumPbkdf2Iterations}, which is the " +
+                "highest cost this server will verify. A higher value writes password and client-secret hashes " +
+                "that fail verification immediately — every affected credential would have to be reset, since " +
+                "the cost is recorded in the stored hash.")
             .ValidateOnStart();
         services.Configure<CacheOptions>(configuration.GetSection("Cache"));
         services.Configure<BackgroundServiceOptions>(configuration.GetSection("BackgroundServices"));

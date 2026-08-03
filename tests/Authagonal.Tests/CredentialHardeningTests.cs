@@ -125,13 +125,32 @@ public class CredentialHardeningTests
         Assert.True(PasswordHasher.IsRecognisedHashFormat(HasherAt(1_000).HashPassword("x")));
         Assert.True(PasswordHasher.IsRecognisedHashFormat("PBKDF2v1$abc"));
         Assert.True(PasswordHasher.IsRecognisedHashFormat("SHA256$abc"));
-        Assert.True(PasswordHasher.IsRecognisedHashFormat("$2a$10$abcdefghijklmnopqrstuv"));
+
+        // A REAL bcrypt hash, produced by the library. The previous fixture here was a 29-character
+        // bcrypt-shaped string that the library cannot parse, so this assertion documented that a
+        // four-character prefix was enough to be "recognised" — which is exactly what let a `$2a$31$…` cost
+        // bomb and a malformed `$2a$1` (a permanent 500 on every token request for that client) through the
+        // admin API's validator.
+        Assert.True(PasswordHasher.IsRecognisedHashFormat(BCrypt.Net.BCrypt.HashPassword("x", 10)));
 
         Assert.False(PasswordHasher.IsRecognisedHashFormat(""));
         Assert.False(PasswordHasher.IsRecognisedHashFormat("   "));
         Assert.False(PasswordHasher.IsRecognisedHashFormat("hash-1"));
         Assert.False(PasswordHasher.IsRecognisedHashFormat(
             Convert.ToBase64String(BuildIdentityV3Bytes(int.MaxValue, 16, 32))));
+
+        // Bcrypt-shaped but not verifiable, and each one a stored denial of service before the bound.
+        Assert.False(PasswordHasher.IsRecognisedHashFormat("$2a$10$abcdefghijklmnopqrstuv"));  // truncated
+        Assert.False(PasswordHasher.IsRecognisedHashFormat("$2a$1"));                          // IndexOutOfRange
+        Assert.False(PasswordHasher.IsRecognisedHashFormat("$2b$"));                           // IndexOutOfRange
+        Assert.False(PasswordHasher.IsRecognisedHashFormat("$2a$11$short"));                   // ArgumentOutOfRange
+        Assert.False(PasswordHasher.IsRecognisedHashFormat(
+            "$2a$xy$abcdefghijklmnopqrstuuXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"));                  // FormatException
+
+        // Over the cost bound: cost 31 is 2^31 key expansions, an uncancellable multi-day burn reachable
+        // from any anonymous /connect/token call for that client.
+        Assert.False(PasswordHasher.IsRecognisedHashFormat(
+            "$2a$31$abcdefghijklmnopqrstuuXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"));
     }
 
     // -----------------------------------------------------------------------

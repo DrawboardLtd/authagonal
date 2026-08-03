@@ -230,6 +230,33 @@ public sealed class InMemoryClientStore : IClientStore
         _clients.TryRemove(clientId, out _);
         return Task.CompletedTask;
     }
+
+    /// <summary>
+    /// Compare-and-set on the one hash entry, under a lock — the in-memory stand-in for the ETag CAS the Azure
+    /// store performs.
+    /// </summary>
+    /// <remarks>
+    /// Implemented rather than left on the interface default because the default is <c>false</c>, which would
+    /// silently disable legacy-hash upgrades across the whole suite and make the tests that cover them pass for
+    /// the wrong reason.
+    /// </remarks>
+    public Task<bool> TryUpgradeSecretHashAsync(
+        string clientId, int index, string expectedHash, string newHash, CancellationToken ct = default)
+    {
+        lock (_upgradeGate)
+        {
+            if (!_clients.TryGetValue(clientId, out var client)) return Task.FromResult(false);
+            if (index >= client.ClientSecretHashes.Count) return Task.FromResult(false);
+            if (!string.Equals(client.ClientSecretHashes[index], expectedHash, StringComparison.Ordinal))
+                return Task.FromResult(false);
+
+            var upgraded = new List<string>(client.ClientSecretHashes) { [index] = newHash };
+            client.ClientSecretHashes = upgraded;
+            return Task.FromResult(true);
+        }
+    }
+
+    private readonly object _upgradeGate = new();
 }
 
 public sealed class InMemoryGrantStore : IGrantStore

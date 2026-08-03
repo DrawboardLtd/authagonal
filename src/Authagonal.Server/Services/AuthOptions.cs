@@ -191,6 +191,31 @@ public sealed class AuthOptions
     public const int MinimumPbkdf2Iterations = 100_000;
 
     /// <summary>
+    /// Upper bound enforced at startup — the highest cost this server can still VERIFY.
+    /// </summary>
+    /// <remarks>
+    /// The write path was uncapped and the verify path was capped, at different values, so raising
+    /// <see cref="Pbkdf2Iterations"/> past this produced hashes the server refuses the moment it reads them
+    /// back. <c>VerifyPbkdf2V2</c> returns <c>Failed</c> for a recorded count above this bound — correctly, since
+    /// the count in a stored blob drives an uncancellable derivation reachable from an anonymous request — but
+    /// the bound applied to this server's own freshly written hashes too, which is the one case it must not
+    /// reject.
+    /// <para>
+    /// The consequence was silent and irreversible. Only a floor was validated at startup, so
+    /// <c>Auth__Pbkdf2Iterations=2000000</c> (or a fat-fingered <c>6000000</c> for the documented 600,000) came
+    /// up healthy and then wrote unverifiable hashes for every registration, password reset and admin
+    /// set-password: those users could never log in, and each attempt incremented the lockout counter. Every
+    /// DCR-issued and seeded client secret became permanently <c>invalid_client</c>. Fixing the configuration
+    /// afterwards does not repair it — the cost is recorded in each stored blob, so the hashes written in the
+    /// interim stay unverifiable and the credentials behind them have to be reset.
+    /// </para>
+    /// <para>
+    /// A validated ceiling turns all of that into a refusal to start, naming the value.
+    /// </para>
+    /// </remarks>
+    public const int MaximumPbkdf2Iterations = 1_000_000;
+
+    /// <summary>
     /// Wall-clock floor, in milliseconds, that a failed login is held to before the uniform
     /// <c>invalid_credentials</c> response is written, measured from the start of the request.
     /// Closes the user-enumeration timing oracle: the no-such-user path verifies against a dummy

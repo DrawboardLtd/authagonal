@@ -1,5 +1,6 @@
 using System.Buffers.Binary;
 using System.Security.Cryptography;
+using Authagonal.Core.Services;
 using Microsoft.Extensions.Options;
 
 namespace Authagonal.Server.Services;
@@ -126,7 +127,12 @@ public sealed class PasswordHasher
         ArgumentException.ThrowIfNullOrWhiteSpace(password);
         ArgumentException.ThrowIfNullOrWhiteSpace(hash);
 
-        if (IsBcryptHash(hash))
+        // Routed on the PREFIX, not on validity: a bcrypt-prefixed blob is bcrypt's business even when it is
+        // malformed, and VerifyBcrypt refuses it. Routing on validity instead would drop a malformed one
+        // through to the unprefixed ASP.NET Identity branch at the end of this method, where the parameters
+        // driving PBKDF2's cost come from the blob itself — which is the fall-through IsRecognisedHashFormat
+        // exists to prevent.
+        if (BcryptHashFormat.HasBcryptPrefix(hash))
             return VerifyBcrypt(password, hash);
 
         if (hash.StartsWith(Pbkdf2V2Prefix, StringComparison.Ordinal))
@@ -173,26 +179,35 @@ public sealed class PasswordHasher
         && (hash.StartsWith(Sha256Prefix, StringComparison.Ordinal)
             || hash.StartsWith(Sha512Prefix, StringComparison.Ordinal));
 
-    private static bool IsBcryptHash(string hash)
-    {
-        foreach (var prefix in BcryptPrefixes)
-        {
-            if (hash.StartsWith(prefix, StringComparison.Ordinal))
-                return true;
-        }
-        return false;
-    }
+    /// <summary>
+    /// True when <paramref name="hash"/> is a bcrypt hash this server will verify — structurally valid and
+    /// within the cost bound. See <see cref="BcryptHashFormat"/>, which both bcrypt verifiers share.
+    /// </summary>
+    /// <remarks>
+    /// Used by <see cref="IsRecognisedHashFormat"/>, so the admin API refuses an over-cost or malformed bcrypt
+    /// entry at the write rather than storing a permanent denial of service for that client.
+    /// </remarks>
+    private static bool IsBcryptHash(string hash) => BcryptHashFormat.IsValid(hash);
 
     private static PasswordVerifyResult VerifyBcrypt(string password, string hash)
     {
+        // Re-checked at verification, not only at the admin-API boundary: a hash stored before this bound
+        // existed, or written by a path that does not validate (a Duende-migrated user row), must fail closed
+        // rather than burn the CPU or throw.
+        if (!BcryptHashFormat.IsValid(hash))
+            return PasswordVerifyResult.Failed;
+
         try
         {
             if (BCrypt.Net.BCrypt.Verify(password, hash))
                 return PasswordVerifyResult.SuccessRehashNeeded;
         }
-        catch (BCrypt.Net.SaltParseException)
+        catch (Exception ex) when (ex is not OutOfMemoryException)
         {
-            // Malformed BCrypt hash
+            // Any parse failure means this hash does not verify — never that the request should fault. The
+            // catch is deliberately broad because the structural check above cannot anticipate every shape a
+            // future library version rejects differently, and the cost of guessing wrong is a permanent 500 on
+            // a principal's every authentication.
         }
 
         return PasswordVerifyResult.Failed;

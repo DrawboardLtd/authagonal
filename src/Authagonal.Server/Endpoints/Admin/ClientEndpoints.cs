@@ -200,10 +200,31 @@ public static class ClientEndpoints
     /// on every token request for that client.
     /// </para>
     /// </remarks>
+    /// <summary>
+    /// How many secret hashes one client may carry.
+    /// </summary>
+    /// <remarks>
+    /// The format of each entry was bounded and the COUNT was not, while the verifier loops the whole list
+    /// running a full derivation per entry with no early exit on a wrong secret. Total work per request is
+    /// therefore <c>count × per-hash cost</c> with <c>count</c> caller-chosen: 1,000 entries at the permitted
+    /// 1,000,000 PBKDF2 iterations each is minutes of uncancellable, thread-pinning CPU per anonymous
+    /// <c>/connect/token</c> call, and the throttle still allows 30 of those per minute per client.
+    /// <para>
+    /// Eight is well past what rotation needs (the outgoing secret plus the incoming one, with room for a
+    /// staged third).
+    /// </para>
+    /// </remarks>
+    private const int MaxSecretHashesPerClient = 8;
+
     private static string? InvalidSecretHashes(OAuthClient client)
     {
         if (client.ClientSecretHashes is not { Count: > 0 } hashes)
             return null;
+
+        if (hashes.Count > MaxSecretHashesPerClient)
+            return $"clientSecretHashes must contain at most {MaxSecretHashesPerClient} entries: every entry " +
+                   "is derived on each failed authentication, so the list length is itself a CPU cost paid on " +
+                   "anonymous token requests";
 
         foreach (var hash in hashes)
         {

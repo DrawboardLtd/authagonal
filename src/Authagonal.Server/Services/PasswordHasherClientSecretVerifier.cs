@@ -47,25 +47,48 @@ public sealed class PasswordHasherClientSecretVerifier(
 
     private async Task UpgradeAsync(OAuthClient client, int index, string secret, CancellationToken ct)
     {
-        var clientStore = services?.GetService<IClientStore>();
-        if (clientStore is null) return;
+        if (services is null) return;
 
         try
         {
-            // Re-read so a concurrent admin edit is not clobbered by this write, and so the upgrade
-            // is skipped when another node has already done it.
-            var current = await clientStore.GetAsync(client.ClientId, ct).ConfigureAwait(false);
-            if (current is null || index >= current.ClientSecretHashes.Count) return;
-            if (!string.Equals(current.ClientSecretHashes[index], client.ClientSecretHashes[index], StringComparison.Ordinal))
+            // Resolved from a SCOPE, and inside the try.
+            //
+            // This class is registered TryAddSingleton, so the injected provider is the ROOT provider —
+            // and GetService<IClientStore>() against the root throws for a store registered AddScoped,
+            // which is how every multi-tenant host registers it (the tenant is a scoped concern). The
+            // resolution sat outside the try, so the exception escaped VerifyAsync after the presented
+            // secret had already verified: correct client_credentials answered 500 instead of a token,
+            // on /connect/token, /par, /introspect, /revocation and /deviceauthorization. Permanent,
+            // because the upgrade could never complete, and triggered by the legitimate credential.
+            //
+            // Exactly the defect LegacySecretHashWarning had — it prevented any tenant-scoped host from
+            // starting until it resolved the store inside a scope — reintroduced one file over.
+            using var scope = services.CreateScope();
+            var clientStore = scope.ServiceProvider.GetService<IClientStore>();
+            if (clientStore is null) return;
+
+            // A CONDITIONAL write of the one entry, not a full-record upsert of a snapshot. The previous
+            // version re-read the record and then wrote the whole thing back unconditionally, so an admin
+            // write landing between the read and the write was reverted — including a secret rotation, which
+            // left the compromised secret working while the audit log recorded a successful rotation. See
+            // IClientStore.TryUpgradeSecretHashAsync.
+            var expected = client.ClientSecretHashes[index];
+            var upgradedHash = passwordHasher.HashPassword(secret);
+
+            if (!await clientStore.TryUpgradeSecretHashAsync(
+                    client.ClientId, index, expected, upgradedHash, ct).ConfigureAwait(false))
+            {
+                // Either the record moved underneath us — in which case whoever wrote it wins — or this
+                // backend has no conditional primitive. Both mean: leave the legacy hash, try again next
+                // time. LegacySecretHashWarning is what tells the operator it is still there.
+                logger?.LogDebug(
+                    "Left the legacy client-secret hash for {ClientId} in place: the conditional upgrade did "
+                    + "not apply", client.ClientId);
                 return;
-
-            var upgraded = new List<string>(current.ClientSecretHashes);
-            upgraded[index] = passwordHasher.HashPassword(secret);
-            current.ClientSecretHashes = upgraded;
-
-            await clientStore.UpsertAsync(current, ct).ConfigureAwait(false);
+            }
 
             // Keep the in-hand copy consistent so the caller does not carry a stale hash onward.
+            var upgraded = new List<string>(client.ClientSecretHashes) { [index] = upgradedHash };
             client.ClientSecretHashes = upgraded;
 
             logger?.LogInformation(
