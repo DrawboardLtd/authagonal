@@ -886,6 +886,8 @@ public sealed class TableUserStore(
             // administrative write, which is the opposite of the guarantee this is here to give.
             AuthUser? storedModel = null;
             var stored = false;
+            // ETag of the profile row as this call left it, for a conditional compensating revert.
+            Azure.ETag? writtenETag = null;
             for (var attempt = 0; attempt < ContendedWriteAttempts && !stored; attempt++)
             {
                 if (attempt > 0) await Task.Delay(Random.Shared.Next(2, 12), ct);
@@ -918,7 +920,11 @@ public sealed class TableUserStore(
 
                 try
                 {
-                    await usersTable.UpdateEntityAsync(candidate, existing.Value.ETag, TableUpdateMode.Replace, ct);
+                    // The ETag this write produced, kept so a compensating revert below can be conditional
+                    // on it — see the revert in the email-claim catch.
+                    var written = await usersTable.UpdateEntityAsync(
+                        candidate, existing.Value.ETag, TableUpdateMode.Replace, ct);
+                    writtenETag = written.Headers.ETag;
                     await LogUpsertAsync("Users", candidate.PartitionKey, candidate.RowKey, ct);
                     stored = true;
                 }
@@ -1008,10 +1014,34 @@ public sealed class TableUserStore(
                 {
                     try
                     {
-                        var revert = UserEntity.FromModel(storedModel);
-                        revert.PartitionKey = _partitioner.PK(revert.PartitionKey);
-                        await EncryptEntityAsync(revert, ct);
-                        await usersTable.UpsertEntityAsync(revert, TableUpdateMode.Replace, ct);
+                        // Conditional on the ETag THIS call wrote, and an Update rather than an Upsert.
+                        //
+                        // It was an unconditional full-entity Upsert of a snapshot, which has two
+                        // consequences the project has already treated as defects elsewhere. First, any write
+                        // landing between our Replace and this revert was silently undone — IsActive (undoing
+                        // a SCIM deprovision), SecurityStamp (undoing a reset's session invalidation),
+                        // RolesJson (undoing a role revocation), PasswordHash, an active lockout. That is
+                        // verbatim the defect fixed for RecordSuccessfulLoginAsync. Second, Upsert CREATES the
+                        // row when absent, so an account deleted during the window — SCIM deprovision, admin
+                        // delete, GDPR erasure — was RESURRECTED with its password hash, roles and MFA flag.
+                        //
+                        // 412 means someone else owns the row now and 404 means it is gone; in both cases the
+                        // right action is to leave it alone. Compensation is best-effort by design, and doing
+                        // nothing is strictly better than reverting someone else's write.
+                        if (writtenETag is { } expected)
+                        {
+                            var revert = UserEntity.FromModel(storedModel);
+                            revert.PartitionKey = _partitioner.PK(revert.PartitionKey);
+                            await EncryptEntityAsync(revert, ct);
+                            await usersTable.UpdateEntityAsync(revert, expected, TableUpdateMode.Replace, ct);
+                        }
+                    }
+                    catch (RequestFailedException ex) when (ex.Status is 412 or 404)
+                    {
+                        // The row moved on (412) or went away (404). Leave it: reverting would undo a write
+                        // that came after ours, or recreate an account someone deleted. This store has no
+                        // logger, and the claim failure that follows is the diagnostic the caller sees.
+                        _ = ex;
                     }
                     catch
                     {

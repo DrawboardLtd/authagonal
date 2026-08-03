@@ -401,6 +401,8 @@ public sealed class SqlUserStore(
         // administrative write.
         AuthUser? old = null;
         var stored = false;
+        // Version of the profile row as this call left it, for a conditional compensating revert.
+        long? writtenVersion = null;
         for (var attempt = 0; attempt < ContendedWriteAttempts && !stored; attempt++)
         {
             if (attempt > 0) await Task.Delay(Random.Shared.Next(2, 12), ct).ConfigureAwait(false);
@@ -429,6 +431,10 @@ public sealed class SqlUserStore(
             // that decides something, the revision check above turns the next pass into a refusal.
             stored = await users.PutIfVersionAsync(
                 await UserRowAsync(user, ct).ConfigureAwait(false), row.Version, ct).ConfigureAwait(false);
+
+            // The version this write produced, so a compensating revert below can be conditional on it.
+            // PutIfVersionAsync increments on success.
+            if (stored) writtenVersion = row.Version + 1;
         }
 
         if (!stored || old is null)
@@ -499,7 +505,20 @@ public sealed class SqlUserStore(
             {
                 try
                 {
-                    await users.PutAsync(await UserRowAsync(old, ct).ConfigureAwait(false), ct).ConfigureAwait(false);
+                    // Conditional on the version THIS call wrote, and update-only.
+                    //
+                    // It was an unconditional PutAsync of a snapshot, with the same two consequences as the
+                    // Azure sibling: any write landing between our write and this revert was silently undone
+                    // (IsActive, SecurityStamp, RolesJson, PasswordHash, an active lockout), and Put CREATES
+                    // the row, so an account deleted during the window was resurrected with its password hash
+                    // and roles. PutIfVersionAsync never inserts and matches on version, so a false return
+                    // means someone else owns the row now — and doing nothing is strictly better than
+                    // reverting their write.
+                    if (writtenVersion is { } expected)
+                    {
+                        await users.PutIfVersionAsync(
+                            await UserRowAsync(old, ct).ConfigureAwait(false), expected, ct).ConfigureAwait(false);
+                    }
                 }
                 catch
                 {
