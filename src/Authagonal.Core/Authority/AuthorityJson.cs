@@ -20,6 +20,32 @@ public static class AuthorityJson
     /// it is a caller bug and throws.</summary>
     public static string Serialize(AuthoritySet set) => ToNode(set).ToJsonString();
 
+    /// <summary>
+    /// True when a set that structurally holds grants serializes to the empty array — every grant was
+    /// dropped by <see cref="ToNode"/>.
+    /// </summary>
+    /// <remarks>
+    /// Such a set must never be minted, and the check has to happen on the WIRE form because serialization is
+    /// where the authority is lost. Counting <see cref="Grants"/> does not see it: the dropped grant is still
+    /// in the structural set, and <see cref="PolicyFor(string, string)"/> reports its actions as grantable
+    /// because it does not consult constraints at all.
+    /// <para>
+    /// `authorization_details: []` is the most dangerous value this type can produce.
+    /// <see cref="AuthorityEvaluator.FromPrincipal"/> reads zero claims as
+    /// <see cref="AuthoritySet.Unrestricted"/> — deliberately, so coarse scope-based tokens keep working —
+    /// and a JWT-to-ClaimsPrincipal conversion flattens an empty array to exactly zero claims. Omitting the
+    /// claim instead is no better for the same reason: the only safe response is to refuse to mint.
+    /// </para>
+    /// <para>
+    /// <see cref="AuthoritySet.Intersect"/> no longer produces such a set, but intersection is not the only
+    /// source. A ceiling whose actions are all <c>ask</c> becomes all-deny under
+    /// <c>MapAskPolicies(…, Deny)</c> in the unattended <c>client_credentials</c> path, and every all-deny
+    /// grant is dropped; a stored set can round-trip through <c>__nothing</c>. Those never touch a meet.
+    /// </para>
+    /// </remarks>
+    public static bool SerializesToNothing(AuthoritySet set)
+        => !set.IsUnrestricted && set.Grants.Count > 0 && ToNode(set).Count == 0;
+
     public static JsonArray ToNode(AuthoritySet set)
     {
         if (set.IsUnrestricted)

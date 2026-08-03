@@ -105,6 +105,24 @@ public sealed class AuthoritySet
                 : value;
         }
 
+        // A constraint that met to nothing permits nothing, exactly like two disjoint location sets — so the
+        // grant is dropped the same way, by clearing Actions for Intersect to filter on.
+        //
+        // Without this the never-widen invariant broke at the WIRE form rather than in the algebra, and the
+        // failure was total rather than partial. AuthorityJson.ToNode drops a grant whose constraint is
+        // Nothing or an empty StringSet (it must: emitting a positive grant carrying a non-standard denial
+        // marker reads as PERMITTED to any spec-conforming resource server). When that was the last grant the
+        // token was signed with `authorization_details: []` — and a JWT-to-ClaimsPrincipal conversion flattens
+        // an empty array to ZERO claims, which AuthorityEvaluator.FromPrincipal reads as UNRESTRICTED, because
+        // a token with no authority claim is a coarse scope-based token that the claim only ever narrows.
+        //
+        // So an intersection that granted strictly less minted a token that evaluated as strictly more: the
+        // narrowest possible request produced the broadest possible token. Reachable with one request, since
+        // ConstraintValue.Meet collapses disjoint string sets to an empty StringSet and ANY kind mismatch to
+        // Nothing — an agent naming `"recipient_domains": 5` against a ceiling that lists domains was enough.
+        var constraintsUnsatisfiable = constraints.Values.Any(v =>
+            v is ConstraintValue.NothingValue or ConstraintValue.StringSet { Values.Count: 0 });
+
         var policies = new Dictionary<string, ActionPolicy>(StringComparer.Ordinal);
         foreach (var action in actions)
         {
@@ -130,7 +148,7 @@ public sealed class AuthoritySet
         return new AuthorityGrant
         {
             Type = a.Type,
-            Actions = locationsDisjoint ? [] : actions,
+            Actions = locationsDisjoint || constraintsUnsatisfiable ? [] : actions,
             Locations = locations,
             Constraints = constraints.Count > 0 ? constraints : AuthorityGrant.EmptyConstraints,
             ActionPolicies = policies.Count > 0 ? policies : AuthorityGrant.EmptyPolicies,

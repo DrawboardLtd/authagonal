@@ -122,6 +122,40 @@
   cannot steer those requests and there is nothing for an address check to add. Email delivery (`Resend`)
   is likewise unguarded and unaffected: its target is a compile-time constant.
 
+### Security — an authority that permitted nothing minted a token that permitted everything
+
+- **`authorization_details: []` evaluated as UNRESTRICTED at every resource server (critical).** Five links,
+  each defensible alone:
+
+  1. `ConstraintValue.Meet` collapses two disjoint string sets to an empty `StringSet`, and *any* kind
+     mismatch to `Nothing`.
+  2. `AuthoritySet.MergeSameType` stored that met value and left `Actions` populated, so `Intersect` kept the
+     grant. It already dropped a grant with disjoint `locations`; the constraint case was missed.
+  3. Every emptiness guard on the mint path counted `Grants`, which still held that grant — and
+     `PolicyFor` reported its actions grantable, because it does not consult constraints at all.
+  4. `AuthorityJson.ToNode` then dropped the grant, correctly: emitting a positive grant carrying a
+     non-standard denial marker reads as *permitted* to any spec-conforming resource server. Dropping the last
+     grant leaves `[]`, and `!string.IsNullOrEmpty("[]")` is true, so the claim was written.
+  5. A JWT-to-ClaimsPrincipal conversion flattens an array claim into one claim per element, so an empty array
+     yields **zero** claims — and `AuthorityEvaluator.FromPrincipal` reads zero claims as `Unrestricted`,
+     deliberately, so that coarse scope-based tokens keep working.
+
+  So the narrowest possible grant produced the broadest possible token. Link 5 is not a bug and has not
+  changed; it is why `[]` must never be minted, and why omitting the claim instead would be no safer.
+
+  Reachable with one request — an agent naming `"max_amount": "unlimited"` against a ceiling that caps it
+  numerically was enough. The sharpest path needs no attacker input at all: in unattended
+  `client_credentials` mode `ask` degrades to deny, so an agent whose ceiling is *entirely* approval-gated —
+  the most careful configuration an admin can write — had every grant dropped and received an unrestricted
+  token from its own valid credentials. That path had no emptiness guard of any kind.
+
+  Fixed in three layers, each independently sufficient for the paths it covers: a constraint that meets to
+  nothing now drops the grant in `Intersect` exactly as disjoint locations do (restoring the never-widen
+  invariant for in-process consumers too); both mint paths ask `AuthorityJson.SerializesToNothing` — the
+  question put to the **wire form**, since serialization is where the authority is lost — and refuse with
+  `invalid_authorization_details` / `unauthorized_client`; and the single mint choke point throws rather than
+  sign an empty array, for the next caller that forgets.
+
 ### Fixed — the admin API was unreachable, and admin-secret rotation was a silent no-op
 
 - **Configuration may seed the administrative scope again.** Reserving `authagonal-admin` against *every*

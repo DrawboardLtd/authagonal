@@ -634,6 +634,110 @@ public sealed class AgentAuthorityResidualTests : IAsyncLifetime
         Assert.Contains("beneficiary", body.GetProperty("error_description").GetString());
     }
 
+    // -------------------------------------------------------------------------------------
+    // The empty wire form — an authority that permits NOTHING minted a token that permitted
+    // EVERYTHING. See EmptyAuthorityWireFormTests for the five links; these are the two HTTP
+    // paths that could reach it.
+    // -------------------------------------------------------------------------------------
+
+    /// <summary>
+    /// A kind mismatch on a granted member is refused, not minted as an empty array.
+    /// </summary>
+    /// <remarks>
+    /// The cheapest reachable trigger: <c>max_amount</c> IS in the ceiling, so the ungranted-member check
+    /// passes; <c>ConstraintValue.Meet</c> collapses Number ∧ StringSet to <c>Nothing</c>;
+    /// <c>PolicyFor</c> never consults constraints so the explicit-denial check reported the action grantable;
+    /// and <c>Grants.Count</c> still saw one grant. Serialization then dropped it, leaving <c>[]</c> — which
+    /// flattens to zero claims and reads as UNRESTRICTED. This returned 200 and an unrestricted token.
+    /// </remarks>
+    [Fact]
+    public async Task Exchange_WhoseConstraintMeetsToNothing_IsRefused_NotMintedAsAnEmptyArray()
+    {
+        var primary = await GetPrimaryAccessTokenAsync();
+        await GrantConsentAsync();
+
+        var response = await ExchangeAsync(primary,
+            """[{"type":"payments","actions":["initiate"],"max_amount":"unlimited"}]""");
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("invalid_authorization_details", body.GetProperty("error").GetString());
+        Assert.False(body.TryGetProperty("access_token", out _));
+    }
+
+    /// <summary>
+    /// An agent whose ceiling is entirely approval-gated gets no unattended token at all.
+    /// </summary>
+    /// <remarks>
+    /// The sharpest path, because it needs no attacker input: valid credentials and the most careful ceiling
+    /// an admin can write. <c>client_credentials</c> has no user to ask, so <c>MapAskPolicies(…, Deny)</c>
+    /// turns every action to deny, <c>ToNode</c> drops every all-denied grant, and this path had no emptiness
+    /// guard whatsoever — the agent received <c>authorization_details: []</c>, i.e. unrestricted.
+    /// </remarks>
+    [Fact]
+    public async Task ClientCredentials_WhenTheWholeCeilingIsAskGated_IsRefused()
+    {
+        await _factory.AgentProfileStore.UpsertAsync(new AgentProfile
+        {
+            ClientId = AgentClientId,
+            Mode = AgentMode.Both,
+            Ceiling = AuthoritySet.Of(new AuthorityGrant
+            {
+                Type = "payments",
+                Actions = ["initiate", "refund"],
+                ActionPolicies = new Dictionary<string, ActionPolicy>
+                {
+                    ["initiate"] = ActionPolicy.Ask,
+                    ["refund"] = ActionPolicy.Ask,
+                },
+            }),
+            MaxDelegationDepth = 0,
+            MaxTokenLifetimeSeconds = 300,
+        });
+
+        var response = await _client.PostAsync("/connect/token", new FormUrlEncodedContent(
+            new Dictionary<string, string>
+            {
+                ["grant_type"] = "client_credentials",
+                ["client_id"] = AgentClientId,
+                ["client_secret"] = AgentClientSecret,
+            }));
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("unauthorized_client", body.GetProperty("error").GetString());
+        Assert.False(body.TryGetProperty("access_token", out _));
+    }
+
+    /// <summary>
+    /// The control: a ceiling with one auto action still issues an unattended token, carrying only that
+    /// action.
+    /// </summary>
+    /// <remarks>
+    /// Without this, refusing every unattended mint would satisfy the assertion above and would disable
+    /// service-mode agents entirely.
+    /// </remarks>
+    [Fact]
+    public async Task ClientCredentials_WithAnAutoActionInTheCeiling_StillIssues()
+    {
+        var response = await _client.PostAsync("/connect/token", new FormUrlEncodedContent(
+            new Dictionary<string, string>
+            {
+                ["grant_type"] = "client_credentials",
+                ["client_id"] = AgentClientId,
+                ["client_secret"] = AgentClientSecret,
+            }));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+
+        // The ask-gated action is gone; the auto one remains. An EMPTY array here would be the defect.
+        var details = body.GetProperty("authorization_details");
+        var grant = Assert.Single(details.EnumerateArray().ToList());
+        Assert.Equal(["initiate"], grant.GetProperty("actions").EnumerateArray()
+            .Select(a => a.GetString()!).ToArray());
+    }
+
     [Fact]
     public async Task Exchange_RequestNarrowsAGrantedMember_StillSucceeds()
     {

@@ -194,6 +194,18 @@ public sealed class ProtocolTokenService(
         if (!string.IsNullOrEmpty(authorizationDetailsJson))
         {
             using var doc = JsonDocument.Parse(authorizationDetailsJson);
+
+            // The last line of defence, at the one point every mint passes through. An empty array must never
+            // be signed: it flattens to zero claims, and zero claims is how AuthorityEvaluator recognises a
+            // coarse scope-based token — so `[]` reads as UNRESTRICTED at every resource server, inverting the
+            // meaning of the narrowest possible grant. Omitting the claim would read the same way, so there is
+            // no safe token to issue here; the callers that can produce this refuse with a protocol error and
+            // this exists to catch the next caller that forgets.
+            if (doc.RootElement.ValueKind == JsonValueKind.Array && doc.RootElement.GetArrayLength() == 0)
+                throw new InvalidOperationException(
+                    "Refusing to mint a token with an empty authorization_details array: it evaluates as "
+                    + "unrestricted authority. Refuse the request instead — see AuthorityJson.SerializesToNothing.");
+
             claims[AuthorityClaims.AuthorizationDetails] = doc.RootElement.Clone();
         }
         if (!string.IsNullOrEmpty(actorJson))
@@ -929,7 +941,20 @@ public sealed class ProtocolTokenService(
                     $"Client '{clientId}' is registered as a delegated-only agent; client_credentials is not permitted");
 
             var authority = await ApplyHighRiskDefaultsAsync(profile.Ceiling, profile.HighRiskDefault, ct);
-            authorityJson = AuthorityJson.Serialize(MapAskPolicies(authority, ActionPolicy.Deny));
+            var unattended = MapAskPolicies(authority, ActionPolicy.Deny);
+
+            // Ask degrades to deny here because an unattended grant has no one to ask — so a ceiling whose
+            // actions are ALL ask (or whose high-risk default makes them so) permits nothing in this mode, and
+            // every grant is dropped on serialization. That minted `authorization_details: []`, which the
+            // resource side reads as UNRESTRICTED: the most tightly configured service agent got the
+            // broadest token, from valid credentials and no attacker input at all. This path had no emptiness
+            // guard of any kind.
+            if (AuthorityJson.SerializesToNothing(unattended))
+                throw new ProtocolTokenException("unauthorized_client",
+                    $"Agent '{clientId}' has no authority available unattended: every action in its ceiling "
+                    + "requires approval, and client_credentials has no user to ask");
+
+            authorityJson = AuthorityJson.Serialize(unattended);
             notAfter = DateTimeOffset.UtcNow.AddSeconds(profile.MaxTokenLifetimeSeconds);
             expiresIn = Math.Min(expiresIn, profile.MaxTokenLifetimeSeconds);
 
@@ -1438,6 +1463,16 @@ public sealed class ProtocolTokenService(
         }
 
         subject = subject with { SessionMaxExpiresAt = effectiveExpiry };
+
+        // Asked of the WIRE form, not the structural set. The Grants.Count checks above cannot see this: a
+        // grant whose constraint met to nothing is still IN the set and PolicyFor reports its actions
+        // grantable, but ToNode drops it — and `authorization_details: []` evaluates as UNRESTRICTED at the
+        // resource server. See AuthorityJson.SerializesToNothing.
+        if (effective is not null && AuthorityJson.SerializesToNothing(effective))
+            throw new ProtocolTokenException("invalid_authorization_details",
+                "the granted authority permits nothing once denied actions and unsatisfiable constraints are "
+                + "removed; no token can express it");
+
         var effectiveJson = effective is null ? null : AuthorityJson.Serialize(effective);
 
         if (agentProfile is not null)
