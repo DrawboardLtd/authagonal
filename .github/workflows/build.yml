@@ -1,0 +1,62 @@
+# The .NET gate: does the identity provider compile, and does its test suite pass.
+#
+# Nothing in this repository ran `dotnet test` before this file existed. The audit workflow covers npm
+# advisories and locale drift, and the release workflow's Trivy step covers the server image — so the
+# checks that existed were the ones around the .NET code, not on it. `publish-nuget` declared no
+# `needs:` at all, which means every package on nuget.org was published on the strength of `dotnet pack`
+# succeeding.
+#
+# What that leaves unenforced is the regression suite itself. Most of these tests exist because
+# something was broken once and someone wrote a test so it would stay fixed: a consumed MFA challenge
+# that could be spent six times, an `authorization_details: []` that evaluated as unrestricted, a
+# federated login that inherited a squatter's binding. A suite nobody runs before shipping records
+# history rather than enforcing it — and it can go red on master for weeks without anyone finding out,
+# at which point the fix is a bisect rather than a revert.
+#
+# Release gates on this via `workflow_call`. See release.yml.
+name: Build and test
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4.3.1
+        with:
+          dotnet-version: '10.0.x'
+
+      # The suite, and everything it references — which is every src/ project.
+      #
+      # Not `dotnet test Authagonal.slnx`: the solution carries demos/custom-server, which floats
+      # Authagonal.* at 0.* on purpose and therefore cannot restore in locked mode (Actions sets
+      # CI=true, which Directory.Build.props turns into RestoreLockedMode). Restoring it here would
+      # either fail on every run or force locked mode off for the whole solution, and the second option
+      # gives up the guarantee the lock files were committed for. The demos are sample code that
+      # ships nothing.
+      #
+      # Testcontainers brings up Azurite and DynamoDB Local, so this job needs the runner's Docker
+      # daemon — present on ubuntu-latest, and the reason the storage-provider tests are real
+      # integration tests rather than mocks. Azurite's conditional-delete semantics differ from
+      # Azure's in a way that has already invalidated one fix that looked correct against the SDK
+      # docs, so running them against the real emulator is load-bearing.
+      - name: Test
+        run: dotnet test tests/Authagonal.Tests/Authagonal.Tests.csproj -c Release --logger "console;verbosity=normal"
+
+      # The three operator-facing tools ship as their own artifacts and are not referenced by the test
+      # project, so nothing above would notice if one stopped compiling.
+      - name: Build tools
+        run: |
+          dotnet build tools/Authagonal.Migration.Cli/Authagonal.Migration.Cli.csproj -c Release
+          dotnet build tools/Authagonal.Backup/Authagonal.Backup.csproj -c Release
+          dotnet build tools/Authagonal.Restore/Authagonal.Restore.csproj -c Release

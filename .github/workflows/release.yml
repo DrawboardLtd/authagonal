@@ -24,7 +24,15 @@ jobs:
   audit:
     uses: ./.github/workflows/audit.yml
 
+  # The .NET gate. Nothing gated publishing on the test suite: `publish-nuget` below declared no
+  # `needs:` at all, so every package on nuget.org shipped on `dotnet pack` succeeding, and the npm
+  # jobs waited only on the frontend audit. The regression tests that pin each of this repository's
+  # security fixes could all have been red. See build.yml.
+  test:
+    uses: ./.github/workflows/build.yml
+
   publish-nuget:
+    needs: [audit, test]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
@@ -93,7 +101,7 @@ jobs:
           retention-days: 1
 
   publish-npm:
-    needs: audit
+    needs: [audit, test]
     runs-on: ubuntu-latest
     permissions:
       id-token: write
@@ -133,7 +141,7 @@ jobs:
           exit 1
 
   publish-npm-bff:
-    needs: audit
+    needs: [audit, test]
     runs-on: ubuntu-latest
     permissions:
       id-token: write
