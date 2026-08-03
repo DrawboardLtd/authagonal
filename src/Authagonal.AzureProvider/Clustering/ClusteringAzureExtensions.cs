@@ -45,6 +45,14 @@ public static class ClusteringAzureExtensions
         string eventTable = "clusterevents",
         TimeSpan? pollInterval = null)
     {
+        // Never-granting lease, so this really is bus-only.
+        //
+        // This left InProcessLeaseProvider in place, which unconditionally grants — so a node wired the
+        // way the summary above describes became leader on its first tick and every tick after, while a
+        // real cluster node held the distributed lease too. Two leaders is what leader election exists
+        // to prevent: the guarded work is signing-key generation and the expiry reaper.
+        builder.Services.Replace(ServiceDescriptor.Singleton<ILeaseProvider, NeverLeaseProvider>());
+
         AddTableBus(builder, tableServiceClient, eventTable, pollInterval);
         return builder;
     }

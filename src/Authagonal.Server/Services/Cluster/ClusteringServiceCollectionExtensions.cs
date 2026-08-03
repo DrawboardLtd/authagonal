@@ -52,8 +52,15 @@ public static class ClusteringServiceCollectionExtensions
         // Renews the lease and publishes leadership to LeaderElection. With the in-process lease this
         // node is always leader; with a real lease backend, exactly one node is. Skipped on nodes that
         // must never hold leadership (they keep the default IsLeader = false).
-        if (runLeaderElection)
+        // Both gates, because they come from different places: the parameter is for a host that composes
+        // clustering itself, and Cluster:RunLeaderElection is for one that goes through AddAuthagonal — which
+        // never exposed the parameter, so configuration was the only reachable switch and it did not exist.
+        if (runLeaderElection && options.RunLeaderElection)
             services.AddHostedService<Services.Cluster.LeaderElectionService>();
+        else
+            // Otherwise the always-granting in-process default would still be resolvable by anything that
+            // asks for a lease directly, and the intent here is "this node never leads".
+            services.Replace(ServiceDescriptor.Singleton<ILeaseProvider, NeverLeaseProvider>());
 
         var builder = new ClusteringBuilder(
             services,

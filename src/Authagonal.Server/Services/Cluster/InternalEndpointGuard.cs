@@ -33,13 +33,13 @@ public static class InternalEndpointGuard
     /// that runs ahead of <c>UseForwardedHeaders</c>. Absent means the middleware was not registered, which
     /// is treated as untrusted.
     /// </summary>
-    public const string RawPeerAddressItem = "Authagonal.RawPeerAddress";
+    public const string RawPeerAddressItem = Authagonal.Protocol.Services.SourceQuota.RawPeerAddressItem;
 
     /// <summary>
     /// <see cref="HttpContext.Items"/> key recording whether the operator DECLARED the proxy in front of
     /// this process (<c>ForwardedHeaders:KnownProxies</c> / <c>:KnownNetworks</c>). Absent means no.
     /// </summary>
-    public const string ProxyTrustDeclaredItem = "Authagonal.ProxyTrustDeclared";
+    public const string ProxyTrustDeclaredItem = Authagonal.Protocol.Services.SourceQuota.ProxyTrustDeclaredItem;
 
     /// <summary>
     /// The one key every per-source quota in this server is keyed on: the forwarded client IP when the
@@ -83,15 +83,14 @@ public static class InternalEndpointGuard
     /// at all. Sibling call sites of one fix, which is why there is now one function and no alternatives.
     /// </para>
     /// </remarks>
+    /// <remarks>
+    /// The implementation moved to <see cref="Authagonal.Protocol.Services.SourceQuota"/> so the
+    /// client-secret throttle in Authagonal.Protocol — which cannot reference this assembly — keys on the
+    /// same definition instead of growing a second copy. This stays as the name every Server call site
+    /// already uses, and there is still exactly one function.
+    /// </remarks>
     public static string SourceQuotaKey(HttpContext httpContext)
-    {
-        if (httpContext.Items.TryGetValue(ProxyTrustDeclaredItem, out var declared) && declared is true)
-            return httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
-
-        // Undeclared: fall back to the peer we actually observed. See the remarks — this is the shared
-        // bucket, and declaring the proxy is what resolves it.
-        return RawPeerAddress(httpContext)?.ToString() ?? "unknown";
-    }
+        => Authagonal.Protocol.Services.SourceQuota.Key(httpContext);
 
     /// <param name="allowLoopbackWithoutSecret">
     /// <see cref="ClusterOptions.AllowLoopbackWithoutSecret"/> — a development opt-in, off by default.
@@ -126,27 +125,7 @@ public static class InternalEndpointGuard
     /// present, so a spoofed header can never be mistaken for a real peer.
     /// </summary>
     public static IPAddress? RawPeerAddress(HttpContext httpContext)
-    {
-        // The PRESENCE of the key is what says the middleware ran, not the value. A server that reports
-        // no peer at all (TestServer, some in-memory transports) stashes null, and that null is the
-        // honest answer — falling through to Connection.RemoteIpAddress there would return the value
-        // UseForwardedHeaders had just written from the client's own header.
-        if (httpContext.Items.TryGetValue(RawPeerAddressItem, out var stashed))
-            return stashed as IPAddress;
-
-        // Not stashed. If the request carries a forwarded header we cannot tell whether
-        // RemoteIpAddress is genuine or rewritten, so refuse to guess.
-        //
-        // Note this test is weaker than it looks: ForwardedHeadersMiddleware CONSUMES the header it
-        // honours, so by the time an endpoint runs there may be none left to find. It catches the case
-        // where the header was never trusted (and so survives) and nothing more — which is why the
-        // stash above, taken ahead of that middleware, is the mechanism and this is only the backstop.
-        if (httpContext.Request.Headers.ContainsKey("X-Forwarded-For")
-            || httpContext.Request.Headers.ContainsKey("Forwarded"))
-            return null;
-
-        return httpContext.Connection.RemoteIpAddress;
-    }
+        => Authagonal.Protocol.Services.SourceQuota.RawPeerAddress(httpContext);
 
     /// <summary>
     /// Middleware that records the raw peer address, and whether the operator declared the proxy whose

@@ -31,7 +31,10 @@ public sealed class LeaderElectionService(
         // taken a node out of the cluster still had it participating.
         if (!options.Value.Enabled)
         {
-            election.Update(true, Timeout.InfiniteTimeSpan);
+            // NOT Update(true, Timeout.InfiniteTimeSpan): that value is a negative TimeSpan, so the
+            // deadline landed in the past and this node was never leader — while this log line claimed
+            // the opposite. See LeaderElection.MarkPermanentLeader.
+            election.MarkPermanentLeader();
             logger.LogInformation("Cluster:Enabled is false — running standalone as permanent leader.");
             return;
         }
@@ -60,9 +63,13 @@ public sealed class LeaderElectionService(
         {
             try
             {
+                // Stamped BEFORE the call. The backend's lease starts when the backend grants it, so
+                // dating the deadline from the response overshoots the real expiry by the round-trip
+                // time — and a stalled lease-store call is exactly what the local deadline is for.
+                var requestedAt = DateTimeOffset.UtcNow;
                 var held = await leaseProvider.TryAcquireOrRenewAsync(LeaderResource, node.NodeId, ttl, stoppingToken)
                     .ConfigureAwait(false);
-                election.Update(held, ttl);
+                election.Update(held, requestedAt, ttl);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {

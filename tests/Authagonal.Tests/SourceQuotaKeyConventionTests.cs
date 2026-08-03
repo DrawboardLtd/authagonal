@@ -65,8 +65,12 @@ public sealed class SourceQuotaKeyConventionTests
             if (Allowed.ContainsKey(relative)) continue;
 
             // The guard itself is where both values legitimately come from — it is the implementation of
-            // the rule, not a violation of it.
-            if (relative.EndsWith("Services/Cluster/InternalEndpointGuard.cs", StringComparison.Ordinal))
+            // the rule, not a violation of it. Two files now: the implementation moved to
+            // Authagonal.Protocol so the client-secret throttle could key on the same definition (Protocol
+            // cannot reference the Server assembly), and InternalEndpointGuard delegates to it. Still one
+            // function; the exclusion list is where that shows up.
+            if (relative.EndsWith("Services/Cluster/InternalEndpointGuard.cs", StringComparison.Ordinal)
+                || relative.EndsWith("Authagonal.Protocol/Services/SourceQuota.cs", StringComparison.Ordinal))
                 continue;
 
             var lines = File.ReadAllLines(file);

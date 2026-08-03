@@ -212,15 +212,33 @@ internal static class ClientAuthentication
             if (string.IsNullOrWhiteSpace(clientSecret))
                 return (null, error("invalid_client", "client_secret is required"));
 
-            // Bound the guesses BEFORE spending the hash. Verification runs a ~100k-iteration PBKDF2 per
-            // attempt on an endpoint reachable without any credential, so unthrottled it is both an
-            // unbounded offline-strength-per-request guessing oracle against the client secret and a CPU
-            // amplifier: one request per core saturates the host. Keyed per client so one client's traffic
-            // cannot lock out another's, and resolved through the DI seam so a host with a distributed
-            // limiter gets a cluster-wide bound.
+            // Keyed per (client, SOURCE), because keying it on the client alone made it a lockout.
+            //
+            // Verification runs a ~100k-iteration PBKDF2 per attempt on an endpoint reachable without any
+            // credential, so unthrottled it is a CPU amplifier — one request per core saturates the host —
+            // which is why the check is here, ahead of the hash.
+            //
+            // The bucket used to be `client-secret|{clientId}` and it counted EVERY request, correct secret
+            // or not. `client_id` is a public identifier, readable from any SPA's network traffic, and the
+            // budget is shared by every endpoint that authenticates through this path: /connect/token (all
+            // five grants), /connect/par, /connect/introspect, /connect/revocation,
+            // /connect/deviceauthorization. So thirty anonymous requests a minute naming a client took that
+            // client's entire token issuance offline, and the client's own legitimate traffic spent the very
+            // budget it was being denied. The comment here claimed the per-client keying meant "one client's
+            // traffic cannot lock out another's" — true, and beside the point: it was one SOURCE locking out
+            // one client.
+            //
+            // A hostile source can now only exhaust its own budget. What that gives up is a single global
+            // cap: an attacker with N addresses gets 30N attempts a minute. That is the right trade and not
+            // merely the convenient one — a client secret is server-generated high-entropy material, so
+            // online guessing was never the threat model here (offline, given the hash, is what the PBKDF2
+            // cost bound and the iteration ceiling address), whereas the CPU amplification IS bounded by
+            // this, per source, which is where the work is actually spent. A client-wide failure cap on top
+            // would reintroduce the lockout it exists to prevent, one order of magnitude further out.
             var limiter = httpContext.RequestServices.GetService<IRateLimiter>();
-            if (limiter is not null &&
-                await limiter.IsRateLimitedAsync($"client-secret|{client.ClientId}", 30, TimeSpan.FromMinutes(1), ct))
+            if (limiter is not null && await limiter.IsRateLimitedAsync(
+                    $"client-secret|{client.ClientId}|{SourceQuota.Key(httpContext)}",
+                    30, TimeSpan.FromMinutes(1), ct))
                 return (null, error("invalid_client", "Too many authentication attempts"));
 
             if (!await secretVerifier.VerifyAsync(client, clientSecret, ct))

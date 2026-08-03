@@ -45,6 +45,18 @@ public sealed class ClusterOptions
     /// <summary>Leadership lease duration in seconds. Renewed at roughly half this interval.</summary>
     public int LeaseTtlSeconds { get; set; } = 30;
 
+    /// <summary>
+    /// Whether this node runs the lease-renewal loop and can therefore become leader. Default true.
+    /// </summary>
+    /// <remarks>
+    /// The equivalent existed only as a parameter on <c>AddAuthagonalClustering</c>, and
+    /// <c>AddAuthagonal</c> — the way every documented deployment wires this up — called it without
+    /// exposing the parameter. So a node that "must receive cluster events but must never hold leadership"
+    /// could not actually be excluded through configuration. Distinct from <see cref="Enabled"/>: false here
+    /// still joins the cluster and consumes the event bus, it just never contends for the lease.
+    /// </remarks>
+    public bool RunLeaderElection { get; set; } = true;
+
     /// <summary>How often (seconds) the event-bus backend polls for messages published by other nodes.</summary>
     public int PollIntervalSeconds { get; set; } = 3;
 }
