@@ -1,3 +1,4 @@
+using System.Security.Claims;
 using System.Security.Cryptography;
 using Authagonal.Core.Models;
 using Authagonal.Core.Services;
@@ -37,7 +38,11 @@ public static class FederatedMfaFlow
         IEnumerable<IAuthHook> authHooks,
         AuthOptions authOptions,
         ILogger logger,
-        CancellationToken ct)
+        CancellationToken ct,
+        IGrantStore? grantStore = null,
+        IEnumerable<Claim>? federationClaims = null,
+        DateTimeOffset? cookieExpires = null,
+        string? sessionId = null)
     {
         // The client (and thus its MfaPolicy) rides in the /authorize URL preserved as returnUrl.
         var clientId = AuthEndpoints.ExtractClientIdFromReturnUrl(returnUrl);
@@ -90,6 +95,32 @@ public static class FederatedMfaFlow
             }
 
             await mfaStore.StoreChallengeAsync(challenge, ct);
+
+            // Park the federation bindings against this challenge, so /api/auth/mfa/verify establishes the
+            // SAME session this callback would have. Without it the verify path minted a bare cookie and every
+            // binding was lost — including saml_name_id, which is how single logout finds a session, so
+            // enabling MFA on a federated tenant quietly disabled SLO for its enrolled users. See
+            // PendingFederatedSession.
+            //
+            // Best effort: this login has already authenticated upstream, and failing it here would be a worse
+            // outcome than the (previous) degraded session.
+            if (grantStore is not null && federationClaims is not null)
+            {
+                try
+                {
+                    await PendingFederatedSession.StoreAsync(
+                        grantStore, challenge.ChallengeId, user.Id, clientId,
+                        federationClaims, cookieExpires, challenge.ExpiresAt, ct, sessionId);
+                }
+                catch (Exception ex)
+                {
+                    logger.LogError(ex,
+                        "Could not park the federation state for user {UserId}; the session established after "
+                        + "MFA will lack its federation bindings (SLO subject, IdP session bound, upstream token)",
+                        user.Id);
+                }
+            }
+
             logger.LogInformation("Federated login for user {UserId} requires MFA — redirecting to challenge", user.Id);
 
             var query = new QueryString()
@@ -118,6 +149,24 @@ public static class FederatedMfaFlow
                 ExpiresAt = DateTimeOffset.UtcNow.AddMinutes(authOptions.MfaSetupTokenExpiryMinutes),
             };
             await mfaStore.StoreChallengeAsync(setupChallenge, ct);
+
+            // Same parking for the enrolment branch: it also ends in a session established away from this
+            // callback, so the same bindings would otherwise be lost.
+            if (grantStore is not null && federationClaims is not null)
+            {
+                try
+                {
+                    await PendingFederatedSession.StoreAsync(
+                        grantStore, setupChallenge.ChallengeId, user.Id, clientId,
+                        federationClaims, cookieExpires, setupChallenge.ExpiresAt, ct, sessionId);
+                }
+                catch (Exception ex)
+                {
+                    logger.LogError(ex,
+                        "Could not park the federation state for user {UserId} during MFA enrolment", user.Id);
+                }
+            }
+
             logger.LogInformation("Federated login for user {UserId} requires MFA enrolment — redirecting to setup", user.Id);
 
             var query = new QueryString().Add("setupToken", setupChallenge.ChallengeId);

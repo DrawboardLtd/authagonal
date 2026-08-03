@@ -36,6 +36,7 @@ public static class MfaEndpoints
         WebAuthnService webAuthnService,
         IEnumerable<IAuthHook> authHooks,
         IRateLimiter rateLimiter,
+        IGrantStore grantStore,
         Microsoft.Extensions.Options.IOptions<AuthOptions> authOptions,
         ILogger<Program> logger,
         CancellationToken ct)
@@ -327,8 +328,18 @@ public static class MfaEndpoints
         // rejects the login prevents the cookie from being issued (not a 500 after it's already set).
         await authHooks.RunOnUserAuthenticatedAsync(user.Id, user.Email, "password", challenge.ClientId, ct);
 
+        // A federated login parked its bindings against this challenge; a password login parked nothing and
+        // this is null, so that path is unchanged. Without this the verify path minted a bare cookie and threw
+        // away saml_name_id (so single logout could no longer find the session), the IdP's session bound, the
+        // upstream refresh token's sid and the federated:* claims — for exactly the users who had MFA enrolled.
+        // See PendingFederatedSession.
+        var parked = await PendingFederatedSession.ConsumeAsync(grantStore, challenge.ChallengeId, user.Id, ct);
+
         // MFA verified and not rejected — sign cookie with the MFA marker.
-        await CookieSignInHelper.SignInAsync(httpContext, user, mfaAuthenticated: true);
+        await CookieSignInHelper.SignInAsync(
+            httpContext, user, mfaAuthenticated: true,
+            extraClaims: parked?.ToClaims(), cookieExpiresUtc: parked?.CookieExpires,
+            sessionId: parked?.SessionId);
 
         var name = CookieSignInHelper.GetDisplayName(user);
         logger.LogInformation("User {UserId} ({Email}) signed in via MFA ({Method})", user.Id, user.Email, request.Method);

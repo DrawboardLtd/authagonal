@@ -110,6 +110,7 @@ public static class SamlEndpoints
         ISamlProviderStore samlStore,
         IUserStore userStore,
         IClientStore clientStore,
+        IGrantStore grantStore,
         IMfaStore mfaStore,
         WebAuthnService webAuthnService,
         IEnumerable<IAuthHook> authHooks,
@@ -596,11 +597,31 @@ public static class SamlEndpoints
         // bare SAML login silently satisfies a tenant's MFA requirement. relayState carries them onward.
         // Per-connection override: the tenant may trust the IdP's own MFA as the second factor,
         // in which case the local challenge is skipped and federation signs in mfa-authenticated.
+        // Built HERE, above the MFA decision, so the challenge branch can park exactly what the fall-through
+        // branch would have signed. These used to be assembled only below this point, so parking on an MFA
+        // challenge discarded all of them — see PendingFederatedSession.
+        var federationClaims = new List<Claim>
+        {
+            // F55: remember the SAML session so /saml/{id}/logout can build a LogoutRequest (NameID +
+            // SessionIndex) and IdP-initiated SLO can be matched to this browser's session.
+            new("saml_connection", connectionId),
+            new("saml_name_id", parseResult.NameId!),
+        };
+        if (!string.IsNullOrEmpty(parseResult.NameIdFormat))
+            federationClaims.Add(new Claim("saml_name_id_format", parseResult.NameIdFormat));
+        if (!string.IsNullOrEmpty(parseResult.SessionIndex))
+            federationClaims.Add(new Claim("saml_session_index", parseResult.SessionIndex));
+        // The IdP's own session bound, carried onto the cookie as session_max_exp — the claim the subject
+        // resolver reads, which clamps every access, id and refresh token issued from this session.
+        if (parseResult.SessionNotOnOrAfter is { } idpSessionBound)
+            federationClaims.Add(new Claim("session_max_exp", idpSessionBound.ToUnixTimeSeconds().ToString()));
+
         var loginAppBase = configuration["LoginAppUrl"] ?? "/login";
         if (config.ChallengeMfaAfterLogin)
         {
             var mfaRedirect = await FederatedMfaFlow.MaybeChallengeAsync(
-                user, relayState, loginAppBase, clientStore, mfaStore, webAuthnService, authHooks, authOptions.Value, logger, ct);
+                user, relayState, loginAppBase, clientStore, mfaStore, webAuthnService, authHooks, authOptions.Value, logger, ct,
+                grantStore, federationClaims, parseResult.SessionNotOnOrAfter);
             if (mfaRedirect is not null)
                 return mfaRedirect;
         }
@@ -622,24 +643,10 @@ public static class SamlEndpoints
         if (!string.IsNullOrWhiteSpace(user.OrganizationId))
             claims.Add(new Claim("org_id", user.OrganizationId));
 
-        // F55: remember the SAML session so /saml/{id}/logout can build a LogoutRequest (NameID +
-        // SessionIndex) and IdP-initiated SLO can be matched to this browser's session.
-        claims.Add(new Claim("saml_connection", connectionId));
-        claims.Add(new Claim("saml_name_id", parseResult.NameId!));
-        if (!string.IsNullOrEmpty(parseResult.NameIdFormat))
-            claims.Add(new Claim("saml_name_id_format", parseResult.NameIdFormat));
-        if (!string.IsNullOrEmpty(parseResult.SessionIndex))
-            claims.Add(new Claim("saml_session_index", parseResult.SessionIndex));
+        // The same list the MFA branch parks — assembled once, above.
+        claims.AddRange(federationClaims);
 
         claims.Add(new Claim(CookieSignInHelper.AuthTimeClaim, DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString()));
-
-        // The IdP's own session bound, carried onto the cookie as session_max_exp — the same claim the
-        // OIDC federation path uses, which the subject resolver already reads and which clamps every
-        // access, id and refresh token issued from this session. Without it the local session outlived
-        // the authentication behind it: an IdP asserting an eight-hour session was overruled by the
-        // local cookie lifetime, which is the opposite of what federating to it means.
-        if (parseResult.SessionNotOnOrAfter is { } idpSessionBound)
-            claims.Add(new Claim("session_max_exp", idpSessionBound.ToUnixTimeSeconds().ToString()));
 
         var identity = new ClaimsIdentity(claims, CookieAuthenticationDefaults.AuthenticationScheme);
         var principal = new ClaimsPrincipal(identity);

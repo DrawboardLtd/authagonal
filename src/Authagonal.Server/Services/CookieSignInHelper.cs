@@ -49,7 +49,20 @@ public static class CookieSignInHelper
             properties.SetString(SessionStartedProperty, DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString());
     }
 
-    public static async Task SignInAsync(HttpContext httpContext, AuthUser user, bool mfaAuthenticated = false)
+    /// <param name="extraClaims">
+    /// Claims to merge onto the session — the federation bindings of a login that was parked on an MFA
+    /// challenge. See <see cref="PendingFederatedSession"/> for what was lost without them.
+    /// </param>
+    /// <param name="cookieExpiresUtc">
+    /// An upstream IdP's stated session bound, so the local cookie cannot outlive the authentication behind it.
+    /// </param>
+    public static async Task SignInAsync(
+        HttpContext httpContext,
+        AuthUser user,
+        bool mfaAuthenticated = false,
+        IEnumerable<Claim>? extraClaims = null,
+        DateTimeOffset? cookieExpiresUtc = null,
+        string? sessionId = null)
     {
         var name = $"{user.FirstName} {user.LastName}".Trim();
         var claims = new List<Claim>
@@ -59,7 +72,9 @@ public static class CookieSignInHelper
             new(ClaimTypes.Email, user.Email),
             new(ClaimTypes.Name, string.IsNullOrWhiteSpace(name) ? user.Email : name),
             new("security_stamp", user.SecurityStamp ?? ""),
-            new("sid", Guid.NewGuid().ToString("N")),
+            // The callback's sid when a federated login parked one: the upstream refresh token is stored under
+            // a per-(user, connection, sid) key at callback time, so minting a fresh one here orphaned it.
+            new("sid", sessionId ?? Guid.NewGuid().ToString("N")),
             new(AuthTimeClaim, DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString())
         };
 
@@ -69,11 +84,30 @@ public static class CookieSignInHelper
         if (!string.IsNullOrWhiteSpace(user.OrganizationId))
             claims.Add(new Claim("org_id", user.OrganizationId));
 
+        // Merged, not overwritten, and only for types this helper did not already mint — so a parked
+        // `sid`/`sub` cannot displace the ones above, while `saml_name_id`, `session_max_exp`,
+        // `upstream_refresh_token` and the `federated:*` passthrough all land.
+        if (extraClaims is not null)
+        {
+            var minted = new HashSet<string>(claims.Select(c => c.Type), StringComparer.Ordinal);
+            foreach (var extra in extraClaims)
+                if (!minted.Contains(extra.Type))
+                    claims.Add(extra);
+        }
+
         var identity = new ClaimsIdentity(claims, CookieAuthenticationDefaults.AuthenticationScheme);
         var principal = new ClaimsPrincipal(identity);
 
         var properties = new AuthenticationProperties();
         MarkSessionStart(properties);
+
+        // The IdP's bound, when it stated one. Without this a federated user with MFA got a session that
+        // outlived the authentication behind it.
+        if (cookieExpiresUtc is { } bound && bound < DateTimeOffset.UtcNow.AddDays(30))
+        {
+            properties.ExpiresUtc = bound;
+            properties.IsPersistent = true;
+        }
 
         await httpContext.SignInAsync(CookieAuthenticationDefaults.AuthenticationScheme, principal, properties);
     }

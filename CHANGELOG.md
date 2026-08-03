@@ -122,6 +122,41 @@
   cannot steer those requests and there is nothing for an address check to add. Email delivery (`Resend`)
   is likewise unguarded and unaffected: its target is a compile-time constant.
 
+### Security — MFA after a federated login threw away every federation binding
+
+- **Enabling MFA on a federated tenant quietly disabled single logout for its enrolled users (high).**
+  When a federated user has MFA enrolled, `FederatedMfaFlow.MaybeChallengeAsync` returns a redirect — so the
+  SAML/OIDC callback returns **before** it builds its sign-in principal. Every federation binding was added only
+  on the fall-through path below that point: `saml_connection`, `saml_name_id`, `saml_name_id_format`,
+  `saml_session_index`, `session_max_exp` (from SAML `SessionNotOnOrAfter` or the OIDC session claim), the
+  IdP-bounded cookie `ExpiresUtc`, the upstream refresh token with its `IUpstreamRefreshTokenStore` seeding, and
+  the `federated:*` claim passthrough.
+
+  The session was then established instead by `/api/auth/mfa/verify`, which signs in through
+  `CookieSignInHelper.SignInAsync` — a helper that mints only `sub`, `email`, `name`, `security_stamp`, a
+  **fresh** `sid`, `auth_time`, `org_id` and `mfa_authenticated`. So for exactly the federated users who had a
+  second factor:
+
+  - **Single logout stopped working.** SLO matches a session by `saml_name_id`, which was gone, so an
+    IdP-initiated logout could not find the session to end. Turning on MFA turned off SLO.
+  - **The IdP's session bound was discarded**, so the local session outlived the authentication behind it —
+    the opposite of what federating to an IdP means.
+  - **The upstream refresh token was stranded**, seeded under the callback's `sid` while the cookie carried a new
+    one, so nothing would ever look it up again.
+  - **`federated:*` claims vanished** from every token issued to those users.
+
+  Both callbacks now settle the `sid` and assemble the federation claims **above** the MFA decision, and park
+  them against the challenge as a short-lived `PendingFederatedSession`; `/api/auth/mfa/verify` consumes that and
+  signs in with the claims merged, the parked `sid` reused and the IdP's cookie bound applied. Parked state is
+  bound to its subject, single-use, and expires with the challenge; the merge is additive only for claim types
+  the helper does not mint itself, so parked state cannot displace `sub` or `mfa_authenticated`.
+
+  Stored as a grant rather than as new columns on `MfaChallenge`: that model is mapped by four storage providers
+  and the Azure one env-prefixes its `ChallengeId`, which is a lot of surface for state wanted for two minutes.
+  A password login parks nothing and that path is unchanged.
+
+  Nothing in the suite exercised the federated-MFA path, which is why this shipped.
+
 ### Security — the two sign-out paths disagreed about what "logged out" means
 
 - **`POST /api/auth/logout` notified no relying party and revoked no grant (high).** Its entire body was an

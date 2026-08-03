@@ -157,6 +157,7 @@ public static class OidcEndpoints
         IOidcProviderStore oidcStore,
         IUserStore userStore,
         IClientStore clientStore,
+        IGrantStore grantStore,
         IMfaStore mfaStore,
         WebAuthnService webAuthnService,
         IEnumerable<IAuthHook> authHooks,
@@ -623,42 +624,24 @@ public static class OidcEndpoints
         // tenant's MFA requirement. When MFA is neither enrolled nor required, federation stands alone.
         // Per-connection override: the tenant may trust the IdP's own MFA as the second factor,
         // in which case the local challenge is skipped and federation signs in mfa-authenticated.
-        var loginAppBase = configuration["LoginAppUrl"] ?? "/login";
-        if (config.ChallengeMfaAfterLogin)
-        {
-            var mfaRedirect = await FederatedMfaFlow.MaybeChallengeAsync(
-                user, returnUrl, loginAppBase, clientStore, mfaStore, webAuthnService, authHooks, authOptions.Value, logger, ct);
-            if (mfaRedirect is not null)
-                return mfaRedirect;
-        }
-
-        // Sign in with cookie auth
-        var displayName = $"{user.FirstName} {user.LastName}".Trim();
+        // The sid and every federation binding are settled HERE, above the MFA decision, because the MFA
+        // branch returns a redirect and the session is then established by /api/auth/mfa/verify. They used to
+        // be built below this point, so parking on a challenge discarded all of them — and the sid in
+        // particular, which the upstream refresh token is stored under. See PendingFederatedSession.
         var sessionId = Guid.NewGuid().ToString("N");
-        var claims = new List<Claim>
-        {
-            new(ClaimTypes.NameIdentifier, user.Id),
-            new("sub", user.Id),
-            new(ClaimTypes.Email, user.Email),
-            new(ClaimTypes.Name, string.IsNullOrWhiteSpace(displayName) ? user.Email : displayName),
-            new("security_stamp", user.SecurityStamp ?? ""),
-            new("sid", sessionId),
-            // Federation satisfies the local MFA requirement — the upstream IdP owns authentication.
-            new(CookieSignInHelper.MfaAuthenticatedClaim, "true")
-        };
-
-        if (!string.IsNullOrWhiteSpace(user.OrganizationId))
-            claims.Add(new Claim("org_id", user.OrganizationId));
+        var federationClaims = new List<Claim>();
 
         // If the connection configures a session-cap claim, carry the upstream value through as
         // "session_max_exp" (Unix seconds). AuthorizeEndpoint reads this and persists it onto
         // the auth code so refresh tokens cannot outlive the federated session.
+        DateTimeOffset? idpSessionBound = null;
         if (!string.IsNullOrWhiteSpace(config.SessionExpClaim))
         {
             var sessionExp = ReadUnixSecondsClaim(validationResult.Claims, config.SessionExpClaim);
             if (sessionExp is { } exp)
             {
-                claims.Add(new Claim("session_max_exp", exp.ToString()));
+                federationClaims.Add(new Claim("session_max_exp", exp.ToString()));
+                idpSessionBound = DateTimeOffset.FromUnixTimeSeconds(exp);
             }
             else
             {
@@ -676,13 +659,16 @@ public static class OidcEndpoints
         // encrypted + httpOnly. Only when the connection opts in AND the upstream actually issued one.
         if (config.RevalidateOnRefresh && !string.IsNullOrEmpty(upstreamRefreshToken))
         {
-            claims.Add(new Claim("upstream_refresh_token", upstreamRefreshToken));
-            claims.Add(new Claim("upstream_connection_id", stateData.ConnectionId));
+            federationClaims.Add(new Claim("upstream_refresh_token", upstreamRefreshToken));
+            federationClaims.Add(new Claim("upstream_connection_id", stateData.ConnectionId));
 
             // Seed the durable per-(user, connection, sid) store — the authoritative rotating copy every RP
             // grant reads and rotates, instead of each grant pinning this login-time cookie copy (which dies
             // once the upstream one-time-rotates it). No store registered (host without an Azure/AWS provider)
             // → the cookie copy is the fallback. Bounded by the absolute 7-day session cap.
+            //
+            // Seeded under the sid settled above, which the MFA sign-in now reuses — it used to mint a fresh
+            // one, leaving this record unreachable for every federated user who had MFA.
             var upstreamTokenStore = httpContext.RequestServices.GetService<IUpstreamRefreshTokenStore>();
             if (upstreamTokenStore is not null)
                 await upstreamTokenStore.SetAsync(user.Id, stateData.ConnectionId, sessionId, upstreamRefreshToken,
@@ -701,8 +687,38 @@ public static class OidcEndpoints
             var stringValue = ConvertClaimValueToString(claimValue);
             if (stringValue is null)
                 continue;
-            claims.Add(new Claim($"federated:{claimName}", stringValue));
+            federationClaims.Add(new Claim($"federated:{claimName}", stringValue));
         }
+
+        var loginAppBase = configuration["LoginAppUrl"] ?? "/login";
+        if (config.ChallengeMfaAfterLogin)
+        {
+            var mfaRedirect = await FederatedMfaFlow.MaybeChallengeAsync(
+                user, returnUrl, loginAppBase, clientStore, mfaStore, webAuthnService, authHooks, authOptions.Value, logger, ct,
+                grantStore, federationClaims, idpSessionBound, sessionId);
+            if (mfaRedirect is not null)
+                return mfaRedirect;
+        }
+
+        // Sign in with cookie auth
+        var displayName = $"{user.FirstName} {user.LastName}".Trim();
+        var claims = new List<Claim>
+        {
+            new(ClaimTypes.NameIdentifier, user.Id),
+            new("sub", user.Id),
+            new(ClaimTypes.Email, user.Email),
+            new(ClaimTypes.Name, string.IsNullOrWhiteSpace(displayName) ? user.Email : displayName),
+            new("security_stamp", user.SecurityStamp ?? ""),
+            new("sid", sessionId),
+            // Federation satisfies the local MFA requirement — the upstream IdP owns authentication.
+            new(CookieSignInHelper.MfaAuthenticatedClaim, "true")
+        };
+
+        if (!string.IsNullOrWhiteSpace(user.OrganizationId))
+            claims.Add(new Claim("org_id", user.OrganizationId));
+
+        // The same list the MFA branch parks — assembled once, above.
+        claims.AddRange(federationClaims);
 
         claims.Add(new Claim(CookieSignInHelper.AuthTimeClaim, DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString()));
 
