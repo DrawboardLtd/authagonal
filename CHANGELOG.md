@@ -1,8 +1,76 @@
 # Changelog
 
-## [Unreleased]
+## [0.22.0], 2026-08-04
 
 ### Breaking
+
+- **IdP-initiated SAML sign-in is refused unless a connection opts in.**
+  `SamlProviderConfig.AllowUnsolicitedResponses` defaults to **false**, and stored rows written before this
+  release read false — so a connection that relies on the user clicking your app's tile in their Okta / Entra /
+  ADFS dashboard stops working until it is turned on, per connection, via
+  `PUT /api/v1/saml/connections/{id}` or the `SamlProviders:*` seed.
+
+  A user who starts at your app and is redirected out to the IdP and back is unaffected. Only the tile breaks.
+
+  Why it cannot stay on by default: an unsolicited response carries no `InResponseTo`, so there is no pending
+  request and no browser to tie it to. Every §4.1.4.3 rule is satisfied by an assertion the attacker obtained
+  legitimately for their OWN account at the same IdP — issuer, destination, recipient, audience, signature,
+  first-sighting of the assertion id all pass — so anyone with an account at that IdP could establish *their*
+  session in *your* user's browser. This release also binds the SP-initiated path to the initiating browser
+  with a `saml_request` cookie, and that binding is worth nothing while the same assertion replays with
+  `InResponseTo` removed. The two halves only work together.
+
+  Most IdPs can point the tile at the SP's login URL instead of firing an unsolicited assertion — Okta's
+  "Login initiated: App Only" with a login URL, Entra's "sign-on URL" — which keeps the tile working and makes
+  the flow SP-initiated. That is the recommended configuration regardless. A refused response logs
+  `saml_unsolicited` naming the connection, so an upgrade tells you which connections are affected rather than
+  leaving you to find out from a ticket.
+
+- **`SamlRedirectBinding.Verify` takes the expected message parameter.**
+  `Verify(rawQuery, "SAMLRequest" | "SAMLResponse", certs)`. Source-breaking for a caller outside this
+  package. It used to choose for itself with `Find("SAMLRequest") ?? Find("SAMLResponse")`, so a caller that
+  had decoded `SAMLResponse` got a signature verified over an appended, unrelated `SAMLRequest` — an attacker
+  kept a captured, correctly-signed request triple intact and simply appended a forged response. It now also
+  refuses a query carrying both messages (Bindings §3.4.4.1 permits exactly one) or a duplicate of the
+  message, `SigAlg`, `Signature` or `RelayState`.
+
+- **`IGrantStore` gains `TryUpdateDataIfUnconsumedAsync`.** Source-breaking for an external implementer; every
+  bundled backend (Azure Table, SQL, DynamoDB) implements it, so a deployment using one of those is
+  unaffected.
+
+  It replaces a grant's `Data` **only while the grant still exists and is un-consumed**, and returns `false` on
+  a lost race. The refresh grace window used `StoreAsync` — an unconditional full-row upsert — to append the
+  access-token jti it had just minted; the instance written carries `ConsumedAt = null`, and on DynamoDB and
+  SQL it also dropped the top-level `consumedAt` guard attribute that `TryMarkConsumedAsync` conditions on. A
+  consume or delete landing between the read and the write was silently undone: a revoked grant came back and
+  replay detection stopped seeing its marker. Implement with your backend's conditional-write primitive and
+  return `false` rather than retrying; it must never insert.
+
+- **Restore no longer applies a `SigningKeys` file unless asked.** `RestoreOptions.IncludeSigningKeys`
+  defaults to false, mirroring `BackupOptions.IncludeSigningKeys`, and `RestoreResult.SkippedSigningKeys`
+  reports when a file was skipped. Restore also refuses any archive naming a table outside
+  `BackupDefaults.Tables` instead of creating it. A restore that was relying on the archive to bring signing
+  keys back must now pass the flag.
+
+- **A BFF exchange route with an unrecognised constraint fails at startup.**
+  `AuthagonalBffOptions.Validate` throws, and the matcher throws as a backstop. Previously an unknown
+  constraint made the route never match, and a non-matching exchange route makes `ProxyAsync` attach the
+  session's **primary, un-downscoped** access token — so a typo silently removed the downscoping. Supported
+  constraints are `BffExchangeRoute.SupportedConstraints`.
+
+- **`GrantReconciliationService` takes an `EnvPartitioner`.** Source-breaking only for a host constructing it
+  by hand. It rebuilt the keys `TableGrantStore` writes without one, so under any non-live env prefix every
+  subject-bearing grant looked orphaned and was deleted; the sweep is also bounded to its own env's partitions
+  now.
+
+- **Access tokens carry the scope-released OIDC §5.4 claims.** `email`, `email_verified`, `given_name`,
+  `family_name`, `name`, `locale`, `phone_number` and `org_id`, under the same scope gates the id_token uses —
+  because `Authagonal.Protocol`'s `/connect/userinfo` answers from the presented access token by design and had
+  nothing to answer with, returning `sub` alone while discovery advertised the full set. Nothing is released
+  for a scope the client was not granted, and `AlwaysIncludeUserClaimsInIdToken` is deliberately **not**
+  honoured here — it is an id_token opt-out. Access tokens are correspondingly larger, and a resource server
+  now sees exactly what the user consented to.
+
 
 - **`IMfaStore` gains `TryUpgradeRecoverySecretAsync`.** Source-breaking for an external implementer of the
   interface; every bundled backend (Azure Table, SQL, DynamoDB) implements it, so a deployment using one of
@@ -121,6 +189,147 @@
   `BffProxy` already refuses any composed target that left the configured upstream authority — so a caller
   cannot steer those requests and there is nothing for an address check to add. Email delivery (`Resend`)
   is likewise unguarded and unaffected: its target is a compile-time constant.
+
+### Security — the rest of the diff-scoped pass (27 clusters, 0 refuted)
+
+Every actionable finding the diff-scoped review produced is now closed. Each fix was verified non-vacuous by
+reverting it and watching a specific test fail.
+
+**Signature and assertion handling**
+
+- The SAML redirect-binding verifier chose its own message, so a captured correctly-signed `SAMLRequest` with a
+  forged `SAMLResponse` appended verified and was acted on. See Breaking.
+- The SAML ACS matched `InResponseTo` against **any** outstanding request row and accepted responses carrying
+  none. `/saml/{id}/login` now sets a browser-bound `saml_request` cookie (`SameSite=None`, because the
+  HTTP-POST binding is a cross-site form POST that Lax withholds cookies from), compared **before** the row is
+  consumed so a cross-browser POST cannot burn the victim's pending login.
+- Expired IdP signing certificates validated assertions indefinitely — `NotBefore`/`NotAfter` were never
+  consulted at load or at validation. Trust still comes from metadata pinning, not a chain; expiry is now
+  honoured with the same 5-minute skew the assertion checks use, so a rollover still works and a frozen
+  certificate set does not.
+- `id_token_hint` at `/connect/endsession` accepted **any** JWT this server signed, including access tokens.
+  One issuer, one ES256 key, no `typ` pin, and the client was read from `client_id` — an access-token claim.
+  The hint is what skips the confirmation interstitial, and that interstitial is the CSRF boundary because the
+  session cookie is `SameSite=Lax`. Now pinned to `typ: JWT`, rejecting payloads carrying `client_id` or
+  `events`, with the client taken from a single `aud`.
+- `private_key_jwt` assertions were replayable for 60 seconds past `exp`: the single-use ledger entry expired at
+  the assertion's own `exp`, while the validator accepts it for `ClockSkew` beyond that. The ledger now covers
+  the whole acceptance window.
+
+**Consent and authority**
+
+- `GET /consent/info` built the consent card entirely from the caller's own `client_id` and `scope`, and
+  `POST /consent` treated the server's offer record as optional — so a crafted link rendered the IdP's own
+  consent card for a real client with an attacker-chosen permission list, and recorded a five-year grant behind
+  it. Both halves now require a live `consent_offer`, and granted scopes are intersected with the offered set.
+- `prompt=consent` was validated as supported and then read at exactly one site, inside
+  `if (client.RequireConsent)` — false for every admin-created and config-seeded client. Now honoured
+  independently, satisfied once per request via a single-use marker (an unconditional re-prompt is an infinite
+  redirect loop between authorize and consent, which is what a `RequireConsent` client already got).
+  `Authagonal.Protocol`, which has no consent surface, answers `consent_required` instead of ignoring it.
+- Agent re-consent replaced the stored floor instead of narrowing it, and the consent screen was never told
+  what had already been granted — so it pre-ticked the whole ceiling and one click silently restored a
+  deliberately narrowed grant. `/consent/agents/{id}/info` now returns the floor.
+- `locations` used ordinal set intersection in the meet but prefix containment in enforcement, so narrowing a
+  location to a sub-resource **annihilated** the grant instead of narrowing it — the ordinary way an agent asks
+  for less than its ceiling. The meet uses the same containment relation and keeps the more specific side;
+  genuine disjointness still drops the grant.
+- Opaque (uninterpretable) constraints were silently skipped in the only branch a caller can reach, while being
+  emitted into the token verbatim — restrictive to anyone reading it, unrestricted in fact. They deny now, as
+  the docs already claimed.
+
+**Credentials and secrets**
+
+- `ISecretProvider` name sanitisation was not injective: characters folded to `-`, the input was truncated
+  **before** sanitising, and hyphens were trimmed. With `UseUpstreamSubjectAsUserId` the user id is the raw
+  upstream `sub`, so two federated users could share one stored TOTP seed and the later enrolment silently
+  overwrote the earlier. `SecretNameSanitizer` appends a hash of the original whenever the rewrite loses
+  information, and leaves an already-valid name untouched so existing secrets still resolve.
+- The MFA enrolment token — the sole identity the enrolment endpoints accept, and one that yields a full
+  session on completion — travelled in a URL. The federated path put it in a `Location` header and a real
+  request line, and therefore in history, `Referer` and access logs. Now an `HttpOnly` cookie for the federated
+  path and router state (with a sessionStorage reload fallback) for the password path;
+  `GET /api/auth/mfa/status` reports `forced` so the page no longer infers it from the query string.
+- Revoking a `RefreshTokenUsage.ReUse` client's refresh token killed none of its access tokens — the ReUse
+  branch never recorded the jti it minted, and a ReUse token never rotates, so it is precisely the grant that
+  accumulates them all.
+- Signing-key rollover published nothing ahead: a `kid` first appeared in JWKS at the instant it started
+  signing, while peers cached keys and both JWKS endpoints sent `max-age=3600`. The successor is now minted a
+  day early and stored inactive-but-published, then promoted — which is what the cache headers already claimed.
+
+**Storage, clustering and operations**
+
+- `Cluster:Enabled=false` made the node a permanent **non**-leader: standalone mode passed
+  `Timeout.InfiniteTimeSpan`, a *negative* TimeSpan, so the deadline landed in the past while the log announced
+  permanent leadership. Every leader-gated job — signing-key generation, the expiry reaper, grant
+  reconciliation — silently never ran.
+- The leadership deadline was computed **after** the lease round trip, overshooting the backend's real expiry
+  by the call's latency — the inverse of what the parameter documentation asserted, and worst exactly when the
+  lease store stalls.
+- `UseAzureStorageBus` / `UseAwsDynamoBus` / `UseSqlBus` are documented for nodes that must never hold
+  leadership and left the always-granting in-process lease in place, so such a node became leader on its first
+  tick. They install `NeverLeaseProvider` now, and `Cluster:RunLeaderElection` makes the same choice reachable
+  from configuration.
+- All three cluster event buses keyed rows on the **publisher's** clock, so one fast node pushed every
+  consumer's cursor into the future and every event published by a correctly-clocked node for the next Δ sorted
+  below it and reached nobody — silently. Future-dated rows are now delivered but do not advance the cursor,
+  de-duplicated, and logged.
+- `GrantReconciliationService` deleted every subject-bearing grant outside the live env. See Breaking.
+- A compensating revert after a failed email claim was an unconditional full-row write of a stale snapshot: it
+  undid concurrent writes (`IsActive`, `SecurityStamp`, `RolesJson`, the password hash, an active lockout) and,
+  because Upsert inserts, **resurrected** accounts deleted mid-request. Now conditional on the ETag / version
+  that call wrote, and update-only.
+- `ProviderSeedService` rebuilt SAML connections from scratch on every boot, writing `SpCertificate`,
+  `SignAuthnRequests`, `NameIdFormat`, `MetadataXml` and `IconUrl` back as null — destroying the SP keypair and
+  reverting admin-set request signing. Both halves are read-merge-write now.
+- The SQL keyset continuation token was `base64($"{pk} {sk}")` split on the first space, so a partition key
+  containing one made `GET /api/v1/users` page forever. Length-prefixed now.
+- The hosted Duende migration recorded `Completed` even when passes failed, and that marker permanently blocked
+  the retry. `CompletedWithErrors` does not block, and the run logs at Error.
+- A failed provisioning Confirm deprovisioned the user from **every** app they had ever been provisioned into,
+  not just the ones that transaction confirmed — so adding an app and failing removed the user from the apps
+  they already had.
+- The provisioning admin API read and wrote a store the orchestrator never consulted, so apps created or edited
+  through `/api/v1/provisioning/apps` never took effect. `StoreProvisioningAppProvider` is the default whenever
+  a store is registered.
+
+**Availability and quotas**
+
+- The client-secret throttle was keyed on `client_id` alone and counted every request, correct secret or not —
+  so thirty anonymous requests a minute naming a public identifier took a confidential client's entire token
+  issuance offline. Keyed per (client, source) now; see the note in `ClientAuthentication` on why no
+  client-wide cap replaces it.
+- `/connect/deviceauthorization` and `/connect/par` had no source dimension either, so one caller could
+  disable device login for a whole fleet. Both are per-source first, per-client as the aggregate ceiling.
+- The PAR `request_uri` expired 90 seconds after the push while the record must survive the entire interactive
+  login, so any real PAR flow broke and the error surfaced to the end user mid-login. The push→first-authorize
+  hop keeps its 90 s; the record is extended once, to an absolute deadline, on first pickup.
+- `/connect/par` stored every submitted field with no bound — Kestrel's 30 MB body and 1024 form values, all
+  serialised into one row, from a client authenticating on a bare `client_id`. Now 32 KB / 64 fields / 8 KB per
+  value, refused with 413.
+- The BFF accumulated per-login correlation cookies without bound (cookie-bomb 431 against the SPA origin) and
+  SCIM group PATCH paid unbounded quadratic cost before refusing it.
+
+**Conformance and correctness**
+
+- `ServiceProviderConfig` advertised cursor pagination provider-wide while `/Groups` implemented only index
+  paging, so a client built against the advertisement could never read past the first page of groups. `/Groups`
+  accepts `cursor` and returns `nextCursor`, and `index` is advertised truthfully.
+- `Authagonal.Protocol`'s `/connect/userinfo` returned `sub` and nothing else. See Breaking.
+- `PUT /api/v1/agents/{clientId}` reset an omitted `mode` to `delegated` — the field deciding which delegation
+  machinery the agent may use — on an endpoint whose other four fields all preserve on omission.
+- Nothing in this repository ever ran `dotnet test`. `build.yml` runs the suite on push, PR and
+  `workflow_call`; all three publishing jobs gate on it (`publish-nuget` previously declared no `needs:` at
+  all), and `ReleaseGateConventionTests` walks the `needs:` graph so the next publishing job cannot skip it.
+
+### Fixed — test infrastructure that hid real defects
+
+- `InMemorySamlProviderStore.Clone` was a hand-written field list four fields behind the model, so
+  `ChallengeMfaAfterLogin`, `ProvisioningAttributeParams`, `AllowUninvitedJit` and the new unsolicited flag were
+  dropped on every read — any test configuring one asserted against the default. It is a serialisation
+  round-trip now.
+- `AuthagonalTestFactory` registered no `IProvisioningAppStore`, which is why the admin surface needed a bespoke
+  host and why the store-backed provisioning provider was never exercised.
 
 ### Security — four medium findings from the diff-scoped pass
 
