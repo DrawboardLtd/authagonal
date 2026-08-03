@@ -18,6 +18,25 @@ public static class BackupDefaults
     /// RevokedTokens — entries are bounded by access token lifetime, typically minutes)
     /// and the Tombstones table (handled separately by the backup engine).
     /// </summary>
+    /// <remarks>
+    /// Three tables the provider creates were missing, and none of the absences was fail-safe — a restored
+    /// deployment came up with authorization QUIETLY WEAKER than the one that was backed up:
+    /// <list type="bullet">
+    /// <item><c>AgentProfiles</c> holds the admin-configured agent ceiling, mode, delegation depth, token
+    /// lifetime cap and high-risk default. <c>ProtocolTokenService</c> looks the profile up and, absent one,
+    /// "behaves exactly as it always has" — every gate lives inside <c>if (agentProfile is not null)</c>. So
+    /// after a rebuild the agent client authenticated with its restored secret and its exchange took the
+    /// unprofiled path: no standing-consent requirement, no ceiling intersection, no approval parking, no
+    /// depth budget, no <c>act</c> chain for audit to see.</item>
+    /// <item><c>UserRoles</c> holds role assignments. Restoring <c>Roles</c> without them leaves the roles
+    /// defined and nobody holding them.</item>
+    /// <item><c>UpstreamRefreshTokens</c> was already named in <see cref="SecretBearingTables"/> as though it
+    /// were in the archive, which is how the omission hid: the inventory the CLI prints described a table the
+    /// backup never wrote.</item>
+    /// </list>
+    /// Kept in sync with the provider's own table set by <c>BackupTableCoverageTests</c> — the list is a claim
+    /// about "all data tables" and only a comparison against what is actually created can keep it true.
+    /// </remarks>
     public static readonly string[] Tables =
     [
         "Users", "UserEmails", "UserFirstNames", "UserLastNames", "UserLogins", "UserExternalIds",
@@ -27,11 +46,13 @@ public static class BackupDefaults
         "SigningKeys",
         "SsoDomains",
         "SamlProviders", "OidcProviders",
+        "UpstreamRefreshTokens",
         "UserProvisions",
         "MfaCredentials", "MfaChallenges", "MfaWebAuthnIndex",
         "ScimTokens", "ScimGroups", "ScimGroupExternalIds", "ScimGroupRoleMappings",
-        "Roles",
+        "Roles", "UserRoles",
         "Scopes",
+        "AgentProfiles",
         "ProvisioningApps"
     ];
 

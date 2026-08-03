@@ -29,6 +29,26 @@ public sealed class MergeService(IBackupSource source)
     /// rollup that silently produced a PLAINTEXT snapshot from encrypted inputs would be a downgrade
     /// performed by the retention job itself, on the copy that outlives everything else.
     /// </remarks>
+    /// <param name="manifestKey">
+    /// The HMAC key the source backups' manifests were signed with, and the one the merged manifest is signed
+    /// with. Supplying it also turns on verification of every input file against its own manifest's hashes.
+    /// </param>
+    /// <remarks>
+    /// Two halves, and they belong together. The merged manifest previously carried no MAC at all, so a
+    /// rolled-up snapshot was unrestorable without <c>AllowUnauthenticatedManifest</c> — and since
+    /// <c>RollupAndCleanAsync</c> then DELETES the signed full and incrementals, the retention path turned
+    /// every authenticated backup into an unauthenticated one and the operator's only way back was to accept
+    /// hashes sitting in a plain JSON file beside the data on the same target. That is precisely the
+    /// circularity <c>ManifestMac</c> exists to remove.
+    /// <para>
+    /// Signing the output alone would have been worse than useless: the merge verified NOTHING about what it
+    /// read, and the output is hashed fresh, so the new manifest vouches for whatever the merge happened to
+    /// find. An attacker with write access to the target edits <c>Users.jsonl</c> in yesterday's full — a
+    /// password hash, say — leaves the manifest alone, and tonight's rollup writes the tampered bytes into a
+    /// new snapshot with correct hashes and a valid MAC over them, then deletes the original. The tamper
+    /// becomes indistinguishable from legitimate content, authenticated by the deployment's own key.
+    /// </para>
+    /// </remarks>
     public async Task<BackupManifest> MergeToTargetAsync(
         string fullBackupId,
         IReadOnlyList<string> incrementalBackupIds,
@@ -36,14 +56,43 @@ public sealed class MergeService(IBackupSource source)
         bool gzip = true,
         CancellationToken ct = default,
         string? newBackupId = null,
-        byte[]? encryptionKey = null)
+        byte[]? encryptionKey = null,
+        byte[]? manifestKey = null)
     {
         // Content keys are per backup, so each input has its own — resolved once here rather than per
         // file, and the merged output gets a fresh one of its own.
         _sourceContentKeys.Clear();
+        _sourceManifests.Clear();
         foreach (var id in incrementalBackupIds.Prepend(fullBackupId))
         {
             var sourceManifest = await source.ReadManifestAsync(id, ct);
+
+            // Every input's manifest is kept, whether or not a manifestKey was supplied, because the FILE
+            // HASHES it records are useful on their own: there is no reason to read a file unverified when its
+            // own manifest says what it should hash to. Deployments that authenticate manifests out of band —
+            // the cloud host signs `_manifest.sig` with Vault Transit rather than an HMAC key here — get the
+            // per-file check with no caller change, which matters because that host recomputes the hashes from
+            // whatever is on the target and then signs THOSE. Without verifying the inputs, its signature
+            // attests to the tamper.
+            if (sourceManifest is not null)
+                _sourceManifests[id] = sourceManifest;
+
+            // The MAC is the separate question — is the manifest itself authentic — and only a key answers it.
+            // Refusing rather than warning is the point: the merged output is the copy that outlives its
+            // sources, so this is the last moment at which anyone can still tell.
+            if (manifestKey is { Length: > 0 })
+            {
+                if (sourceManifest is null)
+                    throw new InvalidOperationException(
+                        $"Backup '{id}' has no manifest, so the rollup cannot authenticate what it reads. " +
+                        "Roll up without a manifestKey to accept unverified inputs.");
+
+                if (!ManifestAuthentication.Verify(sourceManifest, manifestKey))
+                    throw new InvalidOperationException(
+                        $"Backup '{id}' manifest failed authentication, so the rollup would launder it into a " +
+                        "freshly hashed and signed snapshot. Refusing to merge it.");
+            }
+
             if (string.IsNullOrEmpty(sourceManifest?.WrappedContentKey)) continue;
 
             if (encryptionKey is not { Length: > 0 })
@@ -151,6 +200,12 @@ public sealed class MergeService(IBackupSource source)
 
         manifest.TotalEntities = totalEntities;
         manifest.DurationSeconds = (DateTimeOffset.UtcNow - backupStart).TotalSeconds;
+
+        // Last, so the MAC covers the completed manifest including every file hash — same order as
+        // BackupService. Without this the retained snapshot was the one copy that could not be authenticated.
+        if (manifestKey is { Length: > 0 })
+            ManifestAuthentication.Sign(manifest, manifestKey);
+
         await target.WriteManifestAsync(backupId, manifest, ct);
 
         return manifest;
@@ -306,17 +361,57 @@ public sealed class MergeService(IBackupSource source)
     /// <summary>Unwrapped content key per source backup id, for the current merge.</summary>
     private readonly Dictionary<string, byte[]> _sourceContentKeys = new(StringComparer.Ordinal);
 
+    /// <summary>Manifest per source backup id, for the current merge.</summary>
+    private readonly Dictionary<string, BackupManifest> _sourceManifests = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// Opens a source file, verified against the hash its OWN backup's manifest records for it.
+    /// </summary>
+    /// <remarks>
+    /// The merge previously read every input with a bare <c>OpenReadAsync</c> and consulted
+    /// <c>FileHashes</c> for none of them, while hashing its output fresh — so the new manifest vouched for
+    /// whatever the merge happened to find, and the retention job laundered a tampered archive into an
+    /// authenticated one.
+    /// <para>
+    /// A file the manifest LISTS but the store does not hold is an error rather than an empty read. Without
+    /// that, deleting a data file from an input silently dropped every row in it: the merge contributed nothing
+    /// for that table and the output recorded the smaller, hashed, signed result as correct — a way to remove a
+    /// whole table's worth of records that survives every integrity check downstream. This is the gap the
+    /// restore path already closes for its own inputs.
+    /// </para>
+    /// <para>
+    /// Verified BEFORE decryption, so the hash covers the bytes on disk — the same order as the restore path,
+    /// and the order in which they were written.
+    /// </para>
+    /// </remarks>
+    private async Task<Stream?> OpenSourceAsync(string backupId, string fileName, CancellationToken ct)
+    {
+        string? expectedHash = null;
+        var listed = _sourceManifests.TryGetValue(backupId, out var m)
+            && m.FileHashes.TryGetValue(fileName, out expectedHash);
+
+        var stream = await VerifiedRead.OpenAsync(source, backupId, fileName, expectedHash, ct);
+
+        if (stream is null && listed)
+            throw new InvalidOperationException(
+                $"Backup '{backupId}' manifest lists '{fileName}' but the store does not hold it. " +
+                "Refusing to roll up a snapshot with a missing file: the merged output would silently omit " +
+                "its rows and then vouch for the result.");
+
+        return stream;
+    }
+
     private async IAsyncEnumerable<((string PK, string RK) Key, string Line)> ReadEntitiesAsync(
         string backupId, string tableName, [EnumeratorCancellation] CancellationToken ct)
     {
         // The ACTUAL file name matters: it is bound into the encryption's associated data, so guessing
         // the compressed variant when the uncompressed one is on disk fails authentication.
         var fileName = $"{tableName}.jsonl.gz";
-        var stream = await source.OpenReadAsync(backupId, fileName, ct);
+        var stream = await OpenSourceAsync(backupId, fileName, ct);
         if (stream is null)
         {
             fileName = $"{tableName}.jsonl";
-            stream = await source.OpenReadAsync(backupId, fileName, ct);
+            stream = await OpenSourceAsync(backupId, fileName, ct);
         }
 
         if (stream is null) yield break;
@@ -378,12 +473,14 @@ public sealed class MergeService(IBackupSource source)
 
         foreach (var incrId in incrementalBackupIds)
         {
+            // Verified like a data file. Its content is a list of rows to DELETE from the merged output, so a
+            // tampered one removes records of the attacker's choosing from the copy that outlives the sources.
             var tombstoneFile = "_tombstones.jsonl.gz";
-            var stream = await source.OpenReadAsync(incrId, tombstoneFile, ct);
+            var stream = await OpenSourceAsync(incrId, tombstoneFile, ct);
             if (stream is null)
             {
                 tombstoneFile = "_tombstones.jsonl";
-                stream = await source.OpenReadAsync(incrId, tombstoneFile, ct);
+                stream = await OpenSourceAsync(incrId, tombstoneFile, ct);
             }
 
             if (stream is null) continue;

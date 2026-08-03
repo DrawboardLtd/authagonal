@@ -122,6 +122,47 @@
   cannot steer those requests and there is nothing for an address check to add. Email delivery (`Resend`)
   is likewise unguarded and unaffected: its target is a compile-time constant.
 
+### Security — the retention path: what a rollup may read, what it must sign, what a scoped restore may delete
+
+Three defects with one shape — a check that existed on one path and not on its sibling.
+
+- **A scoped restore executed other envs' deletes (high).** `RestoreService` learned to scope the data apply
+  to `CleanEnvPrefix`; `ApplyTombstonesAsync` was left unscoped. `BackupTombstonesAsync` filters the change log
+  on `Timestamp` alone — `BackupOptions` has no env filter — so on a shared sandbox table set the
+  `_tombstones` file holds every env's deletes, with the `{env}|` prefix intact in the `OrigPK` column it
+  writes as `PartitionKey`. An operator restoring `sandbox-1` by the documented procedure therefore deleted
+  rows from `sandbox-2..N`, and unlike `MergeService.IsDeleted` this path has no recreate or timestamp guard,
+  so rows a sibling created *after* the backup went too — unrecoverable, because they are not in the archive
+  being restored. Deleting a revocation record also resurrects a revoked token. Now scoped, with the declined
+  deletes reported as `RestoreResult.TombstonesSkippedOtherEnv` rather than silently executed.
+
+- **The rollup wrote an unsigned manifest (high).** `MergeToTargetAsync` had no manifest key and never called
+  `ManifestAuthentication.Sign`, so the retained copy was the one that could not be authenticated — while
+  `RollupAndCleanAsync` deletes the signed full and incrementals. The operator's only route back was
+  `AllowUnauthenticatedManifest`, which downgrades the archive to hashes sitting in a plain JSON file beside
+  the data on the same target: exactly the circularity `ManifestMac` exists to remove. Every rollup test in the
+  suite passed `AllowUnauthenticatedManifest = true`, which is what made the gap invisible.
+
+- **The rollup verified nothing about what it read (high).** It consulted `FileHashes` for no input and hashed
+  its output fresh, so the new manifest vouched for whatever the merge happened to find. Archives are plaintext
+  JSONL by default: an attacker with write access edits `Users.jsonl` in yesterday's full, leaves the manifest
+  alone, and the next scheduled rollup writes the tampered bytes into a new snapshot with correct hashes over
+  them — then deletes the original. Verification is now unconditional wherever the input's own manifest records
+  a hash, and needs no key, so the cloud host (which signs `_manifest.sig` with Vault Transit and recomputes
+  the hashes from whatever is on the target before signing **those**) is covered with no caller change. A file
+  the manifest lists but the store no longer holds is an error rather than an empty read. `VerifiedRead` is now
+  shared by both readers, because a check only one of them performs is the defect this class keeps producing.
+
+- **Three tables were missing from the backup set (high).** `BackupDefaults.Tables` describes itself as "all
+  Authagonal data tables" and omitted `AgentProfiles`, `UserRoles` and `UpstreamRefreshTokens` — the last
+  already named in `SecretBearingTables` as though it were in the archive, which is how the omission hid.
+  None of the absences was fail-safe. `AgentProfiles` holds the agent's authority ceiling, mode, delegation
+  depth and high-risk default, and every gate that enforces them lives inside `if (agentProfile is not null)`;
+  so after any rebuild-from-backup the agent client authenticated with its restored secret and its exchange
+  took the unprofiled path — no consent requirement, no ceiling intersection, no approval parking, no depth
+  budget, no `act` chain for audit to see. Closed as a class: a convention test compares the set against the
+  tables the provider actually creates, and every exclusion is named with its reason.
+
 ### Security — federated account squatting, closed at the step that actually mattered
 
 - **Adoption inherited the squatter's login binding (high).** Both hosts gated JIT and adoption on whether the

@@ -230,18 +230,19 @@ public sealed class RestoreService(TableServiceClient serviceClient, IBackupSour
         // a later incremental's recreate lands after the earlier delete.
         if (options.ApplyTombstones)
         {
-            result.TombstonesApplied = await ApplyTombstonesAsync(backupId, files, prefix, manifest, canVerify, contentKey, ct);
+            (result.TombstonesApplied, result.TombstonesSkippedOtherEnv) =
+                await ApplyTombstonesAsync(backupId, files, prefix, manifest, canVerify, contentKey, ct);
         }
 
         return result;
     }
 
-    private async Task<long> ApplyTombstonesAsync(
+    private async Task<(long Applied, long SkippedOtherEnv)> ApplyTombstonesAsync(
         string backupId, IReadOnlyList<string> files, string prefix,
         BackupManifest? manifest, bool canVerify, byte[]? contentKey, CancellationToken ct)
     {
         var fileName = files.FirstOrDefault(f => f is "_tombstones.jsonl.gz" or "_tombstones.jsonl");
-        if (fileName is null) return 0; // full backups (and empty incrementals) carry no tombstone file
+        if (fileName is null) return (0, 0); // full backups (and empty incrementals) carry no tombstone file
 
         // A tampered tombstone file deletes attacker-chosen rows (e.g. a revocation record), so verify
         // it like a data file when a hash is recorded.
@@ -259,9 +260,10 @@ public sealed class RestoreService(TableServiceClient serviceClient, IBackupSour
         }
 
         var stream = await OpenVerifiedAsync(backupId, fileName, expectedHash, ct);
-        if (stream is null) return 0;
+        if (stream is null) return (0, 0);
 
         long applied = 0;
+        long skippedOtherEnv = 0;
         await using (stream)
         {
             Stream plain = contentKey is null ? stream : BackupEncryption.Decrypt(stream, contentKey, fileName);
@@ -285,6 +287,25 @@ public sealed class RestoreService(TableServiceClient serviceClient, IBackupSour
                 if (options.Tables is not null && !options.Tables.Contains(tableName, StringComparer.OrdinalIgnoreCase))
                     continue;
 
+                // Scope the DELETES, exactly as the data path scopes the writes. This is the same finding as
+                // the one recorded at the data-apply guard above, on the more destructive half: the wipe was
+                // scoped, the apply was scoped, and the tombstone pass was not.
+                //
+                // BackupTombstonesAsync filters the change log on Timestamp alone — BackupOptions has no env
+                // filter — so on a shared sandbox table set the file holds every env's deletes, with the
+                // `{env}|` prefix intact in the authoritative OrigPK column it writes as PartitionKey. An
+                // operator restoring sandbox-1 therefore executed sandbox-2..N's deletes against live tables
+                // that were never in scope, and unlike MergeService.IsDeleted this path has no recreate or
+                // timestamp guard, so rows a sibling env created AFTER the backup was taken went too. Deleting
+                // a revocation record also resurrects a revoked token. None of it is recoverable from the
+                // archive being restored, because those rows are not in it.
+                if (options.CleanEnvPrefix is not null
+                    && !pk.StartsWith(options.CleanEnvPrefix, StringComparison.Ordinal))
+                {
+                    skippedOtherEnv++;
+                    continue;
+                }
+
                 if (!options.DryRun)
                 {
                     try
@@ -298,73 +319,16 @@ public sealed class RestoreService(TableServiceClient serviceClient, IBackupSour
             }
         }
 
-        return applied;
+        return (applied, skippedOtherEnv);
     }
 
     /// <summary>
-    /// Opens a backup file ONCE and hands back a stream over exactly the bytes that were hashed.
+    /// Opens a backup file over exactly the bytes that were hashed — see <see cref="VerifiedRead"/>, which the
+    /// rollup path shares so that both readers verify by the same rule.
     /// </summary>
-    /// <remarks>
-    /// Verification used to hash the file and then reopen it to read the entities, so the bytes that
-    /// were checked and the bytes that were applied came from two separate reads of a target the
-    /// attacker is assumed to be able to write — which is the same attacker the hashes exist to stop.
-    /// Swapping the file between the two reads defeated the check entirely.
-    /// <para>
-    /// The verified copy is staged to a temp file rather than buffered in memory: a table file is
-    /// unbounded, and a restore that OOMs on a large deployment is a restore that does not happen. The
-    /// staging file is created owner-only and delete-on-close, because for the duration it holds the
-    /// same credential material the archive does.
-    /// </para>
-    /// <para>
-    /// With no <paramref name="expectedHash"/> there is nothing to check against, so the source stream
-    /// is returned directly and no copy is made.
-    /// </para>
-    /// </remarks>
-    private async Task<Stream?> OpenVerifiedAsync(
+    private Task<Stream?> OpenVerifiedAsync(
         string backupId, string fileName, string? expectedHash, CancellationToken ct)
-    {
-        var stream = await source.OpenReadAsync(backupId, fileName, ct);
-        if (stream is null || expectedHash is null) return stream;
-
-        var staged = new FileStream(
-            Path.Combine(Path.GetTempPath(), $"authagonal-restore-{Guid.NewGuid():N}.tmp"),
-            new FileStreamOptions
-            {
-                Mode = FileMode.CreateNew,
-                Access = FileAccess.ReadWrite,
-                Share = FileShare.None,
-                Options = FileOptions.DeleteOnClose | FileOptions.Asynchronous,
-                UnixCreateMode = UnixFileMode.UserRead | UnixFileMode.UserWrite,
-            });
-
-        try
-        {
-            using var hasher = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
-            var buffer = new byte[81920];
-            await using (stream)
-            {
-                int read;
-                while ((read = await stream.ReadAsync(buffer, ct)) > 0)
-                {
-                    hasher.AppendData(buffer, 0, read);
-                    await staged.WriteAsync(buffer.AsMemory(0, read), ct);
-                }
-            }
-
-            var actualHash = Convert.ToHexStringLower(hasher.GetHashAndReset());
-            if (!string.Equals(actualHash, expectedHash, StringComparison.OrdinalIgnoreCase))
-                throw new InvalidOperationException(
-                    $"Backup integrity check failed: '{fileName}' hash does not match the manifest.");
-
-            staged.Position = 0;
-            return staged;
-        }
-        catch
-        {
-            await staged.DisposeAsync();
-            throw;
-        }
-    }
+        => VerifiedRead.OpenAsync(source, backupId, fileName, expectedHash, ct);
 
     /// <summary>
     /// Deletes existing rows ahead of a Clean restore. When <paramref name="envPrefix"/> is supplied the
@@ -515,6 +479,17 @@ public sealed class RestoreResult
     public long TotalErrors => Tables.Values.Sum(t => t.Errors);
     /// <summary>Deletes applied from the backup's <c>_tombstones</c> file (0 for full backups).</summary>
     public long TombstonesApplied { get; set; }
+
+    /// <summary>
+    /// Deletes in the backup's <c>_tombstones</c> file that belong to another env and were NOT applied.
+    /// </summary>
+    /// <remarks>
+    /// The counterpart of <see cref="RestoreTableResult.SkippedOtherEnv"/> for the delete pass. Non-zero is
+    /// normal when restoring one env out of a shared table set — the tombstone file is not env-scoped, because
+    /// the change-log scan that produces it filters on Timestamp alone — and reporting it is what tells an
+    /// operator that siblings' deletes were declined rather than silently executed.
+    /// </remarks>
+    public long TombstonesSkippedOtherEnv { get; set; }
 }
 
 public sealed class RestoreTableResult
