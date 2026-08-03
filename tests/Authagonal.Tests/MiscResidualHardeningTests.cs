@@ -223,15 +223,61 @@ public sealed class RestoreIntegrityTests : IDisposable
     [Fact]
     public async Task Explicit_opt_out_still_restores()
     {
-        SaveManifest(Write(("Nothing.jsonl", "")));
+        // A real table from the backup set, so the archive passes the destination allowlist; the Tables
+        // filter is what excludes it, which is the thing under test. This used to name "Nothing.jsonl" with
+        // a comment claiming ExtractTableName could not name it — it can, and the restore therefore chose
+        // its destination from the archive.
+        SaveManifest(Write(("Users.jsonl", "")));
 
-        // No table file (ExtractTableName only matches *.jsonl[.gz] entries it can name), so this gets
-        // as far as completing without a storage round trip.
         var result = await RunAsync(new RestoreOptions
         {
             AllowUnauthenticatedManifest = true,
             Tables = ["NotPresent"],
         });
+        Assert.Equal(0, result.TotalRestored);
+    }
+
+    /// <summary>
+    /// An archive naming a table outside the backup set is refused, not created.
+    /// </summary>
+    /// <remarks>
+    /// The destination was derived purely from the file name — <c>ExtractTableName(fileName)</c> then
+    /// <c>GetTableClient(prefix + tableName)</c> with <c>CreateIfNotExists</c> — and
+    /// <c>RestoreOptions.Tables</c> is null by default with the CLI leaving it unset. So the set of tables a
+    /// restore wrote was chosen entirely by the archive, which could create and populate anything it liked in
+    /// the target account.
+    /// </remarks>
+    [Fact]
+    public async Task An_archive_naming_an_unknown_table_is_refused()
+    {
+        SaveManifest(Write(("EvilSideTable.jsonl", "{}")));
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => RunAsync(new RestoreOptions
+        {
+            AllowUnauthenticatedManifest = true,
+        }));
+
+        Assert.Contains("EvilSideTable", ex.Message, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// A <c>SigningKeys</c> file is skipped unless the restore explicitly opts in.
+    /// </summary>
+    /// <remarks>
+    /// <c>BackupOptions.IncludeSigningKeys</c> is off by default and <c>BackupService</c> refuses to write
+    /// JWT signing private keys — restore honoured no such decision, so an archive carrying the file anyway
+    /// installed signing keys into a live deployment. One half of a pair of switches is not a switch. The
+    /// skip is reported rather than silent, because "the restore was complete" is the wrong reading and it
+    /// only shows up later, when tokens minted under the old key stop validating.
+    /// </remarks>
+    [Fact]
+    public async Task Signing_keys_are_skipped_unless_explicitly_included()
+    {
+        SaveManifest(Write(("SigningKeys.jsonl", "")));
+
+        var result = await RunAsync(new RestoreOptions { AllowUnauthenticatedManifest = true });
+
+        Assert.True(result.SkippedSigningKeys);
         Assert.Equal(0, result.TotalRestored);
     }
 

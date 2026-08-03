@@ -13,6 +13,18 @@ public sealed class RestoreOptions
     public string? TablePrefix { get; set; }
 
     /// <summary>
+    /// Apply a <c>SigningKeys</c> file if the archive carries one. Off by default.
+    /// </summary>
+    /// <remarks>
+    /// Symmetrical with <c>BackupOptions.IncludeSigningKeys</c>, which is also off by default —
+    /// <c>BackupService</c> deliberately refuses to write JWT signing private keys unless asked. Restore
+    /// honoured no such decision: it derived its destination purely from the archive's file names, so a
+    /// <c>SigningKeys.jsonl</c> entry in a hand-made or tampered archive installed signing keys into a live
+    /// deployment. One half of a pair of switches is not a switch.
+    /// </remarks>
+    public bool IncludeSigningKeys { get; set; }
+
+    /// <summary>
     /// Restore a backup that carries no file hashes, when <c>VerifyIntegrity</c> is on.
     /// </summary>
     /// <remarks>

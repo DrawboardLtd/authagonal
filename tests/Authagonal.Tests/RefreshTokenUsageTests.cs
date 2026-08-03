@@ -67,6 +67,68 @@ public sealed class RefreshTokenUsageTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.BadRequest, (await RefreshAsync(refreshToken)).StatusCode);
     }
 
+    /// <summary>
+    /// Revoking a ReUse client's refresh token also kills the access tokens issued against it.
+    /// </summary>
+    /// <remarks>
+    /// An access token here is a self-contained ES256 JWT with no reference mode, so the ONLY way to kill one
+    /// before its <c>exp</c> is an <c>IRevokedTokenStore</c> entry keyed by <c>jti</c> — and
+    /// <c>RefreshTokenData.AccessTokens</c> is where <c>RevokeRefreshTokenAsync</c> and
+    /// <c>GrantRevocation.RevokeClientGrantsAsync</c> look for them.
+    /// <para>
+    /// Every other issuance path records the jti it just minted: the authorization-code path passes it into
+    /// <c>CreateRefreshTokenAsync</c>, rotation carries the predecessor's list forward plus the new one, the
+    /// device path does it, and the grace-window path appends it with an explicit write whose comment spells
+    /// out why. The ReUse branch did not — and a ReUse refresh token never rotates, so it is precisely the
+    /// grant that accumulates every access token the client will ever mint. Revoking it killed none of them.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task RevokingAReUseRefreshTokenKillsTheAccessTokensIssuedAgainstIt()
+    {
+        await SetUsageAsync(RefreshTokenUsage.ReUse);
+        var tokens = await GetTokensViaPkce();
+        var refreshToken = tokens.GetProperty("refresh_token").GetString()!;
+
+        // A refresh through the ReUse branch: this is the access token whose jti must be recorded.
+        var refreshed = await RefreshAsync(refreshToken);
+        Assert.Equal(HttpStatusCode.OK, refreshed.StatusCode);
+        var accessToken = (await refreshed.Content.ReadFromJsonAsync<JsonElement>())
+            .GetProperty("access_token").GetString()!;
+
+        // It works before revocation — otherwise the assertion below proves nothing.
+        Assert.True(await IsAcceptedAsync(accessToken), "the access token should be valid before revocation");
+
+        var revoke = await _client.PostAsync("/connect/revocation", new FormUrlEncodedContent(
+            new Dictionary<string, string>
+            {
+                ["token"] = refreshToken,
+                ["token_type_hint"] = "refresh_token",
+                ["client_id"] = AuthagonalTestFactory.TestClientId,
+            }));
+        Assert.Equal(HttpStatusCode.OK, revoke.StatusCode);
+
+        Assert.False(await IsAcceptedAsync(accessToken),
+            "revoking the refresh token must kill the access tokens issued against it");
+    }
+
+    /// <summary>
+    /// Whether an access token is still accepted, via <c>/connect/userinfo</c>.
+    /// </summary>
+    /// <remarks>
+    /// Userinfo rather than introspection: introspection authenticates the CALLER, and this suite's client is
+    /// public, so a refusal there would say nothing about the token. Userinfo consults
+    /// <c>IRevokedTokenStore.IsRevokedAsync</c> on the presented token's own jti, which is exactly the
+    /// mechanism under test.
+    /// </remarks>
+    private async Task<bool> IsAcceptedAsync(string accessToken)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Get, "/connect/userinfo");
+        request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", accessToken);
+        var response = await _client.SendAsync(request);
+        return response.IsSuccessStatusCode;
+    }
+
     private async Task SetUsageAsync(RefreshTokenUsage usage)
     {
         var client = await _factory.ClientStore.GetAsync(AuthagonalTestFactory.TestClientId);

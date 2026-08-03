@@ -748,6 +748,26 @@ public sealed class ProtocolTokenService(
                 "Refresh token reused (client is configured ReUse). Client: {ClientId}, Subject: {SubjectId}",
                 clientId, data.SubjectId);
 
+            // Record the jti on the grant that governs it, exactly as every other issuance path does.
+            //
+            // An access token is a self-contained ES256 JWT with no reference mode, so the ONLY way to kill
+            // one before its exp is an IRevokedTokenStore entry keyed by jti — and RefreshTokenData.AccessTokens
+            // is where RevokeRefreshTokenAsync and GrantRevocation.RevokeClientGrantsAsync look to find them.
+            // The authorization-code path passes the fresh jti into CreateRefreshTokenAsync, the rotation path
+            // carries the predecessor's list forward plus the new one, the device path does it, and the
+            // grace-window path appends it with an explicit write whose comment says exactly why. This branch
+            // did not. So for a client configured ReUse — whose refresh token never rotates, and which
+            // therefore accumulates every access token it will ever mint under one grant — revoking the
+            // refresh token killed nothing: every access token issued against it stayed valid to its own exp.
+            data.AccessTokens = PruneAccessTokens(
+                [.. data.AccessTokens ?? [], new IssuedAccessToken { Jti = accessToken.Jti, ExpiresAt = accessToken.ExpiresAt }],
+                now);
+            // Grants read back from storage carry no Key — only its hash is persisted — so it has to be
+            // re-set before writing. See the rotation note below.
+            grant.Key = refreshToken;
+            grant.Data = JsonSerializer.Serialize(data, ProtocolJsonContext.Default.RefreshTokenData);
+            await grantStore.StoreAsync(grant, ct);
+
             string? reuseIdToken = null;
             if (data.Scopes.Contains(StandardScopes.OpenId))
                 reuseIdToken = await CreateIdTokenAsync(freshSubject, client, data.Scopes, ct: ct);

@@ -139,6 +139,27 @@ public sealed class RestoreService(TableServiceClient serviceClient, IBackupSour
             var tableName = ExtractTableName(fileName);
             if (tableName is null) continue;
 
+            // The archive does not get to choose which tables exist.
+            //
+            // The destination was derived purely from the file name, and RestoreOptions.Tables is null by
+            // default (the CLI leaves it unset), so the set of tables written was whatever the archive named
+            // — with GetTableClient(prefix + name) + CreateIfNotExists behind it. A hand-made or tampered
+            // archive could therefore create and populate any table it liked in the target account.
+            if (!BackupDefaults.Tables.Contains(tableName, StringComparer.OrdinalIgnoreCase))
+                throw new InvalidOperationException(
+                    $"Backup integrity check failed: '{fileName}' names table '{tableName}', which is not part "
+                    + "of the backup set. An archive does not get to choose which tables a restore writes.");
+
+            // And it does not get to overturn the backup's own decision about signing keys. BackupOptions
+            // .IncludeSigningKeys is off by default and BackupService refuses to write them; restoring one
+            // from an archive that carries it anyway installs JWT signing private keys into a live
+            // deployment. Both halves of the pair now have to be turned on deliberately.
+            if (tableName.Equals("SigningKeys", StringComparison.OrdinalIgnoreCase) && !options.IncludeSigningKeys)
+            {
+                result.SkippedSigningKeys = true;
+                continue;
+            }
+
             if (options.Tables is not null && !options.Tables.Contains(tableName, StringComparer.OrdinalIgnoreCase))
                 continue;
 
@@ -283,6 +304,16 @@ public sealed class RestoreService(TableServiceClient serviceClient, IBackupSour
                 var pk = root.GetProperty("PartitionKey").GetString();
                 var rk = root.GetProperty("RowKey").GetString();
                 if (string.IsNullOrEmpty(tableName) || pk is null || rk is null) continue;
+
+                // Same allowlist as the data path. A tombstone line names its own table, so without this the
+                // delete half chose its destination from the archive exactly as the write half did.
+                if (!BackupDefaults.Tables.Contains(tableName, StringComparer.OrdinalIgnoreCase))
+                    throw new InvalidOperationException(
+                        $"Backup integrity check failed: a tombstone names table '{tableName}', which is not "
+                        + "part of the backup set.");
+
+                if (tableName.Equals("SigningKeys", StringComparison.OrdinalIgnoreCase) && !options.IncludeSigningKeys)
+                    continue;
 
                 if (options.Tables is not null && !options.Tables.Contains(tableName, StringComparer.OrdinalIgnoreCase))
                     continue;
@@ -479,6 +510,17 @@ public sealed class RestoreResult
     public long TotalErrors => Tables.Values.Sum(t => t.Errors);
     /// <summary>Deletes applied from the backup's <c>_tombstones</c> file (0 for full backups).</summary>
     public long TombstonesApplied { get; set; }
+
+    /// <summary>
+    /// True when the archive carried a <c>SigningKeys</c> file that was NOT applied, because
+    /// <see cref="RestoreOptions.IncludeSigningKeys"/> was off.
+    /// </summary>
+    /// <remarks>
+    /// Reported rather than silent: an operator restoring an archive that contains signing keys needs to know
+    /// the keys were left out, since the alternative reading — "the restore was complete" — is wrong in a way
+    /// that only shows up when tokens minted under the old key fail to validate.
+    /// </remarks>
+    public bool SkippedSigningKeys { get; set; }
 
     /// <summary>
     /// Deletes in the backup's <c>_tombstones</c> file that belong to another env and were NOT applied.
