@@ -34,22 +34,43 @@ public sealed class ProviderSeedService(
                 continue;
             }
 
-            var config = new SamlProviderConfig
+            // Read, then merge — do NOT rebuild from the seed.
+            //
+            // This constructed a brand-new SamlProviderConfig and upserted it, and SamlProviderSeed has no
+            // field for SpCertificate, SignAuthnRequests, NameIdFormat, MetadataXml or IconUrl. So every one
+            // of those was written back as NULL on every pod start for any connection named in the config
+            // section — destroying the SP keypair (breaking EncryptedAssertion decryption, signed
+            // AuthnRequests and signed logout, all of which resolve that secret by name), reverting
+            // admin-set AuthnRequest signing to unsigned, and resetting CreatedAt to now.
+            //
+            // Same defect class the two client seeders already record as fixed: "every property the seed does
+            // not state reverted to the MODEL DEFAULT on each pod start — silently undoing admin hardening
+            // applied through PUT". This was the third seeder, and it had not been converted.
+            var existing = await samlStore.GetAsync(seed.ConnectionId, ct);
+
+            var config = existing ?? new SamlProviderConfig
             {
                 ConnectionId = seed.ConnectionId,
-                ConnectionName = seed.ConnectionName ?? seed.ConnectionId,
-                EntityId = seed.EntityId ?? throw new InvalidOperationException(
-                    $"SAML provider '{seed.ConnectionId}' is missing required EntityId"),
-                MetadataLocation = seed.MetadataLocation ?? throw new InvalidOperationException(
-                    $"SAML provider '{seed.ConnectionId}' is missing required MetadataLocation"),
-                AllowedDomains = seed.AllowedDomains ?? [],
-                JitProvisioningEnabled = seed.JitProvisioningEnabled,
-                ChallengeMfaAfterLogin = seed.ChallengeMfaAfterLogin,
-                ProvisioningAttributeParams = seed.ProvisioningAttributeParams ?? [],
-                AllowUninvitedJit = seed.AllowUninvitedJit,
-                AllowUnsolicitedResponses = seed.AllowUnsolicitedResponses,
-                CreatedAt = DateTimeOffset.UtcNow
+                EntityId = "",
+                MetadataLocation = "",
+                CreatedAt = DateTimeOffset.UtcNow,
             };
+
+            config.ConnectionName = seed.ConnectionName ?? existing?.ConnectionName ?? seed.ConnectionId;
+            config.EntityId = seed.EntityId ?? (existing?.EntityId is { Length: > 0 } e ? e
+                : throw new InvalidOperationException(
+                    $"SAML provider '{seed.ConnectionId}' is missing required EntityId"));
+            config.MetadataLocation = seed.MetadataLocation ?? (existing?.MetadataLocation is { Length: > 0 } m ? m
+                : throw new InvalidOperationException(
+                    $"SAML provider '{seed.ConnectionId}' is missing required MetadataLocation"));
+            config.AllowedDomains = seed.AllowedDomains ?? existing?.AllowedDomains ?? [];
+            config.JitProvisioningEnabled = seed.JitProvisioningEnabled;
+            config.ChallengeMfaAfterLogin = seed.ChallengeMfaAfterLogin;
+            config.ProvisioningAttributeParams =
+                seed.ProvisioningAttributeParams ?? existing?.ProvisioningAttributeParams ?? [];
+            config.AllowUninvitedJit = seed.AllowUninvitedJit;
+            config.AllowUnsolicitedResponses = seed.AllowUnsolicitedResponses;
+            if (existing is not null) config.UpdatedAt = DateTimeOffset.UtcNow;
 
             await samlStore.UpsertAsync(config, ct);
 
@@ -88,10 +109,17 @@ public sealed class ProviderSeedService(
                     $"OIDC provider '{seed.ConnectionId}' is missing required ClientSecret"),
                 ct);
 
+            // Same read-merge-write as the SAML half above. The OIDC seed states nearly every field, so the
+            // blast radius is smaller — IconUrl was overwritten with null and CreatedAt reset to now on every
+            // pod start — but it is the same shape, and the next field added to the model without a matching
+            // seed field would be silently reverted on boot.
+            var existingOidc = await oidcStore.GetAsync(seed.ConnectionId, ct);
+
             var config = new OidcProviderConfig
             {
                 ConnectionId = seed.ConnectionId,
-                ConnectionName = seed.ConnectionName ?? seed.ConnectionId,
+                IconUrl = existingOidc?.IconUrl,
+                ConnectionName = seed.ConnectionName ?? existingOidc?.ConnectionName ?? seed.ConnectionId,
                 MetadataLocation = seed.MetadataLocation ?? throw new InvalidOperationException(
                     $"OIDC provider '{seed.ConnectionId}' is missing required MetadataLocation"),
                 ClientId = seed.ClientId ?? throw new InvalidOperationException(
@@ -112,7 +140,8 @@ public sealed class ProviderSeedService(
                 IsExternalConnection = seed.IsExternalConnection,
                 SessionExpClaim = seed.SessionExpClaim,
                 InteractionPath = seed.InteractionPath,
-                CreatedAt = DateTimeOffset.UtcNow
+                CreatedAt = existingOidc?.CreatedAt ?? DateTimeOffset.UtcNow,
+                UpdatedAt = existingOidc is null ? null : DateTimeOffset.UtcNow,
             };
 
             await oidcStore.UpsertAsync(config, ct);

@@ -86,11 +86,22 @@ internal static class PushedAuthorizationEndpoint
             // is a host registration this package does not make (a Server host has one; an embedding
             // host may bring a distributed one) — the same optional seam the client-secret throttle in
             // ClientAuthentication uses.
+            // Per SOURCE first, then per client — the key was `par|{clientId}` alone. A public client
+            // authenticates here on a bare client_id, so that was one shared bucket per publicly-known id and
+            // the only party inconvenienced by spending it is the legitimate client. The per-client bucket
+            // stays as the aggregate ceiling.
             var limiter = httpContext.RequestServices.GetService<IRateLimiter>();
-            if (limiter is not null &&
-                await limiter.IsRateLimitedAsync($"par|{clientId}", 300, TimeSpan.FromMinutes(1), ct))
+            if (limiter is not null)
             {
-                return JsonResults.OAuthError("temporarily_unavailable", "Too many pushed authorization requests", 429);
+                var source = SourceQuota.Key(httpContext);
+                if (await limiter.IsRateLimitedAsync(
+                        $"par|{clientId}|{source}", 60, TimeSpan.FromMinutes(1), ct))
+                    return JsonResults.OAuthError(
+                        "temporarily_unavailable", "Too many pushed authorization requests", 429);
+
+                if (await limiter.IsRateLimitedAsync($"par|{clientId}", 300, TimeSpan.FromMinutes(1), ct))
+                    return JsonResults.OAuthError(
+                        "temporarily_unavailable", "Too many pushed authorization requests", 429);
             }
 
             // RFC 9126 §2.1: request_uri MUST NOT be sent to PAR — chaining is forbidden.

@@ -41,8 +41,9 @@ public class GrantReconciliationTests(AzuriteFixture azurite)
         new(t.Grants, t.BySubject, t.ByExpiry, EnvPartitioner.Live,
             NullLogger<TableGrantStore>.Instance, fieldCipher: null);
 
-    private static GrantReconciliationService NewService(Tables t) =>
+    private static GrantReconciliationService NewService(Tables t, EnvPartitioner? partitioner = null) =>
         new(t.Grants, t.BySubject, t.ByExpiry,
+            partitioner ?? EnvPartitioner.Live,
             Options.Create(new BackgroundServiceOptions
             {
                 GrantReconciliationDelayMinutes = 0,       // first sweep immediately
@@ -94,6 +95,47 @@ public class GrantReconciliationTests(AzuriteFixture azurite)
         {
             await service.StopAsync(CancellationToken.None);
         }
+    }
+
+    /// <summary>
+    /// Under a non-live env prefix, a perfectly healthy grant survives the sweep.
+    /// </summary>
+    /// <remarks>
+    /// The service rebuilds the keys <c>TableGrantStore</c> writes, and it did so with no
+    /// <c>EnvPartitioner</c>: the index RowKey was built from <c>grant.PartitionKey</c>, which comes back
+    /// PREFIXED while the index holds the raw hash, and the lookup used the RAW subject while the index
+    /// partition is prefixed. Both halves miss, the 404 branch fires for every grant, and the PRIMARY row is
+    /// deleted — so every subject-bearing grant in a sandbox, dev or per-tenant env was destroyed on the
+    /// first sweep. Under the live partitioner nothing is prefixed and the keys agree, which is why every
+    /// existing test in this file passes: they all use <c>EnvPartitioner.Live</c>.
+    /// </remarks>
+    [Fact]
+    public async Task AHealthyGrantSurvivesTheSweepUnderANonLiveEnvPrefix()
+    {
+        var tables = CreateTables("recEnv");
+        var partitioner = new EnvPartitioner("dev");
+        var store = new TableGrantStore(
+            tables.Grants, tables.BySubject, tables.ByExpiry, partitioner,
+            NullLogger<TableGrantStore>.Instance, fieldCipher: null);
+
+        // Written the way production writes it: nothing is drifted, nothing is orphaned.
+        await store.StoreAsync(Grant("env-healthy-1", "subject-1"));
+        var hashed = TableGrantStore.HashKey("env-healthy-1");
+
+        Assert.True(await ExistsAsync(tables.Grants, partitioner.PK(hashed), GrantEntity.GrantRowKey));
+
+        // One full sweep. There is nothing to remove, so wait for the service to have run rather than for a
+        // deletion — then assert the grant is still there.
+        var service = NewService(tables, partitioner);
+        await service.StartAsync(CancellationToken.None);
+        await Task.Delay(1500);
+        await service.StopAsync(CancellationToken.None);
+
+        Assert.True(await ExistsAsync(tables.Grants, partitioner.PK(hashed), GrantEntity.GrantRowKey),
+            "the sweep deleted a healthy grant because it rebuilt the index keys without the env prefix");
+        Assert.True(
+            await ExistsAsync(tables.BySubject, partitioner.PK("subject-1"), $"refresh_token|{hashed}"),
+            "the sweep deleted a healthy subject index entry");
     }
 
     private static string ExpiryPk(string hashedKey) => GrantByExpiryEntity.GetPartitionKey(Expiry, hashedKey);

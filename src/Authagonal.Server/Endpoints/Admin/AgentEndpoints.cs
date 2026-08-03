@@ -53,9 +53,25 @@ public static class AgentEndpoints
         if (client is null)
             return NotFound("client_not_found");
 
-        var mode = AgentModes.Parse(request.Mode);
+        // Validated BEFORE parsing, because Parse maps anything it does not recognise to Delegated — so an
+        // unrecognised value used to be parsed into a real mode first and rejected second.
         if (request.Mode is not (null or "delegated" or "service" or "both"))
             return BadRequest("mode must be one of: delegated, service, both");
+
+        // Read before the grant-type checks below, because those validate the EFFECTIVE mode and the
+        // effective mode may come from the stored profile.
+        var existingProfile = await store.GetAsync(clientId, ct);
+
+        // An omitted mode PRESERVES the stored one, like every other field here.
+        //
+        // It was `AgentModes.Parse(request.Mode)`, and Parse maps null to Delegated — so a PUT that changed
+        // only maxTokenLifetimeSeconds silently reset the mode, which is the field deciding WHICH delegation
+        // machinery the agent may use. A `service` agent quietly became `delegated`. The comment further down,
+        // added when the ceiling had this same asymmetry, claims "as every other field on this endpoint does";
+        // this was the field it was wrong about.
+        var mode = request.Mode is null
+            ? existingProfile?.Mode ?? AgentMode.Delegated
+            : AgentModes.Parse(request.Mode);
 
         // An agent's client_id becomes the `sub` of an entry in the RFC 8693 `act` chain — an assertion
         // about WHICH software acted. A public client proves nothing about its identity (anyone who knows the
@@ -89,7 +105,6 @@ public static class AgentEndpoints
         // say, maxTokenLifetimeSeconds and said nothing about the ceiling silently revoked the agent's
         // entire authority. Every other field on the same request merges, so the asymmetry was the
         // bug: a partial update is the normal way to use this endpoint.
-        var existingProfile = await store.GetAsync(clientId, ct);
         var ceiling = existingProfile?.Ceiling ?? AuthoritySet.Empty;
         if (request.Ceiling is { } ceilingElement &&
             !AuthorityJson.TryParse(ceilingElement.GetRawText(), out ceiling))

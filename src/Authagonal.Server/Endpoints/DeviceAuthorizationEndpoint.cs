@@ -86,6 +86,23 @@ public static class DeviceAuthorizationEndpoint
             // ClientAuthentication.AuthenticateAsync above, on the same `client-secret|{id}` budget key
             // as /connect/token, so an attacker cannot get a fresh budget by switching endpoints. That
             // is the point of routing through the shared path rather than re-implementing verification.
+            // Per SOURCE first, then per client.
+            //
+            // The key was `device-auth|{clientId}` alone, with no source component — and this endpoint is
+            // anonymous by design, because RFC 8628 exists for devices that cannot hold a secret and a public
+            // client authenticates on a bare client_id readable from any SPA's traffic or any shipped
+            // firmware. So one shared bucket per publicly-known id, and the only party inconvenienced by
+            // exhausting it is the legitimate fleet: 120 requests a minute from anywhere disabled device
+            // login for every device of that client. Same defect the sweep fixed for login, the SAML ACS and
+            // forgot-password.
+            //
+            // The per-client bucket stays as the aggregate ceiling, checked second so a hostile source
+            // spends its own budget first.
+            var source = Services.Cluster.InternalEndpointGuard.SourceQuotaKey(httpContext);
+            if (await rateLimiter.IsRateLimitedAsync(
+                    $"device-auth|{clientId}|{source}", 30, TimeSpan.FromMinutes(1), ct))
+                return DeviceError("temporarily_unavailable", "Too many device authorization requests");
+
             if (await rateLimiter.IsRateLimitedAsync($"device-auth|{clientId}", 120, TimeSpan.FromMinutes(1), ct))
                 return DeviceError("temporarily_unavailable", "Too many device authorization requests");
 
