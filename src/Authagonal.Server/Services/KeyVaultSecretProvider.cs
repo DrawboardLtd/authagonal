@@ -50,15 +50,12 @@ public sealed class KeyVaultSecretProvider(
     /// <summary>
     /// Key Vault secret names must be 1-127 characters: alphanumeric and hyphens.
     /// </summary>
+    /// <remarks>
+    /// Injective, via <see cref="SecretNameSanitizer"/>. This used to fold every disallowed character to
+    /// <c>'-'</c>, truncate to 127 characters BEFORE sanitising, and trim hyphens — three ways for two
+    /// distinct names to become one Key Vault secret, which per <see cref="ISecretProvider"/>'s own contract
+    /// means the second silently overwrites the first and both then resolve to the second.
+    /// </remarks>
     private static string SanitizeName(string name)
-    {
-        var sanitized = new char[Math.Min(name.Length, 127)];
-        for (var i = 0; i < sanitized.Length; i++)
-        {
-            var c = name[i];
-            sanitized[i] = char.IsLetterOrDigit(c) ? c : '-';
-        }
-
-        return new string(sanitized).Trim('-');
-    }
+        => SecretNameSanitizer.Sanitize(name, maxLength: 127, extraAllowed: "-");
 }

@@ -62,16 +62,11 @@ public sealed class SecretsManagerSecretProvider(
     /// <summary>
     /// Secrets Manager names allow <c>[A-Za-z0-9/_+=.@-]</c>, 1–512 chars. Map anything else to '-'.
     /// </summary>
+    /// <remarks>
+    /// Injective, via <see cref="Authagonal.Core.Services.SecretNameSanitizer"/> — shared with the Key Vault
+    /// provider so the two cannot drift, since both had the same three collision paths (character folding,
+    /// truncate-before-sanitise, and trimming hyphens) with only the allow-list and the budget differing.
+    /// </remarks>
     private static string SanitizeName(string name)
-    {
-        var max = Math.Min(name.Length, 512);
-        var chars = new char[max];
-        for (var i = 0; i < max; i++)
-        {
-            var c = name[i];
-            chars[i] = char.IsLetterOrDigit(c) || c is '/' or '_' or '+' or '=' or '.' or '@' or '-' ? c : '-';
-        }
-
-        return new string(chars).Trim('-');
-    }
+        => Authagonal.Core.Services.SecretNameSanitizer.Sanitize(name, maxLength: 512, extraAllowed: "/_+=.@-");
 }
