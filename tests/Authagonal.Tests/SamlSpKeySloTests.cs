@@ -233,6 +233,10 @@ public sealed class SamlSpKeySloEndpointTests(AzuriteFixture azurite) : IAsyncLi
         // These tests exercise sign-in/provisioning; JIT now defaults off, so opt in unless the body says otherwise.
         var node = System.Text.Json.Nodes.JsonNode.Parse(JsonSerializer.Serialize(body))!.AsObject();
         if (node["jitProvisioningEnabled"] is null) node["jitProvisioningEnabled"] = true;
+        // Same shape for unsolicited responses: these fixtures post IdP-initiated assertions (no
+        // InResponseTo), which is now off by default because such a response is bound to no pending
+        // request and no browser. Tests that drive a real /saml/{id}/login leave it alone.
+        if (node["allowUnsolicitedResponses"] is null) node["allowUnsolicitedResponses"] = true;
         var request = new HttpRequestMessage(HttpMethod.Post, "/api/v1/saml/connections")
         {
             Content = new StringContent(node.ToJsonString(), Encoding.UTF8, "application/json")

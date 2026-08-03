@@ -21,6 +21,32 @@ public static class SamlEndpoints
     /// </summary>
     private const int MaxSamlResponseBytes = 512 * 1024;
 
+    /// <summary>
+    /// Browser-binding cookie carrying the AuthnRequest id this user-agent started the flow with.
+    /// </summary>
+    /// <remarks>
+    /// The OIDC federation host beside this one has carried the equivalent (<c>oidc_state</c>) since F48d,
+    /// and names the threat in its own comment. This path had nothing: the AuthnRequest row is global, so
+    /// the ACS accepted any response whose <c>InResponseTo</c> matched ANY outstanding request rather than
+    /// the one this browser initiated — SAML login CSRF. An attacker starts a flow, obtains a valid
+    /// assertion for their own account at the same IdP, and delivers the ACS POST to a victim's browser,
+    /// which is then signed in as the attacker.
+    /// <para>
+    /// <c>SameSite=None</c>, unlike <c>oidc_state</c>: the HTTP-POST binding delivers the response as a
+    /// cross-site form POST, and Lax withholds cookies from those. Lax on plain HTTP only, where None
+    /// would be dropped for want of Secure and no real IdP is in play anyway.
+    /// </para>
+    /// </remarks>
+    private const string RequestCookieName = "saml_request";
+
+    /// <summary>Cookie options for <see cref="RequestCookieName"/>; also used to delete it.</summary>
+    private static CookieOptions RequestCookieOptions(HttpContext httpContext) => new()
+    {
+        HttpOnly = true,
+        Secure = httpContext.Request.IsHttps,
+        SameSite = httpContext.Request.IsHttps ? SameSiteMode.None : SameSiteMode.Lax,
+        Path = "/saml",
+    };
 
     public static IEndpointRouteBuilder MapSamlEndpoints(this IEndpointRouteBuilder app)
     {
@@ -40,6 +66,7 @@ public static class SamlEndpoints
         string connectionId,
         string? returnUrl,
         string? loginHint,
+        HttpContext httpContext,
         ISamlProviderStore samlStore,
         SamlMetadataParser metadataParser,
         Authagonal.Core.Services.ISamlReplayCache replayCache,
@@ -64,6 +91,14 @@ public static class SamlEndpoints
         // the SAML spec caps RelayState at 80 bytes and some IdPs truncate it — a full /authorize
         // returnUrl doesn't fit, so it rides the request row and comes back via InResponseTo.
         await replayCache.StoreRequestAsync(requestId, connectionId, SanitizeReturnUrl(returnUrl), ct);
+
+        // Bind this attempt to the initiating browser. The row above is global — the ACS matched an
+        // InResponseTo against ANY outstanding request — so without this, a response obtained in one
+        // browser was accepted in another. Expiry matches the request row's usefulness: long enough for an
+        // IdP login (including a password reset at the IdP), short enough not to linger.
+        var cookieOptions = RequestCookieOptions(httpContext);
+        cookieOptions.Expires = DateTimeOffset.UtcNow.AddMinutes(15);
+        httpContext.Response.Cookies.Append(RequestCookieName, requestId, cookieOptions);
 
         // Build the issuer (our entity ID)
         var issuer = config.EntityId;
@@ -197,11 +232,49 @@ public static class SamlEndpoints
             logger.LogWarning("Could not extract InResponseTo from SAML response for replay validation");
         }
 
+        // A response with no InResponseTo is unsolicited: this server issued no AuthnRequest for it, so
+        // there is no pending request and no browser it can be tied to. Every other §4.1.4.3 rule is
+        // satisfied by an assertion the attacker obtained legitimately for their OWN account at the same
+        // IdP — Issuer matches the metadata entityID, Destination and Recipient are this ACS, Audience is
+        // this SP, the signature verifies, the assertion id is a first sighting — so accepting it
+        // unconditionally let anyone with an account at the IdP sign a session in from any user-agent.
+        //
+        // It also decided whether the binding below meant anything: requiring the request cookie on the
+        // SP-initiated path is worth nothing while the same assertion can be replayed with InResponseTo
+        // removed. The profile permits IdP-initiated SSO, so the connection may opt in.
+        if (expectedInResponseTo is null && !config.AllowUnsolicitedResponses)
+        {
+            logger.LogWarning(
+                "Refusing unsolicited SAML response on connection {ConnectionId}: no InResponseTo, and "
+                + "AllowUnsolicitedResponses is off for this connection", connectionId);
+            return RedirectWithError(relayState, "saml_unsolicited",
+                "This connection does not accept IdP-initiated sign-in.");
+        }
+
         // Validate replay cache if we have an InResponseTo.
         // IdP-initiated flows have no InResponseTo and skip this block entirely.
         // If InResponseTo IS present, replay validation must pass — reject otherwise.
         if (expectedInResponseTo is not null)
         {
+            // Browser binding, checked BEFORE the row is consumed so a cross-browser response cannot burn
+            // the victim's pending request. Same ordering and reasoning as OidcEndpoints' state cookie.
+            var boundRequestId = httpContext.Request.Cookies[RequestCookieName];
+            httpContext.Response.Cookies.Delete(RequestCookieName, RequestCookieOptions(httpContext));
+            if (string.IsNullOrEmpty(boundRequestId)
+                || !System.Security.Cryptography.CryptographicOperations.FixedTimeEquals(
+                        System.Text.Encoding.UTF8.GetBytes(boundRequestId),
+                        System.Text.Encoding.UTF8.GetBytes(expectedInResponseTo)))
+            {
+                logger.LogWarning(
+                    "SAML request cookie missing or mismatched on connection {ConnectionId} — possible login "
+                    + "CSRF. InResponseTo(sha256)={Digest}", connectionId, LogSafeDigest(expectedInResponseTo));
+                return Results.BadRequest(new
+                {
+                    error = "saml_binding",
+                    error_description = "This SAML response was not requested by this browser.",
+                });
+            }
+
             var requestState = await replayCache.ValidateAndConsumeRequestAsync(expectedInResponseTo, ct);
             if (requestState is null)
             {

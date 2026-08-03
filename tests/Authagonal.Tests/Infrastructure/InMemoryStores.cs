@@ -446,25 +446,25 @@ public sealed class InMemorySamlProviderStore : ISamlProviderStore
 {
     private readonly ConcurrentDictionary<string, SamlProviderConfig> _providers = new();
 
-    // Clone on store and on read so the store never aliases the caller's object — the real Table/
-    // Dynamo stores round-trip through an entity, so a caller mutating a config after Upsert (e.g.
-    // masking SpCertificate before returning it in the HTTP response) must not affect stored state.
-    private static SamlProviderConfig Clone(SamlProviderConfig c) => new()
-    {
-        ConnectionId = c.ConnectionId,
-        ConnectionName = c.ConnectionName,
-        IconUrl = c.IconUrl,
-        EntityId = c.EntityId,
-        MetadataLocation = c.MetadataLocation,
-        MetadataXml = c.MetadataXml,
-        NameIdFormat = c.NameIdFormat,
-        SpCertificate = c.SpCertificate,
-        SignAuthnRequests = c.SignAuthnRequests,
-        AllowedDomains = [.. c.AllowedDomains],
-        DisableJitProvisioning = c.DisableJitProvisioning,
-        CreatedAt = c.CreatedAt,
-        UpdatedAt = c.UpdatedAt,
-    };
+    /// <summary>
+    /// Clone on store and on read, so the store never aliases the caller's object.
+    /// </summary>
+    /// <remarks>
+    /// The real Table and Dynamo stores round-trip through an entity, so a caller that mutates a config
+    /// after Upsert — the create endpoint masks <c>SpCertificate</c> before returning it in the HTTP
+    /// response — must not affect stored state.
+    /// <para>
+    /// A serialisation round-trip rather than a hand-written field list. The list silently fell four
+    /// fields behind the model: <c>ChallengeMfaAfterLogin</c>, <c>ProvisioningAttributeParams</c>,
+    /// <c>AllowUninvitedJit</c> and <c>AllowUnsolicitedResponses</c> were all dropped on every read, so a
+    /// test that configured any of them through this store was quietly asserting against the DEFAULT
+    /// instead — including "the tenant trusts the IdP's own MFA", which turns the local challenge off.
+    /// Nothing failed; the setting simply never arrived. This cannot drift again.
+    /// </para>
+    /// </remarks>
+    private static SamlProviderConfig Clone(SamlProviderConfig c)
+        => System.Text.Json.JsonSerializer.Deserialize<SamlProviderConfig>(
+               System.Text.Json.JsonSerializer.Serialize(c))!;
 
     public Task<SamlProviderConfig?> GetAsync(string connectionId, CancellationToken ct = default)
         => Task.FromResult(_providers.TryGetValue(connectionId, out var c) ? Clone(c) : null);

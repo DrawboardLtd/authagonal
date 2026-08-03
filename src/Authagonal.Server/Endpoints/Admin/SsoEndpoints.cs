@@ -94,6 +94,7 @@ public static class SsoEndpoints
             MetadataXml = condensedXml,
             NameIdFormat = request.NameIdFormat,
             SignAuthnRequests = request.SignAuthnRequests,
+            AllowUnsolicitedResponses = request.AllowUnsolicitedResponses,
             AllowedDomains = request.AllowedDomains ?? [],
             JitProvisioningEnabled = request.JitProvisioningEnabled,
             ChallengeMfaAfterLogin = request.ChallengeMfaAfterLogin ?? true,
@@ -180,6 +181,10 @@ public static class SsoEndpoints
         if (request.ChallengeMfaAfterLogin.HasValue)
         {
             config.ChallengeMfaAfterLogin = request.ChallengeMfaAfterLogin.Value;
+        }
+        if (request.AllowUnsolicitedResponses.HasValue)
+        {
+            config.AllowUnsolicitedResponses = request.AllowUnsolicitedResponses.Value;
         }
         // F49/F51 partial updates. Supplying a metadata URL clears pasted XML and vice versa (the
         // two are mutually exclusive sources); NameIdFormat "" resets to the default.
@@ -582,6 +587,13 @@ public static class SsoEndpoints
         /// <summary>Auto-provision an uninvited domain user on SSO login (tagged with the connection so the
         /// downstream places them in the right tenant), instead of requiring an invite.</summary>
         public bool AllowUninvitedJit { get; set; }
+
+        /// <summary>
+        /// Accept IdP-initiated (unsolicited) responses — ones carrying no <c>InResponseTo</c>. Default
+        /// false: such a response is bound to no pending request and no browser, so anyone with an account
+        /// at the IdP could otherwise establish a session here from any user-agent.
+        /// </summary>
+        public bool AllowUnsolicitedResponses { get; set; }
     }
 
     /// <summary>
@@ -608,6 +620,9 @@ public static class SsoEndpoints
         public string? NameIdFormat { get; set; }
         /// <summary>Force signed AuthnRequests; null = leave unchanged. F54.</summary>
         public bool? SignAuthnRequests { get; set; }
+
+        /// <summary>Accept IdP-initiated (unsolicited) responses; null = leave unchanged.</summary>
+        public bool? AllowUnsolicitedResponses { get; set; }
     }
 
     public sealed class CreateOidcRequest

@@ -47,6 +47,7 @@ public sealed class ProviderSeedService(
                 ChallengeMfaAfterLogin = seed.ChallengeMfaAfterLogin,
                 ProvisioningAttributeParams = seed.ProvisioningAttributeParams ?? [],
                 AllowUninvitedJit = seed.AllowUninvitedJit,
+                AllowUnsolicitedResponses = seed.AllowUnsolicitedResponses,
                 CreatedAt = DateTimeOffset.UtcNow
             };
 
@@ -142,6 +143,9 @@ public sealed class ProviderSeedService(
         public bool ChallengeMfaAfterLogin { get; set; } = true;
         public List<string>? ProvisioningAttributeParams { get; set; }
         public bool AllowUninvitedJit { get; set; }
+
+        /// <summary>Accept IdP-initiated (unsolicited) responses on this connection. Default false.</summary>
+        public bool AllowUnsolicitedResponses { get; set; }
     }
 
     public sealed class OidcProviderSeed

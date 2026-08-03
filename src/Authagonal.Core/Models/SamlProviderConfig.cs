@@ -34,6 +34,29 @@ public sealed class SamlProviderConfig
     /// the IdP's metadata declares WantAuthnRequestsSigned.
     /// </summary>
     public bool? SignAuthnRequests { get; set; }
+
+    /// <summary>
+    /// Whether this connection accepts an IdP-initiated (unsolicited) Response — one carrying no
+    /// <c>InResponseTo</c>, for which this server issued no AuthnRequest. Defaults to OFF.
+    /// </summary>
+    /// <remarks>
+    /// An unsolicited response cannot be tied to a pending request or to a browser, so accepting one means
+    /// anyone holding a valid assertion from this IdP can establish that subject's session here from any
+    /// user-agent — including an assertion the attacker obtained legitimately for their OWN account at the
+    /// same IdP, which makes it a login-CSRF primitive: every other §4.1.4.3 rule (Issuer, Destination,
+    /// Recipient, Audience, signature, first-sighting of the assertion id) is satisfied by that assertion.
+    /// <para>
+    /// It also decides whether the browser binding below can be relied on at all. Requiring the
+    /// AuthnRequest-id cookie on the SP-initiated path is worth nothing while the same assertion can be
+    /// replayed with <c>InResponseTo</c> simply removed.
+    /// </para>
+    /// <para>
+    /// The profile permits IdP-initiated SSO, so this is a deployment decision — and therefore one an
+    /// operator makes deliberately, per connection, rather than one every connection has by default.
+    /// </para>
+    /// </remarks>
+    public bool AllowUnsolicitedResponses { get; set; }
+
     public List<string> AllowedDomains { get; set; } = [];
 
     /// <summary>

@@ -25,6 +25,12 @@ public sealed class SamlProviderEntity : ITableEntity
     public string? SpCertificate { get; set; }
     /// <summary>Force AuthnRequest signing; null = follow IdP metadata WantAuthnRequestsSigned (F54).</summary>
     public bool? SignAuthnRequests { get; set; }
+
+    /// <summary>
+    /// Accept IdP-initiated (unsolicited) responses. Rows written before this field existed read false,
+    /// which is the safe direction: an existing connection keeps refusing them until an operator opts in.
+    /// </summary>
+    public bool AllowUnsolicitedResponses { get; set; }
     public required string AllowedDomainsJson { get; set; }
     public string? IconUrl { get; set; }
     /// <summary>
@@ -53,6 +59,7 @@ public sealed class SamlProviderEntity : ITableEntity
         NameIdFormat = config.NameIdFormat,
         SpCertificate = config.SpCertificate,
         SignAuthnRequests = config.SignAuthnRequests,
+        AllowUnsolicitedResponses = config.AllowUnsolicitedResponses,
         AllowedDomainsJson = JsonSerializer.Serialize(config.AllowedDomains, AzureJsonContext.Default.ListString),
         IconUrl = config.IconUrl,
         DisableJitProvisioning = config.DisableJitProvisioning,
@@ -75,6 +82,7 @@ public sealed class SamlProviderEntity : ITableEntity
         NameIdFormat = NameIdFormat,
         SpCertificate = SpCertificate,
         SignAuthnRequests = SignAuthnRequests,
+        AllowUnsolicitedResponses = AllowUnsolicitedResponses,
         AllowedDomains = JsonSerializer.Deserialize(AllowedDomainsJson, AzureJsonContext.Default.ListString) ?? [],
         IconUrl = IconUrl,
         DisableJitProvisioning = DisableJitProvisioning ?? false,
