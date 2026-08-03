@@ -157,6 +157,41 @@ public sealed class SqlGrantStore(
         return true;
     }
 
+    public async Task<bool> TryUpdateDataIfUnconsumedAsync(PersistedGrant grant, CancellationToken ct = default)
+    {
+        if (string.IsNullOrEmpty(grant.Key))
+            throw new ArgumentException(
+                "PersistedGrant.Key is empty. Grants read back from storage have no Key — set it explicitly before updating.",
+                nameof(grant));
+
+        var hashedKey = HashKey(grant.Key);
+        var pk = partitioner.PK(hashedKey);
+        var json = await ProtectAsync(SerializeWithoutHandle(grant), ct).ConfigureAwait(false);
+
+        // No consumedAt attribute written: the guard already requires it to be null, and this row must stay
+        // un-consumed. The grants row carries pk/sk/data only (see StoreAsync), so nothing else is dropped.
+        var row = new SqlRow(pk, GrantSk) { Data = json };
+
+        // Update only if the row exists and is not consumed — the same primitive the consume-mark uses.
+        if (!await grants.UpdateIfAttrNullAsync(row, "consumedAt", ct).ConfigureAwait(false))
+            return false;
+
+        // Mirror to the subject index, best-effort.
+        if (!string.IsNullOrEmpty(grant.SubjectId))
+        {
+            var spk = partitioner.PK(grant.SubjectId);
+            var ssk = SubjectSk(grant.Type, hashedKey);
+            if (await grantsBySubject.GetAsync(spk, ssk, includeData: false, ct).ConfigureAwait(false) is not null)
+            {
+                var s = new SqlRow(spk, ssk) { Data = json };
+                s.PutS("clientId", grant.ClientId);
+                await grantsBySubject.PutAsync(s, ct).ConfigureAwait(false);
+            }
+        }
+
+        return true;
+    }
+
     public async Task<bool> TryMarkConsumedAsync(PersistedGrant grant, CancellationToken ct = default)
     {
         if (string.IsNullOrEmpty(grant.Key))

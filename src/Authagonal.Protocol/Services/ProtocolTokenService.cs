@@ -648,9 +648,13 @@ public sealed class ProtocolTokenService(
                 if (successor is not null &&
                     successor.Type == "refresh_token" &&
                     !successor.ConsumedAt.HasValue &&
-                    successor.ExpiresAt > now)
+                    successor.ExpiresAt > now &&
+                    // Null means the successor was consumed or revoked underneath us, which puts this
+                    // presentation outside the grace window after all — fall through to replay handling.
+                    await ReissueFromSuccessorAsync(successor, data.SuccessorKey, resources, ct)
+                        is { } reissued)
                 {
-                    return await ReissueFromSuccessorAsync(successor, data.SuccessorKey, resources, ct);
+                    return reissued;
                 }
             }
 
@@ -839,7 +843,16 @@ public sealed class ProtocolTokenService(
         };
     }
 
-    private async Task<TokenResponse> ReissueFromSuccessorAsync(
+    /// <summary>
+    /// Serves a retry from the successor of an already-consumed refresh token, or null when it cannot.
+    /// </summary>
+    /// <remarks>
+    /// Null means the successor was consumed or revoked while this retry was being served, so the caller must
+    /// fall through to replay handling: at that point this presentation of the OLD token really is out of the
+    /// safe window — either the legitimate client has moved on past the successor too, or the family is
+    /// already being revoked — and both are what the replay branch is for.
+    /// </remarks>
+    private async Task<TokenResponse?> ReissueFromSuccessorAsync(
         PersistedGrant successor,
         string successorKey, // successor.Key is empty on grants read back from storage
         IEnumerable<string>? resources,
@@ -879,7 +892,29 @@ public sealed class ProtocolTokenService(
             DateTimeOffset.UtcNow);
         successor.Key = successorKey; // grants read back from storage carry no key; see the rotation note
         successor.Data = JsonSerializer.Serialize(data, ProtocolJsonContext.Default.RefreshTokenData);
-        await grantStore.StoreAsync(successor, ct);
+
+        // Conditional on the successor still being live, NOT an unconditional upsert.
+        //
+        // This was grantStore.StoreAsync — a full-row upsert on every provider. The instance written carries
+        // ConsumedAt = null, and on DynamoDB and SQL the write also DROPS the top-level consumedAt guard
+        // attribute that TryMarkConsumedAsync conditions on. So any consume or delete landing between the read
+        // at the top of this method and this write was silently undone: a revoked refresh grant came back, and
+        // rotation-replay detection stopped seeing the marker it depends on. The same
+        // read-modify-blind-write shape already fixed for the device-poll timestamp, for
+        // RecordSuccessfulLoginAsync, and for the profile-revert compensation.
+        //
+        // Losing the race means the successor was consumed or revoked while this retry was being served, so
+        // the retry must not be served: the access token just minted would be untracked by any live grant and
+        // therefore unrevokable. Refusing is also the right answer for the case this window exists to
+        // tolerate — a stolen token racing the legitimate client.
+        if (!await grantStore.TryUpdateDataIfUnconsumedAsync(successor, ct))
+        {
+            logger.LogWarning(
+                "Grace-window retry for client {ClientId} lost the race to record its access token: the "
+                + "successor grant was consumed or revoked concurrently. Refusing the retry.",
+                successor.ClientId);
+            return null;
+        }
 
         string? idToken = null;
         if (data.Scopes.Contains(StandardScopes.OpenId))

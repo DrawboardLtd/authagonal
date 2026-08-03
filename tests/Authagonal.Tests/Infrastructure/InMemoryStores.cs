@@ -307,6 +307,26 @@ public sealed class InMemoryGrantStore : IGrantStore
     public Task<bool> TryConsumeAsync(string key, CancellationToken ct = default)
         => Task.FromResult(_grants.TryRemove(key, out _)); // atomic single-use
 
+    public Task<bool> TryUpdateDataIfUnconsumedAsync(PersistedGrant grant, CancellationToken ct = default)
+    {
+        // Mirrors the real stores: Data only, and only while the row exists and is un-consumed. Sharing the
+        // consume gate is what makes the check-and-set atomic here, as the ETag / condition expression does
+        // for the durable backends — so a concurrent consume and a concurrent data update cannot both win.
+        if (string.IsNullOrEmpty(grant.Key))
+            throw new ArgumentException(
+                "PersistedGrant.Key is empty. Grants read back from storage have no Key — set it explicitly before updating.",
+                nameof(grant));
+
+        lock (_consumeGate)
+        {
+            if (!_grants.TryGetValue(grant.Key, out var existing) || existing.ConsumedAt is not null)
+                return Task.FromResult(false);
+
+            existing.Data = grant.Data;
+            return Task.FromResult(true);
+        }
+    }
+
     public Task<bool> TryMarkConsumedAsync(PersistedGrant grant, CancellationToken ct = default)
     {
         // Mirror TableGrantStore: fail loudly on an empty handle, and let exactly one concurrent caller

@@ -162,6 +162,55 @@ public sealed class DynamoGrantStore(
         return true;
     }
 
+    public async Task<bool> TryUpdateDataIfUnconsumedAsync(PersistedGrant grant, CancellationToken ct = default)
+    {
+        if (string.IsNullOrEmpty(grant.Key))
+            throw new ArgumentException(
+                "PersistedGrant.Key is empty. Grants read back from storage have no Key — set it explicitly before updating.",
+                nameof(grant));
+
+        var hashedKey = HashKey(grant.Key);
+        var pk = partitioner.PK(hashedKey);
+        var json = await ProtectAsync(SerializeWithoutHandle(grant), ct).ConfigureAwait(false);
+
+        // No consumedAt attribute: the condition requires its absence, and this row must stay un-consumed.
+        // The grants item carries pk/sk/data only (see StoreAsync), so a full Put drops nothing.
+        var item = Dyn.Item(pk, GrantSk);
+        item.PutS("data", json);
+
+        // Same condition as the consume-mark: the row must exist and must not be consumed. A concurrent
+        // consume or delete fails the condition and this caller loses.
+        try
+        {
+            await grants.Client.PutItemAsync(new PutItemRequest
+            {
+                TableName = grants.Name,
+                Item = item,
+                ConditionExpression = "attribute_exists(pk) AND attribute_not_exists(consumedAt)",
+            }, ct).ConfigureAwait(false);
+        }
+        catch (ConditionalCheckFailedException)
+        {
+            return false;
+        }
+
+        // Mirror to the subject index, best-effort.
+        if (!string.IsNullOrEmpty(grant.SubjectId))
+        {
+            var spk = partitioner.PK(grant.SubjectId);
+            var ssk = SubjectSk(grant.Type, hashedKey);
+            if (await grantsBySubject.GetAsync(spk, ssk, ct).ConfigureAwait(false) is not null)
+            {
+                var s = Dyn.Item(spk, ssk);
+                s.PutS("data", json);
+                s.PutS("clientId", grant.ClientId);
+                await grantsBySubject.PutAsync(s, ct).ConfigureAwait(false);
+            }
+        }
+
+        return true;
+    }
+
     public async Task<bool> TryMarkConsumedAsync(PersistedGrant grant, CancellationToken ct = default)
     {
         if (string.IsNullOrEmpty(grant.Key))

@@ -27,6 +27,28 @@ public interface IGrantStore
     /// </summary>
     Task<bool> TryMarkConsumedAsync(PersistedGrant grant, CancellationToken ct = default);
 
+    /// <summary>
+    /// Atomically replaces a grant's <see cref="PersistedGrant.Data"/>, but ONLY if the grant still exists
+    /// and is NOT consumed. Returns false for a caller whose row was consumed or deleted in the meantime.
+    /// </summary>
+    /// <remarks>
+    /// The read-modify-write sibling of <see cref="TryMarkConsumedAsync"/>, for the one caller that has to
+    /// amend a LIVE grant it already read: the refresh grace window appends the access-token jti it just
+    /// minted to the successor's tracked list, so revoking that refresh token can still reach the token.
+    /// <para>
+    /// It used to do that with <see cref="StoreAsync"/> — an unconditional full-row upsert on every provider.
+    /// The instance written carries <c>ConsumedAt = null</c>, and on DynamoDB and SQL the write also drops the
+    /// top-level <c>consumedAt</c> guard attribute that <see cref="TryMarkConsumedAsync"/> conditions on. So a
+    /// consume or delete landing between the read and the write was silently undone: a revoked grant came
+    /// back, and rotation-replay detection stopped seeing the marker it depends on.
+    /// </para>
+    /// <para>
+    /// The caller must set <see cref="PersistedGrant.Key"/> — grants read back from storage have none — or the
+    /// write would land under the empty-key partition.
+    /// </para>
+    /// </remarks>
+    Task<bool> TryUpdateDataIfUnconsumedAsync(PersistedGrant grant, CancellationToken ct = default);
+
     Task RemoveAsync(string key, CancellationToken ct = default);
     Task RemoveAllBySubjectAsync(string subjectId, CancellationToken ct = default);
     Task RemoveAllBySubjectAndClientAsync(string subjectId, string clientId, CancellationToken ct = default);

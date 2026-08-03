@@ -212,6 +212,69 @@ public sealed class TableGrantStore(
         return true;
     }
 
+    public async Task<bool> TryUpdateDataIfUnconsumedAsync(PersistedGrant grant, CancellationToken ct = default)
+    {
+        if (string.IsNullOrEmpty(grant.Key))
+            throw new ArgumentException(
+                "PersistedGrant.Key is empty. Grants read back from storage have no Key — set it explicitly before updating.",
+                nameof(grant));
+
+        var hashedKey = HashKey(grant.Key);
+        var hashedKeyPk = partitioner.PK(hashedKey);
+
+        GrantEntity entity;
+        try
+        {
+            var response = await grantsTable.GetEntityAsync<GrantEntity>(
+                hashedKeyPk, GrantEntity.GrantRowKey, cancellationToken: ct);
+            entity = response.Value;
+        }
+        catch (RequestFailedException ex) when (ex.Status == 404)
+        {
+            return false;
+        }
+
+        // Consumed or revoked while the caller was working — it must not be brought back to life.
+        if (entity.ConsumedAt is not null)
+            return false;
+
+        // Data only. Everything else on the row, including the consumed marker's absence, is left as read.
+        entity.Data = await ProtectAsync(grant.Data, ct);
+
+        // Same ETag compare-and-set as TryMarkConsumedAsync: a concurrent consume or delete changes the
+        // ETag, this caller loses, and the row keeps whatever that caller wrote.
+        try
+        {
+            await grantsTable.UpdateEntityAsync(entity, entity.ETag, TableUpdateMode.Replace, ct);
+        }
+        catch (RequestFailedException ex) when (ex.Status is 412 or 404)
+        {
+            return false;
+        }
+
+        // Mirror to the subject index, best-effort, exactly as the consume-mark does.
+        if (!string.IsNullOrEmpty(entity.SubjectId))
+        {
+            var subjectRk = $"{entity.Type}|{hashedKey}";
+            try
+            {
+                var subjectResponse = await grantsBySubjectTable.GetEntityAsync<GrantBySubjectEntity>(
+                    partitioner.PK(entity.SubjectId), subjectRk, cancellationToken: ct);
+
+                var subjectEntity = subjectResponse.Value;
+                subjectEntity.Data = entity.Data;
+                await grantsBySubjectTable.UpsertEntityAsync(subjectEntity, TableUpdateMode.Replace, ct);
+            }
+            catch (RequestFailedException ex) when (ex.Status == 404)
+            {
+                logger.LogWarning("Subject index entry missing during data update for subject {SubjectId}, key {HashedKey}",
+                    entity.SubjectId, hashedKey);
+            }
+        }
+
+        return true;
+    }
+
     public async Task<bool> TryMarkConsumedAsync(PersistedGrant grant, CancellationToken ct = default)
     {
         if (string.IsNullOrEmpty(grant.Key))

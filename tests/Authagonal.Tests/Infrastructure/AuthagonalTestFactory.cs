@@ -68,6 +68,15 @@ public sealed class AuthagonalTestFactory : IAsyncDisposable
     public InMemoryUserStore UserStore { get; } = new();
     public InMemoryClientStore ClientStore { get; } = new();
     public InMemoryGrantStore GrantStore { get; } = new();
+
+    /// <summary>
+    /// Wraps the grant store before registration, for tests that need one operation to lose a race.
+    /// </summary>
+    /// <remarks>
+    /// Set before the first <c>CreateClient()</c>. Reads and writes still land in <see cref="GrantStore"/>, so
+    /// a test can assert on it directly while the host sees the decorated instance.
+    /// </remarks>
+    public Func<IGrantStore, IGrantStore>? GrantStoreDecorator { get; set; }
     public InMemorySigningKeyStore SigningKeyStore { get; } = new();
     public InMemorySsoDomainStore SsoDomainStore { get; } = new();
     public InMemorySamlProviderStore SamlProviderStore { get; } = new();
@@ -314,7 +323,9 @@ public sealed class AuthagonalTestFactory : IAsyncDisposable
         // connection string and no Azurite.
         services.AddSingleton<IUserStore>(UserStore);
         services.AddSingleton<IClientStore>(ClientStore);
-        services.AddSingleton<IGrantStore>(GrantStore);
+        // Wrappable, so a test can make one grant-store operation fail the way a concurrent writer would.
+        // The refresh grace window's conditional write is a TOCTOU that sequential HTTP calls cannot produce.
+        services.AddSingleton<IGrantStore>(GrantStoreDecorator is null ? GrantStore : GrantStoreDecorator(GrantStore));
         services.AddSingleton<ISigningKeyStore>(SigningKeyStore);
         services.AddSingleton<ISsoDomainStore>(SsoDomainStore);
         services.AddSingleton<ISamlProviderStore>(SamlProviderStore);
