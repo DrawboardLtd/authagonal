@@ -561,16 +561,41 @@ public sealed class SqlTable(SqlDataSource source, string name)
 
     // ── continuation tokens ──────────────────────────────────────────────────────
 
+    /// <summary>
+    /// Encodes the resume cursor. Length-prefixed, because the key columns are not constrained to exclude
+    /// any particular character.
+    /// </summary>
+    /// <remarks>
+    /// This was <c>$"{pk} {sk}"</c> split back on the first space, which is lossy the moment a partition key
+    /// contains one: pk=<c>"u1 x"</c>, sk=<c>"profile"</c> encoded to <c>"u1 x profile"</c> and decoded to
+    /// <c>("u1", "x profile")</c>. <c>FetchAsync</c> then binds <c>(pk, sk) &gt; ('u1', 'x profile')</c>,
+    /// which the offending row STILL satisfies because <c>'u1 x' &gt; 'u1'</c> — so the cursor never
+    /// advances past it. When such a row lands on a page boundary, and therefore becomes the token, every
+    /// subsequent call returns the identical page and the identical token: user paging never terminates.
+    /// <para>
+    /// The sibling backends do not have this. Azure uses the SDK's opaque token and AWS JSON-encodes the key
+    /// dictionary; a delimiter chosen for readability was the only difference.
+    /// </para>
+    /// </remarks>
     private static string EncodeToken(string pk, string sk)
-        => Convert.ToBase64String(Encoding.UTF8.GetBytes($"{pk} {sk}"));
+        => Convert.ToBase64String(Encoding.UTF8.GetBytes($"{pk.Length}:{pk}{sk}"));
 
     private static (string Pk, string Sk)? DecodeToken(string? token)
     {
         if (string.IsNullOrEmpty(token)) return null;
         try
         {
-            var parts = Encoding.UTF8.GetString(Convert.FromBase64String(token)).Split(' ', 2);
-            return parts.Length == 2 ? (parts[0], parts[1]) : null;
+            var decoded = Encoding.UTF8.GetString(Convert.FromBase64String(token));
+
+            var colon = decoded.IndexOf(':', StringComparison.Ordinal);
+            if (colon <= 0) return null;
+
+            if (!int.TryParse(decoded[..colon], out var pkLength) || pkLength < 0) return null;
+
+            var body = decoded[(colon + 1)..];
+            if (pkLength > body.Length) return null;
+
+            return (body[..pkLength], body[pkLength..]);
         }
         catch (FormatException)
         {

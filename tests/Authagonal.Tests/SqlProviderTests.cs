@@ -142,6 +142,53 @@ public abstract class SqlProviderTestsBase : IAsyncLifetime
         Assert.Equal(25, seen.Distinct().Count());
     }
 
+    /// <summary>
+    /// Paging terminates when a key contains the character the cursor used as its delimiter.
+    /// </summary>
+    /// <remarks>
+    /// The cursor was <c>base64($"{pk} {sk}")</c> split back on the first space. With pk=<c>"u1 x"</c> and
+    /// sk=<c>"profile"</c> it decoded to <c>("u1", "x profile")</c>, and the row-value predicate
+    /// <c>(pk, sk) &gt; ('u1', 'x profile')</c> is still satisfied by that very row because
+    /// <c>'u1 x' &gt; 'u1'</c> — so the cursor never advanced past it. A row like that on a page boundary
+    /// becomes the token, and every subsequent call returns the identical page: an admin walking
+    /// <c>/api/v1/users</c> to exhaustion never finishes. The bound on the loop below is what turns that
+    /// into a failure rather than a hung test.
+    /// <para>
+    /// Partition keys here are user ids and env-prefixed composites, so a space is not hypothetical —
+    /// a display name or an imported external id reaching a key column is enough.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task CursorPaging_TerminatesWhenKeysContainTheDelimiter()
+    {
+        var table = await T("PagingSpaces");
+
+        // Enough rows to force several pages, with the space in the PARTITION key — the component the old
+        // split truncated.
+        var expected = new List<string>();
+        for (var i = 0; i < 9; i++)
+        {
+            var pk = $"tenant one|user {i:D2}";
+            await table.PutAsync(new SqlRow(pk, "profile"));
+            expected.Add(pk);
+        }
+
+        var seen = new List<string>();
+        string? token = null;
+        var pages = 0;
+        do
+        {
+            var (rows, next) = await table.ScanPageAsync(new SqlKeyFilter { PkPrefix = "tenant one|" }, token, 2);
+            seen.AddRange(rows.Select(r => r.Pk));
+            token = next;
+        }
+        while (token is not null && ++pages < 25);
+
+        Assert.Null(token);
+        Assert.Equal(expected.Count, seen.Count);
+        Assert.Equal(expected.Count, seen.Distinct().Count());
+    }
+
     [Fact]
     public async Task EnumerationToleratesDeletingAsItGoes()
     {
