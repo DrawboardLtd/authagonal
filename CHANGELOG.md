@@ -122,6 +122,25 @@
   cannot steer those requests and there is nothing for an address check to add. Email delivery (`Resend`)
   is likewise unguarded and unaffected: its target is a compile-time constant.
 
+### Security — an agent could switch off its own approval gate
+
+- **A client-supplied `action_policies` entry counted as an administrator's decision (high).**
+  `AuthoritySet.MergeSameType` records a policy for an action when the meet is not `Auto` **or** when either
+  operand carried an explicit entry — deliberately, because `ApplyHighRiskDefaultsAsync` reads *absence* as
+  "apply the profile default", so an administrator who marks a high-risk action `auto` must not have that
+  decision erased.
+
+  But in a delegated exchange the operands include the client's own `authorization_details` request, and nothing
+  filtered `action_policies` out of it: `AuthorityJson.TryParse` treats the member as first-class, which is
+  exactly why `FindUngrantedConstraint` — the guard that stops a client contributing members the ceiling never
+  defined — never inspected it. So an agent put `"action_policies": {"transfer": "auto"}` in its own request,
+  that was recorded as an explicit decision, and the high-risk default skipped the action: the human-approval
+  gate on the riskiest actions, switched off by the party it exists to gate.
+
+  `Intersect` now takes policy provenance. A non-authoritative operand — the request, or a subject token's own
+  claim — may still **raise** a policy (`Auto` → `Ask` → `Deny`), because that only narrows; it cannot create
+  the explicit-entry marker that suppresses the default.
+
 ### Security — four more highs: an MFA bypass, an unauthenticated logout endpoint, a spendable challenge, a resettable throttle
 
 - **`/_internal/backchannel-logout` treated loopback as a credential (high).** With `Cluster:Secret` unset — the

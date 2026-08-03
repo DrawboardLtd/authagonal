@@ -195,4 +195,74 @@ public sealed class EmptyAuthorityWireFormTests
         Assert.Empty(identity.Claims);
         Assert.True(AuthorityEvaluator.Permits(new ClaimsPrincipal(identity), "payments", "transfer"));
     }
+    // ── policy provenance ────────────────────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// A request-supplied <c>auto</c> cannot suppress the profile's high-risk default.
+    /// </summary>
+    /// <remarks>
+    /// <c>MergeSameType</c> records a policy when the meet is not Auto OR when either operand carried an
+    /// explicit entry — deliberately, because <c>ApplyHighRiskDefaultsAsync</c> reads ABSENCE as "apply the
+    /// default", so an administrator's explicit <c>auto</c> must not be erased. But in a delegated exchange one
+    /// of the operands is the CLIENT'S OWN request, and nothing filtered <c>action_policies</c> out of it:
+    /// <c>AuthorityJson.TryParse</c> treats the member as first-class, so <c>FindUngrantedConstraint</c> — the
+    /// guard against a client contributing members the ceiling never defined — never inspected it.
+    /// <para>
+    /// So an agent wrote <c>"action_policies": {"transfer": "auto"}</c> into its own request and the high-risk
+    /// default skipped the action: the human-approval gate on the riskiest actions, switched off by the party it
+    /// exists to gate.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void ARequestSuppliedAutoPolicy_DoesNotCountAsAnExplicitDecision()
+    {
+        var ceiling = AuthoritySet.Of(new AuthorityGrant { Type = "payments", Actions = ["transfer"] });
+        var request = AuthoritySet.Of(new AuthorityGrant
+        {
+            Type = "payments",
+            Actions = ["transfer"],
+            ActionPolicies = new Dictionary<string, ActionPolicy> { ["transfer"] = ActionPolicy.Auto },
+        });
+
+        var effective = ceiling.Intersect(request, merger: null, otherDecidesPolicy: false);
+
+        // No explicit entry, so the high-risk default still applies to this action.
+        var grant = Assert.Single(effective.Grants);
+        Assert.False(grant.ActionPolicies.ContainsKey("transfer"));
+    }
+
+    /// <summary>
+    /// The control: an ADMIN-side explicit auto is still recorded, and a request may still RAISE a policy.
+    /// </summary>
+    /// <remarks>
+    /// Both halves matter. Dropping the admin's explicit auto would reintroduce the defect the
+    /// either-operand rule was written for; refusing a request's Ask/Deny would stop an agent voluntarily
+    /// narrowing its own authority, which only ever restricts.
+    /// </remarks>
+    [Fact]
+    public void AnAdminExplicitAutoSurvives_AndARequestMayStillRaiseThePolicy()
+    {
+        var adminAuto = AuthoritySet.Of(new AuthorityGrant
+        {
+            Type = "payments",
+            Actions = ["transfer"],
+            ActionPolicies = new Dictionary<string, ActionPolicy> { ["transfer"] = ActionPolicy.Auto },
+        });
+        var plainRequest = AuthoritySet.Of(new AuthorityGrant { Type = "payments", Actions = ["transfer"] });
+
+        var kept = adminAuto.Intersect(plainRequest, merger: null, otherDecidesPolicy: false);
+        Assert.True(Assert.Single(kept.Grants).ActionPolicies.ContainsKey("transfer"));
+
+        // And a request asking for MORE restriction is honoured.
+        var narrowing = AuthoritySet.Of(new AuthorityGrant
+        {
+            Type = "payments",
+            Actions = ["transfer"],
+            ActionPolicies = new Dictionary<string, ActionPolicy> { ["transfer"] = ActionPolicy.Ask },
+        });
+
+        var raised = AuthoritySet.Of(new AuthorityGrant { Type = "payments", Actions = ["transfer"] })
+            .Intersect(narrowing, merger: null, otherDecidesPolicy: false);
+        Assert.Equal(ActionPolicy.Ask, Assert.Single(raised.Grants).PolicyFor("transfer"));
+    }
 }

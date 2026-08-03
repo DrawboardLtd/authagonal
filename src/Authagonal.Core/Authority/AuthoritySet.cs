@@ -59,7 +59,31 @@ public sealed class AuthoritySet
     /// intersection); action policies take the most restrictive.
     /// </summary>
     /// <param name="merger">Optional host override for named constraints' meet semantics.</param>
-    public AuthoritySet Intersect(AuthoritySet other, IConstraintMerger? merger = null)
+    /// <param name="otherDecidesPolicy">
+    /// Whether <paramref name="other"/> is an AUTHORITATIVE source of action policies. False for anything the
+    /// requesting party supplies — the client's <c>authorization_details</c>, or a subject token's own claim.
+    /// </param>
+    /// <remarks>
+    /// The provenance distinction is load-bearing and its absence was a privilege escalation.
+    /// <see cref="MergeSameType"/> records a policy for an action when the meet is not <c>Auto</c> OR when
+    /// either operand carried an explicit entry — deliberately, because an administrator who marks a high-risk
+    /// action <c>auto</c> must not have that decision erased, and <c>ApplyHighRiskDefaultsAsync</c> reads
+    /// ABSENCE as "apply the profile default".
+    /// <para>
+    /// But in a delegated exchange the operands include the CLIENT-SUPPLIED request. Nothing filtered
+    /// <c>action_policies</c> out of it — <c>AuthorityJson.TryParse</c> treats the member as first-class, so
+    /// <c>FindUngrantedConstraint</c> (the guard that stops a client contributing members the ceiling never
+    /// defined) never looked at it. An agent could therefore put <c>"action_policies": {"transfer": "auto"}</c>
+    /// in its own request, have that recorded as an explicit decision, and the high-risk default would skip the
+    /// action: the human-approval gate on the riskiest actions, suppressed by the party it exists to gate.
+    /// </para>
+    /// <para>
+    /// A non-authoritative operand can still RAISE a policy (Auto → Ask → Deny), because that only ever
+    /// narrows. It just cannot create the explicit-entry marker that suppresses the profile default.
+    /// </para>
+    /// </remarks>
+    public AuthoritySet Intersect(
+        AuthoritySet other, IConstraintMerger? merger = null, bool otherDecidesPolicy = true)
     {
         if (IsUnrestricted) return other;
         if (other.IsUnrestricted) return this;
@@ -69,14 +93,15 @@ public sealed class AuthoritySet
         foreach (var mine in Grants)
         {
             if (!theirs.TryGetValue(mine.Type, out var its)) continue;
-            var merged = MergeSameType(mine, its, merger);
+            var merged = MergeSameType(mine, its, merger, otherDecidesPolicy);
             if (merged.Actions.Count > 0)
                 result.Add(merged);
         }
         return result.Count == 0 ? Empty : new(result, isUnrestricted: false);
     }
 
-    private static AuthorityGrant MergeSameType(AuthorityGrant a, AuthorityGrant b, IConstraintMerger? merger)
+    private static AuthorityGrant MergeSameType(
+        AuthorityGrant a, AuthorityGrant b, IConstraintMerger? merger, bool bDecidesPolicy = true)
     {
         var actions = a.Actions.Intersect(b.Actions, StringComparer.Ordinal).ToList();
 
@@ -137,9 +162,12 @@ public sealed class AuthoritySet
             // who deliberately marked a high-risk action auto had that decision erased by any Intersect
             // and the action fell back to ask (or deny) anyway — the one behaviour the explicit setting
             // exists to override.
+            // `b` only counts as having "explicitly decided" when it is an authoritative source. A
+            // request-supplied auto must not create the entry that ApplyHighRiskDefaultsAsync reads as
+            // "an administrator already decided this" — see Intersect's remarks.
             if (policy != ActionPolicy.Auto
                 || a.ActionPolicies.ContainsKey(action)
-                || b.ActionPolicies.ContainsKey(action))
+                || (bDecidesPolicy && b.ActionPolicies.ContainsKey(action)))
             {
                 policies[action] = policy;
             }

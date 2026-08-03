@@ -1332,8 +1332,13 @@ public sealed class ProtocolTokenService(
                     $"'{ungranted.Type}'; only members the ceiling and consent define may be requested");
 
             effective = granted
-                .Intersect(requestedAuthority)
-                .Intersect(subjectAuthority);
+                // The request and the subject token are supplied by the requesting party, so neither DECIDES
+                // action policy — either may raise one (narrowing), but neither may create the explicit entry
+                // that suppresses the profile's high-risk default. Without this an agent suppressed its own
+                // approval gate with "action_policies": {"transfer": "auto"} in its own request. See
+                // AuthoritySet.Intersect.
+                .Intersect(requestedAuthority, merger: null, otherDecidesPolicy: false)
+                .Intersect(subjectAuthority, merger: null, otherDecidesPolicy: false);
             effective = await ApplyHighRiskDefaultsAsync(effective, agentProfile.HighRiskDefault, ct);
 
             // Explicitly requested authority that the intersection denied is a hard error, not
@@ -1428,7 +1433,8 @@ public sealed class ProtocolTokenService(
                     $"'{ungrantedMember.Member}' is not a member of the subject token's authority for type " +
                     $"'{ungrantedMember.Type}'; an exchange may narrow the authority it holds, not add to it");
 
-            effective = subjectAuthority.Intersect(requestedAuthority);
+            // Same provenance rule as the profile branch: the request is the requesting party's.
+            effective = subjectAuthority.Intersect(requestedAuthority, merger: null, otherDecidesPolicy: false);
             if (effective.Grants.Count == 0)
                 throw new ProtocolTokenException("invalid_authorization_details",
                     "the requested authorization_details are not within the subject token's authority");
