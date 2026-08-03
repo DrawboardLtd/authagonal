@@ -88,11 +88,36 @@ public sealed class SqlClusterEventBus(SqlTable table, TimeSpan pollInterval, IL
     {
         var cursor = topic.Cursor!;
         var max = cursor;
+        var nowBound = ClusterEventCursor.TimeBound(DateTimeOffset.UtcNow);
+        var futureRows = 0;
 
         var filter = SqlKeyFilter.Partition(topic.Name) with { SkAfter = cursor };
         await foreach (var row in table.QueryAsync(filter, ct).ConfigureAwait(false))
         {
-            if (string.CompareOrdinal(row.Sk, max) > 0) max = row.Sk;
+            // A row dated in the future does NOT advance the cursor.
+            //
+            // Every row key comes from the PUBLISHER's clock, so a node running fast used to push every
+            // consumer's cursor into the future — and every event published by a correctly-clocked node for
+            // the next Δ of real time then sorted below that cursor and was delivered to nobody, silently.
+            // Delivering it and holding the cursor back is the only combination that loses nothing: see
+            // ClusterEventCursor.
+            var isFuture = ClusterEventCursor.IsAfter(row.Sk, nowBound);
+            var alreadyDelivered = !topic.Dedupe.ShouldDeliver(row.Sk);
+
+            if (isFuture)
+            {
+                futureRows++;
+                if (!alreadyDelivered) topic.Dedupe.RecordDelivered(row.Sk);
+            }
+            else
+            {
+                if (string.CompareOrdinal(row.Sk, max) > 0) max = row.Sk;
+                // The cursor is about to move past it, so it can never be re-read.
+                topic.Dedupe.Forget(row.Sk);
+            }
+
+            // Re-read on a later poll because the cursor was held back — not a second event.
+            if (alreadyDelivered) continue;
 
             ReadOnlyMemory<byte> payload = Convert.FromBase64String(row.GetStr("payload"));
             foreach (var sub in topic.Handlers.Keys)
@@ -104,6 +129,13 @@ public sealed class SqlClusterEventBus(SqlTable table, TimeSpan pollInterval, IL
                 }
             }
         }
+
+        if (futureRows > 0)
+            logger.LogWarning(
+                "Topic {Topic}: {Count} cluster event(s) are dated in the future, so a publishing node's "
+                + "clock is ahead of this one. They were delivered and the cursor was held at real time; "
+                + "check time sync, because skew is what makes invalidation events go missing.",
+                topic.Name, futureRows);
 
         topic.Cursor = max;
     }
@@ -152,6 +184,12 @@ public sealed class SqlClusterEventBus(SqlTable table, TimeSpan pollInterval, IL
     {
         public string Name => name;
         public string? Cursor;
+
+        /// <summary>
+        /// Future-dated rows already delivered. Empty unless a publisher's clock runs ahead — see
+        /// <see cref="ClusterEventCursor"/> for why a future row is delivered but must not move the cursor.
+        /// </summary>
+        public ClusterEventDeduper Dedupe { get; } = new();
         public ConcurrentDictionary<Subscription, byte> Handlers { get; } = new();
     }
 
