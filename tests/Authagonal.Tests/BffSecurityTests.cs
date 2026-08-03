@@ -91,11 +91,58 @@ public class BffSecurityTests
         }
     }
 
+    /// <summary>
+    /// An unknown route constraint is refused, not treated as a non-match.
+    /// </summary>
+    /// <remarks>
+    /// This test used to assert the opposite, and the matcher's comment agreed with it: "unknown constraint:
+    /// never match rather than silently over-match". The two directions are not symmetric. A route that does
+    /// not match sends <c>ProxyAsync</c> down the else-branch, which attaches the session's PRIMARY,
+    /// un-downscoped access token instead of the RFC 8693 context-bound one the route was configured to
+    /// require — so "never match" was the fail-OPEN direction for the only thing this route does.
+    /// Over-matching would have demanded an exchange that was not needed and cost a 403.
+    /// <para>
+    /// A typo in a constraint name is now a startup failure (see
+    /// <c>AuthagonalBffOptions.ValidateExchangeRoutes</c>); this is the runtime backstop.
+    /// </para>
+    /// </remarks>
     [Fact]
-    public void TryMatchExchangeRoute_unknown_constraint_never_matches()
+    public void TryMatchExchangeRoute_unknown_constraint_is_refused()
     {
         var routes = new[] { new BffExchangeRoute { PathPattern = "/{apiver}/{project_id:int}" } };
-        Assert.False(BffProxy.TryMatchExchangeRoute(routes, "/v1/123/x", out _, out _));
+
+        var ex = Assert.Throws<InvalidOperationException>(
+            () => BffProxy.TryMatchExchangeRoute(routes, "/v1/123/x", out _, out _));
+
+        Assert.Contains("int", ex.Message, StringComparison.Ordinal);
+    }
+
+    /// <summary>A pattern with an unknown constraint does not survive startup validation.</summary>
+    [Fact]
+    public void Options_reject_an_unknown_route_constraint_at_startup()
+    {
+        var options = new AuthagonalBffOptions
+        {
+            Authority = "https://idp.test",
+            ClientId = "bff",
+            ClientSecret = "secret",
+            ExchangeRoutes = [new BffExchangeRoute { PathPattern = "/{apiver}/{project_id:int}" }],
+        };
+
+        var ex = Assert.Throws<InvalidOperationException>(options.Validate);
+        Assert.Contains("int", ex.Message, StringComparison.Ordinal);
+    }
+
+    /// <summary>The control: a supported constraint still matches, and still validates.</summary>
+    [Fact]
+    public void A_supported_constraint_still_matches()
+    {
+        var routes = new[] { new BffExchangeRoute { PathPattern = "/{apiver}/{project_id:guid}" } };
+        var id = Guid.NewGuid().ToString();
+
+        Assert.True(BffProxy.TryMatchExchangeRoute(routes, $"/v1/{id}", out var name, out var value));
+        Assert.Equal("project_id", name);
+        Assert.Equal(id, value);
     }
 
     [Fact]

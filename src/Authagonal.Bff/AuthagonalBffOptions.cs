@@ -145,6 +145,51 @@ public sealed class AuthagonalBffOptions
 
         BasePath = "/" + BasePath.Trim('/');
         CallbackPath = "/" + CallbackPath.Trim('/');
+
+        ValidateExchangeRoutes();
+    }
+
+    /// <summary>
+    /// Refuses an exchange-route pattern the matcher cannot honour, at startup.
+    /// </summary>
+    /// <remarks>
+    /// Patterns were never validated, and an unrecognised <c>{param:constraint}</c> makes the segment never
+    /// match — so the whole route never matches, and <c>ProxyAsync</c> takes the else-branch and attaches the
+    /// session's PRIMARY, un-downscoped access token instead of the RFC 8693 context-bound one the route was
+    /// configured to require. A typo in a constraint name therefore removed the downscoping silently.
+    /// <para>
+    /// The matcher's own comment ("unknown constraint: never match rather than silently over-match") treats
+    /// the two directions as symmetric. They are not: over-matching demands an exchange that was not needed
+    /// and costs a 403, while never matching forwards a BROADER token to the upstream. Fail-closed for a
+    /// downscoping route means refusing to start, not quietly proxying with more privilege.
+    /// </para>
+    /// </remarks>
+    private void ValidateExchangeRoutes()
+    {
+        foreach (var route in ExchangeRoutes)
+        {
+            var pattern = route.PathPattern ?? "";
+            if (string.IsNullOrWhiteSpace(pattern))
+                throw new InvalidOperationException(
+                    "A BffExchangeRoute has an empty PathPattern.");
+
+            foreach (var segment in pattern.Split('/', StringSplitOptions.RemoveEmptyEntries))
+            {
+                if (segment.Length < 2 || segment[0] != '{' || segment[^1] != '}') continue;
+
+                var placeholder = segment[1..^1];
+                var colon = placeholder.IndexOf(':');
+                if (colon < 0) continue;
+
+                var constraint = placeholder[(colon + 1)..];
+                if (!BffExchangeRoute.SupportedConstraints.Contains(constraint, StringComparer.Ordinal))
+                    throw new InvalidOperationException(
+                        $"BffExchangeRoute '{pattern}' uses the unknown route constraint '{constraint}'. "
+                        + $"Supported constraints: {string.Join(", ", BffExchangeRoute.SupportedConstraints)}. "
+                        + "An unrecognised constraint makes the route never match, which forwards the "
+                        + "session's full-privilege access token instead of a downscoped one.");
+            }
+        }
     }
 }
 
@@ -209,4 +254,15 @@ public sealed class BffUpstream
 public sealed class BffExchangeRoute
 {
     public string PathPattern { get; set; } = default!;
+
+    /// <summary>
+    /// Route constraints <c>BffProxy.TryMatchExchangeRoute</c> implements.
+    /// </summary>
+    /// <remarks>
+    /// Named here so the matcher and the startup validation cannot disagree. Adding a constraint to the
+    /// matcher without adding it here makes a valid pattern fail to start; adding it here without
+    /// implementing it lets a pattern start that never matches — which forwards the session's
+    /// full-privilege token. One list, read by both.
+    /// </remarks>
+    public static readonly string[] SupportedConstraints = ["guid"];
 }

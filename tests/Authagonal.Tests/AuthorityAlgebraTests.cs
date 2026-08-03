@@ -233,8 +233,69 @@ public sealed class AuthorityAlgebraTests
 
         // context presented for an opaque constraint fails closed
         Assert.False(parsed.Permits("crm", "read", new Dictionary<string, string> { ["filter"] = "contacts" }));
-        // absent context: the constraint is uncheckable here and skipped
-        Assert.True(parsed.Permits("crm", "read"));
+
+        // ...and so does the case with NO context, which is the only reachable one.
+        //
+        // This asserted True, with the comment "the constraint is uncheckable here and skipped" — in a test
+        // named AndFailsClosed. The two halves contradicted each other, and the half that was pinned as
+        // correct is unreachable in practice: `context` is IReadOnlyDictionary<string, string> and an Opaque
+        // value is by definition not a string, so a resource server wanting to honour
+        // {"filter":{"objects":["contacts"]}} has no way to say what it is presenting. So the skip was the
+        // ONLY branch a real caller could take — while Serialize emits the member verbatim, meaning the grant
+        // read as restrictive to anyone inspecting the token and was unrestricted in fact. An uninterpretable
+        // restriction is not a restriction this library can honour, which is what the docs and CHANGELOG
+        // already claimed.
+        Assert.False(parsed.Permits("crm", "read"));
+    }
+
+    /// <summary>
+    /// Narrowing a location to a sub-resource narrows the grant instead of annihilating it.
+    /// </summary>
+    /// <remarks>
+    /// The meet intersected <c>locations</c> with an ordinal set intersection while <c>Permits</c> matches a
+    /// presented location against a granted one with containment — case-insensitive scheme and authority,
+    /// granted path as a root. The two predicates disagreed about the same pair of values: for granted
+    /// <c>/orders</c> and requested <c>/orders/17</c>, <c>Permits</c> answered true while <c>Intersect</c>
+    /// produced no grants and a Deny policy. So the ordinary way an agent asks for less than its ceiling —
+    /// which is what RFC 9396 §6.1 describes — destroyed the grant.
+    /// </remarks>
+    [Fact]
+    public void Intersect_NarrowingALocationToASubResource_NarrowsRatherThanAnnihilates()
+    {
+        Assert.True(AuthorityJson.TryParse(
+            """[{"type":"orders","actions":["read"],"locations":["https://api.example.com/orders"]}]""",
+            out var ceiling));
+        Assert.True(AuthorityJson.TryParse(
+            """[{"type":"orders","actions":["read"],"locations":["https://api.example.com/orders/17"]}]""",
+            out var request));
+
+        var effective = ceiling.Intersect(request);
+
+        // The grant survives, narrowed to the more specific location — which is what a meet means.
+        var grant = Assert.Single(effective.Grants);
+        Assert.Equal(["https://api.example.com/orders/17"], grant.Locations);
+        Assert.Contains("read", grant.Actions);
+
+        // And enforcement agrees with the algebra, which is the property that was broken.
+        Assert.True(effective.Permits("orders", "read", "https://api.example.com/orders/17"));
+    }
+
+    /// <summary>Genuinely disjoint locations still drop the grant.</summary>
+    /// <remarks>
+    /// The containment relation must not become a way to widen: a request for a sibling resource is not
+    /// covered by the ceiling and must still annihilate, which is the behaviour the earlier fix installed.
+    /// </remarks>
+    [Fact]
+    public void Intersect_DisjointLocations_StillDropTheGrant()
+    {
+        Assert.True(AuthorityJson.TryParse(
+            """[{"type":"orders","actions":["read"],"locations":["https://api.example.com/orders"]}]""",
+            out var ceiling));
+        Assert.True(AuthorityJson.TryParse(
+            """[{"type":"orders","actions":["read"],"locations":["https://api.example.com/invoices"]}]""",
+            out var request));
+
+        Assert.Empty(ceiling.Intersect(request).Grants);
     }
 
     [Fact]

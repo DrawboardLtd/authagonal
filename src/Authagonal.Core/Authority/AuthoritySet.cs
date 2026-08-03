@@ -115,7 +115,7 @@ public sealed class AuthoritySet
         {
             (0, _) => b.Locations,
             (_, 0) => a.Locations,
-            _ => a.Locations.Intersect(b.Locations, StringComparer.Ordinal).ToList(),
+            _ => MeetLocations(a.Locations, b.Locations),
         };
         if (a.Locations.Count > 0 && b.Locations.Count > 0 && locations.Count == 0)
             locationsDisjoint = true;
@@ -299,6 +299,18 @@ public sealed class AuthoritySet
             // so treating it as "no constraint" inverted its meaning entirely.
             if (constraint is ConstraintValue.StringSet { Values.Count: 0 }) return false;
 
+            // An uninterpretable restriction is not a restriction this library can honour, so it denies.
+            //
+            // Opaque holds an authorization-details member the parser cannot shape-type — a nested object or
+            // a mixed array. Satisfies() does return false for it, but a context value can never meaningfully
+            // be supplied: `context` is IReadOnlyDictionary<string, string> and an Opaque value is by
+            // definition not a string, so a resource server wanting to honour
+            // {"filter":{"objects":["contacts"]}} has no way to express what it is presenting. The only
+            // reachable branch in the default non-strict evaluation was therefore the SKIP — while ToNode
+            // emits the constraint into the token verbatim, so the grant looked restrictive to anyone reading
+            // it and was unrestricted in fact. The docs and CHANGELOG say this path fails closed; now it does.
+            if (constraint is ConstraintValue.Opaque) return false;
+
             if (context is null || !context.TryGetValue(name, out var contextValue))
             {
                 if (strict) return false;
@@ -308,6 +320,52 @@ public sealed class AuthoritySet
             if (!Satisfies(constraint, contextValue)) return false;
         }
         return true;
+    }
+
+    /// <summary>
+    /// The meet of two non-empty location sets, using the SAME containment relation enforcement uses.
+    /// </summary>
+    /// <remarks>
+    /// This was an ordinal set intersection, while <see cref="Permits(string, string, string?,
+    /// IReadOnlyDictionary{string, string}, bool)"/> matches a presented location against a granted one with
+    /// <see cref="LocationCovers"/> — case-insensitive scheme and authority, granted path as a containment
+    /// ROOT. The two predicates therefore disagreed about the same pair of values: for granted
+    /// <c>https://api.example.com/orders</c> and requested <c>https://api.example.com/orders/17</c>,
+    /// <c>Permits</c> answered TRUE while <c>Intersect</c> produced no grants at all and a Deny policy.
+    /// <para>
+    /// So narrowing a location to a sub-resource — the ordinary way an agent asks for less than its ceiling,
+    /// and what RFC 9396 §6.1 describes — annihilated the grant instead of narrowing it. The failure is
+    /// closed, so it is a correctness and usability defect rather than an escalation, but a delegation
+    /// primitive that cannot express "less" is the one thing this algebra exists to do.
+    /// </para>
+    /// <para>
+    /// The more specific side is kept, which is what makes this a meet: if one side grants
+    /// <c>/orders</c> and the other asks for <c>/orders/17</c>, the result is <c>/orders/17</c>. Genuine
+    /// disjointness still empties the set, and the caller still drops the grant — that behaviour is correct
+    /// and pinned by <c>AuthorityEvaluationTests</c>.
+    /// </para>
+    /// </remarks>
+    private static List<string> MeetLocations(IReadOnlyList<string> a, IReadOnlyList<string> b)
+    {
+        var result = new List<string>();
+
+        foreach (var mine in a)
+        {
+            foreach (var theirs in b)
+            {
+                // Whichever side is contained by the other is the narrower grant, so it is the meet. An
+                // exact match satisfies both directions and yields the value itself.
+                if (LocationCovers(mine, theirs)) AddDistinct(result, theirs);
+                else if (LocationCovers(theirs, mine)) AddDistinct(result, mine);
+            }
+        }
+
+        return result;
+
+        static void AddDistinct(List<string> into, string value)
+        {
+            if (!into.Contains(value, StringComparer.Ordinal)) into.Add(value);
+        }
     }
 
     /// <summary>

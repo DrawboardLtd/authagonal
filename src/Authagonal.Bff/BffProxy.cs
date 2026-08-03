@@ -95,11 +95,28 @@ internal static class BffProxy
                     if (constraint is not null)
                         placeholder = placeholder[..constraintIdx];
 
+                    // An unknown constraint is a configuration error, not a non-match.
+                    //
+                    // It used to return false, which makes the ROUTE not match — and a non-matching route
+                    // means ProxyAsync attaches the session's PRIMARY, un-downscoped access token instead of
+                    // the context-bound one this route exists to require. So the fail-safe direction was
+                    // actually the fail-open one for the thing that matters. AuthagonalBffOptions.Validate now
+                    // refuses such a pattern at startup; this throw is the backstop for a route list built
+                    // after validation, and it surfaces as a 500 rather than a quietly broader token.
+                    if (constraint is not null
+                        && !BffExchangeRoute.SupportedConstraints.Contains(constraint, StringComparer.Ordinal))
+                    {
+                        throw new InvalidOperationException(
+                            $"BffExchangeRoute '{route.PathPattern}' uses the unknown route constraint "
+                            + $"'{constraint}'. Refusing to proxy, because treating it as a non-match would "
+                            + "forward the session's full-privilege access token.");
+                    }
+
                     matched = constraint switch
                     {
                         null => true,
                         "guid" => Guid.TryParse(pathSegments[i], out _),
-                        _ => false, // unknown constraint: never match rather than silently over-match
+                        _ => false, // unreachable: the check above throws first
                     };
                     if (matched)
                     {
