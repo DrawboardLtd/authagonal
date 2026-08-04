@@ -37,6 +37,24 @@ public static class ScimTokenEndpoints
         if (client is null)
             return TypedResults.Json(new ErrorInfoResponse { Error = "client_not_found", ErrorDescription = $"Client '{request.ClientId}' not found" }, AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 404);
 
+        var allowedDomains = (request.AllowedEmailDomains ?? [])
+            .Select(d => d?.Trim() ?? "")
+            .Where(d => d.Length > 0)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        // A domain that cannot match anything would read as a bound while permitting nothing, which is a
+        // worse failure than refusing it here: the connector would 400 on every user with no way to see why.
+        foreach (var domain in allowedDomains)
+        {
+            if (domain.Contains('@') || domain.Contains(' ') || !domain.Contains('.'))
+                return TypedResults.Json(new ErrorInfoResponse
+                {
+                    Error = "invalid_request",
+                    ErrorDescription = $"'{domain}' is not a domain — supply bare domains such as 'acme.example'",
+                }, AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 400);
+        }
+
         // Generate a cryptographically secure token
         var rawTokenBytes = RandomNumberGenerator.GetBytes(32);
         var rawToken = Convert.ToBase64String(rawTokenBytes);
@@ -54,6 +72,7 @@ public static class ScimTokenEndpoints
             ExpiresAt = request.ExpiresInDays > 0
                 ? DateTimeOffset.UtcNow.AddDays(request.ExpiresInDays.Value)
                 : null,
+            AllowedEmailDomains = allowedDomains,
         };
 
         await scimTokenStore.StoreAsync(token, ct);
@@ -66,6 +85,19 @@ public static class ScimTokenEndpoints
 
         logger.LogInformation("SCIM token generated: {TokenId} for client {ClientId}", token.TokenId, token.ClientId);
 
+        // Said out loud, because the unrestricted case is the default and its consequence is not obvious: a
+        // SCIM-created user is written EmailConfirmed = true, so an unrestricted connector can mint a
+        // pre-verified account for any address in any domain — and FederationAdoptionPolicy adopts a record
+        // with no external logins unconditionally, so the real owner's first federated sign-in binds to it.
+        if (allowedDomains.Count == 0)
+        {
+            logger.LogWarning(
+                "SCIM token {TokenId} for client {ClientId} is UNRESTRICTED: it may provision users in any "
+                + "email domain, and a SCIM-created user is marked email-confirmed. Set allowedEmailDomains "
+                + "when minting, or Scim:Clients:{ClientId}:AllowedEmailDomains in configuration.",
+                token.TokenId, token.ClientId, token.ClientId);
+        }
+
         // Return the raw token once — it cannot be recovered later
         return TypedResults.Json(new ScimTokenCreatedResponse
         {
@@ -75,6 +107,7 @@ public static class ScimTokenEndpoints
             Description = token.Description,
             CreatedAt = token.CreatedAt,
             ExpiresAt = token.ExpiresAt ?? default,
+            AllowedEmailDomains = token.AllowedEmailDomains,
         }, AuthagonalJsonContext.Default.ScimTokenCreatedResponse);
     }
 
@@ -130,4 +163,16 @@ public sealed class GenerateScimTokenRequest
     public string? ClientId { get; set; }
     public string? Description { get; set; }
     public int? ExpiresInDays { get; set; }
+
+    /// <summary>
+    /// Email domains this credential may provision into. Omit or leave empty for unrestricted.
+    /// </summary>
+    /// <remarks>
+    /// A SCIM token is a directory-wide write credential, and this is the only thing that bounds WHICH
+    /// identities it may create. It was previously reachable only from
+    /// <c>Scim:Clients:{clientId}:AllowedEmailDomains</c>, which this endpoint could not write and no
+    /// document mentioned — so the documented way to onboard a connector produced an unrestricted one.
+    /// Intersected with that configuration key, so a token can only narrow an operator's bound.
+    /// </remarks>
+    public List<string>? AllowedEmailDomains { get; set; }
 }

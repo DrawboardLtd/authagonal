@@ -569,6 +569,9 @@ public sealed class ScimTokenCreatedResponse
     [JsonPropertyName("description")] public string? Description { get; set; }
     [JsonPropertyName("createdAt")] public DateTimeOffset CreatedAt { get; set; }
     [JsonPropertyName("expiresAt")] public DateTimeOffset ExpiresAt { get; set; }
+
+    /// <summary>Echoed so the caller can see the bound that was actually recorded. Empty = unrestricted.</summary>
+    [JsonPropertyName("allowedEmailDomains")] public List<string> AllowedEmailDomains { get; set; } = [];
 }
 
 public sealed class ScimTokenInfo

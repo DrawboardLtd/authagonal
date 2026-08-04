@@ -212,7 +212,8 @@ public sealed class AuthagonalTestFactory : IAsyncDisposable
     /// <summary>Seed a SCIM client and return the raw Bearer token.</summary>
     public async Task<(string ClientId, string RawToken)> SeedScimClientAsync(
         string clientId = "scim-client",
-        string? orgId = null)
+        string? orgId = null,
+        IEnumerable<string>? allowedEmailDomains = null)
     {
         EnsureStarted();
 
@@ -239,6 +240,7 @@ public sealed class AuthagonalTestFactory : IAsyncDisposable
             TokenHash = tokenHash,
             Description = "Test SCIM token",
             CreatedAt = DateTimeOffset.UtcNow,
+            AllowedEmailDomains = [.. allowedEmailDomains ?? []],
         };
 
         await ScimTokenStore.StoreAsync(scimToken);

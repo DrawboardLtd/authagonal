@@ -22,6 +22,21 @@ public sealed class ScimTokenEntity : ITableEntity
     public DateTimeOffset? ExpiresAt { get; set; }
     public bool IsRevoked { get; set; }
 
+    /// <summary>
+    /// <see cref="ScimToken.AllowedEmailDomains"/>, space-delimited — Table Storage has no list type. A
+    /// domain cannot contain whitespace, so the delimiter is unambiguous. Null on rows written before this
+    /// column, which reads back as empty, i.e. unrestricted: the previous behaviour.
+    /// </summary>
+    public string? AllowedEmailDomains { get; set; }
+
+    private static string? Pack(List<string> domains) =>
+        domains.Count == 0 ? null : string.Join(' ', domains);
+
+    private static List<string> Unpack(string? packed) =>
+        string.IsNullOrEmpty(packed)
+            ? []
+            : [.. packed.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)];
+
     /// <summary>Forward index: PK=tokenHash, RK="lookup" — O(1) auth lookup.</summary>
     public static ScimTokenEntity FromModelForward(ScimToken token) => new()
     {
@@ -34,6 +49,7 @@ public sealed class ScimTokenEntity : ITableEntity
         CreatedAt = token.CreatedAt,
         ExpiresAt = token.ExpiresAt,
         IsRevoked = token.IsRevoked,
+        AllowedEmailDomains = Pack(token.AllowedEmailDomains),
     };
 
     /// <summary>Reverse index: PK=clientId, RK="scimtoken|{tokenId}" — list by client.</summary>
@@ -48,6 +64,7 @@ public sealed class ScimTokenEntity : ITableEntity
         CreatedAt = token.CreatedAt,
         ExpiresAt = token.ExpiresAt,
         IsRevoked = token.IsRevoked,
+        AllowedEmailDomains = Pack(token.AllowedEmailDomains),
     };
 
     public ScimToken ToModel() => new()
@@ -59,5 +76,6 @@ public sealed class ScimTokenEntity : ITableEntity
         CreatedAt = CreatedAt,
         ExpiresAt = ExpiresAt,
         IsRevoked = IsRevoked,
+        AllowedEmailDomains = Unpack(AllowedEmailDomains),
     };
 }

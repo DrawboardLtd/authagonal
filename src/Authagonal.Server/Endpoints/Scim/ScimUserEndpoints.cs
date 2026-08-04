@@ -224,16 +224,45 @@ public static class ScimUserEndpoints
     /// account object permanently, while the domain's real connector gets 404/409 forever, and the
     /// owner's first federated sign-in binds to the squatted record.
     /// </remarks>
+    /// <remarks>
+    /// Two sources, INTERSECTED. <c>Scim:Clients:{clientId}:AllowedEmailDomains</c> is the operator's
+    /// configuration bound; <see cref="ScimToken.AllowedEmailDomains"/> is the credential's own, set when the
+    /// token is minted. Either may be empty, meaning "no bound from this source" — so both empty is
+    /// unrestricted, which is the historical default and what an upgrade keeps.
+    /// <para>
+    /// Intersection rather than override, so minting a token can only narrow an existing configuration bound
+    /// and never widen it. Overriding would make the admin API a way around the operator's own setting.
+    /// </para>
+    /// <para>
+    /// The token half exists because the config key was the ONLY way to reach this control, no document
+    /// mentioned it, and <c>POST /api/v1/scim/tokens</c> — the documented way to mint a SCIM credential —
+    /// could not write it. The shipped path therefore produced an unrestricted directory-wide credential.
+    /// </para>
+    /// </remarks>
     private static IResult? EmailDomainRefusal(
-        string email, string clientId, IConfiguration configuration, ILogger logger)
+        HttpContext httpContext, string email, string clientId, IConfiguration configuration, ILogger logger)
     {
-        var allowedDomains = configuration
+        var fromConfig = configuration
             .GetSection($"Scim:Clients:{clientId}:AllowedEmailDomains").Get<string[]>() ?? [];
-        if (allowedDomains.Length == 0)
+
+        var fromToken = httpContext.User
+            .FindAll(Authagonal.Server.Services.ScimClaims.AllowedEmailDomain)
+            .Select(c => c.Value)
+            .ToArray();
+
+        var effective = (fromConfig.Length, fromToken.Length) switch
+        {
+            (0, 0) => [],
+            (0, _) => fromToken,
+            (_, 0) => fromConfig,
+            _ => fromConfig.Intersect(fromToken, StringComparer.OrdinalIgnoreCase).ToArray(),
+        };
+
+        if (effective.Length == 0)
             return null;
 
         var scimDomain = email.Split('@').Last();
-        if (allowedDomains.Contains(scimDomain, StringComparer.OrdinalIgnoreCase))
+        if (effective.Contains(scimDomain, StringComparer.OrdinalIgnoreCase))
             return null;
 
         logger.LogWarning(
@@ -323,7 +352,7 @@ public static class ScimUserEndpoints
         // this, ANY SCIM token could mint a pre-verified account for any address — including a domain
         // belonging to another tenant — and that account then feeds federation auto-linking and (before
         // the SSO-only guard on forgot-password) a local password reset.
-        if (EmailDomainRefusal(email, clientId, configuration, logger) is { } domainRefusal)
+        if (EmailDomainRefusal(httpContext, email, clientId, configuration, logger) is { } domainRefusal)
             return domainRefusal;
 
         // Check if user already exists
@@ -480,7 +509,7 @@ public static class ScimUserEndpoints
             {
                 // The domain allowlist binds the ADDRESS, not the moment of creation — otherwise a
                 // rename is simply the way around it.
-                if (EmailDomainRefusal(email, clientId, configuration, logger) is { } domainRefusal)
+                if (EmailDomainRefusal(httpContext, email, clientId, configuration, logger) is { } domainRefusal)
                     return domainRefusal;
 
                 // Re-check the global email index so an email change can't repoint another account's
@@ -601,7 +630,7 @@ public static class ScimUserEndpoints
         // A PATCH that renames the account is subject to the same domain allowlist a create is; the
         // applier writes straight onto the model, so this is the only place left to enforce it.
         if (!string.Equals(oldEmail, user.Email, StringComparison.OrdinalIgnoreCase)
-            && EmailDomainRefusal(user.Email, clientId, configuration, logger) is { } patchDomainRefusal)
+            && EmailDomainRefusal(httpContext, user.Email, clientId, configuration, logger) is { } patchDomainRefusal)
             return patchDomainRefusal;
 
         // If the patch changed the email, re-check the global index BEFORE persisting so it can't

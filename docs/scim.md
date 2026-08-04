@@ -36,7 +36,8 @@ Content-Type: application/json
 {
   "clientId": "your-client-id",
   "description": "Entra ID SCIM token",
-  "expiresInDays": 365
+  "expiresInDays": 365,
+  "allowedEmailDomains": ["acme.example", "acme-eu.example"]
 }
 ```
 
@@ -49,11 +50,50 @@ The response includes the raw token **once**. It is stored as a SHA-256 hash and
   "token": "base64-encoded-token",
   "description": "Entra ID SCIM token",
   "createdAt": "2024-01-01T00:00:00Z",
-  "expiresAt": "2025-01-01T00:00:00Z"
+  "expiresAt": "2025-01-01T00:00:00Z",
+  "allowedEmailDomains": ["acme.example", "acme-eu.example"]
 }
 ```
 
 Omit `expiresInDays` (or pass `0`) for a non-expiring token.
+
+### Bounding which identities a connector may create
+
+`allowedEmailDomains` is the only control over **which** users a SCIM credential can provision. Set it.
+
+Omitting it produces an unrestricted token, and unrestricted is wider than it sounds. A SCIM-created user is
+written with `EmailConfirmed = true` — the address is treated as proven from that moment on — so an
+unrestricted connector can create `ceo@some-other-company.example` as a pre-verified account. When the real
+owner later signs in through federation, a record with no existing external logins is adopted rather than
+refused, so their sign-in binds to that account; and because `ScimProvisionedByClientId` still names the
+connector that created it, that connector keeps full ownership of the object — it can read the profile, rename
+the `userName`, deactivate it (which revokes every grant), or delete it, which purges the user's passkeys and
+group memberships and tombstones the row so the legitimate connector for that domain gets 404 on every
+operation.
+
+A token that omits the field logs a warning at mint time naming the token id.
+
+Supply bare domains — `acme.example`, not `@acme.example` or an address. A value that could never match is
+refused rather than stored, because a bound that permits nothing looks identical to a misconfigured connector.
+
+Operators can also set a bound in configuration:
+
+```json
+{
+  "Scim": {
+    "Clients": {
+      "your-client-id": { "AllowedEmailDomains": ["acme.example"] }
+    }
+  }
+}
+```
+
+The two are **intersected**, and an empty list from either source means "no bound from this source". So both
+empty is unrestricted; either one alone applies on its own; and when both are set, only domains in both are
+permitted — minting a token can narrow an operator's configured bound but never widen it.
+
+Enforced on create, `PUT` and `PATCH` alike, so a rename cannot move an account into a domain the credential
+is not allowed to provision.
 
 ### Listing tokens
 

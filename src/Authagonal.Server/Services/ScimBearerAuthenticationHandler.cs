@@ -88,6 +88,12 @@ public sealed class ScimBearerAuthenticationHandler(
             new("token_id", scimToken.TokenId),
         };
 
+        // The credential's own domain bound travels with it, so the endpoints need no second store read to
+        // know what this token may provision. One claim per domain rather than a delimited value, so no
+        // endpoint has to agree with this file about a separator.
+        foreach (var domain in scimToken.AllowedEmailDomains)
+            claims.Add(new Claim(ScimClaims.AllowedEmailDomain, domain));
+
         // For org scoping, we need a convention to derive org from client.
         // Use a claim if available, or fall back to clientId as the org scope.
         // The SCIM endpoints will use client_id for scoping.
