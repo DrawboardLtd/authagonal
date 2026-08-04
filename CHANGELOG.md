@@ -1,5 +1,87 @@
 # Changelog
 
+## [Unreleased]
+
+Found by a blind review pass — a different method over the same tree, asking what is MISSING rather than what
+is wrong in a changed line. Six of these are cases where an earlier fix was recorded as closed but was inert,
+unreachable, or applied on one of several sibling paths.
+
+### Breaking
+
+- **`SamlRedirectBinding.Verify` takes an optional logger** and now enforces the IdP certificate's validity
+  window. A retired signing certificate that previously verified a redirect-binding message is refused.
+  Source-compatible; behaviour-breaking only for a connection whose pinned certificate has expired — which is
+  the defect.
+
+- **An agent client's tokens are bounded on every grant.** A client with an `AgentProfile` that obtains a
+  token through `authorization_code`, `refresh_token` or `device_code` now receives its ceiling as
+  `authorization_details` (with `ask` policies degraded to deny, since those grants have nobody to ask) and is
+  clamped to `MaxTokenLifetimeSeconds`. An agent whose ceiling grants nothing unattended is refused with
+  `unauthorized_client`. Previously those grants minted with no authority claim at all, which every resource
+  server reads as **unrestricted**.
+
+### Security
+
+- **Signing-key publish-ahead was dead code whenever `Auth:KeyRotationEnabled` was on.** Its window was
+  measured against the key's expiry (one day) while rotation retires the key at `KeyRotationLeadTimeDays`
+  (14 by default), so the key was deactivated thirteen days before the window opened and a brand-new key was
+  minted and made the signer in the same call — the exact outcome publish-ahead exists to prevent, with both
+  JWKS endpoints still sending `max-age=3600` on the strength of it. The window is now a margin on top of the
+  rotation lead time. `AuthagonalProtocolOptions.KeyRotationLeadTimeDays` is new and the Server host mirrors
+  `Auth:KeyRotationLeadTimeDays` into it. A lead time too large for the key lifetime is now refused with an
+  error naming the maximum instead of silently promoting the key rotation just retired.
+
+- **Publish-ahead was also a permanent silent no-op under `NeverLeaseProvider`**, which
+  `Cluster:RunLeaderElection=false` and all three `Use*Bus` helpers install container-wide. Now logged, plus
+  `SigningKeyPublishAheadWarning` at startup for the permanent case.
+
+- **Logout, deactivation, deletion, SCIM deprovisioning, password reset, admin MFA reset and the cluster's
+  own back-channel fan-out deleted grant rows without revoking the access tokens minted under them.** Access
+  tokens are self-contained ES256 JWTs, so for up to `AccessTokenLifetimeSeconds` — 30 minutes on the defaults
+  — a disabled, deleted or signed-out subject's token still passed the JwtBearer scheme, still returned their
+  claims from `/connect/userinfo`, and still reported `active: true` from `/connect/introspect`. Nine call
+  sites now route through `GrantRevocation`, which exists precisely to make revocation do both halves.
+  `MfaAdminEndpoints` logged and audited "sessions invalidated" while rotating only the cookie security stamp.
+
+- **`/connect/userinfo` never checked `IsActive`**, so the OP's own endpoint served a deactivated user's full
+  scoped claim set.
+
+- **Both SAML single-logout legs signed out the cookie and nothing else** — no RP notified, no grant revoked.
+  An IdP-initiated `LogoutRequest` is an offboarding signal; it reached one cookie.
+
+- **Azure: the environment prefix came back as part of the model's identity on six stores.** Nine entities set
+  an identity field from the raw `PartitionKey`; `Strip` was applied at two. Outside the live env a
+  read-modify-write therefore targeted `{env}|{env}|{key}` and reported success while changing nothing —
+  so revoking trust in a compromised IdP (replacing its `MetadataXml`, clearing `AllowUninvitedJit`, trimming
+  `AllowedDomains`) silently did nothing, group-to-role mapping never applied at all, and SCIM group updates
+  forked the row and burned the per-client quota. `ToModel` now requires the partitioner, which turned a
+  convention into a compiler check and surfaced three more unstripped read paths.
+
+- **The BFF believed whatever the discovery document said** (.NET and TypeScript). `issuer` from the document
+  became `ValidIssuer` and `jwks_uri` from the same document supplied the verification keys, so anyone able to
+  answer the metadata URL could mint an id_token for any `sub` and be issued a BFF session. The issuer is now
+  bound to the configured authority per OIDC Discovery §4.3, and an https authority refuses a plaintext
+  endpoint the document names. The private-network authority topology stays supported.
+
+- **AWS rate-limit rows were never reclaimed:** the increment wrote `_ttl` while the provisioner enables TTL
+  on `ttl`. Enabling `Auth:DurableRateLimiting` turned unauthenticated request volume into unbounded permanent
+  storage, on the one backend with no sweeper for those rows.
+
+- **Grant reconciliation deleted live grants that raced the store's two-write path.** A five-minute retention
+  margin off `GrantEntity.CreatedAt`, and the sweep is leader-gated.
+
+### Fixed
+
+- **`GET /admin/migration/status` was mapped by nobody.** Documented twice as the way to read the migration
+  report and reachable from nowhere, so the documented dry-run cutover answered 404 — indistinguishable from
+  its own `IdentityAdmin` policy refusing the caller. Call `app.MapAuthagonalDuendeMigration()`;
+  `docs/migration.md` now says so, and an enabled migration whose endpoint is unmapped warns at startup. Its
+  handler also relied on binding inference, which threw at map time unless `AddAuthagonalDuendeMigration` had
+  already run.
+
+- `HandleAuthorizationCode` and `HandleRefreshToken` never mapped `ProtocolTokenException`, so a protocol
+  error on either path surfaced as a 500.
+
 ## [0.22.0], 2026-08-04
 
 ### Breaking
