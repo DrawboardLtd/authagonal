@@ -4,6 +4,7 @@ using Authagonal.Core.Clustering;
 using Authagonal.Core.Models;
 using Authagonal.Core.Stores;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.IdentityModel.Tokens;
 
 namespace Authagonal.Protocol.Services;
@@ -50,8 +51,13 @@ public static class ProtocolSigningKeyOps
     /// </remarks>
     public static async Task<SigningKeyInfo> EnsureActiveKeyAsync(
         ISigningKeyStore keyStore, int keyLifetimeDays, ILogger logger, CancellationToken ct = default,
-        ILeaseProvider? lease = null, string? nodeId = null)
+        ILeaseProvider? lease = null, string? nodeId = null, int rotationLeadTimeDays = 0)
     {
+        // NullLogger: the misconfiguration this reports is reported by PublishSuccessorIfDueAsync, which
+        // runs immediately after this on the same refresh. Passing the real logger here would emit the same
+        // error twice per refresh.
+        var (_, successorFloor) = PublishAheadThresholds(
+            keyLifetimeDays, rotationLeadTimeDays, NullLogger.Instance);
         var now = DateTimeOffset.UtcNow;
         var activeKey = await keyStore.GetActiveKeyAsync(ct);
 
@@ -110,7 +116,7 @@ public static class ProtocolSigningKeyOps
             // PublishSuccessorIfDueAsync puts the successor in the store INACTIVE well before this point, and
             // BuildJwksAsync publishes every unexpired key regardless of IsActive — so by the time it is
             // promoted here, every peer and every cache has already seen it.
-            var successor = await FindPublishedSuccessorAsync(keyStore, DateTimeOffset.UtcNow, keyLifetimeDays, ct);
+            var successor = await FindPublishedSuccessorAsync(keyStore, DateTimeOffset.UtcNow, successorFloor, ct);
             if (successor is not null)
             {
                 logger.LogInformation(
@@ -150,45 +156,94 @@ public static class ProtocolSigningKeyOps
     }
 
     /// <summary>
-    /// How long before an active key's expiry its successor is generated and published.
+    /// How far ahead of the moment a key could first be PROMOTED its successor is published.
     /// </summary>
     /// <remarks>
     /// Has to exceed the longest window in which another party could still be holding a stale key set: the
     /// JWKS <c>max-age</c> both endpoints send (1 hour) and the in-process
     /// <c>SigningKeyCacheRefreshMinutes</c>. A day is generously past both and costs only one extra published
     /// key, which is what a JWKS is for.
+    /// <para>
+    /// This is a margin on top of the rotation lead time, not an absolute window against expiry. Measuring it
+    /// against expiry is what made publish-ahead dead code whenever <c>Auth:KeyRotationEnabled</c> was on:
+    /// <see cref="CheckAndRotateAsync"/> retires the key at <c>KeyRotationLeadTimeDays</c> (14 by default),
+    /// thirteen days before a one-day window against expiry would ever open, so no successor was ever
+    /// published and <see cref="EnsureActiveKeyAsync"/> minted a key that signed the instant it appeared.
+    /// </para>
     /// </remarks>
-    private static readonly TimeSpan PublishAheadWindow = TimeSpan.FromDays(1);
+    private static readonly TimeSpan PublishAheadMargin = TimeSpan.FromDays(1);
+
+    /// <summary>
+    /// The two coupled thresholds publish-ahead needs, derived from the host's rotation lead time.
+    /// </summary>
+    /// <param name="rotationLeadTimeDays">
+    /// How far before expiry <see cref="CheckAndRotateAsync"/> retires the active key, or 0 when the host
+    /// runs no rotation service and a key is only ever replaced once it has actually expired.
+    /// </param>
+    /// <returns>
+    /// <c>PublishWhenRemaining</c>: publish once the active key has this much life left. Null when the
+    /// configuration cannot support publish-ahead at all.
+    /// <c>SuccessorFloor</c>: minimum remaining life for an inactive key to count as a published successor
+    /// rather than a retired one.
+    /// </returns>
+    /// <remarks>
+    /// A retired key has at most <c>rotationLeadTimeDays</c> left, by construction — that is why it was
+    /// retired. A freshly published successor has a full lifetime. The floor has to sit between the two,
+    /// which needs the lifetime to be more than twice the publish point. On the defaults it is: 90d against
+    /// 15d. When it is not, publish-ahead is refused loudly rather than silently inverting and promoting the
+    /// key rotation just retired.
+    /// </remarks>
+    private static (TimeSpan? PublishWhenRemaining, TimeSpan SuccessorFloor) PublishAheadThresholds(
+        int keyLifetimeDays, int rotationLeadTimeDays, ILogger logger)
+    {
+        var lifetime = TimeSpan.FromDays(keyLifetimeDays);
+        var lead = TimeSpan.FromDays(Math.Max(0, rotationLeadTimeDays));
+        var publishWhen = lead + PublishAheadMargin;
+
+        if (lifetime <= publishWhen * 2)
+        {
+            logger.LogError(
+                "Signing-key rotation lead time ({Lead:F0}d) is too large for the key lifetime "
+                + "({Lifetime:F0}d): a key would be retired before its successor could be published far "
+                + "enough ahead to be told apart from it. Publish-ahead is DISABLED, so a new key will not "
+                + "be in JWKS before it starts signing and verifiers may reject tokens for up to the JWKS "
+                + "max-age. Set the lead time below {Max:F0}d.",
+                lead.TotalDays, lifetime.TotalDays,
+                (lifetime / 2).TotalDays - PublishAheadMargin.TotalDays);
+
+            // The floor is still the publish point, NOT lifetime/2. A retired key has at most `lead`
+            // remaining, and with a lead time this large lifetime/2 sits BELOW that — so it would classify
+            // the key rotation just retired as a published successor and promote it straight back, which is
+            // the original defect. Publishing is off; excluding retired keys is not optional.
+            return (null, publishWhen);
+        }
+
+        return (publishWhen, publishWhen);
+    }
 
     /// <summary>
     /// An unexpired, inactive key already in the store — the successor published ahead of promotion.
     /// </summary>
     /// <remarks>
+    /// <paramref name="successorFloor"/> is what separates a PUBLISHED SUCCESSOR from a RETIRED key. Both
+    /// are inactive and unexpired, and the first version of this looked only at IsActive — so immediately
+    /// after <see cref="CheckAndRotateAsync"/> deactivated the outgoing key, this found that very key and
+    /// promoted it straight back. The suite caught it:
+    /// <c>Rotation_PublishAhead_NewKeyActive_OldKeyStillInJwks</c> failed with <c>fresh.KeyId == old.KeyId</c>.
+    /// <para>
     /// Newest first, so a store that somehow holds several inactive keys promotes the freshest rather than one
     /// about to expire. Keys past their own expiry are skipped: they are retained in JWKS for verification
     /// (see <c>JwksRetentionGrace</c>) but must never be promoted to signer.
+    /// </para>
     /// </remarks>
     private static async Task<SigningKeyInfo?> FindPublishedSuccessorAsync(
-        ISigningKeyStore keyStore, DateTimeOffset now, int keyLifetimeDays, CancellationToken ct)
+        ISigningKeyStore keyStore, DateTimeOffset now, TimeSpan successorFloor, CancellationToken ct)
     {
-        // More than half its life left is what separates a PUBLISHED SUCCESSOR from a RETIRED key.
-        //
-        // Both are inactive and unexpired, and the first version of this looked only at IsActive — so
-        // immediately after CheckAndRotateAsync deactivated the outgoing key, this found that very key and
-        // promoted it straight back. The suite caught it: Rotation_PublishAhead_NewKeyActive_OldKeyStillInJwks
-        // failed with fresh.KeyId == old.KeyId.
-        //
-        // A key is retired because it came within the rotation lead time of expiry, so it has little life
-        // left; a successor is minted with a full lifetime. Half is comfortably between the two and needs no
-        // new column on SigningKeyInfo — and refusing to promote a key that is itself nearly due for rotation
-        // is the right rule regardless of how it came to be inactive.
-        var minimumRemaining = TimeSpan.FromDays(keyLifetimeDays) / 2;
-
         var all = await keyStore.GetAllAsync(ct);
         return all
             .Where(k => !k.IsActive
                         && k.ExpiresAt > now
-                        && k.ExpiresAt - now > minimumRemaining
+                        && k.ExpiresAt - now > successorFloor
                         && IsSupportedAlgorithm(k.Algorithm))
             .OrderByDescending(k => k.CreatedAt)
             .FirstOrDefault();
@@ -213,17 +268,24 @@ public static class ProtocolSigningKeyOps
         ILogger logger,
         CancellationToken ct = default,
         Authagonal.Core.Clustering.ILeaseProvider? lease = null,
-        string? nodeId = null)
+        string? nodeId = null,
+        int rotationLeadTimeDays = 0)
     {
+        var (publishWhenRemaining, successorFloor) =
+            PublishAheadThresholds(keyLifetimeDays, rotationLeadTimeDays, logger);
+
+        if (publishWhenRemaining is null)
+            return false;
+
         var now = DateTimeOffset.UtcNow;
         var activeKey = await keyStore.GetActiveKeyAsync(ct);
 
         // No active key at all is EnsureActiveKeyAsync's job, not this one.
-        if (activeKey is null || activeKey.ExpiresAt - now > PublishAheadWindow)
+        if (activeKey is null || activeKey.ExpiresAt - now > publishWhenRemaining)
             return false;
 
         // Already published — nothing to do. Checked before taking the lease so the common case is one read.
-        if (await FindPublishedSuccessorAsync(keyStore, now, keyLifetimeDays, ct) is not null)
+        if (await FindPublishedSuccessorAsync(keyStore, now, successorFloor, ct) is not null)
             return false;
 
         var holdsLease = false;
@@ -241,13 +303,29 @@ public static class ProtocolSigningKeyOps
                 return false;
             }
 
-            if (!holdsLease) return false;
+            if (!holdsLease)
+            {
+                // Said out loud, because a lease that NEVER grants turns this control off permanently and
+                // silently. NeverLeaseProvider is installed container-wide by Cluster:RunLeaderElection=false
+                // and by each UseAzureStorageBus/UseAwsDynamoBus/UseSqlBus helper, so a whole Deployment can
+                // be in that state with nothing to distinguish it from a healthy one until a key expires.
+                // Generation deliberately proceeds on the same refusal (an IdP that cannot sign is down);
+                // publishing cannot, because two nodes publishing two successors is the race the lease exists
+                // to prevent. The Server host's SigningKeyPublishAheadWarning reports the permanent case at
+                // boot, which is where it can actually be acted on; this covers the transient one.
+                logger.LogInformation(
+                    "Signing-key publish-ahead skipped: another node holds the generation lease, or this "
+                    + "node can never hold one. The active key expires in {Hours:F0}h; if no node publishes "
+                    + "a successor before then, its replacement will not be in JWKS before it signs.",
+                    (activeKey.ExpiresAt - now).TotalHours);
+                return false;
+            }
         }
 
         try
         {
             // Re-read under the lease: another node may have published between the check above and here.
-            if (await FindPublishedSuccessorAsync(keyStore, DateTimeOffset.UtcNow, keyLifetimeDays, ct) is not null)
+            if (await FindPublishedSuccessorAsync(keyStore, DateTimeOffset.UtcNow, successorFloor, ct) is not null)
                 return false;
 
             var successor = GenerateNewKey(DateTimeOffset.UtcNow, keyLifetimeDays);

@@ -332,6 +332,12 @@ public static class AuthagonalExtensions
             {
                 o.SigningKeyLifetimeDays = auth.SigningKeyLifetimeDays;
                 o.SigningKeyCacheRefreshMinutes = auth.SigningKeyCacheRefreshMinutes;
+
+                // Only meaningful when SigningKeyRotationService is actually running: it is the service
+                // that retires a key early, and it returns immediately when KeyRotationEnabled is false.
+                // Mirroring the lead time unconditionally would make publish-ahead fire 15 days before
+                // expiry on a host where nothing retires the key until it expires.
+                o.KeyRotationLeadTimeDays = auth.KeyRotationEnabled ? auth.KeyRotationLeadTimeDays : 0;
                 o.RefreshTokenReuseGraceSeconds = auth.RefreshTokenReuseGraceSeconds;
                 o.AuthenticationScheme = CookieAuthenticationDefaults.AuthenticationScheme;
             });
@@ -358,6 +364,10 @@ public static class AuthagonalExtensions
         // The private signing key is the one secret whose exposure is total, and its at-rest
         // protection is opt-in through IFieldCipher — so its absence is stated rather than assumed.
         services.AddSingleton<IHostedService, PlaintextSigningKeyWarning>();
+
+        // Resolved at StartAsync, not registration: the clustering extensions Replace ILeaseProvider and may
+        // run either side of AddAuthagonal, so only the built container knows which provider won.
+        services.AddSingleton<IHostedService, SigningKeyPublishAheadWarning>();
         services.AddSingleton<IHostedService, Services.Cluster.InternalEndpointAccessWarning>();
         services.AddSingleton<IHostedService, NullAuditLoggerWarning>();
 

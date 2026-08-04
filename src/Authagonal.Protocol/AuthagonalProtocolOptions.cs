@@ -65,6 +65,20 @@ public sealed class AuthagonalProtocolOptions
     public int SigningKeyLifetimeDays { get; set; } = 90;
 
     /// <summary>
+    /// How far before expiry a host-side rotation service retires the active signing key, in days, or 0
+    /// when the host runs no such service and a key is replaced only once it has actually expired.
+    /// </summary>
+    /// <remarks>
+    /// Publish-ahead has to fire before the key can be retired, so it needs this value — the retirement
+    /// point, not the expiry, is the deadline. When the two disagreed, publish-ahead was dead code for
+    /// every deployment with rotation enabled: the key was retired 13 days before a window measured
+    /// against expiry would have opened. The <c>Authagonal.Server</c> host mirrors
+    /// <c>Auth:KeyRotationLeadTimeDays</c> into this (as 0 when <c>Auth:KeyRotationEnabled</c> is false);
+    /// a host embedding the protocol package with its own rotation service must set it to match.
+    /// </remarks>
+    public int KeyRotationLeadTimeDays { get; set; }
+
+    /// <summary>
     /// How often <see cref="Services.ProtocolKeyManager"/> re-reads signing keys
     /// from storage to pick up externally rotated keys (cluster rotation, admin
     /// action). Acts as the eventual-consistency window for new keys.

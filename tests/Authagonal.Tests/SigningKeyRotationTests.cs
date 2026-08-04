@@ -29,6 +29,19 @@ public class SigningKeyRotationTests
     private Task<bool> CheckAndRotateAsync() =>
         ProtocolSigningKeyOps.CheckAndRotateAsync(_store, LifetimeDays, LeadTimeDays, NullLogger.Instance);
 
+    // Both of these take the SAME lead time CheckAndRotateAsync above uses, because that is what the
+    // Authagonal.Server host does (AuthagonalExtensions mirrors Auth:KeyRotationLeadTimeDays into
+    // AuthagonalProtocolOptions). Calling them without it is what let the publish-ahead defect survive a
+    // suite that appeared to cover it: with the lead time defaulted to 0 the publish window is one day
+    // against expiry, and rotation retires the key thirteen days before that window opens.
+    private Task<SigningKeyInfo> EnsureActiveKeyAsync() =>
+        ProtocolSigningKeyOps.EnsureActiveKeyAsync(
+            _store, LifetimeDays, NullLogger.Instance, rotationLeadTimeDays: LeadTimeDays);
+
+    private Task<bool> PublishSuccessorIfDueAsync() =>
+        ProtocolSigningKeyOps.PublishSuccessorIfDueAsync(
+            _store, LifetimeDays, NullLogger.Instance, rotationLeadTimeDays: LeadTimeDays);
+
     // ── No-rotation cases ────────────────────────────────────────────
 
     [Fact]
@@ -79,7 +92,7 @@ public class SigningKeyRotationTests
         // The rotation service's real sequence: rotate, then the key manager refresh
         // (which funnels through EnsureActiveKeyAsync) mints the replacement.
         Assert.True(await CheckAndRotateAsync());
-        var fresh = await ProtocolSigningKeyOps.EnsureActiveKeyAsync(_store, LifetimeDays, NullLogger.Instance);
+        var fresh = await EnsureActiveKeyAsync();
 
         Assert.NotEqual(old.KeyId, fresh.KeyId);
         Assert.True(fresh.IsActive);
@@ -112,12 +125,11 @@ public class SigningKeyRotationTests
     [Fact]
     public async Task SuccessorIsPublishedBeforeItSigns()
     {
-        // Inside the publish-ahead window (1 day) but not yet due for rotation.
+        // Inside the publish-ahead window — the rotation lead time plus a day's margin.
         var active = KeyCreatedDaysAgo(LifetimeDays - 1);
         await _store.StoreAsync(active);
 
-        Assert.True(await ProtocolSigningKeyOps.PublishSuccessorIfDueAsync(
-            _store, LifetimeDays, NullLogger.Instance));
+        Assert.True(await PublishSuccessorIfDueAsync());
 
         // Two keys: the signer, and a successor that is published but NOT active.
         var all = await _store.GetAllAsync();
@@ -139,8 +151,8 @@ public class SigningKeyRotationTests
     {
         await _store.StoreAsync(KeyCreatedDaysAgo(LifetimeDays - 1));
 
-        Assert.True(await ProtocolSigningKeyOps.PublishSuccessorIfDueAsync(_store, LifetimeDays, NullLogger.Instance));
-        Assert.False(await ProtocolSigningKeyOps.PublishSuccessorIfDueAsync(_store, LifetimeDays, NullLogger.Instance));
+        Assert.True(await PublishSuccessorIfDueAsync());
+        Assert.False(await PublishSuccessorIfDueAsync());
 
         Assert.Equal(2, (await _store.GetAllAsync()).Count);
     }
@@ -155,7 +167,7 @@ public class SigningKeyRotationTests
     {
         await _store.StoreAsync(KeyCreatedDaysAgo(1));
 
-        Assert.False(await ProtocolSigningKeyOps.PublishSuccessorIfDueAsync(_store, LifetimeDays, NullLogger.Instance));
+        Assert.False(await PublishSuccessorIfDueAsync());
         Assert.Single(await _store.GetAllAsync());
     }
 
@@ -171,13 +183,13 @@ public class SigningKeyRotationTests
     {
         var active = KeyCreatedDaysAgo(LifetimeDays - 1);
         await _store.StoreAsync(active);
-        await ProtocolSigningKeyOps.PublishSuccessorIfDueAsync(_store, LifetimeDays, NullLogger.Instance);
+        await PublishSuccessorIfDueAsync();
 
         var published = Assert.Single(await _store.GetAllAsync(), k => k.KeyId != active.KeyId);
 
         // Rotation retires the active key; the next refresh settles on a signer.
         Assert.True(await CheckAndRotateAsync());
-        var signer = await ProtocolSigningKeyOps.EnsureActiveKeyAsync(_store, LifetimeDays, NullLogger.Instance);
+        var signer = await EnsureActiveKeyAsync();
 
         // The already-published key, not a third one.
         Assert.Equal(published.KeyId, signer.KeyId);
@@ -200,7 +212,112 @@ public class SigningKeyRotationTests
         await _store.StoreAsync(old);
 
         Assert.True(await CheckAndRotateAsync());
-        var signer = await ProtocolSigningKeyOps.EnsureActiveKeyAsync(_store, LifetimeDays, NullLogger.Instance);
+        var signer = await EnsureActiveKeyAsync();
+
+        Assert.NotEqual(old.KeyId, signer.KeyId);
+        Assert.True(signer.IsActive);
+    }
+
+    /// <summary>
+    /// With rotation enabled at the production lead time, the successor is published BEFORE rotation can
+    /// retire the active key — so rotation promotes it instead of minting a signer nobody has seen.
+    /// </summary>
+    /// <remarks>
+    /// The regression test for the defect that made publish-ahead dead code for every deployment with
+    /// <c>Auth:KeyRotationEnabled</c> on. The publish window was measured against EXPIRY (one day), while
+    /// <see cref="ProtocolSigningKeyOps.CheckAndRotateAsync"/> retires the key at
+    /// <c>KeyRotationLeadTimeDays</c> — 14 days by default. The key was therefore deactivated thirteen days
+    /// before the publish window opened; <c>GetActiveKeyAsync</c> then returned null, publish-ahead bailed
+    /// out on its own "no active key is EnsureActiveKeyAsync's job" guard, and the retired key failed the
+    /// successor floor — so a brand-new key was minted and signed in the same call.
+    /// <para>
+    /// This drives the real sequence at the real lead time. Before the fix it failed on the final assertion:
+    /// the signer was a third key, not the published successor.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task PublishAhead_AtProductionLeadTime_SuccessorIsPublishedBeforeRotationRetiresTheKey()
+    {
+        // Just outside the rotation lead time, so rotation has NOT fired yet, but inside the publish
+        // window (lead time + a day). This is the state every deployment passes through once per key.
+        var active = KeyCreatedDaysAgo(LifetimeDays - LeadTimeDays - 0.5);
+        await _store.StoreAsync(active);
+
+        Assert.False(await CheckAndRotateAsync()); // not yet due for retirement
+        Assert.True(await PublishSuccessorIfDueAsync()); // but the successor goes out now
+
+        var published = Assert.Single(await _store.GetAllAsync(), k => k.KeyId != active.KeyId);
+        Assert.False(published.IsActive);
+
+        // Every verifier can see it while it is still unused — the property both JWKS endpoints'
+        // `max-age=3600` headers assert.
+        var jwksBeforeUse = await ProtocolSigningKeyOps.BuildJwksAsync(_store);
+        Assert.Contains(jwksBeforeUse, k => k.Kid == published.KeyId);
+
+        // Now let rotation run. It must promote what was published, not mint a third key.
+        await _store.StoreAsync(new SigningKeyInfo
+        {
+            KeyId = active.KeyId,
+            Algorithm = active.Algorithm,
+            KeyMaterialJson = active.KeyMaterialJson,
+            IsActive = true,
+            CreatedAt = active.CreatedAt,
+            ExpiresAt = DateTimeOffset.UtcNow.AddDays(LeadTimeDays - 1), // now inside the lead time
+        });
+
+        Assert.True(await CheckAndRotateAsync());
+        var signer = await EnsureActiveKeyAsync();
+
+        Assert.Equal(published.KeyId, signer.KeyId);
+        Assert.True(signer.IsActive);
+        Assert.Equal(2, (await _store.GetAllAsync()).Count); // no third key
+    }
+
+    /// <summary>
+    /// A node that can never hold the generation lease publishes nothing — and says so.
+    /// </summary>
+    /// <remarks>
+    /// <c>NeverLeaseProvider</c> is installed container-wide by <c>Cluster:RunLeaderElection=false</c> and by
+    /// each <c>Use*Bus</c> helper, so a whole Deployment can be in this state. Publishing must not proceed
+    /// (two nodes publishing two successors is the race the lease exists to prevent), which makes the log
+    /// line the only signal that the control is off.
+    /// </remarks>
+    [Fact]
+    public async Task PublishAhead_WithALeaseThatNeverGrants_PublishesNothing()
+    {
+        await _store.StoreAsync(KeyCreatedDaysAgo(LifetimeDays - 1));
+
+        Assert.False(await ProtocolSigningKeyOps.PublishSuccessorIfDueAsync(
+            _store, LifetimeDays, NullLogger.Instance,
+            lease: new Authagonal.Core.Clustering.NeverLeaseProvider(), nodeId: "node-1",
+            rotationLeadTimeDays: LeadTimeDays));
+
+        Assert.Single(await _store.GetAllAsync());
+    }
+
+    /// <summary>
+    /// A lead time too large for the key lifetime disables publish-ahead rather than inverting it.
+    /// </summary>
+    /// <remarks>
+    /// The floor that tells a published successor from a retired key sits between "at most the lead time
+    /// remaining" and "a full lifetime remaining". When the lead time exceeds half the lifetime there is no
+    /// such gap, and the old <c>lifetime/2</c> rule silently started promoting the key rotation had just
+    /// retired. It is refused loudly instead — and, critically, the retired key still is not promoted.
+    /// </remarks>
+    [Fact]
+    public async Task PublishAhead_LeadTimeTooLargeForLifetime_IsRefused_AndStillWillNotPromoteARetiredKey()
+    {
+        var old = KeyCreatedDaysAgo(LifetimeDays - 50); // 50 days left, lead time 60 → already retirable
+        await _store.StoreAsync(old);
+
+        Assert.False(await ProtocolSigningKeyOps.PublishSuccessorIfDueAsync(
+            _store, LifetimeDays, NullLogger.Instance, rotationLeadTimeDays: 60));
+
+        Assert.True(await ProtocolSigningKeyOps.CheckAndRotateAsync(
+            _store, LifetimeDays, 60, NullLogger.Instance));
+
+        var signer = await ProtocolSigningKeyOps.EnsureActiveKeyAsync(
+            _store, LifetimeDays, NullLogger.Instance, rotationLeadTimeDays: 60);
 
         Assert.NotEqual(old.KeyId, signer.KeyId);
         Assert.True(signer.IsActive);
@@ -225,7 +342,7 @@ public class SigningKeyRotationTests
     {
         await _store.StoreAsync(KeyCreatedDaysAgo(85));
         Assert.True(await CheckAndRotateAsync());
-        var fresh = await ProtocolSigningKeyOps.EnsureActiveKeyAsync(_store, LifetimeDays, NullLogger.Instance);
+        var fresh = await EnsureActiveKeyAsync();
 
         Assert.False(await CheckAndRotateAsync());
 
@@ -238,7 +355,7 @@ public class SigningKeyRotationTests
     [Fact]
     public async Task EnsureActiveKey_EmptyStore_GeneratesActiveEs256Key()
     {
-        var key = await ProtocolSigningKeyOps.EnsureActiveKeyAsync(_store, LifetimeDays, NullLogger.Instance);
+        var key = await EnsureActiveKeyAsync();
 
         Assert.True(key.IsActive);
         Assert.Equal(ProtocolSigningKeyOps.Algorithm, key.Algorithm);
@@ -260,7 +377,7 @@ public class SigningKeyRotationTests
         };
         await _store.StoreAsync(legacyRsa);
 
-        var key = await ProtocolSigningKeyOps.EnsureActiveKeyAsync(_store, LifetimeDays, NullLogger.Instance);
+        var key = await EnsureActiveKeyAsync();
 
         Assert.NotEqual("legacy-rsa", key.KeyId);
         Assert.Equal(ProtocolSigningKeyOps.Algorithm, key.Algorithm);
