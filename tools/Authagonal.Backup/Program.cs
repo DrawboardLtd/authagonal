@@ -12,8 +12,18 @@ var cliArgs = Environment.GetCommandLineArgs().Skip(1).ToArray();
 var connectionString = GetArg(cliArgs, "--connection-string") ?? Environment.GetEnvironmentVariable("STORAGE_CONNECTION_STRING");
 var outputRoot = GetArg(cliArgs, "--output") ?? "./backups";
 
+// Both keys accept an environment variable, exactly as --connection-string already does.
+//
+// argv-only was the whole problem: the shipped image puts these in the container's command line, so a
+// Kubernetes CronJob spec literally contains the base64 KEK and the manifest HMAC key. Anyone with
+// get/list on cronjobs or pods in that namespace — a far wider set than holders of the Secret, and
+// routinely granted to read-only dashboards and CI service accounts — reads both with
+// `kubectl get cronjob -o yaml`. The same values sit in /proc/<pid>/cmdline for any process on the node
+// and in any shell history or CI log that assembled the command. The connection string had an env path
+// for exactly this reason; the two keys that protect the archive did not.
 byte[]? encryptionKey = null;
-var encryptionKeyArg = GetArg(cliArgs, "--encryption-key");
+var encryptionKeyArg = GetArg(cliArgs, "--encryption-key")
+    ?? Environment.GetEnvironmentVariable("BACKUP_ENCRYPTION_KEY");
 if (!string.IsNullOrWhiteSpace(encryptionKeyArg))
 {
     try { encryptionKey = Convert.FromBase64String(encryptionKeyArg); }
@@ -33,7 +43,8 @@ if (!string.IsNullOrWhiteSpace(encryptionKeyArg))
 // ever set it, so every backup the shipped tool produced was unsigned — the library could
 // authenticate a manifest that nothing in the release could actually sign.
 byte[]? manifestKey = null;
-var manifestKeyArg = GetArg(cliArgs, "--manifest-key");
+var manifestKeyArg = GetArg(cliArgs, "--manifest-key")
+    ?? Environment.GetEnvironmentVariable("BACKUP_MANIFEST_KEY");
 if (!string.IsNullOrWhiteSpace(manifestKeyArg))
 {
     try { manifestKey = Convert.FromBase64String(manifestKeyArg); }

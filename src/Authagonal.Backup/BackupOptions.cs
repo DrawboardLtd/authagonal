@@ -52,6 +52,39 @@ public sealed class BackupOptions
     public DateTimeOffset? WatermarkOverride { get; set; }
 
     /// <summary>
+    /// Which run's watermark this configuration owns. Null when the run covers the default table set with no
+    /// prefix, so a plain schedule keeps using the unscoped <c>.lastbackup</c>.
+    /// </summary>
+    /// <remarks>
+    /// The watermark was one value per output directory, advanced by any successful run. Two documented option
+    /// combinations broke on that. <c>--prefix</c> exists for multi-tenancy, so a second tenant's FIRST EVER
+    /// incremental into the same <c>--output</c> found a recent watermark, skipped the full-backup fallback, and
+    /// produced an archive covering only the last interval. And <c>--tables</c> restricted a run to a subset
+    /// while advancing the watermark for every table, so the next full-set incremental skipped everything
+    /// committed to the others before it.
+    /// <para>
+    /// Derived from the prefix and the table set — the two things that decide what a run actually covered. A
+    /// digest rather than the values themselves because it becomes a filename, and a table list can be long
+    /// and contain characters a path will not take.
+    /// </para>
+    /// </remarks>
+    public string? WatermarkScope()
+    {
+        var tables = Tables is { Length: > 0 }
+            ? string.Join(',', Tables.OrderBy(t => t, StringComparer.Ordinal))
+            : "";
+
+        if (string.IsNullOrEmpty(TablePrefix) && tables.Length == 0)
+            return null;
+
+        var material = $"{TablePrefix}\u0000{tables}";
+        var digest = System.Security.Cryptography.SHA256.HashData(
+            System.Text.Encoding.UTF8.GetBytes(material));
+
+        return Convert.ToHexString(digest)[..16].ToLowerInvariant();
+    }
+
+    /// <summary>
     /// Safety margin subtracted from the watermark before every Timestamp filter (see
     /// <see cref="BackupDefaults.WatermarkSkewMargin"/> for why). Override only in tests that assert
     /// exact window boundaries; production callers keep the default.

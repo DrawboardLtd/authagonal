@@ -32,10 +32,33 @@ public sealed class BackupService(TableServiceClient serviceClient, IBackupTarge
         // since the stored (per-run) watermark. All Timestamp filters below use the margin-adjusted
         // effectiveWatermark (see BackupDefaults.WatermarkSkewMargin) — the raw watermark is pod-clock,
         // row Timestamps are storage-clock, and a commit inside the skew would escape every future run.
+        // A table the restore path will refuse is not a table worth backing up.
+        //
+        // Backup accepted any --tables value and wrote, hashed and manifest-signed the result, while
+        // RestoreService's allowlist is BackupDefaults.Tables — and it throws before the --tables filter,
+        // mid-loop. So `--tables Users,Clients,RevokedTokens` produced a complete, signed archive that could
+        // never be restored, and the failure surfaced during the restore, which is the worst possible moment
+        // to discover it. Refused here instead, where the operator is standing at the terminal.
+        if (options.Tables is { Length: > 0 })
+        {
+            var unknown = options.Tables
+                .Where(t => !BackupDefaults.Tables.Contains(t, StringComparer.OrdinalIgnoreCase))
+                .ToList();
+
+            if (unknown.Count > 0)
+                throw new InvalidOperationException(
+                    $"Not part of the backup set: {string.Join(", ", unknown)}. An archive naming a table "
+                    + "outside BackupDefaults.Tables is refused by restore, so backing it up would produce an "
+                    + "archive that cannot be restored. Transient tables (revoked-token entries, rate-limit "
+                    + "counters) are excluded deliberately — they expire on their own and restoring stale rows "
+                    + "achieves nothing.");
+        }
+
         DateTimeOffset? watermark = null;
         if (options.Incremental)
         {
-            watermark = options.WatermarkOverride ?? await target.GetLastWatermarkAsync(ct);
+            watermark = options.WatermarkOverride
+                ?? await target.GetLastWatermarkAsync(ct, options.WatermarkScope());
         }
         var effectiveWatermark = watermark - options.WatermarkSkewMargin;
 
@@ -200,7 +223,7 @@ public sealed class BackupService(TableServiceClient serviceClient, IBackupTarge
                 ManifestAuthentication.Sign(manifest, manifestKey);
 
             await target.WriteManifestAsync(backupId, manifest, ct);
-            await target.SetLastWatermarkAsync(backupStart, ct);
+            await target.SetLastWatermarkAsync(backupStart, ct, options.WatermarkScope());
         }
 
         return manifest;

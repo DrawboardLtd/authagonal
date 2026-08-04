@@ -126,9 +126,15 @@ return result.TotalErrors > 0 ? 2 : 0;
 
 // Set by ReadKey rather than thrown: top-level statements run before the help block, and a malformed
 // key must not stop `--help` from printing.
+/// <remarks>
+/// Falls back to an environment variable, exactly as --connection-string does. argv-only was the whole
+/// problem: a Kubernetes CronJob or Job spec then literally contains the base64 KEK and the manifest HMAC
+/// key, readable by anyone with get/list on those objects — a far wider set than holders of the Secret — and
+/// present in /proc/&lt;pid&gt;/cmdline, shell history and CI logs besides.
+/// </remarks>
 static byte[]? ReadKey(string[] args, string name, int? exactBytes = null, int? minBytes = null)
 {
-    var raw = GetArg(args, name);
+    var raw = GetArg(args, name) ?? Environment.GetEnvironmentVariable(EnvVarFor(name));
     if (string.IsNullOrWhiteSpace(raw)) return null;
 
     byte[] key;
@@ -146,6 +152,14 @@ static byte[]? ReadKey(string[] args, string name, int? exactBytes = null, int? 
 
     return KeyError is null ? key : null;
 }
+
+/// <summary><c>--encryption-key</c> → <c>BACKUP_ENCRYPTION_KEY</c>, matching the backup tool.</summary>
+static string EnvVarFor(string argName) => argName switch
+{
+    "--encryption-key" => "BACKUP_ENCRYPTION_KEY",
+    "--manifest-key" => "BACKUP_MANIFEST_KEY",
+    _ => argName.TrimStart('-').Replace('-', '_').ToUpperInvariant(),
+};
 
 static string? GetArg(string[] args, string name)
 {

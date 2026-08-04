@@ -70,9 +70,24 @@ public sealed class FileSystemBackupTarget(string rootDirectory) : IBackupTarget
         await writer.WriteAsync(json.AsMemory(), ct);
     }
 
-    public Task<DateTimeOffset?> GetLastWatermarkAsync(CancellationToken ct = default)
+    /// <summary>
+    /// The watermark file for a scope. Unscoped runs keep <c>.lastbackup</c>, so a target written by an
+    /// earlier version is read by this one and an unscoped incremental is unaffected.
+    /// </summary>
+    private string WatermarkPath(string? scope) =>
+        Path.Combine(rootDirectory, scope is null ? ".lastbackup" : $".lastbackup-{scope}");
+
+    public Task<DateTimeOffset?> GetLastWatermarkAsync(CancellationToken ct = default, string? scope = null)
     {
-        var path = Path.Combine(rootDirectory, ".lastbackup");
+        var path = WatermarkPath(scope);
+
+        // A scoped run with no watermark of its own falls back to the unscoped file rather than to "no
+        // watermark at all": a deployment upgrading mid-schedule would otherwise take one full backup per
+        // scope, which is correct but surprising. A scope that has never run reads null from both and takes a
+        // full backup, which is the behaviour the multi-tenant case needed.
+        if (!File.Exists(path) && scope is not null)
+            path = WatermarkPath(null);
+
         if (!File.Exists(path))
             return Task.FromResult<DateTimeOffset?>(null);
 
@@ -83,9 +98,10 @@ public sealed class FileSystemBackupTarget(string rootDirectory) : IBackupTarget
         return Task.FromResult<DateTimeOffset?>(null);
     }
 
-    public async Task SetLastWatermarkAsync(DateTimeOffset watermark, CancellationToken ct = default)
+    public async Task SetLastWatermarkAsync(
+        DateTimeOffset watermark, CancellationToken ct = default, string? scope = null)
     {
         Directory.CreateDirectory(rootDirectory);
-        await File.WriteAllTextAsync(Path.Combine(rootDirectory, ".lastbackup"), watermark.ToString("O"), ct);
+        await File.WriteAllTextAsync(WatermarkPath(scope), watermark.ToString("O"), ct);
     }
 }

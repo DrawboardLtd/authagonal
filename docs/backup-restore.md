@@ -25,8 +25,8 @@ dotnet run --project tools/Authagonal.Backup -- \
 | `--tables <t1,t2,...>` | Comma-separated list of tables (default: all Authagonal tables) |
 | `--prefix <prefix>` | Table name prefix (for multi-tenant storage) |
 | `--gzip` | Compress backup files with gzip (`.jsonl.gz`) |
-| `--encryption-key <base64>` | 32-byte AES-256 key-encryption key. Encrypts every data file. Keep it **outside** the backup target. |
-| `--manifest-key <base64>` | ≥32-byte HMAC key. Signs the manifest so restore can prove the recorded hashes were not rewritten with the files. Keep it **outside** the backup target. |
+| `--encryption-key <base64>` | 32-byte AES-256 key-encryption key. Encrypts every data file. Keep it **outside** the backup target. Also reads `BACKUP_ENCRYPTION_KEY` — prefer that; see below. |
+| `--manifest-key <base64>` | ≥32-byte HMAC key. Signs the manifest so restore can prove the recorded hashes were not rewritten with the files. Keep it **outside** the backup target. Also reads `BACKUP_MANIFEST_KEY` — prefer that; see below. |
 | `--dry-run` | Show what would be backed up without writing |
 
 ### Output format
@@ -57,6 +57,28 @@ Entity values round-trip exactly: each backed-up row carries a `"@v"` format mar
 
 Each backup manifest includes a `FileHashes` dictionary mapping filenames to their SHA-256 hashes. During restore each file is verified against its recorded hash — from the same read the entities are applied from, so the bytes that were checked are the bytes that get written — before any of its data reaches a table. A file that fails the check, a data file absent from the manifest, or a manifest-listed file missing from the store all abort the restore. Backups written before integrity hashing existed (no `FileHashes`) cannot be verified and are refused unless `--allow-unverified`. Verification can be disabled programmatically via `RestoreOptions.VerifyIntegrity` (default `true`).
 
+### Pass the keys by environment variable, not on the command line
+
+Both tools read `BACKUP_ENCRYPTION_KEY` and `BACKUP_MANIFEST_KEY`, and a scheduled backup should use them.
+
+A flag becomes the process's command line. In Kubernetes that means the CronJob spec literally contains the
+base64 KEK and the HMAC key, so anyone with `get`/`list` on cronjobs or pods in that namespace can read both
+with `kubectl get cronjob -o yaml` — a far wider set of principals than the holders of the Secret, and one
+routinely granted to read-only dashboards and CI service accounts. The same values are visible in
+`/proc/<pid>/cmdline` to any process on the node, and in whatever shell history or CI log assembled the
+command. `--connection-string` has had an environment path for exactly this reason; the two keys that protect
+the archive did not.
+
+```yaml
+env:
+  - name: BACKUP_ENCRYPTION_KEY
+    valueFrom: { secretKeyRef: { name: authagonal-backup, key: encryption-key } }
+  - name: BACKUP_MANIFEST_KEY
+    valueFrom: { secretKeyRef: { name: authagonal-backup, key: manifest-key } }
+```
+
+A flag still wins if both are set, so an interactive one-off restore needs no change.
+
 Hashes establish that the archive matches the manifest, not that either is authentic: the manifest sits on the same target as the data, so whoever can rewrite `Clients.jsonl.gz` can rewrite the line recording its hash. `--manifest-key` closes that — the backup HMACs the manifest, the restore verifies it, and the key lives somewhere the backup writer cannot reach. **Restore fails closed**: with no `--manifest-key` it refuses rather than warning, and `--allow-unauthenticated-manifest` is the explicit opt-out for archives written before manifest signing.
 
 ### Incremental backups
@@ -81,6 +103,14 @@ The `SigningKeys` table is in the default table list but **filtered out of backu
 
 > ⚠️ Only opt in via `BackupOptions.IncludeSigningKeys` when the backup target is itself encrypted at rest and access-controlled. The same applies to the rest of the backup: with the default **plaintext** secret provider, backups also contain upstream OIDC client secrets and TOTP / MFA seeds in cleartext. See [Configuration → Secret Provider](configuration#secret-provider).
 
+### `--tables` names tables from the backup set
+
+Only tables in `BackupDefaults.Tables` may be named. A table outside it is refused up front rather than
+producing an archive the restore would reject — restore's allowlist is that same set, so an archive naming
+anything else could be written, hashed and signed and then never restored. Transient tables (revoked-token
+entries, rate-limit counters) are excluded deliberately: they expire on their own, and restoring stale rows
+achieves nothing.
+
 ## Restore
 
 ```bash
@@ -101,8 +131,8 @@ dotnet run --project tools/Authagonal.Restore -- \
 | `--clean-env <env>` | With `--mode clean`, wipe only this env's rows (PartitionKey prefix `<env>|`) |
 | `--allow-clean-from-incremental` | Permit `--mode clean` against an incremental backup |
 | `--allow-clean-all-envs` | Permit `--mode clean` with no `--clean-env`, emptying the whole table |
-| `--encryption-key <base64>` | The 32-byte key-encryption key the backup was written with. Required for an encrypted archive. |
-| `--manifest-key <base64>` | The HMAC key the backup was signed with. **Required** unless `--allow-unauthenticated-manifest`. |
+| `--encryption-key <base64>` | The 32-byte key-encryption key the backup was written with. Required for an encrypted archive. Also reads `BACKUP_ENCRYPTION_KEY`. |
+| `--manifest-key <base64>` | The HMAC key the backup was signed with. **Required** unless `--allow-unauthenticated-manifest`. Also reads `BACKUP_MANIFEST_KEY`. |
 | `--allow-unauthenticated-manifest` | Restore without `--manifest-key`, accepting hashes that detect corruption but not tampering |
 | `--allow-unverified` | Restore a backup whose manifest carries no file hashes at all |
 | `--dry-run` | Show what would be restored without writing |
