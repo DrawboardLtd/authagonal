@@ -13,6 +13,23 @@ unreachable, or applied on one of several sibling paths.
   Source-compatible; behaviour-breaking only for a connection whose pinned certificate has expired — which is
   the defect.
 
+- **`IGrantStore` gains `RemoveBySessionAsync`, and `PersistedGrant` gains `SessionId`.** Implementors of
+  either must add them; no data migration is required (Azure Table and the SQL/Dynamo attribute bags are
+  schemaless, and old rows read back a null `SessionId`, which is never matched by a session-scoped removal).
+
+- **`SamlEndpoints`' two logout handlers and `AuthEndpoints`' two session-revocation handlers take more
+  dependencies**, and `SessionTermination.NotifyAndRevokeAsync` gains an optional `IRevokedTokenStore`.
+  Source-breaking only for a caller invoking these internals directly.
+
+- **HashiCorp Vault Transit JWT signing was never implemented and is no longer advertised.** Registering
+  `VaultTransitCryptoProvider` never affected token signing — `ProtocolKeyManager` always signs with the key in
+  `ISigningKeyStore`. The claim is withdrawn from the README and four doc pages, and a host that registered the
+  provider now gets an Error at startup saying so. `VaultTransitClient` and the three related types are kept:
+  they are the right building block for a Vault-backed `IFieldCipher` or `IIndexTokenizer`, which is what
+  `docs/extensibility.md` now shows. **If you believed your signing key was in Vault, it was not** — it was
+  generated locally and persisted to your primary data store, in the clear unless an `IFieldCipher` was
+  registered.
+
 - **An agent client's tokens are bounded on every grant.** A client with an `AgentProfile` that obtains a
   token through `authorization_code`, `refresh_token` or `device_code` now receives its ceiling as
   `authorization_details` (with `ask` policies degraded to deny, since those grants have nobody to ask) and is
@@ -69,6 +86,34 @@ unreachable, or applied on one of several sibling paths.
 
 - **Grant reconciliation deleted live grants that raced the store's two-write path.** A five-minute retention
   margin off `GrantEntity.CreatedAt`, and the sweep is leader-gated.
+
+- **"Log out other devices" ended the OP cookie and nothing else.** The refresh token the relying party on that
+  device already held kept rotating for the client's whole absolute refresh lifetime, and no relying party was
+  notified — so a user who lost a laptop was told every other device was signed out while the thief retained RP
+  access. Revoking one session's grants was previously inexpressible; see the `RemoveBySessionAsync` note above.
+
+- **SCIM group `externalId` was never validated**, while being the raw PartitionKey of the group external-id
+  index. An unstorable value failed *after* the group row was durably written, so each connector retry left an
+  unreachable orphan counting against `Auth:MaxScimGroupsPerClient` — and once the orphans reached the cap, every
+  create was refused and role grants driven by group membership stopped working with no recovery through the SCIM
+  API. Validated on create, replace and PATCH now.
+
+- **A SCIM credential's email-domain bound is settable and documented.** `POST /api/v1/scim/tokens` accepts
+  `allowedEmailDomains`; it is intersected with `Scim:Clients:{clientId}:AllowedEmailDomains`, so a token can
+  narrow an operator's bound but never widen it. Previously the control existed only as that configuration key,
+  which no document mentioned and the token-minting endpoint could not write — so the documented onboarding
+  produced an unrestricted directory-wide credential, and a SCIM-created user is written email-confirmed.
+  Unchanged default: no bound anywhere is still unrestricted, but minting one now logs a warning.
+
+- **The device-code grant dropped the federated session clamp, `RevalidateOnRefresh` and `sid`.** A device
+  approved through a federated session kept minting tokens for the client's full absolute refresh lifetime after
+  that session ended, never re-asked the upstream on rotation, and received an id_token with no `sid` while
+  back-channel logout sent it the browser's.
+
+- **The GDPR data export could save the login page as the user's data.** `exportMyData()` checked only
+  `response.ok`, and `MapFallbackToFile` answers an unimplemented route with 200 and the SPA's own HTML. It now
+  verifies the content type. The endpoints themselves are served by Authagonal Cloud, which `docs/index.md` now
+  states rather than listing GDPR self-service as a library feature.
 
 ### Fixed
 
