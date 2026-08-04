@@ -231,7 +231,19 @@ User listings use **cursor pagination**. Each page of `GET /scim/v2/Users` retur
 
 Requesting `startIndex` greater than 1 on the Users endpoint returns a `400` error directing you to cursor pagination; offset paging past the first page is not offered. `totalResults` reports the number of resources returned in the response (it is the true total only when `nextCursor` is absent).
 
-Group listings still use `startIndex`/`count` offset pagination.
+**Group listings are cursor-paginated too.** `GET /scim/v2/Groups` returns a `nextCursor` on both its filtered
+and unfiltered forms; follow it the same way. `startIndex` is still accepted on Groups for clients already using
+it, but it is **not advertised** in `ServiceProviderConfig` and should not be relied on: `pagination.index` is a
+claim about the provider, not about one collection, and `/Users` does not support it — so the only value that is
+true everywhere is `false`. Use cursors, which work on both.
+
+A filtered group listing scans in bounded windows rather than materialising the whole tenant, so it can return
+an empty page while matches still exist further on. When that happens it returns a `nextCursor` and **omits**
+`totalResults` — an empty page with a cursor means "keep going", and an empty page with no cursor means the
+filtered set really is empty. Do not treat the first empty page as the end of the collection.
+
+`count=0` returns `totalResults` with no resources (RFC 7644 §3.4.2.4) on both collections, and a negative
+`count` is refused with a `400` rather than clamped.
 
 ### Group membership via PATCH
 `PATCH /scim/v2/Groups/{id}` accepts the membership shapes the major identity providers actually send:

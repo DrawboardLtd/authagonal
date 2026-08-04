@@ -65,24 +65,26 @@ public static class ScimDiscoveryEndpoints
             documentationUri = $"{baseUrl}/docs/scim",
             patch = new { supported = true },
             // Pagination is CURSOR-based (draft-ietf-scim-cursor-pagination): pass a response's
-            // `nextCursor` back as ?cursor=. `startIndex` past the first page is refused with 400, and
-            // nothing here said so — a conforming client had to discover that by failing. `totalResults` is
-            // omitted while a listing is incomplete, because under cursor pagination the true total is not
-            // knowable without a full scan and reporting the page size instead led syncing clients to stop
-            // after one page and silently miss users.
-            // `index = true` because the provider DOES support it — /Groups pages by startIndex and only
-            // by startIndex. This said false, which is a per-provider claim (draft-ietf-scim-cursor-pagination
-            // §4 has no per-endpoint qualifier), and it was false about the Groups collection: an integrator
-            // building against this advertisement could never read past the first page of groups, because the
-            // model it was told to use did not exist there and the one that worked was declared unsupported.
+            // `nextCursor` back as ?cursor=. `totalResults` is omitted while a listing is incomplete, because
+            // under cursor pagination the true total is not knowable without a full scan, and reporting the
+            // page size instead led syncing clients to stop after one page and silently miss users.
             //
-            // /Groups now also accepts `cursor` and returns `nextCursor`, so a cursor-only client works
-            // against both collections; the token is opaque, which is the whole point of a cursor, so it
-            // carrying an index is between the server and itself.
+            // `index = false`, and this has now been wrong in BOTH directions. It said false while /Groups
+            // paged only by startIndex, so an integrator following the advertisement could never read past the
+            // first page of groups. It was then flipped to true — but /Users refuses startIndex > 1 outright
+            // with a 400 (F26: emulating it materialised and decrypted the entire client population per
+            // request), so true was a lie about the OTHER collection, and a client that selected index paging
+            // provider-wide aborted its user sync after 100 users.
+            //
+            // §4 has no per-endpoint qualifier, so this is a claim about the provider and the only honest
+            // value is one that holds for every collection. Cursor now does: /Groups accepts `cursor` and
+            // returns `nextCursor` on both its filtered and unfiltered branches. So cursor is advertised and
+            // index is not. /Groups still ACCEPTS startIndex for clients already using it — it simply is not
+            // promised, because it is not universally available.
             pagination = new
             {
                 cursor = true,
-                index = true,
+                index = false,
                 defaultPageSize = 100,
                 maxPageSize = 200,
             },

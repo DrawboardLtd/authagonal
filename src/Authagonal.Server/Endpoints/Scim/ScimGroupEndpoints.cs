@@ -85,16 +85,45 @@ public static class ScimGroupEndpoints
     private static string WriteGroupCursor(int nextStart)
         => Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes($"{GroupCursorPrefix}{nextStart}"));
 
-    private static bool TryReadGroupCursor(string? cursor, out int? start)
+    /// <summary>
+    /// A cursor for the FILTERED listing, carrying the scan offset to resume from.
+    /// </summary>
+    /// <remarks>
+    /// Distinct from <see cref="WriteGroupCursor"/> because the two page over different things: the unfiltered
+    /// listing pages by store index, while a filtered listing scans rows and collects the ones that match, so
+    /// resuming it needs the row it stopped at. Marked with <c>f</c> so a cursor cannot be read as the wrong
+    /// kind, and so tokens already issued in the old (index-only) form keep working.
+    /// </remarks>
+    private static string WriteFilteredGroupCursor(int scanFrom)
+        => Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes($"{GroupCursorPrefix}f{scanFrom}"));
+
+    /// <param name="start">The next start index, for a cursor from the unfiltered listing.</param>
+    /// <param name="scanFrom">The row to resume scanning at, for a cursor from the filtered listing.</param>
+    /// <remarks>
+    /// At most one of the two is set. A cursor issued before the filtered form existed parses as
+    /// <paramref name="start"/>, which is what it meant.
+    /// </remarks>
+    private static bool TryReadGroupCursor(string? cursor, out int? start, out int? scanFrom)
     {
         start = null;
+        scanFrom = null;
         if (string.IsNullOrEmpty(cursor)) return true;
 
         try
         {
             var decoded = System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(cursor));
             if (!decoded.StartsWith(GroupCursorPrefix, StringComparison.Ordinal)) return false;
-            if (!int.TryParse(decoded[GroupCursorPrefix.Length..], out var parsed) || parsed < 1) return false;
+
+            var body = decoded[GroupCursorPrefix.Length..];
+
+            if (body.StartsWith('f'))
+            {
+                if (!int.TryParse(body[1..], out var scan) || scan < 0) return false;
+                scanFrom = scan;
+                return true;
+            }
+
+            if (!int.TryParse(body, out var parsed) || parsed < 1) return false;
 
             start = parsed;
             return true;
@@ -130,13 +159,23 @@ public static class ScimGroupEndpoints
             return ScimResults.Error(400, "invalidValue", projectionError);
 
         var baseUrl = GetBaseUrl(tenantContext);
+
+        // RFC 7644 §3.4.2.4, implemented on /Users and not here. A negative count was silently clamped to 1,
+        // so `count=-1` returned a resource; and `count=0` — the spec's way to ask "how many are there, send me
+        // none" — returned one full group INCLUDING its entire members array, which is both the wrong answer
+        // and the largest possible one. Same two rules as ScimUserEndpoints, so a client cannot get different
+        // count semantics depending on which collection it asks.
+        if (count < 0)
+            return ScimResults.Error(400, "invalidValue", "count must not be negative.");
+
+        var countOnly = count == 0;
         var pageSize = Math.Clamp(count ?? 100, 1, 200);
 
         // Cursor pagination, because ServiceProviderConfig advertises it for the provider and this
         // collection did not offer it — so a client built against the advertisement could never read past the
         // first page of groups. The store is index-based, and a cursor is opaque by definition, so the token
         // carries the next start index. `startIndex` keeps working for clients already using it.
-        if (!TryReadGroupCursor(cursor, out var cursorStart))
+        if (!TryReadGroupCursor(cursor, out var cursorStart, out var cursorScanFrom))
             return ScimResults.Error(400, "invalidValue", "cursor is not a cursor this server issued.");
 
         var start = cursorStart ?? Math.Max(startIndex ?? 1, 1);
@@ -164,8 +203,9 @@ public static class ScimGroupEndpoints
             {
                 TotalResults = total,
                 StartIndex = start,
-                ItemsPerPage = pageResources.Count,
-                Resources = ScimProjection.ApplyAll(pageResources, projection),
+                // count=0 asks for the total without the resources (§3.4.2.4).
+                ItemsPerPage = countOnly ? 0 : pageResources.Count,
+                Resources = countOnly ? [] : ScimProjection.ApplyAll(pageResources, projection),
                 // Present only while there is another page, so a cursor-following client stops.
                 NextCursor = nextStart <= total ? WriteGroupCursor(nextStart) : null,
             });
@@ -180,7 +220,14 @@ public static class ScimGroupEndpoints
 
         var matches = new List<ScimGroupResource>();
         var matched = 0;
-        var scanned = 0;
+
+        // Where this request begins scanning. A filtered cursor carries the SCAN offset, not a match index:
+        // resuming by match index would re-scan from row 1 every time and, past MaxFilterWindows × WindowSize
+        // rows, could never reach the requested match at all. Everything before scanFrom was returned by an
+        // earlier page, so matches found from here are collected without skipping.
+        var scanFrom = cursorScanFrom ?? 0;
+        var scanned = scanFrom;
+        var skip = cursorScanFrom is null ? start - 1 : 0;
         var exhausted = false;
 
         for (var window = 0; window < MaxFilterWindows; window++)
@@ -194,7 +241,7 @@ public static class ScimGroupEndpoints
                 if (!ScimFilterEvaluator.Matches(filterExpression, resource))
                     continue;
                 matched++;
-                if (matched > start - 1 && matches.Count < pageSize)
+                if (matched > skip && matches.Count < pageSize)
                     matches.Add(resource);
             }
 
@@ -205,13 +252,21 @@ public static class ScimGroupEndpoints
 
         return ScimResults.Success(new ScimListResponse<object>
         {
-            // Only a completed scan knows the true total. Reporting what this page matched when groups past
-            // the window were never examined would tell a syncing client it had seen everything — see
-            // ScimListResponse.TotalResults.
-            TotalResults = exhausted ? matched : null,
+            // Only a completed scan knows the true total, and only one that began at the start of the
+            // collection. Reporting what this page matched when groups past the window were never examined —
+            // or when earlier pages were counted by an earlier request — would tell a syncing client it had
+            // seen everything. See ScimListResponse.TotalResults.
+            TotalResults = exhausted && scanFrom == 0 ? matched : null,
             StartIndex = start,
-            ItemsPerPage = matches.Count,
-            Resources = ScimProjection.ApplyAll(matches, projection),
+            // count=0 asks for the total without the resources (§3.4.2.4).
+            ItemsPerPage = countOnly ? 0 : matches.Count,
+            Resources = countOnly ? [] : ScimProjection.ApplyAll(matches, projection),
+            // The gap this closes: a truncated filtered scan returned neither totalResults NOR nextCursor, so
+            // a cursor-following client saw no cursor and concluded the filtered set was empty, while a
+            // totalResults-reading client saw the field absent. Neither could tell "nothing matched" from
+            // "the scan window ran out before it got there" — and with the matching groups sorted past the
+            // window, both silently missed every one of them.
+            NextCursor = exhausted ? null : WriteFilteredGroupCursor(scanned),
         });
     }
 
