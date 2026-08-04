@@ -32,7 +32,7 @@ COPY --from=frontend /app/dist/ demos/custom-server/wwwroot/
 RUN dotnet publish demos/custom-server/ -c Release -o /app/publish --no-restore
 
 # Stage 3: Runtime
-FROM mcr.microsoft.com/dotnet/aspnet:10.0@sha256:1fa23fc4872d95fd71c2833ebe65d7e84a43b2d51a31d119516852f13d9505a7
+FROM mcr.microsoft.com/dotnet/aspnet:10.0@sha256:f1126d438ccc359f51cc6d4701a8deae513856cf10f5fe645d29ea6403dcac6b
 WORKDIR /app
 COPY --from=backend /app/publish .
 EXPOSE 8080
