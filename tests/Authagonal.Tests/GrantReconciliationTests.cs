@@ -8,6 +8,7 @@ using Azure;
 using Azure.Data.Tables;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
+using Authagonal.Core.Clustering;
 
 namespace Authagonal.Tests;
 
@@ -41,9 +42,18 @@ public class GrantReconciliationTests(AzuriteFixture azurite)
         new(t.Grants, t.BySubject, t.ByExpiry, EnvPartitioner.Live,
             NullLogger<TableGrantStore>.Instance, fieldCipher: null);
 
+    /// <summary>A leader, so the sweep runs. A standalone node is a permanent leader in production too.</summary>
+    private static Authagonal.Server.Services.Cluster.ClusterLeaderService Leader()
+    {
+        var election = new LeaderElection("test-node");
+        election.MarkPermanentLeader();
+        return new Authagonal.Server.Services.Cluster.ClusterLeaderService(election);
+    }
+
     private static GrantReconciliationService NewService(Tables t, EnvPartitioner? partitioner = null) =>
         new(t.Grants, t.BySubject, t.ByExpiry,
             partitioner ?? EnvPartitioner.Live,
+            Leader(),
             Options.Create(new BackgroundServiceOptions
             {
                 GrantReconciliationDelayMinutes = 0,       // first sweep immediately
@@ -53,14 +63,20 @@ public class GrantReconciliationTests(AzuriteFixture azurite)
 
     private static readonly DateTimeOffset Expiry = DateTimeOffset.UtcNow.AddDays(30);
 
-    private static PersistedGrant Grant(string key, string? subjectId) => new()
+    /// <param name="createdAt">
+    /// Defaults to an hour ago, past <c>OrphanRetentionMargin</c>. A grant younger than the margin is
+    /// deliberately left alone — its subject-index write may still be in flight — so a fixture stamped
+    /// <c>UtcNow</c> would assert the opposite of the intended behaviour.
+    /// </param>
+    private static PersistedGrant Grant(
+        string key, string? subjectId, DateTimeOffset? createdAt = null) => new()
     {
         Key = key,
         Type = "refresh_token",
         SubjectId = subjectId,
         ClientId = "client-1",
         Data = "{\"sub\":\"" + (subjectId ?? "none") + "\"}",
-        CreatedAt = DateTimeOffset.UtcNow,
+        CreatedAt = createdAt ?? DateTimeOffset.UtcNow.AddHours(-1),
         ExpiresAt = Expiry,
     };
 
@@ -164,6 +180,43 @@ public class GrantReconciliationTests(AzuriteFixture azurite)
         Assert.True(await ExistsAsync(t.Grants, healthyHash, GrantEntity.GrantRowKey));
         Assert.True(await ExistsAsync(t.BySubject, "user-h", $"refresh_token|{healthyHash}"));
         Assert.True(await ExistsAsync(t.ByExpiry, ExpiryPk(healthyHash), healthyHash));
+    }
+
+    /// <summary>
+    /// A grant younger than the retention margin is left alone: its index write may still be in flight.
+    /// </summary>
+    /// <remarks>
+    /// <c>TableGrantStore</c> writes the primary row and its subject index in two separate calls, so between
+    /// them a live grant genuinely has no index entry. That window is one round trip, stretched to seconds by
+    /// the Azure SDK's exponential retry — which happens exactly when write volume is high. A sweep landing
+    /// inside it deleted the primary row: the refresh token the client had just received was gone, its next
+    /// refresh returned invalid_grant, and the only trace was a Warning that reads like successful cleanup.
+    /// If the racing write was the authorization-code grant, the in-flight redemption failed outright.
+    /// <para>
+    /// This reproduces the window directly — a grant stamped now, with no index row — and asserts the sweep
+    /// leaves it. The sibling test above proves a genuinely old orphan is still collected, so the margin
+    /// defers collection rather than preventing it.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task AGrantYoungerThanTheRetentionMargin_IsNotJudgedAnOrphan()
+    {
+        var t = CreateTables($"recon{Guid.NewGuid():N}");
+        var store = NewStore(t);
+
+        // Exactly the state the two-write path passes through: primary written, index not yet.
+        await store.StoreAsync(Grant("racing-handle", "user-r", createdAt: DateTimeOffset.UtcNow));
+        var racingHash = TableGrantStore.HashKey("racing-handle");
+        await t.BySubject.DeleteEntityAsync("user-r", $"refresh_token|{racingHash}");
+
+        var service = NewService(t);
+        await service.StartAsync(CancellationToken.None);
+        await Task.Delay(TimeSpan.FromSeconds(2));
+        await service.StopAsync(CancellationToken.None);
+
+        Assert.True(
+            await ExistsAsync(t.Grants, racingHash, GrantEntity.GrantRowKey),
+            "a grant created seconds ago was deleted as an orphan while its index write could still be in flight");
     }
 
     [Fact]

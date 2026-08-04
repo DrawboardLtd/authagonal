@@ -336,6 +336,48 @@ public sealed class RevocationCascadeTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.BadRequest, (await PostRefreshAsync(refreshToken)).StatusCode);
     }
 
+    /// <summary>
+    /// A SAML logout is a logout: it must reach the tokens, not only the cookie.
+    /// </summary>
+    /// <remarks>
+    /// Both SAML single-logout legs called <c>SignOutAsync</c> and nothing else — no relying party notified,
+    /// no grant revoked. On the IdP-initiated leg (<c>/saml/{c}/slo</c>) that is an offboarding signal from the
+    /// customer's IdP: Authagonal validated it fully, dropped its own cookie, returned a signed LogoutResponse
+    /// so the IdP recorded the SP as logged out — and the refresh token the tenant's SPA obtained ten minutes
+    /// earlier kept rotating. The offboarding propagated to the IdP's view and to one cookie, and to nothing
+    /// holding tokens.
+    /// <para>
+    /// Driven through the SP-initiated leg because it needs no IdP fixture: the shared
+    /// <c>SessionTermination</c> call is subject-wide and runs before the connection-specific work, so this
+    /// pins the call both legs now make. The IdP-initiated leg is the same call on the same helper.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task SamlLogout_RevokesTheGrants_NotJustTheCookie()
+    {
+        await _factory.SamlProviderStore.UpsertAsync(new SamlProviderConfig
+        {
+            ConnectionId = "acme",
+            ConnectionName = "Acme",
+            EntityId = "urn:acme",
+            MetadataXml = SamlTestHelper.BuildIdpMetadata(),
+        });
+
+        var tokens = await GetTokensViaPkce();
+        var accessToken = tokens.GetProperty("access_token").GetString()!;
+        var refreshToken = tokens.GetProperty("refresh_token").GetString()!;
+
+        Assert.Equal(HttpStatusCode.OK, (await CallUserinfoAsync(accessToken)).StatusCode);
+
+        var logout = await _client.GetAsync("/saml/acme/logout");
+        Assert.True(
+            logout.StatusCode is HttpStatusCode.Redirect or HttpStatusCode.Found or HttpStatusCode.OK,
+            $"unexpected {(int)logout.StatusCode}");
+
+        Assert.True(await _factory.RevokedTokenStore.IsRevokedAsync(JtiOf(accessToken)));
+        Assert.Equal(HttpStatusCode.BadRequest, (await PostRefreshAsync(refreshToken)).StatusCode);
+    }
+
     private async Task AsAdminAsync(HttpMethod method, string path, object? body)
     {
         var token = await _factory.GetAdminTokenAsync(_client);

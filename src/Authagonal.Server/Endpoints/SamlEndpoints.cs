@@ -884,6 +884,10 @@ public static class SamlEndpoints
         string connectionId,
         string? returnUrl,
         HttpContext httpContext,
+        IClientStore clientStore,
+        IGrantStore grantStore,
+        Authagonal.Core.Services.IKeyManager keyManager,
+        IHttpClientFactory httpClientFactory,
         ISamlProviderStore samlStore,
         SamlMetadataParser metadataParser,
         Authagonal.Core.Services.ISamlReplayCache replayCache,
@@ -906,6 +910,20 @@ public static class SamlEndpoints
         var nameId = principal?.FindFirst("saml_name_id")?.Value;
         var nameIdFormat = principal?.FindFirst("saml_name_id_format")?.Value;
         var sessionIndex = principal?.FindFirst("saml_session_index")?.Value;
+
+        // What "logged out" means, shared with /connect/endsession and POST /api/auth/logout. Both SAML
+        // legs signed out the cookie and NOTHING else: no relying party was notified and no grant was
+        // revoked, so a refresh token obtained minutes earlier kept rotating and every RP with a
+        // BackChannelLogoutUri still believed the user was present. On the IdP-initiated leg that is an
+        // offboarding request from the IdP, which propagated to one cookie and to nothing holding tokens.
+        // Called BEFORE SignOutAsync, because the grant lookup needs the subject and the sid comes off the
+        // live principal.
+        await SessionTermination.NotifyAndRevokeAsync(
+            httpContext,
+            principal?.FindFirst("sub")?.Value
+                ?? principal?.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value,
+            principal?.FindFirst("sid")?.Value,
+            clientStore, grantStore, keyManager, tenantContext, httpClientFactory, ct);
 
         // Always end the local session first — the user asked to log out; IdP SLO is best-effort.
         await httpContext.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
@@ -967,6 +985,10 @@ public static class SamlEndpoints
     private static async Task<IResult> SloAsync(
         string connectionId,
         HttpContext httpContext,
+        IClientStore clientStore,
+        IGrantStore grantStore,
+        Authagonal.Core.Services.IKeyManager keyManager,
+        IHttpClientFactory httpClientFactory,
         ISamlProviderStore samlStore,
         SamlMetadataParser metadataParser,
         Authagonal.Core.Services.ISamlReplayCache replayCache,
@@ -1229,6 +1251,15 @@ public static class SamlEndpoints
                 return Results.BadRequest(new { error = "saml_invalid", error_description = "LogoutRequest does not match this session." });
             }
         }
+
+        // Same shared termination as the SP-initiated leg above — see the note there. An IdP-initiated
+        // LogoutRequest is an offboarding signal, so revoking the grants is the point of honouring it.
+        await SessionTermination.NotifyAndRevokeAsync(
+            httpContext,
+            sloAuth.Principal?.FindFirst("sub")?.Value
+                ?? sloAuth.Principal?.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value,
+            sloAuth.Principal?.FindFirst("sid")?.Value,
+            clientStore, grantStore, keyManager, tenantContext, httpClientFactory, ct);
 
         await httpContext.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
         logger.LogInformation("SAML IdP-initiated logout for connection {ConnectionId}", connectionId);

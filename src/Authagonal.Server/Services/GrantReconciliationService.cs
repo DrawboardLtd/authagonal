@@ -31,9 +31,30 @@ public sealed class GrantReconciliationService(
     [FromKeyedServices("GrantsBySubject")] TableClient grantsBySubjectTable,
     [FromKeyedServices("GrantsByExpiry")] TableClient grantsByExpiryTable,
     Authagonal.Core.Services.EnvPartitioner partitioner,
+    Cluster.ClusterLeaderService leaderService,
     IOptions<BackgroundServiceOptions> bgOptions,
     ILogger<GrantReconciliationService> logger) : BackgroundService
 {
+    /// <summary>
+    /// How long a grant is left alone before it can be judged an orphan.
+    /// </summary>
+    /// <remarks>
+    /// <c>TableGrantStore</c> writes the primary row and its subject index in two separate calls, so between
+    /// them a perfectly live grant HAS no index entry. That window is one round trip — stretched to seconds by
+    /// the Azure SDK's exponential retry whenever the table is throttled, which is exactly when write volume is
+    /// high. A sweep landing inside it point-read the index, got 404, logged
+    /// "Deleting orphaned grant ... " at Warning, and deleted the row: the refresh token the client had just
+    /// received was gone, its next refresh returned invalid_grant, and if the racing write was the
+    /// authorization-code grant the in-flight redemption failed outright. The only trace was a log line that
+    /// reads like successful cleanup.
+    /// <para>
+    /// Five minutes is far past any plausible retry chain and costs nothing: a genuine orphan is still
+    /// collected on the next pass. Every sibling sweep in the product already has an age or retention bound;
+    /// this one had none.
+    /// </para>
+    /// </remarks>
+    private static readonly TimeSpan OrphanRetentionMargin = TimeSpan.FromMinutes(5);
+
     /// <summary>
     /// Restricts a scan to this env's partitions. Null for the live env, which owns the unprefixed range.
     /// </summary>
@@ -60,6 +81,17 @@ public sealed class GrantReconciliationService(
         {
             try
             {
+                // Leader only. This sweep DELETES primary grant rows, and every replica running it multiplies
+                // the chance of one landing inside the store's two-write window by the replica count while
+                // adding nothing — a full unpaged scan of the grants table per replica per pass. Cluster
+                // :Enabled=false marks the single node a permanent leader, so a standalone deployment still
+                // reconciles.
+                if (!leaderService.IsLeader())
+                {
+                    logger.LogDebug("Skipping grant reconciliation — not the cluster leader");
+                    continue;
+                }
+
                 var orphanedGrants = await RemoveOrphanedGrantsAsync(stoppingToken);
                 var staleSubjectEntries = await RemoveStaleSubjectIndexEntriesAsync(stoppingToken);
                 var staleExpiryEntries = await RemoveStaleExpiryIndexEntriesAsync(stoppingToken);
@@ -90,11 +122,16 @@ public sealed class GrantReconciliationService(
     private async Task<int> RemoveOrphanedGrantsAsync(CancellationToken ct)
     {
         var removed = 0;
+        var cutoff = DateTimeOffset.UtcNow - OrphanRetentionMargin;
         var query = grantsTable.QueryAsync<GrantEntity>(EnvFilter(), cancellationToken: ct);
 
         await foreach (var grant in query)
         {
             if (string.IsNullOrEmpty(grant.SubjectId))
+                continue;
+
+            // Too young to judge: its subject-index write may still be in flight. See OrphanRetentionMargin.
+            if (grant.CreatedAt > cutoff)
                 continue;
 
             // Strip on the way out, prefix on the way in — the index RowKey holds the RAW hash and its
