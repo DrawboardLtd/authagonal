@@ -36,7 +36,7 @@ const ASYMMETRIC_SIGNING_ALGORITHMS = [
   'ES256', 'ES384', 'ES512',
 ];
 
-interface OidcMetadata {
+export interface OidcMetadata {
   issuer: string;
   authorization_endpoint: string;
   token_endpoint: string;
@@ -53,6 +53,63 @@ export interface TokenResult {
 }
 
 export class BffTokenError extends Error {}
+
+/**
+ * The two trust-anchor checks on a discovery document, before anything in it is believed.
+ *
+ * The document is the trust anchor for the whole connection: `issuer` becomes the `issuer` option passed to
+ * `jwtVerify`, and `jwks_uri` supplies the keys that verification uses. Both halves of that comparison came
+ * from the same document, so anyone able to answer the metadata URL could mint an id_token for any `sub` and
+ * be issued a BFF session for that user. `requireHttps` in the .NET twin — and nothing at all here — bounded
+ * only the metadata address.
+ *
+ * 1. **Issuer binding (OIDC Discovery §4.3).** The declared `issuer` MUST equal the authority the document was
+ *    fetched from. This is the check that closes the bypass, and it holds whatever the scheme is.
+ * 2. **No endpoint weaker than the authority.** For an https authority, every endpoint the document names must
+ *    be https. An http authority is left alone on purpose: reaching an identity server on a private address is
+ *    a supported topology, and that deployment has already accepted plaintext — what it has not accepted is
+ *    being downgraded by a value the document chose.
+ *
+ * Mirrors `BffOidcConfig.Validate` in the .NET package. Exported so the check is testable on its own.
+ */
+export function assertTrustedMetadata(authority: string, m: OidcMetadata): void {
+  const declared = (m.issuer ?? '').replace(/\/+$/, '');
+  if (declared.toLowerCase() !== authority.toLowerCase()) {
+    throw new BffTokenError(
+      `OIDC discovery issuer mismatch: the document for authority '${authority}' declares issuer ` +
+        `'${m.issuer}'. Per OIDC Discovery §4.3 they must match. Refusing rather than trusting an issuer ` +
+        `the configured authority does not vouch for — the id_token is validated against this value, so ` +
+        `accepting it would let whoever served the document authenticate as any user.`,
+    );
+  }
+
+  if (!authority.toLowerCase().startsWith('https://')) return;
+
+  const endpoints: [string, string | undefined][] = [
+    ['jwks_uri', m.jwks_uri],
+    ['token_endpoint', m.token_endpoint],
+    ['authorization_endpoint', m.authorization_endpoint],
+    ['end_session_endpoint', m.end_session_endpoint],
+    ['revocation_endpoint', m.revocation_endpoint],
+  ];
+
+  for (const [name, endpoint] of endpoints) {
+    if (!endpoint) continue;
+    let parsed: URL;
+    try {
+      parsed = new URL(endpoint);
+    } catch {
+      throw new BffTokenError(`OIDC discovery document declared an unparseable ${name} ('${endpoint}').`);
+    }
+    if (parsed.protocol !== 'https:') {
+      throw new BffTokenError(
+        `OIDC discovery document for https authority '${authority}' declared a non-https ${name} ` +
+          `('${endpoint}'). That would move the signing keys, the client secret, the authorization code or ` +
+          `the id_token over cleartext on a connection the operator configured as https.`,
+      );
+    }
+  }
+}
 
 /** Talks to one tenant's OIDC endpoints: discovery + JWKS (cached, rotation-aware via jose), token exchange,
  * refresh, revocation, and id_token / logout_token verification. Bound to an authority only — the confidential
@@ -72,6 +129,7 @@ export class OidcClient {
     const res = await fetch(`${this.authority}/.well-known/openid-configuration`);
     if (!res.ok) throw new BffTokenError(`OIDC discovery failed: ${res.status}`);
     const m = (await res.json()) as OidcMetadata;
+    assertTrustedMetadata(this.authority.replace(/\/+$/, ''), m);
     this.metadata = m;
     this.fetchedAt = Date.now();
     this.jwks = createRemoteJWKSet(new URL(m.jwks_uri));

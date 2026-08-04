@@ -10,6 +10,7 @@ import assert from 'node:assert/strict';
 import { prefixMatches, composeTarget, authorizeProxy, routeBff } from '../dist/core.js';
 import { MemorySessionStore } from '../dist/session.js';
 import { resolveOptions } from '../dist/options.js';
+import { assertTrustedMetadata } from '../dist/oidc.js';
 
 // ---- #214: upstream selection must respect segment boundaries ----
 
@@ -234,3 +235,67 @@ function unsignedJwt(payload) {
   const b64 = (o) => Buffer.from(JSON.stringify(o)).toString('base64url');
   return `${b64({ alg: 'none', typ: 'JWT' })}.${b64(payload)}.`;
 }
+
+// ---- Discovery is the trust anchor: neither implementation checked it ----
+//
+// `issuer` out of the document becomes the `issuer` option jwtVerify is given, and `jwks_uri` out of the
+// same document supplies the keys it verifies against — so anyone able to answer the metadata URL could
+// mint an id_token for any `sub` and be handed a BFF session for that user. Mirrors
+// tests/Authagonal.Tests/BffDiscoveryTrustTests.cs.
+
+test('a discovery document declaring someone else as issuer is refused', () => {
+  assert.throws(
+    () => assertTrustedMetadata('https://auth.example', {
+      issuer: 'https://evil.example',
+      authorization_endpoint: 'https://auth.example/connect/authorize',
+      token_endpoint: 'https://auth.example/connect/token',
+      jwks_uri: 'https://auth.example/.well-known/jwks',
+    }),
+    /issuer mismatch/,
+  );
+});
+
+test('a matching issuer is accepted, trailing slash and case notwithstanding', () => {
+  assertTrustedMetadata('https://auth.example', {
+    issuer: 'https://auth.example/',
+    authorization_endpoint: 'https://auth.example/connect/authorize',
+    token_endpoint: 'https://auth.example/connect/token',
+    jwks_uri: 'https://auth.example/.well-known/jwks',
+  });
+});
+
+test('an https authority will not accept a plaintext endpoint the document names', () => {
+  // Each of these is a full compromise on its own: the keys, the client secret plus authorization code,
+  // and the id_token handed to an attacker-named host by GET /bff/logout.
+  for (const field of ['jwks_uri', 'token_endpoint', 'end_session_endpoint']) {
+    const m = {
+      issuer: 'https://auth.example',
+      authorization_endpoint: 'https://auth.example/connect/authorize',
+      token_endpoint: 'https://auth.example/connect/token',
+      jwks_uri: 'https://auth.example/.well-known/jwks',
+    };
+    m[field] = 'http://evil.example/x';
+    assert.throws(() => assertTrustedMetadata('https://auth.example', m), /non-https/, field);
+  }
+});
+
+test('a private-network http authority stays supported', () => {
+  // AuthagonalBffExtensions calls this a supported topology, and requireHttps exists to permit it. Such a
+  // deployment already accepted plaintext on that path; the issuer binding still applies.
+  assertTrustedMetadata('http://auth.internal:8080', {
+    issuer: 'http://auth.internal:8080',
+    authorization_endpoint: 'http://auth.internal:8080/connect/authorize',
+    token_endpoint: 'http://auth.internal:8080/connect/token',
+    jwks_uri: 'http://auth.internal:8080/.well-known/jwks',
+  });
+
+  assert.throws(
+    () => assertTrustedMetadata('http://auth.internal:8080', {
+      issuer: 'https://evil.example',
+      authorization_endpoint: 'http://auth.internal:8080/connect/authorize',
+      token_endpoint: 'http://auth.internal:8080/connect/token',
+      jwks_uri: 'https://evil.example/jwks',
+    }),
+    /issuer mismatch/,
+  );
+});
