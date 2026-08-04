@@ -41,7 +41,7 @@ A single, self-contained deployment. The server and login UI ship as one Docker 
 - **Brandable Login UI**: runtime-configurable via a JSON file, logo, colors, CSS custom properties, no rebuild needed; localized into 10 languages
 - **Auth Hooks**: `IAuthHook` extensibility for audit logging, custom validation, webhooks
 - **PII Encryption Seams**: `IFieldCipher` / `IIndexTokenizer` extension points for field-level encryption at rest with keyed blind-index (HMAC) search; recovery codes encrypted via `ISecretProvider`
-- **HashiCorp Vault Transit**: remote JWT signing without local private key access
+- **HashiCorp Vault Transit client**: sign/verify, encrypt/decrypt and keyed HMAC against Vault's Transit engine, for building an `IFieldCipher` or `IIndexTokenizer`. Remote JWT signing is not wired: the token-signing key is always the one in `ISigningKeyStore`.
 - **Composable Library**: `AddAuthagonal()` / `UseAuthagonal()` to host in your own project with custom service overrides
 - **Native AOT Ready**: IL trimming and source-generated JSON serialization for fast startup
 - **Pluggable storage**: self-hosted PostgreSQL or SQLite (no cloud account), or Azure Table Storage / AWS (DynamoDB / S3 / Secrets Manager) for low-cost serverless-friendly backends

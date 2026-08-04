@@ -77,7 +77,7 @@ Transient tables (`SamlReplayCache`, `OidcStateStore`, `RevokedTokens`) are excl
 
 ### Signing keys are excluded by default
 
-The `SigningKeys` table is in the default table list but **filtered out of backups by default** (`BackupOptions.IncludeSigningKeys`, default `false`; the CLI never enables it). For hosts using the local (table-stored) key source, this table holds the JWT signing **private key**, and writing it to a plaintext backup file would let anyone who reads the backup forge tokens. (Hosts that sign via HashiCorp Vault Transit keep no private key in the table, so this concern doesn't apply to them.)
+The `SigningKeys` table is in the default table list but **filtered out of backups by default** (`BackupOptions.IncludeSigningKeys`, default `false`; the CLI never enables it). For hosts using the local (table-stored) key source, this table holds the JWT signing **private key**, and writing it to a plaintext backup file would let anyone who reads the backup forge tokens. This applies to **every** host: JWT signing is not delegated to Vault Transit, so there is no configuration in which the `SigningKeys` table holds no private key.
 
 > ⚠️ Only opt in via `BackupOptions.IncludeSigningKeys` when the backup target is itself encrypted at rest and access-controlled. The same applies to the rest of the backup: with the default **plaintext** secret provider, backups also contain upstream OIDC client secrets and TOTP / MFA seeds in cleartext. See [Configuration → Secret Provider](configuration#secret-provider).
 

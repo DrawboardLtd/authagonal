@@ -68,7 +68,7 @@ This starts the auth server on `http://localhost:8080` with an Azurite storage e
 - **Auth Hooks**: `IAuthHook` extensibility point for audit logging, custom validation, webhooks. Multiple implementations run in registration order.
 - **Role-Based Access Control**: role CRUD, user-role assignment/removal via admin API (`/api/v1/roles`)
 - **Multi-Tenant Abstractions**: `ITenantContext` and `IKeyManager` interfaces for per-tenant configuration and signing key isolation
-- **HashiCorp Vault Transit**: remote JWT signing via Vault's Transit secrets engine. Private keys never leave Vault.
+- **HashiCorp Vault Transit client**: `VaultTransitClient` for sign/verify, encrypt/decrypt and keyed HMAC against Vault's Transit engine — the building block for an `IFieldCipher` or `IIndexTokenizer`. **Note:** remote JWT *signing* is not wired; see [Extensibility](docs/extensibility.md#hashicorp-vault-transit-integration).
 - **Backup & Restore**: incremental backups with integrity verification (SHA-256), tombstone-based delete tracking, restore with upsert/merge/clean modes
 - **Native AOT Ready**: IL trimming and source-generated JSON serialization across all packages
 - **Composable Library**: `AddAuthagonal()` / `UseAuthagonal()` extension methods to host in your own project

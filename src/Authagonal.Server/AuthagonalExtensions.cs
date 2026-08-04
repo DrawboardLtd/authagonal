@@ -368,6 +368,9 @@ public static class AuthagonalExtensions
         // Resolved at StartAsync, not registration: the clustering extensions Replace ILeaseProvider and may
         // run either side of AddAuthagonal, so only the built container knows which provider won.
         services.AddSingleton<IHostedService, SigningKeyPublishAheadWarning>();
+
+        // Resolved at StartAsync so a host that registers the provider either side of AddAuthagonal is caught.
+        services.AddSingleton<IHostedService, VaultTransitSigningWarning>();
         services.AddSingleton<IHostedService, Services.Cluster.InternalEndpointAccessWarning>();
         services.AddSingleton<IHostedService, NullAuditLoggerWarning>();
 

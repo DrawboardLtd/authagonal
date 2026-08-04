@@ -314,24 +314,50 @@ app.MapFallbackToFile("index.html");
 
 ## HashiCorp Vault Transit Integration
 
-Authagonal can delegate JWT signing to HashiCorp Vault's Transit secrets engine. Private keys never leave Vault; only the signing operation is remote. Public keys are cached locally for verification.
+> **JWT signing is not delegated to Vault.** This section previously showed a DI snippet that appeared to
+> enable it. Registering `VaultTransitCryptoProvider` has **no effect on token signing**:
+> `ProtocolKeyManager` calls `ProtocolSigningKeyOps.BuildSigningCredentials`, which builds an
+> `ECDsaSecurityKey` from the material in `ISigningKeyStore`, and nothing substitutes a
+> `VaultTransitSecurityKey` for it. A host that followed the old snippet saw ES256 tokens verify against JWKS
+> and reasonably concluded Vault was signing them — while the private key was generated locally on first boot
+> and persisted to the primary data store, in plaintext unless an `IFieldCipher` happened to be registered.
+> Read access to that store is complete impersonation of the issuer. If you have a compliance requirement that
+> signing keys never leave an HSM, this does not satisfy it.
+>
+> The server now logs an error at startup if it finds `VaultTransitCryptoProvider` registered, so the
+> misconception cannot persist silently.
+>
+> Making it real needs more than a DI registration: `ISigningKeyStore` would have to represent a key that has
+> no local material (a Transit key *name* rather than a private scalar), `BuildSigningCredentials` would need a
+> seam to return a `VaultTransitSecurityKey`, `BuildJwksAsync` would have to publish the public key read back
+> from Vault, and rotation and publish-ahead would have to create and promote Transit key versions instead of
+> generating locally. `VaultTransitClient`, `VaultTransitSecurityKey`, `VaultTransitSignatureProvider` and
+> `VaultTransitCryptoProvider` are kept because they are the pieces that work; the wiring is what is absent.
+
+What `VaultTransitClient` **is** good for today is the encryption and HMAC seams — a Vault-backed
+`IFieldCipher` for PII at rest, or an `IIndexTokenizer` for keyed blind indexes:
 
 ```csharp
 var builder = WebApplication.CreateBuilder(args);
 
-// Configure Vault Transit HTTP client
 builder.Services.AddHttpClient("Vault", client =>
 {
     client.BaseAddress = new Uri("https://vault.example.com");
     client.DefaultRequestHeaders.Add("X-Vault-Token", "hvs.xxx");
 });
 
-// Register Vault Transit services
 builder.Services.AddSingleton<VaultTransitClient>();
-builder.Services.AddSingleton<VaultTransitCryptoProvider>();
+
+// Your own adapters over the client — these are the seams Authagonal actually consumes.
+builder.Services.AddSingleton<IFieldCipher, MyVaultFieldCipher>();
+builder.Services.AddSingleton<IIndexTokenizer, MyVaultIndexTokenizer>();
 
 builder.Services.AddAuthagonal(builder.Configuration);
 ```
+
+Registering an `IFieldCipher` is also what silences `PlaintextSigningKeyWarning`, because the signing key
+stores route their key material through that same seam — which is the closest thing to the original claim
+that is available today: the private key still exists locally, but not in the clear.
 
 The `VaultTransitClient` provides these operations:
 

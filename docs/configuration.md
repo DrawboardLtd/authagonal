@@ -613,9 +613,14 @@ CORS is configured dynamically. Origins from all registered clients' `AllowedCor
 
 ## HashiCorp Vault Transit
 
-Authagonal can sign JWTs using HashiCorp Vault's Transit secrets engine. Private keys never leave Vault, only the signing operation is delegated remotely. Public keys are cached locally for verification.
+`VaultTransitClient` talks to Vault's Transit secrets engine — sign, verify, encrypt, decrypt and keyed HMAC.
+It is the building block for a Vault-backed `IFieldCipher` or `IIndexTokenizer`, which you register yourself.
 
-This is configured programmatically when hosting as a library. See [Extensibility](extensibility) for details.
+**JWT signing is not delegated to Vault.** `ProtocolKeyManager` always signs with the key in
+`ISigningKeyStore`, and there is no seam that substitutes a Vault key for it. See
+[Extensibility](extensibility) for what that would require.
+
+This is configured programmatically when hosting as a library.
 
 ## Full Example
 
