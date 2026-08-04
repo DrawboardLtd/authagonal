@@ -377,6 +377,7 @@ public static class DeviceAuthorizationEndpoint
             IUserStore userStore,
             IScopeRoleGate scopeRoleGate,
             IRateLimiter rateLimiter,
+            IEnumerable<IAuthHook> authHooks,
             CancellationToken ct) =>
         {
             if (httpContext.User.Identity?.IsAuthenticated != true)
@@ -454,6 +455,35 @@ public static class DeviceAuthorizationEndpoint
             // equivalent of the check /connect/authorize does before consent. Without it this endpoint
             // would be a way around the gate.
             var approver = await userStore.GetAsync(subjectId, ct);
+
+            // MfaPolicy.Required, which this path did not consult at all.
+            //
+            // AuthorizeEndpoint enforces it with a comment naming its own scope — "enforced HERE, which is the
+            // only place both the subject and the client are known for certain". This endpoint is a SECOND such
+            // place: the subject comes from the cookie principal and the client id from the device grant, both
+            // server-side. It checked neither client.MfaPolicy nor IAuthHook.ResolveMfaPolicyAsync, so a user
+            // with no second factor could approve a device for a client whose policy demands one — and the
+            // resulting grant mints tokens for 30 days.
+            //
+            // Refused rather than redirected to enrolment: unlike /connect/authorize there is no interactive
+            // flow to resume here, and the approving browser is not the device that will hold the token. The
+            // message names the remedy, and the user can enrol and approve again.
+            var deviceClient = await clientStore.GetAsync(data.ClientId, ct);
+            if (approver is { MfaEnabled: false } && deviceClient is not null)
+            {
+                var effectivePolicy = await authHooks.RunResolveMfaPolicyAsync(
+                    approver.Id, approver.Email, deviceClient.MfaPolicy, deviceClient.ClientId, ct);
+
+                if (effectivePolicy == Core.Models.MfaPolicy.Required)
+                    return TypedResults.Json(
+                        new ErrorInfoResponse
+                        {
+                            Error = "mfa_enrolment_required",
+                            Message = "This application requires multi-factor authentication. "
+                                + "Enrol a second factor in your account settings, then approve the device again.",
+                        }, AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 403);
+            }
+
             var entitledScopes = await scopeRoleGate.FilterAsync(data.Scopes, approver?.Roles, ct);
             if (entitledScopes.Count == 0)
                 return TypedResults.Json(
@@ -532,7 +562,7 @@ public static class DeviceAuthorizationEndpoint
             // on any other. This screen IS the consent interaction for the device grant — it shows the
             // client and the scopes and the user chooses them — so what it records is a real consent,
             // narrowed to what was actually approved rather than what was requested.
-            var deviceClient = await clientStore.GetAsync(data.ClientId, ct);
+            // Resolved once, above, for the MFA-policy check.
             if (deviceClient is not null)
             {
                 var consentKey = $"consent:{subjectId}:{data.ClientId}";

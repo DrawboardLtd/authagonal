@@ -38,7 +38,9 @@ public static class MfaSetupEndpoints
     internal static CookieOptions SetupCookieOptions(HttpContext httpContext) => new()
     {
         HttpOnly = true,
-        Secure = httpContext.Request.IsHttps,
+        // Same policy as the session cookie, not Request.IsHttps. This cookie carries the MFA-enrolment
+        // token, which is a full sign-in credential — see CookieSecurity.
+        Secure = Services.CookieSecurity.Secure(httpContext),
         SameSite = SameSiteMode.Lax,
         Path = "/",
     };
@@ -267,6 +269,7 @@ public static class MfaSetupEndpoints
         HttpContext httpContext,
         IMfaStore mfaStore,
         IUserStore userStore,
+        IGrantStore grantStore,
         TotpService totpService,
         ISecretProvider secretProvider,
         IRateLimiter rateLimiter,
@@ -362,7 +365,29 @@ public static class MfaSetupEndpoints
         if (setupChallenge is not null && user is not null)
         {
             await authHooks.RunOnUserAuthenticatedAsync(user.Id, user.Email, "password", setupChallenge.ClientId, ct);
-            await CookieSignInHelper.SignInAsync(httpContext, user);
+
+            // Two absences, both from calling this with every optional argument defaulted.
+            //
+            // FIRST, mfaAuthenticated. The user has just proved a TOTP code or a WebAuthn attestation and
+            // user.MfaEnabled was set to true — so the cookie minted here is an MFA-verified session in every
+            // sense except the marker. AuthorizeEndpoint sees MfaEnabled: true with no `mfa_authenticated`,
+            // calls SignOutAsync and redirects to /login: the user types their password and a SECOND code to
+            // get anywhere, which for a federated user is a whole second round trip through the IdP. The other
+            // two verify paths pass it; these two enrolment-completion paths did not.
+            //
+            // SECOND, the parked federation state. FederatedMfaFlow parks the connection bindings against this
+            // challenge for the ENROLMENT branch too, with a comment saying it "also ends in a session
+            // established away from this callback, so the same bindings would otherwise be lost" — and nothing
+            // read it back. So a federated user enrolling their first factor lost saml_name_id (single logout
+            // can then no longer find the session), the IdP's session bound, the upstream refresh token's sid
+            // and every federated:* claim. The verify path in MfaEndpoints consumes it; this is the same call.
+            var parked = await PendingFederatedSession.ConsumeAsync(
+                grantStore, setupChallenge.ChallengeId, user.Id, ct);
+
+            await CookieSignInHelper.SignInAsync(
+                httpContext, user, mfaAuthenticated: true,
+                extraClaims: parked?.ToClaims(), cookieExpiresUtc: parked?.CookieExpires,
+                sessionId: parked?.SessionId);
             await mfaStore.ConsumeChallengeAsync(setupChallenge.ChallengeId, ct);
 
             // The enrolment token has done its job and the session cookie has replaced it. Clearing this
@@ -446,6 +471,7 @@ public static class MfaSetupEndpoints
         HttpContext httpContext,
         IMfaStore mfaStore,
         IUserStore userStore,
+        IGrantStore grantStore,
         WebAuthnService webAuthnService,
         IEnumerable<IAuthHook> authHooks,
         CancellationToken ct)
@@ -543,7 +569,29 @@ public static class MfaSetupEndpoints
         if (setupChallenge is not null && user is not null)
         {
             await authHooks.RunOnUserAuthenticatedAsync(user.Id, user.Email, "password", setupChallenge.ClientId, ct);
-            await CookieSignInHelper.SignInAsync(httpContext, user);
+
+            // Two absences, both from calling this with every optional argument defaulted.
+            //
+            // FIRST, mfaAuthenticated. The user has just proved a TOTP code or a WebAuthn attestation and
+            // user.MfaEnabled was set to true — so the cookie minted here is an MFA-verified session in every
+            // sense except the marker. AuthorizeEndpoint sees MfaEnabled: true with no `mfa_authenticated`,
+            // calls SignOutAsync and redirects to /login: the user types their password and a SECOND code to
+            // get anywhere, which for a federated user is a whole second round trip through the IdP. The other
+            // two verify paths pass it; these two enrolment-completion paths did not.
+            //
+            // SECOND, the parked federation state. FederatedMfaFlow parks the connection bindings against this
+            // challenge for the ENROLMENT branch too, with a comment saying it "also ends in a session
+            // established away from this callback, so the same bindings would otherwise be lost" — and nothing
+            // read it back. So a federated user enrolling their first factor lost saml_name_id (single logout
+            // can then no longer find the session), the IdP's session bound, the upstream refresh token's sid
+            // and every federated:* claim. The verify path in MfaEndpoints consumes it; this is the same call.
+            var parked = await PendingFederatedSession.ConsumeAsync(
+                grantStore, setupChallenge.ChallengeId, user.Id, ct);
+
+            await CookieSignInHelper.SignInAsync(
+                httpContext, user, mfaAuthenticated: true,
+                extraClaims: parked?.ToClaims(), cookieExpiresUtc: parked?.CookieExpires,
+                sessionId: parked?.SessionId);
             await mfaStore.ConsumeChallengeAsync(setupChallenge.ChallengeId, ct);
 
             // The enrolment token has done its job and the session cookie has replaced it. Clearing this

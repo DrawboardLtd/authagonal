@@ -85,7 +85,8 @@ public static class OidcEndpoints
         httpContext.Response.Cookies.Append(StateCookieName, state, new CookieOptions
         {
             HttpOnly = true,
-            Secure = httpContext.Request.IsHttps,
+            // Same policy as the session cookie, not Request.IsHttps — see CookieSecurity.
+            Secure = Services.CookieSecurity.Secure(httpContext),
             SameSite = SameSiteMode.Lax,
             Path = "/oidc",
             Expires = DateTimeOffset.UtcNow.AddMinutes(15),
@@ -730,7 +731,25 @@ public static class OidcEndpoints
         // rejects the login prevents the cookie from being issued (not a 500 after it's already set).
         await authHooks.RunOnUserAuthenticatedAsync(user.Id, email, "oidc", ct: ct);
 
-        await httpContext.SignInAsync(CookieAuthenticationDefaults.AuthenticationScheme, principal);
+        // The cookie itself expires no later than the IdP's stated bound. `idpSessionBound` is computed
+        // above, emitted onto the principal as `session_max_exp`, and carried into the MFA branch as
+        // `cookieExpires` — and on this fall-through path it was used for NOTHING: SignInAsync was called with
+        // no AuthenticationProperties at all, so no ExpiresUtc and no IsPersistent.
+        //
+        // The cookie then lived on its own 48-hour sliding schedule, bounded only by the 7-day absolute cap, so
+        // a user who federated in at 10:00 under an upstream session ending at 11:00 was still authenticated at
+        // /api/auth/session, /api/auth/profile and the authorize endpoint hours after that session ended. Both
+        // siblings apply it — SamlEndpoints ("The cookie itself expires no later than the IdP's stated bound")
+        // and CookieSignInHelper — so this was the one of three that did not.
+        var signInProperties = new AuthenticationProperties();
+        if (idpSessionBound is { } cookieBound && cookieBound < DateTimeOffset.UtcNow.AddDays(30))
+        {
+            signInProperties.ExpiresUtc = cookieBound;
+            signInProperties.IsPersistent = true;
+        }
+
+        await httpContext.SignInAsync(
+            CookieAuthenticationDefaults.AuthenticationScheme, principal, signInProperties);
 
         logger.LogInformation("User {UserId} ({Email}) signed in via OIDC connection {ConnectionId}",
             user.Id, email, stateData.ConnectionId);

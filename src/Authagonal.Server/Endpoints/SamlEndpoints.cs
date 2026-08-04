@@ -43,8 +43,11 @@ public static class SamlEndpoints
     private static CookieOptions RequestCookieOptions(HttpContext httpContext) => new()
     {
         HttpOnly = true,
-        Secure = httpContext.Request.IsHttps,
-        SameSite = httpContext.Request.IsHttps ? SameSiteMode.None : SameSiteMode.Lax,
+        // Same policy as the session cookie, not Request.IsHttps — see CookieSecurity. SameSite stays
+        // coupled to it because SameSite=None is only valid on a Secure cookie, and None is what the SAML
+        // POST-binding callback needs to survive the cross-site return.
+        Secure = Services.CookieSecurity.Secure(httpContext),
+        SameSite = Services.CookieSecurity.Secure(httpContext) ? SameSiteMode.None : SameSiteMode.Lax,
         Path = "/saml",
     };
 
