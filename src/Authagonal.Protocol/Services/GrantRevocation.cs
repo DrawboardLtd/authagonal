@@ -56,6 +56,77 @@ public static class GrantRevocation
     }
 
     /// <summary>
+    /// Ends a subject's live token authority across EVERY client: removes the grant rows of the given
+    /// <paramref name="types"/> for that subject and revokes the access tokens those grants minted.
+    /// Returns the number of grant rows removed.
+    /// </summary>
+    /// <param name="types">
+    /// Which grant types to remove. Session-ending callers pass
+    /// <see cref="PersistedGrantTypes.SessionBound"/>; passing the consent types as well removes the
+    /// user's recorded preferences, which is a different act with its own UI.
+    /// </param>
+    /// <remarks>
+    /// The subject-wide sibling of <see cref="RevokeClientGrantsAsync"/>, for logout, single-logout and
+    /// the cluster's internal back-channel fan-out. Those paths removed grant rows directly and so left
+    /// every access token already minted under them valid to its own <c>exp</c> — up to
+    /// <c>AccessTokenLifetimeSeconds</c>, 30 minutes by default. Revoking the same grant from the
+    /// Authorized Apps page did kill those tokens, because that path came through here.
+    /// </remarks>
+    public static async Task<int> RevokeSubjectGrantsAsync(
+        IGrantStore grantStore,
+        IRevokedTokenStore? revokedTokenStore,
+        string subjectId,
+        IReadOnlyCollection<string> types,
+        ILogger? logger = null,
+        CancellationToken ct = default)
+    {
+        var grants = await grantStore.GetBySubjectAsync(subjectId, ct);
+
+        var doomed = grants.Where(g => types.Contains(g.Type)).ToList();
+
+        // Read the tracked jtis off the refresh grants BEFORE the rows go away — see the note on
+        // RevokeClientGrantsAsync.
+        foreach (var grant in doomed.Where(g => g.Type == PersistedGrantTypes.RefreshToken))
+            await RevokeTrackedAccessTokensAsync(revokedTokenStore, grant, logger, ct);
+
+        await grantStore.RemoveBySubjectAsync(subjectId, types, ct: ct);
+
+        return doomed.Count;
+    }
+
+    /// <summary>
+    /// Ends EVERYTHING the subject has: every grant row of every type, and the access tokens the refresh
+    /// grants minted. Returns the number of grant rows removed.
+    /// </summary>
+    /// <remarks>
+    /// For offboarding — account deletion, deactivation, SCIM deprovisioning, a completed password reset.
+    /// Unlike <see cref="RevokeSubjectGrantsAsync"/> this does take recorded consent with it, which is
+    /// correct when the account itself is going away or its credentials have just changed hands.
+    /// <para>
+    /// These callers used <see cref="IGrantStore.RemoveAllBySubjectAsync"/> directly, which is why a
+    /// deactivated account kept working until its access token expired — the outcome
+    /// <c>Admin/UserEndpoints</c>'s own comment ("a disabled account that keeps working until its token
+    /// expires has not been disabled") said was unacceptable, immediately above the code that produced it.
+    /// </para>
+    /// </remarks>
+    public static async Task<int> RevokeAllSubjectGrantsAsync(
+        IGrantStore grantStore,
+        IRevokedTokenStore? revokedTokenStore,
+        string subjectId,
+        ILogger? logger = null,
+        CancellationToken ct = default)
+    {
+        var grants = await grantStore.GetBySubjectAsync(subjectId, ct);
+
+        foreach (var grant in grants.Where(g => g.Type == PersistedGrantTypes.RefreshToken))
+            await RevokeTrackedAccessTokensAsync(revokedTokenStore, grant, logger, ct);
+
+        await grantStore.RemoveAllBySubjectAsync(subjectId, ct);
+
+        return grants.Count;
+    }
+
+    /// <summary>
     /// Writes a refresh grant's tracked access tokens to the revoked-token store. Returns how many
     /// were still live and therefore worth revoking.
     /// </summary>

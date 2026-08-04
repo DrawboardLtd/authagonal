@@ -233,6 +233,121 @@ public sealed class RevocationCascadeTests : IAsyncLifetime
 
     /// <summary>The <c>jti</c> claim, which is the only handle a self-contained access token can be
     /// revoked by.</summary>
+    // -----------------------------------------------------------------------
+    // The session-termination and offboarding paths. GrantRevocation exists so a
+    // revocation path cannot do only half the job, and these nine call sites removed
+    // grant rows directly — so the access tokens already minted stayed valid to their
+    // own exp. Revoking the same grant from the Authorized Apps page (covered above)
+    // did kill them, which is the same product answering two ways.
+    // -----------------------------------------------------------------------
+
+    [Fact]
+    public async Task SigningOut_RevokesTheAccessTokenTheSessionAlreadyMinted()
+    {
+        var tokens = await GetTokensViaPkce();
+        var accessToken = tokens.GetProperty("access_token").GetString()!;
+
+        Assert.Equal(HttpStatusCode.OK, (await CallUserinfoAsync(accessToken)).StatusCode);
+
+        var logout = await _client.PostAsync("/api/auth/logout", null);
+        Assert.Equal(HttpStatusCode.OK, logout.StatusCode);
+
+        Assert.True(await _factory.RevokedTokenStore.IsRevokedAsync(JtiOf(accessToken)));
+        Assert.Equal(HttpStatusCode.Unauthorized, (await CallUserinfoAsync(accessToken)).StatusCode);
+    }
+
+    [Fact]
+    public async Task DeactivatingAUser_RevokesTheirLiveAccessToken()
+    {
+        var tokens = await GetTokensViaPkce();
+        var accessToken = tokens.GetProperty("access_token").GetString()!;
+        var refreshToken = tokens.GetProperty("refresh_token").GetString()!;
+
+        var user = Assert.Single(await _factory.UserStore.SearchAsync("test@example.com"));
+
+        await AsAdminAsync(HttpMethod.Put, "/api/v1/profile",
+            new { userId = user.Id, isActive = false });
+
+        // "A disabled account that keeps working until its token expires has not been disabled" —
+        // the endpoint's own comment, which was true of the refresh token and false of this one.
+        Assert.True(await _factory.RevokedTokenStore.IsRevokedAsync(JtiOf(accessToken)));
+        Assert.Equal(HttpStatusCode.Unauthorized, (await CallUserinfoAsync(accessToken)).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, (await PostRefreshAsync(refreshToken)).StatusCode);
+    }
+
+    [Fact]
+    public async Task DeletingAUser_RevokesTheirLiveAccessToken()
+    {
+        var tokens = await GetTokensViaPkce();
+        var accessToken = tokens.GetProperty("access_token").GetString()!;
+
+        var user = Assert.Single(await _factory.UserStore.SearchAsync("test@example.com"));
+
+        await AsAdminAsync(HttpMethod.Delete, $"/api/v1/profile/{user.Id}", null);
+
+        Assert.True(await _factory.RevokedTokenStore.IsRevokedAsync(JtiOf(accessToken)));
+    }
+
+    /// <summary>
+    /// The deactivation check that does not depend on the revocation list.
+    /// </summary>
+    /// <remarks>
+    /// <c>/connect/userinfo</c> read the user and tested only for null, so a disabled account's email, name,
+    /// phone, roles and groups kept coming back from the OP's own endpoint for the remaining lifetime of any
+    /// token minted before it was disabled. Deactivation now revokes those tokens, but a host that registered
+    /// no <c>IRevokedTokenStore</c> tracks nothing — so the liveness check has to stand on its own.
+    /// </remarks>
+    [Fact]
+    public async Task Userinfo_RefusesADeactivatedSubject_EvenWhenTheTokenWasNeverRevoked()
+    {
+        var tokens = await GetTokensViaPkce();
+        var accessToken = tokens.GetProperty("access_token").GetString()!;
+
+        var user = Assert.Single(await _factory.UserStore.SearchAsync("test@example.com"));
+        user.IsActive = false;
+        await _factory.UserStore.UpdateAsync(user);
+
+        Assert.False(await _factory.RevokedTokenStore.IsRevokedAsync(JtiOf(accessToken)));
+        Assert.Equal(HttpStatusCode.Unauthorized, (await CallUserinfoAsync(accessToken)).StatusCode);
+    }
+
+    /// <summary>
+    /// Resetting MFA is the documented response to an account takeover, so it has to end the takeover.
+    /// </summary>
+    /// <remarks>
+    /// The handler rotated the security stamp, which reaches the COOKIE — while its own log line and its
+    /// audit record both said "sessions invalidated". An OAuth grant is not a cookie: the attacker's refresh
+    /// token survived, because the only rejection condition on refresh is <c>IsActive</c> and a reset does not
+    /// change it. The incident responder had written confirmation that access was cut while
+    /// <c>grant_type=refresh_token</c> kept rotating forward.
+    /// </remarks>
+    [Fact]
+    public async Task ResettingMfa_RevokesTheGrantsTheAuditRecordClaimsItInvalidates()
+    {
+        var tokens = await GetTokensViaPkce();
+        var accessToken = tokens.GetProperty("access_token").GetString()!;
+        var refreshToken = tokens.GetProperty("refresh_token").GetString()!;
+
+        var user = Assert.Single(await _factory.UserStore.SearchAsync("test@example.com"));
+
+        await AsAdminAsync(HttpMethod.Delete, $"/api/v1/profile/{user.Id}/mfa", null);
+
+        Assert.True(await _factory.RevokedTokenStore.IsRevokedAsync(JtiOf(accessToken)));
+        Assert.Equal(HttpStatusCode.BadRequest, (await PostRefreshAsync(refreshToken)).StatusCode);
+    }
+
+    private async Task AsAdminAsync(HttpMethod method, string path, object? body)
+    {
+        var token = await _factory.GetAdminTokenAsync(_client);
+        var request = new HttpRequestMessage(method, path);
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        if (body is not null) request.Content = JsonContent.Create(body);
+
+        var response = await _client.SendAsync(request);
+        Assert.True(response.IsSuccessStatusCode,
+            $"{method} {path} returned {(int)response.StatusCode}: {await response.Content.ReadAsStringAsync()}");
+    }
+
     private static string JtiOf(string jwt)
     {
         var payload = jwt.Split('.')[1];

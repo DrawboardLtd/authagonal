@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using Authagonal.Core.Models;
 using Authagonal.Core.Services;
 using Authagonal.Core.Stores;
+using Authagonal.Protocol.Services;
 using Authagonal.Server.Services;
 using Authagonal.Server.Services.Scim;
 using Authagonal.Server.Services.Cluster;
@@ -445,6 +446,7 @@ public static class ScimUserEndpoints
         HttpContext httpContext,
         IUserStore userStore,
         IGrantStore grantStore,
+        IRevokedTokenStore? revokedTokenStore,
         Authagonal.Core.Services.ITenantContext tenantContext,
         IRateLimiter rateLimiter,
         IConfiguration configuration,
@@ -532,7 +534,7 @@ public static class ScimUserEndpoints
         // user kept working until each token expired on its own.
         if (wasActive && !user.IsActive)
         {
-            await grantStore.RemoveAllBySubjectAsync(user.Id, ct);
+            await GrantRevocation.RevokeAllSubjectGrantsAsync(grantStore, revokedTokenStore, user.Id, null, ct);
             logger.LogInformation(
                 "SCIM user {UserId} deactivated via PUT by client {ClientId}; grants revoked", user.Id, clientId);
         }
@@ -546,6 +548,7 @@ public static class ScimUserEndpoints
         HttpContext httpContext,
         IUserStore userStore,
         IGrantStore grantStore,
+        IRevokedTokenStore? revokedTokenStore,
         Authagonal.Core.Services.ITenantContext tenantContext,
         IRateLimiter rateLimiter,
         IConfiguration configuration,
@@ -639,7 +642,7 @@ public static class ScimUserEndpoints
         // If deactivated, revoke all grants
         if (wasActive && !user.IsActive)
         {
-            await grantStore.RemoveAllBySubjectAsync(user.Id, ct);
+            await GrantRevocation.RevokeAllSubjectGrantsAsync(grantStore, revokedTokenStore, user.Id, null, ct);
             logger.LogInformation("SCIM deactivated user {UserId}, grants revoked", user.Id);
         }
 
@@ -651,6 +654,7 @@ public static class ScimUserEndpoints
         HttpContext httpContext,
         IUserStore userStore,
         IGrantStore grantStore,
+        IRevokedTokenStore? revokedTokenStore,
         IProvisioningOrchestrator provisioning,
         IRateLimiter rateLimiter,
         ILogger<Program> logger,
@@ -688,7 +692,7 @@ public static class ScimUserEndpoints
             await userStore.RemoveExternalIdAsync(user.Id, clientId, user.ExternalId, ct);
 
         // Revoke all grants
-        await grantStore.RemoveAllBySubjectAsync(user.Id, ct);
+        await GrantRevocation.RevokeAllSubjectGrantsAsync(grantStore, revokedTokenStore, user.Id, null, ct);
 
         // Trigger deprovisioning
         try

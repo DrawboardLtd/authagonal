@@ -8,6 +8,7 @@ using System.Text.Json.Nodes;
 using Authagonal.Core.Models;
 using Authagonal.Core.Services;
 using Authagonal.Core.Stores;
+using Authagonal.Protocol.Services;
 using Authagonal.Server.Services;
 using Fido2NetLib;
 using Microsoft.AspNetCore.Authentication;
@@ -1393,6 +1394,7 @@ public static class AuthEndpoints
         HttpContext httpContext,
         IUserStore userStore,
         IGrantStore grantStore,
+        IRevokedTokenStore? revokedTokenStore,
         IClientStore clientStore,
         PasswordHasher passwordHasher,
         PasswordValidator passwordValidator,
@@ -1470,8 +1472,10 @@ public static class AuthEndpoints
         user.UpdatedAt = DateTimeOffset.UtcNow;
         await userStore.UpdateAsync(user, ct);
 
-        // Invalidate all refresh tokens for this user
-        await grantStore.RemoveAllBySubjectAsync(user.Id, ct);
+        // Invalidate all refresh tokens for this user — and the access tokens they minted. Removing only
+        // the rows left tokens issued under the OLD password valid for up to AccessTokenLifetimeSeconds,
+        // which is the window a password reset exists to close.
+        await GrantRevocation.RevokeAllSubjectGrantsAsync(grantStore, revokedTokenStore, user.Id, null, ct);
 
         await authHooks.RunOnPasswordChangedAsync(user.Id, user.Email, "reset", ct);
 

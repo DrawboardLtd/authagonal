@@ -2,6 +2,7 @@ using System.Security.Claims;
 using Authagonal.Core.Models;
 using Authagonal.Core.Services;
 using Authagonal.Core.Stores;
+using Authagonal.Protocol.Services;
 
 namespace Authagonal.Server.Endpoints.Admin;
 
@@ -63,6 +64,8 @@ public static class MfaAdminEndpoints
         HttpContext httpContext,
         IUserStore userStore,
         IMfaStore mfaStore,
+        IGrantStore grantStore,
+        IRevokedTokenStore? revokedTokenStore,
         IEnumerable<IAuthHook> authHooks,
         IAuditLogger audit,
         ILogger<Program> logger,
@@ -81,6 +84,14 @@ public static class MfaAdminEndpoints
         user.SecurityStamp = Guid.NewGuid().ToString("N");
         user.UpdatedAt = DateTimeOffset.UtcNow;
         await userStore.UpdateAsync(user, ct);
+
+        // The security stamp only reaches the COOKIE. This handler's log line and its audit record both say
+        // "sessions invalidated", and an OAuth grant is not a cookie: the attacker whose enrolled factor was
+        // just deleted kept a working refresh token, because the only rejection condition on refresh is
+        // IsActive and a reset does not change it. So the incident responder had written confirmation that
+        // access was cut while `grant_type=refresh_token` kept rotating forward indefinitely. Resetting MFA
+        // is the documented response to an account takeover; it has to end the takeover.
+        await GrantRevocation.RevokeAllSubjectGrantsAsync(grantStore, revokedTokenStore, userId, logger, ct);
 
         foreach (var cred in removed)
         {
@@ -116,6 +127,8 @@ public static class MfaAdminEndpoints
         HttpContext httpContext,
         IUserStore userStore,
         IMfaStore mfaStore,
+        IGrantStore grantStore,
+        IRevokedTokenStore? revokedTokenStore,
         IEnumerable<IAuthHook> authHooks,
         IAuditLogger audit,
         ILogger<Program> logger,
@@ -143,6 +156,10 @@ public static class MfaAdminEndpoints
             user.SecurityStamp = Guid.NewGuid().ToString("N");
             user.UpdatedAt = DateTimeOffset.UtcNow;
             await userStore.UpdateAsync(user, ct);
+
+            // Removing the last factor is a reset in all but name, so it revokes grants and access tokens
+            // for the same reason ResetMfa does.
+            await GrantRevocation.RevokeAllSubjectGrantsAsync(grantStore, revokedTokenStore, userId, logger, ct);
         }
 
         await authHooks.RunOnMfaCredentialRemovedAsync(

@@ -101,6 +101,15 @@ public static class UserinfoEndpoint
             if (user is null)
                 return UnauthorizedWithChallenge();
 
+            // A deactivated subject is not a subject this endpoint answers for. The store read above already
+            // happened, so this costs nothing — and without it the OP's own userinfo kept returning a disabled
+            // user's email, name, phone, roles and groups for the remaining lifetime of an access token minted
+            // before the account was disabled. Deactivation now revokes those tokens (see GrantRevocation), but
+            // this is the check that does not depend on the revocation list being complete or on the host
+            // having registered a revoked-token store at all.
+            if (!user.IsActive)
+                return UnauthorizedWithChallenge();
+
             var claims = new Dictionary<string, object?> { ["sub"] = user.Id };
 
             if (scopes.Contains(StandardScopes.Email, StringComparer.Ordinal))

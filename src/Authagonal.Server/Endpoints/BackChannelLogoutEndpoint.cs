@@ -3,6 +3,7 @@ using System.Security.Claims;
 using Authagonal.Core.Models;
 using Authagonal.Core.Services;
 using Authagonal.Core.Stores;
+using Authagonal.Protocol.Services;
 using Authagonal.Server.Services;
 using Authagonal.Server.Services.Cluster;
 using Microsoft.Extensions.Options;
@@ -34,6 +35,7 @@ public static class BackChannelLogoutEndpoint
         HttpContext httpContext,
         IClientStore clientStore,
         IGrantStore grantStore,
+        IRevokedTokenStore? revokedTokenStore,
         IKeyManager keyManager,
         ITenantContext tenantContext,
         IHttpClientFactory httpClientFactory,
@@ -124,8 +126,11 @@ public static class BackChannelLogoutEndpoint
             }
         }
 
-        // Revoke all grants for the subject
-        await grantStore.RemoveAllBySubjectAsync(request.SubjectId, ct);
+        // Revoke all grants for the subject, and the access tokens they minted. This endpoint is the
+        // cluster's own revocation fan-out — an operator calling it and being told GrantsRevoked=N while N
+        // access tokens stayed valid is the reverse of what it exists for.
+        await GrantRevocation.RevokeAllSubjectGrantsAsync(
+            grantStore, revokedTokenStore, request.SubjectId, logger, ct);
 
         return TypedResults.Json(new BackChannelLogoutResult { Notified = notified, Failed = failed, GrantsRevoked = grants.Count }, AuthagonalJsonContext.Default.BackChannelLogoutResult);
     }

@@ -3,6 +3,7 @@ using System.Text;
 using Authagonal.Core.Models;
 using Authagonal.Core.Services;
 using Authagonal.Core.Stores;
+using Authagonal.Protocol.Services;
 using Authagonal.Server.Services;
 using Microsoft.Extensions.Localization;
 using Microsoft.Extensions.Options;
@@ -169,6 +170,7 @@ public static class UserEndpoints
         SetPasswordRequest request,
         IUserStore userStore,
         IGrantStore grantStore,
+        IRevokedTokenStore? revokedTokenStore,
         PasswordHasher passwordHasher,
         PasswordValidator passwordValidator,
         PasswordPolicy passwordPolicy,
@@ -194,7 +196,9 @@ public static class UserEndpoints
         user.SecurityStamp = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
         user.UpdatedAt = DateTimeOffset.UtcNow;
         await userStore.UpdateAsync(user, ct);
-        await grantStore.RemoveAllBySubjectAsync(user.Id, ct);
+        // Both halves: the grant rows AND the access tokens they minted. Removing the rows alone left the
+        // old password's tokens working for up to AccessTokenLifetimeSeconds after the reset.
+        await GrantRevocation.RevokeAllSubjectGrantsAsync(grantStore, revokedTokenStore, user.Id, null, ct);
         await authHooks.RunOnPasswordChangedAsync(user.Id, user.Email, "admin", ct);
 
         // Audited: an admin write on someone else's account, and this group produced no trail at all.
@@ -423,6 +427,7 @@ public static class UserEndpoints
         UpdateUserRequest request,
         IUserStore userStore,
         IGrantStore grantStore,
+        IRevokedTokenStore? revokedTokenStore,
         IEnumerable<IAuthHook> authHooks,
         IStringLocalizer<SharedMessages> localizer,
         IAuditLogger audit,
@@ -460,7 +465,14 @@ public static class UserEndpoints
         if (orgChanged || deactivated)
         {
             user.SecurityStamp = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
-            await grantStore.RemoveAllBySubjectAsync(user.Id, ct);
+
+            // Through GrantRevocation: the comment above is only true if the access tokens go too. Rotating
+            // the stamp kills the cookie and removing the rows kills the refresh token, but the access token
+            // already issued is a self-contained JWT — it kept passing the JwtBearer scheme, kept returning
+            // the user's claims from /connect/userinfo and kept reporting active:true from /connect/introspect
+            // for its full lifetime. A disabled account that keeps working until its token expires has not
+            // been disabled.
+            await GrantRevocation.RevokeAllSubjectGrantsAsync(grantStore, revokedTokenStore, user.Id, null, ct);
         }
 
         await userStore.UpdateAsync(user, ct);
@@ -487,6 +499,7 @@ public static class UserEndpoints
         string userId,
         IUserStore userStore,
         IGrantStore grantStore,
+        IRevokedTokenStore? revokedTokenStore,
         IProvisioningOrchestrator provisioningOrchestrator,
         IEnumerable<IAuthHook> authHooks,
         IStringLocalizer<SharedMessages> localizer,
@@ -500,8 +513,9 @@ public static class UserEndpoints
         if (user is null)
             return TypedResults.Json(new ErrorInfoResponse { Error = "user_not_found", ErrorDescription = string.Format(localizer["Admin_UserNotFound"].Value, userId) }, AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 404);
 
-        // Remove all grants for this user
-        await grantStore.RemoveAllBySubjectAsync(userId, ct);
+        // Remove all grants for this user, and the access tokens they minted — a deleted account whose
+        // token still resolves is not deleted.
+        await GrantRevocation.RevokeAllSubjectGrantsAsync(grantStore, revokedTokenStore, userId, null, ct);
 
         // Deprovision from all downstream apps (best-effort)
         await provisioningOrchestrator.DeprovisionAllAsync(userId, ct);
@@ -746,9 +760,10 @@ public static class UserEndpoints
         /// Deactivate or reactivate the account. Null leaves it alone.
         /// </summary>
         /// <remarks>
-        /// Deactivating revokes every refresh token and rotates the security stamp, so an existing
-        /// session cannot outlive the decision — a block that only takes effect at next login is not
-        /// a block.
+        /// Deactivating rotates the security stamp (which ends the cookie session), removes every grant,
+        /// AND revokes the access tokens those grants minted — a self-contained JWT survives the removal of
+        /// its grant row, so without that last part a blocked account kept calling resource servers for the
+        /// rest of its access-token lifetime. A block that only takes effect at next login is not a block.
         /// </remarks>
         public bool? IsActive { get; set; }
 

@@ -1,6 +1,7 @@
 using Authagonal.Core.Constants;
 using Authagonal.Core.Services;
 using Authagonal.Core.Stores;
+using Authagonal.Protocol.Services;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.IdentityModel.JsonWebTokens;
@@ -68,13 +69,20 @@ public static class SessionTermination
         IKeyManager keyManager,
         ITenantContext tenantContext,
         IHttpClientFactory httpClientFactory,
-        CancellationToken ct)
+        CancellationToken ct,
+        IRevokedTokenStore? revokedTokenStore = null)
     {
         var frontChannelUris = new List<string>();
         if (string.IsNullOrEmpty(subjectId)) return new Result(frontChannelUris);
 
         var logger = httpContext.RequestServices
             .GetRequiredService<ILoggerFactory>().CreateLogger("SessionTermination");
+
+        // Optional, and resolved here rather than taken as a required handler parameter, for the same reason
+        // ConsentEndpoint does it this way: a host that registered no provider has no revoked-token store, and
+        // failing sign-out over its absence would be worse than tracking nothing. The parameter above exists so
+        // a test can inject one directly.
+        revokedTokenStore ??= httpContext.RequestServices.GetService<IRevokedTokenStore>();
 
         List<(string Uri, string Token)> notifications = [];
         try
@@ -131,7 +139,16 @@ public static class SessionTermination
             // `agent_consent` records and every pending approval along with the tokens. Ending a session is not
             // revoking consent — there is a separate Authorized Apps page for that — so the broader call made
             // logging out silently discard preferences the user never asked to discard.
-            await grantStore.RemoveBySubjectAsync(subjectId, PersistedGrantTypes.SessionBound, ct: ct);
+            //
+            // Through GrantRevocation, not IGrantStore directly, because removing a refresh grant does nothing
+            // to the access tokens it already minted: those are self-contained ES256 JWTs valid to their own
+            // exp. This path deleted the rows and stopped there, so for up to AccessTokenLifetimeSeconds after
+            // signing out — 30 minutes on the defaults — the token still passed the JwtBearer scheme, still
+            // returned the user's claims from /connect/userinfo, and still reported active:true from
+            // /connect/introspect. Revoking the same grant from the Authorized Apps page killed it immediately,
+            // because THAT path came through here. Same product, same token, opposite answers.
+            await GrantRevocation.RevokeSubjectGrantsAsync(
+                grantStore, revokedTokenStore, subjectId, PersistedGrantTypes.SessionBound, logger, ct);
         }
         catch (Exception ex)
         {
