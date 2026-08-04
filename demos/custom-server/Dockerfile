@@ -12,7 +12,7 @@ RUN npm run build
 # Stage 2: Build .NET (packages come from nuget.org, with the just-released
 # Authagonal.* nupkgs preferred from ./nupkgs when present — see NuGet.Config.
 # This avoids the 4–6 min wait for nuget.org indexing during a release build.)
-FROM mcr.microsoft.com/dotnet/sdk:10.0@sha256:ed034a8bf0b24ded0cbbac07e17825d8e9ebfe21e308191d0f7421eaf5ad4664 AS backend
+FROM mcr.microsoft.com/dotnet/sdk:10.0@sha256:72dd743782f2ae7e5476fd64f6a460045e3998dc862218b80e6944cba79a01b0 AS backend
 WORKDIR /src
 COPY NuGet.Config ./
 COPY nupkgs/ ./nupkgs/
