@@ -124,6 +124,70 @@ unreachable, or applied on one of several sibling paths.
   `nextCursor` instead of being indistinguishable from an empty result — an empty page WITH a cursor means keep
   going — and `count=0` / a negative `count` behave as on `/Users` (RFC 7644 §3.4.2.4).
 
+- **A refresh chain outlived the permission it was granted under.** The refresh path re-applied the per-user
+  role gate but never re-checked the client's own `AllowedScopes`, so removing a scope from a client refused new
+  authorization requests while every existing refresh chain kept re-minting it for up to 30 days.
+
+- **Every Duende-migrated client sat on the permissive resource-indicator reading.** The migration engine
+  creates clients and never set `AudiencesDeclared`, so anyone able to drive an authorization request could name
+  any absolute URI as `resource` and receive a token whose `aud` was that string. Now set after the ApiResource
+  flattening determines the declaration, with the count of clients that end up declaring nothing reported.
+
+- **`MfaPolicy.Required` was not enforced on device approval**, so a user with no second factor could approve a
+  device for a client that demands one — and that grant mints tokens for 30 days.
+
+- **Both MFA-enrolment completions minted a bare cookie** — no `mfa_authenticated` marker (so the authorize
+  endpoint signed the user straight back out and demanded a second code) and no parked federation state, which
+  cost a federated user `saml_name_id`, the IdP session bound and every `federated:*` claim on first enrolment.
+
+- **The OIDC callback's non-MFA sign-in dropped the upstream IdP's session bound.** Both siblings applied it.
+
+- **Three hand-built cookies took `Secure` from `Request.IsHttps`** — including the MFA-enrolment token, which
+  is a full sign-in credential — the posture the session cookie's own configuration rejects. One shared
+  decision now.
+
+- **SCIM group `externalId` uniqueness was never enforced**, although the index and `FindByExternalIdAsync`
+  exist on all four providers; a connector retry after a lost response created a duplicate that later
+  `externalId eq` filters resolved to arbitrarily.
+
+- **`GET /scim/v2/Groups/{id}` discarded its projection**, returning the full membership to a caller that had
+  excluded it.
+
+- **The entire SCIM write surface fired no `IAuthHook` and wrote no audit row**, while `IAuthHook`'s own docs
+  name `"scim"` as an origin it receives. Writes now fire hooks and audit through a new `ScimActor`, which
+  attributes to the provisioning client and token rather than to a person.
+
+- **Admin user creation performed no email validation**, while both sibling creation paths refused the same
+  values — and the address becomes a storage key written after the profile row.
+
+- **Nothing collected `MfaChallenges`, `UpstreamRefreshTokens` or `RevokedTokens` on Azure Table**, the default
+  backend; DynamoDB expires all three natively and `SqlExpiryReaper` covers all three. A parameterised
+  `TableExpirySweepService` now does, leaving rows with no stated expiry alone.
+
+- **Server-side session rows persisted the whole authentication ticket in cleartext**, including the upstream
+  IdP's refresh token and all user PII, with no `IFieldCipher` — in the deployment where the operator is told
+  PII is encrypted at rest.
+
+- **The at-rest encryption backfill had no driver.** `ReindexUserAsync`, `EnumerateUserIdsAsync` and
+  `MigrateProvisioningAppsAsync` were implemented on every provider and called by nothing, so registering an
+  `IFieldCipher` never rewrote an existing row. `AtRestBackfillService` runs it, opt-in via
+  `Auth:AtRestBackfillEnabled`, on the leader, once per process.
+
+- **The incremental backup watermark was one value per output directory**, so a second tenant's first
+  `--prefix` run inherited another tenant's and produced an archive covering one interval. Scoped by prefix and
+  table set now.
+
+- **A `--tables` value outside the backup set produced an archive that could never be restored** — restore's
+  allowlist rejects it, after the backup was written, hashed and signed. Refused up front.
+
+- **The backup KEK and manifest HMAC key were argv-only**, so a Kubernetes CronJob spec contained both in
+  plaintext. Both tools now read `BACKUP_ENCRYPTION_KEY` and `BACKUP_MANIFEST_KEY`.
+
+- **The TypeScript BFF had no cross-replica refresh single-flight and never enforced absolute session expiry.**
+  `IBffSessionStore` gains optional `acquireRefreshLock`/`releaseRefreshLock` mirroring the .NET
+  `ILeaseProvider` design, and `sessionLifetimeSeconds` is now enforced by the library rather than trusted to
+  the store. Both BFF READMEs state the lease requirement a multi-instance deployment needs.
+
 ### Fixed
 
 - **`GET /admin/migration/status` was mapped by nobody.** Documented twice as the way to read the migration
