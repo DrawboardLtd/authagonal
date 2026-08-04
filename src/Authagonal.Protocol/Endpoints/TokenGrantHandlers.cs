@@ -23,8 +23,19 @@ internal static class TokenGrantHandlers
 
         var codeVerifier = form["code_verifier"].FirstOrDefault() ?? string.Empty;
 
-        var response = await tokenService.HandleAuthorizationCodeAsync(code, clientId, redirectUri, codeVerifier, ct);
-        return TokenSuccess(response);
+        try
+        {
+            var response = await tokenService.HandleAuthorizationCodeAsync(code, clientId, redirectUri, codeVerifier, ct);
+            return TokenSuccess(response);
+        }
+        // ProtocolTokenException is the type that carries an OAuth error code, and this handler did not map
+        // it — harmless while nothing on this path threw one, and a 500 the moment something did. The agent
+        // ceiling now applies at the shared mint, so an agent whose ceiling grants nothing unattended is
+        // refused here and the caller is entitled to `unauthorized_client` rather than an opaque failure.
+        catch (ProtocolTokenException ex)
+        {
+            return TokenError(ex.Error, ex.Description);
+        }
     }
 
     public static async Task<IResult> HandleRefreshToken(
@@ -41,6 +52,10 @@ internal static class TokenGrantHandlers
             var response = await tokenService.HandleRefreshTokenAsync(
                 refreshToken, clientId, resources.Length > 0 ? resources : null, ct);
             return TokenSuccess(response);
+        }
+        catch (ProtocolTokenException ex)
+        {
+            return TokenError(ex.Error, ex.Description);
         }
         catch (InvalidOperationException ex) when (ex.Message.StartsWith("Resource '", StringComparison.Ordinal))
         {

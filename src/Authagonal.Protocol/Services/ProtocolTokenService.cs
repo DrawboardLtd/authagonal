@@ -197,6 +197,54 @@ public sealed class ProtocolTokenService(
 
         // Agentic claims are first-class and reserved: authorization_details is a JSON array
         // and act a JSON object, so neither can ride the string-valued claim bags — and
+        // An AGENT client with no authority claim at all is the same inversion as `[]` below, one step
+        // earlier — and it was reachable on three grants.
+        //
+        // AgentMode was enforced in exactly two places: HandleClientCredentialsAsync refuses a
+        // Delegated-only profile, HandleTokenExchangeAsync refuses a Service-mode one. No other mint path
+        // consulted IAgentProfileStore, so authorization_code, refresh_token and device_code minted for an
+        // agent exactly as for any other client: no authorization_details, no `act` chain, no
+        // MaxTokenLifetimeSeconds clamp. AuthorityEvaluator.FromPrincipal returns Unrestricted for zero
+        // claims (legacy scope-only compatibility), and AuthoritySet.Permits short-circuits on
+        // IsUnrestricted — so the most tightly configured agent yielded the broadest possible token, from a
+        // plain authorization_code flow against its own registered redirect URI. The ceiling, the standing
+        // consent at /consent/agents, the ask-gate, the act provenance chain and MaxDelegationDepth were all
+        // bypassed at once, and `action_policies` has no scope equivalent, so no amount of scope checking at
+        // the resource server could recover the approval requirement.
+        //
+        // Applied HERE rather than at the three handlers because this is the one point every mint converges
+        // on — the same reasoning as the reserved-scope guard above and the empty-array guard below. A
+        // caller that already computed an authority (the exchange and client-credentials paths) is left
+        // alone; this only fills the vacuum.
+        //
+        // Ask degrades to deny for the same reason it does on client_credentials: these paths have no one to
+        // ask and no approval to consume. A ceiling that grants nothing unattended therefore has no safe
+        // token to mint, and refusing is the only correct answer — omitting the claim would read as
+        // unrestricted, which is the defect.
+        if (string.IsNullOrEmpty(authorizationDetailsJson) && agentProfileStore is not null)
+        {
+            var agentProfile = await agentProfileStore.GetAsync(client.ClientId, ct);
+            if (agentProfile is not null)
+            {
+                var ceiling = await ApplyHighRiskDefaultsAsync(
+                    agentProfile.Ceiling, agentProfile.HighRiskDefault, ct);
+                var unattended = MapAskPolicies(ceiling, ActionPolicy.Deny);
+
+                if (AuthorityJson.SerializesToNothing(unattended))
+                    throw new ProtocolTokenException("unauthorized_client",
+                        $"Client '{client.ClientId}' is a registered agent whose ceiling grants nothing "
+                        + "without human approval, and this grant has no way to obtain one. Use token "
+                        + "exchange (which can park a pending approval), or widen the agent's ceiling.");
+
+                authorizationDetailsJson = AuthorityJson.Serialize(unattended);
+
+                var agentCap = now.AddSeconds(agentProfile.MaxTokenLifetimeSeconds);
+                notAfter = notAfter is null
+                    ? agentCap
+                    : notAfter.Value < agentCap ? notAfter.Value : agentCap;
+            }
+        }
+
         // nothing in those bags can shadow them.
         if (!string.IsNullOrEmpty(authorizationDetailsJson))
         {
