@@ -227,7 +227,7 @@ jobs:
           cache-to: type=gha,mode=max
 
       - name: Scan server image
-        uses: aquasecurity/trivy-action@dc5a429b52fcf669ce959baa2c2dd26090d2a6c4 # v0.32.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         # Trivy version pinned EXPLICITLY, because setup-trivy's own default resolved to v0.64.1 — a tag
         # that does not exist as a release. Every run then failed in "installing Trivy binary", after
         # printing "found version: 0.64.1", with no scan and no CVE involved. It broke the v0.22.0 release
