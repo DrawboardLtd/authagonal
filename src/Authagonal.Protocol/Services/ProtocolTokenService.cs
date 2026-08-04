@@ -738,6 +738,34 @@ public sealed class ProtocolTokenService(
             data.Scopes = [.. entitledScopes];
         }
 
+        // And re-apply the CLIENT's own AllowedScopes, which this path never re-checked.
+        //
+        // The per-user role gate above is the same idea one level down — "this is where revoking a role
+        // actually takes effect" — and the client-level equivalent was missing, so removing a scope from a
+        // client was not a way to stop that client using it. Responding to an incident by PUTting
+        // /api/v1/clients/{id} without `billing.write` refused every NEW authorization request naming it while
+        // every existing refresh chain kept re-minting it, for as long as the absolute refresh lifetime allowed
+        // — 30 days on the defaults. The operator is told the permission is gone and the tokens say otherwise.
+        //
+        // Dropped rather than refused, exactly as the role gate does, so a client that lost one scope keeps
+        // working with the rest; dropping to nothing ends the chain.
+        var clientAllowedScopes = new HashSet<string>(client.AllowedScopes, StringComparer.Ordinal);
+        if (data.Scopes.Any(sc => !clientAllowedScopes.Contains(sc)))
+        {
+            var stillAllowed = data.Scopes.Where(clientAllowedScopes.Contains).ToList();
+
+            if (stillAllowed.Count == 0)
+                throw new InvalidOperationException(
+                    "This client is no longer allowed any of this grant's scopes");
+
+            logger.LogInformation(
+                "Dropping scopes no longer allowed for client {ClientId} on refresh for {SubjectId}: {Dropped}",
+                clientId, grant.SubjectId,
+                string.Join(',', data.Scopes.Except(stillAllowed, StringComparer.Ordinal)));
+
+            data.Scopes = stillAllowed;
+        }
+
         // RFC 8707: refresh-time resources must be a subset of the original grant's resources
         // (or client.Audiences if none recorded).
         var requestedResources = resources?.Where(r => !string.IsNullOrWhiteSpace(r)).ToList();

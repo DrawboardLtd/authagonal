@@ -32,6 +32,16 @@ public sealed class DuendeMigrationReport
 
     // API resources (flattened onto clients + scopes)
     public int ApiResourcesFlattened { get; set; }
+
+    /// <summary>
+    /// Migrated clients that reference no ApiResource, so they declare no audience.
+    /// </summary>
+    /// <remarks>
+    /// Reported because <c>AudiencesDeclared</c> is now set on every migrated client, and for these that means
+    /// a <c>resource</c> parameter is refused outright. Without the flag they sat permanently on the permissive
+    /// reading, where any absolute URI could be named and would land in the token's <c>aud</c>.
+    /// </remarks>
+    public int ClientsWithNoDeclaredAudience { get; set; }
     public int ApiResourcesSkipped { get; set; }
 
     // Federation

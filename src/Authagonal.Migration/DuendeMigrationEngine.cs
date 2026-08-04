@@ -441,6 +441,41 @@ public sealed class DuendeMigrationEngine(
             report.ApiResourcesFlattened++;
         }
 
+        // Every migrated client is held to its declaration, now that the flattening above has determined what
+        // that declaration is.
+        //
+        // AudiencesDeclared exists so a client is bound by the audiences it names, with the permissive reading
+        // kept only "for rows that predate this flag" — and OAuthClient's own remarks say "Every surface that
+        // creates a client does accept audiences, so… New clients carry it". This surface creates clients and
+        // did not set it, so every client a migration produced sat permanently on the permissive reading: on a
+        // freshly migrated deployment, anyone able to drive an authorization request for a client could append
+        // `&resource=https://anything` and receive a tenant-signed token whose `aud` was that string.
+        //
+        // Set HERE rather than at construction, because at construction the audiences are not known yet — the
+        // ApiResource flattening above is what fills them, so declaring earlier would declare an empty set for
+        // every client and refuse `resource` outright. A client that legitimately ends with no audiences is
+        // still held to that, which is the intended meaning, and the count is reported so an operator can see
+        // how many clients will now refuse a `resource` parameter rather than discovering it from a ticket.
+        foreach (var client in liveClients)
+        {
+            if (!_createdClientIds.Contains(client.ClientId)) continue;
+            if (client.AudiencesDeclared) continue;
+
+            client.AudiencesDeclared = true;
+            dirtyClients.Add(client);
+
+            if (client.Audiences.Count == 0)
+                report.ClientsWithNoDeclaredAudience++;
+        }
+
+        if (report.ClientsWithNoDeclaredAudience > 0)
+        {
+            report.Warnings.Add(
+                $"{report.ClientsWithNoDeclaredAudience} migrated client(s) reference no ApiResource, so they "
+                + "declare no audience and will refuse a `resource` parameter. If one of them legitimately "
+                + "names a resource, add it to that client's Audiences.");
+        }
+
         if (!options.DryRun)
         {
             foreach (var scope in dirtyScopes) await stores.Scopes.UpdateAsync(scope, ct);
