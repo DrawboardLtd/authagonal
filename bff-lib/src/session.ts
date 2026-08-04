@@ -41,6 +41,29 @@ export interface IBffSessionStore {
    *
    * `tenantKey` scopes the lookup exactly as in {@link removeBySid}. */
   removeBySubject(subject: string, tenantKey?: string): Promise<number>;
+
+  /**
+   * OPTIONAL cross-replica lock for one session's refresh. Return false if another holder has it.
+   *
+   * Without this, `RefreshCoordinator`'s single-flight is per-PROCESS — a `Map` on one instance — while the
+   * session and its rotating refresh token live in a store shared by every replica. Two replicas can
+   * therefore read the same session, both see it needs refreshing, and both redeem the same refresh token.
+   * That is indistinguishable from a stolen-token replay, and an IdP's response to replay is to revoke the
+   * whole grant family — so the multi-instance deployment the README recommends can sign a user out
+   * everywhere as a matter of routine, under nothing more than concurrent load.
+   *
+   * Any backend works: all this needs is "at most one holder for a short time". Implement it with `SET NX PX`
+   * on Redis, or a conditional write anywhere else. The .NET twin does the same thing through
+   * `ILeaseProvider`.
+   *
+   * With it unimplemented the behaviour is unchanged, and a multi-instance BFF then depends on the IdP's
+   * refresh-reuse grace window (`Auth:RefreshTokenReuseGraceSeconds`, 30 in the protocol layer but **0 —
+   * strict** in the Authagonal.Server host's own default) to absorb the double redemption.
+   */
+  acquireRefreshLock?(sessionId: string, ttlMs: number): Promise<boolean>;
+
+  /** Releases {@link IBffSessionStore.acquireRefreshLock}. Implement both or neither. */
+  releaseRefreshLock?(sessionId: string): Promise<void>;
 }
 
 /** Single-process in-memory session store. Fine for one instance; use a shared store (e.g. Redis) for more.

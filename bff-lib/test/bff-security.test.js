@@ -11,6 +11,7 @@ import { prefixMatches, composeTarget, authorizeProxy, routeBff } from '../dist/
 import { MemorySessionStore } from '../dist/session.js';
 import { resolveOptions } from '../dist/options.js';
 import { assertTrustedMetadata } from '../dist/oidc.js';
+import { RefreshCoordinator } from '../dist/refresh.js';
 
 // ---- #214: upstream selection must respect segment boundaries ----
 
@@ -298,4 +299,106 @@ test('a private-network http authority stays supported', () => {
     }),
     /issuer mismatch/,
   );
+});
+
+// ---- Multi-instance parity: the absolute cap and the cross-replica refresh lock ----
+//
+// `sessionLifetimeSeconds` (8h default) was written onto the session and checked only by
+// MemorySessionStore.get. The README tells a multi-instance host to implement IBffSessionStore "e.g. over
+// Redis", and the obvious implementation enforces no expiry at all — so in that deployment the cap did not
+// exist and a captured cookie authenticated indefinitely, because the coordinator kept the token fresh.
+//
+// And the refresh single-flight was a per-process Map while the rotating refresh token lived in the shared
+// store, so two replicas could redeem the same token — which an IdP reads as replay and answers by revoking
+// the whole family. Mirrors src/Authagonal.Bff/BffRefreshCoordinator's ILeaseProvider design.
+
+/** A store that persists sessions and enforces nothing, as a naive Redis adapter would. */
+class NaiveStore {
+  constructor() { this.sessions = new Map(); this.locks = new Map(); }
+  async get(id) { return this.sessions.get(id) ?? null; }
+  async set(s) { this.sessions.set(s.sessionId, s); }
+  async remove(id) { this.sessions.delete(id); }
+  async removeBySid() { return 0; }
+  async removeBySubject() { return 0; }
+}
+
+const tenantResolver = { resolve: async () => ({ authority: 'https://auth.example', clientId: 'c', clientSecret: 's' }) };
+const neverCalledOidc = () => ({ refresh: async () => { throw new Error('refresh must not be attempted'); } });
+const options = { refreshThresholdSeconds: 60, sessionLifetimeSeconds: 8 * 60 * 60 };
+
+function bffSession(overrides) {
+  return {
+    sessionId: 's1', subject: 'u1', idToken: 'id', accessToken: 'at',
+    refreshToken: 'rt',
+    accessTokenExpiresAt: Date.now() + 60 * 60 * 1000,
+    expiresAt: Date.now() + 60 * 60 * 1000,
+    claims: {},
+    ...overrides,
+  };
+}
+
+test('the absolute session cap is enforced by the library, not by the store', async () => {
+  const store = new NaiveStore();
+  const expired = bffSession({ expiresAt: Date.now() - 1000 });
+  await store.set(expired);
+
+  const coordinator = new RefreshCoordinator(tenantResolver, neverCalledOidc, store, options);
+
+  // Past its absolute expiry: refused, and no refresh attempted (neverCalledOidc would throw).
+  assert.equal(await coordinator.ensureFresh(expired), null);
+  // And the row is dropped rather than left for a store that never evicts.
+  assert.equal(await store.get('s1'), null);
+});
+
+test('a live session inside the cap is returned untouched', async () => {
+  const store = new NaiveStore();
+  const live = bffSession({});
+  await store.set(live);
+
+  const coordinator = new RefreshCoordinator(tenantResolver, neverCalledOidc, store, options);
+  assert.equal(await coordinator.ensureFresh(live), live);
+});
+
+test('a replica that cannot take the refresh lock uses the holder\'s stored session', async () => {
+  const store = new NaiveStore();
+  // Needs refreshing, so the coordinator would redeem if it did not respect the lock.
+  const stale = bffSession({ accessTokenExpiresAt: Date.now() + 5_000 });
+  await store.set(stale);
+
+  // The lock is already held by "another replica".
+  store.acquireRefreshLock = async () => false;
+  store.releaseRefreshLock = async () => {};
+
+  // That replica finishes and stores a fresh session.
+  setTimeout(() => {
+    void store.set(bffSession({ accessToken: 'fresh', accessTokenExpiresAt: Date.now() + 60 * 60 * 1000 }));
+  }, 120);
+
+  const coordinator = new RefreshCoordinator(tenantResolver, neverCalledOidc, store, options);
+
+  // neverCalledOidc throws if this replica redeems, so reaching a result at all is the assertion.
+  const result = await coordinator.ensureFresh(stale);
+  assert.ok(result, 'the waiting replica got no session');
+  assert.equal(result.accessToken, 'fresh');
+});
+
+test('the lock is released after a successful redemption', async () => {
+  const store = new NaiveStore();
+  await store.set(bffSession({ accessTokenExpiresAt: Date.now() + 5_000 }));
+
+  let acquired = 0;
+  let released = 0;
+  store.acquireRefreshLock = async () => { acquired++; return true; };
+  store.releaseRefreshLock = async () => { released++; };
+
+  const oidc = () => ({
+    refresh: async () => ({ accessToken: 'new', refreshToken: 'rt2', expiresIn: 3600 }),
+  });
+
+  const coordinator = new RefreshCoordinator(tenantResolver, oidc, store, options);
+  const result = await coordinator.ensureFresh(await store.get('s1'));
+
+  assert.equal(result.accessToken, 'new');
+  assert.equal(acquired, 1);
+  assert.equal(released, 1);
 });

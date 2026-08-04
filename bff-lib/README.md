@@ -91,6 +91,20 @@ A custom store must honour the `tenantKey` argument on `removeBySid` / `removeBy
 any tenant this BFF serves. A store that indexes on the bare value lets one tenant's IdP log out
 another tenant's users.
 
+**Running more than one instance? Implement `acquireRefreshLock` / `releaseRefreshLock` too.** The
+refresh single-flight is otherwise per-process — a `Map` on one instance — while the session and its
+rotating refresh token live in the store every replica shares. Two replicas can read the same session,
+both see it needs refreshing, and both redeem the same refresh token. That is indistinguishable from a
+stolen-token replay, and an IdP's answer to replay is to revoke the whole grant family — so this
+deployment can sign a user out everywhere under nothing more than concurrent load. `SET NX PX` on Redis
+is enough; all the coordinator needs is "at most one holder for a short time". Without it you are
+relying on the IdP's refresh-reuse grace window, which in Authagonal's own server host defaults to **0
+— strict**.
+
+**`sessionLifetimeSeconds` is enforced by the library, not by your store.** The absolute cap is checked
+on every `ensureFresh`, so a store that does not evict expired rows cannot extend a session — it should
+still evict them, for retention, but the policy does not depend on it.
+
 ## Extension points (the hosted seam)
 
 `sessionStore` (`IBffSessionStore`), `cookieProtector` (`ICookieProtector`), and the core `OidcClient`

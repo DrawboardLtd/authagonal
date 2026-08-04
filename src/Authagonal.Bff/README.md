@@ -72,6 +72,25 @@ cache (e.g. Redis) before `AddAuthagonalBff` when you run more than one instance
 builder.Services.AddStackExchangeRedisCache(o => o.Configuration = "...");
 ```
 
+**A shared cache is not sufficient on its own — register an `ILeaseProvider` too.** The refresh
+single-flight is otherwise process-local, while the session and its rotating refresh token live in the
+cache every replica shares. Two replicas can read the same session, both see it needs refreshing, and
+both redeem the same refresh token; that is indistinguishable from a stolen-token replay, and the IdP's
+answer to replay is to revoke the whole grant family — so a multi-instance BFF can sign a user out
+everywhere as a matter of routine. `BffRefreshCoordinator` documents this in its own remarks and the
+requirement was missing here.
+
+Any backend works, because all the coordinator needs is "at most one holder": the Azure, AWS and SQL
+providers each ship one through `AddAuthagonalClustering`.
+
+```csharp
+builder.Services.AddAuthagonalClustering(/* … */);   // supplies ILeaseProvider
+```
+
+With no lease provider registered, a multi-instance deployment depends on the IdP's refresh-reuse grace
+window (`Auth:RefreshTokenReuseGraceSeconds`) to absorb the double redemption — and in Authagonal's own
+server host that defaults to **0, strict**.
+
 ## Extension points (the hosted seam)
 
 Swap any of these to move the BFF onto other infrastructure:
