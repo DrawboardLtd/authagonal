@@ -136,6 +136,97 @@ public sealed class DeviceAuthorizationTests : IAsyncLifetime
         Assert.Equal("slow_down", secondJson.GetProperty("error").GetString());
     }
 
+    /// <summary>
+    /// A device grant is bound to the session that approved it, exactly as an interactive grant is.
+    /// </summary>
+    /// <remarks>
+    /// The token endpoint called <c>BuildSubjectAsync(user, client)</c> with every optional argument defaulted,
+    /// because <c>DeviceCodeData</c> had nowhere to carry them. So a device grant silently lost three controls:
+    /// the upstream IdP's session bound (which clamps both the access token's <c>exp</c> and the refresh
+    /// grant's <c>ExpiresAt</c>), <c>RevalidateOnRefresh</c> (which needs the connection id to re-ask the
+    /// upstream on every rotation), and <c>sid</c>.
+    /// <para>
+    /// <c>sid</c> is the observable one without an IdP fixture, and its absence was not cosmetic:
+    /// <c>DiscoveryEndpoint</c> claims "the OP puts <c>sid</c> in every ID token and in every Logout Token",
+    /// and <c>SessionTermination</c> sent this client a logout token carrying the BROWSER's sid — an
+    /// identifier the device RP never received and is entitled by OIDC Back-Channel Logout §2.6 to reject.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task DeviceCodeGrant_IdToken_CarriesTheApprovingSessionsSid()
+    {
+        await _factory.SeedTestUserAsync();
+        var deviceCodes = await RequestDeviceCodes();
+
+        await _client.PostAsJsonAsync("/api/auth/login", new { email = "test@example.com", password = "Test1234!" });
+
+        // The sid the approving browser holds, read from its own session view.
+        var session = await (await _client.GetAsync("/api/auth/session")).Content.ReadFromJsonAsync<JsonElement>();
+
+        Assert.Equal(HttpStatusCode.OK, (await _client.PostAsync("/api/auth/device/approve",
+            new FormUrlEncodedContent(new Dictionary<string, string> { ["user_code"] = deviceCodes.UserCode })))
+            .StatusCode);
+
+        var tokenResponse = await _client.PostAsync("/connect/token", new FormUrlEncodedContent(
+            new Dictionary<string, string>
+            {
+                ["grant_type"] = GrantTypes.DeviceCode,
+                ["device_code"] = deviceCodes.DeviceCode,
+                ["client_id"] = AuthagonalTestFactory.AdminClientId,
+                ["client_secret"] = AuthagonalTestFactory.AdminClientSecret,
+            }));
+        tokenResponse.EnsureSuccessStatusCode();
+
+        var tokens = await tokenResponse.Content.ReadFromJsonAsync<JsonElement>();
+        var idToken = tokens.GetProperty("id_token").GetString()!;
+
+        var payload = PayloadOf(idToken);
+        Assert.True(payload.TryGetProperty("sid", out var sid), "the device id_token carried no sid");
+        Assert.False(string.IsNullOrEmpty(sid.GetString()));
+
+        // And it is the APPROVING session's sid, not a fresh one — otherwise back-channel logout still
+        // cannot correlate the device.
+        if (session.TryGetProperty("sessionId", out var browserSid) && browserSid.ValueKind == JsonValueKind.String)
+            Assert.Equal(browserSid.GetString(), sid.GetString());
+    }
+
+    /// <summary>
+    /// The carried session state survives serialization — the record is stored as JSON between the approval
+    /// and the poll, through a source-generated context.
+    /// </summary>
+    [Fact]
+    public async Task DeviceCodeData_RoundTripsTheSessionState()
+    {
+        var data = new DeviceCodeData
+        {
+            UserCode = "WDJB-MJHT",
+            ClientId = "tv",
+            Scopes = ["openid"],
+            IsApproved = true,
+            SubjectId = "user-1",
+            SessionId = "sid-1",
+            SessionMaxExpiresAt = DateTimeOffset.UtcNow.AddHours(1),
+            AuthTime = DateTimeOffset.UtcNow.AddMinutes(-5),
+            UpstreamConnectionId = "acme-entra",
+        };
+
+        var json = JsonSerializer.Serialize(data, AuthagonalJsonContext.Default.DeviceCodeData);
+        var read = JsonSerializer.Deserialize(json, AuthagonalJsonContext.Default.DeviceCodeData)!;
+
+        Assert.Equal("sid-1", read.SessionId);
+        Assert.Equal("acme-entra", read.UpstreamConnectionId);
+        Assert.Equal(data.SessionMaxExpiresAt, read.SessionMaxExpiresAt);
+        Assert.Equal(data.AuthTime, read.AuthTime);
+    }
+
+    private static JsonElement PayloadOf(string jwt)
+    {
+        var part = jwt.Split('.')[1];
+        var padded = part.Replace('-', '+').Replace('_', '/')
+            .PadRight(part.Length + (4 - part.Length % 4) % 4, '=');
+        return JsonDocument.Parse(Convert.FromBase64String(padded)).RootElement.Clone();
+    }
+
     [Fact]
     public async Task DeviceCodeGrant_AfterApproval_ReturnsTokens()
     {

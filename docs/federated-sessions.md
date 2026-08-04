@@ -70,5 +70,11 @@ revocable credential.
 `RevalidateOnRefresh` keeps a session honest against upstream revocation. If instead (or additionally) you
 want the local session to never *outlive* the upstream's asserted session, set `SessionExpClaim` to the name
 of an id_token claim carrying an expiry (Unix seconds). Authagonal clamps the local session and all tokens
-minted from it — including refresh rotations — to that bound. See
-[OIDC Federation → Session lifetime cap](oidc-federation).
+minted from it — including refresh rotations, and including a device-code grant approved through that session —
+to that bound. See [OIDC Federation → Session lifetime cap](oidc-federation).
+
+The device flow is worth naming because it was the exception until recently: the device-code record had nowhere
+to carry the approving session's bound, so a device approved through a federated session kept minting tokens for
+the client's full absolute refresh lifetime after that session had ended, and `RevalidateOnRefresh` never
+re-asked the upstream for it either. Both now follow the approving session. A device approved through a
+*non-federated* session has no bound to inherit, which is the same result the authorize flow gives.

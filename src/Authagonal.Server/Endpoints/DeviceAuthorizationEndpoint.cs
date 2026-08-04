@@ -478,6 +478,23 @@ public static class DeviceAuthorizationEndpoint
             data.IsApproved = true;
             data.SubjectId = subjectId;
 
+            // Off the approving browser's principal, which is the only place this state exists — the polling
+            // device has no cookie. Same claims UserStoreOidcSubjectResolver.ResolveAsync reads for the
+            // authorize flow, so a device grant is bound exactly as an interactive one is.
+            data.SessionId = httpContext.User.FindFirst("sid")?.Value;
+            data.UpstreamConnectionId = httpContext.User.FindFirst("upstream_connection_id")?.Value;
+
+            if (DateTimeOffset.TryParse(
+                    httpContext.User.FindFirst("session_max_exp")?.Value,
+                    System.Globalization.CultureInfo.InvariantCulture,
+                    System.Globalization.DateTimeStyles.RoundtripKind, out var deviceSessionMaxExp))
+                data.SessionMaxExpiresAt = deviceSessionMaxExp;
+
+            if (long.TryParse(
+                    httpContext.User.FindFirst(Services.CookieSignInHelper.AuthTimeClaim)?.Value,
+                    System.Globalization.CultureInfo.InvariantCulture, out var deviceAuthTime))
+                data.AuthTime = DateTimeOffset.FromUnixTimeSeconds(deviceAuthTime);
+
             // Claim the user_code ATOMICALLY, and do it before the approval write rather than after it.
             //
             // Everything above this line is check-then-act: two overlapping approvals of one user_code
@@ -660,4 +677,42 @@ internal sealed class DeviceCodeData
     /// earlier version still deserializes.
     /// </summary>
     public DateTimeOffset? LastPolledAt { get; set; }
+
+    /// <summary>
+    /// The sign-in session that approved this device, and what that session was bound to.
+    /// </summary>
+    /// <remarks>
+    /// The token endpoint called <c>BuildSubjectAsync(user, client)</c> with every optional argument
+    /// defaulted, because there was nowhere on this record to put them — so a device grant lost three
+    /// controls the authorize flow keeps:
+    /// <list type="bullet">
+    /// <item>the upstream IdP's session bound, which clamps both the access token's <c>exp</c> and the refresh
+    /// grant's <c>ExpiresAt</c>, so the device kept minting tokens for the client's full absolute refresh
+    /// lifetime (30 days by default) after the federated session it was approved under had ended;</item>
+    /// <item><c>RevalidateOnRefresh</c>, which needs the upstream connection id to re-ask the IdP on every
+    /// rotation — with it null, <c>ResolveRefreshAsync</c> skipped the upstream redemption block forever, so
+    /// disabling the user upstream never reached this grant;</item>
+    /// <item><c>sid</c>, so the id_token carried none and this client could not be correlated for
+    /// back-channel logout — while <c>SessionTermination</c> sent it a logout token bearing the BROWSER's sid,
+    /// an identifier the device RP never received and is entitled by §2.6 to reject.</item>
+    /// </list>
+    /// <para>
+    /// The upstream refresh token itself is deliberately NOT carried. It is a live credential for another
+    /// provider and <c>IUpstreamRefreshTokenStore</c> already holds it keyed on
+    /// (subject, connection, sid) — which <c>ResolveRefreshAsync</c> prefers over the copy on the subject — so
+    /// the connection id and the sid are sufficient and a second copy of the credential is not created.
+    /// </para>
+    /// Null on a grant written before this existed, and on one approved by a non-federated session, which is
+    /// the same thing the authorize flow produces in that case.
+    /// </remarks>
+    public string? SessionId { get; set; }
+
+    /// <inheritdoc cref="SessionId"/>
+    public DateTimeOffset? SessionMaxExpiresAt { get; set; }
+
+    /// <inheritdoc cref="SessionId"/>
+    public DateTimeOffset? AuthTime { get; set; }
+
+    /// <inheritdoc cref="SessionId"/>
+    public string? UpstreamConnectionId { get; set; }
 }

@@ -158,7 +158,25 @@ public static class TokenEndpoint
 
         // Build the subject through the shared resolver so group inflation and claim
         // shape match what the authorize flow produces.
-        var subject = await subjectResolver.BuildSubjectAsync(user, client, ct: ct);
+        //
+        // Every optional argument used to be defaulted, because DeviceCodeData had nowhere to carry them —
+        // so the device grant silently lost the federated session clamp (which bounds both the access token's
+        // exp and the refresh grant's ExpiresAt), RevalidateOnRefresh (which needs the connection id to
+        // re-ask the upstream on every rotation), and sid (so the id_token carried none and back-channel
+        // logout could not correlate this client). A device approved through a federated session therefore
+        // outlived that session by up to the client's absolute refresh lifetime, while an identical grant
+        // obtained through /connect/authorize died within one access-token lifetime.
+        //
+        // The upstream refresh token is not among these: IUpstreamRefreshTokenStore holds it keyed on
+        // (subject, connection, sid), and ResolveRefreshAsync prefers the store over the subject's copy — so
+        // the connection id and the sid are enough, without a second copy of a live upstream credential.
+        var subject = await subjectResolver.BuildSubjectAsync(
+            user, client,
+            sessionMaxExpiresAt: data.SessionMaxExpiresAt,
+            sessionId: data.SessionId,
+            upstreamConnectionId: data.UpstreamConnectionId,
+            authTime: data.AuthTime,
+            ct: ct);
         var response = await tokenService.HandleDeviceCodeAsync(subject, client, data.Scopes, ct);
         // Through TokenSuccess, not Results.Ok: this is the one grant handled outside
         // TokenGrantHandlers, so it was the one token set leaving /connect/token with no
