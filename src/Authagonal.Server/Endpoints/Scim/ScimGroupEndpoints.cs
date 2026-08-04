@@ -318,6 +318,13 @@ public static class ScimGroupEndpoints
         // store returns the full count independently of the page it hands back — so requesting the cap's
         // worth meant materialising and ordering up to 5000 group models on every single group create,
         // paying a slice of the very amplification this check exists to bound.
+        // externalId becomes the PartitionKey of the external-id index outright — see ScimKeySafety. The
+        // group row is written BEFORE that index, so an unstorable value fails after the group is durably
+        // created and every connector retry leaves another unreachable orphan against the per-client quota.
+        if (!string.IsNullOrEmpty(request.ExternalId)
+            && !ScimKeySafety.IsUsableExternalId(request.ExternalId))
+            return ScimResults.BadRequest(ScimKeySafety.ExternalIdRefusal);
+
         var (_, ownedCount) = await groupStore.ListAsync(clientId, 1, 1, ct);
         if (ownedCount >= options.MaxScimGroupsPerClient)
             return ScimResults.Error(403, "invalidValue",
@@ -373,6 +380,11 @@ public static class ScimGroupEndpoints
 
         if (string.IsNullOrWhiteSpace(request.DisplayName))
             return ScimResults.BadRequest("displayName is required");
+
+        // Same rule as create: a replace can move the index to an unstorable key just as easily.
+        if (!string.IsNullOrEmpty(request.ExternalId)
+            && !ScimKeySafety.IsUsableExternalId(request.ExternalId))
+            return ScimResults.BadRequest(ScimKeySafety.ExternalIdRefusal);
 
         group.DisplayName = request.DisplayName;
         group.ExternalId = request.ExternalId;
@@ -458,6 +470,14 @@ public static class ScimGroupEndpoints
                 "Unsupported PATCH operation(s): " + string.Join("; ", unsupported));
 
         if (RefuseOversizedMembership(group.MemberUserIds, authOptions.Value) is { } oversized) return oversized;
+
+        // Checked AFTER the applier, because a PATCH sets externalId through a path expression rather than a
+        // typed field — so the only place the resulting value is knowable is here. Same rule as create and
+        // replace: externalId is the PartitionKey of the external-id index, and this write repoints it.
+        if (!string.IsNullOrEmpty(group.ExternalId)
+            && !ScimKeySafety.IsUsableExternalId(group.ExternalId))
+            return ScimResults.BadRequest(ScimKeySafety.ExternalIdRefusal);
+
         group.UpdatedAt = DateTimeOffset.UtcNow;
         // Membership must name users THIS client provisioned. Group membership drives role assignment, so
         // an unchecked id in a role-mapped group is a privilege path.

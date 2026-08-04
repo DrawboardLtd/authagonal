@@ -830,14 +830,38 @@ public sealed class InMemoryScimGroupStore : IScimGroupStore
 {
     private readonly ConcurrentDictionary<string, ScimGroup> _groups = new();
 
+    /// <summary>
+    /// Reads hand back a detached copy, as every real store does — they map a table entity or deserialize a
+    /// document.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="InMemoryUserStore"/> was given this for the same reason and this store was left as the
+    /// sibling that never got it, with a specific cost: sharing the stored instance makes any "the write was
+    /// REFUSED, so nothing changed" assertion untestable. <c>PatchGroupAsync</c> runs
+    /// <c>ScimPatchApplier.ApplyToGroup</c> on the object it read and only then validates the result — so
+    /// against a sharing double the refused value was already in the store, and a test asserting the group was
+    /// unchanged failed against correct code. Membership is copied too, since the applier mutates that list in
+    /// place.
+    /// </remarks>
+    private static ScimGroup? Detach(ScimGroup? g) => g is null ? null : new()
+    {
+        Id = g.Id,
+        DisplayName = g.DisplayName,
+        ExternalId = g.ExternalId,
+        OrganizationId = g.OrganizationId,
+        MemberUserIds = [.. g.MemberUserIds],
+        CreatedAt = g.CreatedAt,
+        UpdatedAt = g.UpdatedAt,
+    };
+
     public Task<ScimGroup?> GetAsync(string groupId, CancellationToken ct = default)
-        => Task.FromResult(_groups.GetValueOrDefault(groupId));
+        => Task.FromResult(Detach(_groups.GetValueOrDefault(groupId)));
 
     public Task<ScimGroup?> FindByExternalIdAsync(string organizationId, string externalId, CancellationToken ct = default)
     {
         var group = _groups.Values.FirstOrDefault(g =>
             g.OrganizationId == organizationId && g.ExternalId == externalId);
-        return Task.FromResult(group);
+        return Task.FromResult(Detach(group));
     }
 
     /// <summary>Every (startIndex, count) the listing endpoint asked for — the endpoint used to ask for
@@ -852,7 +876,7 @@ public sealed class InMemoryScimGroupStore : IScimGroupStore
             all = all.Where(g => g.OrganizationId == organizationId);
 
         var list = all.OrderBy(g => g.CreatedAt).ToList();
-        var paged = list.Skip(startIndex - 1).Take(count).ToList();
+        var paged = list.Skip(startIndex - 1).Take(count).Select(g => Detach(g)!).ToList();
         return Task.FromResult<(IReadOnlyList<ScimGroup>, int)>((paged, list.Count));
     }
 
@@ -860,19 +884,20 @@ public sealed class InMemoryScimGroupStore : IScimGroupStore
     {
         var groups = _groups.Values
             .Where(g => g.MemberUserIds.Contains(userId))
+            .Select(g => Detach(g)!)
             .ToList();
         return Task.FromResult<IReadOnlyList<ScimGroup>>(groups);
     }
 
     public Task CreateAsync(ScimGroup group, CancellationToken ct = default)
     {
-        _groups[group.Id] = group;
+        _groups[group.Id] = Detach(group)!;
         return Task.CompletedTask;
     }
 
     public Task UpdateAsync(ScimGroup group, CancellationToken ct = default)
     {
-        _groups[group.Id] = group;
+        _groups[group.Id] = Detach(group)!;
         return Task.CompletedTask;
     }
 

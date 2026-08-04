@@ -265,19 +265,18 @@ public static class ScimUserEndpoints
     /// lookup can reach. None of these characters can appear in an unquoted addr-spec anyway, so
     /// refusing them costs nothing an IdP would legitimately send.
     /// </remarks>
-    private static bool IsKeyHostile(char c) => c is '/' or '\\' or '#' or '?';
+    private static bool IsKeyHostile(char c) => ScimKeySafety.IsKeyHostile(c);
 
     /// <summary>
     /// externalId is the other SCIM-supplied string that becomes a key — it is a component of the
     /// (clientId, externalId) index — so it carries the same constraints, plus a length bound.
     /// </summary>
-    private static bool IsUsableExternalId(string value)
-    {
-        if (value.Length > 256) return false;
-        foreach (var c in value)
-            if (char.IsControl(c) || IsKeyHostile(c)) return false;
-        return true;
-    }
+    /// <remarks>
+    /// Lives in <see cref="ScimKeySafety"/> now because the GROUP write paths needed the identical rule and
+    /// had none: there, externalId is the PartitionKey of the group external-id index outright, not merely a
+    /// component of one.
+    /// </remarks>
+    private static bool IsUsableExternalId(string value) => ScimKeySafety.IsUsableExternalId(value);
 
     private static async Task<IResult> CreateUserAsync(
         ScimCreateUserRequest request,
