@@ -450,6 +450,42 @@ public sealed class TableGrantStore(
         await DeleteIndexedGrantsAsync(entities, ct);
     }
 
+    public async Task<int> RemoveBySessionAsync(
+        string subjectId,
+        IReadOnlyCollection<string> types,
+        string sessionId,
+        bool invert = false,
+        CancellationToken ct = default)
+    {
+        if (types.Count == 0 || string.IsNullOrEmpty(sessionId)) return 0;
+
+        var subjectPk = partitioner.PK(subjectId);
+        var wanted = new HashSet<string>(types, StringComparer.Ordinal);
+        var entities = new List<GrantBySubjectEntity>();
+
+        // SessionId is materialized on the index row, so this needs no primary-table reads — same reasoning
+        // as RemoveBySubjectAsync above, and the same client-side filtering for the same reason.
+        var query = grantsBySubjectTable.QueryAsync<GrantBySubjectEntity>(
+            e => e.PartitionKey == subjectPk, cancellationToken: ct);
+
+        await foreach (var entity in query)
+        {
+            if (!wanted.Contains(entity.Type)) continue;
+
+            // A null SessionId is never matched, in either direction: the grant cannot be attributed to the
+            // session being ended, so ending that session must not destroy it. This is also what makes the
+            // call safe against rows written before the column existed.
+            if (string.IsNullOrEmpty(entity.SessionId)) continue;
+
+            var belongs = string.Equals(entity.SessionId, sessionId, StringComparison.Ordinal);
+            if (belongs != invert)
+                entities.Add(entity);
+        }
+
+        await DeleteIndexedGrantsAsync(entities, ct);
+        return entities.Count;
+    }
+
     /// <summary>
     /// Deletes the primary row plus both index rows for every supplied subject-index entity.
     /// </summary>

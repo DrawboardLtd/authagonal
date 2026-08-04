@@ -95,6 +95,56 @@ public static class GrantRevocation
     }
 
     /// <summary>
+    /// Ends the token authority of ONE sign-in session — or of every session except one — and revokes the
+    /// access tokens those grants minted. Returns the number of grant rows removed.
+    /// </summary>
+    /// <param name="sessionId">The session to match on <see cref="PersistedGrant.SessionId"/>.</param>
+    /// <param name="invert">
+    /// False: end the named session ("log this device out"). True: end every OTHER session ("log my other
+    /// devices out"), leaving the named one intact.
+    /// </param>
+    /// <remarks>
+    /// What the account page's session list needs. Revoking a session used to mean deleting its
+    /// <c>Sessions</c> row, which ends the OP cookie and nothing else: the refresh token the relying party on
+    /// that device already held kept rotating for the whole absolute refresh lifetime, so a user who clicked
+    /// "Log out other devices" after losing a laptop was told every other device was signed out while the
+    /// thief retained RP access. Reaching for <see cref="RevokeSubjectGrantsAsync"/> instead would have killed
+    /// the tokens on the device they chose to keep.
+    /// <para>
+    /// A grant with no <see cref="PersistedGrant.SessionId"/> is left alone in both directions — it cannot be
+    /// attributed to the session being ended. That is also what makes this safe for grants written before the
+    /// field existed, and for <c>client_credentials</c> and token-exchange grants, which have no session.
+    /// </para>
+    /// </remarks>
+    public static async Task<int> RevokeSessionGrantsAsync(
+        IGrantStore grantStore,
+        IRevokedTokenStore? revokedTokenStore,
+        string subjectId,
+        string sessionId,
+        bool invert = false,
+        ILogger? logger = null,
+        CancellationToken ct = default)
+    {
+        if (string.IsNullOrEmpty(sessionId)) return 0;
+
+        // The tracked jtis have to be read off the refresh grants before the rows go away — see the note on
+        // RevokeClientGrantsAsync. Same session predicate the store applies, so the two cannot disagree.
+        var grants = await grantStore.GetBySubjectAsync(subjectId, ct);
+
+        foreach (var grant in grants)
+        {
+            if (grant.Type != PersistedGrantTypes.RefreshToken) continue;
+            if (string.IsNullOrEmpty(grant.SessionId)) continue;
+            if (string.Equals(grant.SessionId, sessionId, StringComparison.Ordinal) == invert) continue;
+
+            await RevokeTrackedAccessTokensAsync(revokedTokenStore, grant, logger, ct);
+        }
+
+        return await grantStore.RemoveBySessionAsync(
+            subjectId, PersistedGrantTypes.SessionBound, sessionId, invert, ct);
+    }
+
+    /// <summary>
     /// Ends EVERYTHING the subject has: every grant row of every type, and the access tokens the refresh
     /// grants minted. Returns the number of grant rows removed.
     /// </summary>

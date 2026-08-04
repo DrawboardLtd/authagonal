@@ -293,6 +293,18 @@ public sealed class DynamoGrantStore(
             ? Task.CompletedTask
             : RemoveBySubjectCoreAsync(subjectId, clientId, new HashSet<string>(types, StringComparer.Ordinal), ct);
 
+    public Task<int> RemoveBySessionAsync(
+        string subjectId,
+        IReadOnlyCollection<string> types,
+        string sessionId,
+        bool invert = false,
+        CancellationToken ct = default)
+        => types.Count == 0 || string.IsNullOrEmpty(sessionId)
+            ? Task.FromResult(0)
+            : RemoveBySubjectCoreAsync(
+                subjectId, clientId: null, new HashSet<string>(types, StringComparer.Ordinal), ct,
+                (sessionId, invert));
+
     public async Task<IReadOnlyList<PersistedGrant>> GetBySubjectAsync(string subjectId, CancellationToken ct = default)
     {
         var results = new List<PersistedGrant>();
@@ -348,8 +360,9 @@ public sealed class DynamoGrantStore(
     /// Bulk subject removal. <paramref name="types"/> null means every type; otherwise only those types
     /// are removed (the index item carries <c>type</c>, so this costs no extra reads).
     /// </summary>
-    private async Task RemoveBySubjectCoreAsync(
-        string subjectId, string? clientId, HashSet<string>? types, CancellationToken ct)
+    private async Task<int> RemoveBySubjectCoreAsync(
+        string subjectId, string? clientId, HashSet<string>? types, CancellationToken ct,
+        (string SessionId, bool Invert)? session = null)
     {
         var spk = partitioner.PK(subjectId);
         var filter = clientId is null ? null : "clientId = :c";
@@ -362,9 +375,21 @@ public sealed class DynamoGrantStore(
             items.Add(item);
         }
 
+        var removed = 0;
         foreach (var item in items)
         {
             var grant = await ReadGrantAsync(item, ct).ConfigureAwait(false);
+
+            // Session scoping is applied here rather than in the query above because SessionId lives in the
+            // serialized payload this read materializes. A null SessionId is never matched in either
+            // direction — the grant cannot be attributed to the session being ended, so ending that session
+            // must not destroy it, which also makes this safe for rows written before the field existed.
+            if (session is { } s)
+            {
+                if (string.IsNullOrEmpty(grant.SessionId)) continue;
+                if (string.Equals(grant.SessionId, s.SessionId, StringComparison.Ordinal) == s.Invert) continue;
+            }
+
             // Taken from the index row's sort key ("{type}|{hashedKey}"), not by re-hashing
             // grant.Key — the raw handle is deliberately not persisted, so it is empty here.
             var hashedKey = HashedKeyFromSubjectSk(item.GetStr(Dyn.Sk));
@@ -378,7 +403,11 @@ public sealed class DynamoGrantStore(
                 await tombstones.WriteAsync("Grants", partitioner.PK(hashedKey), GrantSk, ct).ConfigureAwait(false);
                 await tombstones.WriteAsync("GrantsBySubject", item.GetStr(Dyn.Pk), item.GetStr(Dyn.Sk), ct).ConfigureAwait(false);
             }
+
+            removed++;
         }
+
+        return removed;
     }
 
     private async Task CleanupIndexesAsync(string hashedKey, string? subjectId, string type, DateTimeOffset expiresAt, CancellationToken ct)
@@ -433,6 +462,7 @@ public sealed class DynamoGrantStore(
             CreatedAt = grant.CreatedAt,
             ExpiresAt = grant.ExpiresAt,
             ConsumedAt = grant.ConsumedAt,
+            SessionId = grant.SessionId,
         }, AwsJsonContext.Default.PersistedGrant);
 
     /// <summary>The hashed key embedded in a subject-index sort key.</summary>

@@ -190,6 +190,8 @@ public sealed class GraceWindowConcurrencyTests
             => inner.RemoveAllBySubjectAndClientAsync(subjectId, clientId, ct);
         public Task RemoveBySubjectAsync(string subjectId, IReadOnlyCollection<string> types, string? clientId = null, CancellationToken ct = default)
             => inner.RemoveBySubjectAsync(subjectId, types, clientId, ct);
+        public Task<int> RemoveBySessionAsync(string subjectId, IReadOnlyCollection<string> types, string sessionId, bool invert = false, CancellationToken ct = default)
+            => inner.RemoveBySessionAsync(subjectId, types, sessionId, invert, ct);
         public Task<IReadOnlyList<PersistedGrant>> GetBySubjectAsync(string subjectId, CancellationToken ct = default)
             => inner.GetBySubjectAsync(subjectId, ct);
         public Task RemoveExpiredAsync(DateTimeOffset cutoff, CancellationToken ct = default)

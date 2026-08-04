@@ -70,6 +70,37 @@ public interface IGrantStore
         IReadOnlyCollection<string> types,
         string? clientId = null,
         CancellationToken ct = default);
+    /// <summary>
+    /// Removes the subject's grants of the given <paramref name="types"/> that belong to one sign-in
+    /// session — or, when <paramref name="invert"/> is true, to every session EXCEPT that one. Returns the
+    /// number of grant rows removed.
+    /// </summary>
+    /// <param name="sessionId">The session to match on <see cref="PersistedGrant.SessionId"/>.</param>
+    /// <param name="invert">
+    /// False: remove the grants belonging to <paramref name="sessionId"/> ("log this device out").
+    /// True: remove the grants belonging to any other session ("log my other devices out").
+    /// </param>
+    /// <remarks>
+    /// The narrowest of the three bulk removals, and the one the self-service session list needs. Ending a
+    /// session used to be expressible only as subject-wide or subject-and-client-wide, so the account page's
+    /// "Log out other devices" deleted the <c>Sessions</c> row and nothing else: the refresh token the
+    /// relying party on the stolen laptop already held kept rotating for the whole absolute refresh lifetime,
+    /// while the user had been told every other device was signed out. Reaching for
+    /// <see cref="RemoveBySubjectAsync"/> instead would have killed the tokens on the device they chose to
+    /// keep.
+    /// <para>
+    /// A grant whose <see cref="PersistedGrant.SessionId"/> is null is never matched, in either direction.
+    /// It cannot be attributed to the session being ended, so ending that session must not destroy it —
+    /// which also makes this safe against rows written before the column existed.
+    /// </para>
+    /// </remarks>
+    Task<int> RemoveBySessionAsync(
+        string subjectId,
+        IReadOnlyCollection<string> types,
+        string sessionId,
+        bool invert = false,
+        CancellationToken ct = default);
+
     Task<IReadOnlyList<PersistedGrant>> GetBySubjectAsync(string subjectId, CancellationToken ct = default);
     Task RemoveExpiredAsync(DateTimeOffset cutoff, CancellationToken ct = default);
 }

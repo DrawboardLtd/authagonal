@@ -24,6 +24,9 @@ public sealed class GrantEntity : ITableEntity
     public DateTimeOffset ExpiresAt { get; set; }
     public DateTimeOffset? ConsumedAt { get; set; }
 
+    /// <summary>The sign-in session this grant was minted under. Null on rows written before this column.</summary>
+    public string? SessionId { get; set; }
+
     public static GrantEntity FromModel(PersistedGrant grant, string hashedKey) => new()
     {
         PartitionKey = hashedKey,
@@ -35,6 +38,7 @@ public sealed class GrantEntity : ITableEntity
         CreatedAt = grant.CreatedAt,
         ExpiresAt = grant.ExpiresAt,
         ConsumedAt = grant.ConsumedAt,
+        SessionId = grant.SessionId,
     };
 
     public PersistedGrant ToModel() => new()
@@ -47,5 +51,6 @@ public sealed class GrantEntity : ITableEntity
         CreatedAt = CreatedAt,
         ExpiresAt = ExpiresAt,
         ConsumedAt = ConsumedAt,
+        SessionId = SessionId,
     };
 }

@@ -1615,25 +1615,125 @@ public static class AuthEndpoints
         return TypedResults.Json(view, AuthagonalJsonContext.Default.ActiveSessionsResponse);
     }
 
-    private static async Task<IResult> RevokeSessionAsync(string sessionId, HttpContext httpContext, IUserSessionRegistry? registry, CancellationToken ct)
+    /// <remarks>
+    /// Deleting the <c>Sessions</c> row ends the OP cookie for that device and NOTHING else. The refresh token
+    /// the relying party on it already holds is a <c>refresh_token</c> grant that nothing here touched, so
+    /// <c>POST /connect/token</c> from that device kept succeeding and rotating indefinitely — bounded only by
+    /// the client's absolute refresh lifetime. A user whose laptop was stolen, told from their phone that the
+    /// device was signed out, still had a thief with live RP access. Every relying party also went on believing
+    /// the user was present, because no Logout Token was sent for the revoked sid.
+    /// <para>
+    /// So the grants for that session go too, and the RPs are notified. This is what
+    /// <see cref="PersistedGrant.SessionId"/> exists for: revoking one session's grants was previously
+    /// inexpressible, and the alternatives were to leave the tokens alive or to kill every session's.
+    /// </para>
+    /// </remarks>
+    private static async Task<IResult> RevokeSessionAsync(
+        string sessionId,
+        HttpContext httpContext,
+        IUserSessionRegistry? registry,
+        IClientStore clientStore,
+        IGrantStore grantStore,
+        IRevokedTokenStore? revokedTokenStore,
+        Authagonal.Core.Services.IKeyManager keyManager,
+        Authagonal.Core.Services.ITenantContext tenantContext,
+        IHttpClientFactory httpClientFactory,
+        CancellationToken ct)
     {
         var userId = httpContext.User.FindFirstValue(ClaimTypes.NameIdentifier) ?? httpContext.User.FindFirstValue("sub");
         if (userId is null) return JsonResults.Error("user_not_found", 404);
         if (registry is null) return JsonResults.Error("not_supported", 404);
+
         var ok = await registry.RevokeAsync(userId, sessionId, ct);
-        return ok
-            ? TypedResults.Json(new RevokeSessionsResponse { Revoked = 1 }, AuthagonalJsonContext.Default.RevokeSessionsResponse)
-            : JsonResults.Error("session_not_found", 404);
+        if (!ok) return JsonResults.Error("session_not_found", 404);
+
+        // Notify FIRST: the client set is derived from the session's grants, which the next call removes.
+        await NotifyRelyingPartiesOfEndedSessionAsync(
+            httpContext, userId, sessionId, clientStore, grantStore, keyManager, tenantContext,
+            httpClientFactory, ct);
+
+        await GrantRevocation.RevokeSessionGrantsAsync(
+            grantStore, revokedTokenStore, userId, sessionId, invert: false, ct: ct);
+
+        return TypedResults.Json(new RevokeSessionsResponse { Revoked = 1 }, AuthagonalJsonContext.Default.RevokeSessionsResponse);
     }
 
-    private static async Task<IResult> RevokeOtherSessionsAsync(HttpContext httpContext, IUserSessionRegistry? registry, CancellationToken ct)
+    /// <remarks>
+    /// "Log out other devices" — same defect as <see cref="RevokeSessionAsync"/>, inverted: every session
+    /// except this one loses its grants, and this one keeps them. Killing the whole subject's grants instead
+    /// would sign the user out of the relying parties on the device they deliberately kept.
+    /// </remarks>
+    private static async Task<IResult> RevokeOtherSessionsAsync(
+        HttpContext httpContext,
+        IUserSessionRegistry? registry,
+        IClientStore clientStore,
+        IGrantStore grantStore,
+        IRevokedTokenStore? revokedTokenStore,
+        Authagonal.Core.Services.IKeyManager keyManager,
+        Authagonal.Core.Services.ITenantContext tenantContext,
+        IHttpClientFactory httpClientFactory,
+        CancellationToken ct)
     {
         var userId = httpContext.User.FindFirstValue(ClaimTypes.NameIdentifier) ?? httpContext.User.FindFirstValue("sub");
         if (userId is null) return JsonResults.Error("user_not_found", 404);
         if (registry is null) return TypedResults.Json(new RevokeSessionsResponse(), AuthagonalJsonContext.Default.RevokeSessionsResponse);
-        var revoked = await registry.RevokeOthersAsync(userId, CurrentSessionId(httpContext), ct);
+
+        var current = CurrentSessionId(httpContext);
+
+        // Sessions to notify, read BEFORE they are removed from the registry.
+        var ended = current is null
+            ? []
+            : (await registry.ListAsync(userId, current, ct))
+                .Where(s => !s.Current)
+                .Select(s => s.SessionId)
+                .ToList();
+
+        var revoked = await registry.RevokeOthersAsync(userId, current, ct);
+
+        // Without a current session id there is nothing to preserve, so a session-scoped removal cannot be
+        // expressed and the safe answer is to leave the grants alone rather than take the current device's
+        // with them. The registry rows are gone either way, which is the previous behaviour.
+        if (current is not null)
+        {
+            // Notify FIRST, for the same reason as above: each session's client set comes off its grants.
+            foreach (var sid in ended)
+            {
+                await NotifyRelyingPartiesOfEndedSessionAsync(
+                    httpContext, userId, sid, clientStore, grantStore, keyManager, tenantContext,
+                    httpClientFactory, ct);
+            }
+
+            await GrantRevocation.RevokeSessionGrantsAsync(
+                grantStore, revokedTokenStore, userId, current, invert: true, ct: ct);
+        }
+
         return TypedResults.Json(new RevokeSessionsResponse { Revoked = revoked }, AuthagonalJsonContext.Default.RevokeSessionsResponse);
     }
+
+    /// <summary>
+    /// Sends the back-channel / front-channel logout notifications for a session that has just been ended
+    /// remotely, without touching the caller's own cookie.
+    /// </summary>
+    /// <remarks>
+    /// <c>SessionTermination.NotifyAndRevokeAsync</c> cannot be reused directly here: it revokes the subject's
+    /// session-bound grants wholesale, which is exactly what these two endpoints must not do — the caller is
+    /// ending someone ELSE'S session and keeping their own. So the grant half is done by
+    /// <c>GrantRevocation.RevokeSessionGrantsAsync</c> and this does the notification half for the sid that
+    /// ended.
+    /// </remarks>
+    private static Task NotifyRelyingPartiesOfEndedSessionAsync(
+        HttpContext httpContext,
+        string subjectId,
+        string sessionId,
+        IClientStore clientStore,
+        IGrantStore grantStore,
+        Authagonal.Core.Services.IKeyManager keyManager,
+        Authagonal.Core.Services.ITenantContext tenantContext,
+        IHttpClientFactory httpClientFactory,
+        CancellationToken ct)
+        => SessionTermination.NotifyOnlyAsync(
+            httpContext, subjectId, sessionId, clientStore, grantStore, keyManager, tenantContext,
+            httpClientFactory, ct);
 
     private static string? CurrentSessionId(HttpContext httpContext) =>
         httpContext.Items.TryGetValue(IUserSessionRegistry.CurrentSessionItem, out var v) ? v as string : null;

@@ -501,6 +501,12 @@ public sealed class ProtocolTokenService(
             Type = "refresh_token",
             SubjectId = subject.SubjectId,
             ClientId = client.ClientId,
+            // Which sign-in session this refresh family belongs to, so ending ONE session can revoke it.
+            // Without it, the account page's "Log out other devices" could end the OP cookie and nothing
+            // else — grant removal was only expressible as subject-wide, and revoking every session would
+            // have logged the user out of the device they chose to keep. Null when the grant has no
+            // interactive session behind it, and never matched by a session-scoped removal in that case.
+            SessionId = subject.SessionId,
             Data = JsonSerializer.Serialize(new RefreshTokenData
             {
                 Scopes = scopeList,

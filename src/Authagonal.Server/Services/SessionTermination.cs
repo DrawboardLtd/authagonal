@@ -88,8 +88,60 @@ public static class SessionTermination
         try
         {
             var grants = await grantStore.GetBySubjectAsync(subjectId);
-            foreach (var clientIdGrant in grants.Select(g => g.ClientId).Distinct())
-            {
+            (frontChannelUris, notifications) = await BuildNotificationsAsync(
+                grants.Select(g => g.ClientId).Distinct(), subjectId, sessionId,
+                clientStore, keyManager, tenantContext, logger, ct);
+
+            // Session-bound grants ONLY. RemoveAllBySubjectAsync would delete the user's recorded `consent` and
+            // `agent_consent` records and every pending approval along with the tokens. Ending a session is not
+            // revoking consent — there is a separate Authorized Apps page for that — so the broader call made
+            // logging out silently discard preferences the user never asked to discard.
+            //
+            // Through GrantRevocation, not IGrantStore directly, because removing a refresh grant does nothing
+            // to the access tokens it already minted: those are self-contained ES256 JWTs valid to their own
+            // exp. This path deleted the rows and stopped there, so for up to AccessTokenLifetimeSeconds after
+            // signing out — 30 minutes on the defaults — the token still passed the JwtBearer scheme, still
+            // returned the user's claims from /connect/userinfo, and still reported active:true from
+            // /connect/introspect. Revoking the same grant from the Authorized Apps page killed it immediately,
+            // because THAT path came through here. Same product, same token, opposite answers.
+            await GrantRevocation.RevokeSubjectGrantsAsync(
+                grantStore, revokedTokenStore, subjectId, PersistedGrantTypes.SessionBound, logger, ct);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Session termination preparation failed for subject {SubjectId}", subjectId);
+        }
+
+        SendBackChannelNotifications(notifications, httpClientFactory, logger);
+
+        return new Result(frontChannelUris);
+    }
+
+
+    /// <summary>
+    /// Builds the front-channel URIs and the signed back-channel Logout Tokens for a set of clients.
+    /// </summary>
+    /// <remarks>
+    /// Shared by <see cref="NotifyAndRevokeAsync"/> and <see cref="NotifyOnlyAsync"/>. Extracted because the
+    /// account page's session list has to notify relying parties for a session it is ending REMOTELY while
+    /// leaving the caller's own session — and its grants — alone, which the combined method cannot express.
+    /// </remarks>
+    private static async Task<(List<string> FrontChannel, List<(string Uri, string Token)> BackChannel)>
+        BuildNotificationsAsync(
+            IEnumerable<string> clientIds,
+            string subjectId,
+            string? sessionId,
+            IClientStore clientStore,
+            IKeyManager keyManager,
+            ITenantContext tenantContext,
+            ILogger logger,
+            CancellationToken ct)
+    {
+        var frontChannelUris = new List<string>();
+        List<(string Uri, string Token)> notifications = [];
+
+        foreach (var clientIdGrant in clientIds)
+        {
                 var c = await clientStore.GetAsync(clientIdGrant, ct);
                 if (c is null) continue;
 
@@ -135,51 +187,90 @@ public static class SessionTermination
                     CreateBackChannelLogoutToken(tenantContext.Issuer, clientIdGrant, subjectId, tokenSid, keyManager)));
             }
 
-            // Session-bound grants ONLY. RemoveAllBySubjectAsync would delete the user's recorded `consent` and
-            // `agent_consent` records and every pending approval along with the tokens. Ending a session is not
-            // revoking consent — there is a separate Authorized Apps page for that — so the broader call made
-            // logging out silently discard preferences the user never asked to discard.
-            //
-            // Through GrantRevocation, not IGrantStore directly, because removing a refresh grant does nothing
-            // to the access tokens it already minted: those are self-contained ES256 JWTs valid to their own
-            // exp. This path deleted the rows and stopped there, so for up to AccessTokenLifetimeSeconds after
-            // signing out — 30 minutes on the defaults — the token still passed the JwtBearer scheme, still
-            // returned the user's claims from /connect/userinfo, and still reported active:true from
-            // /connect/introspect. Revoking the same grant from the Authorized Apps page killed it immediately,
-            // because THAT path came through here. Same product, same token, opposite answers.
-            await GrantRevocation.RevokeSubjectGrantsAsync(
-                grantStore, revokedTokenStore, subjectId, PersistedGrantTypes.SessionBound, logger, ct);
+        return (frontChannelUris, notifications);
+    }
+
+    /// <summary>
+    /// Notifies the relying parties that ONE session has ended, without revoking anything and without
+    /// touching the caller's own session.
+    /// </summary>
+    /// <remarks>
+    /// For <c>POST /api/auth/sessions/{id}/revoke</c> and <c>POST /api/auth/sessions/revoke-others</c>. Those
+    /// deleted the <c>Sessions</c> row and nothing else, so every relying party went on believing the user was
+    /// present on a device the user had just been told was signed out. The grant half is
+    /// <c>GrantRevocation.RevokeSessionGrantsAsync</c>, which is session-scoped for the same reason: the
+    /// subject-wide revocation this file performs would take the caller's own tokens with it.
+    /// <para>
+    /// Must be called BEFORE the grants are removed — the client set is derived from them.
+    /// </para>
+    /// </remarks>
+    public static async Task NotifyOnlyAsync(
+        HttpContext httpContext,
+        string subjectId,
+        string sessionId,
+        IClientStore clientStore,
+        IGrantStore grantStore,
+        IKeyManager keyManager,
+        ITenantContext tenantContext,
+        IHttpClientFactory httpClientFactory,
+        CancellationToken ct)
+    {
+        var logger = httpContext.RequestServices
+            .GetRequiredService<ILoggerFactory>().CreateLogger("SessionTermination");
+
+        try
+        {
+            var grants = await grantStore.GetBySubjectAsync(subjectId, ct);
+            var clientIds = grants
+                .Where(g => string.Equals(g.SessionId, sessionId, StringComparison.Ordinal))
+                .Select(g => g.ClientId)
+                .Distinct();
+
+            var (_, notifications) = await BuildNotificationsAsync(
+                clientIds, subjectId, sessionId, clientStore, keyManager, tenantContext, logger, ct);
+
+            // Front-channel URIs are dropped deliberately: a front-channel logout is an iframe the USER's
+            // browser must load, and the browser here belongs to a different session on a different device.
+            SendBackChannelNotifications(notifications, httpClientFactory, logger);
         }
         catch (Exception ex)
         {
-            logger.LogWarning(ex, "Session termination preparation failed for subject {SubjectId}", subjectId);
+            logger.LogWarning(ex,
+                "Relying-party notification failed for subject {SubjectId}, session {SessionId}",
+                subjectId, sessionId);
         }
+    }
 
-        if (notifications.Count > 0)
-            _ = Task.Run(async () =>
+    /// <summary>Fire-and-forget POST of each Logout Token. Never faults the caller.</summary>
+    private static void SendBackChannelNotifications(
+        List<(string Uri, string Token)> notifications,
+        IHttpClientFactory httpClientFactory,
+        ILogger logger)
+    {
+        if (notifications.Count == 0) return;
+
+        _ = Task.Run(async () =>
+        {
+            foreach (var (uri, token) in notifications)
             {
-                foreach (var (uri, token) in notifications)
+                try
                 {
-                    try
+                    var client = httpClientFactory.CreateClient("BackChannelLogout");
+                    client.Timeout = TimeSpan.FromSeconds(10);
+                    using var logoutRequest = new HttpRequestMessage(HttpMethod.Post, uri)
                     {
-                        var client = httpClientFactory.CreateClient("BackChannelLogout");
-                        client.Timeout = TimeSpan.FromSeconds(10);
-                        using var logoutRequest = new HttpRequestMessage(HttpMethod.Post, uri)
-                        {
-                            Content = new FormUrlEncodedContent(
-                                new Dictionary<string, string> { ["logout_token"] = token }),
-                        };
-                        using var _ = await SafeOutboundHttp.SendAsync(
-                            client, logoutRequest, logger, CancellationToken.None);
-                    }
-                    catch (Exception ex)
-                    {
-                        logger.LogWarning(ex, "Back-channel logout POST failed for {Uri}", uri);
-                    }
+                        Content = new FormUrlEncodedContent(
+                            new Dictionary<string, string> { ["logout_token"] = token }),
+                    };
+                    using var _ = await SafeOutboundHttp.SendAsync(
+                        client, logoutRequest, logger, CancellationToken.None);
                 }
-            });
-
-        return new Result(frontChannelUris);
+                catch (Exception ex)
+                {
+                    logger.LogWarning(ex, "Back-channel logout POST failed for {Uri}", uri);
+                }
+            }
+        });
     }
 
     internal static string CreateBackChannelLogoutToken(

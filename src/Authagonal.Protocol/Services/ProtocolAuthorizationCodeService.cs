@@ -60,6 +60,9 @@ public sealed class ProtocolAuthorizationCodeService(
             Type = "authorization_code",
             SubjectId = subject.SubjectId,
             ClientId = clientId,
+            // Session-scoped for the same reason the refresh grant is: an in-flight code belonging to a
+            // session that has just been signed out must not survive it.
+            SessionId = subject.SessionId,
             Data = JsonSerializer.Serialize(authCode, ProtocolJsonContext.Default.ProtocolAuthorizationCode),
             CreatedAt = now,
             ExpiresAt = expiresAt

@@ -285,6 +285,13 @@ public sealed class InMemoryGrantStore : IGrantStore
         return Task.FromResult(grant is null ? null : Clone(grant, string.Empty));
     }
 
+    /// <remarks>
+    /// A hand-written field list, which is the shape that already cost this suite once:
+    /// <c>InMemorySamlProviderStore.Clone</c> was four fields behind its model, so every test configuring one
+    /// of those fields asserted against the DEFAULT and an Azure-only defect sailed through the shared parity
+    /// tests. Any field added to <see cref="PersistedGrant"/> has to be added here too, or a session-scoped
+    /// revocation test would pass against a double that silently drops the session id.
+    /// </remarks>
     private static PersistedGrant Clone(PersistedGrant grant, string key) => new()
     {
         Key = key,
@@ -295,6 +302,7 @@ public sealed class InMemoryGrantStore : IGrantStore
         CreatedAt = grant.CreatedAt,
         ExpiresAt = grant.ExpiresAt,
         ConsumedAt = grant.ConsumedAt,
+        SessionId = grant.SessionId,
     };
 
     public Task ConsumeAsync(string key, CancellationToken ct = default)
@@ -366,6 +374,31 @@ public sealed class InMemoryGrantStore : IGrantStore
         foreach (var key in _grants.Where(kvp => kvp.Value.SubjectId == subjectId && kvp.Value.ClientId == clientId).Select(kvp => kvp.Key))
             _grants.TryRemove(key, out _);
         return Task.CompletedTask;
+    }
+
+    public Task<int> RemoveBySessionAsync(
+        string subjectId,
+        IReadOnlyCollection<string> types,
+        string sessionId,
+        bool invert = false,
+        CancellationToken ct = default)
+    {
+        if (types.Count == 0 || string.IsNullOrEmpty(sessionId)) return Task.FromResult(0);
+
+        var wanted = new HashSet<string>(types, StringComparer.Ordinal);
+        var keys = _grants
+            .Where(kvp => kvp.Value.SubjectId == subjectId
+                          && wanted.Contains(kvp.Value.Type)
+                          // A null SessionId is never matched, in either direction — see IGrantStore.
+                          && !string.IsNullOrEmpty(kvp.Value.SessionId)
+                          && string.Equals(kvp.Value.SessionId, sessionId, StringComparison.Ordinal) != invert)
+            .Select(kvp => kvp.Key)
+            .ToList();
+
+        foreach (var key in keys)
+            _grants.TryRemove(key, out _);
+
+        return Task.FromResult(keys.Count);
     }
 
     public Task RemoveBySubjectAsync(
