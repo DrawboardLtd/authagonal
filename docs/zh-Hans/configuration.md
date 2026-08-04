@@ -32,7 +32,8 @@ Authagonal 通过 `appsettings.json` 或环境变量进行配置。环境变量�
 | 设置 | 默认值 | 描述 |
 |---|---|---|
 | `Authentication:CookieLifetimeHours` | `48` | Cookie 会话生命周期（滑动过期） |
-| `Authentication:AlwaysSecureCookie` | `false` | 无条件强制会话 Cookie 的 `Secure` 标志。默认值（`SameAsRequest`）在会转发 `X-Forwarded-Proto: https` 的 TLS 终止代理之后，已经会产生 Secure Cookie。 |
+| `Authentication:AllowInsecureCookie` | `false` | Let the session cookie be sent over plain http (`SameAsRequest` instead of `Always`). **Development only** — see the English documentation. |
+| `Authentication:CookieDomain` | *(unset)* | Scope the session cookie to a parent domain. **Costs the `__Host-` prefix and its origin binding** — see the English documentation. |
 | `Auth:AllowInsecureHttp` | `false` | 允许 OAuth 端点（`/connect/*`）响应明文 http 请求。**仅限开发环境。** RFC 6749 §3.1/§3.2 要求授权端点和令牌端点使用 TLS，因此默认情况下对其中任一端点的非 https 请求都会以 `invalid_request` 被拒绝。协议方案是在转发头处理*之后*才判定的，所以终止 TLS 并转发 `X-Forwarded-Proto: https` 的代理即使不开启此项也能通过该关卡——前提是该代理已在 `ForwardedHeaders:KnownNetworks` / `KnownProxies` 中声明；没有这项声明，该头会被忽略。只有真正以明文运行的部署（随附的 `docker-compose.yml`、custom-server 演示）才需要它，而且只要它处于开启状态，服务器就会在启动时记录一条警告。该值会传播到 `AuthagonalProtocolOptions.AllowInsecureHttp`，因此也同样管辖由 `Authagonal.Protocol` 拥有的那些端点（参见[扩展性](extensibility#embedding-authagonalprotocol-alone)）。 |
 | `Auth:MaxFailedAttempts` | `5` | 账户锁定前允许的登录失败次数 |
 | `Auth:LockoutDurationMinutes` | `10` | 达到最大失败次数后的账户锁定时长 |

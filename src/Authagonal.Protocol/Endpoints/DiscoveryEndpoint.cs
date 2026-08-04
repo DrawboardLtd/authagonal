@@ -10,7 +10,12 @@ internal static class DiscoveryEndpoint
 {
     public static IEndpointRouteBuilder MapProtocolDiscoveryEndpoint(this IEndpointRouteBuilder app)
     {
-        app.MapGet("/.well-known/openid-configuration", async (
+        // Both paths, not just the OIDC one. An MCP client resolves the authorization server via
+        // `oauth-authorization-server` FIRST and need not fall back to OIDC discovery, and this package is the
+        // one documented for embedding OAuth in an existing app — so it was the host that most needed the
+        // RFC 8414 path and the one that did not publish it. See DiscoveryHelpers.MetadataPaths.
+        foreach (var metadataPath in DiscoveryHelpers.MetadataPaths)
+        app.MapGet(metadataPath, async (
             ITenantContext tenantContext,
             IScopeStore scopeStore,
             HttpResponse response,
@@ -61,7 +66,7 @@ internal static class DiscoveryEndpoint
                 RequestParameterSupported = false,
                 RequestUriParameterSupported = false,
                 ResponseModesSupported = ["query"],
-                ClaimsSupported = ["sub", "iss", "aud", "exp", "iat", "auth_time", "email", "email_verified", "name", "given_name", "family_name", "phone_number", "roles", "groups", "org_id"],
+                ClaimsSupported = DiscoveryHelpers.ClaimsSupported,
                 AuthorizationDetailsTypesSupported = authorityTypes,
             }, ProtocolJsonContext.Default.DiscoveryResponse);
         })

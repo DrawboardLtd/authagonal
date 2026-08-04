@@ -30,8 +30,30 @@ public static class ClientRegistrationEndpoint
     /// The OIDC built-ins, always registrable. Anything beyond these has to be named in
     /// <c>Auth:DynamicClientRegistrationScopes</c>.
     /// </summary>
+    /// <remarks>
+    /// <c>phone</c> belongs here for the same reason <c>email</c> does: it is an OIDC standard scope that
+    /// releases the user's own contact detail under their consent, and the discovery document advertises it.
+    /// It was absent, so an RFC 7591 client that did the conformant thing — read <c>scopes_supported</c>, ask
+    /// for what it said — was answered <c>400 invalid_scope</c> "Unknown scope: phone" for a scope the same
+    /// server had just declared supported.
+    /// </remarks>
     private static readonly HashSet<string> BuiltInScopes =
-        new(["openid", "profile", "email", "offline_access"], StringComparer.Ordinal);
+        new(["openid", "profile", "email", "phone", "offline_access"], StringComparer.Ordinal);
+
+    /// <summary>
+    /// Standard scopes this OP advertises that are RECOGNISED here but not open-registrable by default.
+    /// </summary>
+    /// <remarks>
+    /// <c>roles</c> and <c>groups</c> release authorization-relevant claims rather than the subject's own
+    /// contact details, so an anonymous registrant should not self-assign them — an operator names them in
+    /// <c>Auth:DynamicClientRegistrationScopes</c> if they want that. But they are real, advertised scopes, and
+    /// answering "Unknown scope: roles" told the client its request was malformed when the truth is that the
+    /// scope exists and open registration may not have it. Recognising them separates "no such scope" from
+    /// "not yours to claim", which is the difference between a client that gives up and one that asks an
+    /// operator.
+    /// </remarks>
+    private static readonly HashSet<string> KnownButNotOpenRegistrableScopes =
+        new(["roles", "groups"], StringComparer.Ordinal);
 
     /// <summary>
     /// Ceiling on how many redirect URIs one anonymous registration may declare, and how long each may
@@ -212,6 +234,9 @@ public static class ClientRegistrationEndpoint
         var storeScopes = await scopeStore.ListAsync(ct);
         var knownScopes = new HashSet<string>(storeScopes.Select(s => s.Name), StringComparer.Ordinal);
         knownScopes.UnionWith(BuiltInScopes);
+        // Recognised, so the refusal below says "not open-registrable" rather than "Unknown scope" for a
+        // scope this server's own discovery document advertises. See KnownButNotOpenRegistrableScopes.
+        knownScopes.UnionWith(KnownButNotOpenRegistrableScopes);
 
         // What open registration may reach: the built-ins, plus exactly what an operator named.
         //

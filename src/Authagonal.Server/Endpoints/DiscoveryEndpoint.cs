@@ -6,17 +6,10 @@ namespace Authagonal.Server.Endpoints;
 public static class DiscoveryEndpoint
 {
     /// <summary>
-    /// The paths this metadata is served at. OIDC discovery is a superset of RFC 8414's
-    /// authorization-server metadata, so one document satisfies both.
+    /// The paths this metadata is served at — shared with the Protocol host, which published only the OIDC
+    /// one. See <see cref="Authagonal.Protocol.Endpoints.DiscoveryHelpers.MetadataPaths"/>.
     /// </summary>
-    /// <remarks>
-    /// Publishing the RFC 8414 path matters for OAuth-only clients. The MCP authorization spec has
-    /// clients resolve the authorization server via <c>oauth-authorization-server</c> FIRST, and an
-    /// implementation is not obliged to fall back to OIDC discovery — so a host that answers only the
-    /// OIDC path is undiscoverable to them even though its metadata is perfectly good.
-    /// </remarks>
-    private static readonly string[] MetadataPaths =
-        ["/.well-known/openid-configuration", "/.well-known/oauth-authorization-server"];
+    private static string[] MetadataPaths => Authagonal.Protocol.Endpoints.DiscoveryHelpers.MetadataPaths;
 
     public static IEndpointRouteBuilder MapDiscoveryEndpoints(this IEndpointRouteBuilder app)
     {
@@ -87,7 +80,7 @@ public static class DiscoveryEndpoint
                 BackchannelLogoutSessionSupported = true,
                 FrontchannelLogoutSupported = true,
                 FrontchannelLogoutSessionSupported = true,
-                ClaimsSupported = ["sub", "iss", "aud", "exp", "iat", "auth_time", "email", "email_verified", "name", "given_name", "family_name", "phone_number", "roles", "groups"],
+                ClaimsSupported = Authagonal.Protocol.Endpoints.DiscoveryHelpers.ClaimsSupported,
                 AuthorizationDetailsTypesSupported = authorityTypes,
             }, ProtocolJsonContext.Default.DiscoveryResponse);
         })
