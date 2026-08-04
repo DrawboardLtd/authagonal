@@ -46,9 +46,10 @@ public static class UserRevision
             => sb.Append(value?.Length.ToString(CultureInfo.InvariantCulture) ?? "-")
                  .Append(':').Append(value).Append(Separator);
 
-        // Id is deliberately absent: the stores look a record up BY id, so no racing writer can change
-        // it, and the Azure store rewrites it (env-prefix strip) after building the model — which would
-        // make the same record digest differently depending on where in the read path it was taken.
+        // Id is deliberately absent: the stores look a record up BY id, so no racing writer can change it.
+        // The Azure store's env-prefix strip used to happen AFTER the model was built, which would have made
+        // the same record digest differently depending on where in the read path it was taken; the strip now
+        // lives inside UserEntity.ToModel, and Id staying out of the digest keeps that move invisible here.
         Add(user.Email);
         Add(user.NormalizedEmail);
         Add(user.PasswordHash);

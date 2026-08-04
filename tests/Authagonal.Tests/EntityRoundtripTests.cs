@@ -1,5 +1,6 @@
 using Authagonal.Core.Models;
 using Authagonal.AzureProvider.Entities;
+using Authagonal.Core.Services;
 
 namespace Authagonal.Tests;
 
@@ -29,7 +30,7 @@ public class EntityRoundtripTests
         };
 
         var entity = UserEntity.FromModel(user);
-        var result = entity.ToModel();
+        var result = entity.ToModel(EnvPartitioner.Live);
 
         Assert.Equal(user.Id, result.Id);
         Assert.Equal(user.Email, result.Email);
@@ -93,7 +94,7 @@ public class EntityRoundtripTests
         };
 
         var entity = ClientEntity.FromModel(client);
-        var result = entity.ToModel();
+        var result = entity.ToModel(EnvPartitioner.Live);
 
         Assert.Equal(client.ClientId, result.ClientId);
         Assert.Equal(client.ClientName, result.ClientName);
@@ -142,7 +143,7 @@ public class EntityRoundtripTests
         };
 
         var entity = ClientEntity.FromModel(client);
-        var result = entity.ToModel();
+        var result = entity.ToModel(EnvPartitioner.Live);
 
         Assert.Empty(result.ClientSecretHashes);
         Assert.Empty(result.AllowedCorsOrigins);
@@ -206,7 +207,7 @@ public class EntityRoundtripTests
         };
 
         var entity = GrantBySubjectEntity.FromModel(grant, "hashed-xyz");
-        var result = entity.ToModel();
+        var result = entity.ToModel(EnvPartitioner.Live);
 
         // Key (raw token handle) is deliberately NOT persisted — see GrantEntity round-trip test.
         Assert.Equal(string.Empty, result.Key);
@@ -339,7 +340,7 @@ public class EntityRoundtripTests
         };
 
         var entity = SamlProviderEntity.FromModel(config);
-        var result = entity.ToModel();
+        var result = entity.ToModel(EnvPartitioner.Live);
 
         Assert.Equal(config.ConnectionId, result.ConnectionId);
         Assert.Equal(config.ConnectionName, result.ConnectionName);
@@ -375,14 +376,14 @@ public class EntityRoundtripTests
         // column/mapping fails here — the hand-picked test below can't catch that (InteractionPath
         // shipped in 0.10.15 with no Azure entity mapping and silently vanished on upsert).
         var config = new OidcProviderConfig();
-        AssertEntityRoundtripPreservesEveryProperty(config, c => OidcProviderEntity.FromModel(c).ToModel());
+        AssertEntityRoundtripPreservesEveryProperty(config, c => OidcProviderEntity.FromModel(c).ToModel(EnvPartitioner.Live));
     }
 
     [Fact]
     public void SamlProviderEntity_Roundtrip_PreservesEveryModelProperty()
     {
         var config = new SamlProviderConfig();
-        AssertEntityRoundtripPreservesEveryProperty(config, c => SamlProviderEntity.FromModel(c).ToModel());
+        AssertEntityRoundtripPreservesEveryProperty(config, c => SamlProviderEntity.FromModel(c).ToModel(EnvPartitioner.Live));
     }
 
     private static void AssertEntityRoundtripPreservesEveryProperty<T>(T model, Func<T, T> roundtrip)
@@ -431,7 +432,7 @@ public class EntityRoundtripTests
         };
 
         var entity = OidcProviderEntity.FromModel(config);
-        var result = entity.ToModel();
+        var result = entity.ToModel(EnvPartitioner.Live);
 
         Assert.Equal(config.ConnectionId, result.ConnectionId);
         Assert.Equal(config.ConnectionName, result.ConnectionName);

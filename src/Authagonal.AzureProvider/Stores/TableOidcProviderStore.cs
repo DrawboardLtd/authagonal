@@ -15,7 +15,7 @@ public sealed class TableOidcProviderStore(TableClient oidcProvidersTable, EnvPa
         {
             var response = await oidcProvidersTable.GetEntityAsync<OidcProviderEntity>(
                 partitioner.PK(connectionId), OidcProviderEntity.ConfigRowKey, cancellationToken: ct);
-            return response.Value.ToModel();
+            return response.Value.ToModel(partitioner);
         }
         catch (RequestFailedException ex) when (ex.Status == 404)
         {
@@ -38,7 +38,7 @@ public sealed class TableOidcProviderStore(TableClient oidcProvidersTable, EnvPa
 
         await foreach (var entity in query)
         {
-            results.Add(entity.ToModel());
+            results.Add(entity.ToModel(partitioner));
         }
 
         return results;

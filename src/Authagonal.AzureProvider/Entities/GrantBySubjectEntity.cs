@@ -1,6 +1,7 @@
 using Azure;
 using Azure.Data.Tables;
 using Authagonal.Core.Models;
+using Authagonal.Core.Services;
 
 namespace Authagonal.AzureProvider.Entities;
 
@@ -34,11 +35,18 @@ public sealed class GrantBySubjectEntity : ITableEntity
         ConsumedAt = grant.ConsumedAt,
     };
 
-    public PersistedGrant ToModel() => new()
+    /// <remarks>
+    /// Takes the partitioner because <c>PartitionKey</c> carries the <c>{env}|</c> prefix outside the live
+    /// env, and this field is the model's IDENTITY — it is echoed to callers and fed straight back into
+    /// <c>PK()</c> on the next write. Unstripped, a read-modify-write re-prefixes it and targets a phantom
+    /// row: the update returns 200 and changes nothing. Stripping was done at two of the nine stores that
+    /// needed it, so it is a required parameter here rather than a call-site convention.
+    /// </remarks>
+    public PersistedGrant ToModel(EnvPartitioner partitioner) => new()
     {
         Key = string.Empty, // not persisted (see note above); no read path consumes it
         Type = Type,
-        SubjectId = PartitionKey,
+        SubjectId = partitioner.Strip(PartitionKey),
         ClientId = ClientId,
         Data = Data,
         CreatedAt = CreatedAt,

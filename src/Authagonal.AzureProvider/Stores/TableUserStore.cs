@@ -673,8 +673,7 @@ public sealed class TableUserStore(
             var entity = (await usersTable.GetEntityAsync<UserEntity>(
                 _partitioner.PK(userId), UserEntity.ProfileRowKey, cancellationToken: ct)).Value;
             await DecryptEntityAsync(entity, ct);
-            var user = entity.ToModel();
-            user.Id = _partitioner.Strip(user.Id);
+            var user = entity.ToModel(_partitioner);
             return user;
         }
         catch (RequestFailedException ex) when (ex.Status == 404)
@@ -897,7 +896,7 @@ public sealed class TableUserStore(
                 // Decrypt first: the old email/names drive old-index-key removal, and must be plaintext
                 // (never the stored ciphertext) to recompute the right tokens.
                 await DecryptEntityAsync(existing.Value, ct);
-                storedModel = existing.Value.ToModel();
+                storedModel = existing.Value.ToModel(_partitioner);
 
                 // The write below is a full-entity Replace, so it puts back every column as it stood
                 // when the CALLER read — silently reverting a password reset and its security-stamp
@@ -1134,7 +1133,7 @@ public sealed class TableUserStore(
 
             // Drop this user's role memberships — otherwise a deleted account keeps answering
             // "who administers this", which is the one question the index exists to answer.
-            await SyncRoleIndexAsync(existing.Value.ToModel().Roles, roles: null, userId, ct);
+            await SyncRoleIndexAsync(existing.Value.ToModel(_partitioner).Roles, roles: null, userId, ct);
 
             // Delete all external login entries for this user — independent row pairs, so remove them
             // concurrently instead of one blocking round-trip each.
@@ -1179,7 +1178,7 @@ public sealed class TableUserStore(
         //    without it the index only ever describes accounts touched since it shipped, and a role
         //    granted years ago is invisible. Upsert-only: reindex adds what the user holds now and
         //    never removes, so it cannot race a concurrent grant into deleting a live membership.
-        foreach (var role in entity.ToModel().Roles)
+        foreach (var role in entity.ToModel(_partitioner).Roles)
         {
             await WriteRoleIndexAsync(role, userId, ct);
         }
@@ -1335,8 +1334,7 @@ public sealed class TableUserStore(
             try
             {
                 await DecryptEntityAsync(entity, ct);
-                user = entity.ToModel();
-                user.Id = _partitioner.Strip(user.Id);
+                user = entity.ToModel(_partitioner);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
@@ -1399,8 +1397,7 @@ public sealed class TableUserStore(
             try
             {
                 await DecryptEntityAsync(entity, ct);
-                user = entity.ToModel();
-                user.Id = _partitioner.Strip(user.Id);
+                user = entity.ToModel(_partitioner);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
@@ -1481,8 +1478,7 @@ public sealed class TableUserStore(
                 try
                 {
                     await DecryptEntityAsync(entity, ct);
-                    user = entity.ToModel();
-                    user.Id = _partitioner.Strip(user.Id);
+                    user = entity.ToModel(_partitioner);
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {

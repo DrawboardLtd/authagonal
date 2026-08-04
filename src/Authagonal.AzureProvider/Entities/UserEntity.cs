@@ -2,6 +2,7 @@ using System.Text.Json;
 using Azure;
 using Azure.Data.Tables;
 using Authagonal.Core.Models;
+using Authagonal.Core.Services;
 
 namespace Authagonal.AzureProvider.Entities;
 
@@ -73,9 +74,16 @@ public sealed class UserEntity : ITableEntity
         LastLoginAt = user.LastLoginAt,
     };
 
-    public AuthUser ToModel()
+    /// <remarks>
+    /// Takes the partitioner because <c>PartitionKey</c> carries the <c>{env}|</c> prefix outside the live
+    /// env, and <c>Id</c> is fed straight back into <c>PK()</c> on the next write. Stripping it here rather
+    /// than at each read site is the same reasoning as the concurrency token below: no read path can forget
+    /// it. <c>UserRevision.Of</c> deliberately excludes <c>Id</c>, so the digest is unaffected by where in
+    /// the read path the strip happens.
+    /// </remarks>
+    public AuthUser ToModel(EnvPartitioner partitioner)
     {
-        var model = ToModelCore();
+        var model = ToModelCore(partitioner);
         // The revision the caller is holding. TableUserStore.UpdateAsync refuses a write whose token no
         // longer matches the stored state, so a stale snapshot cannot revert what landed in between.
         // Stamped here rather than at each read site so no read path can forget it — a null token means
@@ -84,9 +92,9 @@ public sealed class UserEntity : ITableEntity
         return model;
     }
 
-    private AuthUser ToModelCore() => new()
+    private AuthUser ToModelCore(EnvPartitioner partitioner) => new()
     {
-        Id = PartitionKey,
+        Id = partitioner.Strip(PartitionKey),
         Email = Email,
         NormalizedEmail = NormalizedEmail,
         PasswordHash = PasswordHash,

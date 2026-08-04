@@ -19,7 +19,7 @@ public sealed class TableScimGroupStore(
         {
             var response = await scimGroupsTable.GetEntityAsync<ScimGroupEntity>(
                 partitioner.PK(groupId), ScimGroupEntity.GroupRowKey, cancellationToken: ct);
-            return response.Value.ToModel();
+            return response.Value.ToModel(partitioner);
         }
         catch (RequestFailedException ex) when (ex.Status == 404)
         {
@@ -56,7 +56,7 @@ public sealed class TableScimGroupStore(
 
         await foreach (var entity in query)
         {
-            var group = entity.ToModel();
+            var group = entity.ToModel(partitioner);
             if (group.MemberUserIds.Contains(userId))
             {
                 groups.Add(group);
@@ -82,7 +82,7 @@ public sealed class TableScimGroupStore(
 
         await foreach (var entity in query)
         {
-            var group = entity.ToModel();
+            var group = entity.ToModel(partitioner);
             if (organizationId is null || string.Equals(group.OrganizationId, organizationId, StringComparison.Ordinal))
             {
                 allGroups.Add(group);
@@ -167,7 +167,7 @@ public sealed class TableScimGroupStore(
             var existing = await scimGroupsTable.GetEntityAsync<ScimGroupEntity>(
                 groupPk, ScimGroupEntity.GroupRowKey, cancellationToken: ct);
 
-            var group = existing.Value.ToModel();
+            var group = existing.Value.ToModel(partitioner);
 
             // Tombstone-first (F24e): record both deletes before removing anything.
             if (tombstoneWriter is not null)

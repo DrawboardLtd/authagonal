@@ -16,7 +16,7 @@ public sealed class TableClientStore(TableClient clientsTable, EnvPartitioner pa
         {
             var response = await clientsTable.GetEntityAsync<ClientEntity>(
                 partitioner.PK(clientId), ClientEntity.ConfigRowKey, cancellationToken: ct);
-            return response.Value.ToModel();
+            return response.Value.ToModel(partitioner);
         }
         catch (RequestFailedException ex) when (ex.Status == 404)
         {
@@ -39,7 +39,7 @@ public sealed class TableClientStore(TableClient clientsTable, EnvPartitioner pa
 
         await foreach (var entity in query)
         {
-            results.Add(entity.ToModel());
+            results.Add(entity.ToModel(partitioner));
         }
 
         return results;
@@ -70,7 +70,7 @@ public sealed class TableClientStore(TableClient clientsTable, EnvPartitioner pa
                 partitioner.PK(clientId), ClientEntity.ConfigRowKey, cancellationToken: ct);
             var entity = response.Value;
 
-            var hashes = entity.ToModel().ClientSecretHashes;
+            var hashes = entity.ToModel(partitioner).ClientSecretHashes;
             if (index >= hashes.Count) return false;
             if (!string.Equals(hashes[index], expectedHash, StringComparison.Ordinal)) return false;
 

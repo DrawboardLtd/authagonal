@@ -93,8 +93,7 @@ public sealed class TableMfaStore(
     /// </remarks>
     private MfaCredential ToModel(MfaCredentialEntity entity)
     {
-        var model = entity.ToModel();
-        model.UserId = partitioner.Strip(model.UserId);
+        var model = entity.ToModel(partitioner);
         return model;
     }
 
@@ -112,8 +111,7 @@ public sealed class TableMfaStore(
     /// </remarks>
     private MfaChallenge ToModel(MfaChallengeEntity entity)
     {
-        var model = entity.ToModel();
-        model.ChallengeId = partitioner.Strip(model.ChallengeId);
+        var model = entity.ToModel(partitioner);
         return model;
     }
 

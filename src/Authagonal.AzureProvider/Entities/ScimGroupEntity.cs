@@ -2,6 +2,7 @@ using System.Text.Json;
 using Azure;
 using Azure.Data.Tables;
 using Authagonal.Core.Models;
+using Authagonal.Core.Services;
 
 namespace Authagonal.AzureProvider.Entities;
 
@@ -34,9 +35,16 @@ public sealed class ScimGroupEntity : ITableEntity
         UpdatedAt = group.UpdatedAt,
     };
 
-    public ScimGroup ToModel() => new()
+    /// <remarks>
+    /// Takes the partitioner because <c>PartitionKey</c> carries the <c>{env}|</c> prefix outside the live
+    /// env, and this field is the model's IDENTITY — it is echoed to callers and fed straight back into
+    /// <c>PK()</c> on the next write. Unstripped, a read-modify-write re-prefixes it and targets a phantom
+    /// row: the update returns 200 and changes nothing. Stripping was done at two of the nine stores that
+    /// needed it, so it is a required parameter here rather than a call-site convention.
+    /// </remarks>
+    public ScimGroup ToModel(EnvPartitioner partitioner) => new()
     {
-        Id = PartitionKey,
+        Id = partitioner.Strip(PartitionKey),
         DisplayName = DisplayName,
         ExternalId = ExternalId,
         OrganizationId = OrganizationId,

@@ -505,7 +505,7 @@ public sealed class TableGrantStore(
 
         await foreach (var entity in query)
         {
-            var model = entity.ToModel();
+            var model = entity.ToModel(partitioner);
             model.Data = await ResolveAsync(model.Data, ct);
             results.Add(model);
         }

@@ -15,7 +15,7 @@ public sealed class TableSamlProviderStore(TableClient samlProvidersTable, EnvPa
         {
             var response = await samlProvidersTable.GetEntityAsync<SamlProviderEntity>(
                 partitioner.PK(connectionId), SamlProviderEntity.ConfigRowKey, cancellationToken: ct);
-            return response.Value.ToModel();
+            return response.Value.ToModel(partitioner);
         }
         catch (RequestFailedException ex) when (ex.Status == 404)
         {
@@ -38,7 +38,7 @@ public sealed class TableSamlProviderStore(TableClient samlProvidersTable, EnvPa
 
         await foreach (var entity in query)
         {
-            results.Add(entity.ToModel());
+            results.Add(entity.ToModel(partitioner));
         }
 
         return results;

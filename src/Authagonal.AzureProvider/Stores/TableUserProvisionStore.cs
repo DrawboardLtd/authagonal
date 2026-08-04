@@ -16,7 +16,7 @@ public sealed class TableUserProvisionStore(TableClient tableClient, EnvPartitio
         await foreach (var entity in tableClient.QueryAsync<UserProvisionEntity>(
             e => e.PartitionKey == pk, cancellationToken: ct))
         {
-            results.Add(entity.ToModel());
+            results.Add(entity.ToModel(partitioner));
         }
         return results;
     }
