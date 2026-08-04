@@ -137,6 +137,7 @@ public static class ScimGroupEndpoints
     private static async Task<IResult> ListGroupsAsync(
         HttpContext httpContext,
         IScimGroupStore groupStore,
+        IAuditLogger audit,
         Authagonal.Core.Services.ITenantContext tenantContext,
         int? startIndex,
         int? count,
@@ -180,9 +181,16 @@ public static class ScimGroupEndpoints
 
         var start = cursorStart ?? Math.Max(startIndex ?? 1, 1);
 
-        // Enumeration is scoped to groups owned by the calling SCIM client. No backend indexes the owner,
-        // so a list is a scan; bounding it by the requested page (and, under a filter, by a fixed number of
-        // windows) keeps one request's cost independent of how many rows an attacker managed to write.
+        // Enumeration is scoped to groups owned by the calling SCIM client. No backend indexes the owner, so a
+        // list is a SCAN — and the scan is not bounded by the requested page. Every provider's ListAsync
+        // materialises the owner's whole set, orders it, then skips and takes; the page argument bounds what is
+        // RETURNED and therefore what is serialised into resources, not what is read from storage.
+        //
+        // Comments here used to imply otherwise ("asks the store for the page it will return"), which was
+        // true of the serialisation and false of the read. What actually bounds one request's cost is the rate
+        // limiter above (200/minute per client), the per-client group quota, and — under a filter — the fixed
+        // window count below. Bounding the READ needs an owner index on all four providers plus a keyset
+        // ListAsync; until that exists, this is a scan and saying so is the only honest option.
         var clientId = CallerClientId(httpContext);
 
         // A filter is honoured or refused, never quietly dropped — silently listing every group answers a
@@ -190,10 +198,10 @@ public static class ScimGroupEndpoints
         if (!ScimFilterParser.TryParse(filter, out var filterExpression, out var filterError))
             return ScimResults.Error(400, "invalidFilter", filterError!);
 
-        // Unfiltered listing asks the store for the page it will return. It used to ask for
-        // (0, int.MaxValue) and then page in memory, so one request materialised — and serialised to a
-        // JsonNode — every group in the tenant no matter how small the page requested. Scoped to groups
-        // owned by the calling SCIM client.
+        // Unfiltered listing asks the store only for the page it will return, so only that page is turned into
+        // resources. It used to ask for (0, int.MaxValue) and page in memory, which serialised every group in
+        // the tenant to a JsonNode however small the page requested — that part is genuinely fixed. The store
+        // still READS the owner's whole set to satisfy the request; see the note above.
         if (filterExpression is null)
         {
             var (page, total) = await groupStore.ListAsync(clientId, start, pageSize, ct);
@@ -274,6 +282,7 @@ public static class ScimGroupEndpoints
         string id,
         HttpContext httpContext,
         IScimGroupStore groupStore,
+        IAuditLogger audit,
         Authagonal.Core.Services.ITenantContext tenantContext,
         IRateLimiter rateLimiter,
         string? attributes,
@@ -294,7 +303,19 @@ public static class ScimGroupEndpoints
             return ScimResults.NotFound($"Group '{id}' not found");
 
         var baseUrl = GetBaseUrl(tenantContext);
-        return ScimResults.Success(ScimGroupResource.FromGroup(group, baseUrl));
+
+        // The projection is APPLIED, not merely validated. This endpoint parsed attributes/excludedAttributes,
+        // refused an invalid one, and then returned the full resource — so
+        // `?excludedAttributes=members` answered 200 with the complete members array, one entry per member with
+        // a user id and a $ref, to a connector that had explicitly said it did not want it. That is the
+        // documented purpose of the parameter and the reason a well-behaved connector sends it: on a
+        // role-mapped group of any size it is the largest field in the response. Symmetrically,
+        // `?attributes=displayName` returned externalId and the whole roster too.
+        //
+        // RFC 7644 §3.9 is honoured on the single-user GET, the user listing and the group listing. This was
+        // the fourth read path and the only one of the four with no test.
+        return ScimResults.Success(
+            ScimProjection.ApplyAll([ScimGroupResource.FromGroup(group, baseUrl)], projection).Single());
     }
 
     /// <summary>
@@ -334,6 +355,7 @@ public static class ScimGroupEndpoints
         ScimCreateGroupRequest request,
         HttpContext httpContext,
         IScimGroupStore groupStore,
+        IAuditLogger audit,
         Authagonal.Core.Services.ITenantContext tenantContext,
         ILogger<Program> logger,
         IUserStore userStore,
@@ -370,15 +392,31 @@ public static class ScimGroupEndpoints
         // inflated table makes every login in the tenant pay for it. The cap is what bounds that scan.
         //
         // Asks for ONE row, not MaxScimGroupsPerClient of them. Only the total is read here, and every
-        // store returns the full count independently of the page it hands back — so requesting the cap's
-        // worth meant materialising and ordering up to 5000 group models on every single group create,
-        // paying a slice of the very amplification this check exists to bound.
-        // externalId becomes the PartitionKey of the external-id index outright — see ScimKeySafety. The
+        // store returns the full count independently of the page it hands back — so asking for one row rather
+        // than the cap's worth avoids serialising 5000 group models on every create. It does NOT avoid reading
+        // them: ListAsync materialises and orders the owner's whole set either way, so this check still costs a
+        // scan. Removing that needs a counted owner index, which no provider has.
+        // externalId becomes the PartitionKey of the external-id index outright — see StorageKeySafety. The
         // group row is written BEFORE that index, so an unstorable value fails after the group is durably
         // created and every connector retry leaves another unreachable orphan against the per-client quota.
         if (!string.IsNullOrEmpty(request.ExternalId)
-            && !ScimKeySafety.IsUsableExternalId(request.ExternalId))
-            return ScimResults.BadRequest(ScimKeySafety.ExternalIdRefusal);
+            && !StorageKeySafety.IsUsableExternalId(request.ExternalId))
+            return ScimResults.BadRequest(StorageKeySafety.ExternalIdRefusal);
+
+        // externalId uniqueness, using the index every provider already maintains.
+        //
+        // IScimGroupStore.FindByExternalIdAsync is implemented and indexed by all four storage providers,
+        // migrated, parity-tested — and was called by no production code, so the rule it exists to serve was
+        // never enforced. It is enforced on users and was enforced on nothing else.
+        //
+        // No attacker needed: Entra POSTs a group, the response is lost to a gateway timeout after the row is
+        // written, Entra retries, and a SECOND group with the same externalId is created. The connector's later
+        // PATCHes resolve the group through an `externalId eq` filter, which returns whichever row the scan
+        // reaches first — so if the administrator attached a group-to-role mapping to the other one, the
+        // members it grants roles to silently stop matching the members the connector is maintaining.
+        if (!string.IsNullOrEmpty(request.ExternalId)
+            && await groupStore.FindByExternalIdAsync(clientId, request.ExternalId, ct) is not null)
+            return ScimResults.Conflict($"Group with externalId '{request.ExternalId}' already exists");
 
         var (_, ownedCount) = await groupStore.ListAsync(clientId, 1, 1, ct);
         if (ownedCount >= options.MaxScimGroupsPerClient)
@@ -406,6 +444,11 @@ public static class ScimGroupEndpoints
 
         logger.LogInformation("SCIM group created: {GroupId} ({DisplayName})", group.Id, group.DisplayName);
 
+        // Group membership drives role assignment through IScimGroupRoleMappingStore, so a group write is a
+        // privilege change and had no audit row at all. See ScimActor.
+        await audit.LogAsync(
+            ScimActor.Of(httpContext), "scim.group_created", "scim_group", group.Id, group.DisplayName, ct);
+
         var createdGroup = ScimGroupResource.FromGroup(group, baseUrl);
         return ScimResults.Created(createdGroup, createdGroup.Meta?.Location);
     }
@@ -415,6 +458,7 @@ public static class ScimGroupEndpoints
         ScimCreateGroupRequest request,
         HttpContext httpContext,
         IScimGroupStore groupStore,
+        IAuditLogger audit,
         Authagonal.Core.Services.ITenantContext tenantContext,
         IUserStore userStore,
         IRateLimiter rateLimiter,
@@ -438,8 +482,20 @@ public static class ScimGroupEndpoints
 
         // Same rule as create: a replace can move the index to an unstorable key just as easily.
         if (!string.IsNullOrEmpty(request.ExternalId)
-            && !ScimKeySafety.IsUsableExternalId(request.ExternalId))
-            return ScimResults.BadRequest(ScimKeySafety.ExternalIdRefusal);
+            && !StorageKeySafety.IsUsableExternalId(request.ExternalId))
+            return ScimResults.BadRequest(StorageKeySafety.ExternalIdRefusal);
+
+        // Uniqueness on the update path too, not only on create — otherwise a PUT is the way around it, and
+        // repointing the index at THIS group while another still believed it owned that externalId is exactly
+        // the state the user path's own comment describes as unrecoverable through the API.
+        if (!string.IsNullOrEmpty(request.ExternalId))
+        {
+            var externalIdOwner = await groupStore.FindByExternalIdAsync(
+                CallerClientId(httpContext) ?? "", request.ExternalId, ct);
+            if (externalIdOwner is not null
+                && !string.Equals(externalIdOwner.Id, group.Id, StringComparison.Ordinal))
+                return ScimResults.Conflict($"Group with externalId '{request.ExternalId}' already exists");
+        }
 
         group.DisplayName = request.DisplayName;
         group.ExternalId = request.ExternalId;
@@ -459,6 +515,10 @@ public static class ScimGroupEndpoints
 
         await groupStore.UpdateAsync(group, ct);
 
+        await audit.LogAsync(
+            ScimActor.Of(httpContext), "scim.group_replaced", "scim_group", group.Id,
+            $"{group.MemberUserIds.Count} member(s)", ct);
+
         return ScimResults.Success(ScimGroupResource.FromGroup(group, baseUrl));
     }
 
@@ -467,6 +527,7 @@ public static class ScimGroupEndpoints
         ScimPatchRequest request,
         HttpContext httpContext,
         IScimGroupStore groupStore,
+        IAuditLogger audit,
         Authagonal.Core.Services.ITenantContext tenantContext,
         ILogger<Program> logger,
         IUserStore userStore,
@@ -530,8 +591,19 @@ public static class ScimGroupEndpoints
         // typed field — so the only place the resulting value is knowable is here. Same rule as create and
         // replace: externalId is the PartitionKey of the external-id index, and this write repoints it.
         if (!string.IsNullOrEmpty(group.ExternalId)
-            && !ScimKeySafety.IsUsableExternalId(group.ExternalId))
-            return ScimResults.BadRequest(ScimKeySafety.ExternalIdRefusal);
+            && !StorageKeySafety.IsUsableExternalId(group.ExternalId))
+            return ScimResults.BadRequest(StorageKeySafety.ExternalIdRefusal);
+
+        // And uniqueness, for the same reason and at the same point: a PATCH sets externalId through a path
+        // expression, so this is where the resulting value is knowable.
+        if (!string.IsNullOrEmpty(group.ExternalId))
+        {
+            var patchExternalIdOwner = await groupStore.FindByExternalIdAsync(
+                CallerClientId(httpContext) ?? "", group.ExternalId, ct);
+            if (patchExternalIdOwner is not null
+                && !string.Equals(patchExternalIdOwner.Id, group.Id, StringComparison.Ordinal))
+                return ScimResults.Conflict($"Group with externalId '{group.ExternalId}' already exists");
+        }
 
         group.UpdatedAt = DateTimeOffset.UtcNow;
         // Membership must name users THIS client provisioned. Group membership drives role assignment, so
@@ -545,6 +617,10 @@ public static class ScimGroupEndpoints
 
         logger.LogInformation("SCIM group patched: {GroupId}", group.Id);
 
+        await audit.LogAsync(
+            ScimActor.Of(httpContext), "scim.group_patched", "scim_group", group.Id,
+            $"{group.MemberUserIds.Count} member(s)", ct);
+
         return ScimResults.Success(ScimGroupResource.FromGroup(group, baseUrl));
     }
 
@@ -552,6 +628,7 @@ public static class ScimGroupEndpoints
         string id,
         HttpContext httpContext,
         IScimGroupStore groupStore,
+        IAuditLogger audit,
         ILogger<Program> logger,
         IRateLimiter rateLimiter,
         CancellationToken ct)
@@ -569,6 +646,9 @@ public static class ScimGroupEndpoints
         await groupStore.DeleteAsync(id, ct);
 
         logger.LogInformation("SCIM group deleted: {GroupId}", group.Id);
+
+        await audit.LogAsync(
+            ScimActor.Of(httpContext), "scim.group_deleted", "scim_group", group.Id, group.DisplayName, ct);
 
         return ScimResults.NoContent();
     }

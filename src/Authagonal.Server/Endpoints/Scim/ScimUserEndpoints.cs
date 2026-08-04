@@ -82,6 +82,8 @@ public static class ScimUserEndpoints
     private static async Task<IResult> ListUsersAsync(
         HttpContext httpContext,
         IUserStore userStore,
+        IEnumerable<IAuthHook> authHooks,
+        IAuditLogger audit,
         Authagonal.Core.Services.ITenantContext tenantContext,
         IRateLimiter rateLimiter,
         int? startIndex,
@@ -183,6 +185,8 @@ public static class ScimUserEndpoints
         string id,
         HttpContext httpContext,
         IUserStore userStore,
+        IEnumerable<IAuthHook> authHooks,
+        IAuditLogger audit,
         Authagonal.Core.Services.ITenantContext tenantContext,
         IRateLimiter rateLimiter,
         string? attributes,
@@ -270,18 +274,7 @@ public static class ScimUserEndpoints
         return ScimResults.BadRequest($"Domain '{scimDomain}' is not permitted for this provisioning client");
     }
 
-    private static bool IsPlausibleEmail(string value)
-    {
-        if (string.IsNullOrWhiteSpace(value) || value.Length > 320) return false;
-        foreach (var c in value)
-            if (char.IsWhiteSpace(c) || char.IsControl(c) || IsKeyHostile(c)) return false;
-
-        var at = value.IndexOf('@');
-        if (at <= 0 || at != value.LastIndexOf('@') || at == value.Length - 1) return false;
-
-        var domain = value[(at + 1)..];
-        return domain.Contains('.') && !domain.StartsWith('.') && !domain.EndsWith('.');
-    }
+    private static bool IsPlausibleEmail(string value) => StorageKeySafety.IsPlausibleEmail(value);
 
     /// <summary>
     /// Characters no supported backend accepts inside a key. Azure Table forbids all four outright;
@@ -294,7 +287,7 @@ public static class ScimUserEndpoints
     /// lookup can reach. None of these characters can appear in an unquoted addr-spec anyway, so
     /// refusing them costs nothing an IdP would legitimately send.
     /// </remarks>
-    private static bool IsKeyHostile(char c) => ScimKeySafety.IsKeyHostile(c);
+    private static bool IsKeyHostile(char c) => StorageKeySafety.IsKeyHostile(c);
 
     /// <summary>
     /// externalId is the other SCIM-supplied string that becomes a key — it is a component of the
@@ -305,12 +298,14 @@ public static class ScimUserEndpoints
     /// had none: there, externalId is the PartitionKey of the group external-id index outright, not merely a
     /// component of one.
     /// </remarks>
-    private static bool IsUsableExternalId(string value) => ScimKeySafety.IsUsableExternalId(value);
+    private static bool IsUsableExternalId(string value) => StorageKeySafety.IsUsableExternalId(value);
 
     private static async Task<IResult> CreateUserAsync(
         ScimCreateUserRequest request,
         HttpContext httpContext,
         IUserStore userStore,
+        IEnumerable<IAuthHook> authHooks,
+        IAuditLogger audit,
         IProvisioningOrchestrator provisioning,
         Authagonal.Core.Services.ITenantContext tenantContext,
         IRateLimiter rateLimiter,
@@ -463,6 +458,17 @@ public static class ScimUserEndpoints
 
         logger.LogInformation("SCIM user created: {UserId} ({Email}) by client {ClientId}", user.Id, email, clientId);
 
+        // The SCIM write surface fired no IAuthHook and wrote no audit row — the whole surface, on every path.
+        // IAuthHook's own parameter docs name "scim" as an origin value it receives, and docs/extensibility.md
+        // shows an audit-logger hook as its worked example, so an operator who registered one to mirror
+        // identities downstream and feed a SIEM got nothing: 500 accounts provisioned by Entra never appeared
+        // in the downstream directory, and a deactivation — which revokes every grant — produced no SIEM event.
+        // "Who deactivated this user, and when" had nowhere to look, while the same trail faithfully records an
+        // admin renaming a client.
+        await authHooks.RunOnUserCreatedAsync(user.Id, email, "scim", ct);
+        await audit.LogAsync(
+            ScimActor.Of(httpContext), "scim.user_created", "user", user.Id, email, ct);
+
         var resource = ScimUserResource.FromUser(user, baseUrl);
         // meta.location is already computed on the resource; pass it so the 201 carries it.
         return ScimResults.Created(resource, resource.Meta?.Location);
@@ -473,6 +479,8 @@ public static class ScimUserEndpoints
         ScimCreateUserRequest request,
         HttpContext httpContext,
         IUserStore userStore,
+        IEnumerable<IAuthHook> authHooks,
+        IAuditLogger audit,
         IGrantStore grantStore,
         IRevokedTokenStore? revokedTokenStore,
         Authagonal.Core.Services.ITenantContext tenantContext,
@@ -557,6 +565,11 @@ public static class ScimUserEndpoints
         user.UpdatedAt = DateTimeOffset.UtcNow;
         await userStore.UpdateAsync(user, ct);
 
+        await authHooks.RunOnUserUpdatedAsync(user.Id, user.Email, "scim", ct);
+        await audit.LogAsync(
+            ScimActor.Of(httpContext), "scim.user_replaced", "user", user.Id,
+            user.IsActive ? "active" : "deactivated", ct);
+
         // Deactivating must REVOKE, not merely mark. PATCH and DELETE already do this; PUT did not, so
         // deprovisioning through the replace path left every refresh token and stored consent live and the
         // user kept working until each token expired on its own.
@@ -575,6 +588,8 @@ public static class ScimUserEndpoints
         ScimPatchRequest request,
         HttpContext httpContext,
         IUserStore userStore,
+        IEnumerable<IAuthHook> authHooks,
+        IAuditLogger audit,
         IGrantStore grantStore,
         IRevokedTokenStore? revokedTokenStore,
         Authagonal.Core.Services.ITenantContext tenantContext,
@@ -667,6 +682,11 @@ public static class ScimUserEndpoints
         user.UpdatedAt = DateTimeOffset.UtcNow;
         await userStore.UpdateAsync(user, ct);
 
+        await authHooks.RunOnUserUpdatedAsync(user.Id, user.Email, "scim", ct);
+        await audit.LogAsync(
+            ScimActor.Of(httpContext), "scim.user_patched", "user", user.Id,
+            user.IsActive ? "active" : "deactivated", ct);
+
         // If deactivated, revoke all grants
         if (wasActive && !user.IsActive)
         {
@@ -681,6 +701,8 @@ public static class ScimUserEndpoints
         string id,
         HttpContext httpContext,
         IUserStore userStore,
+        IEnumerable<IAuthHook> authHooks,
+        IAuditLogger audit,
         IGrantStore grantStore,
         IRevokedTokenStore? revokedTokenStore,
         IProvisioningOrchestrator provisioning,
@@ -712,6 +734,10 @@ public static class ScimUserEndpoints
         user.ScimDeletedAt = DateTimeOffset.UtcNow;
         user.UpdatedAt = DateTimeOffset.UtcNow;
         await userStore.UpdateAsync(user, ct);
+
+        await authHooks.RunOnUserDeletedAsync(user.Id, user.Email, "scim", ct);
+        await audit.LogAsync(
+            ScimActor.Of(httpContext), "scim.user_deleted", "user", user.Id, user.Email, ct);
 
         // The externalId index is dropped so a re-provision can bind the same externalId to the new
         // resource. The email index is deliberately kept — it is what lets the create path find the

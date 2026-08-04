@@ -320,6 +320,23 @@ public static class UserEndpoints
         if (string.IsNullOrWhiteSpace(request.Password))
             return TypedResults.Json(new ErrorInfoResponse { Error = "invalid_request", ErrorDescription = localizer["Admin_PasswordRequired"].Value }, AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 400);
 
+        // The address becomes a storage key. With the default non-tokenizing configuration the normalized
+        // address IS the email index's PartitionKey, and CreateAsync writes the profile row BEFORE the index
+        // row — so a key the storage service rejects (Azure Table refuses '/', '\\', '#', '?') fails after the
+        // account is durably created, leaving a record FindByEmailAsync cannot reach: the holder cannot log in,
+        // cannot reset their password, and the address cannot be reused because the profile row still has it.
+        //
+        // Both sibling creation paths — anonymous self-registration and SCIM — already refuse these values for
+        // exactly that reason. This one checked only that the field was non-empty, and it is the path a stolen
+        // admin token reaches, which the audit comments in this file already treat as the threat model.
+        if (!StorageKeySafety.IsPlausibleEmail(request.Email))
+            return TypedResults.Json(
+                new ErrorInfoResponse
+                {
+                    Error = "invalid_request",
+                    ErrorDescription = "email must be a valid email address",
+                }, AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 400);
+
         var (isValid, validationError) = passwordValidator.Validate(request.Password, passwordPolicy);
         if (!isValid)
             return TypedResults.Json(new ErrorInfoResponse { Error = "weak_password", ErrorDescription = validationError }, AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 400);
