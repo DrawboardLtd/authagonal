@@ -21,7 +21,16 @@ Add it after `AddAuthagonal` (it depends on the stores, the secret provider, and
 ```csharp
 builder.Services.AddAuthagonal(builder.Configuration, c => c.UseAzureStorage(blob, table));
 builder.Services.AddAuthagonalDuendeMigration(builder.Configuration);
+
+var app = builder.Build();
+app.MapAuthagonalEndpoints();
+app.MapAuthagonalDuendeMigration();   // GET /admin/migration/status
 ```
+
+The second `Map` call is required and separate: this package references `Authagonal.Server`, so
+`MapAuthagonalEndpoints` cannot reach it. Without it `GET /admin/migration/status` answers 404 —
+indistinguishable from the `IdentityAdmin` policy refusing you — and the run logs a warning at startup
+saying so.
 
 Configure via the `Migration` section:
 

@@ -33,6 +33,45 @@ public sealed class SamlSignatureBindingTests
                 SamlTestHelper.TestCertificate);
     }
 
+    /// <summary>
+    /// A retired IdP certificate cannot authenticate a redirect-binding message.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="SamlResponseParser"/> enforces the certificate's own validity window for XML signatures
+    /// over the same pinned trust set. This verifier went straight to <c>VerifyData</c>, so a certificate the
+    /// IdP had rotated away from — retirement after a compromise being the case the check exists for — kept
+    /// authenticating redirect-binding messages indefinitely. On this binding that means forcing logout
+    /// through <c>/saml/{connection}/logout</c> and <c>/saml/{connection}/slo</c>.
+    /// <para>
+    /// The only other expiry control here is metadata <c>@validUntil</c>, which is optional and which a
+    /// pasted <c>MetadataXml</c> connection never re-fetches — so for those connections the certificate set
+    /// was frozen with no expiry at all.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void AnExpiredIdpCertificateCannotVerifyARedirectBindingSignature()
+    {
+        using var rsa = RSA.Create(2048);
+        var request = new CertificateRequest(
+            "CN=Retired IdP", rsa, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
+        using var expired = request.CreateSelfSigned(
+            DateTimeOffset.UtcNow.AddYears(-3), DateTimeOffset.UtcNow.AddYears(-2));
+
+        var url = SamlRequestBuilder.BuildAuthnRequestUrl("_r1", "sp", "https://sp/acs", "https://idp/sso");
+        var query = new Uri(SamlRedirectBinding.Sign(url, rsa)).Query;
+
+        // The signature itself is genuine — it is the certificate that is no longer current.
+        Assert.False(SamlRedirectBinding.Verify(query, "SAMLRequest", [expired]));
+    }
+
+    /// <summary>The control: the same message verifies against a certificate that IS current.</summary>
+    [Fact]
+    public void ACurrentIdpCertificateStillVerifiesARedirectBindingSignature()
+    {
+        var (captured, cert) = SignedAuthnRequest();
+        Assert.True(SamlRedirectBinding.Verify(captured, "SAMLRequest", [cert]));
+    }
+
     /// <summary>The captured-triple-plus-appended-response attack.</summary>
     [Fact]
     public void AppendingAForgedResponseToACapturedRequestIsRefused()

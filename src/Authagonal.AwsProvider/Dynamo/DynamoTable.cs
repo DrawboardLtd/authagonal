@@ -207,9 +207,18 @@ public sealed class DynamoTable(IAmazonDynamoDB db, string name)
     /// budget needs. <c>UPDATED_NEW</c> returns the post-increment value in the same round trip, so the
     /// count is never read separately from the write that produced it.
     /// <para>
-    /// <c>_ttl</c> is DynamoDB's native expiry (epoch seconds), so buckets are reclaimed by the service
-    /// with no sweep of our own. It is set on every increment rather than only on create — refreshing it
-    /// costs nothing and keeps a bucket from expiring out from under a window still in use.
+    /// The TTL attribute is DynamoDB's native expiry (epoch seconds), so buckets are reclaimed by the
+    /// service with no sweep of our own. It is set on every increment rather than only on create —
+    /// refreshing it costs nothing and keeps a bucket from expiring out from under a window still in use.
+    /// <para>
+    /// The name comes from <see cref="DynamoTableProvisioner.TtlAttribute"/> rather than a literal, because
+    /// this wrote <c>_ttl</c> while the provisioner enabled TTL on <c>ttl</c>. Nothing expired: every
+    /// rate-limit item was permanent, on the one backend with no sweeper for these rows (Azure has
+    /// RateLimitCounterSweepService, SQL has SqlExpiryReaper). Turning on the documented multi-replica
+    /// limiter therefore made unauthenticated request volume — one item per source address for
+    /// login/registration/DCR, per target address for forgot-password, per user_code for the device flow —
+    /// into unbounded permanent storage.
+    /// </para>
     /// </para>
     /// </remarks>
     public async Task<long> IncrementAsync(
@@ -227,7 +236,7 @@ public sealed class DynamoTable(IAmazonDynamoDB db, string name)
             ExpressionAttributeNames = new Dictionary<string, string>
             {
                 ["#c"] = counterAttribute,
-                ["#ttl"] = "_ttl",
+                ["#ttl"] = DynamoTableProvisioner.TtlAttribute,
             },
             ExpressionAttributeValues = new Dictionary<string, AttributeValue>
             {

@@ -189,4 +189,43 @@ public class DurableRateLimiterTests
             return Task.FromResult(1L);
         }
     }
+
+    /// <summary>
+    /// The DynamoDB increment must write the SAME attribute the provisioner enables TTL on.
+    /// </summary>
+    /// <remarks>
+    /// It wrote <c>_ttl</c>; <c>DynamoTableProvisioner</c> enabled TTL on <c>ttl</c>. So nothing ever
+    /// expired, on the one backend with no sweeper for these rows — Azure has
+    /// <c>RateLimitCounterSweepService</c> and SQL has <c>SqlExpiryReaper</c>, and neither covers AWS.
+    /// Enabling the documented multi-replica limiter turned unauthenticated request volume into unbounded
+    /// permanent storage: one item per source address for login/registration/DCR, per target address for
+    /// forgot-password, per <c>user_code</c> for the device flow.
+    /// <para>
+    /// A source check because the two names live in different assemblies and nothing else compares them —
+    /// the increment now references the provisioner's constant, and this is what keeps it doing so. There is
+    /// no assertion available against a real table: DynamoDB Local implements TTL as a no-op.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void DynamoRateLimitIncrementWritesTheProvisionedTtlAttribute()
+    {
+        var path = Path.Combine(RepositoryRoot(),
+            "src/Authagonal.AwsProvider/Dynamo/DynamoTable.cs".Replace('/', Path.DirectorySeparatorChar));
+        Assert.True(File.Exists(path), $"expected {path}");
+
+        var text = File.ReadAllText(path);
+
+        Assert.Contains("DynamoTableProvisioner.TtlAttribute", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("\"_ttl\"", text, StringComparison.Ordinal);
+    }
+
+    private static string RepositoryRoot()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir is not null && !File.Exists(Path.Combine(dir.FullName, "Authagonal.slnx")))
+            dir = dir.Parent;
+
+        Assert.NotNull(dir);
+        return dir!.FullName;
+    }
 }

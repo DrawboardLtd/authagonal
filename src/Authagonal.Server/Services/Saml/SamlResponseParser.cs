@@ -964,15 +964,9 @@ public sealed class SamlResponseParser(ILogger<SamlResponseParser> logger)
             //
             // Same skew the assertion time checks allow, so a few seconds of clock disagreement around a
             // rollover boundary is not a hard failure.
-            if (now < cert.NotBefore.ToUniversalTime() - CertificateValiditySkew
-                || now > cert.NotAfter.ToUniversalTime() + CertificateValiditySkew)
+            if (!SamlCertificateValidity.IsCurrent(cert, now, logger))
             {
                 expiredCandidates++;
-                logger.LogWarning(
-                    "Skipping IdP signing certificate {Thumbprint}: outside its validity window "
-                    + "({NotBefore:o} – {NotAfter:o}). Refresh the connection's metadata to pick up the "
-                    + "rollover.",
-                    cert.Thumbprint, cert.NotBefore.ToUniversalTime(), cert.NotAfter.ToUniversalTime());
                 continue;
             }
 
@@ -1020,7 +1014,6 @@ public sealed class SamlResponseParser(ILogger<SamlResponseParser> logger)
     /// not a hard failure. Taken as a constant rather than from the validation context because
     /// <c>ValidateElementSignature</c> is also called for the logout legs, which have no context.
     /// </remarks>
-    private static readonly TimeSpan CertificateValiditySkew = TimeSpan.FromMinutes(5);
 
     private static SamlParseResult Fail(string error) => new() { Success = false, Error = error };
 

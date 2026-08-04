@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
+using Microsoft.Extensions.Logging;
 using System.Text;
 
 namespace Authagonal.Server.Services.Saml;
@@ -68,7 +69,8 @@ public static class SamlRedirectBinding
     public static bool Verify(
         string rawQuery,
         string expectedMessageParameter,
-        IReadOnlyList<X509Certificate2> trustedCertificates)
+        IReadOnlyList<X509Certificate2> trustedCertificates,
+        ILogger? logger = null)
     {
         if (expectedMessageParameter is not ("SAMLRequest" or "SAMLResponse"))
             throw new ArgumentOutOfRangeException(nameof(expectedMessageParameter),
@@ -122,8 +124,21 @@ public static class SamlRedirectBinding
         var toVerify = Encoding.UTF8.GetBytes(
             message + (relayState is null ? "" : "&" + relayState) + "&" + sigAlgPart);
 
+        // The certificate's own validity window, which this path ignored entirely.
+        //
+        // SamlResponseParser enforces it for XML signatures over the SAME pinned trust set; this verifier
+        // went straight to VerifyData. So a signing certificate the IdP had already rotated away from —
+        // retirement after a compromise being exactly the case the check exists for — kept authenticating
+        // redirect-binding messages indefinitely, which on this path means forcing logout through
+        // /saml/{connection}/logout and /saml/{connection}/slo. Shared with the XML verifier now, because
+        // the reason this was missing is that the rule lived in one of the two places that needed it.
+        var now = DateTimeOffset.UtcNow;
+
         foreach (var cert in trustedCertificates)
         {
+            if (!SamlCertificateValidity.IsCurrent(cert, now, logger))
+                continue;
+
             using var rsa = cert.GetRSAPublicKey();
             if (rsa is not null && rsa.VerifyData(toVerify, signature, hash, RSASignaturePadding.Pkcs1))
                 return true;

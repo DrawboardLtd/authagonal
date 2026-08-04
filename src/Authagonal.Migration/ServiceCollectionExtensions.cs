@@ -52,6 +52,13 @@ public static class ServiceCollectionExtensions
             sp.GetService<ILogger<DuendeMigrationEngine>>()));
 
         services.AddHostedService<DuendeMigrationHostedRunner>();
+
+        // The status endpoint has to be mapped by the host — this package references Authagonal.Server, so
+        // MapAuthagonalEndpoints cannot reach it. This pair makes the omission report itself at startup
+        // instead of surfacing as a 404 on the one request the documented cutover tells an operator to make.
+        services.TryAddSingleton<MigrationEndpointRegistration>();
+        services.AddHostedService<MigrationStatusEndpointCheck>();
+
         return services;
     }
 
