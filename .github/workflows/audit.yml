@@ -116,6 +116,36 @@ jobs:
         working-directory: bff-lib
         run: npm test
 
+  # The login SPA's unit tests. This package had no test runner at all, which meant its exported
+  # open-redirect control — resolveRedirect, the THIRD implementation of a guard whose other two
+  # (Authagonal.Core/Services/LocalRedirect and the BFF's return-URL check) are both table-tested —
+  # was the one nobody could assert on. The same gap left the GDPR export's content-type guard
+  # untestable: without it, a self-hosted deployment answers /api/v1/account/export with 200 and
+  # this SPA's own HTML, which the client saved as the user's personal data.
+  #
+  # `vitest run` typechecks nothing on its own, so `tsc -b` runs alongside it — the build script
+  # already pairs them and a type error in a test file must not pass silently.
+  login-app:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+
+      - name: Install
+        working-directory: login-app
+        run: npm ci
+
+      - name: Typecheck
+        working-directory: login-app
+        run: npx tsc --noEmit
+
+      - name: Unit tests
+        working-directory: login-app
+        run: npm test
+
   # Locale drift. i18next falls back to en for any key a locale is missing, so a dropped
   # translation ships as untranslated English and nothing anywhere reports it — which is how
   # oidcErrorGeneric stayed missing from seven of the ten shipped locales. No npm install: the
