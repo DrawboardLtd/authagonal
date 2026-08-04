@@ -28,6 +28,28 @@ internal sealed class TableTicketStore(
 {
     internal const string Partition = "session";
 
+    /// <summary>
+    /// At-rest protection for the serialized ticket. Passthrough when no <see cref="IFieldCipher"/> is
+    /// registered, which is the historical layout and keeps an existing deployment reading its own rows.
+    /// </summary>
+    /// <remarks>
+    /// The <c>Data</c> column is the WHOLE authentication ticket, base64 of everything on the principal: the
+    /// user's email, name and phone, every federated:* claim, <c>saml_name_id</c>, and — for a connection with
+    /// <c>RevalidateOnRefresh</c> — the upstream IdP's refresh token, which is a live credential for another
+    /// provider. It was stored in the clear.
+    /// <para>
+    /// The adversary is the one <c>IFieldCipher</c> and <c>TableSigningKeyStore</c> already name: "a leaked
+    /// read-only role, a copied backup, a snapshot, a support export". An operator who registers a cipher is
+    /// told PII and upstream tokens are encrypted at rest; every store that holds them honoured that seam
+    /// except this one, so the deployment that opted in was the one silently excluded.
+    /// </para>
+    /// Resolved lazily from the service provider rather than taken as a constructor parameter, because a host
+    /// may register its cipher either side of <c>AddAuthagonalServerSideSessions</c> — the same ordering
+    /// problem that made the DataProtection check read resolved options rather than configuration.
+    /// </remarks>
+    private IFieldCipher Cipher =>
+        services?.GetService(typeof(IFieldCipher)) as IFieldCipher ?? NullFieldCipher.Instance;
+
     private string SessionPk => partitioner.PK(Partition);
     private string UserPk(string userId) => partitioner.PK(userId);
 
@@ -46,7 +68,8 @@ internal sealed class TableTicketStore(
         try
         {
             var response = await sessions.GetEntityAsync<SessionEntity>(SessionPk, key);
-            var ticket = TicketSerializer.Default.Deserialize(Convert.FromBase64String(response.Value.Data));
+            var ticket = TicketSerializer.Default.Deserialize(
+                Convert.FromBase64String(await Cipher.ResolveAsync(response.Value.Data)));
             if (ticket?.Properties.ExpiresUtc is { } expires && expires < DateTimeOffset.UtcNow)
             {
                 await RemoveAsync(key);
@@ -73,7 +96,11 @@ internal sealed class TableTicketStore(
         {
             var row = (await sessions.GetEntityAsync<SessionEntity>(SessionPk, key)).Value;
             userId = row.UserId;
-            try { ticket = TicketSerializer.Default.Deserialize(Convert.FromBase64String(row.Data)); }
+            try
+            {
+                ticket = TicketSerializer.Default.Deserialize(
+                    Convert.FromBase64String(await Cipher.ResolveAsync(row.Data)));
+            }
             catch (Exception) { /* unreadable ticket — the session still goes */ }
         }
         catch (RequestFailedException ex) when (ex.Status == 404) { /* already gone */ }
@@ -135,7 +162,8 @@ internal sealed class TableTicketStore(
         {
             PartitionKey = SessionPk,
             RowKey = key,
-            Data = Convert.ToBase64String(TicketSerializer.Default.Serialize(ticket)),
+            Data = await Cipher.ProtectAsync(
+                Convert.ToBase64String(TicketSerializer.Default.Serialize(ticket))),
             UserId = userId,
             ExpiresUtc = ticket.Properties.ExpiresUtc,
             IssuedUtc = ticket.Properties.IssuedUtc,

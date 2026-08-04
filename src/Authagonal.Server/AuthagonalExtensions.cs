@@ -195,6 +195,37 @@ public static class AuthagonalExtensions
             services.AddSingleton<IHostedService, Authagonal.Server.Services.Oidc.OidcStateSweepService>();
         }
 
+        // Azure Table has no TTL, so three tables that every other backend collects automatically were
+        // accumulating forever on the DEFAULT backend: abandoned MFA challenges (user id, client id, return
+        // URL, WebAuthn challenge), upstream IdP refresh tokens (a live credential for another provider), and
+        // revoked-token entries whose own comment says the expiry reapers keep the list bounded. DynamoDB
+        // expires all three natively; SqlExpiryReaper's table list covers all three. See
+        // TableExpirySweepService.
+        //
+        // Registered only when the Azure backend supplied these keyed clients, the same guard
+        // GrantReconciliationService uses.
+        foreach (var (key, expiryProperty, description) in new[]
+                 {
+                     ("MfaChallenges", "ExpiresAt", "MFA challenge"),
+                     ("RevokedTokens", "ExpiresAt", "revoked token"),
+                     // Nullable on this one: a row with no stated expiry is deliberately never swept, because
+                     // it holds an upstream credential and a sweep must not invent an expiry for it.
+                     ("UpstreamRefreshTokens", "ExpiresUtc", "upstream refresh token"),
+                 })
+        {
+            if (!services.Any(d => d.IsKeyedService && (d.ServiceKey as string) == key)) continue;
+
+            var sweptKey = key;
+            var sweptProperty = expiryProperty;
+            var sweptDescription = description;
+            services.AddSingleton<IHostedService>(sp => new TableExpirySweepService(
+                sp.GetRequiredKeyedService<TableClient>(sweptKey),
+                sweptProperty,
+                sweptDescription,
+                sp.GetRequiredService<Core.Clustering.ILeaderElection>(),
+                sp.GetRequiredService<ILogger<TableExpirySweepService>>()));
+        }
+
         // Health check (depends on ISigningKeyStore singleton).
         //
         // Registered as a SINGLETON on purpose: the check caches its own answer for a few seconds so an
@@ -371,6 +402,11 @@ public static class AuthagonalExtensions
 
         // Resolved at StartAsync so a host that registers the provider either side of AddAuthagonal is caught.
         services.AddSingleton<IHostedService, VaultTransitSigningWarning>();
+
+        // The driver for ReindexUserAsync / EnumerateUserIdsAsync / MigrateProvisioningAppsAsync, which were
+        // implemented on every provider and called by nothing — so the documented way to turn on at-rest
+        // encryption never rewrote an existing row. Opt-in via Auth:AtRestBackfillEnabled.
+        services.AddSingleton<IHostedService, AtRestBackfillService>();
         services.AddSingleton<IHostedService, Services.Cluster.InternalEndpointAccessWarning>();
         services.AddSingleton<IHostedService, NullAuditLoggerWarning>();
 

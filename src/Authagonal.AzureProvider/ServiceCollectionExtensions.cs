@@ -198,6 +198,13 @@ public static class ServiceCollectionExtensions
             new TableRateLimitCounterStore(rateLimitCounters, live));
         services.AddKeyedSingleton("RateLimitCounters", rateLimitCounters);
 
+        // Keyed so the Server can attach TableExpirySweepService to them. Azure Table has no TTL, and
+        // nothing collected any of these three: DynamoDB expires them natively and SqlExpiryReaper's table
+        // list covers all three, so the DEFAULT backend was the only one accumulating them forever.
+        services.AddKeyedSingleton("MfaChallenges", mfaChallenges);
+        services.AddKeyedSingleton("RevokedTokens", revokedTokens);
+        services.AddKeyedSingleton("UpstreamRefreshTokens", upstreamRefreshTokens);
+
         return services;
     }
 

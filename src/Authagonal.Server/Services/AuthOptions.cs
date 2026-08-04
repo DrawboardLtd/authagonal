@@ -262,6 +262,21 @@ public sealed class AuthOptions
     public int KeyRotationCheckIntervalMinutes { get; set; } = 360;
     public int KeyRotationLeadTimeDays { get; set; } = 14;
 
+    /// <summary>
+    /// Run the at-rest backfill once at startup, on the cluster leader. Default false.
+    /// </summary>
+    /// <remarks>
+    /// Rewrites every existing user row and its profile-derived index rows to the current at-rest scheme —
+    /// the migration path for enabling <c>IFieldCipher</c> / <c>IIndexTokenizer</c> on a deployment that
+    /// already has data. The stores implemented it and nothing called it, so registering a cipher previously
+    /// encrypted only rows written afterwards and left every existing row's PII in the clear.
+    /// <para>
+    /// Opt-in because it is real write volume and a migration rather than steady-state behaviour. Idempotent,
+    /// so leaving it on costs one pass per restart; turn it off once the log reports a complete run.
+    /// </para>
+    /// </remarks>
+    public bool AtRestBackfillEnabled { get; set; }
+
     // --- Cookie validation ---
     public int SecurityStampRevalidationMinutes { get; set; } = 30;
 
