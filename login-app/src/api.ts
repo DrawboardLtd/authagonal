@@ -112,16 +112,40 @@ export function revokeOtherSessions(): Promise<RevokeSessionsResponse> {
   return api<RevokeSessionsResponse>('/api/auth/sessions/revoke-others', { method: 'POST' });
 }
 
-/** Download all personal data held on the signed-in user (GDPR Art. 15/20) as a JSON blob. Served by the
- *  Cloud auth host; not part of the library's own /api/auth surface. */
+/**
+ * Download all personal data held on the signed-in user (GDPR Art. 15/20) as a JSON blob.
+ *
+ * Served by the Cloud auth host; **not** part of the library's own `/api/auth` surface. On a host that has not
+ * implemented it, `Authagonal.Server`'s `MapFallbackToFile("index.html")` answers the request with **HTTP 200
+ * and this very SPA's HTML** — so checking `response.ok` alone accepted the login page as the user's subject
+ * access response, and the browser saved it as `authagonal-data-export.json` with no error anywhere. Someone
+ * exercising Art. 15 received a page of markup and no indication that anything had gone wrong.
+ *
+ * So the content type is verified, not just the status. A 200 that is not JSON is a missing endpoint, and
+ * saying so is the whole point: an export that fails must fail loudly.
+ */
 export async function exportMyData(): Promise<Blob> {
-  const response = await fetch(`${API_URL}/api/v1/account/export`, { credentials: 'include' });
+  const response = await fetch(`${API_URL}/api/v1/account/export`, {
+    credentials: 'include',
+    headers: { accept: 'application/json' },
+  });
   if (!response.ok) {
     let apiError: ApiError;
     try { apiError = await response.json() as ApiError; }
     catch { apiError = { error: 'export_failed', message: `Request failed with status ${response.status}` }; }
     throw new ApiRequestError(apiError);
   }
+
+  const contentType = response.headers.get('content-type') ?? '';
+  if (!contentType.includes('json')) {
+    throw new ApiRequestError({
+      error: 'export_unavailable',
+      message:
+        'The data export endpoint is not available on this deployment. It is provided by the Authagonal ' +
+        'Cloud auth host; a self-hosted server must implement GET /api/v1/account/export itself.',
+    });
+  }
+
   return response.blob();
 }
 

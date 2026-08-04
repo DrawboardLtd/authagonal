@@ -31,7 +31,12 @@ A single, self-contained deployment. The server and login UI ship as one Docker 
   single algorithm is a deliberate posture: every additional accepted algorithm is another way for a
   verifier to be talked into the wrong one.
 - **Back-Channel Logout**: OIDC Back-Channel Logout 1.0 notifications to relying parties
-- **GDPR Self-Service**: data export and scheduled account deletion from the hosted account page
+- **GDPR Self-Service** *(Authagonal Cloud)*: data export and scheduled account deletion from the hosted
+  account page. The login app ships the UI for it, but the endpoints it calls —
+  `GET /api/v1/account/export`, `POST /api/v1/account/erasure` — are served by the Cloud auth host and are
+  **not** part of this library's surface. A self-hosted deployment must implement them, or leave the two
+  buttons out of its account page: `MapFallbackToFile` answers an unimplemented route with 200 and the SPA's
+  own HTML, so an export that is not implemented has to be recognised rather than downloaded.
 - **TCC Provisioning**: Try-Confirm-Cancel provisioning into downstream apps at authorize time
 - **Brandable Login UI**: runtime-configurable via a JSON file, logo, colors, CSS custom properties, no rebuild needed; localized into 10 languages
 - **Auth Hooks**: `IAuthHook` extensibility for audit logging, custom validation, webhooks
