@@ -115,6 +115,15 @@ unreachable, or applied on one of several sibling paths.
   verifies the content type. The endpoints themselves are served by Authagonal Cloud, which `docs/index.md` now
   states rather than listing GDPR self-service as a library feature.
 
+- **`/Groups` is cursor-paginated, and `pagination.index` is now `false`.** That flag had been wrong in both
+  directions: `false` while `/Groups` paged only by `startIndex`, then `true` — which was a lie about `/Users`,
+  which refuses `startIndex > 1` with a 400, so a client that selected index paging provider-wide aborted its
+  user sync after 100 users. It is a provider-level claim (draft-ietf-scim-cursor-pagination §4 has no
+  per-endpoint qualifier), so the only honest value is one that holds for every collection. `/Groups` still
+  accepts `startIndex`; it is simply no longer advertised. A truncated filtered group scan now returns a
+  `nextCursor` instead of being indistinguishable from an empty result — an empty page WITH a cursor means keep
+  going — and `count=0` / a negative `count` behave as on `/Users` (RFC 7644 §3.4.2.4).
+
 ### Fixed
 
 - **`GET /admin/migration/status` was mapped by nobody.** Documented twice as the way to read the migration
@@ -126,6 +135,11 @@ unreachable, or applied on one of several sibling paths.
 
 - `HandleAuthorizationCode` and `HandleRefreshToken` never mapped `ProtocolTokenException`, so a protocol
   error on either path surfaced as a 500.
+
+- **The login SPA has a test runner.** `@authagonal/login` shipped with none, which left `resolveRedirect` —
+  the third implementation of an open-redirect guard whose other two are table-tested — with no coverage at all,
+  and made the GDPR export's content-type guard untestable. vitest + jsdom, 32 tests, and a CI job in
+  `audit.yml` alongside the `bff-lib` one. Test files are excluded from the published tarball.
 
 ## [0.22.0], 2026-08-04
 
