@@ -96,7 +96,7 @@ A pesquisa por prefixo de nome no admin é suportada pelas tabelas de índice `U
 Ao executar múltiplas instâncias atrás de um balanceador de carga:
 
 - **Cabeçalhos encaminhados**: a limitação de taxa e o bloqueio indexam pelo IP do cliente, resolvido a partir de `X-Forwarded-For`. Defina `ForwardedHeaders:KnownNetworks` para o CIDR do seu ingress / pod para que o IP do cliente não possa ser falsificado entre instâncias. `ForwardedHeaders:ForwardLimit` tem por padrão `1`. Consulte [Configuração](configuration#forwarded-headers-trusted-proxy).
-- **Endpoints internos**: `/_internal/backchannel-logout` é protegido por IP de origem (apenas loopback / privado) a menos que `Cluster:Secret` esteja definido, caso em que os chamadores devem apresentar o segredo no cabeçalho `X-Cluster-Secret` (comparado em tempo constante). Defina o segredo sempre que o tráfego interno for roteado através de qualquer coisa que reescreva o IP de origem.
+- **Endpoints internos**: `/_internal/backchannel-logout` exige `Cluster:Secret` no cabeçalho `X-Cluster-Secret` (comparado em tempo constante). Sem ele, o endpoint não autoriza ninguém e responde 404 — o IP de origem não é tratado como credencial, porque loopback é o que um proxy inverso no mesmo host apresenta para cada pedido reencaminhado, e um intervalo privado é cada workload vizinha numa rede de cluster partilhada. `Cluster:AllowLoopbackWithoutSecret` é um opt-in apenas de desenvolvimento que readmite um par loopback antes do reencaminhamento. O produto entregue nunca chama esta rota (a difusão de sessão é in-process via `SessionTermination`), portanto só importa para uma difusão que você construa.
 
 ## Recomendações de escalabilidade
 

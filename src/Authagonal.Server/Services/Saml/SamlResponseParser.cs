@@ -1020,10 +1020,20 @@ public sealed class SamlResponseParser(ILogger<SamlResponseParser> logger)
     /// <summary>
     /// F54: decrypt an xenc EncryptedAssertion in place. Handles the shapes real IdPs emit: an
     /// EncryptedKey either referenced from the EncryptedData's KeyInfo or as a sibling under the
-    /// EncryptedAssertion; RSA-OAEP(SHA1/SHA256) or RSA-1.5 key transport; AES-CBC / 3DES data
-    /// encryption (AES-GCM is not supported by <see cref="EncryptedXml"/> — a clear error beats a
-    /// silent failure).
+    /// EncryptedAssertion; RSA-OAEP(SHA1/SHA256) key transport; AES-CBC / 3DES data encryption.
     /// </summary>
+    /// <remarks>
+    /// <b>RSA-1.5 key transport is refused</b>, and this doc comment used to say it was handled. The switch
+    /// below accepts only the two OAEP URLs, deliberately: PKCS#1 v1.5 unwrapping is a
+    /// Bleichenbacher/ROBOT oracle, and which padding "succeeded" is attacker-observable through timing
+    /// and behaviour. An IdP configured for v1.5 fails every assertion.
+    /// <para>
+    /// AES-GCM data encryption is also unsupported (an <see cref="EncryptedXml"/> limitation), and the
+    /// failure is NOT a clear error: every unsupported algorithm returns the deliberately constant
+    /// "Could not decrypt the assertion." — which is the point, since naming the stage that failed is what
+    /// makes a padding oracle. Diagnosis comes from the IdP's configuration, not from the message.
+    /// </para>
+    /// </remarks>
     [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("Trimming", "IL2026", Justification = "SAML XML decryption requires reflection")]
     private static void DecryptAssertion(XmlElement encryptedAssertion, System.Security.Cryptography.RSA decryptionKey, XmlDocument doc)
     {

@@ -15,7 +15,7 @@ SCIM 是一种入站预配协议：您的身份提供商将用户和组的变更
 **支持的操作：**
 - 用户 CRUD（创建、读取、更新、通过软停用删除）
 - 组 CRUD 及成员管理
-- 过滤（`userName`、`externalId`、`displayName` 上的 `eq` 和 `co` 运算符）
+- 过滤（RFC 7644 §3.4.2.2 的完整过滤语法）
 - 分页：用户列表使用基于游标的分页（`cursor`/`nextCursor`），组使用 `startIndex` 和 `count`
 - PATCH 部分更新（包括 `active=false` 停用）
 - 在令牌签发时解析的组到角色映射
@@ -114,7 +114,7 @@ https://your-authagonal-instance/scim/v2
 | POST | `/scim/v2/Users` | 创建用户 |
 | PUT | `/scim/v2/Users/{id}` | 替换用户 |
 | PATCH | `/scim/v2/Users/{id}` | 部分更新 |
-| DELETE | `/scim/v2/Users/{id}` | 软停用 |
+| DELETE | `/scim/v2/Users/{id}` | 墓碑（停用；之后的 GET 为 404） |
 | GET | `/scim/v2/Groups` | 列出/过滤组 |
 | GET | `/scim/v2/Groups/{id}` | 获取单个组 |
 | POST | `/scim/v2/Groups` | 创建组 |
@@ -127,7 +127,7 @@ https://your-authagonal-instance/scim/v2
 
 每个端点也映射了不带 `/v2` 段的形式（例如 `/scim/Users`），以适配会自行追加路径的身份提供商。发现端点（`ServiceProviderConfig`、`Schemas`、`ResourceTypes`，以及裸的 `/scim/` 和 `/scim/v2/` 基础 URL，后两者返回 ServiceProviderConfig）是匿名的；其余所有端点都需要 SCIM Bearer 令牌。
 
-用户端点按 SCIM 客户端限速为每分钟 200 个请求；超出的请求会收到状态为 `429` 的 SCIM 错误。
+用户端点和群组端点按 SCIM 客户端限速为每分钟 200 个请求；超出的请求会收到状态为 `429` 的 SCIM 错误。
 
 ## 属性映射
 
@@ -157,11 +157,12 @@ https://your-authagonal-instance/scim/v2
 ### 用户创建
 - SCIM 预配的用户在创建时带有 `EmailConfirmed = true`（仅 SSO，无密码）。
 - `ScimProvisionedByClientId` 字段记录是哪个 SCIM 客户端创建了该用户。
-- 如果客户端配置了 `ProvisioningApps`，会自动触发 TCC 预配。如果预配拒绝了该用户，则 SCIM 创建会被回滚并返回 `422` 响应。
+- 如果客户端配置了 `ProvisioningApps`，会自动触发 TCC 预配。如果预配拒绝了该用户，SCIM 创建会被回滚，响应是符合 SCIM 格式的 `400`，带 `scimType: invalidValue` 和一条固定消息（下游应用自己的文本被有意不回传给 SCIM 客户端）。
 - 创建的用户如果其 `userName` 或 `externalId` 已存在，会返回 SCIM `409` 冲突。通过 PUT 或 PATCH 修改邮箱时会以同样的方式做冲突检查。
 
 ### 用户停用
-- `DELETE /scim/v2/Users/{id}` 通过设置 `IsActive = false` 执行**软删除**。用户记录会被保留：之后的 `GET /scim/v2/Users/{id}` 仍会返回它（带 `active: false`），而不是 404。
+- `DELETE /scim/v2/Users/{id}` 会写入**墓碑（tombstone）**：停用该用户、保留本地记录，并标记 `ScimDeletedAt`。之后的 `GET /scim/v2/Users/{id}` 返回 **404**，符合 RFC 7644 §3.6 的要求（"服务提供方对已删除资源的所有操作都必须返回 404"）。因此不要通过重新读取资源并期望 `active: false` 来确认取消预配——读取结果就是 404，而这正是成功。
+- 保留记录而不是彻底删除，是为了让再次入职的人可以被重新创建：墓碑会释放新资源所需的 `userName`/`externalId`，同时本地账户、其审计历史以及群组成员关系都会保留。
 - 带 `active = false` 的 `PATCH` 同样会停用该用户。
 - 被停用的用户无法通过密码、SAML 或 OIDC 登录。
 - 停用时会吊销所有授权（刷新令牌、会话）。
@@ -180,7 +181,7 @@ https://your-authagonal-instance/scim/v2
 ### 分页
 用户列表使用**游标分页**。`GET /scim/v2/Users` 的每一页都会在列表响应中返回一个 `nextCursor` 属性；将其作为 `?cursor=` 传回即可获取下一页。当 `nextCursor` 不存在时，列表即已取完。页面大小由 `count` 控制（默认 100，最大 200）。
 
-在 Users 端点请求大于 1 的 `startIndex` 会返回 `400` 错误并引导您使用游标分页；不提供越过第一页的偏移量分页。`totalResults` 报告的是本次响应中返回的资源数量（仅当 `nextCursor` 不存在时才是真实总数）。
+在 Users 端点请求大于 1 的 `startIndex` 会返回 `400` 错误并引导您使用游标分页；不提供越过第一页的偏移量分页。只要 `nextCursor` 存在，`totalResults` 就会被**省略**，只有在最后一页才携带精确总数——它有意不报告本次返回的页大小，因为把两者混淆的客户端会静默地读不全整个目录。请用 `nextCursor` 驱动循环，而不是 `totalResults`；并把缺失的 `totalResults` 视为"尚未知道"，而不是 0。
 
 组列表仍使用 `startIndex`/`count` 偏移量分页。
 
@@ -204,6 +205,5 @@ SCIM 组的成员身份可以授予应用角色。映射按（组、角色）对
 
 - **无批量操作：** 用户和组必须逐个预配。
 - **无排序：** 游标分页下用户列表按存储顺序返回；组列表按创建日期排序。
-- **过滤子集：** 仅支持 `userName`、`externalId` 和 `displayName` 上的 `eq` 和 `co` 运算符（组：`displayName` 和 `externalId`）。
 - **无密码管理：** SCIM 预配的用户仅通过 SSO 认证。
-- **仅软删除：** `DELETE` 停用用户而非永久移除。
+- **墓碑而非删除：** `DELETE` 会停用并写入墓碑（之后的 `GET` 为 404，符合 RFC 7644 §3.6），而不是永久移除本地用户记录。需要彻底删除请使用管理 API。

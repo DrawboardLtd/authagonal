@@ -6,7 +6,7 @@ locale: vi
 
 # Ban dia hoa
 
-Giao diện đăng nhập cung cấp sẵn mười một locale: tiếng Anh, tiếng Trung giản thể (`zh-Hans`), tiếng Đức (`de`), tiếng Pháp (`fr`), tiếng Tây Ban Nha (`es`), tiếng Việt (`vi`), tiếng Bồ Đào Nha (`pt`), tiếng Ả Rập (`ar`), tiếng Afrikaans (`af`), tiếng Hindi (`hi`), và một locale vui tiếng Klingon (`tlh`). Các phản hồi API của máy chủ được bản địa hóa trong bảy ngôn ngữ đầu tiên. Bản địa hóa bao gồm các phản hồi API của máy chủ, giao diện đăng nhập và trang tài liệu này.
+Giao diện đăng nhập cung cấp sẵn mười locale: tiếng Anh, tiếng Trung giản thể (`zh-Hans`), tiếng Đức (`de`), tiếng Pháp (`fr`), tiếng Tây Ban Nha (`es`), tiếng Việt (`vi`), tiếng Bồ Đào Nha (`pt`), tiếng Ả Rập (`ar`), tiếng Afrikaans (`af`) và tiếng Hindi (`hi`). Các phản hồi API của máy chủ được bản địa hóa trong bảy ngôn ngữ đầu tiên. Bản địa hóa bao gồm các phản hồi API của máy chủ, giao diện đăng nhập và trang tài liệu này.
 
 ## Cac ngon ngu duoc ho tro
 
@@ -22,7 +22,6 @@ Giao diện đăng nhập cung cấp sẵn mười một locale: tiếng Anh, ti
 | `ar` | Tiếng Ả Rập (phải sang trái) | ✓ | — |
 | `af` | Tiếng Afrikaans | ✓ | — |
 | `hi` | Tiếng Hindi | ✓ | — |
-| `tlh` | Tiếng Klingon (locale vui) | ✓ | — |
 
 ## May chu (phan hoi API)
 
@@ -78,7 +77,7 @@ Resources/
 
 Ung dung SPA dang nhap su dung [react-i18next](https://react.i18next.com/) de ban dia hoa phia may khach. Ngon ngu duoc tu dong phat hien tu cai dat `navigator.language` cua trinh duyet.
 
-Các locale đã đăng ký nằm trong một registry `LANGUAGES` duy nhất tại `login-app/src/i18n/index.ts`, nơi điều khiển cả việc đăng ký tài nguyên i18next lẫn mọi bộ chọn ngôn ngữ, nên hai bên không thể lệch nhau. Các locale được gắn cờ `novelty` (hiện là `tlh`) vẫn hoạt động đầy đủ (`?lng=tlh` dùng được) nhưng bị loại khỏi bộ chọn mặc định; chúng chỉ xuất hiện trong danh sách thả xuống khi `BrandingConfig.languages` của một tenant liệt kê chúng một cách tường minh. Tenant cũng có thể thu hẹp bộ chọn theo cùng cách: một mảng `languages` trong `branding.json` thay thế hoàn toàn danh sách mặc định (xem [Tùy chỉnh giao diện](branding)).
+Các locale đã đăng ký nằm trong một registry `LANGUAGES` duy nhất tại `login-app/src/i18n/index.ts`, nơi điều khiển cả việc đăng ký tài nguyên i18next lẫn mọi bộ chọn ngôn ngữ, nên hai bên không thể lệch nhau. Hiện tại mọi locale đã đăng ký đều xuất hiện trong bộ chọn mặc định. `DEFAULT_LANGUAGES` được xuất riêng khỏi `LANGUAGES` để một locale bị giới hạn trong tương lai có thể được loại khỏi các bộ chọn mà không phải sửa nơi gọi, nhưng hiện không có locale nào bị loại. Tenant cũng có thể thu hẹp bộ chọn theo cùng cách: một mảng `languages` trong `branding.json` thay thế hoàn toàn danh sách mặc định (xem [Tùy chỉnh giao diện](branding)).
 
 Ngôn ngữ đang hoạt động được phản chiếu lên `<html lang>` và `<html dir>`, nên các ngôn ngữ viết phải sang trái (`ar`) tự động lật thẻ xác thực, kể cả khi ngôn ngữ được chuyển tại chỗ qua bộ chọn.
 
@@ -108,7 +107,6 @@ i18n/
   ar.json         # Arabic
   af.json         # Afrikaans
   hi.json         # Hindi
-  tlh.json        # Klingon (novelty)
 ```
 
 ### Nhan chinh sach mat khau

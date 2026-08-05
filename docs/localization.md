@@ -5,7 +5,7 @@ title: Localization
 
 # Localization
 
-The login UI ships eleven locales out of the box: English, Simplified Chinese (`zh-Hans`), German (`de`), French (`fr`), Spanish (`es`), Vietnamese (`vi`), Portuguese (`pt`), Arabic (`ar`), Afrikaans (`af`), Hindi (`hi`), and a Klingon (`tlh`) novelty locale. Server API responses are localized in the first seven of these. Localization covers the server API responses, the login UI, and this documentation site.
+The login UI ships ten locales out of the box: English, Simplified Chinese (`zh-Hans`), German (`de`), French (`fr`), Spanish (`es`), Vietnamese (`vi`), Portuguese (`pt`), Arabic (`ar`), Afrikaans (`af`) and Hindi (`hi`). Server API responses are localized in the first seven of these. Localization covers the server API responses, the login UI, and this documentation site.
 
 ## Supported Languages
 
@@ -21,7 +21,6 @@ The login UI ships eleven locales out of the box: English, Simplified Chinese (`
 | `ar` | Arabic (right-to-left) | ✓ | — |
 | `af` | Afrikaans | ✓ | — |
 | `hi` | Hindi | ✓ | — |
-| `tlh` | Klingon (novelty) | ✓ | — |
 
 ## Server (API Responses)
 
@@ -77,7 +76,7 @@ Resources/
 
 The login SPA uses [react-i18next](https://react.i18next.com/) for client-side localization. Language is auto-detected from the browser's `navigator.language` setting.
 
-The registered locales live in a single `LANGUAGES` registry in `login-app/src/i18n/index.ts`, which drives both the i18next resource registration and every language picker, so the two can't drift. Locales flagged `novelty` (currently `tlh`) stay fully functional (`?lng=tlh` works) but are excluded from the default picker; they only appear in a dropdown when a tenant's `BrandingConfig.languages` explicitly lists them. Tenants can also narrow the picker the same way: a `languages` array in `branding.json` replaces the default list entirely (see [Branding](branding)).
+The registered locales live in a single `LANGUAGES` registry in `login-app/src/i18n/index.ts`, which drives both the i18next resource registration and every language picker, so the two can't drift. Every registered locale currently appears in the default picker. `DEFAULT_LANGUAGES` is exported separately from `LANGUAGES` so that a future restricted locale could be excluded from pickers without touching call sites, but nothing is excluded today. Tenants can also narrow the picker the same way: a `languages` array in `branding.json` replaces the default list entirely (see [Branding](branding)).
 
 The active language is mirrored onto `<html lang>` and `<html dir>`, so right-to-left languages (`ar`) flip the auth card automatically, including when the language is switched in place via the picker.
 
@@ -107,7 +106,6 @@ i18n/
   ar.json         # Arabic
   af.json         # Afrikaans
   hi.json         # Hindi
-  tlh.json        # Klingon (novelty)
 ```
 
 ### Password policy labels

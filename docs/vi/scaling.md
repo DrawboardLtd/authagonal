@@ -96,7 +96,7 @@ Tìm kiếm theo tiền tố tên trong trang quản trị được hỗ trợ b
 Khi chạy nhiều instance phía sau một bộ cân bằng tải:
 
 - **Forwarded headers**: giới hạn tốc độ và khóa tài khoản lập khóa dựa trên IP của client, được phân giải từ `X-Forwarded-For`. Hãy đặt `ForwardedHeaders:KnownNetworks` thành CIDR của ingress / pod của bạn để IP của client không thể bị giả mạo giữa các instance. `ForwardedHeaders:ForwardLimit` mặc định là `1`. Xem [Cấu hình](configuration#forwarded-headers-proxy-tin-cậy).
-- **Các endpoint nội bộ**: `/_internal/backchannel-logout` được bảo vệ bằng IP nguồn (chỉ loopback / riêng tư) trừ khi `Cluster:Secret` được đặt, trong trường hợp đó người gọi phải xuất trình bí mật trong header `X-Cluster-Secret` (so sánh trong thời gian hằng số). Hãy đặt bí mật mỗi khi lưu lượng nội bộ được định tuyến qua bất cứ thứ gì ghi đè IP nguồn.
+- **Các endpoint nội bộ**: `/_internal/backchannel-logout` yêu cầu `Cluster:Secret` trong header `X-Cluster-Secret` (so sánh trong thời gian hằng số). Không có nó, endpoint không cấp quyền cho ai và trả về 404 — IP nguồn không được coi là credential, vì loopback là thứ reverse proxy trên cùng host xuất trình cho mọi yêu cầu được chuyển tiếp, còn một dải riêng tư là mọi workload lân cận trong mạng cluster dùng chung. `Cluster:AllowLoopbackWithoutSecret` là tùy chọn chỉ dành cho phát triển, cho phép lại peer loopback trước khi chuyển tiếp. Sản phẩm được phát hành không bao giờ gọi route này (việc phát tán phiên diễn ra in-process qua `SessionTermination`), nên nó chỉ quan trọng với cơ chế phát tán do bạn tự xây dựng.
 
 ## Khuyến nghị mở rộng quy mô
 

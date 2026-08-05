@@ -22,7 +22,7 @@ Authagonal 包含一个自研的 SAML 2.0 服务提供者实现。不依赖第�
 - Artifact 绑定
 - AES-GCM 断言加密（.NET `EncryptedXml` 限制；请在 IdP 端配置 AES-CBC，见下文）
 
-IdP 发起的 SSO 已支持。ACS 端点可以处理不含 `InResponseTo` 的响应（对非请求响应会跳过请求 ID 检查，但仍强制断言 ID 的一次性使用，参见安全性）。
+IdP 发起的 SSO **按连接支持，且默认关闭**：在连接上设置 `allowUnsolicitedResponses: true` 才会接受。否则 ACS 会拒绝不含 `InResponseTo` 的 Response，并带 `error=saml_unsolicited` 重定向。默认关闭的原因是：接受非请求响应会让任何在该 IdP 有账户的人从任意 user-agent 登入一个会话；而且只要同一断言可以在移除 `InResponseTo` 后重放，在 SP 发起路径上要求 request cookie 就毫无意义。启用后，对非请求响应会跳过请求 ID 检查，但仍强制断言 ID 的一次性使用（参见安全性）。
 
 ## Azure AD 设置
 
@@ -64,7 +64,7 @@ curl -X POST https://auth.example.com/api/v1/saml/connections \
   }'
 ```
 
-该 API 会生成 `connectionId`（一个 GUID），并在 `Location` 头和响应正文中返回它。其他可选字段：`metadataXml`（粘贴的元数据，见下文）、`nameIdFormat`（见下文）、`signAuthnRequests`（强制签名 AuthnRequest）、`iconUrl`（登录按钮图标）、`disableJitProvisioning`（拒绝未知用户而不是自动创建它们）。通过 API 创建的连接还会获得一个自动生成的 SP 密钥对（参见下文的 SP 密钥对）。
+该 API 会生成 `connectionId`（一个 GUID），并在 `Location` 头和响应正文中返回它。其他可选字段：`metadataXml`（粘贴的元数据，见下文）、`nameIdFormat`（见下文）、`signAuthnRequests`（强制签名 AuthnRequest）、`iconUrl`（登录按钮图标）、`disableJitProvisioning`（拒绝未知用户而不是自动创建它们）、`allowUnsolicitedResponses`（接受 IdP 发起的登录——默认关闭，见上文）。通过 API 创建的连接还会获得一个自动生成的 SP 密钥对（参见下文的 SP 密钥对）。
 
 连接通过对 `/api/v1/saml/connections[/{connectionId}]` 的 `POST` / `GET` / `PUT` / `DELETE` 进行管理。`PUT` 是部分更新：只有在请求中提供的字段才会被修改。
 
@@ -117,7 +117,7 @@ curl -X POST https://auth.example.com/api/v1/saml/connections \
 每个通过 API 创建的连接都会获得一个自动生成的 SP 密钥对：一张自签名的 2048 位 RSA 证书（10 年有效期），以 PKCS#12 存储，并由宿主的机密提供者在静态时保护。它仅供服务器使用，绝不会由 API 返回。该密钥对可实现：
 
 - **签名的 AuthnRequest**（redirect 绑定的 `SigAlg`/`Signature` 查询签名）。当 IdP 的元数据声明了 `WantAuthnRequestsSigned` 时会自动开启签名，或当连接设置 `signAuthnRequests: true` 时始终开启。
-- **加密断言解密。** 当 SP 元数据公布了加密证书时，ADFS 默认会开始加密断言；ACS 使用 SP 私钥对其解密，并让解密后的断言经过与明文断言相同的签名/条件流水线。支持：RSA-OAEP（SHA-1/SHA-256）和 RSA-1.5 密钥传输；AES-128/192/256-CBC 和 3DES 数据加密。**不支持 AES-GCM**（.NET `EncryptedXml` 限制），并会产生明确的错误；请将 IdP 配置为使用 AES-CBC。
+- **加密断言解密。** 当 SP 元数据公布了加密证书时，ADFS 默认会开始加密断言；ACS 使用 SP 私钥对其解密，并让解密后的断言经过与明文断言相同的签名/条件流水线。支持：RSA-OAEP（SHA-1/SHA-256）密钥传输；AES-128/192/256-CBC 和 3DES 数据加密。**RSA-1.5 密钥传输会被拒绝**——PKCS#1 v1.5 解包是 Bleichenbacher/ROBOT 预言机——并且**不支持 AES-GCM**（.NET `EncryptedXml` 限制）。请将 IdP 配置为 RSA-OAEP 与 AES-CBC。两种失败都会返回同一条固定消息（"Could not decrypt the assertion."），这是有意为之：指明失败的算法或阶段正是构造预言机的关键，因此请从 IdP 的配置而不是错误消息入手诊断。
 - **签名的登出消息**（redirect 绑定上的 LogoutRequest/LogoutResponse）。
 
 SP 元数据会将该证书同时作为 `signing` 和 `encryption` 的 `KeyDescriptor` 发布，并在连接强制签名时设置 `AuthnRequestsSigned="true"`。
@@ -127,7 +127,7 @@ SP 元数据会将该证书同时作为 `signing` 和 `encryption` 的 `KeyDescr
 ACS 会在认证 Cookie 上记录 SAML 会话（`saml_connection`、`saml_name_id`、`saml_name_id_format`、`saml_session_index` 声明），以便登出可以关联回 IdP 会话。
 
 - **SP 发起：** `GET /saml/{connectionId}/logout` 总是先结束本地 Cookie 会话（用户要求登出；IdP SLO 是尽力而为）。如果浏览器的会话来自此连接，且 IdP 元数据公布了 `SingleLogoutService`，则会通过 redirect 绑定发送一个 LogoutRequest（NameID + SessionIndex，当 SP 拥有密钥时签名）；IdP 的 LogoutResponse 会返回到 `/slo`，将用户带到存储的 `returnUrl`。没有 SLO 端点的 IdP（Google）只会得到本地登出。
-- **IdP 发起：** IdP 向 `/saml/{connectionId}/slo` 发送一个 LogoutRequest（Redirect GET 或 POST 绑定）。签名的请求会根据 IdP 元数据中的证书进行验证。**只有当浏览器自身的会话属于此连接时，未签名的 LogoutRequest 才会被接受**，因此未认证的攻击者只能登出自己。当 IdP 拥有 SLO 端点时会返回一个签名的 LogoutResponse。仅前端通道：消息到达用户的浏览器，因此结束该 Cookie 会话恰好登出该浏览器。
+- **IdP 发起：** IdP 向 `/saml/{connectionId}/slo` 发送一个 LogoutRequest（Redirect GET 或 POST 绑定）。签名的请求会根据 IdP 元数据中的证书进行验证。**未签名或无法验证的 LogoutRequest 会在查询任何会话之前直接以 400 拒绝。** 不存在按会话放宽的回退路径：第三方页面把*受害者*的浏览器导航到这里时，携带的是受害者的会话而不是攻击者的会话，因此限定为当前会话并不能限制谁会被登出。Profiles §4.4.3.1 本就要求 IdP 对 Redirect 或 POST 绑定上的 LogoutRequest 进行签名，而连接的元数据已经提供了证书，所以拒绝未签名请求对合规的 IdP 没有任何代价。当 IdP 拥有 SLO 端点时会返回一个签名的 LogoutResponse。仅前端通道：消息到达用户的浏览器，因此结束该 Cookie 会话恰好登出该浏览器。
 
 ## 元数据缓存与证书轮换
 

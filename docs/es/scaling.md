@@ -96,7 +96,7 @@ La búsqueda de nombres por prefijo del administrador se respalda en las tablas 
 Al ejecutar múltiples instancias detrás de un balanceador de carga:
 
 - **Encabezados reenviados**: la limitación de velocidad y el bloqueo se basan en la IP del cliente, resuelta desde `X-Forwarded-For`. Establezca `ForwardedHeaders:KnownNetworks` con el CIDR de su ingress / pod para que la IP del cliente no pueda suplantarse entre instancias. `ForwardedHeaders:ForwardLimit` tiene el valor predeterminado `1`. Ver [Configuración](configuration#forwarded-headers-trusted-proxy).
-- **Endpoints internos**: `/_internal/backchannel-logout` está protegido por IP de origen (solo loopback / privada) a menos que se establezca `Cluster:Secret`, en cuyo caso los llamadores deben presentar el secreto en el encabezado `X-Cluster-Secret` (comparado en tiempo constante). Establezca el secreto siempre que el tráfico interno se enrute a través de cualquier cosa que reescriba la IP de origen.
+- **Endpoints internos**: `/_internal/backchannel-logout` requiere `Cluster:Secret` en el encabezado `X-Cluster-Secret` (comparado en tiempo constante). Sin él, el endpoint no autoriza a nadie y responde 404: la IP de origen no se trata como credencial, porque loopback es lo que presenta un proxy inverso en el mismo host para cada solicitud reenviada, y un rango privado es cada carga de trabajo vecina en una red de clúster compartida. `Cluster:AllowLoopbackWithoutSecret` es un opt-in solo para desarrollo que readmite un par loopback previo al reenvío. El producto entregado nunca llama a esta ruta (la difusión de sesión es en proceso vía `SessionTermination`), así que solo importa para una difusión que construya usted.
 
 ## Recomendaciones de escalabilidad
 

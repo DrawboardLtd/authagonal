@@ -16,7 +16,7 @@ SCIM is an inbound provisioning protocol: your identity provider pushes user and
 - User CRUD (create, read, update, delete via soft deactivation)
 - Group CRUD with member management
 - Filtering (`eq` and `co` operators on `userName`, `externalId`, `displayName`)
-- Pagination: cursor-based for user listings (`cursor`/`nextCursor`), `startIndex` and `count` for groups
+- Pagination: cursor-based (`cursor`/`nextCursor`) on both users and groups; `startIndex` is still accepted on groups for existing clients but is not advertised
 - PATCH for partial updates (including `active=false` deactivation)
 - Group-to-role mapping resolved at token issuance
 
@@ -154,7 +154,7 @@ Use **OAuth Bearer Token** with the token generated above.
 | POST | `/scim/v2/Users` | Create a user |
 | PUT | `/scim/v2/Users/{id}` | Replace a user |
 | PATCH | `/scim/v2/Users/{id}` | Partial update |
-| DELETE | `/scim/v2/Users/{id}` | Soft deactivate |
+| DELETE | `/scim/v2/Users/{id}` | Tombstone (deactivates; a later GET is 404) |
 | GET | `/scim/v2/Groups` | List/filter groups |
 | GET | `/scim/v2/Groups/{id}` | Get a group |
 | POST | `/scim/v2/Groups` | Create a group |
@@ -167,7 +167,7 @@ Use **OAuth Bearer Token** with the token generated above.
 
 Every endpoint is also mapped without the `/v2` segment (e.g. `/scim/Users`) for identity providers that append their own path. The discovery endpoints (`ServiceProviderConfig`, `Schemas`, `ResourceTypes`, and the bare `/scim/` and `/scim/v2/` base URLs, which return the ServiceProviderConfig) are anonymous; everything else requires a SCIM Bearer token.
 
-User endpoints are rate-limited to 200 requests per minute per SCIM client; excess requests receive a SCIM error with status `429`.
+User and group endpoints are rate-limited to 200 requests per minute per SCIM client; excess requests receive a SCIM error with status `429`.
 
 ## Attribute Mapping
 
@@ -197,11 +197,12 @@ User endpoints are rate-limited to 200 requests per minute per SCIM client; exce
 ### User creation
 - SCIM-provisioned users are created with `EmailConfirmed = true` (SSO-only, no password).
 - The `ScimProvisionedByClientId` field tracks which SCIM client created the user.
-- If the client has `ProvisioningApps` configured, TCC provisioning is triggered automatically. If provisioning rejects the user, the SCIM create is rolled back with a `422` response.
+- If the client has `ProvisioningApps` configured, TCC provisioning is triggered automatically. If provisioning rejects the user, the SCIM create is rolled back and the response is a SCIM `400` with `scimType: invalidValue` and a fixed message (the downstream app's own text is deliberately not echoed to the SCIM client).
 - Creating a user whose `userName` or `externalId` already exists returns a SCIM `409` conflict. Email changes via PUT or PATCH are conflict-checked the same way.
 
 ### User deactivation
-- `DELETE /scim/v2/Users/{id}` performs a **soft delete** by setting `IsActive = false`. The user record is kept: a subsequent `GET /scim/v2/Users/{id}` still returns it (with `active: false`) rather than a 404.
+- `DELETE /scim/v2/Users/{id}` **tombstones** the resource: it deactivates the user, keeps the local record, and stamps `ScimDeletedAt`. A subsequent `GET /scim/v2/Users/{id}` returns **404**, as RFC 7644 §3.6 requires ("the service provider MUST return a 404 for all operations associated with the previously deleted resource"). Do not confirm a deprovision by reading the resource back and expecting `active: false` — the read is a 404, and that is success.
+- The record is retained rather than erased so a re-hire can be re-created: the tombstone releases the `userName`/`externalId` a new resource needs, while the local account, its audit history and its group memberships survive.
 - `PATCH` with `active = false` also deactivates the user.
 - Deactivated users cannot log in via password, SAML, or OIDC.
 - All grants (refresh tokens, sessions) are revoked upon deactivation.
@@ -224,12 +225,12 @@ meta.lastModified gt "2026-01-01T00:00:00Z"
 
 Semantics follow the RFC: string comparison is case-insensitive, a multi-valued attribute matches when any element matches, and an absent attribute makes every comparison false except `ne`. Input that is not a valid SCIM filter is rejected with `400` and `scimType: invalidFilter`, naming the problem.
 
-**Performance.** `userName eq` and `externalId eq` — the lookups Entra and Okta issue before every create or update — are resolved via indexed point lookups rather than a listing scan, so they stay fast at any user count. Every other filter is evaluated while paging through the client's users, bounded: user PII is encrypted at rest and searchable only through blind indexes, so richer predicates cannot be pushed down to storage. Under cursor pagination `totalResults` reflects what was returned, and is exact once `nextCursor` is absent.
+**Performance.** `userName eq` and `externalId eq` — the lookups Entra and Okta issue before every create or update — are resolved via indexed point lookups rather than a listing scan, so they stay fast at any user count. Every other filter is evaluated while paging through the client's users, bounded: user PII is encrypted at rest and searchable only through blind indexes, so richer predicates cannot be pushed down to storage. Under cursor pagination `totalResults` is **omitted** while `nextCursor` is present, and is the exact total once `nextCursor` is absent — see Pagination.
 
 ### Pagination
 User listings use **cursor pagination**. Each page of `GET /scim/v2/Users` returns a `nextCursor` property in the list response; pass it back as `?cursor=` to fetch the next page. When `nextCursor` is absent, the listing is complete. Page size is controlled by `count` (default 100, maximum 200).
 
-Requesting `startIndex` greater than 1 on the Users endpoint returns a `400` error directing you to cursor pagination; offset paging past the first page is not offered. `totalResults` reports the number of resources returned in the response (it is the true total only when `nextCursor` is absent).
+Requesting `startIndex` greater than 1 on the Users endpoint returns a `400` error directing you to cursor pagination; offset paging past the first page is not offered. `totalResults` is **omitted entirely** while `nextCursor` is present, and carries the exact total only on the final page. It deliberately does not report the returned page's size: a syncing client that read `totalResults`, saw it equal the number of resources it had just received, and concluded it held the whole directory silently under-read the tenant. Drive the loop off `nextCursor`, never off `totalResults` — and treat an absent `totalResults` as "not yet known", not as zero.
 
 **Group listings are cursor-paginated too.** `GET /scim/v2/Groups` returns a `nextCursor` on both its filtered
 and unfiltered forms; follow it the same way. `startIndex` is still accepted on Groups for clients already using
@@ -265,6 +266,5 @@ Optionally, a client with `IncludeGroupsInTokens` enabled also receives the user
 
 - **No bulk operations:** users and groups must be provisioned individually.
 - **No sorting:** user listings return storage order under cursor pagination; group listings are ordered by creation date.
-- **Filter subset:** only `eq` and `co` operators on `userName`, `externalId`, and `displayName` (groups: `displayName` and `externalId`).
 - **No password management:** SCIM-provisioned users authenticate via SSO only.
-- **Soft delete only:** `DELETE` deactivates rather than permanently removes users.
+- **Tombstone, not erasure:** `DELETE` deactivates and tombstones the resource (a later `GET` is a 404, per RFC 7644 §3.6) rather than permanently removing the local user record. For erasure, use the admin API.

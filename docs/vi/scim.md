@@ -15,7 +15,7 @@ SCIM là một giao thức cung cấp hướng vào (inbound): nhà cung cấp d
 **Các thao tác được hỗ trợ:**
 - CRUD người dùng (tạo, đọc, cập nhật, xóa qua vô hiệu hóa mềm)
 - CRUD nhóm với quản lý thành viên
-- Lọc (toán tử `eq` và `co` trên `userName`, `externalId`, `displayName`)
+- Lọc (toàn bộ ngữ pháp bộ lọc theo RFC 7644 §3.4.2.2)
 - Phân trang: dựa trên con trỏ cho danh sách người dùng (`cursor`/`nextCursor`), `startIndex` và `count` cho nhóm
 - PATCH cho cập nhật một phần (bao gồm vô hiệu hóa `active=false`)
 - Ánh xạ nhóm sang vai trò được phân giải tại thời điểm cấp token
@@ -114,7 +114,7 @@ Sử dụng **OAuth Bearer Token** với token đã tạo ở trên.
 | POST | `/scim/v2/Users` | Tạo một người dùng |
 | PUT | `/scim/v2/Users/{id}` | Thay thế một người dùng |
 | PATCH | `/scim/v2/Users/{id}` | Cập nhật một phần |
-| DELETE | `/scim/v2/Users/{id}` | Vô hiệu hóa mềm |
+| DELETE | `/scim/v2/Users/{id}` | Tombstone (vô hiệu hóa; GET sau đó là 404) |
 | GET | `/scim/v2/Groups` | Liệt kê/lọc nhóm |
 | GET | `/scim/v2/Groups/{id}` | Lấy một nhóm |
 | POST | `/scim/v2/Groups` | Tạo một nhóm |
@@ -127,7 +127,7 @@ Sử dụng **OAuth Bearer Token** với token đã tạo ở trên.
 
 Mỗi endpoint cũng được ánh xạ mà không có đoạn `/v2` (ví dụ `/scim/Users`) cho các nhà cung cấp danh tính tự nối thêm đường dẫn của riêng họ. Các endpoint khám phá (`ServiceProviderConfig`, `Schemas`, `ResourceTypes`, và các URL cơ sở trần `/scim/` và `/scim/v2/`, vốn trả về ServiceProviderConfig) là ẩn danh; mọi thứ khác đều yêu cầu một SCIM Bearer token.
 
-Các endpoint người dùng bị giới hạn tốc độ ở mức 200 yêu cầu mỗi phút cho mỗi SCIM client; các yêu cầu vượt mức nhận một lỗi SCIM với trạng thái `429`.
+Các endpoint người dùng và nhóm bị giới hạn tốc độ ở mức 200 yêu cầu mỗi phút cho mỗi SCIM client; các yêu cầu vượt mức nhận một lỗi SCIM với trạng thái `429`.
 
 ## Ánh xạ thuộc tính
 
@@ -157,11 +157,12 @@ Các endpoint người dùng bị giới hạn tốc độ ở mức 200 yêu c�
 ### Tạo người dùng
 - Người dùng được cung cấp qua SCIM được tạo với `EmailConfirmed = true` (chỉ SSO, không mật khẩu).
 - Trường `ScimProvisionedByClientId` theo dõi SCIM client nào đã tạo người dùng.
-- Nếu client có cấu hình `ProvisioningApps`, việc cung cấp TCC được kích hoạt tự động. Nếu việc cung cấp từ chối người dùng, thao tác tạo SCIM sẽ được hoàn tác với phản hồi `422`.
+- Nếu client có cấu hình `ProvisioningApps`, việc cung cấp TCC được kích hoạt tự động. Nếu việc cung cấp từ chối người dùng, thao tác tạo SCIM sẽ được hoàn tác và phản hồi là một `400` theo dạng SCIM kèm `scimType: invalidValue` và một thông điệp cố định (văn bản của ứng dụng hạ nguồn được chủ ý không chuyển tiếp cho client SCIM).
 - Việc tạo một người dùng có `userName` hoặc `externalId` đã tồn tại sẽ trả về xung đột SCIM `409`. Các thay đổi email qua PUT hoặc PATCH cũng được kiểm tra xung đột theo cách tương tự.
 
 ### Vô hiệu hóa người dùng
-- `DELETE /scim/v2/Users/{id}` thực hiện một **xóa mềm** bằng cách đặt `IsActive = false`. Bản ghi người dùng được giữ lại: một `GET /scim/v2/Users/{id}` sau đó vẫn trả về nó (với `active: false`) thay vì 404.
+- `DELETE /scim/v2/Users/{id}` tạo một **tombstone**: vô hiệu hóa người dùng, giữ lại bản ghi cục bộ và đóng dấu `ScimDeletedAt`. Một `GET /scim/v2/Users/{id}` sau đó trả về **404**, đúng như RFC 7644 §3.6 yêu cầu ("service provider PHẢI trả về 404 cho mọi thao tác liên quan đến tài nguyên đã bị xóa trước đó"). Vì vậy đừng xác nhận việc hủy cấp phép bằng cách đọc lại tài nguyên và mong đợi `active: false` — kết quả đọc là 404, và đó chính là thành công.
+- Bản ghi được giữ lại thay vì xóa hẳn để một người được tuyển lại có thể được tạo mới: tombstone giải phóng `userName`/`externalId` mà tài nguyên mới cần, trong khi tài khoản cục bộ, lịch sử audit và các nhóm mà họ thuộc về vẫn còn.
 - `PATCH` với `active = false` cũng vô hiệu hóa người dùng.
 - Người dùng đã bị vô hiệu hóa không thể đăng nhập qua mật khẩu, SAML, hoặc OIDC.
 - Tất cả cấp quyền (refresh token, phiên) đều bị thu hồi khi vô hiệu hóa.
@@ -180,7 +181,7 @@ Các bộ lọc `eq` trên `userName` và `externalId` (những lượt tra cứ
 ### Phân trang
 Danh sách người dùng sử dụng **phân trang bằng con trỏ**. Mỗi trang của `GET /scim/v2/Users` trả về một thuộc tính `nextCursor` trong phản hồi danh sách; hãy truyền lại nó dưới dạng `?cursor=` để lấy trang tiếp theo. Khi `nextCursor` vắng mặt, danh sách đã hoàn tất. Kích thước trang được kiểm soát bởi `count` (mặc định 100, tối đa 200).
 
-Việc yêu cầu `startIndex` lớn hơn 1 trên endpoint Users sẽ trả về lỗi `400` hướng bạn đến phân trang bằng con trỏ; không cung cấp phân trang theo offset qua khỏi trang đầu tiên. `totalResults` báo cáo số lượng tài nguyên được trả về trong phản hồi (nó chỉ là tổng thực sự khi `nextCursor` vắng mặt).
+Việc yêu cầu `startIndex` lớn hơn 1 trên endpoint Users sẽ trả về lỗi `400` hướng bạn đến phân trang bằng con trỏ; không cung cấp phân trang theo offset qua khỏi trang đầu tiên. `totalResults` sẽ **bị bỏ qua** khi còn `nextCursor`, và chỉ mang tổng chính xác ở trang cuối — nó chủ ý không báo cáo kích thước trang vừa trả về, vì một client nhầm hai điều này sẽ đọc thiếu thư mục một cách âm thầm. Hãy điều khiển vòng lặp bằng `nextCursor` chứ không bằng `totalResults`, và coi `totalResults` vắng mặt là "chưa biết", không phải là 0.
 
 Danh sách nhóm vẫn dùng phân trang theo offset `startIndex`/`count`.
 
@@ -204,6 +205,5 @@ Tùy chọn, một client bật `IncludeGroupsInTokens` cũng nhận được c�
 
 - **Không có thao tác hàng loạt:** người dùng và nhóm phải được cung cấp riêng lẻ.
 - **Không sắp xếp:** danh sách người dùng trả về theo thứ tự lưu trữ dưới phân trang bằng con trỏ; danh sách nhóm được sắp xếp theo ngày tạo.
-- **Tập con bộ lọc:** chỉ các toán tử `eq` và `co` trên `userName`, `externalId`, và `displayName` (nhóm: `displayName` và `externalId`).
 - **Không quản lý mật khẩu:** người dùng được cung cấp qua SCIM chỉ xác thực qua SSO.
-- **Chỉ xóa mềm:** `DELETE` vô hiệu hóa chứ không xóa vĩnh viễn người dùng.
+- **Tombstone, không phải xóa hẳn:** `DELETE` vô hiệu hóa và đặt tombstone (một `GET` sau đó là 404, theo RFC 7644 §3.6) chứ không xóa vĩnh viễn bản ghi người dùng cục bộ. Muốn xóa hẳn thì dùng admin API.

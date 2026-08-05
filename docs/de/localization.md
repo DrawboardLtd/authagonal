@@ -6,7 +6,7 @@ locale: de
 
 # Lokalisierung
 
-Die Login-Oberfläche liefert standardmäßig elf Sprachen: Englisch, Vereinfachtes Chinesisch (`zh-Hans`), Deutsch (`de`), Französisch (`fr`), Spanisch (`es`), Vietnamesisch (`vi`), Portugiesisch (`pt`), Arabisch (`ar`), Afrikaans (`af`), Hindi (`hi`) und eine Klingonisch-Neuheitssprache (`tlh`). Die Server-API-Antworten sind in den ersten sieben davon lokalisiert. Die Lokalisierung umfasst die Server-API-Antworten, die Login-Oberfläche und diese Dokumentationsseite.
+Die Login-Oberfläche liefert standardmäßig zehn Sprachen: Englisch, Vereinfachtes Chinesisch (`zh-Hans`), Deutsch (`de`), Französisch (`fr`), Spanisch (`es`), Vietnamesisch (`vi`), Portugiesisch (`pt`), Arabisch (`ar`), Afrikaans (`af`) und Hindi (`hi`). Die Server-API-Antworten sind in den ersten sieben davon lokalisiert. Die Lokalisierung umfasst die Server-API-Antworten, die Login-Oberfläche und diese Dokumentationsseite.
 
 ## Unterstützte Sprachen
 
@@ -22,7 +22,6 @@ Die Login-Oberfläche liefert standardmäßig elf Sprachen: Englisch, Vereinfach
 | `ar` | Arabisch (rechts-nach-links) | ✓ | — |
 | `af` | Afrikaans | ✓ | — |
 | `hi` | Hindi | ✓ | — |
-| `tlh` | Klingonisch (Neuheit) | ✓ | — |
 
 ## Server (API-Antworten)
 
@@ -78,7 +77,7 @@ Resources/
 
 Die Login-SPA verwendet [react-i18next](https://react.i18next.com/) für die clientseitige Lokalisierung. Die Sprache wird automatisch aus der `navigator.language`-Einstellung des Browsers erkannt.
 
-Die registrierten Sprachen befinden sich in einer einzigen `LANGUAGES`-Registry in `login-app/src/i18n/index.ts`, die sowohl die i18next-Ressourcenregistrierung als auch jede Sprachauswahl steuert, sodass die beiden nicht auseinanderdriften können. Als `novelty` gekennzeichnete Sprachen (derzeit `tlh`) bleiben voll funktionsfähig (`?lng=tlh` funktioniert), sind aber von der Standardauswahl ausgeschlossen; sie erscheinen nur dann in einem Dropdown, wenn die `BrandingConfig.languages` eines Mandanten sie ausdrücklich auflistet. Mandanten können die Auswahl auf die gleiche Weise einschränken: Ein `languages`-Array in `branding.json` ersetzt die Standardliste vollständig (siehe [Branding](branding)).
+Die registrierten Sprachen befinden sich in einer einzigen `LANGUAGES`-Registry in `login-app/src/i18n/index.ts`, die sowohl die i18next-Ressourcenregistrierung als auch jede Sprachauswahl steuert, sodass die beiden nicht auseinanderdriften können. Derzeit erscheint jede registrierte Sprache in der Standardauswahl. `DEFAULT_LANGUAGES` wird getrennt von `LANGUAGES` exportiert, damit eine künftig eingeschränkte Sprache ohne Änderung der Aufrufstellen ausgeschlossen werden könnte — ausgeschlossen ist heute jedoch keine. Mandanten können die Auswahl auf die gleiche Weise einschränken: Ein `languages`-Array in `branding.json` ersetzt die Standardliste vollständig (siehe [Branding](branding)).
 
 Die aktive Sprache wird auf `<html lang>` und `<html dir>` gespiegelt, sodass Rechts-nach-links-Sprachen (`ar`) die Auth-Karte automatisch umkehren, auch wenn die Sprache über die Auswahl direkt gewechselt wird.
 
@@ -108,7 +107,6 @@ i18n/
   ar.json         # Arabic
   af.json         # Afrikaans
   hi.json         # Hindi
-  tlh.json        # Klingon (novelty)
 ```
 
 ### Passwortrichtlinien-Labels

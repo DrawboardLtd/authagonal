@@ -22,7 +22,7 @@ Authagonal bao gồm triển khai SAML 2.0 Service Provider tự phát triển. 
 - Artifact binding
 - Mã hóa assertion bằng AES-GCM (hạn chế của `EncryptedXml` trong .NET; hãy cấu hình AES-CBC tại IdP, xem bên dưới)
 
-SSO khởi tạo từ IdP được hỗ trợ. Endpoint ACS xử lý các phản hồi không có `InResponseTo` (bỏ qua kiểm tra request-ID cho các phản hồi không được yêu cầu, nhưng vẫn thực thi assertion-ID chỉ dùng một lần, xem phần Bảo mật).
+SSO khởi tạo từ IdP được hỗ trợ **theo từng kết nối và mặc định bị tắt**: đặt `allowUnsolicitedResponses: true` trên kết nối để chấp nhận. Nếu không, ACS sẽ từ chối Response không có `InResponseTo` và chuyển hướng kèm `error=saml_unsolicited`. Mặc định tắt vì việc chấp nhận phản hồi không được yêu cầu cho phép bất kỳ ai có tài khoản tại IdP đăng nhập một phiên từ bất kỳ user-agent nào, và vì việc yêu cầu cookie request trên luồng do SP khởi tạo là vô nghĩa khi cùng assertion đó có thể được phát lại sau khi bỏ `InResponseTo`. Khi bật, kiểm tra request-ID sẽ bị bỏ qua cho các phản hồi không được yêu cầu, nhưng assertion-ID chỉ dùng một lần vẫn được thực thi (xem phần Bảo mật).
 
 ## Thiết lập Azure AD
 
@@ -64,7 +64,7 @@ curl -X POST https://auth.example.com/api/v1/saml/connections \
   }'
 ```
 
-API tạo ra `connectionId` (một GUID) và trả về nó trong header `Location` cùng phần thân phản hồi. Các trường tùy chọn bổ sung: `metadataXml` (metadata dán vào, xem bên dưới), `nameIdFormat` (xem bên dưới), `signAuthnRequests` (buộc ký AuthnRequest), `iconUrl` (biểu tượng nút đăng nhập), `disableJitProvisioning` (từ chối người dùng lạ thay vì tự động tạo). Các kết nối tạo qua API cũng nhận một cặp khóa SP được tạo tự động (xem phần Cặp khóa SP bên dưới).
+API tạo ra `connectionId` (một GUID) và trả về nó trong header `Location` cùng phần thân phản hồi. Các trường tùy chọn bổ sung: `metadataXml` (metadata dán vào, xem bên dưới), `nameIdFormat` (xem bên dưới), `signAuthnRequests` (buộc ký AuthnRequest), `iconUrl` (biểu tượng nút đăng nhập), `disableJitProvisioning` (từ chối người dùng lạ thay vì tự động tạo), `allowUnsolicitedResponses` (chấp nhận đăng nhập do IdP khởi tạo — mặc định tắt, xem ở trên). Các kết nối tạo qua API cũng nhận một cặp khóa SP được tạo tự động (xem phần Cặp khóa SP bên dưới).
 
 Các kết nối được quản lý qua `POST` / `GET` / `PUT` / `DELETE` trên `/api/v1/saml/connections[/{connectionId}]`. `PUT` là cập nhật một phần: chỉ các trường được gửi trên đường truyền mới bị thay đổi.
 
@@ -117,7 +117,7 @@ URL trả về sau đăng nhập được mang ở phía máy chủ trên AuthnR
 Mọi kết nối tạo qua API đều nhận một cặp khóa SP được tạo tự động: một chứng chỉ RSA 2048-bit tự ký (hiệu lực 10 năm), được lưu dưới dạng PKCS#12 và được bảo vệ khi lưu trữ bởi nhà cung cấp bí mật của host. Nó chỉ tồn tại phía máy chủ và không bao giờ được API trả về. Cặp khóa cho phép:
 
 - **AuthnRequest có ký** (ký truy vấn `SigAlg`/`Signature` của redirect-binding). Việc ký tự động bật khi metadata của IdP khai báo `WantAuthnRequestsSigned`, hoặc luôn bật khi kết nối đặt `signAuthnRequests: true`.
-- **Giải mã assertion mã hóa.** Khi metadata của SP quảng bá một chứng chỉ mã hóa, ADFS mặc định bắt đầu mã hóa các assertion; ACS giải mã chúng bằng khóa riêng của SP và đưa assertion đã giải mã qua cùng một quy trình chữ ký/điều kiện như một assertion văn bản rõ. Được hỗ trợ: chuyển khóa RSA-OAEP (SHA-1/SHA-256) và RSA-1.5; mã hóa dữ liệu AES-128/192/256-CBC và 3DES. **AES-GCM không được hỗ trợ** (hạn chế của `EncryptedXml` trong .NET) và tạo ra lỗi rõ ràng; hãy cấu hình IdP dùng AES-CBC.
+- **Giải mã assertion mã hóa.** Khi metadata của SP quảng bá một chứng chỉ mã hóa, ADFS mặc định bắt đầu mã hóa các assertion; ACS giải mã chúng bằng khóa riêng của SP và đưa assertion đã giải mã qua cùng một quy trình chữ ký/điều kiện như một assertion văn bản rõ. Được hỗ trợ: chuyển khóa RSA-OAEP (SHA-1/SHA-256); mã hóa dữ liệu AES-128/192/256-CBC và 3DES. **Chuyển khóa RSA-1.5 bị từ chối** — giải bọc PKCS#1 v1.5 là một oracle Bleichenbacher/ROBOT — và **AES-GCM không được hỗ trợ** (hạn chế của `EncryptedXml` trong .NET). Hãy cấu hình IdP dùng RSA-OAEP và AES-CBC. Cả hai trường hợp lỗi đều trả về cùng một thông điệp không đổi ("Could not decrypt the assertion."), một cách có chủ ý: nêu tên thuật toán hay giai đoạn thất bại chính là điều tạo ra oracle, nên hãy chẩn đoán từ cấu hình của IdP thay vì từ thông điệp lỗi.
 - **Thông điệp đăng xuất có ký** (LogoutRequest/LogoutResponse trên binding redirect).
 
 Metadata của SP công bố chứng chỉ vừa là một `KeyDescriptor` `signing` vừa là một `KeyDescriptor` `encryption`, và đặt `AuthnRequestsSigned="true"` khi kết nối buộc ký.
@@ -127,7 +127,7 @@ Metadata của SP công bố chứng chỉ vừa là một `KeyDescriptor` `sign
 ACS ghi lại phiên SAML trên cookie xác thực (các claim `saml_connection`, `saml_name_id`, `saml_name_id_format`, `saml_session_index`) để việc đăng xuất có thể được liên kết trở lại với phiên IdP.
 
 - **Khởi tạo từ SP:** `GET /saml/{connectionId}/logout` luôn kết thúc phiên cookie cục bộ trước (người dùng đã yêu cầu đăng xuất; SLO của IdP là nỗ lực tốt nhất). Nếu phiên của trình duyệt đến từ kết nối này và metadata của IdP quảng bá một `SingleLogoutService`, một LogoutRequest (NameID + SessionIndex, có ký khi SP có khóa) được gửi qua binding redirect; LogoutResponse của IdP quay lại `/slo`, đưa người dùng đến `returnUrl` đã lưu. Các IdP không có endpoint SLO (Google) chỉ được đăng xuất cục bộ.
-- **Khởi tạo từ IdP:** IdP gửi một LogoutRequest đến `/saml/{connectionId}/slo` (binding Redirect GET hoặc POST). Các yêu cầu có ký được xác thực với các chứng chỉ trong metadata của IdP. **Các LogoutRequest không ký chỉ được tôn trọng khi phiên của chính trình duyệt thuộc về kết nối này**, nên một kẻ tấn công chưa xác thực không thể đăng xuất ai khác ngoài chính mình. Một LogoutResponse có ký được trả về khi IdP có endpoint SLO. Chỉ front-channel: thông điệp đến trong trình duyệt của người dùng, nên việc kết thúc phiên cookie đăng xuất chính xác trình duyệt đó.
+- **Khởi tạo từ IdP:** IdP gửi một LogoutRequest đến `/saml/{connectionId}/slo` (binding Redirect GET hoặc POST). Các yêu cầu có ký được xác thực với các chứng chỉ trong metadata của IdP. **LogoutRequest không có chữ ký hoặc không xác minh được sẽ bị từ chối với mã 400** trước khi bất kỳ phiên nào được tham chiếu. Không có phương án dự phòng theo phiên: một trang của bên thứ ba điều hướng trình duyệt của *nạn nhân* đến đây sẽ cung cấp phiên của nạn nhân, không phải của kẻ tấn công — nên việc giới hạn theo phiên hiện tại cũng không hạn chế được ai có thể bị đăng xuất. Profiles §4.4.3.1 dù sao cũng yêu cầu IdP phải ký LogoutRequest trên binding Redirect hoặc POST, và metadata của kết nối đã cung cấp chứng chỉ, nên việc từ chối một yêu cầu không có chữ ký không gây tốn kém gì cho một IdP tuân thủ. Một LogoutResponse có ký được trả về khi IdP có endpoint SLO. Chỉ front-channel: thông điệp đến trong trình duyệt của người dùng, nên việc kết thúc phiên cookie đăng xuất chính xác trình duyệt đó.
 
 ## Bộ nhớ đệm metadata và luân chuyển chứng chỉ
 

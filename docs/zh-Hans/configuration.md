@@ -397,7 +397,9 @@ public Task<MfaPolicy> ResolveMfaPolicyAsync(
 | 设置 | 环境变量 | 默认值 | 描述 |
 |---|---|---|---|
 | `Cluster:Enabled` | `Cluster__Enabled` | `true` | 主开关。设为 `false` 时节点独立运行（始终为领导者，使用进程内事件总线）。 |
-| `Cluster:Secret` | `Cluster__Secret` | *（无）* | 内部专用端点 `/_internal/backchannel-logout` 所需的共享密钥。设置后，调用方必须在 `X-Cluster-Secret` 请求头中提供它（以恒定时间比较）。**未设置**时，该端点仅可从环回 / 私有（RFC 1918 / 链路本地 / ULA）源 IP 访问——携带公网 IP 的外部请求将被拒绝。 |
+| `Cluster:Secret` | `Cluster__Secret` | *（无）* | 内部专用端点 `/_internal/backchannel-logout` 所需的共享密钥。设置后，调用方必须在 `X-Cluster-Secret` 请求头中提供它（以恒定时间比较）。**未设置时该端点不授权任何人**，并返回 404——源地址不是凭据，而回环恰恰是同主机反向代理为它转发的每个请求所呈现的地址，包括来自互联网的请求。 |
+| `Cluster:AllowLoopbackWithoutSecret` | `Cluster__AllowLoopbackWithoutSecret` | `false` | 开发用途的显式开关：在没有 `Cluster:Secret` 时，接受**转发前对端地址**为回环的调用方。私有地址段仍会被拒绝——在共享的集群网络中那等于信任每一个相邻工作负载。不要在反向代理之后的主机上启用它。 |
+| `Cluster:RunLeaderElection` | `Cluster__RunLeaderElection` | `true` | 本节点是否运行租约续期循环、因而可以成为 leader。设为 `false` 仍会加入集群并消费事件总线，只是永不竞争租约——适用于必须接收集群事件但绝不担任 leader 的节点。 |
 | `Cluster:LeaseTtlSeconds` | `Cluster__LeaseTtlSeconds` | `30` | 领导权租约时长。大约每隔其一半的间隔续约一次。 |
 | `Cluster:PollIntervalSeconds` | `Cluster__PollIntervalSeconds` | `3` | 事件总线后端轮询其他节点所发布消息的频率。 |
 
@@ -476,7 +478,13 @@ Authagonal 以客户端 IP 作为速率限制和账户锁定的键，并且仅�
 
 ## CORS
 
-CORS 动态配置。所有已注册客户端的 `AllowedCorsOrigins` 中的来源自动被允许，缓存 60 分钟。
+CORS 是动态配置的，并且**按路径划分范围**——此前那句一行描述（"所有已注册客户端的来源自动被允许"）说得比该 provider 实际做的多得多。
+
+- **客户端注册的来源**（客户端上的 `AllowedCorsOrigins`）只在 `/connect/` 和 `/.well-known/` 下生效，**不会**打开 `/api/auth/`、`/api/v1/` 或 `/scim/`。被禁用的客户端不贡献任何来源，格式错误的来源会被丢弃。
+- **在 `/api/auth/`、`/api/v1/`、`/scim/`、`/consent` 和 `/approvals` 下永不允许携带凭据**，对任何来源都是如此——无论是运维配置的还是客户端注册的。浏览器客户端从其他来源以 `credentials: 'include'` 调用这些路径都会失败，配置无法改变这一点；请使用 backend-for-frontend（参见 `@authagonal/bff` 包），而不是带凭据的跨源调用。
+- 解析出的策略会缓存 60 分钟。
+
+因此，把某个来源加入客户端的 `AllowedCorsOrigins` 会让 `/connect/*` 可用，但不会让 `/api/v1/*` 可用。这是有意为之：那些路径承载会话 Cookie 和管理面。
 
 ## HashiCorp Vault Transit
 

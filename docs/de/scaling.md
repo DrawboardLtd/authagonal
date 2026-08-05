@@ -96,7 +96,7 @@ Die Admin-Namenspräfixsuche wird durch die Indextabellen `UserFirstNames` / `Us
 Beim Betrieb mehrerer Instanzen hinter einem Load Balancer:
 
 - **Weitergeleitete Header**: Ratenbegrenzung und Kontosperre basieren auf der Client-IP, die aus `X-Forwarded-For` aufgelöst wird. Setzen Sie `ForwardedHeaders:KnownNetworks` auf Ihr Ingress- / Pod-CIDR, damit die Client-IP nicht instanzübergreifend gefälscht werden kann. `ForwardedHeaders:ForwardLimit` ist standardmäßig `1`. Siehe [Konfiguration](configuration#forwarded-headers-trusted-proxy).
-- **Interne Endpunkte**: `/_internal/backchannel-logout` ist durch die Quell-IP geschützt (nur Loopback / privat), sofern nicht `Cluster:Secret` gesetzt ist; in diesem Fall müssen Aufrufer das Secret im Header `X-Cluster-Secret` vorlegen (Vergleich in konstanter Zeit). Setzen Sie das Secret, sobald interner Traffic durch etwas geleitet wird, das die Quell-IP umschreibt.
+- **Interne Endpunkte**: `/_internal/backchannel-logout` erfordert `Cluster:Secret` im Header `X-Cluster-Secret` (Vergleich in konstanter Zeit). Ohne das Geheimnis autorisiert der Endpunkt niemanden und antwortet mit 404 — die Quell-IP wird nicht als Credential behandelt, denn Loopback ist das, was ein Reverse-Proxy auf demselben Host für jede weitergeleitete Anfrage präsentiert, und ein privater Bereich ist in einem gemeinsam genutzten Cluster-Netzwerk jede benachbarte Workload. `Cluster:AllowLoopbackWithoutSecret` ist ein reines Entwicklungs-Opt-in, das einen Loopback-Peer vor der Weiterleitung wieder zulässt. Das ausgelieferte Produkt ruft diese Route nie auf (die Session-Verteilung läuft in-process über `SessionTermination`), sie ist also nur für eine selbst gebaute Verteilung relevant.
 
 ## Skalierungsempfehlungen
 

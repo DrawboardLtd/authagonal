@@ -444,7 +444,9 @@ The clustering layer provides **leader election** (so leader-gated jobs like sig
 | Setting | Env Variable | Default | Description |
 |---|---|---|---|
 | `Cluster:Enabled` | `Cluster__Enabled` | `true` | Master switch. When `false` the node runs standalone (always leader, in-process event bus). |
-| `Cluster:Secret` | `Cluster__Secret` | *(none)* | Shared secret required on the internal-only `/_internal/backchannel-logout` endpoint. When set, callers must present it in the `X-Cluster-Secret` header (compared in constant time). When **unset**, the endpoint is reachable only from loopback / private (RFC 1918 / link-local / ULA) source IPs, an external request carrying a public IP is rejected. |
+| `Cluster:Secret` | `Cluster__Secret` | *(none)* | Shared secret required on the internal-only `/_internal/backchannel-logout` endpoint. When set, callers must present it in the `X-Cluster-Secret` header (compared in constant time). When **unset the endpoint authorizes nobody** and answers 404 — a source address is not a credential, and loopback is exactly what a same-host reverse proxy presents for every request it forwards, internet-originated ones included. |
+| `Cluster:AllowLoopbackWithoutSecret` | `Cluster__AllowLoopbackWithoutSecret` | `false` | Development opt-in: with no `Cluster:Secret`, accept a caller whose **pre-forwarding peer address** is loopback. Private ranges are still refused — in a shared cluster network that would trust every neighbouring workload. Do not set it on a host behind a reverse proxy. |
+| `Cluster:RunLeaderElection` | `Cluster__RunLeaderElection` | `true` | Whether this node runs the lease-renewal loop and can become leader. `false` still joins the cluster and consumes the event bus; it just never contends for the lease — for a node that must receive cluster events but must never hold leadership. |
 | `Cluster:LeaseTtlSeconds` | `Cluster__LeaseTtlSeconds` | `30` | Leadership lease duration. Renewed at roughly half this interval. |
 | `Cluster:PollIntervalSeconds` | `Cluster__PollIntervalSeconds` | `3` | How often the event-bus backend polls for messages published by other nodes. |
 
@@ -610,7 +612,20 @@ Details that matter in production:
 
 ## CORS
 
-CORS is configured dynamically. Origins from all registered clients' `AllowedCorsOrigins` are automatically allowed, with a 60-minute cache.
+CORS is configured dynamically, and **scoped by path** — the previous one-line description ("origins from all
+registered clients are automatically allowed") described considerably more than the provider does.
+
+- **Client-registered origins** (`AllowedCorsOrigins` on a client) are honoured only under `/connect/` and
+  `/.well-known/`. They do **not** open `/api/auth/`, `/api/v1/` or `/scim/`. A disabled client contributes
+  nothing, and a malformed origin is dropped.
+- **Credentials are never allowed** under `/api/auth/`, `/api/v1/`, `/scim/`, `/consent` or `/approvals`, for
+  any origin — operator-configured or client-registered. A browser client calling those with
+  `credentials: 'include'` from another origin will fail regardless of configuration; use a
+  backend-for-frontend (see the `@authagonal/bff` package) rather than credentialed cross-origin calls.
+- Resolved policies are cached for 60 minutes.
+
+So an origin added to a client's `AllowedCorsOrigins` makes `/connect/*` work and does not make `/api/v1/*`
+work. That is deliberate: those paths carry the session cookie and the admin surface.
 
 ## HashiCorp Vault Transit
 

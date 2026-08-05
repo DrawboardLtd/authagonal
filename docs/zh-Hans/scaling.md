@@ -96,7 +96,7 @@ builder.Services.AddAuthagonal(builder.Configuration,
 在负载均衡器后面运行多个实例时：
 
 - **转发头**：速率限制和锁定以客户端 IP 为键，该 IP 从 `X-Forwarded-For` 解析。将 `ForwardedHeaders:KnownNetworks` 设为您的入口 / Pod CIDR，使客户端 IP 无法跨实例被伪造。`ForwardedHeaders:ForwardLimit` 默认为 `1`。参见[配置](configuration#forwarded-headers-trusted-proxy)。
-- **内部端点**：`/_internal/backchannel-logout` 受源 IP 保护（仅环回 / 私有），除非设置了 `Cluster:Secret`；设置后，调用方必须在 `X-Cluster-Secret` 请求头中提供该密钥（以恒定时间比较）。只要内部流量经过任何会改写源 IP 的组件，就应设置该密钥。
+- **内部端点**：`/_internal/backchannel-logout` 要求在 `X-Cluster-Secret` 请求头中提供 `Cluster:Secret`（以恒定时间比较）。没有它，该端点不授权任何人并返回 404——源 IP 不被当作凭据，因为回环正是同主机反向代理为每个转发请求所呈现的地址，而私有地址段在共享集群网络中等于每一个相邻工作负载。`Cluster:AllowLoopbackWithoutSecret` 是仅供开发使用的开关，可重新接受转发前为回环的对端。发布的产品从不调用此路由（会话分发通过 `SessionTermination` 在进程内完成），因此它只对你自建的分发机制有意义。
 
 ## 扩展建议
 

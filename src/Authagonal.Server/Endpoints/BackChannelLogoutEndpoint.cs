@@ -21,7 +21,11 @@ public static class BackChannelLogoutEndpoint
 {
     public static IEndpointRouteBuilder MapBackChannelLogoutEndpoints(this IEndpointRouteBuilder app)
     {
-        // Internal endpoint called by EndSessionEndpoint after cookie sign-out
+        // Internal endpoint, and nothing in this product calls it. The comment here used to say
+        // "called by EndSessionEndpoint after cookie sign-out" — EndSessionEndpoint does not call it;
+        // the relying-party fan-out is in-process via SessionTermination. The route exists for a host
+        // that builds its own pod-to-pod revocation on top of it, which is also why the guard fails
+        // closed without Cluster:Secret: no first-party flow depends on it.
         app.MapPost("/_internal/backchannel-logout", HandleAsync)
             .AllowAnonymous()
             .DisableAntiforgery()

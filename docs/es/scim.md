@@ -15,7 +15,7 @@ SCIM es un protocolo de aprovisionamiento entrante: su proveedor de identidad en
 **Operaciones admitidas:**
 - CRUD de usuarios (crear, leer, actualizar, eliminar mediante desactivación suave)
 - CRUD de grupos con gestión de miembros
-- Filtrado (operadores `eq` y `co` sobre `userName`, `externalId`, `displayName`)
+- Filtrado (la gramática de filtros completa de RFC 7644 §3.4.2.2)
 - Paginación: basada en cursor para los listados de usuarios (`cursor`/`nextCursor`), `startIndex` y `count` para grupos
 - PATCH para actualizaciones parciales (incluida la desactivación con `active=false`)
 - Asignación de grupos a roles resuelta en el momento de emisión del token
@@ -114,7 +114,7 @@ Use **OAuth Bearer Token** con el token generado anteriormente.
 | POST | `/scim/v2/Users` | Crear un usuario |
 | PUT | `/scim/v2/Users/{id}` | Reemplazar un usuario |
 | PATCH | `/scim/v2/Users/{id}` | Actualización parcial |
-| DELETE | `/scim/v2/Users/{id}` | Desactivación suave |
+| DELETE | `/scim/v2/Users/{id}` | Tombstone (desactiva; un GET posterior es 404) |
 | GET | `/scim/v2/Groups` | Listar/filtrar grupos |
 | GET | `/scim/v2/Groups/{id}` | Obtener un grupo |
 | POST | `/scim/v2/Groups` | Crear un grupo |
@@ -157,11 +157,12 @@ Los endpoints de usuarios tienen un límite de 200 solicitudes por minuto por cl
 ### Creación de usuarios
 - Los usuarios aprovisionados vía SCIM se crean con `EmailConfirmed = true` (solo SSO, sin contraseña).
 - El campo `ScimProvisionedByClientId` registra qué cliente SCIM creó al usuario.
-- Si el cliente tiene `ProvisioningApps` configurado, el aprovisionamiento TCC se dispara automáticamente. Si el aprovisionamiento rechaza al usuario, la creación SCIM se revierte con una respuesta `422`.
+- Si el cliente tiene `ProvisioningApps` configurado, el aprovisionamiento TCC se dispara automáticamente. Si el aprovisionamiento rechaza al usuario, la creación SCIM se revierte y la respuesta es un `400` SCIM con `scimType: invalidValue` y un mensaje fijo (el texto de la aplicación aguas abajo no se transmite al cliente SCIM, deliberadamente).
 - Crear un usuario cuyo `userName` o `externalId` ya existe devuelve un conflicto SCIM `409`. Los cambios de correo electrónico vía PUT o PATCH se verifican contra conflictos de la misma manera.
 
 ### Desactivación de usuarios
-- `DELETE /scim/v2/Users/{id}` realiza una **eliminación suave** estableciendo `IsActive = false`. El registro del usuario se conserva: un `GET /scim/v2/Users/{id}` posterior aún lo devuelve (con `active: false`) en lugar de un 404.
+- `DELETE /scim/v2/Users/{id}` crea un **tombstone**: desactiva al usuario, conserva el registro local y marca `ScimDeletedAt`. Un `GET /scim/v2/Users/{id}` posterior devuelve **404**, como exige RFC 7644 §3.6 («el proveedor de servicio DEBE devolver un 404 para todas las operaciones asociadas al recurso previamente eliminado»). No confirme un desaprovisionamiento releyendo el recurso y esperando `active: false`: la lectura es un 404, y eso es el éxito.
+- El registro se conserva en lugar de borrarse para que una recontratación pueda volver a crearse: el tombstone libera el `userName`/`externalId` que necesita un recurso nuevo, mientras que la cuenta local, su historial de auditoría y sus pertenencias a grupos sobreviven.
 - `PATCH` con `active = false` también desactiva al usuario.
 - Los usuarios desactivados no pueden iniciar sesión mediante contraseña, SAML u OIDC.
 - Todos los grants (tokens de actualización, sesiones) se revocan al desactivar.
@@ -180,7 +181,7 @@ Los filtros `eq` sobre `userName` y `externalId` (las consultas que Entra y Okta
 ### Paginación
 Los listados de usuarios usan **paginación por cursor**. Cada página de `GET /scim/v2/Users` devuelve una propiedad `nextCursor` en la respuesta de listado; pásela de vuelta como `?cursor=` para obtener la siguiente página. Cuando `nextCursor` está ausente, el listado está completo. El tamaño de página se controla con `count` (predeterminado 100, máximo 200).
 
-Solicitar `startIndex` mayor que 1 en el endpoint de Users devuelve un error `400` que le dirige a la paginación por cursor; no se ofrece paginación por desplazamiento más allá de la primera página. `totalResults` informa el número de recursos devueltos en la respuesta (es el total verdadero solo cuando `nextCursor` está ausente).
+Solicitar `startIndex` mayor que 1 en el endpoint de Users devuelve un error `400` que le dirige a la paginación por cursor; no se ofrece paginación por desplazamiento más allá de la primera página. `totalResults` se **omite** mientras `nextCursor` esté presente, y lleva el total exacto solo en la última página: deliberadamente no informa el tamaño de la página devuelta, porque un cliente que confunde ambas cosas lee el directorio de forma incompleta y en silencio. Gobierne el bucle con `nextCursor`, no con `totalResults`, y trate un `totalResults` ausente como "aún desconocido", no como cero.
 
 Los listados de grupos siguen usando paginación por desplazamiento con `startIndex`/`count`.
 
@@ -204,6 +205,5 @@ Opcionalmente, un cliente con `IncludeGroupsInTokens` habilitado también recibe
 
 - **Sin operaciones masivas:** los usuarios y grupos deben aprovisionarse individualmente.
 - **Sin ordenamiento:** los listados de usuarios devuelven el orden de almacenamiento bajo paginación por cursor; los listados de grupos se ordenan por fecha de creación.
-- **Subconjunto de filtros:** solo los operadores `eq` y `co` sobre `userName`, `externalId` y `displayName` (grupos: `displayName` y `externalId`).
 - **Sin gestión de contraseñas:** los usuarios aprovisionados vía SCIM se autentican solo mediante SSO.
-- **Solo eliminación suave:** `DELETE` desactiva en lugar de eliminar permanentemente a los usuarios.
+- **Tombstone, no borrado:** `DELETE` desactiva y marca un tombstone (un `GET` posterior es un 404, según RFC 7644 §3.6) en lugar de eliminar permanentemente el registro local del usuario. Para el borrado, use la API de administración.

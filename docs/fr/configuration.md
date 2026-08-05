@@ -400,7 +400,9 @@ La couche de clustering fournit l'**élection d'un leader** (afin que les tâche
 | Paramètre | Variable d'env | Défaut | Description |
 |---|---|---|---|
 | `Cluster:Enabled` | `Cluster__Enabled` | `true` | Interrupteur principal. Lorsque `false`, le nœud s'exécute en autonome (toujours leader, bus d'événements en-processus). |
-| `Cluster:Secret` | `Cluster__Secret` | *(aucun)* | Secret partagé requis sur le point d'accès interne uniquement `/_internal/backchannel-logout`. Lorsqu'il est défini, les appelants doivent le présenter dans l'en-tête `X-Cluster-Secret` (comparé en temps constant). Lorsqu'il est **non défini**, le point d'accès n'est accessible que depuis des IP source de boucle locale / privées (RFC 1918 / lien-local / ULA) : une requête externe portant une IP publique est rejetée. |
+| `Cluster:Secret` | `Cluster__Secret` | *(aucun)* | Secret partagé requis sur le point d'accès interne uniquement `/_internal/backchannel-logout`. Lorsqu'il est défini, les appelants doivent le présenter dans l'en-tête `X-Cluster-Secret` (comparé en temps constant). Lorsqu'il n'est **pas défini, le point d'accès n'autorise personne** et répond 404 : une adresse source n'est pas un credential, et la boucle locale est précisément ce qu'un proxy inverse sur le même hôte présente pour chaque requête qu'il transfère, y compris celles venues d'internet. |
+| `Cluster:AllowLoopbackWithoutSecret` | `Cluster__AllowLoopbackWithoutSecret` | `false` | Opt-in de développement : sans `Cluster:Secret`, accepter un appelant dont l'**adresse de pair avant transfert** est la boucle locale. Les plages privées restent refusées : dans un réseau de cluster partagé, cela ferait confiance à chaque charge de travail voisine. Ne l'activez pas sur un hôte derrière un proxy inverse. |
+| `Cluster:RunLeaderElection` | `Cluster__RunLeaderElection` | `true` | Si ce nœud exécute la boucle de renouvellement du bail et peut donc devenir leader. `false` rejoint toujours le cluster et consomme le bus d'événements ; il ne se dispute simplement jamais le bail — pour un nœud qui doit recevoir les événements du cluster mais ne jamais détenir le leadership. |
 | `Cluster:LeaseTtlSeconds` | `Cluster__LeaseTtlSeconds` | `30` | Durée du bail de leadership. Renouvelé à environ la moitié de cet intervalle. |
 | `Cluster:PollIntervalSeconds` | `Cluster__PollIntervalSeconds` | `3` | Fréquence à laquelle le backend du bus d'événements interroge les messages publiés par les autres nœuds. |
 
@@ -479,7 +481,13 @@ Les limites sont appliquées **en-processus par nœud** (derrière le seam `IRat
 
 ## CORS
 
-CORS est configuré dynamiquement. Les origines de tous les `AllowedCorsOrigins` des clients enregistrés sont automatiquement autorisées, avec un cache de 60 minutes.
+CORS est configuré dynamiquement et **délimité par chemin** : la description précédente en une ligne (« les origines de tous les clients enregistrés sont automatiquement autorisées ») décrivait bien plus que ce que fait réellement le fournisseur.
+
+- **Les origines enregistrées sur un client** (`AllowedCorsOrigins`) ne sont honorées que sous `/connect/` et `/.well-known/`. Elles n'ouvrent **pas** `/api/auth/`, `/api/v1/` ni `/scim/`. Un client désactivé n'apporte rien, et une origine mal formée est écartée.
+- **Les credentials ne sont jamais autorisés** sous `/api/auth/`, `/api/v1/`, `/scim/`, `/consent` ou `/approvals`, pour aucune origine — configurée par l'opérateur ou enregistrée par un client. Un client navigateur qui appelle ces chemins avec `credentials: 'include'` depuis une autre origine échouera quelle que soit la configuration ; utilisez un backend-for-frontend (voir le paquet `@authagonal/bff`) plutôt que des appels cross-origin avec credentials.
+- Les policies résolues sont mises en cache pendant 60 minutes.
+
+Une origine ajoutée aux `AllowedCorsOrigins` d'un client fait donc fonctionner `/connect/*` et ne fait pas fonctionner `/api/v1/*`. C'est délibéré : ces chemins portent le cookie de session et la surface d'administration.
 
 ## HashiCorp Vault Transit
 

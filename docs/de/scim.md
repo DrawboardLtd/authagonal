@@ -15,7 +15,7 @@ SCIM ist ein eingehendes Bereitstellungsprotokoll: Ihr Identitätsanbieter über
 **Unterstützte Vorgänge:**
 - Benutzer-CRUD (Erstellen, Lesen, Aktualisieren, Löschen über Soft-Deaktivierung)
 - Gruppen-CRUD mit Mitgliederverwaltung
-- Filterung (Operatoren `eq` und `co` für `userName`, `externalId`, `displayName`)
+- Filterung (die vollständige Filtergrammatik nach RFC 7644 §3.4.2.2)
 - Paginierung: cursorbasiert für Benutzerlisten (`cursor`/`nextCursor`), `startIndex` und `count` für Gruppen
 - PATCH für Teilaktualisierungen (einschließlich Deaktivierung über `active=false`)
 - Zuordnung von Gruppen zu Rollen, aufgelöst bei der Token-Ausstellung
@@ -114,7 +114,7 @@ Verwenden Sie **OAuth Bearer Token** mit dem oben generierten Token.
 | POST | `/scim/v2/Users` | Benutzer erstellen |
 | PUT | `/scim/v2/Users/{id}` | Benutzer ersetzen |
 | PATCH | `/scim/v2/Users/{id}` | Teilaktualisierung |
-| DELETE | `/scim/v2/Users/{id}` | Soft-deaktivieren |
+| DELETE | `/scim/v2/Users/{id}` | Tombstone (deaktiviert; ein späteres GET ist 404) |
 | GET | `/scim/v2/Groups` | Gruppen auflisten/filtern |
 | GET | `/scim/v2/Groups/{id}` | Gruppe abrufen |
 | POST | `/scim/v2/Groups` | Gruppe erstellen |
@@ -127,7 +127,7 @@ Verwenden Sie **OAuth Bearer Token** mit dem oben generierten Token.
 
 Jeder Endpunkt ist zusätzlich ohne das Segment `/v2` verfügbar (z. B. `/scim/Users`), für Identitätsanbieter, die ihren eigenen Pfad anhängen. Die Discovery-Endpunkte (`ServiceProviderConfig`, `Schemas`, `ResourceTypes` sowie die reinen Basis-URLs `/scim/` und `/scim/v2/`, die die ServiceProviderConfig zurückgeben) sind anonym zugänglich; alle anderen erfordern ein SCIM-Bearer-Token.
 
-Benutzer-Endpunkte sind auf 200 Anfragen pro Minute pro SCIM-Client ratenbegrenzt; überzählige Anfragen erhalten einen SCIM-Fehler mit Status `429`.
+Benutzer- und Gruppen-Endpunkte sind auf 200 Anfragen pro Minute pro SCIM-Client ratenbegrenzt; überzählige Anfragen erhalten einen SCIM-Fehler mit Status `429`.
 
 ## Attributzuordnung
 
@@ -157,11 +157,12 @@ Benutzer-Endpunkte sind auf 200 Anfragen pro Minute pro SCIM-Client ratenbegrenz
 ### Benutzererstellung
 - SCIM-bereitgestellte Benutzer werden mit `EmailConfirmed = true` erstellt (nur SSO, kein Passwort).
 - Das Feld `ScimProvisionedByClientId` verfolgt, welcher SCIM-Client den Benutzer erstellt hat.
-- Wenn für den Client `ProvisioningApps` konfiguriert ist, wird die TCC-Bereitstellung automatisch ausgelöst. Lehnt die Bereitstellung den Benutzer ab, wird die SCIM-Erstellung mit einer `422`-Antwort zurückgerollt.
+- Wenn für den Client `ProvisioningApps` konfiguriert ist, wird die TCC-Bereitstellung automatisch ausgelöst. Lehnt die Bereitstellung den Benutzer ab, wird die SCIM-Erstellung zurückgerollt und die Antwort ist ein SCIM-`400` mit `scimType: invalidValue` und einer festen Meldung (der Text der Downstream-App wird dem SCIM-Client absichtlich nicht durchgereicht).
 - Das Erstellen eines Benutzers, dessen `userName` oder `externalId` bereits existiert, liefert einen SCIM-Konflikt `409`. E-Mail-Änderungen über PUT oder PATCH werden auf dieselbe Weise auf Konflikte geprüft.
 
 ### Benutzerdeaktivierung
-- `DELETE /scim/v2/Users/{id}` führt ein **Soft Delete** durch, indem `IsActive = false` gesetzt wird. Der Benutzerdatensatz bleibt erhalten: Ein nachfolgendes `GET /scim/v2/Users/{id}` liefert ihn weiterhin (mit `active: false`) statt eines 404.
+- `DELETE /scim/v2/Users/{id}` erzeugt einen **Tombstone**: der Benutzer wird deaktiviert, der lokale Datensatz bleibt erhalten und `ScimDeletedAt` wird gesetzt. Ein nachfolgendes `GET /scim/v2/Users/{id}` liefert **404**, wie RFC 7644 §3.6 es verlangt („der Service Provider MUSS für alle Operationen auf der zuvor gelöschten Ressource 404 zurückgeben"). Bestätigen Sie eine Deprovisionierung also nicht, indem Sie die Ressource erneut lesen und `active: false` erwarten — der Lesevorgang ist ein 404, und das ist der Erfolgsfall.
+- Der Datensatz bleibt erhalten statt gelöscht zu werden, damit eine Wiedereinstellung neu angelegt werden kann: der Tombstone gibt `userName`/`externalId` für eine neue Ressource frei, während das lokale Konto, seine Audit-Historie und seine Gruppenmitgliedschaften bestehen bleiben.
 - `PATCH` mit `active = false` deaktiviert den Benutzer ebenfalls.
 - Deaktivierte Benutzer können sich weder per Passwort noch per SAML oder OIDC anmelden.
 - Alle Grants (Refresh Tokens, Sitzungen) werden bei der Deaktivierung widerrufen.
@@ -180,7 +181,7 @@ Es werden nur Filter mit einem einzelnen Attribut unterstützt. Komplexe boolesc
 ### Paginierung
 Benutzerlisten verwenden **Cursor-Paginierung**. Jede Seite von `GET /scim/v2/Users` liefert eine Eigenschaft `nextCursor` in der Listenantwort zurück; übergeben Sie diese als `?cursor=`, um die nächste Seite abzurufen. Fehlt `nextCursor`, ist die Liste vollständig. Die Seitengröße wird über `count` gesteuert (Standard 100, Maximum 200).
 
-Eine Anfrage mit `startIndex` größer als 1 am Users-Endpunkt liefert einen `400`-Fehler, der auf die Cursor-Paginierung verweist; Offset-Paginierung über die erste Seite hinaus wird nicht angeboten. `totalResults` gibt die Anzahl der in der Antwort zurückgegebenen Ressourcen an (nur dann die tatsächliche Gesamtzahl, wenn `nextCursor` fehlt).
+Eine Anfrage mit `startIndex` größer als 1 am Users-Endpunkt liefert einen `400`-Fehler, der auf die Cursor-Paginierung verweist; Offset-Paginierung über die erste Seite hinaus wird nicht angeboten. `totalResults` wird **weggelassen**, solange `nextCursor` vorhanden ist, und enthält die exakte Gesamtzahl erst auf der letzten Seite — die Größe der zurückgegebenen Seite wird absichtlich nicht gemeldet, weil ein Client, der sie mit der Gesamtzahl verwechselt, das Verzeichnis stillschweigend unvollständig liest. Steuern Sie die Schleife über `nextCursor`, nicht über `totalResults`, und behandeln Sie ein fehlendes `totalResults` als "noch unbekannt", nicht als Null.
 
 Gruppenlisten verwenden weiterhin die Offset-Paginierung über `startIndex`/`count`.
 
@@ -204,6 +205,5 @@ Optional erhält ein Client mit aktiviertem `IncludeGroupsInTokens` zusätzlich 
 
 - **Keine Massenoperationen:** Benutzer und Gruppen müssen einzeln bereitgestellt werden.
 - **Keine Sortierung:** Benutzerlisten werden unter Cursor-Paginierung in Speicherreihenfolge zurückgegeben; Gruppenlisten sind nach Erstellungsdatum sortiert.
-- **Filterteilmenge:** nur die Operatoren `eq` und `co` für `userName`, `externalId` und `displayName` (Gruppen: `displayName` und `externalId`).
 - **Keine Passwortverwaltung:** SCIM-bereitgestellte Benutzer authentifizieren sich nur über SSO.
-- **Nur Soft Delete:** `DELETE` deaktiviert Benutzer, statt sie dauerhaft zu entfernen.
+- **Tombstone statt Löschung:** `DELETE` deaktiviert und setzt einen Tombstone (ein späteres `GET` ist ein 404, gemäß RFC 7644 §3.6), statt den lokalen Benutzerdatensatz dauerhaft zu entfernen. Für eine echte Löschung dient die Admin-API.

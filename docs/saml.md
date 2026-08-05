@@ -21,7 +21,7 @@ Authagonal includes a homebrew SAML 2.0 Service Provider implementation. No thir
 - Artifact binding
 - AES-GCM assertion encryption (.NET `EncryptedXml` limitation; configure AES-CBC at the IdP, see below)
 
-IdP-initiated SSO is supported. The ACS endpoint handles responses without `InResponseTo` (the request-ID check is skipped for unsolicited responses, but assertion-ID single-use is still enforced, see Security).
+IdP-initiated SSO is supported **per connection, and off by default**: set `allowUnsolicitedResponses: true` on the connection to accept it. Without it the ACS refuses a Response with no `InResponseTo` and redirects with `error=saml_unsolicited`. Off by default because accepting unsolicited responses lets anyone with an account at the IdP sign a session in from any user-agent, and because requiring the request cookie on the SP-initiated path is worth nothing while the same assertion can be replayed with `InResponseTo` removed. When it is on, the request-ID check is skipped for unsolicited responses but assertion-ID single-use is still enforced (see Security).
 
 ## Azure AD Setup
 
@@ -65,7 +65,7 @@ curl -X POST https://auth.example.com/api/v1/saml/connections \
   }'
 ```
 
-The API generates the `connectionId` (a GUID) and returns it in the `Location` header and response body. Additional optional fields: `metadataXml` (pasted metadata, see below), `nameIdFormat` (see below), `signAuthnRequests` (force signed AuthnRequests), `iconUrl` (login-button icon), `disableJitProvisioning` (reject unknown users instead of auto-creating them). API-created connections also get an auto-generated SP keypair (see SP Keypair below).
+The API generates the `connectionId` (a GUID) and returns it in the `Location` header and response body. Additional optional fields: `metadataXml` (pasted metadata, see below), `nameIdFormat` (see below), `signAuthnRequests` (force signed AuthnRequests), `iconUrl` (login-button icon), `disableJitProvisioning` (reject unknown users instead of auto-creating them), `allowUnsolicitedResponses` (accept IdP-initiated sign-in — off by default, see above). API-created connections also get an auto-generated SP keypair (see SP Keypair below).
 
 Connections are managed via `POST` / `GET` / `PUT` / `DELETE` on `/api/v1/saml/connections[/{connectionId}]`. `PUT` is a partial update: only fields supplied on the wire are modified.
 
@@ -118,7 +118,7 @@ The post-login return URL is carried server-side on the stored AuthnRequest (key
 Every API-created connection gets an auto-generated SP keypair: a self-signed 2048-bit RSA certificate (10-year validity), stored as PKCS#12 and protected at rest by the host's secret provider. It is server-only and never returned by the API. The keypair enables:
 
 - **Signed AuthnRequests** (redirect-binding `SigAlg`/`Signature` query signing). Signing turns on automatically when the IdP's metadata declares `WantAuthnRequestsSigned`, or always when the connection sets `signAuthnRequests: true`.
-- **Encrypted assertion decryption.** When the SP metadata advertises an encryption certificate, ADFS starts encrypting assertions by default; the ACS decrypts them with the SP private key and runs the decrypted assertion through the same signature/conditions pipeline as a plaintext one. Supported: RSA-OAEP (SHA-1/SHA-256) and RSA-1.5 key transport; AES-128/192/256-CBC and 3DES data encryption. **AES-GCM is not supported** (.NET `EncryptedXml` limitation) and produces a clear error; configure the IdP to use AES-CBC.
+- **Encrypted assertion decryption.** When the SP metadata advertises an encryption certificate, ADFS starts encrypting assertions by default; the ACS decrypts them with the SP private key and runs the decrypted assertion through the same signature/conditions pipeline as a plaintext one. Supported: RSA-OAEP (SHA-1/SHA-256) key transport; AES-128/192/256-CBC and 3DES data encryption. **RSA-1.5 key transport is refused** — PKCS#1 v1.5 unwrapping is a Bleichenbacher/ROBOT oracle — and **AES-GCM is not supported** (.NET `EncryptedXml` limitation). Configure the IdP for RSA-OAEP and AES-CBC. Both failures return the same constant message ("Could not decrypt the assertion."), deliberately: naming the algorithm or the stage that failed is what builds the oracle, so diagnose from the IdP's configuration rather than from the error.
 - **Signed logout messages** (LogoutRequest/LogoutResponse on the redirect binding).
 
 The SP metadata publishes the certificate as both a `signing` and an `encryption` `KeyDescriptor`, and sets `AuthnRequestsSigned="true"` when the connection forces signing.
@@ -128,7 +128,7 @@ The SP metadata publishes the certificate as both a `signing` and an `encryption
 The ACS records the SAML session on the auth cookie (`saml_connection`, `saml_name_id`, `saml_name_id_format`, `saml_session_index` claims) so logout can be tied back to the IdP session.
 
 - **SP-initiated:** `GET /saml/{connectionId}/logout` always ends the local cookie session first (the user asked to log out; IdP SLO is best-effort). If the browser's session came from this connection and the IdP metadata advertises a `SingleLogoutService`, a LogoutRequest (NameID + SessionIndex, signed when the SP has a key) is sent via the redirect binding; the IdP's LogoutResponse comes back to `/slo`, which lands the user on the stored `returnUrl`. IdPs with no SLO endpoint (Google) just get the local sign-out.
-- **IdP-initiated:** the IdP sends a LogoutRequest to `/saml/{connectionId}/slo` (Redirect GET or POST binding). Signed requests are validated against the IdP's metadata certificates. **Unsigned LogoutRequests are honored only when the browser's own session belongs to this connection**, so an unauthenticated attacker can log out nobody but themselves. A signed LogoutResponse is returned when the IdP has an SLO endpoint. Front-channel only: the message arrives in the user's browser, so ending the cookie session logs out exactly that browser.
+- **IdP-initiated:** the IdP sends a LogoutRequest to `/saml/{connectionId}/slo` (Redirect GET or POST binding). Signed requests are validated against the IdP's metadata certificates. **An unsigned or unverifiable LogoutRequest is refused with a 400** before any session is consulted. There is no session-scoped fallback: a third-party page that navigates the *victim's* browser here supplies the victim's session, not the attacker's, so scoping the fallback to the current session would not have limited who could be logged out. Profiles §4.4.3.1 requires the IdP to sign a LogoutRequest on the Redirect or POST binding anyway, and the connection's metadata already supplies the certificates, so refusing an unsigned one costs no conformant IdP anything. A signed LogoutResponse is returned when the IdP has an SLO endpoint. Front-channel only: the message arrives in the user's browser, so ending the cookie session logs out exactly that browser.
 
 ## Metadata Caching & Cert Rollover
 

@@ -400,7 +400,9 @@ Lớp clustering cung cấp **bầu chọn leader** (để các công việc do 
 | Cài đặt | Biến môi trường | Mặc định | Mô tả |
 |---|---|---|---|
 | `Cluster:Enabled` | `Cluster__Enabled` | `true` | Công tắc chính. Khi `false`, node chạy độc lập (luôn là leader, event bus in-process). |
-| `Cluster:Secret` | `Cluster__Secret` | *(không có)* | Bí mật dùng chung bắt buộc trên endpoint chỉ nội bộ `/_internal/backchannel-logout`. Khi được đặt, người gọi phải xuất trình nó trong header `X-Cluster-Secret` (so sánh trong thời gian hằng số). Khi **không được đặt**, endpoint chỉ có thể truy cập từ các IP nguồn loopback / riêng tư (RFC 1918 / link-local / ULA), một yêu cầu bên ngoài mang IP công khai sẽ bị từ chối. |
+| `Cluster:Secret` | `Cluster__Secret` | *(không có)* | Bí mật dùng chung bắt buộc trên endpoint chỉ nội bộ `/_internal/backchannel-logout`. Khi được đặt, người gọi phải xuất trình nó trong header `X-Cluster-Secret` (so sánh trong thời gian hằng số). Khi **không được đặt, endpoint không cấp quyền cho bất kỳ ai** và trả về 404 — địa chỉ nguồn không phải là một credential, và loopback chính là thứ mà một reverse proxy trên cùng host xuất trình cho mọi yêu cầu nó chuyển tiếp, kể cả yêu cầu đến từ internet. |
+| `Cluster:AllowLoopbackWithoutSecret` | `Cluster__AllowLoopbackWithoutSecret` | `false` | Tùy chọn dành cho phát triển: khi không có `Cluster:Secret`, chấp nhận người gọi có **địa chỉ peer trước khi chuyển tiếp** là loopback. Các dải riêng tư vẫn bị từ chối — trong một mạng cluster dùng chung, điều đó sẽ tin cậy mọi workload lân cận. Đừng bật nó trên host nằm sau reverse proxy. |
+| `Cluster:RunLeaderElection` | `Cluster__RunLeaderElection` | `true` | Node này có chạy vòng lặp gia hạn lease và do đó có thể trở thành leader hay không. `false` vẫn tham gia cluster và tiêu thụ event bus, chỉ là không bao giờ tranh lease — dành cho node phải nhận sự kiện cluster nhưng không bao giờ được giữ vai trò leader. |
 | `Cluster:LeaseTtlSeconds` | `Cluster__LeaseTtlSeconds` | `30` | Thời gian lease quyền leader. Được gia hạn ở khoảng một nửa khoảng thời gian này. |
 | `Cluster:PollIntervalSeconds` | `Cluster__PollIntervalSeconds` | `3` | Tần suất backend event-bus thăm dò các thông điệp do các node khác phát hành. |
 
@@ -479,7 +481,13 @@ Các giới hạn được áp dụng **in-process theo từng node** (phía sau
 
 ## CORS
 
-CORS được cấu hình động. Các origin từ `AllowedCorsOrigins` của tất cả client đã đăng ký được tự động cho phép, với bộ nhớ đệm 60 phút.
+CORS được cấu hình động và **được giới hạn theo đường dẫn** — mô tả một dòng trước đây ("các origin của mọi client đã đăng ký đều được tự động cho phép") nói nhiều hơn khá đáng kể so với những gì provider thực sự làm.
+
+- **Các origin đăng ký trên client** (`AllowedCorsOrigins`) chỉ được tôn trọng dưới `/connect/` và `/.well-known/`. Chúng **không** mở `/api/auth/`, `/api/v1/` hay `/scim/`. Một client bị vô hiệu hóa không đóng góp gì, và origin sai định dạng sẽ bị loại bỏ.
+- **Credential không bao giờ được cho phép** dưới `/api/auth/`, `/api/v1/`, `/scim/`, `/consent` hay `/approvals`, với bất kỳ origin nào — do người vận hành cấu hình hay do client đăng ký. Một client trình duyệt gọi các đường dẫn đó với `credentials: 'include'` từ origin khác sẽ thất bại bất kể cấu hình; hãy dùng backend-for-frontend (xem gói `@authagonal/bff`) thay cho các lệnh gọi cross-origin kèm credential.
+- Các policy đã phân giải được cache trong 60 phút.
+
+Vì vậy một origin được thêm vào `AllowedCorsOrigins` của client sẽ làm `/connect/*` hoạt động chứ không làm `/api/v1/*` hoạt động. Đó là có chủ ý: những đường dẫn đó mang cookie phiên và bề mặt quản trị.
 
 ## HashiCorp Vault Transit
 

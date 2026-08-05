@@ -6,7 +6,7 @@ locale: es
 
 # Localización
 
-La interfaz de inicio de sesión incluye once idiomas de forma predeterminada: inglés, chino simplificado (`zh-Hans`), alemán (`de`), francés (`fr`), español (`es`), vietnamita (`vi`), portugués (`pt`), árabe (`ar`), afrikaans (`af`), hindi (`hi`) y un idioma novedad, klingon (`tlh`). Las respuestas de la API del servidor están localizadas en los primeros siete de estos. La localización abarca las respuestas de la API del servidor, la interfaz de inicio de sesión y este sitio de documentación.
+La interfaz de inicio de sesión incluye diez idiomas de forma predeterminada: inglés, chino simplificado (`zh-Hans`), alemán (`de`), francés (`fr`), español (`es`), vietnamita (`vi`), portugués (`pt`), árabe (`ar`), afrikaans (`af`) e hindi (`hi`). Las respuestas de la API del servidor están localizadas en los primeros siete de estos. La localización abarca las respuestas de la API del servidor, la interfaz de inicio de sesión y este sitio de documentación.
 
 ## Idiomas admitidos
 
@@ -22,7 +22,6 @@ La interfaz de inicio de sesión incluye once idiomas de forma predeterminada: i
 | `ar` | Árabe (de derecha a izquierda) | ✓ | — |
 | `af` | Afrikaans | ✓ | — |
 | `hi` | Hindi | ✓ | — |
-| `tlh` | Klingon (novedad) | ✓ | — |
 
 ## Servidor (respuestas de la API)
 
@@ -78,7 +77,7 @@ Resources/
 
 La SPA de inicio de sesión utiliza [react-i18next](https://react.i18next.com/) para la localización del lado del cliente. El idioma se detecta automáticamente a partir de la configuración `navigator.language` del navegador.
 
-Los idiomas registrados se encuentran en un único registro `LANGUAGES` en `login-app/src/i18n/index.ts`, que gobierna tanto el registro de recursos de i18next como cada selector de idioma, de modo que ambos no pueden desincronizarse. Los idiomas marcados como `novelty` (actualmente `tlh`) siguen siendo plenamente funcionales (`?lng=tlh` funciona) pero se excluyen del selector predeterminado; solo aparecen en un desplegable cuando el `BrandingConfig.languages` de un tenant los enumera explícitamente. Los tenants también pueden acotar el selector de la misma manera: un arreglo `languages` en `branding.json` reemplaza por completo la lista predeterminada (ver [Personalización visual](branding)).
+Los idiomas registrados se encuentran en un único registro `LANGUAGES` en `login-app/src/i18n/index.ts`, que gobierna tanto el registro de recursos de i18next como cada selector de idioma, de modo que ambos no pueden desincronizarse. Actualmente todos los idiomas registrados aparecen en el selector predeterminado. `DEFAULT_LANGUAGES` se exporta por separado de `LANGUAGES` para que un futuro idioma restringido pueda excluirse de los selectores sin tocar los puntos de llamada, pero hoy no se excluye ninguno. Los tenants también pueden acotar el selector de la misma manera: un arreglo `languages` en `branding.json` reemplaza por completo la lista predeterminada (ver [Personalización visual](branding)).
 
 El idioma activo se refleja en `<html lang>` y `<html dir>`, de modo que los idiomas de derecha a izquierda (`ar`) invierten la tarjeta de autenticación automáticamente, incluso cuando el idioma se cambia en el momento mediante el selector.
 
@@ -108,7 +107,6 @@ i18n/
   ar.json         # Arabic
   af.json         # Afrikaans
   hi.json         # Hindi
-  tlh.json        # Klingon (novelty)
 ```
 
 ### Etiquetas de la política de contraseñas

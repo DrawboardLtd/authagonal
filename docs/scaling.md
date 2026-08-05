@@ -106,7 +106,7 @@ Admin name-prefix search is backed by the `UserFirstNames` / `UserLastNames` ind
 When running multiple instances behind a load balancer:
 
 - **Forwarded headers**: rate limiting and lockout key on the client IP, resolved from `X-Forwarded-For`. Set `ForwardedHeaders:KnownNetworks` to your ingress / pod CIDR so the client IP can't be spoofed across instances. `ForwardedHeaders:ForwardLimit` defaults to `1`. See [Configuration](configuration#forwarded-headers-trusted-proxy).
-- **Internal endpoints**: `/_internal/backchannel-logout` is guarded by source IP (loopback / private only) unless `Cluster:Secret` is set, in which case callers must present the secret in the `X-Cluster-Secret` header (compared in constant time). Set the secret whenever internal traffic is routed through anything that rewrites the source IP.
+- **Internal endpoints**: `/_internal/backchannel-logout` requires `Cluster:Secret` in the `X-Cluster-Secret` header (compared in constant time). Without it the endpoint authorizes nobody and answers 404 — source IP is not treated as a credential, because loopback is what a same-host reverse proxy presents for every forwarded request and a private range is every neighbouring workload in a shared cluster network. `Cluster:AllowLoopbackWithoutSecret` is a development-only opt-in that re-admits a loopback pre-forwarding peer. The shipped product never calls this route (session fan-out is in-process via `SessionTermination`), so it matters only for a fan-out you build yourself.
 
 ## Scaling recommendations
 

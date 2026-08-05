@@ -400,7 +400,9 @@ La capa de agrupación proporciona **elección de líder** (para que los trabajo
 | Ajuste | Variable de entorno | Predeterminado | Descripción |
 |---|---|---|---|
 | `Cluster:Enabled` | `Cluster__Enabled` | `true` | Interruptor principal. Cuando es `false`, el nodo se ejecuta de forma independiente (siempre líder, bus de eventos en proceso). |
-| `Cluster:Secret` | `Cluster__Secret` | *(ninguno)* | Secreto compartido requerido en el endpoint de uso interno `/_internal/backchannel-logout`. Cuando se establece, los llamadores deben presentarlo en el encabezado `X-Cluster-Secret` (comparado en tiempo constante). Cuando **no** se establece, el endpoint solo es accesible desde IPs de origen de loopback / privadas (RFC 1918 / link-local / ULA); una solicitud externa que lleve una IP pública se rechaza. |
+| `Cluster:Secret` | `Cluster__Secret` | *(ninguno)* | Secreto compartido requerido en el endpoint de uso interno `/_internal/backchannel-logout`. Cuando se establece, los llamadores deben presentarlo en el encabezado `X-Cluster-Secret` (comparado en tiempo constante). Cuando **no se establece, el endpoint no autoriza a nadie** y responde 404: una dirección de origen no es una credencial, y loopback es exactamente lo que presenta un proxy inverso en el mismo host para cada solicitud que reenvía, incluidas las originadas en internet. |
+| `Cluster:AllowLoopbackWithoutSecret` | `Cluster__AllowLoopbackWithoutSecret` | `false` | Opt-in de desarrollo: sin `Cluster:Secret`, acepta un llamador cuya **dirección de par previa al reenvío** sea loopback. Los rangos privados siguen rechazándose: en una red de clúster compartida eso confiaría en cada carga de trabajo vecina. No lo active en un host detrás de un proxy inverso. |
+| `Cluster:RunLeaderElection` | `Cluster__RunLeaderElection` | `true` | Si este nodo ejecuta el bucle de renovación del lease y, por tanto, puede convertirse en líder. `false` sigue uniéndose al clúster y consumiendo el bus de eventos; simplemente nunca compite por el lease, para un nodo que debe recibir eventos del clúster pero nunca ostentar el liderazgo. |
 | `Cluster:LeaseTtlSeconds` | `Cluster__LeaseTtlSeconds` | `30` | Duración de la concesión de liderazgo. Se renueva aproximadamente cada mitad de este intervalo. |
 | `Cluster:PollIntervalSeconds` | `Cluster__PollIntervalSeconds` | `3` | Frecuencia con la que el backend del bus de eventos sondea los mensajes publicados por otros nodos. |
 
@@ -479,7 +481,13 @@ Los límites se aplican **en proceso por nodo** (detrás del punto de extensión
 
 ## CORS
 
-CORS se configura dinámicamente. Los orígenes de todos los `AllowedCorsOrigins` de los clientes registrados se permiten automáticamente, con un cache de 60 minutos.
+CORS se configura dinámicamente y está **acotado por ruta**: la descripción anterior de una línea («los orígenes de todos los clientes registrados se permiten automáticamente») describía bastante más de lo que hace el proveedor.
+
+- **Los orígenes registrados en un cliente** (`AllowedCorsOrigins`) se honran solo bajo `/connect/` y `/.well-known/`. **No** abren `/api/auth/`, `/api/v1/` ni `/scim/`. Un cliente deshabilitado no aporta nada y un origen mal formado se descarta.
+- **Las credenciales nunca se permiten** bajo `/api/auth/`, `/api/v1/`, `/scim/`, `/consent` ni `/approvals`, para ningún origen —configurado por el operador o registrado por un cliente—. Un cliente de navegador que llame a esas rutas con `credentials: 'include'` desde otro origen fallará sea cual sea la configuración; use un backend-for-frontend (vea el paquete `@authagonal/bff`) en lugar de llamadas cross-origin con credenciales.
+- Las políticas resueltas se almacenan en cache 60 minutos.
+
+Así que un origen añadido a los `AllowedCorsOrigins` de un cliente hace que funcione `/connect/*` y no hace que funcione `/api/v1/*`. Es deliberado: esas rutas llevan la cookie de sesión y la superficie de administración.
 
 ## HashiCorp Vault Transit
 

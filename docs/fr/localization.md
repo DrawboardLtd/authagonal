@@ -6,7 +6,7 @@ locale: fr
 
 # Localisation
 
-L'interface de connexion est livrée avec onze locales par défaut : anglais, chinois simplifié (`zh-Hans`), allemand (`de`), français (`fr`), espagnol (`es`), vietnamien (`vi`), portugais (`pt`), arabe (`ar`), afrikaans (`af`), hindi (`hi`) et une locale fantaisie klingon (`tlh`). Les réponses de l'API serveur sont localisées dans les sept premières. La localisation couvre les réponses de l'API serveur, l'interface de connexion et ce site de documentation.
+L'interface de connexion est livrée avec dix locales par défaut : anglais, chinois simplifié (`zh-Hans`), allemand (`de`), français (`fr`), espagnol (`es`), vietnamien (`vi`), portugais (`pt`), arabe (`ar`), afrikaans (`af`) et hindi (`hi`). Les réponses de l'API serveur sont localisées dans les sept premières. La localisation couvre les réponses de l'API serveur, l'interface de connexion et ce site de documentation.
 
 ## Langues prises en charge
 
@@ -22,7 +22,6 @@ L'interface de connexion est livrée avec onze locales par défaut : anglais, ch
 | `ar` | Arabe (droite à gauche) | ✓ | — |
 | `af` | Afrikaans | ✓ | — |
 | `hi` | Hindi | ✓ | — |
-| `tlh` | Klingon (fantaisie) | ✓ | — |
 
 ## Serveur (réponses API)
 
@@ -78,7 +77,7 @@ Resources/
 
 La SPA de connexion utilise [react-i18next](https://react.i18next.com/) pour la localisation côté client. La langue est détectée automatiquement à partir du paramètre `navigator.language` du navigateur.
 
-Les locales enregistrées vivent dans un registre `LANGUAGES` unique dans `login-app/src/i18n/index.ts`, qui pilote à la fois l'enregistrement des ressources i18next et chaque sélecteur de langue, de sorte que les deux ne peuvent pas diverger. Les locales marquées `novelty` (actuellement `tlh`) restent pleinement fonctionnelles (`?lng=tlh` fonctionne) mais sont exclues du sélecteur par défaut ; elles n'apparaissent dans un menu déroulant que lorsque le `BrandingConfig.languages` d'un tenant les liste explicitement. Les tenants peuvent aussi restreindre le sélecteur de la même façon : un tableau `languages` dans `branding.json` remplace entièrement la liste par défaut (voir [Marque](branding)).
+Les locales enregistrées vivent dans un registre `LANGUAGES` unique dans `login-app/src/i18n/index.ts`, qui pilote à la fois l'enregistrement des ressources i18next et chaque sélecteur de langue, de sorte que les deux ne peuvent pas diverger. Toutes les locales enregistrées apparaissent actuellement dans le sélecteur par défaut. `DEFAULT_LANGUAGES` est exporté séparément de `LANGUAGES` afin qu'une future locale restreinte puisse être exclue des sélecteurs sans modifier les points d'appel, mais aucune ne l'est aujourd'hui. Les tenants peuvent aussi restreindre le sélecteur de la même façon : un tableau `languages` dans `branding.json` remplace entièrement la liste par défaut (voir [Marque](branding)).
 
 La langue active est reflétée sur `<html lang>` et `<html dir>`, de sorte que les langues de droite à gauche (`ar`) retournent automatiquement la carte d'authentification, y compris lorsque la langue est changée sur place via le sélecteur.
 
@@ -108,7 +107,6 @@ i18n/
   ar.json         # Arabic
   af.json         # Afrikaans
   hi.json         # Hindi
-  tlh.json        # Klingon (novelty)
 ```
 
 ### Labels de la politique de mot de passe

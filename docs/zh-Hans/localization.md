@@ -6,7 +6,7 @@ locale: zh-Hans
 
 # 本地化
 
-登录界面开箱即支持十一种语言/区域设置：英语、简体中文 (`zh-Hans`)、德语 (`de`)、法语 (`fr`)、西班牙语 (`es`)、越南语 (`vi`)、葡萄牙语 (`pt`)、阿拉伯语 (`ar`)、南非荷兰语 (`af`)、印地语 (`hi`)，以及作为趣味区域设置的克林贡语 (`tlh`)。服务器 API 响应对其中前七种进行本地化。本地化涵盖服务器 API 响应、登录界面以及本文档站点。
+登录界面开箱即支持十种语言/区域设置：英语、简体中文 (`zh-Hans`)、德语 (`de`)、法语 (`fr`)、西班牙语 (`es`)、越南语 (`vi`)、葡萄牙语 (`pt`)、阿拉伯语 (`ar`)、南非荷兰语 (`af`) 和印地语 (`hi`)。服务器 API 响应对其中前七种进行本地化。本地化涵盖服务器 API 响应、登录界面以及本文档站点。
 
 ## 支持的语言
 
@@ -22,7 +22,6 @@ locale: zh-Hans
 | `ar` | 阿拉伯语（从右到左） | ✓ | — |
 | `af` | 南非荷兰语 | ✓ | — |
 | `hi` | 印地语 | ✓ | — |
-| `tlh` | 克林贡语（趣味） | ✓ | — |
 
 ## 服务器（API 响应）
 
@@ -78,7 +77,7 @@ Resources/
 
 登录单页应用使用 [react-i18next](https://react.i18next.com/) 进行客户端本地化。语言根据浏览器的 `navigator.language` 设置自动检测。
 
-已注册的语言/区域设置集中在 `login-app/src/i18n/index.ts` 中的单个 `LANGUAGES` 注册表内，它同时驱动 i18next 资源注册和每个语言选择器，因此两者不会出现偏差。标记为 `novelty` 的区域设置（目前是 `tlh`）仍完全可用（`?lng=tlh` 有效），但会从默认选择器中排除；只有当某个租户的 `BrandingConfig.languages` 显式列出它们时，它们才会出现在下拉菜单中。租户也可以用同样的方式收窄选择器：`branding.json` 中的 `languages` 数组会完全替换默认列表（参见 [品牌定制](branding)）。
+已注册的语言/区域设置集中在 `login-app/src/i18n/index.ts` 中的单个 `LANGUAGES` 注册表内，它同时驱动 i18next 资源注册和每个语言选择器，因此两者不会出现偏差。目前所有已注册的区域设置都会出现在默认选择器中。`DEFAULT_LANGUAGES` 与 `LANGUAGES` 分开导出，以便将来某个受限区域设置可以在不改动调用点的情况下从选择器中排除，但目前没有任何一个被排除。租户也可以用同样的方式收窄选择器：`branding.json` 中的 `languages` 数组会完全替换默认列表（参见 [品牌定制](branding)）。
 
 当前语言会同步反映到 `<html lang>` 和 `<html dir>` 上，因此从右到左的语言（`ar`）会自动翻转认证卡片，包括通过选择器就地切换语言时。
 
@@ -108,7 +107,6 @@ i18n/
   ar.json         # Arabic
   af.json         # Afrikaans
   hi.json         # Hindi
-  tlh.json        # Klingon (novelty)
 ```
 
 ### 密码策略标签
