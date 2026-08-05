@@ -220,7 +220,7 @@ La SPA de connexion par défaut fonctionne directement, mais vous pouvez la remp
 ```bash
 mkdir login-app && cd login-app
 npm init -y
-npm install react react-dom react-router-dom @authagonal/login
+npm install react react-dom react-router @authagonal/login
 npm install -D vite @vitejs/plugin-react typescript @types/react @types/react-dom
 ```
 
@@ -301,7 +301,7 @@ loadBranding().then((config) => {
 Combinez des pages personnalisées avec les pages du package de base :
 
 ```tsx
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router';
 import {
   ForgotPasswordPage, ResetPasswordPage, ConsentPage, DevicePage, GrantsPage,
 } from '@authagonal/login';

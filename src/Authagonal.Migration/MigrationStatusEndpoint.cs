@@ -54,12 +54,18 @@ public static class MigrationStatusEndpoint
     {
         var marker = await stateStore.GetAsync(options.Version, ct);
         if (marker is null)
-            return Results.Json(new MigrationStatusResponse { Version = options.Version, Status = "NotRun" });
+            return Results.Json(
+                new MigrationStatusResponse { Version = options.Version, Status = "NotRun" },
+                MigrationJsonContext.Default.MigrationStatusResponse);
 
         DuendeMigrationReport? report = null;
         if (!string.IsNullOrEmpty(marker.StatsJson))
         {
-            try { report = JsonSerializer.Deserialize<DuendeMigrationReport>(marker.StatsJson); }
+            try
+            {
+                report = JsonSerializer.Deserialize(
+                    marker.StatsJson, MigrationJsonContext.Default.DuendeMigrationReport);
+            }
             catch (JsonException) { /* leave report null if the stored blob is unparseable */ }
         }
 
@@ -73,7 +79,7 @@ public static class MigrationStatusEndpoint
             NodeId = marker.NodeId,
             Error = marker.Error,
             Report = report,
-        });
+        }, MigrationJsonContext.Default.MigrationStatusResponse);
     }
 }
 

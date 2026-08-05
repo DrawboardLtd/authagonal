@@ -24,6 +24,10 @@
     <TargetFrameworks>net9.0;net10.0</TargetFrameworks>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <!-- The only shipped package that did not declare this. See MigrationJsonContext for why that mattered:
+         a host that trims got an assembly nobody had ever trim-analyzed, and the first casualty was the
+         migration's own report. The analyzer keeps the serialization honest from here. -->
+    <IsTrimmable>true</IsTrimmable>
     <IsPackable>true</IsPackable>
     <PackageId>Authagonal.Migration</PackageId>
     <Description>One-time Duende IdentityServer → Authagonal migration engine, hosted runner, and CLI support.</Description>

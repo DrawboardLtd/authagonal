@@ -7,17 +7,25 @@ Use as a standalone app (built into the Authagonal Docker image) or as an npm pa
 ## Installation
 
 ```bash
-npm install @authagonal/login
+npm install @authagonal/login react react-dom react-router
 ```
 
-`react`, `react-dom`, and `react-router-dom` are externalized at build time, your app must provide them.
+`react`, `react-dom`, and `react-router` are externalized at build time and declared as **peer**
+dependencies, your app must provide them. That is not a formality: the exported pages call
+`useNavigate` and `useSearchParams`, so they have to resolve to the same `react-router` instance as
+the `<BrowserRouter>` you wrap them in, and their hooks have to run against the React instance that
+renders them. A second copy installed under this package produces "Invalid hook call" or
+"useNavigate() may be used only in the context of a `<Router>` component" from a host that did
+everything right.
+
+`react-router` v8, not `react-router-dom` — v8 removes that package and ships one.
 
 ## Quick start
 
 Import the base components and styles, then mount the router:
 
 ```tsx
-import { BrowserRouter, Routes, Route } from 'react-router-dom';
+import { BrowserRouter, Routes, Route } from 'react-router';
 import { AuthLayout, LoginPage, ForgotPasswordPage, ResetPasswordPage } from '@authagonal/login';
 import '@authagonal/login/styles.css';
 

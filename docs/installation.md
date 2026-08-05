@@ -164,10 +164,12 @@ The DynamoDB tables mirror the Azure layout one-for-one and are ensured on start
 The login UI is published as an npm package for customization:
 
 ```bash
-npm install @authagonal/login
+npm install @authagonal/login react react-dom react-router
 ```
 
 The package ships compiled JS and CSS, import components and styles directly in your own React app. See [Custom Server](custom-server) for a full walkthrough.
+
+`react`, `react-dom` and `react-router` are **peer** dependencies: the build externalizes them, so the components use your application's copies rather than their own. That is what lets the exported pages call `useNavigate` inside your `<BrowserRouter>` and run their hooks against the React instance that renders them — install them alongside the package, don't let it bring its own.
 
 ## Production security checklist
 

@@ -134,7 +134,7 @@ public sealed class DuendeMigrationHostedRunner(
                 CompletedAt = DateTimeOffset.UtcNow,
                 NodeId = leaderService.NodeId,
                 DryRun = options.DryRun,
-                StatsJson = JsonSerializer.Serialize(report),
+                StatsJson = JsonSerializer.Serialize(report, MigrationJsonContext.Default.DuendeMigrationReport),
             }, stoppingToken);
 
             if (hadErrors)
