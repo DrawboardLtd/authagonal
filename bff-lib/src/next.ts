@@ -21,7 +21,7 @@ export function createBffRoute(options: AuthagonalBffOptions): {
     if (isProxyPath(ctx.path, deps.o)) {
       const decision = await authorizeProxy(ctx, deps);
       if ('error' in decision) return new Response('', { status: decision.error });
-      return forwardProxy(req, decision.targetUrl, decision.accessToken);
+      return forwardProxy(req, decision.targetUrl, decision.accessToken, decision.forwarded);
     }
     const handled = await routeBff(ctx, deps);
     if (!handled) ctx.text('not_found', 404);
@@ -30,10 +30,15 @@ export function createBffRoute(options: AuthagonalBffOptions): {
   return { GET: handler, POST: handler };
 }
 
-async function forwardProxy(req: Request, targetUrl: string, accessToken: string): Promise<Response> {
+async function forwardProxy(
+  req: Request, targetUrl: string, accessToken: string, forwarded: Record<string, string>,
+): Promise<Response> {
   const headers = new Headers();
   req.headers.forEach((value, key) => { if (!PROXY_STRIP.has(key.toLowerCase())) headers.set(key, value); });
   headers.set('authorization', `Bearer ${accessToken}`);
+  // After the filter, so an asserted value replaces a caller's rather than colliding with it. A Web
+  // `Request` has no socket, so x-forwarded-for is here only if the host supplied `clientIp`.
+  for (const [name, value] of Object.entries(forwarded)) headers.set(name, value);
   const hasBody = req.method !== 'GET' && req.method !== 'HEAD';
   const upstream = await fetch(targetUrl, {
     method: req.method,

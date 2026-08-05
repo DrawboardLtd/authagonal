@@ -50,8 +50,8 @@ Coloque un archivo `branding.json` en el directorio `wwwroot/` (o móntelo en el
 | `showForgotPassword` | `boolean` | `true` | Mostrar/ocultar el enlace "¿Contraseña olvidada?" en la página de inicio de sesión |
 | `showRegistration` | `boolean` | `false` | Mostrar/ocultar el enlace de registro de autoservicio |
 | `customCssUrl` | `string \| null` | `null` | URL a un archivo CSS personalizado cargado después de los estilos predeterminados |
-| `welcomeTitle` | `LocalizedString` | `null` | Anular el título de la página de inicio de sesión (cadena simple o `{ "en": "...", "de": "..." }`) |
-| `welcomeSubtitle` | `LocalizedString` | `null` | Anular el subtítulo de la página de inicio de sesión |
+| `welcomeTitle` | `LocalizedString` | `null` | Saludo opcional que se muestra bajo el encabezado en las páginas de autenticación (cadena simple o `{ "en": "...", "de": "..." }`). No se muestra nada si no se define. |
+| `welcomeSubtitle` | `LocalizedString` | `null` | Línea opcional bajo `welcomeTitle`, con el mismo formato. No se muestra nada si no se define. |
 | `languages` | `array \| null` | `null` | Opciones del selector de idioma (`[{ "code": "en", "label": "English" }, ...]`). `null` muestra todos los idiomas incluidos excepto los locales de novedad (ver [Localización](localization)). |
 | `poweredBy` | `boolean` | `true` | Mostrar/ocultar el pie de página "Powered by Authagonal" en las páginas de autenticación |
 | `darkMode` | `"off" \| "auto" \| "force"` | `"auto"` | Tema predeterminado cuando el visitante no ha elegido uno: `"off"` (solo claro), `"auto"` (seguir la preferencia del sistema operativo), `"force"` (siempre oscuro). El interruptor de tema del visitante sigue teniendo prioridad. |

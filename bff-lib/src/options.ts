@@ -51,6 +51,12 @@ export interface AuthagonalBffOptions {
   /** Upstream APIs the proxy (`{basePath}/api/**`) forwards to with the session's access token attached.
    * Empty/absent disables the proxy. */
   upstreams?: BffUpstream[];
+  /** Resolves the client address the proxy asserts to upstreams as `X-Forwarded-For`, overriding what
+   * the adapter observed. Required to get a real client address out of the Next adapter, where a Web
+   * `Request` has no socket: return whatever your platform exposes (`req.ip`, the platform's own
+   * forwarded header). The Express adapter defaults to `req.ip`, which already honours the host app's
+   * `trust proxy` setting. Return undefined to assert nothing. */
+  clientIp?: (ctx: { origin: string; path: string; getHeader(name: string): string | undefined }) => string | undefined;
 }
 
 /** An upstream API the BFF proxy forwards to. The path after `{basePath}/api` is matched against
@@ -64,7 +70,9 @@ export interface BffUpstream {
 }
 
 /** Options with defaults applied. */
-export interface ResolvedBffOptions extends Required<Omit<AuthagonalBffOptions, 'sessionStore' | 'cookieProtector' | 'cookieSecret' | 'tenantResolver'>> {
+export interface ResolvedBffOptions extends Required<Omit<AuthagonalBffOptions, 'sessionStore' | 'cookieProtector' | 'cookieSecret' | 'tenantResolver' | 'clientIp'>> {
+  /** Passed through unchanged; absent means "use what the adapter observed". */
+  clientIp?: AuthagonalBffOptions['clientIp'];
   scopeString: string;
   correlationCookieName: string;
   antiForgeryHeaderLower: string;
@@ -106,6 +114,7 @@ export function resolveOptions(o: AuthagonalBffOptions): ResolvedBffOptions {
     antiForgeryHeader,
     sessionLifetimeSeconds: o.sessionLifetimeSeconds ?? 8 * 60 * 60,
     upstreams: o.upstreams ?? [],
+    clientIp: o.clientIp,
     scopeString: scope.join(' '),
     correlationCookieName: cookieName + '.tmp',
     antiForgeryHeaderLower: antiForgeryHeader.toLowerCase(),

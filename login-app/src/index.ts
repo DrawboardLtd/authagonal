@@ -46,8 +46,8 @@ export { default as GrantsPage } from './pages/GrantsPage';
 export { default as App } from './App';
 
 // Branding
-export { loadBranding, BrandingContext, useBranding, resolveLocalized } from './branding';
-export type { BrandingConfig, LocalizedString } from './branding';
+export { loadBranding, BrandingContext, brandingDefaults, useBranding, resolveLocalized, getBoot } from './branding';
+export type { BrandingConfig, LocalizedString, AuthagonalBoot } from './branding';
 
 // API client
 export { login, register, logout, forgotPassword, resetPassword, getSession, ssoCheck, getProviders, getPasswordPolicy, mfaVerify, mfaStatus, mfaTotpSetup, mfaTotpConfirm, mfaWebAuthnSetup, mfaWebAuthnConfirm, mfaRecoveryGenerate, mfaDeleteCredential, ApiRequestError } from './api';

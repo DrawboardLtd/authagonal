@@ -69,6 +69,30 @@ Register a **BFF client** in the Authagonal portal (confidential + PKCE + `offli
 redirect URI `https://app.acme.com/bff/callback` and post-logout redirect `https://app.acme.com/`.
 For subject-wide "log out everywhere", register it with `BackChannelLogoutSessionRequired=false`.
 
+## The proxy and forwarding metadata
+
+`{basePath}/api/**` forwards to a configured `upstreams` entry with the session's access token
+attached. Inbound `x-forwarded-*` / `forwarded` / `x-real-ip` headers are **stripped** — copied through
+verbatim they would let any script on the SPA's origin tell the upstream that this BFF, a trusted
+reverse proxy, had vouched for whatever client IP, host and scheme the caller chose.
+
+They are then **re-asserted** from the proxy's own state, because a missing `X-Forwarded-For` is not a
+neutral outcome: the upstream falls back to the TCP peer, so every user of the SPA is attributed to the
+BFF's own address, one user's failed attempts against a per-IP-limited endpoint buy a 429 for everyone,
+and every audit row names the pod instead of the actor.
+
+- `X-Forwarded-Proto` / `X-Forwarded-Host` — from the same values the BFF derives its own origin from.
+- `X-Forwarded-For` — Express uses `req.ip`, which honours the host app's own `app.set('trust proxy')`
+  setting; the trust boundary stays the host's to declare. A Web `Request` (the Next adapter) has no
+  socket to read, so supply it there:
+
+```ts
+authagonalBff({ /* … */ clientIp: () => headers().get('x-real-ip') ?? undefined })
+```
+
+  With nothing to assert the header is simply absent — the inbound one is never re-emitted, since that
+  is the pass-through the strip exists to prevent.
+
 ## From the browser
 
 Every non-navigation call must carry a static anti-forgery header (defends against CSRF alongside

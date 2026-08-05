@@ -55,10 +55,16 @@ const defaults: BrandingConfig = {
 };
 
 /**
- * Boot payload a host server may inline into the login document (a
- * `window.__AUTHAGONAL_BOOT__` script tag) so the SPA renders without waiting
- * on the branding/providers fetches — each one is a full client→origin round
- * trip that serializes first paint for far-from-origin visitors.
+ * Boot payload a host server may inline into the login document — a
+ * `<script type="application/json" id="authagonal-boot">` element — so the SPA
+ * renders without waiting on the branding/providers fetches, each of which is a
+ * full client→origin round trip that serializes first paint for far-from-origin
+ * visitors.
+ *
+ * A JSON script element rather than an executable `window.__AUTHAGONAL_BOOT__`
+ * assignment, and that is not a detail: the server's own CSP is
+ * `default-src 'self'` with no `unsafe-inline` and no nonce, so it would block
+ * the assignment form on the page that needs it. See `getBoot` below.
  */
 export interface AuthagonalBoot {
   branding?: Partial<BrandingConfig>;
@@ -93,11 +99,25 @@ export async function loadBranding(): Promise<BrandingConfig> {
   }
 }
 
-export const BrandingContext = createContext<BrandingConfig>(defaults);
+/**
+ * The resolved branding for the tree below, or `undefined` when nothing has provided it.
+ *
+ * The default is deliberately `undefined` rather than `defaults`, so a component can tell "no provider
+ * above me" from "a provider that happens to hold the defaults". `AuthLayout` needs that distinction to
+ * load branding itself when it is mounted outside a provider — which is what the published README and
+ * `docs/branding.md` ("The `AuthLayout` component loads it automatically") describe — without fetching
+ * a second time in the app that already provided it.
+ *
+ * `useBranding()` still always returns a `BrandingConfig`, so nothing that consumes it changes.
+ */
+export const BrandingContext = createContext<BrandingConfig | undefined>(undefined);
 
 export function useBranding(): BrandingConfig {
-  return useContext(BrandingContext);
+  return useContext(BrandingContext) ?? defaults;
 }
+
+/** The built-in branding, used until a `branding.json` (or a boot payload) says otherwise. */
+export const brandingDefaults: BrandingConfig = defaults;
 
 /** Resolve a LocalizedString to a concrete string for the given language, or null if not set. */
 export function resolveLocalized(value: LocalizedString, language: string): string | null {

@@ -49,8 +49,8 @@ Place a `branding.json` file in the `wwwroot/` directory (or mount it into the D
 | `showForgotPassword` | `boolean` | `true` | Show/hide the "Forgot password?" link on the login page |
 | `showRegistration` | `boolean` | `false` | Show/hide the self-service registration link |
 | `customCssUrl` | `string \| null` | `null` | URL to a custom CSS file loaded after the default styles |
-| `welcomeTitle` | `LocalizedString` | `null` | Override the login page title (plain string or `{ "en": "...", "de": "..." }`) |
-| `welcomeSubtitle` | `LocalizedString` | `null` | Override the login page subtitle |
+| `welcomeTitle` | `LocalizedString` | `null` | Optional greeting rendered under the header on the auth pages (plain string or `{ "en": "...", "de": "..." }`). Nothing is rendered when unset. |
+| `welcomeSubtitle` | `LocalizedString` | `null` | Optional line under `welcomeTitle`, same form. Nothing is rendered when unset. |
 | `languages` | `array \| null` | `null` | Language selector options (`[{ "code": "en", "label": "English" }, ...]`). `null` shows all shipped languages except novelty locales (see [Localization](localization)). |
 | `poweredBy` | `boolean` | `true` | Show/hide the "Powered by Authagonal" footer on the auth pages |
 | `darkMode` | `"off" \| "auto" \| "force"` | `"auto"` | Default theme when the visitor hasn't picked one: `"off"` (light only), `"auto"` (follow the OS preference), `"force"` (always dark). The visitor's theme toggle still wins. |

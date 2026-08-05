@@ -7,7 +7,10 @@ interface ExpressReq {
   url?: string;
   originalUrl?: string;
   headers: Record<string, string | string[] | undefined>;
-  socket?: { encrypted?: boolean };
+  socket?: { encrypted?: boolean; remoteAddress?: string };
+  /** Express's own resolved client address. It honours the host app's `trust proxy` setting, which is
+   * why the proxy asserts it rather than re-deriving a trust decision the host has already made. */
+  ip?: string;
   body?: unknown;
   on(event: string, cb: (chunk?: unknown) => void): void;
 }
@@ -34,7 +37,7 @@ export function authagonalBff(options: AuthagonalBffOptions): (req: ExpressReq, 
       if (isProxyPath(ctx.path, deps.o)) {
         const decision = await authorizeProxy(ctx, deps);
         if ('error' in decision) { res.statusCode = decision.error; res.end(); return; }
-        await forwardProxy(req, res, decision.targetUrl, decision.accessToken);
+        await forwardProxy(req, res, decision.targetUrl, decision.accessToken, decision.forwarded);
         return;
       }
       const handled = await routeBff(ctx, deps);
@@ -45,7 +48,10 @@ export function authagonalBff(options: AuthagonalBffOptions): (req: ExpressReq, 
 
 // Buffered forward (no node:stream dependency). Fine for typical JSON/text APIs; very large uploads
 // buffer in memory — swap for a streaming forward if that matters.
-async function forwardProxy(req: ExpressReq, res: ExpressRes, targetUrl: string, accessToken: string): Promise<void> {
+async function forwardProxy(
+  req: ExpressReq, res: ExpressRes, targetUrl: string, accessToken: string,
+  forwarded: Record<string, string>,
+): Promise<void> {
   const method = req.method ?? 'GET';
   const headers: Record<string, string> = {};
   for (const [k, v] of Object.entries(req.headers)) {
@@ -53,6 +59,8 @@ async function forwardProxy(req: ExpressReq, res: ExpressRes, targetUrl: string,
     headers[k] = Array.isArray(v) ? v.join(', ') : String(v ?? '');
   }
   headers.authorization = `Bearer ${accessToken}`;
+  // After the filter, so an asserted value replaces a caller's rather than colliding with it.
+  Object.assign(headers, forwarded);
 
   let body: Uint8Array | undefined;
   if (method !== 'GET' && method !== 'HEAD') {
@@ -103,6 +111,7 @@ function expressCtx(req: ExpressReq, res: ExpressRes): HttpCtx {
     path: url.pathname,
     query: url.searchParams,
     origin: `${proto}://${host}`,
+    clientIp: req.ip ?? req.socket?.remoteAddress,
     getCookie: (name) => cookies[name],
     setCookie: (name, value, opts) => appendSetCookie(serializeCookie(name, value, opts)),
     deleteCookie: (name, opts) => appendSetCookie(serializeCookie(name, '', { ...opts, maxAgeSeconds: 0 })),

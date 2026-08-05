@@ -138,7 +138,10 @@ try {
 
 ## Branding
 
-Place a `branding.json` in your public directory. The `AuthLayout` component loads it automatically.
+Place a `branding.json` in your public directory. `AuthLayout` fetches it on mount when nothing above
+it has provided branding, so the quick start above needs no extra wiring. Wrap the tree in
+`<BrandingContext.Provider>` (as `loadBranding()` + your own root does) and that value is used instead
+— the layout does not fetch a second time.
 
 ```json
 {

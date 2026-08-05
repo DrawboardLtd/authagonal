@@ -1800,10 +1800,16 @@ public static class AuthEndpoints
 
     /// <summary>
     /// Builds the login page's provider-list payload (the <c>/api/auth/providers</c> response body).
-    /// Public so a host can inline the exact same payload into the login document it serves
-    /// (a <c>window.__AUTHAGONAL_BOOT__</c> script the login SPA consumes), sparing far-from-origin
-    /// visitors the extra round trip that otherwise serializes first paint.
+    /// Public so a host can inline the exact same payload into the login document it serves, sparing
+    /// far-from-origin visitors the extra round trip that otherwise serializes first paint.
     /// </summary>
+    /// <remarks>
+    /// Inline it as the <c>providers</c> member of a
+    /// <c>&lt;script type="application/json" id="authagonal-boot"&gt;</c> element, which is what the SPA
+    /// reads (<c>login-app/src/branding.ts</c>, <c>getBoot</c>). Not an executable
+    /// <c>window.__AUTHAGONAL_BOOT__</c> assignment, which this host's own CSP —
+    /// <c>default-src 'self'</c>, no <c>unsafe-inline</c>, no nonce — blocks.
+    /// </remarks>
     public static async Task<SsoProviderListResponse> BuildProvidersResponseAsync(
         IOidcProviderStore oidcStore,
         ISamlProviderStore samlStore,

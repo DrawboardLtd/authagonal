@@ -51,8 +51,6 @@
   "or": "أو",
   "signedInAs": "تم تسجيل الدخول باسم ⁨{{name}}⁩",
   "signedInMessage": "تم تسجيل دخولك بالفعل.",
-  "welcomeTitle": "مرحبًا بك في ⁨{{appName}}⁩",
-  "welcomeSubtitle": "سجّل الدخول للوصول إلى حسابك",
   "signOut": "تسجيل الخروج",
   "mfaTitle": "المصادقة الثنائية",
   "mfaSubtitle": "أدخل رمز التحقق للمتابعة",

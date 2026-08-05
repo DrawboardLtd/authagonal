@@ -1,6 +1,7 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useContext, useEffect, useRef, useState, type ReactNode } from 'react';
+import { Outlet } from 'react-router';
 import { Trans, useTranslation } from 'react-i18next';
-import { useBranding } from '../branding';
+import { BrandingContext, brandingDefaults, loadBranding, resolveLocalized, type BrandingConfig } from '../branding';
 import { useDarkMode } from '../hooks/useDarkMode';
 import { Card } from './ui/card';
 import { cn } from '@/lib/utils';
@@ -11,7 +12,12 @@ import '../i18n';
 import { DEFAULT_LANGUAGES } from '../i18n';
 
 interface AuthLayoutProps {
-  children: ReactNode;
+  /**
+   * The page to render inside the card. Omit it to use `AuthLayout` as a react-router layout route,
+   * in which case the matched child route renders through `<Outlet />` — which is the shape the
+   * published README's quick start uses (`<Route element={<AuthLayout />}>` wrapping nested routes).
+   */
+  children?: ReactNode;
 }
 
 // Accept only hex (#rgb/#rrggbb/#rrggbbaa) or rgb()/rgba()/hsl()/hsla() forms.
@@ -117,7 +123,34 @@ function LanguagePicker({ languages }: { languages: { code: string; label: strin
 }
 
 export default function AuthLayout({ children }: AuthLayoutProps) {
-  const branding = useBranding();
+  // Branding: use what a provider supplied, and load it here when nothing did. Both the published
+  // README ("loads branding") and docs/branding.md ("The AuthLayout component loads it automatically")
+  // describe the second case, and it is the one an npm consumer following the quick start lands in —
+  // no BrandingContext.Provider, so branding.json was never requested and the card rendered with the
+  // default name and colours while the docs promised otherwise. Reading the context directly rather
+  // than through useBranding() is what distinguishes "nothing provided" from "provided the defaults",
+  // so the app that already loaded branding does not fetch it a second time.
+  const provided = useContext(BrandingContext);
+  const [selfLoaded, setSelfLoaded] = useState<BrandingConfig>();
+  useEffect(() => {
+    if (provided) return;
+    let cancelled = false;
+    void loadBranding().then((config) => { if (!cancelled) setSelfLoaded(config); });
+    return () => { cancelled = true; };
+  }, [provided]);
+  const branding = provided ?? selfLoaded ?? brandingDefaults;
+
+  // welcomeTitle / welcomeSubtitle: typed on BrandingConfig, defaulted, and documented in seven
+  // locales as "Override the login page title/subtitle" — and read by no component, which made
+  // resolveLocalized (the function that exists to resolve exactly these) an exported no-op.
+  //
+  // Rendered only when a tenant sets one. There is deliberately no default greeting: the pages carry
+  // their own <CardTitle>, and inventing a heading above them would change every existing
+  // deployment's login page to close a documentation gap.
+  const { i18n } = useTranslation();
+  const welcomeTitle = resolveLocalized(branding.welcomeTitle, i18n.language);
+  const welcomeSubtitle = resolveLocalized(branding.welcomeSubtitle, i18n.language);
+
   useDarkMode();
 
   useEffect(() => {
@@ -184,8 +217,19 @@ export default function AuthLayout({ children }: AuthLayoutProps) {
           ) : (
             <h1 className="text-2xl font-bold tracking-tight" data-auth="app-name" style={{ color: 'var(--auth-heading)' }}>{branding.appName}</h1>
           )}
+          {welcomeTitle && (
+            <h2 className="mt-3 text-lg font-semibold tracking-tight" data-auth="welcome-title" style={{ color: 'var(--auth-heading)' }}>
+              {welcomeTitle}
+            </h2>
+          )}
+          {welcomeSubtitle && (
+            <p className="mt-1 text-sm text-gray-500 dark:text-gray-400" data-auth="welcome-subtitle">
+              {welcomeSubtitle}
+            </p>
+          )}
         </div>
-        <div data-auth="content">{children}</div>
+        {/* Children when used as a wrapper, the matched route when used as a layout route. */}
+        <div data-auth="content">{children ?? <Outlet />}</div>
         <LanguagePicker languages={branding.languages ?? DEFAULT_LANGUAGES} />
         <ThemeToggle />
         {branding.poweredBy && (

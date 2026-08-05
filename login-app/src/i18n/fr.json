@@ -51,8 +51,6 @@
   "or": "ou",
   "signedInAs": "Connecté en tant que {{name}}",
   "signedInMessage": "Vous êtes déjà authentifié.",
-  "welcomeTitle": "Bienvenue sur {{appName}}",
-  "welcomeSubtitle": "Connectez-vous pour accéder à votre compte",
   "signOut": "Se déconnecte",
   "mfaTitle": "Authentification à deux facteurs",
   "mfaSubtitle": "Entrez le code de vérification pour continuer",

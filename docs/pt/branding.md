@@ -50,8 +50,8 @@ Coloque um ficheiro `branding.json` no diretório `wwwroot/` (ou monte-o no cont
 | `showForgotPassword` | `boolean` | `true` | Mostrar/ocultar o link "Esqueceu a senha?" na página de login |
 | `showRegistration` | `boolean` | `false` | Mostrar/ocultar o link de registo de autoatendimento |
 | `customCssUrl` | `string \| null` | `null` | URL para um ficheiro CSS personalizado carregado após os estilos padrão |
-| `welcomeTitle` | `LocalizedString` | `null` | Substituir o título da página de login (string simples ou `{ "en": "...", "de": "..." }`) |
-| `welcomeSubtitle` | `LocalizedString` | `null` | Substituir o subtítulo da página de login |
+| `welcomeTitle` | `LocalizedString` | `null` | Saudação opcional apresentada sob o cabeçalho nas páginas de autenticação (string simples ou `{ "en": "...", "de": "..." }`). Nada é apresentado quando não está definida. |
+| `welcomeSubtitle` | `LocalizedString` | `null` | Linha opcional sob `welcomeTitle`, no mesmo formato. Nada é apresentado quando não está definida. |
 | `languages` | `array \| null` | `null` | Opções do seletor de idioma (`[{ "code": "en", "label": "English" }, ...]`). `null` mostra todos os idiomas incluídos exceto locales de novidade (consulte [Localização](localization)). |
 | `poweredBy` | `boolean` | `true` | Mostrar/ocultar o rodapé "Powered by Authagonal" nas páginas de autenticação |
 | `darkMode` | `"off" \| "auto" \| "force"` | `"auto"` | Tema padrão quando o visitante ainda não escolheu um: `"off"` (apenas claro), `"auto"` (seguir a preferência do SO), `"force"` (sempre escuro). A alternância de tema do visitante continua a prevalecer. |

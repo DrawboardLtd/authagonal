@@ -7,7 +7,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { prefixMatches, composeTarget, authorizeProxy, routeBff } from '../dist/core.js';
+import { prefixMatches, composeTarget, authorizeProxy, routeBff, assertedForwarding, PROXY_STRIP } from '../dist/core.js';
 import { MemorySessionStore } from '../dist/session.js';
 import { resolveOptions } from '../dist/options.js';
 import { assertTrustedMetadata } from '../dist/oidc.js';
@@ -206,13 +206,17 @@ function session(overrides = {}) {
   };
 }
 
-function ctx({ method = 'GET', path = '/', query = '', cookies = {}, form = new URLSearchParams() } = {}) {
+function ctx({
+  method = 'GET', path = '/', query = '', cookies = {}, form = new URLSearchParams(),
+  origin = 'https://app.example', clientIp = undefined,
+} = {}) {
   const headers = {};
   const c = {
     method,
     path,
     query: new URLSearchParams(query),
-    origin: 'https://app.example',
+    origin,
+    clientIp,
     headers,
     status: 200,
     body: undefined,
@@ -401,4 +405,90 @@ test('the lock is released after a successful redemption', async () => {
   assert.equal(result.accessToken, 'new');
   assert.equal(acquired, 1);
   assert.equal(released, 1);
+});
+
+// ---- The proxy strips forwarding metadata; it has to re-assert it too ----
+//
+// PROXY_STRIP removes x-forwarded-* "for the same reason the .NET proxy strips it", and the .NET
+// comment it cites ends "They are re-set from server-side state below" — which BffProxy.ProxyAsync
+// does and neither adapter here did. Stripping alone is not fail-closed: an upstream that finds no
+// X-Forwarded-For falls back to the TCP peer, so every user of the SPA becomes one address and a
+// per-IP rate limit becomes per-deployment.
+
+test('the proxy asserts forwarding metadata from its own state', async () => {
+  const d = deps({ upstreams: [{ prefix: '/orders', targetBaseUrl: 'https://orders.internal.example' }] });
+  await d.store.set(session());
+
+  const decision = await authorizeProxy(ctx({
+    path: '/bff/api/orders/1',
+    cookies: { 'agbff-test': 's-1' },
+    origin: 'https://app.example',
+    clientIp: '203.0.113.7',
+  }), d);
+
+  assert.deepEqual(decision.forwarded, {
+    'x-forwarded-proto': 'https',
+    'x-forwarded-host': 'app.example',
+    'x-forwarded-for': '203.0.113.7',
+  });
+});
+
+test('every stripped forwarding header the proxy can observe is re-asserted', () => {
+  // The three the .NET twin sets. The rest of PROXY_STRIP's forwarding entries (x-forwarded-port,
+  // x-forwarded-prefix, x-real-ip, forwarded) are deliberately dropped rather than asserted: the
+  // proxy has nothing authoritative to put in them.
+  const asserted = assertedForwarding(
+    { origin: 'https://app.example', clientIp: '203.0.113.7' },
+    { clientIp: undefined },
+  );
+  for (const name of ['x-forwarded-for', 'x-forwarded-proto', 'x-forwarded-host']) {
+    assert.ok(PROXY_STRIP.has(name), `${name} must still be stripped from the caller's set`);
+    assert.ok(name in asserted, `${name} must be re-asserted from server-side state`);
+  }
+});
+
+test('an unobservable client address is asserted as nothing, not as the caller claimed', () => {
+  // A Web Request (the Next adapter) has no socket. Re-emitting the inbound header instead would be
+  // the verbatim pass-through the strip exists to prevent, so the header is simply absent.
+  const asserted = assertedForwarding(
+    { origin: 'https://app.example', getHeader: () => '198.51.100.1' },
+    { clientIp: undefined },
+  );
+
+  assert.equal(asserted['x-forwarded-for'], undefined);
+  assert.equal(asserted['x-forwarded-proto'], 'https');
+  assert.equal(asserted['x-forwarded-host'], 'app.example');
+});
+
+test('the clientIp option supplies what the adapter cannot observe', () => {
+  const asserted = assertedForwarding(
+    { origin: 'https://app.example' },
+    { clientIp: () => '198.51.100.9' },
+  );
+
+  assert.equal(asserted['x-forwarded-for'], '198.51.100.9');
+});
+
+test('an origin that will not parse asserts nothing rather than something wrong', () => {
+  assert.deepEqual(assertedForwarding({ origin: 'not a url' }, { clientIp: undefined }), {});
+});
+
+test('both adapters apply the asserted headers after the strip filter', async () => {
+  // Order is the whole control: applied before the filter, the asserted values would be dropped by
+  // it; applied after, they replace whatever the caller sent. Checked in both adapters because the
+  // defect was that one half of a two-part control was ported and the other was not.
+  const { readFileSync } = await import('node:fs');
+  const { fileURLToPath } = await import('node:url');
+  const dir = fileURLToPath(new URL('../src/', import.meta.url));
+
+  for (const file of ['express.ts', 'next.ts']) {
+    const src = readFileSync(dir + file, 'utf8');
+    const filter = src.indexOf('PROXY_STRIP.has');
+    const assertAt = src.indexOf('forwarded');
+    assert.ok(filter > 0, `${file}: no strip filter`);
+    assert.ok(src.includes('decision.forwarded'), `${file}: never passes the asserted headers on`);
+    assert.ok(assertAt > 0 && src.lastIndexOf('Object.entries(forwarded)') > filter
+      || src.lastIndexOf('Object.assign(headers, forwarded)') > filter,
+      `${file}: asserted headers are not applied after the filter`);
+  }
 });

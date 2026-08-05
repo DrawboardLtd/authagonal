@@ -50,8 +50,8 @@ Platzieren Sie eine `branding.json`-Datei im Verzeichnis `wwwroot/` (oder mounte
 | `showForgotPassword` | `boolean` | `true` | Zeigt/verbirgt den Link "Passwort vergessen?" auf der Login-Seite |
 | `showRegistration` | `boolean` | `false` | Zeigt/verbirgt den Self-Service-Registrierungslink |
 | `customCssUrl` | `string \| null` | `null` | URL zu einer benutzerdefinierten CSS-Datei, die nach den Standardstilen geladen wird |
-| `welcomeTitle` | `LocalizedString` | `null` | Überschreibt den Titel der Login-Seite (einfacher String oder `{ "en": "...", "de": "..." }`) |
-| `welcomeSubtitle` | `LocalizedString` | `null` | Überschreibt den Untertitel der Login-Seite |
+| `welcomeTitle` | `LocalizedString` | `null` | Optionale Begrüßung, die unter der Kopfzeile der Auth-Seiten gerendert wird (einfacher String oder `{ "en": "...", "de": "..." }`). Ohne Wert wird nichts gerendert. |
+| `welcomeSubtitle` | `LocalizedString` | `null` | Optionale Zeile unter `welcomeTitle`, gleiche Form. Ohne Wert wird nichts gerendert. |
 | `languages` | `array \| null` | `null` | Optionen der Sprachauswahl (`[{ "code": "en", "label": "English" }, ...]`). `null` zeigt alle mitgelieferten Sprachen außer den Neuheiten-Locales (siehe [Lokalisierung](localization)). |
 | `poweredBy` | `boolean` | `true` | Zeigt/verbirgt die Fußzeile "Powered by Authagonal" auf den Auth-Seiten |
 | `darkMode` | `"off" \| "auto" \| "force"` | `"auto"` | Standard-Theme, solange der Besucher noch keines gewählt hat: `"off"` (nur hell), `"auto"` (folgt der Betriebssystem-Einstellung), `"force"` (immer dunkel). Der Theme-Umschalter des Besuchers hat weiterhin Vorrang. |

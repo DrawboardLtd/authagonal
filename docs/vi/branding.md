@@ -50,8 +50,8 @@ Khi khởi động, SPA tải `/branding.json`. Nếu tệp không tồn tại h
 | `showForgotPassword` | `boolean` | `true` | Hiển thị/ẩn liên kết "Forgot password?" trên trang đăng nhập |
 | `showRegistration` | `boolean` | `false` | Hiển thị/ẩn liên kết đăng ký tự phục vụ |
 | `customCssUrl` | `string \| null` | `null` | URL đến tệp CSS tùy chỉnh được tải sau các style mặc định |
-| `welcomeTitle` | `LocalizedString` | `null` | Ghi đè tiêu đề trang đăng nhập (chuỗi thuần hoặc `{ "en": "...", "de": "..." }`) |
-| `welcomeSubtitle` | `LocalizedString` | `null` | Ghi đè phụ đề trang đăng nhập |
+| `welcomeTitle` | `LocalizedString` | `null` | Lời chào tùy chọn, hiển thị bên dưới phần đầu trên các trang xác thực (chuỗi thuần hoặc `{ "en": "...", "de": "..." }`). Không hiển thị gì khi bỏ trống. |
+| `welcomeSubtitle` | `LocalizedString` | `null` | Dòng tùy chọn bên dưới `welcomeTitle`, cùng định dạng. Không hiển thị gì khi bỏ trống. |
 | `languages` | `array \| null` | `null` | Tùy chọn bộ chọn ngôn ngữ (`[{ "code": "en", "label": "English" }, ...]`). `null` hiển thị tất cả ngôn ngữ được đóng gói ngoại trừ các locale mang tính vui đùa (xem [Bản địa hóa](localization)). |
 | `poweredBy` | `boolean` | `true` | Hiển thị/ẩn chân trang "Powered by Authagonal" trên các trang xác thực |
 | `darkMode` | `"off" \| "auto" \| "force"` | `"auto"` | Chủ đề mặc định khi khách truy cập chưa chọn: `"off"` (chỉ sáng), `"auto"` (theo tùy chọn của hệ điều hành), `"force"` (luôn tối). Nút chuyển chủ đề của khách truy cập vẫn thắng. |

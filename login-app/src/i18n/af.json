@@ -51,8 +51,6 @@
   "or": "of",
   "signedInAs": "Aangemeld as {{name}}",
   "signedInMessage": "Jy is reeds aangemeld.",
-  "welcomeTitle": "Welkom by {{appName}}",
-  "welcomeSubtitle": "Meld aan om toegang tot jou rekening te kry",
   "signOut": "Meld af",
   "mfaTitle": "Twee-faktor-verifikasie",
   "mfaSubtitle": "Voer die verifikasiekode in om voort te gaan",

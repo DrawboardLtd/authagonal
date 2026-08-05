@@ -50,8 +50,8 @@ Placez un fichier `branding.json` dans le répertoire `wwwroot/` (ou montez-le d
 | `showForgotPassword` | `boolean` | `true` | Afficher/masquer le lien "Mot de passe oublié ?" sur la page de connexion |
 | `showRegistration` | `boolean` | `false` | Afficher/masquer le lien d'inscription en libre-service |
 | `customCssUrl` | `string \| null` | `null` | URL vers un fichier CSS personnalisé chargé après les styles par défaut |
-| `welcomeTitle` | `LocalizedString` | `null` | Remplacer le titre de la page de connexion (chaîne simple ou `{ "en": "...", "de": "..." }`) |
-| `welcomeSubtitle` | `LocalizedString` | `null` | Remplacer le sous-titre de la page de connexion |
+| `welcomeTitle` | `LocalizedString` | `null` | Message d'accueil optionnel affiché sous l'en-tête des pages d'authentification (chaîne simple ou `{ "en": "...", "de": "..." }`). Rien n'est affiché s'il est absent. |
+| `welcomeSubtitle` | `LocalizedString` | `null` | Ligne optionnelle sous `welcomeTitle`, même forme. Rien n'est affiché si elle est absente. |
 | `languages` | `array \| null` | `null` | Options du sélecteur de langue (`[{ "code": "en", "label": "English" }, ...]`). `null` affiche toutes les langues livrées sauf les locales fantaisie (voir [Localisation](localization)). |
 | `poweredBy` | `boolean` | `true` | Afficher/masquer le pied de page "Powered by Authagonal" sur les pages d'authentification |
 | `darkMode` | `"off" \| "auto" \| "force"` | `"auto"` | Thème par défaut lorsque le visiteur n'en a pas choisi : `"off"` (clair uniquement), `"auto"` (suivre la préférence de l'OS), `"force"` (toujours sombre). Le basculeur de thème du visiteur garde toujours la priorité. |

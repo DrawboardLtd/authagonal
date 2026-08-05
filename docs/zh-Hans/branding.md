@@ -50,8 +50,8 @@ locale: zh-Hans
 | `showForgotPassword` | `boolean` | `true` | 在登录页面显示/隐藏"忘记密码？"链接 |
 | `showRegistration` | `boolean` | `false` | 显示/隐藏自助注册链接 |
 | `customCssUrl` | `string \| null` | `null` | 在默认样式之后加载的自定义 CSS 文件的 URL |
-| `welcomeTitle` | `LocalizedString` | `null` | 覆盖登录页面标题（纯字符串或 `{ "en": "...", "de": "..." }`） |
-| `welcomeSubtitle` | `LocalizedString` | `null` | 覆盖登录页面副标题 |
+| `welcomeTitle` | `LocalizedString` | `null` | 可选的欢迎语，显示在认证页面页眉下方（纯字符串或 `{ "en": "...", "de": "..." }`）。未设置时不渲染任何内容。 |
+| `welcomeSubtitle` | `LocalizedString` | `null` | `welcomeTitle` 下方的可选文字，格式相同。未设置时不渲染任何内容。 |
 | `languages` | `array \| null` | `null` | 语言选择器选项（`[{ "code": "en", "label": "English" }, ...]`）。`null` 显示除趣味区域设置外的所有随附语言（参见 [本地化](localization)）。 |
 | `poweredBy` | `boolean` | `true` | 在认证页面显示/隐藏 "Powered by Authagonal" 页脚 |
 | `darkMode` | `"off" \| "auto" \| "force"` | `"auto"` | 访客尚未选择时的默认主题：`"off"`（仅浅色）、`"auto"`（跟随操作系统偏好）、`"force"`（始终深色）。访客的主题切换仍然优先。 |

@@ -24,6 +24,9 @@ export interface HttpCtx {
   readonly query: URLSearchParams;
   /** `scheme://host` of this request, used to build the redirect_uri. */
   readonly origin: string;
+  /** The client address this adapter can observe, asserted to upstreams as `X-Forwarded-For`. Absent
+   * where the adapter has no socket to read (a Web `Request`); see {@link assertedForwarding}. */
+  readonly clientIp?: string;
   getCookie(name: string): string | undefined;
   setCookie(name: string, value: string, opts: CookieOptions): void;
   deleteCookie(name: string, opts: CookieOptions): void;
@@ -84,7 +87,9 @@ export function isProxyPath(path: string, o: ResolvedBffOptions): boolean {
 }
 
 /** A resolved proxy target + bearer token, or an HTTP error status. */
-export type ProxyDecision = { targetUrl: string; accessToken: string } | { error: number };
+export type ProxyDecision =
+  | { targetUrl: string; accessToken: string; forwarded: Record<string, string> }
+  | { error: number };
 
 /**
  * True when `path` is under `prefix` on a segment boundary. Mirrors the .NET `BffProxy.PrefixMatches`.
@@ -142,7 +147,48 @@ export async function authorizeProxy(ctx: HttpCtx, d: BffDeps): Promise<ProxyDec
   const qs = ctx.query.toString();
   const targetUrl = composeTarget(upstream.targetBaseUrl, apiPath, qs ? `?${qs}` : '');
   if (targetUrl === null) return { error: 404 };
-  return { targetUrl, accessToken: fresh.accessToken };
+  return { targetUrl, accessToken: fresh.accessToken, forwarded: assertedForwarding(ctx, d.o) };
+}
+
+/**
+ * The forwarding metadata the proxy asserts from its own state, replacing whatever the caller sent.
+ *
+ * Stripping without re-asserting is not fail-closed, which is what made this half easy to leave out.
+ * The upstream's behaviour on a MISSING `X-Forwarded-For` is not neutral: whether it reads the header
+ * directly or through ASP.NET's `ForwardedHeadersMiddleware`, it falls back to the TCP peer — this BFF.
+ * Every user of the SPA is then one address, so one user's failed attempts against a per-IP-limited
+ * endpoint buy a 429 for everybody, and every audit row names the BFF pod instead of the actor. The
+ * server's own `SourceQuotaKey` records the same failure reached from the other direction: "behind any
+ * reverse proxy, declared or not, every client in the deployment shared one bucket."
+ *
+ * The .NET twin treats strip-then-assert as one control for exactly that reason
+ * (`BffProxy.ProxyAsync`), and `PROXY_STRIP`'s comment already cited it as the rationale for the half
+ * that was ported. Built here rather than in each adapter so there is one place to be wrong.
+ */
+export function assertedForwarding(ctx: HttpCtx, o: ResolvedBffOptions): Record<string, string> {
+  const forwarded: Record<string, string> = {};
+
+  // Proto and host come from the same values the BFF already derived for its own origin — the ones it
+  // builds the redirect_uri from — so this asserts what the proxy believes about itself, not what the
+  // request claimed.
+  try {
+    const origin = new URL(ctx.origin);
+    forwarded['x-forwarded-proto'] = origin.protocol.replace(':', '');
+    forwarded['x-forwarded-host'] = origin.host;
+  } catch {
+    // An origin that will not parse cannot be asserted. Better absent than wrong.
+  }
+
+  // The client address is the one thing a Web `Request` cannot observe — there is no socket behind it —
+  // so the Next adapter has nothing to offer here and supplies it through `clientIp` instead. The
+  // Express adapter defaults to `req.ip`, which honours the host app's own `trust proxy` setting: the
+  // trust boundary is the host's to declare, exactly as the .NET twin delegates it to
+  // ForwardedHeadersMiddleware. Deliberately NOT read from the inbound header, since re-emitting that
+  // is the verbatim pass-through the strip exists to prevent.
+  const clientIp = o.clientIp?.(ctx) ?? ctx.clientIp;
+  if (clientIp) forwarded['x-forwarded-for'] = clientIp;
+
+  return forwarded;
 }
 
 /** Headers the proxy never forwards (hop-by-hop + ones we set/strip: cookie, authorization, host). */

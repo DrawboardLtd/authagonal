@@ -51,8 +51,6 @@
   "or": "hoặc",
   "signedInAs": "Đã đăng nhập với tên {{name}}",
   "signedInMessage": "Bạn đã được xác thực.",
-  "welcomeTitle": "Chào mừng đến với {{appName}}",
-  "welcomeSubtitle": "Đăng nhập để truy cập tài khoản của bạn",
   "signOut": "Đăng xuất",
   "mfaTitle": "Xác thực hai yếu tố",
   "mfaSubtitle": "Nhập mã xác minh để tiếp tục",
