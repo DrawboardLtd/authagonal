@@ -24,6 +24,18 @@ public interface IAuthHook
 
     /// <summary>Called when tokens are issued via the token endpoint.
     /// Throw to reject the token issuance.</summary>
+    /// <param name="subjectId">
+    /// <b>Always null from the token endpoint.</b> This gate runs BEFORE minting — deliberately, so a rejection
+    /// persists no grant and returns no token — and at that point the subject is still inside the
+    /// authorization code or refresh grant that has not been redeemed yet. Resolving it early would mean
+    /// redeeming the grant to decide whether to redeem it.
+    /// <para>
+    /// It is non-null only from <c>POST /api/v1/token</c>, the admin mint, where the caller names the subject.
+    /// For a subject-aware decision use <see cref="OnTokenIssuingAsync"/>, which fires from the mint itself with
+    /// the resolved subject, the effective scopes and the effective authority in
+    /// <see cref="TokenIssuanceContext"/>.
+    /// </para>
+    /// </param>
     Task OnTokenIssuedAsync(string? subjectId, string clientId, string grantType, CancellationToken ct = default);
 
     /// <summary>

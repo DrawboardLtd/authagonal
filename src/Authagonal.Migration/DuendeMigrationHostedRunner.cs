@@ -164,6 +164,17 @@ public sealed class DuendeMigrationHostedRunner(
         }
         finally
         {
+            // Cancel the watchdog before awaiting it, or it never stops.
+            //
+            // Its loop is `while (!linked.IsCancellationRequested)` and its catch comment says "Engine
+            // completed (linked cancelled)" — but on a SUCCESSFUL run nothing cancelled `linked`. So the
+            // watchdog kept polling IsLeader() every 10 seconds forever, `await watchdog` here never returned,
+            // and ExecuteAsync never completed: the runner's task, its CancellationTokenSource and the poll
+            // stayed alive for the whole process lifetime on a pod with no migration work left. If that pod
+            // later lost the lease, the watchdog then cancelled a token nobody was using.
+            //
+            // Cancelling here makes the comment true for every exit path, including the successful one.
+            await linked.CancelAsync();
             await watchdog;
         }
     }
@@ -206,7 +217,8 @@ public sealed class DuendeMigrationHostedRunner(
         }
         catch (OperationCanceledException)
         {
-            // Engine completed (linked cancelled) or host stopping — either way, stop watching.
+            // Engine finished (the caller's finally cancels `linked`) or the host is stopping — either way,
+            // stop watching.
         }
     }
 }

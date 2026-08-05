@@ -146,10 +146,21 @@ public sealed class ProtocolTokenService(
         {
             claims["sub"] = subject.SubjectId;
 
-            if (subject.Roles is { Count: > 0 })
+            // Scope-gated, like everything else that leaves here.
+            //
+            // These two were written unconditionally, immediately above the gated block below — so
+            // `scope=openid profile` released the subject's full role and group membership to whatever resource
+            // server received the token, while the id_token gated them (:389) and both userinfo endpoints gate
+            // them at read time. A client whose AllowedScopes are `openid profile` cannot ask for `roles`, the
+            // consent screen never mentions them, and the token carried them anyway.
+            //
+            // AlwaysIncludeUserClaimsInIdToken is deliberately NOT honoured here — it is an id_token opt-out
+            // whose name says so, and letting it widen an access token would release claims to resource
+            // servers on a setting that never mentioned them. Same reasoning as the §5.4 block below.
+            if (scopeList.Contains(StandardScopes.Roles) && subject.Roles is { Count: > 0 })
                 claims["roles"] = subject.Roles.ToArray();
 
-            if (subject.Groups is { Count: > 0 })
+            if (scopeList.Contains(StandardScopes.Groups) && subject.Groups is { Count: > 0 })
                 claims["groups"] = subject.Groups.ToArray();
 
             // The same §5.4 sets the id_token carries, under the same scope gates — because this host's
@@ -933,7 +944,52 @@ public sealed class ProtocolTokenService(
             tokenResources = data.Resources;
         }
 
-        var accessToken = await MintAccessTokenAsync(data.Subject, client, data.Scopes, tokenResources, ct: ct);
+        // Re-derive the subject and re-apply the role gate, as the normal rotation path does.
+        //
+        // This minted from `data.Subject` — the snapshot frozen at the last rotation — so for the length of the
+        // grace window (RefreshTokenReuseGraceSeconds, 30 by default) a retry received a token built from
+        // authorization facts that may already be stale: a deactivated account, a revoked role, an upstream
+        // session the IdP has ended. The normal path re-reads the user store on every refresh precisely to stop
+        // that, and the grace path is the one place a refresh does not.
+        //
+        // The successor grant itself is still replayed — that is what makes the retry idempotent and what the
+        // window exists for. Only the SUBJECT is refreshed. A subject that can no longer be resolved returns
+        // null, which drops the caller through to replay handling rather than serving a token for an account
+        // that is gone.
+        var graceContext = new OidcSubjectResolutionContext(
+            successor.ClientId, data.Scopes, data.Resources ?? []);
+        var graceSubject = subjectResolver is null
+            ? data.Subject
+            : await subjectResolver.ResolveRefreshAsync(data.Subject, graceContext, ct) switch
+            {
+                OidcSubjectResult.Allowed allowed => allowed.Subject,
+                _ => null,
+            };
+
+        if (graceSubject is null)
+        {
+            logger.LogWarning(
+                "Grace-window retry for client {ClientId} refused: the subject could no longer be resolved "
+                + "(deactivated, or the upstream session ended).", successor.ClientId);
+            return null;
+        }
+
+        var graceScopes = data.Scopes;
+        var graceEntitled = await _scopeRoleGate.FilterAsync(graceScopes, graceSubject.Roles, ct);
+        if (graceEntitled.Count < graceScopes.Count)
+        {
+            if (graceEntitled.Count == 0)
+            {
+                logger.LogWarning(
+                    "Grace-window retry for client {ClientId} refused: the subject is no longer entitled to "
+                    + "any of this grant's scopes.", successor.ClientId);
+                return null;
+            }
+
+            graceScopes = [.. graceEntitled];
+        }
+
+        var accessToken = await MintAccessTokenAsync(graceSubject, client, graceScopes, tokenResources, ct: ct);
 
         // The grace path mints against a successor that already exists, so the jti has to be appended
         // to it rather than passed in at creation. Without this write, an access token handed out on a
@@ -968,10 +1024,13 @@ public sealed class ProtocolTokenService(
             return null;
         }
 
+        // The refreshed subject and the gated scope set, not the frozen snapshot — otherwise the id_token
+        // would carry claims the access token beside it no longer does, and the reported `scope` would name
+        // scopes this token was not minted with.
         string? idToken = null;
-        if (data.Scopes.Contains(StandardScopes.OpenId))
+        if (graceScopes.Contains(StandardScopes.OpenId))
         {
-            idToken = await CreateIdTokenAsync(data.Subject, client, data.Scopes, ct: ct);
+            idToken = await CreateIdTokenAsync(graceSubject, client, graceScopes, ct: ct);
         }
 
         logger.LogInformation(
@@ -986,7 +1045,7 @@ public sealed class ProtocolTokenService(
             ExpiresIn = accessToken.ExpiresInSeconds,
             IdToken = idToken,
             RefreshToken = successorKey,
-            Scope = string.Join(' ', data.Scopes)
+            Scope = string.Join(' ', graceScopes)
         };
     }
 

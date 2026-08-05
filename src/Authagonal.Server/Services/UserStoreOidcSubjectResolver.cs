@@ -137,6 +137,37 @@ public sealed class UserStoreOidcSubjectResolver(
             if (!string.IsNullOrEmpty(stored))
                 upstreamRefreshToken = stored;
         }
+        // Said out loud when the control cannot run at all.
+        //
+        // RevalidateOnRefresh is opt-in, and an operator who turns it on has decided that upstream revocation
+        // must reach this session. With no upstream refresh token there is nothing to redeem, so the control
+        // silently becomes a no-op — at no log level — and the deployment believes offboarding is enforced when
+        // it is not. The usual cause is an app registration that never consented offline_access, or an upstream
+        // that declines it for this flow, so it is a configuration fault with a fix rather than a transient.
+        // The adjacent SessionExpClaim control already warns for exactly the same shape of failure.
+        if (!string.IsNullOrEmpty(priorSubject.UpstreamConnectionId)
+            && string.IsNullOrEmpty(upstreamRefreshToken))
+        {
+            // The connection is only loaded in this degraded branch, so the extra read costs nothing on a
+            // healthy refresh — and nothing at all for a non-federated one, which has no connection id.
+            OidcProviderConfig? degradedConfig = null;
+            try { degradedConfig = await oidcProviderStore.GetAsync(priorSubject.UpstreamConnectionId, ct); }
+            catch (Exception ex)
+            {
+                logger.LogDebug(ex,
+                    "Could not load connection {ConnectionId} to report upstream-revalidation state",
+                    priorSubject.UpstreamConnectionId);
+            }
+
+            if (degradedConfig?.RevalidateOnRefresh == true)
+                logger.LogWarning(
+                    "RevalidateOnRefresh is enabled for connection {ConnectionId} but no upstream refresh token "
+                    + "is held for subject {SubjectId}, so the upstream was NOT re-checked on this refresh. "
+                    + "Upstream revocation will not reach this session. The usual cause is an app registration "
+                    + "that never received offline_access from the identity provider.",
+                    priorSubject.UpstreamConnectionId, priorSubject.SubjectId);
+        }
+
         if (!string.IsNullOrEmpty(upstreamRefreshToken) && !string.IsNullOrEmpty(priorSubject.UpstreamConnectionId))
         {
             var (outcome, rotated) = await RedeemUpstreamRefreshAsync(

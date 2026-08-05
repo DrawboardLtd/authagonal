@@ -37,6 +37,18 @@ public static class ScimTokenEndpoints
         if (client is null)
             return TypedResults.Json(new ErrorInfoResponse { Error = "client_not_found", ErrorDescription = $"Client '{request.ClientId}' not found" }, AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 404);
 
+        // Bounded, because DateTimeOffset.AddDays throws out of range and the throw becomes a 500 with no
+        // indication of which field was wrong and no audit row — the audit call is after the store write. Both
+        // sibling admin endpoints that take a day count bound it; this one did not, so a value computed from a
+        // UI date picker, or a plain int.MaxValue, produced an opaque server error.
+        const int MaxExpiresInDays = 3650;
+        if (request.ExpiresInDays is { } days && (days < 0 || days > MaxExpiresInDays))
+            return TypedResults.Json(new ErrorInfoResponse
+            {
+                Error = "invalid_request",
+                ErrorDescription = $"expiresInDays must be between 0 and {MaxExpiresInDays} (0 means no expiry).",
+            }, AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 400);
+
         var allowedDomains = (request.AllowedEmailDomains ?? [])
             .Select(d => d?.Trim() ?? "")
             .Where(d => d.Length > 0)

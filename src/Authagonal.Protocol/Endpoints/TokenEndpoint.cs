@@ -5,6 +5,7 @@ using Authagonal.Protocol.Services;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
+using Authagonal.Core.Services;
 
 namespace Authagonal.Protocol.Endpoints;
 
@@ -17,6 +18,7 @@ internal static class TokenEndpoint
             IProtocolTokenService tokenService,
             IClientStore clientStore,
             IClientSecretVerifier secretVerifier,
+            IEnumerable<IAuthHook> authHooks,
             CancellationToken ct) =>
         {
             var form = await httpContext.Request.ReadFormAsync(ct);
@@ -38,6 +40,16 @@ internal static class TokenEndpoint
 
             try
             {
+                // The rejection gate, which this host never invoked for any grant.
+                //
+                // IAuthHook.OnTokenIssuedAsync is documented as "Throw to reject the token issuance", and
+                // docs/extensibility.md lists it among the core lifecycle hooks and repeats that methods on the
+                // critical path can abort the operation. The Server host called it; the embeddable package —
+                // the one an integrator reaches for precisely to keep their own policy in the loop — did not,
+                // so a hook registered to refuse issuance for a suspended tenant was accepted at registration
+                // and never consulted. Before minting, so a rejection persists nothing.
+                await authHooks.RunOnTokenIssuedAsync(null, client.ClientId, grantType, ct);
+
                 return grantType switch
                 {
                     GrantTypes.AuthorizationCode => await TokenGrantHandlers.HandleAuthorizationCode(form, tokenService, client.ClientId, ct),
