@@ -8,6 +8,34 @@ unreachable, or applied on one of several sibling paths.
 
 ### Breaking
 
+- **`IBackupTarget` gains `GetLastFullBackupIdAsync` / `SetLastFullBackupIdAsync`.** Implementors of the
+  interface must add them. `BackupManifest.ParentBackupId` was serialized into every manifest, covered by the
+  manifest MAC and read on the recovery path — and written by nothing, so the message that exists to name an
+  incremental's chain root rendered as "Restore the parent full ('')". `FileSystemBackupTarget` records it in a
+  `.lastfull[-scope]` file beside the watermark, scoped the same way. No archive format change: the field was
+  always there.
+
+- **`@authagonal/login` moves `react`, `react-dom` and `react-router` from `dependencies` to
+  `peerDependencies`** (`^19.0.0` / `^19.0.0` / `^8.0.0`). Install them alongside the package. The library build
+  already externalized all three, so this makes the manifest agree with the build — and stops npm nesting a
+  second React under the package, which produced "Invalid hook call" and "useNavigate() may be used only in the
+  context of a `<Router>` component" from correctly-written host applications.
+
+- **`BrandingContext`'s default value is now `undefined` rather than the defaults object.**
+  `useBranding()` still always returns a `BrandingConfig`, so nothing that consumes it changes; only code
+  reading `useContext(BrandingContext)` directly sees the new type. The distinction is what lets `AuthLayout`
+  tell "nothing provided branding" from "something provided the defaults", so it can load `branding.json`
+  itself — which the published README and `docs/branding.md` both describe — without a second fetch in the app
+  that already did it.
+
+- **`AuthLayout`'s `children` prop is now optional**, falling back to `<Outlet />` so the component works as
+  the react-router layout route its README documents. The previous required prop meant the published quick
+  start did not typecheck, and rendered an auth card with an empty content area.
+
+- **`ProxyDecision` in `@authagonal/bff` gains a `forwarded` field**, and both adapters' internal
+  `forwardProxy` take it. Source-breaking only for code constructing a `ProxyDecision` by hand.
+
+
 - **`SamlRedirectBinding.Verify` takes an optional logger** and now enforces the IdP certificate's validity
   window. A retired signing certificate that previously verified a redirect-binding message is refused.
   Source-compatible; behaviour-breaking only for a connection whose pinned certificate has expired — which is
@@ -204,6 +232,88 @@ unreachable, or applied on one of several sibling paths.
   the third implementation of an open-redirect guard whose other two are table-tested — with no coverage at all,
   and made the GDPR export's content-type guard untestable. vitest + jsdom, 32 tests, and a CI job in
   `audit.yml` alongside the `bff-lib` one. Test files are excluded from the published tarball.
+
+### Fixed — the 22 low findings, in five batches
+
+- **`roles` and `groups` rode the access token with no scope gate**, while the id_token gated the same two and
+  both userinfo endpoints gate them at read time. `scope=openid profile` released the subject's full role and
+  group membership to whatever resource server received the token.
+
+- **The refresh grace-window retry minted from a frozen snapshot.** The normal rotation path re-reads the user
+  store on every refresh — where deactivating an account or revoking a role takes effect. The grace path minted
+  from the snapshot and did neither. It now re-resolves the subject and re-applies the role gate while still
+  replaying the same successor grant.
+
+- **`Authagonal.Protocol`'s token endpoint never invoked `IAuthHook.OnTokenIssuedAsync`** — the hook documented
+  as "throw to reject the token issuance", in the package an integrator embeds precisely to keep their own
+  policy in the loop. Its `subjectId` is documented as always null there, with the reason.
+
+- **`POST /api/v1/scim/tokens` accepted an unbounded `expiresInDays`**, so a large value threw out of
+  `DateTimeOffset.AddDays` and became a 500 with no field named and no audit row. Bounded at 3650 days.
+
+- **`RevalidateOnRefresh` degraded to nothing in silence** when the upstream held no refresh token, so an
+  opted-in offboarding control was a no-op at no log level.
+
+- **The migration runner's leadership watchdog never terminated after a successful run**, so `ExecuteAsync`
+  never completed and a 10-second poll ran for the process lifetime on a pod with no work left.
+
+- **`Authagonal.Migration` was the only shipped package with no `IsTrimmable`** and the only one serializing
+  through the reflection-based resolver — so a trimming host got an assembly nobody had trim-analyzed, and the
+  first casualty was the migration's own report. A source-generated context now covers all four sites; the
+  project compiles with zero IL warnings.
+
+- **The Node BFF stripped forwarding metadata and never re-asserted it**, unlike the .NET proxy its own comment
+  cites. A missing `X-Forwarded-For` is not neutral: the upstream falls back to the TCP peer, so every user of
+  the SPA becomes one address and a per-IP rate limit becomes per-deployment. Express asserts `req.ip` (which
+  honours the host's `trust proxy` setting); a new `clientIp` option supplies it where a Web `Request` has no
+  socket.
+
+- **`welcomeTitle` and `welcomeSubtitle` were read by no component** — typed, defaulted, documented in seven
+  locales and translated into ten. They now render in the layout header when a tenant sets one; there is
+  deliberately no default greeting, and the unreachable i18n keys are gone.
+
+- **The boot-payload contract was documented as the one form the CSP blocks.** Two comments told a host to
+  inline `window.__AUTHAGONAL_BOOT__`; the SPA reads a `<script type="application/json">` element, and this
+  host's own CSP (`default-src 'self'`, no `unsafe-inline`, no nonce) refuses the assignment form.
+
+- **The SCIM `documentationUri` pointed at `{issuer}/docs/scim`** — a route nothing serves, so
+  `MapFallbackToFile` answered it with 200 text/html: the login page, to an administrator following the link
+  their provisioning UI surfaced. It now points at the documentation site.
+
+- **`OidcProviderConfig.RedirectUrl` was required by the admin API and by config seeding, and read by
+  nothing.** Both legs of the federation flow derive the callback from the issuer, because it has to be on the
+  origin the browser is on. Neither writer refuses now; a value that is not the derived one is logged as
+  ignored. `POST /api/v1/oidc/connections` without `RedirectUrl` succeeds, and seeding without it no longer
+  throws at startup.
+
+- **The SQL and DynamoDB change writers omitted the authoritative key columns** their own summaries claimed to
+  mirror. The composite sort key is `"{pk}|{sk}"` and a '|' in the partition key makes splitting it ambiguous,
+  so every row was one a reader has to guess at. Both now write `origPk`/`origSk`. Upsert coverage was one
+  store of four on both backends, and the role-mapping stores took no change writer at all while every sibling
+  on the same registration line did.
+
+- **`SqlGrantStore` recorded its deletes after performing them**, contradicting the F24e ordering the Azure
+  store documents as a contract, on all four paths. And `RemoveBySubjectCoreAsync` deleted the
+  `GrantsByExpiry` row while recording only two of the three, so a revoked grant's expiry-index row came back
+  from every incremental restore — from the one path that revokes in bulk.
+
+- **Seven documentation pages described behaviour the code was changed away from**, each in seven locales:
+  `docs/saml.md` on IdP-initiated SSO (off by default, and the option that enables it was in no document),
+  unsigned LogoutRequests (refused outright) and RSA-1.5 key transport (refused as a Bleichenbacher/ROBOT
+  oracle); `docs/scim.md` on soft delete (a tombstone, and the GET is a 404), `totalResults` (omitted while
+  incomplete, which is the defect the docs prescribed), a 422 that is a 400, and a filter subset the same page
+  contradicted; `docs/localization.md` on eleven locales including a Klingon one that ships nowhere; the CORS
+  section, which claimed considerably more than the path-scoped provider does; and `/_internal/*` as reachable
+  from private source addresses, when the guard authorizes nobody without `Cluster:Secret`.
+  `Cluster:AllowLoopbackWithoutSecret` and `Cluster:RunLeaderElection` are now documented — the first is the
+  only way to restore the old behaviour and was findable only by reading the source.
+
+Fifty-six tests across the five batches, and each batch was probed by reverting its fixes: 6 of 9, 4 of 7,
+4 of 14, 12 of 22 and 4 of 4 fail without them. Four conventions are now enforced over their whole set rather
+than the case that was found, because every one of these was a one-of-N omission: every packable project must
+declare `IsTrimmable`; every module the login build externalizes must be a peer dependency; every `Cluster:*`
+option must appear in the configuration reference; and no locale's documentation may advertise a locale the
+build does not ship.
 
 ## [0.22.0], 2026-08-04
 
