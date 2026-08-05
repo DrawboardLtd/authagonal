@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.23.0], 2026-08-05
 
 Found by a blind review pass — a different method over the same tree, asking what is MISSING rather than what
 is wrong in a changed line. Six of these are cases where an earlier fix was recorded as closed but was inert,
