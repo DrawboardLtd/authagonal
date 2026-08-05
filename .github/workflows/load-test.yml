@@ -37,7 +37,7 @@ jobs:
       (github.event_name == 'workflow_dispatch' && github.event.inputs.test == 'smoke')
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: grafana/setup-k6-action@db07bd9765aac508ef18982e52ab937fe633a065 # v1.2.1
       - run: k6 run tests/load/smoke.js -e BASE_URL=${{ env.BASE_URL }}
 
@@ -45,7 +45,7 @@ jobs:
     if: github.event_name == 'workflow_dispatch' && github.event.inputs.test == 'stress'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: grafana/setup-k6-action@db07bd9765aac508ef18982e52ab937fe633a065 # v1.2.1
       - run: k6 run tests/load/stress.js -e BASE_URL=${{ env.BASE_URL }}
 
@@ -56,7 +56,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 120
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: grafana/setup-k6-action@db07bd9765aac508ef18982e52ab937fe633a065 # v1.2.1
       # Passed through the environment, not interpolated into the shell line. A workflow_dispatch
       # input is free text, and `${{ ... }}` is substituted before the shell ever sees it — so a
