@@ -317,7 +317,7 @@ Defina los proveedores de identidad OIDC en la configuración. Estos se inyectan
 | `MetadataLocation` | Sí | URL al documento de descubrimiento OpenID Connect del IdP |
 | `ClientId` | Sí | ID de cliente OAuth2 registrado con el IdP |
 | `ClientSecret` | Sí | Secreto de cliente OAuth2 (protegido vía `ISecretProvider` al inicio) |
-| `RedirectUrl` | Sí | URI de redirección OAuth2 registrada con el IdP |
+| `RedirectUrl` | No | **Se ignora.** La URI de redirección se deriva por solicitud como `{Issuer}/oidc/callback`: registre *esa* en el IdP. Un valor aquí no tiene efecto y se registra como ignorado. |
 | `AllowedDomains` | No | Dominios de correo electrónico enrutados a este proveedor vía SSO |
 
 > **Nota:** Los proveedores también pueden gestionarse en tiempo de ejecución mediante la [API de administración](admin-api). Los proveedores configurados se actualizan (upsert) en cada inicio, por lo que los cambios de configuración surten efecto al reiniciar.

@@ -44,6 +44,11 @@ public sealed class SqlProvisioningAppStore(
             Data = await _cipher.ProtectAsync(json, ct).ConfigureAwait(false),
         };
         await table.PutAsync(row, ct).ConfigureAwait(false);
+        // Recorded, not just deletes: an incremental window that carries the deletions and none of
+        // the writes reconstructs a table that is missing every row created or changed in it.
+        if (tombstones is not null)
+            await tombstones.WriteUpsertAsync("ProvisioningApps", partitioner.PK(Partition), app.AppId, ct)
+                .ConfigureAwait(false);
     }
 
     public async Task DeleteAsync(string appId, CancellationToken ct = default)

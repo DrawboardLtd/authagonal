@@ -54,7 +54,7 @@ Adicione ao `appsettings.json`:
 }
 ```
 
-Os provedores são semeados na inicialização. Os campos semeáveis são exatamente os apresentados: `ConnectionId`, `ConnectionName`, `MetadataLocation`, `ClientId`, `ClientSecret`, `RedirectUrl`, `AllowedDomains`. O `ClientSecret` é protegido via `ISecretProvider` (Key Vault quando configurado, texto simples caso contrário). Os mapeamentos de domínio SSO são registados automaticamente a partir de `AllowedDomains`.
+Os provedores são semeados na inicialização. Os campos semeáveis são exatamente os apresentados, menos `RedirectUrl`: `ConnectionId`, `ConnectionName`, `MetadataLocation`, `ClientId`, `ClientSecret`, `AllowedDomains`. `RedirectUrl` é aceite por compatibilidade e ignorado — o URI de redirecionamento é derivado por pedido como `{Issuer}/oidc/callback`, pois tem de estar na origem em que o browser se encontra, e é esse o URI a registar no IdP. O `ClientSecret` é protegido via `ISecretProvider` (Key Vault quando configurado, texto simples caso contrário). Os mapeamentos de domínio SSO são registados automaticamente a partir de `AllowedDomains`.
 
 O modelo de conexão transporta comportamento opcional adicional: `PassthroughParams` (definível via a criação na API de administração), mais `SessionExpClaim` e `DisableJitProvisioning` (campos ao nível do store, definidos via `IOidcProviderStore` a partir do código de hospedagem). Consulte [Repasse de scopes e claims](#repasse-de-scopes-e-claims) e [Limite de vida da sessão](#limite-de-vida-da-sessão) abaixo.
 

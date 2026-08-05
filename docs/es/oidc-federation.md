@@ -54,7 +54,7 @@ Agregue en `appsettings.json`:
 }
 ```
 
-Los proveedores se inyectan al inicio. Los campos inyectables son exactamente los mostrados: `ConnectionId`, `ConnectionName`, `MetadataLocation`, `ClientId`, `ClientSecret`, `RedirectUrl`, `AllowedDomains`. El `ClientSecret` se protege mediante `ISecretProvider` (Key Vault cuando está configurado, texto plano en caso contrario). Los mapeos de dominios SSO se registran automáticamente desde `AllowedDomains`.
+Los proveedores se inyectan al inicio. Los campos inyectables son exactamente los mostrados, menos `RedirectUrl`: `ConnectionId`, `ConnectionName`, `MetadataLocation`, `ClientId`, `ClientSecret`, `AllowedDomains`. `RedirectUrl` se acepta por compatibilidad y se ignora: la URI de redirección se deriva por solicitud como `{Issuer}/oidc/callback`, ya que debe estar en el origen en el que se encuentra el navegador, y es esa la URI que hay que registrar en el IdP. El `ClientSecret` se protege mediante `ISecretProvider` (Key Vault cuando está configurado, texto plano en caso contrario). Los mapeos de dominios SSO se registran automáticamente desde `AllowedDomains`.
 
 El modelo de conexión incorpora comportamiento opcional adicional: `PassthroughParams` (configurable mediante la creación en la API de administración), más `SessionExpClaim` y `DisableJitProvisioning` (campos a nivel de almacén, establecidos mediante `IOidcProviderStore` desde el código de alojamiento). Ver [Flujo de scopes y claims](#scope-and-claim-flow-through) y [Límite de duración de sesión](#session-lifetime-cap) más abajo.
 

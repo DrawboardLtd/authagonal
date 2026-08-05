@@ -146,14 +146,27 @@ public sealed class SqlGrantStore(
         var hashedKey = HashKey(key);
         var pk = partitioner.PK(hashedKey);
 
+        // Tombstone-first (F24e), which this store did the other way round while the Azure store
+        // documents the ordering as a contract: a crash between the data delete and its change-log entry
+        // loses the delete from every future backup, because the backstop scan only re-reads LIVE rows.
+        // The row is therefore read before it is removed. That costs one point-read on the redemption
+        // path and buys a delete that cannot go unrecorded.
+        //
+        // The tombstone stays correct if this caller then loses the race, for the reason the Azure store
+        // gives: a tombstone for a delete that does not happen is safe, since any later write to the key
+        // re-stamps a newer Timestamp and the merge keeps rows written after the tombstone's DeletedAt.
+        var existing = await grants.GetAsync(pk, GrantSk, ct: ct).ConfigureAwait(false);
+        if (existing is null) return false;
+
+        var grant = await ReadGrantAsync(existing, ct).ConfigureAwait(false);
+        if (tombstones is not null) await tombstones.WriteAsync("Grants", pk, GrantSk, ct).ConfigureAwait(false);
+
         // Atomic single-use: only the caller whose delete removes the row wins; a racing redemption
         // gets nothing back and loses.
         var old = await grants.DeleteIfExistsReturningAsync(pk, GrantSk, ct).ConfigureAwait(false);
         if (old is null) return false;
 
-        var grant = await ReadGrantAsync(old, ct).ConfigureAwait(false);
         await CleanupIndexesAsync(hashedKey, grant.SubjectId, grant.Type, grant.ExpiresAt, ct).ConfigureAwait(false);
-        if (tombstones is not null) await tombstones.WriteAsync("Grants", pk, GrantSk, ct).ConfigureAwait(false);
         return true;
     }
 
@@ -238,12 +251,17 @@ public sealed class SqlGrantStore(
         var hashedKey = HashKey(key);
         var pk = partitioner.PK(hashedKey);
 
+        // Tombstone-first (F24e) — see TryConsumeAsync.
+        var existing = await grants.GetAsync(pk, GrantSk, ct: ct).ConfigureAwait(false);
+        if (existing is null) return;
+
+        var grant = await ReadGrantAsync(existing, ct).ConfigureAwait(false);
+        if (tombstones is not null) await tombstones.WriteAsync("Grants", pk, GrantSk, ct).ConfigureAwait(false);
+
         var old = await grants.DeleteIfExistsReturningAsync(pk, GrantSk, ct).ConfigureAwait(false);
         if (old is null) return;
 
-        var grant = await ReadGrantAsync(old, ct).ConfigureAwait(false);
         await CleanupIndexesAsync(hashedKey, grant.SubjectId, grant.Type, grant.ExpiresAt, ct).ConfigureAwait(false);
-        if (tombstones is not null) await tombstones.WriteAsync("Grants", pk, GrantSk, ct).ConfigureAwait(false);
     }
 
     public Task RemoveAllBySubjectAsync(string subjectId, CancellationToken ct = default)
@@ -359,15 +377,24 @@ public sealed class SqlGrantStore(
             // grant.Key — the raw handle is deliberately not persisted, so it is empty here.
             var hashedKey = HashedKeyFromSubjectSk(row.Sk);
 
-            await grants.DeleteAsync(partitioner.PK(hashedKey), GrantSk, ct).ConfigureAwait(false);
-            await grantsBySubject.DeleteAsync(row.Pk, row.Sk, ct).ConfigureAwait(false);
-            await grantsByExpiry.DeleteAsync(partitioner.PK(ExpiryPk(Shard(hashedKey))), ExpirySk(grant.ExpiresAt, hashedKey), ct).ConfigureAwait(false);
+            var grantPk = partitioner.PK(hashedKey);
+            var expiryPk = partitioner.PK(ExpiryPk(Shard(hashedKey)));
+            var expirySk = ExpirySk(grant.ExpiresAt, hashedKey);
 
+            // Tombstone-first (F24e) — see TryConsumeAsync. And all THREE keys: this path deleted the
+            // GrantsByExpiry row and recorded only Grants and GrantsBySubject, so a bulk subject removal
+            // left the expiry-index row alive in every future incremental restore — a revoked grant's
+            // index entry resurrected by the recovery, from the one path that revokes in bulk.
             if (tombstones is not null)
             {
-                await tombstones.WriteAsync("Grants", partitioner.PK(hashedKey), GrantSk, ct).ConfigureAwait(false);
+                await tombstones.WriteAsync("Grants", grantPk, GrantSk, ct).ConfigureAwait(false);
                 await tombstones.WriteAsync("GrantsBySubject", row.Pk, row.Sk, ct).ConfigureAwait(false);
+                await tombstones.WriteAsync("GrantsByExpiry", expiryPk, expirySk, ct).ConfigureAwait(false);
             }
+
+            await grants.DeleteAsync(grantPk, GrantSk, ct).ConfigureAwait(false);
+            await grantsBySubject.DeleteAsync(row.Pk, row.Sk, ct).ConfigureAwait(false);
+            await grantsByExpiry.DeleteAsync(expiryPk, expirySk, ct).ConfigureAwait(false);
 
             removed++;
         }
@@ -377,19 +404,23 @@ public sealed class SqlGrantStore(
 
     private async Task CleanupIndexesAsync(string hashedKey, string? subjectId, string type, DateTimeOffset expiresAt, CancellationToken ct)
     {
+        // Tombstone-first (F24e) — see TryConsumeAsync. Both keys are already in hand here, so the
+        // ordering costs nothing at all; it was simply the other way round.
         var expiryPk = partitioner.PK(ExpiryPk(Shard(hashedKey)));
         var expirySk = ExpirySk(expiresAt, hashedKey);
-        await grantsByExpiry.DeleteAsync(expiryPk, expirySk, ct).ConfigureAwait(false);
+        var spk = string.IsNullOrEmpty(subjectId) ? null : partitioner.PK(subjectId);
+        var ssk = spk is null ? null : SubjectSk(type, hashedKey);
 
-        if (!string.IsNullOrEmpty(subjectId))
+        if (tombstones is not null)
         {
-            var spk = partitioner.PK(subjectId);
-            var ssk = SubjectSk(type, hashedKey);
-            await grantsBySubject.DeleteAsync(spk, ssk, ct).ConfigureAwait(false);
-            if (tombstones is not null) await tombstones.WriteAsync("GrantsBySubject", spk, ssk, ct).ConfigureAwait(false);
+            await tombstones.WriteAsync("GrantsByExpiry", expiryPk, expirySk, ct).ConfigureAwait(false);
+            if (spk is not null)
+                await tombstones.WriteAsync("GrantsBySubject", spk, ssk!, ct).ConfigureAwait(false);
         }
 
-        if (tombstones is not null) await tombstones.WriteAsync("GrantsByExpiry", expiryPk, expirySk, ct).ConfigureAwait(false);
+        await grantsByExpiry.DeleteAsync(expiryPk, expirySk, ct).ConfigureAwait(false);
+        if (spk is not null)
+            await grantsBySubject.DeleteAsync(spk, ssk!, ct).ConfigureAwait(false);
     }
 
     private async Task<PersistedGrant> ReadGrantAsync(SqlRow row, CancellationToken ct)

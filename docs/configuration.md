@@ -362,7 +362,7 @@ Define OIDC identity providers in configuration. These are seeded on startup:
 | `MetadataLocation` | Yes | URL to the IdP's OpenID Connect discovery document |
 | `ClientId` | Yes | OAuth2 client ID registered with the IdP |
 | `ClientSecret` | Yes | OAuth2 client secret (protected via `ISecretProvider` at startup) |
-| `RedirectUrl` | Yes | OAuth2 redirect URI registered with the IdP |
+| `RedirectUrl` | No | **Ignored.** The redirect URI is derived per request as `{Issuer}/oidc/callback` — register *that* with the IdP. A value here has no effect and is logged as ignored. |
 | `AllowedDomains` | No | Email domains routed to this provider via SSO |
 
 > **Note:** Providers can also be managed at runtime via the [Admin API](admin-api). Config-seeded providers are upserted on every startup, so config changes take effect on restart.

@@ -153,7 +153,7 @@ public static class ServiceCollectionExtensions
         services.TryAddSingleton<ISsoDomainStore>(new DynamoSsoDomainStore(new DynamoTable(db, SsoDomainsTable), live, tombstones));
         services.TryAddSingleton<IScimTokenStore>(new DynamoScimTokenStore(new DynamoTable(db, ScimTokensTable), live, tombstones));
         services.TryAddSingleton<IScimGroupStore>(new DynamoScimGroupStore(new DynamoTable(db, ScimGroupsTable), new DynamoTable(db, ScimGroupExternalIdsTable), live, tombstones));
-        services.TryAddSingleton<IScimGroupRoleMappingStore>(new DynamoScimGroupRoleMappingStore(new DynamoTable(db, ScimGroupRoleMappingsTable), live));
+        services.TryAddSingleton<IScimGroupRoleMappingStore>(new DynamoScimGroupRoleMappingStore(new DynamoTable(db, ScimGroupRoleMappingsTable), live, tombstones));
         services.TryAddSingleton<IMfaStore>(new DynamoMfaStore(
             new DynamoTable(db, MfaCredentialsTable),
             new DynamoTable(db, MfaChallengesTable),

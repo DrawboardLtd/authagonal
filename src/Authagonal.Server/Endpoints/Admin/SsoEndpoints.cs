@@ -272,6 +272,8 @@ public static class SsoEndpoints
         ISsoDomainStore ssoDomainStore,
         ISecretProvider secretProvider,
         IAuditLogger audit,
+        ITenantContext tenantContext,
+        ILogger<CreateOidcRequest> logger,
         HttpContext http,
         CancellationToken ct)
     {
@@ -303,8 +305,20 @@ public static class SsoEndpoints
         if (string.IsNullOrWhiteSpace(request.ClientSecret))
             return Results.BadRequest(new { error = "invalid_request", error_description = "ClientSecret is required" });
 
-        if (string.IsNullOrWhiteSpace(request.RedirectUrl))
-            return Results.BadRequest(new { error = "invalid_request", error_description = "RedirectUrl is required" });
+        // RedirectUrl is NOT required, and used to be — a 400 demanding a value that nothing reads. The
+        // callback is derived per request from the issuer (OidcEndpoints.CallbackUriFor), because in a
+        // multi-tenant host it has to be on the origin the browser is on. An administrator who supplied a
+        // different value got no error and no effect; now they get a line saying so.
+        var derivedCallback = OidcEndpoints.CallbackUriFor(tenantContext.Issuer);
+        if (!string.IsNullOrWhiteSpace(request.RedirectUrl)
+            && !string.Equals(request.RedirectUrl, derivedCallback, StringComparison.OrdinalIgnoreCase))
+        {
+            logger.LogWarning(
+                "OIDC connection '{ConnectionName}' was created with RedirectUrl '{Supplied}', which is "
+                + "ignored: the redirect_uri is derived per request as {Derived}. Register that URI with the "
+                + "upstream provider.",
+                request.ConnectionName, request.RedirectUrl, derivedCallback);
+        }
 
         // InteractionPath is later concatenated onto LoginAppUrl to build a redirect; a value missing the
         // leading '/' (e.g. ".evil.com/x") would alter the host. Require a leading slash.

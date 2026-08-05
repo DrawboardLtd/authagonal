@@ -144,7 +144,7 @@ public static class ServiceCollectionExtensions
         services.TryAddSingleton<IScimTokenStore>(new SqlScimTokenStore(T(ScimTokensTable), live, tombstones));
         services.TryAddSingleton<IScimGroupStore>(new SqlScimGroupStore(
             T(ScimGroupsTable), T(ScimGroupExternalIdsTable), live, tombstones));
-        services.TryAddSingleton<IScimGroupRoleMappingStore>(new SqlScimGroupRoleMappingStore(T(ScimGroupRoleMappingsTable), live));
+        services.TryAddSingleton<IScimGroupRoleMappingStore>(new SqlScimGroupRoleMappingStore(T(ScimGroupRoleMappingsTable), live, tombstones));
         services.TryAddSingleton<IMfaStore>(new SqlMfaStore(
             T(MfaCredentialsTable), T(MfaChallengesTable), T(MfaWebAuthnIndexTable), live, tombstones));
 

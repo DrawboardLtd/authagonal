@@ -53,7 +53,7 @@ Add to `appsettings.json`:
 }
 ```
 
-Providers are seeded on startup. The seedable fields are exactly those shown: `ConnectionId`, `ConnectionName`, `MetadataLocation`, `ClientId`, `ClientSecret`, `RedirectUrl`, `AllowedDomains`. The `ClientSecret` is protected via `ISecretProvider` (Key Vault when configured, plaintext otherwise). SSO domain mappings are registered automatically from `AllowedDomains`.
+Providers are seeded on startup. The seedable fields are exactly those shown, minus `RedirectUrl`: `ConnectionId`, `ConnectionName`, `MetadataLocation`, `ClientId`, `ClientSecret`, `AllowedDomains`. `RedirectUrl` is accepted for compatibility and ignored — the redirect URI is derived per request as `{Issuer}/oidc/callback`, since it has to be on the origin the browser is on, and that is the URI to register with the IdP. The `ClientSecret` is protected via `ISecretProvider` (Key Vault when configured, plaintext otherwise). SSO domain mappings are registered automatically from `AllowedDomains`.
 
 > **An IdP on your own private network.** `MetadataLocation` must be https and, by default, must resolve to a publicly routable address — Authagonal refuses internal targets on every URL it fetches, at the URL and again at the socket. To federate with an on-premises IdP, name it in [`Auth:AllowedInternalTargets`](configuration#outbound-fetches-ssrf-guard). That covers the whole exchange, including the `token_endpoint`, `userinfo_endpoint` and `jwks_uri` the discovery document names. https is still required: this document supplies the keys every upstream `id_token` is validated against, and a private network is not a secure channel.
 

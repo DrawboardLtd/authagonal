@@ -95,11 +95,22 @@ public sealed class RestoreService(TableServiceClient serviceClient, IBackupSour
             // the changed rows, so every row that did NOT change in the window is destroyed.
             var isIncremental = string.Equals(manifest?.Mode, "incremental", StringComparison.OrdinalIgnoreCase);
             if (isIncremental && !options.AllowCleanFromIncremental)
+            {
+                // Name the parent when the manifest records one. It always DID read ParentBackupId here and
+                // nothing ever wrote it, so this rendered as "the parent full ('')" — omitting the single
+                // fact the message exists to supply, to an operator mid-recovery. Archives written before
+                // the chain root was recorded still have none, so say so rather than printing empty quotes.
+                var parent = manifest?.ParentBackupId is { Length: > 0 } id
+                    ? $"parent full ('{id}')"
+                    : "parent full (not recorded in this manifest — the chain root is the most recent "
+                      + "archive here with no '-incr' suffix)";
+
                 throw new InvalidOperationException(
                     $"Refusing a Clean restore of incremental backup '{backupId}': it contains only rows changed " +
                     $"since {manifest?.Watermark:o}, so cleaning first would destroy every unchanged row. Restore the " +
-                    $"parent full ('{manifest?.ParentBackupId}') with --mode clean, then this incremental with " +
-                    "--mode upsert. Pass AllowCleanFromIncremental to override.");
+                    $"{parent} with --mode clean, then this incremental with --mode upsert. " +
+                    "Pass AllowCleanFromIncremental to override.");
+            }
 
             // Refuse rather than warn. This used to write to Console.Error — the anti-pattern this same
             // file rejects three screens up, because a library writing to stderr inside a host process

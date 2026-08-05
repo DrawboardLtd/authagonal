@@ -55,6 +55,24 @@ public static class ScimDiscoveryEndpoints
     /// and the single-resource route serve.</summary>
     private sealed record DiscoveryResource(string Id, object Body);
 
+    /// <summary>
+    /// Where RFC 7643 §5's "human-consumable help documentation" actually is.
+    /// </summary>
+    /// <remarks>
+    /// This was <c>$"{tenantContext.Issuer}/docs/scim"</c> — the identity provider's own origin, where
+    /// nothing maps a <c>/docs</c> route. So it fell through to <c>MapFallbackToFile("index.html")</c>
+    /// and answered <b>200 text/html</b>: the login page, served to an administrator who followed the
+    /// link their provisioning UI surfaced, with no status code to tell them the URL was never backed
+    /// by anything. That is the identical failure the comment above records fixing for
+    /// <c>meta.location</c>, one field below the fix.
+    /// <para>
+    /// An absolute URL to the project's documentation site rather than a route, because that is where
+    /// the documentation is: the server has no docs to serve — <c>docs/scim.md</c> is a Jekyll page for
+    /// the project site, not content in the image.
+    /// </para>
+    /// </remarks>
+    private const string ScimDocumentationUri = "https://authagonal.github.io/authagonal/scim.html";
+
     private static IResult GetServiceProviderConfig(Authagonal.Core.Services.ITenantContext tenantContext)
     {
         var baseUrl = tenantContext.Issuer;
@@ -62,7 +80,7 @@ public static class ScimDiscoveryEndpoints
         var config = new
         {
             schemas = new[] { "urn:ietf:params:scim:schemas:core:2.0:ServiceProviderConfig" },
-            documentationUri = $"{baseUrl}/docs/scim",
+            documentationUri = ScimDocumentationUri,
             patch = new { supported = true },
             // Pagination is CURSOR-based (draft-ietf-scim-cursor-pagination): pass a response's
             // `nextCursor` back as ?cursor=. `totalResults` is omitted while a listing is incomplete, because

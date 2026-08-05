@@ -54,7 +54,7 @@ Thêm vào `appsettings.json`:
 }
 ```
 
-Các nhà cung cấp được khởi tạo khi khởi động. Các trường có thể khởi tạo chính xác là những trường được hiển thị: `ConnectionId`, `ConnectionName`, `MetadataLocation`, `ClientId`, `ClientSecret`, `RedirectUrl`, `AllowedDomains`. `ClientSecret` được bảo vệ qua `ISecretProvider` (Key Vault khi được cấu hình, văn bản thuần trong trường hợp khác). Các ánh xạ tên miền SSO được đăng ký tự động từ `AllowedDomains`.
+Các nhà cung cấp được khởi tạo khi khởi động. Các trường có thể khởi tạo chính xác là những trường được hiển thị, trừ `RedirectUrl`: `ConnectionId`, `ConnectionName`, `MetadataLocation`, `ClientId`, `ClientSecret`, `AllowedDomains`. `RedirectUrl` được chấp nhận để tương thích và bị bỏ qua — redirect URI được suy ra theo từng yêu cầu là `{Issuer}/oidc/callback`, vì nó phải nằm trên origin mà trình duyệt đang truy cập, và đó là URI cần đăng ký với IdP. `ClientSecret` được bảo vệ qua `ISecretProvider` (Key Vault khi được cấu hình, văn bản thuần trong trường hợp khác). Các ánh xạ tên miền SSO được đăng ký tự động từ `AllowedDomains`.
 
 Mô hình kết nối còn mang thêm hành vi tùy chọn: `PassthroughParams` (đặt được qua API tạo của quản trị), cùng `SessionExpClaim` và `DisableJitProvisioning` (các trường cấp store, đặt qua `IOidcProviderStore` từ mã hosting), xem [Luồng scope và claim](#scope-and-claim-flow-through) và [Giới hạn thời gian phiên](#session-lifetime-cap) bên dưới.
 

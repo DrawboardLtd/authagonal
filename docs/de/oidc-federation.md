@@ -54,7 +54,7 @@ Zu `appsettings.json` hinzufügen:
 }
 ```
 
-Anbieter werden beim Start initialisiert. Die initialisierbaren Felder sind genau die gezeigten: `ConnectionId`, `ConnectionName`, `MetadataLocation`, `ClientId`, `ClientSecret`, `RedirectUrl`, `AllowedDomains`. Das `ClientSecret` wird über `ISecretProvider` geschützt (Key Vault, sofern konfiguriert, sonst Klartext). SSO-Domänenzuordnungen werden automatisch aus `AllowedDomains` registriert.
+Anbieter werden beim Start initialisiert. Die initialisierbaren Felder sind genau die gezeigten, ohne `RedirectUrl`: `ConnectionId`, `ConnectionName`, `MetadataLocation`, `ClientId`, `ClientSecret`, `AllowedDomains`. `RedirectUrl` wird aus Kompatibilitätsgründen akzeptiert und ignoriert — die Weiterleitungs-URI wird pro Anfrage als `{Issuer}/oidc/callback` abgeleitet, da sie auf dem Origin liegen muss, auf dem der Browser ist; diese URI ist beim IdP zu registrieren. Das `ClientSecret` wird über `ISecretProvider` geschützt (Key Vault, sofern konfiguriert, sonst Klartext). SSO-Domänenzuordnungen werden automatisch aus `AllowedDomains` registriert.
 
 Das Verbindungsmodell trägt zusätzliches optionales Verhalten: `PassthroughParams` (einstellbar über die Erstellung per Admin-API) sowie `SessionExpClaim` und `DisableJitProvisioning` (Felder auf Store-Ebene, gesetzt über `IOidcProviderStore` aus dem Hosting-Code); siehe [Scope- und Claim-Durchreichung](#scope-and-claim-flow-through) und [Sitzungsdauer-Obergrenze](#session-lifetime-cap) weiter unten.
 

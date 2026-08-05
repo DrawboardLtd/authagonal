@@ -314,7 +314,7 @@ public Task<MfaPolicy> ResolveMfaPolicyAsync(
 | `MetadataLocation` | 是 | IdP 的 OpenID Connect 发现文档的 URL |
 | `ClientId` | 是 | 在 IdP 注册的 OAuth2 客户端 ID |
 | `ClientSecret` | 是 | OAuth2 客户端密钥（启动时通过 `ISecretProvider` 保护） |
-| `RedirectUrl` | 是 | 在 IdP 注册的 OAuth2 重定向 URI |
+| `RedirectUrl` | 否 | **被忽略。** 重定向 URI 按请求推导为 `{Issuer}/oidc/callback` — 请向 IdP 注册*该* URI。此处的值不起作用，并会记录为已忽略。 |
 | `AllowedDomains` | 否 | 通过 SSO 路由到此提供者的电子邮件域 |
 
 > **注意：** 提供者也可以通过[管理 API](admin-api) 在运行时管理。配置播种的提供者在每次启动时执行 upsert，因此配置更改在重启后生效。

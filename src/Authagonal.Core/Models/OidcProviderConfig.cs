@@ -9,6 +9,31 @@ public sealed record OidcProviderConfig
     public string MetadataLocation { get; set; } = "";
     public string ClientId { get; set; } = "";
     public string ClientSecret { get; set; } = "";
+
+    /// <summary>
+    /// Not read. The upstream <c>redirect_uri</c> is derived per request as
+    /// <c>{issuer}/oidc/callback</c> — see <c>OidcEndpoints.CallbackUriFor</c>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// It cannot be an input, and that is the reason rather than an oversight: the callback has to be on
+    /// the origin the browser is actually on, so in a multi-tenant host no single stored value is correct
+    /// for every tenant that shares a connection. Both legs of the flow therefore compute it, and they
+    /// must compute the same thing — the upstream compares the authorize leg's <c>redirect_uri</c> with
+    /// the token exchange's and rejects a mismatch.
+    /// </para>
+    /// <para>
+    /// Every write path used to treat it as load-bearing anyway: the admin API answered 400 "RedirectUrl
+    /// is required" without it and config seeding threw at startup, so an operator was made to supply a
+    /// value, was given no validation of it, and got no indication that it did nothing. Neither refuses
+    /// now, and a value that is not the derived one is logged as ignored.
+    /// </para>
+    /// <para>
+    /// Retained rather than removed because three storage providers persist it, the admin DTO carries it
+    /// and the Duende migration reader populates it — dropping the property would break stored rows and
+    /// an API contract to delete a field that costs nothing.
+    /// </para>
+    /// </remarks>
     public string RedirectUrl { get; set; } = "";
     public List<string> AllowedDomains { get; set; } = [];
 

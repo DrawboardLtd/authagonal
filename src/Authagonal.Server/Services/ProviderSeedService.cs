@@ -1,6 +1,7 @@
 using Authagonal.Core.Models;
 using Authagonal.Core.Services;
 using Authagonal.Core.Stores;
+using Authagonal.Server.Endpoints;
 
 namespace Authagonal.Server.Services;
 
@@ -115,6 +116,20 @@ public sealed class ProviderSeedService(
             // seed field would be silently reverted on boot.
             var existingOidc = await oidcStore.GetAsync(seed.ConnectionId, ct);
 
+            // Said once per seeded connection that names one, because a value here reads as configuration
+            // and is not: the redirect_uri is derived per request from the issuer, so this is the field an
+            // operator most plausibly gets wrong and never finds out about.
+            var derivedCallback = (configuration["Issuer"] ?? "").TrimEnd('/') + OidcEndpoints.CallbackPath;
+            if (!string.IsNullOrWhiteSpace(seed.RedirectUrl)
+                && !string.Equals(seed.RedirectUrl, derivedCallback, StringComparison.OrdinalIgnoreCase))
+            {
+                logger.LogWarning(
+                    "OIDC provider seed '{ConnectionId}' sets RedirectUrl '{Supplied}', which is ignored: the "
+                    + "redirect_uri is derived per request as {Derived}. Register that URI with the upstream "
+                    + "provider; the seed value has no effect.",
+                    seed.ConnectionId, seed.RedirectUrl, derivedCallback);
+            }
+
             var config = new OidcProviderConfig
             {
                 ConnectionId = seed.ConnectionId,
@@ -125,8 +140,11 @@ public sealed class ProviderSeedService(
                 ClientId = seed.ClientId ?? throw new InvalidOperationException(
                     $"OIDC provider '{seed.ConnectionId}' is missing required ClientId"),
                 ClientSecret = protectedSecret,
-                RedirectUrl = seed.RedirectUrl ?? throw new InvalidOperationException(
-                    $"OIDC provider '{seed.ConnectionId}' is missing required RedirectUrl"),
+                // Not required, and it used to throw at startup for a value nothing reads. The callback is
+                // derived per request from the issuer (OidcEndpoints.CallbackUriFor) — a stored value could
+                // not be right for every tenant sharing a connection. Kept as supplied so an existing row
+                // round-trips unchanged; a supplied value that is not the derived one is warned about below.
+                RedirectUrl = seed.RedirectUrl ?? "",
                 AllowedDomains = seed.AllowedDomains ?? [],
                 JitProvisioningEnabled = seed.JitProvisioningEnabled,
                 UseUpstreamSubjectAsUserId = seed.UseUpstreamSubjectAsUserId,

@@ -104,4 +104,34 @@ public sealed class FileSystemBackupTarget(string rootDirectory) : IBackupTarget
         Directory.CreateDirectory(rootDirectory);
         await File.WriteAllTextAsync(WatermarkPath(scope), watermark.ToString("O"), ct);
     }
+
+    /// <summary>
+    /// A file of its own rather than a second line in the watermark file, which is read as a bare
+    /// timestamp — anything appended to it parses as nothing and silently disables incrementals.
+    /// </summary>
+    private string ChainRootPath(string? scope) =>
+        Path.Combine(rootDirectory, scope is null ? ".lastfull" : $".lastfull-{scope}");
+
+    public Task<string?> GetLastFullBackupIdAsync(CancellationToken ct = default, string? scope = null)
+    {
+        var path = ChainRootPath(scope);
+
+        // Same fallback as the watermark, for the same reason: a target written before this file existed,
+        // or by an unscoped run, still names a parent rather than reverting to "unknown".
+        if (!File.Exists(path) && scope is not null)
+            path = ChainRootPath(null);
+
+        if (!File.Exists(path))
+            return Task.FromResult<string?>(null);
+
+        var text = File.ReadAllText(path).Trim();
+        return Task.FromResult(string.IsNullOrEmpty(text) ? null : text);
+    }
+
+    public async Task SetLastFullBackupIdAsync(
+        string backupId, CancellationToken ct = default, string? scope = null)
+    {
+        Directory.CreateDirectory(rootDirectory);
+        await File.WriteAllTextAsync(ChainRootPath(scope), backupId, ct);
+    }
 }

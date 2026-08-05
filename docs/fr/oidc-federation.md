@@ -54,7 +54,7 @@ Ajoutez dans `appsettings.json` :
 }
 ```
 
-Les fournisseurs sont injectés au démarrage. Les champs injectables sont exactement ceux affichés : `ConnectionId`, `ConnectionName`, `MetadataLocation`, `ClientId`, `ClientSecret`, `RedirectUrl`, `AllowedDomains`. Le `ClientSecret` est protégé via `ISecretProvider` (Key Vault lorsqu'il est configuré, texte brut sinon). Les mappages de domaines SSO sont enregistrés automatiquement à partir d'`AllowedDomains`.
+Les fournisseurs sont injectés au démarrage. Les champs injectables sont exactement ceux affichés, sauf `RedirectUrl` : `ConnectionId`, `ConnectionName`, `MetadataLocation`, `ClientId`, `ClientSecret`, `AllowedDomains`. `RedirectUrl` est accepté par compatibilité et ignoré — l'URI de redirection est dérivée par requête sous la forme `{Issuer}/oidc/callback`, puisqu'elle doit se trouver sur l'origine où est le navigateur, et c'est cette URI qu'il faut enregistrer auprès de l'IdP. Le `ClientSecret` est protégé via `ISecretProvider` (Key Vault lorsqu'il est configuré, texte brut sinon). Les mappages de domaines SSO sont enregistrés automatiquement à partir d'`AllowedDomains`.
 
 Le modèle de connexion porte des comportements optionnels supplémentaires : `PassthroughParams` (définissable via la création par l'API d'administration), ainsi que `SessionExpClaim` et `DisableJitProvisioning` (champs au niveau du store, définis via `IOidcProviderStore` depuis le code d'hébergement). Voir [Propagation des Scopes et des Claims](#propagation-des-scopes-et-des-claims) et [Plafond de durée de vie de la session](#plafond-de-durée-de-vie-de-la-session) ci-dessous.
 

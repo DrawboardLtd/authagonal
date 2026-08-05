@@ -317,7 +317,7 @@ Chính sách được áp dụng khi đặt lại mật khẩu và đăng ký ng
 | `MetadataLocation` | Có | URL đến tài liệu khám phá OpenID Connect của IdP |
 | `ClientId` | Có | OAuth2 client ID đã đăng ký với IdP |
 | `ClientSecret` | Có | OAuth2 client secret (được bảo vệ qua `ISecretProvider` khi khởi động) |
-| `RedirectUrl` | Có | OAuth2 redirect URI đã đăng ký với IdP |
+| `RedirectUrl` | Không | **Bị bỏ qua.** Redirect URI được suy ra theo từng yêu cầu là `{Issuer}/oidc/callback` — hãy đăng ký *URI đó* với IdP. Giá trị ở đây không có tác dụng và được ghi log là bị bỏ qua. |
 | `AllowedDomains` | Không | Các tên miền email được định tuyến đến nhà cung cấp này qua SSO |
 
 > **Lưu ý:** Các nhà cung cấp cũng có thể được quản lý tại thời điểm chạy qua [API Quản trị](admin-api). Các nhà cung cấp được khởi tạo từ cấu hình sẽ được upsert mỗi lần khởi động, nên thay đổi cấu hình có hiệu lực khi khởi động lại.

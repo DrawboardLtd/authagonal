@@ -1,4 +1,5 @@
 using Amazon.DynamoDBv2;
+using Amazon.DynamoDBv2.Model;
 using Authagonal.AwsProvider.Dynamo;
 using Authagonal.AwsProvider.Stores;
 using Authagonal.Core.Models;
@@ -603,5 +604,86 @@ public class DynamoStoreParityTests(DynamoFixture dynamo)
 
         Assert.Null(await store.ConsumeAsync("state-old")); // expired
         Assert.Null(await store.ConsumeAsync("state-old")); // and the row was deleted by the attempt
+    }
+
+    // ── the change log's authoritative key columns (#21) ─────────────────────
+
+    /// <summary>
+    /// The change log records the original keys as attributes, not only inside the composite sort key.
+    /// </summary>
+    /// <remarks>
+    /// <c>TableChangeWriter</c> writes <c>OrigPK</c>/<c>OrigRK</c> and says why: the sort key is
+    /// <c>"{pk}|{sk}"</c>, and a '|' inside the original partition key — the sandbox <c>{env}|</c> prefix,
+    /// a legacy <c>{clientId}|{externalId}</c> or <c>{provider}|{providerKey}</c> key — makes splitting it
+    /// ambiguous. This writer claimed to mirror it and wrote neither attribute, so every row was one a
+    /// reader has to guess at: a SCIM-provisioned user keyed <c>"{clientId}|{externalId}"</c> would
+    /// restore under partition key <c>{clientId}</c>.
+    /// </remarks>
+    [Fact]
+    public async Task ChangeWriter_RecordsTheOriginalKeysAsAttributes()
+    {
+        var log = await T("pcTombstones");
+        var writer = new DynamoChangeWriter(log);
+
+        await writer.WriteUpsertAsync("Users", "acme|ext-42", "profile");
+        await writer.WriteAsync("Users", "sandbox|u1", "profile");
+        await writer.WriteUpsertBatchAsync("Users", [("tenantA|u2", "profile")]);
+
+        var rows = new Dictionary<string, Dictionary<string, AttributeValue>>();
+        await foreach (var item in log.QueryAsync("Users"))
+            rows[item["sk"].S] = item;
+
+        var upsert = rows["acme|ext-42|profile"];
+        Assert.Equal("U", upsert["op"].S);
+        Assert.Equal("acme|ext-42", upsert["origPk"].S);
+        Assert.Equal("profile", upsert["origSk"].S);
+
+        var delete = rows["sandbox|u1|profile"];
+        Assert.Equal("D", delete["op"].S);
+        Assert.Equal("sandbox|u1", delete["origPk"].S);
+
+        // The batch path builds its items inline and had the same omission.
+        Assert.Equal("tenantA|u2", rows["tenantA|u2|profile"]["origPk"].S);
+    }
+
+    /// <summary>
+    /// Every store that records a delete records an upsert too.
+    /// </summary>
+    /// <remarks>
+    /// On Azure four stores call <c>WriteUpsertAsync</c>; here only the user store did, and the
+    /// role-mapping store took no change writer at all — so an incremental window carried the deletions
+    /// and none of the writes, and a restore from it rebuilds a table missing every row created or
+    /// changed in the window.
+    /// </remarks>
+    [Fact]
+    public async Task ChangeWriter_RecordsUpsertsFromEveryStoreThatRecordsDeletes()
+    {
+        var log = await T("pcTombstonesUpserts");
+        var writer = new DynamoChangeWriter(log);
+
+        var agents = new DynamoAgentProfileStore(await T("pcAgentProfiles"), EnvPartitioner.Live, writer);
+        var apps = new DynamoProvisioningAppStore(await T("pcProvisioningApps"), EnvPartitioner.Live, writer);
+        var mappings = new DynamoScimGroupRoleMappingStore(
+            await T("pcScimGroupRoleMappings"), EnvPartitioner.Live, writer);
+
+        await agents.UpsertAsync(new AgentProfile { ClientId = "agent-1" });
+        await apps.UpsertAsync(new ProvisioningAppConfig { AppId = "app-1", Name = "App" });
+        await mappings.SetAsync(new ScimGroupRoleMapping { GroupId = "g1", Role = "admin" });
+        await mappings.DeleteAsync("g1", "admin");
+
+        foreach (var table in new[] { "AgentProfiles", "ProvisioningApps" })
+        {
+            var rows = new List<Dictionary<string, AttributeValue>>();
+            await foreach (var item in log.QueryAsync(table)) rows.Add(item);
+            var row = Assert.Single(rows);
+            Assert.Equal("U", row["op"].S);
+            Assert.False(string.IsNullOrEmpty(row["origPk"].S), $"{table}: no origPk");
+        }
+
+        // The mapping was written then deleted, so the one row for that key resolves to the delete —
+        // which this store also never recorded.
+        var mappingRows = new List<Dictionary<string, AttributeValue>>();
+        await foreach (var item in log.QueryAsync("ScimGroupRoleMappings")) mappingRows.Add(item);
+        Assert.Equal("D", Assert.Single(mappingRows)["op"].S);
     }
 }

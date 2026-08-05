@@ -54,7 +54,7 @@ Authagonal 可以将认证联合到外部 OIDC 身份提供者（Google、Apple�
 }
 ```
 
-提供者在启动时播种。可播种的字段正是所示的这些：`ConnectionId`、`ConnectionName`、`MetadataLocation`、`ClientId`、`ClientSecret`、`RedirectUrl`、`AllowedDomains`。`ClientSecret` 通过 `ISecretProvider` 保护（配置 Key Vault 时使用 Key Vault，否则使用纯文本）。SSO 域映射从 `AllowedDomains` 自动注册。
+提供者在启动时播种。可播种的字段正是所示的这些，但不含 `RedirectUrl`：`ConnectionId`、`ConnectionName`、`MetadataLocation`、`ClientId`、`ClientSecret`、`AllowedDomains`。`RedirectUrl` 仅为兼容而接受并被忽略——重定向 URI 按请求推导为 `{Issuer}/oidc/callback`，因为它必须位于浏览器所在的 origin 上；应向 IdP 注册的是该 URI。`ClientSecret` 通过 `ISecretProvider` 保护（配置 Key Vault 时使用 Key Vault，否则使用纯文本）。SSO 域映射从 `AllowedDomains` 自动注册。
 
 连接模型还带有额外的可选行为 -- `PassthroughParams`（可通过管理 API 创建时设置），以及 `SessionExpClaim` 和 `DisableJitProvisioning`（存储级字段，由宿主代码通过 `IOidcProviderStore` 设置）-- 参见下文的[作用域与声明透传](#scope-and-claim-flow-through)和[会话生命周期上限](#session-lifetime-cap)。
 

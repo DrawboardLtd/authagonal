@@ -37,4 +37,28 @@ public interface IBackupTarget
     /// <param name="scope"><inheritdoc cref="GetLastWatermarkAsync" path="/param[@name='scope']"/></param>
     Task SetLastWatermarkAsync(
         DateTimeOffset watermark, CancellationToken ct = default, string? scope = null);
+
+    /// <summary>
+    /// The id of the most recent FULL backup in this scope — the chain root an incremental applies onto.
+    /// Null when no full backup has been recorded for the scope.
+    /// </summary>
+    /// <param name="scope"><inheritdoc cref="GetLastWatermarkAsync" path="/param[@name='scope']"/></param>
+    /// <remarks>
+    /// <para>
+    /// <see cref="BackupManifest.ParentBackupId"/> has always been serialized into every manifest, covered
+    /// by the manifest MAC, and READ on the recovery path — and never written by anything, so it was
+    /// always null. The one message designed to tell an operator which archive is the chain root rendered
+    /// as "Restore the parent full ('') with --mode clean", omitting the only fact it exists to supply,
+    /// at the moment they are recovering.
+    /// </para>
+    /// <para>
+    /// Scoped exactly as the watermark is, and for the same reason: the chain root is per prefix and per
+    /// table set, so one value per output directory would name tenant A's full as tenant B's parent.
+    /// </para>
+    /// </remarks>
+    Task<string?> GetLastFullBackupIdAsync(CancellationToken ct = default, string? scope = null);
+
+    /// <summary>Records the chain root after a successful FULL backup.</summary>
+    /// <param name="scope"><inheritdoc cref="GetLastWatermarkAsync" path="/param[@name='scope']"/></param>
+    Task SetLastFullBackupIdAsync(string backupId, CancellationToken ct = default, string? scope = null);
 }

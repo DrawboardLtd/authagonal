@@ -86,6 +86,17 @@ public sealed class BackupService(TableServiceClient serviceClient, IBackupTarge
             Compressed = options.Gzip,
             Watermark = watermark,
             WrappedContentKey = wrappedContentKey,
+            // Which full this incremental applies onto. The field has always been serialized, covered by
+            // the manifest MAC and read on the recovery path — and written by nothing, so it was always
+            // null and the refusal message that exists to name the chain root named ''.
+            //
+            // Read from the same scope the watermark came from, so the parent is the full that established
+            // this chain and not another prefix's. Null stays possible and is handled: a target that has
+            // only ever taken incrementals, or one written before the chain root was recorded, has no full
+            // to name.
+            ParentBackupId = watermark.HasValue
+                ? await target.GetLastFullBackupIdAsync(ct, options.WatermarkScope())
+                : null,
         };
 
         long totalEntities = 0;
@@ -224,6 +235,12 @@ public sealed class BackupService(TableServiceClient serviceClient, IBackupTarge
 
             await target.WriteManifestAsync(backupId, manifest, ct);
             await target.SetLastWatermarkAsync(backupStart, ct, options.WatermarkScope());
+
+            // A completed full backup becomes the chain root every later incremental in this scope names.
+            // After the manifest, so a run that failed to write its manifest does not become the parent of
+            // archives that cannot be restored from it.
+            if (!watermark.HasValue)
+                await target.SetLastFullBackupIdAsync(backupId, ct, options.WatermarkScope());
         }
 
         return manifest;

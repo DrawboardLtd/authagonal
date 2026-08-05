@@ -765,6 +765,183 @@ public abstract class SqlProviderTestsBase : IAsyncLifetime
         Assert.NotEqual(default, row.GetDate("deletedAt"));
     }
 
+    /// <summary>
+    /// The change log records the original keys as columns, not only inside the composite sort key.
+    /// </summary>
+    /// <remarks>
+    /// <c>TableChangeWriter</c> writes <c>OrigPK</c>/<c>OrigRK</c> and explains why: the sort key is
+    /// <c>"{pk}|{sk}"</c>, and a '|' inside the original partition key — the sandbox <c>{env}|</c> prefix,
+    /// a legacy <c>{clientId}|{externalId}</c> or <c>{provider}|{providerKey}</c> key — makes splitting it
+    /// ambiguous. This writer's summary claimed it "mirrors TableChangeWriter and DynamoChangeWriter
+    /// exactly, so a backup taken against SQL restores onto any backend", and wrote neither column: every
+    /// row was a row a reader has to guess at, so a SCIM-provisioned user keyed
+    /// <c>"{clientId}|{externalId}"</c> would restore under partition key <c>{clientId}</c>.
+    /// </remarks>
+    [Fact]
+    public async Task ChangeWriter_RecordsTheOriginalKeysAsColumns()
+    {
+        var log = await T("Tombstones");
+        var writer = new SqlChangeWriter(log);
+
+        // A partition key with a '|' in it — the case the columns exist for.
+        await writer.WriteUpsertAsync("Users", "acme|ext-42", "profile");
+        await writer.WriteAsync("Users", "sandbox|u1", "profile");
+        await writer.WriteUpsertBatchAsync("Users", [("tenantA|u2", "profile")]);
+
+        var rows = (await Collect(log.QueryPartitionAsync("Users"))).ToDictionary(r => r.Sk);
+
+        var upsert = rows["acme|ext-42|profile"];
+        Assert.Equal("U", upsert.GetStr("op"));
+        Assert.Equal("acme|ext-42", upsert.GetStr("origPk"));
+        Assert.Equal("profile", upsert.GetStr("origSk"));
+
+        var delete = rows["sandbox|u1|profile"];
+        Assert.Equal("D", delete.GetStr("op"));
+        Assert.Equal("sandbox|u1", delete.GetStr("origPk"));
+
+        // The batch path is a separate code path in each writer, and had the same omission.
+        Assert.Equal("tenantA|u2", rows["tenantA|u2|profile"].GetStr("origPk"));
+    }
+
+    /// <summary>
+    /// Every store that records a delete records an upsert too.
+    /// </summary>
+    /// <remarks>
+    /// On Azure four stores call <c>WriteUpsertAsync</c>; here only the user store did, and the role-mapping
+    /// store took no change writer at all. So an incremental window carried the deletions and none of the
+    /// writes: a restore from it reconstructs a table missing every row created or changed in the window.
+    /// </remarks>
+    [Fact]
+    public async Task ChangeWriter_RecordsUpsertsFromEveryStoreThatRecordsDeletes()
+    {
+        var log = await T("Tombstones");
+        var writer = new SqlChangeWriter(log);
+
+        var agents = new SqlAgentProfileStore(await T("AgentProfiles"), Live, writer);
+        var apps = new SqlProvisioningAppStore(await T("ProvisioningApps"), Live, writer);
+        var mappings = new SqlScimGroupRoleMappingStore(await T("ScimGroupRoleMappings"), Live, writer);
+
+        await agents.UpsertAsync(new AgentProfile { ClientId = "agent-1" });
+        await apps.UpsertAsync(new ProvisioningAppConfig { AppId = "app-1", Name = "App" });
+        await mappings.SetAsync(new ScimGroupRoleMapping { GroupId = "g1", Role = "admin" });
+
+        foreach (var table in new[] { "AgentProfiles", "ProvisioningApps", "ScimGroupRoleMappings" })
+        {
+            var row = Assert.Single(await Collect(log.QueryPartitionAsync(table)));
+            Assert.Equal("U", row.GetStr("op"));
+            Assert.False(string.IsNullOrEmpty(row.GetStr("origPk")), $"{table}: no origPk");
+        }
+    }
+
+    /// <summary>
+    /// The role-mapping store records its deletes as well, which nothing on this backend did.
+    /// </summary>
+    [Fact]
+    public async Task ChangeWriter_RecordsRoleMappingDeletes()
+    {
+        var log = await T("Tombstones");
+        var writer = new SqlChangeWriter(log);
+        var mappings = new SqlScimGroupRoleMappingStore(await T("ScimGroupRoleMappings"), Live, writer);
+
+        await mappings.SetAsync(new ScimGroupRoleMapping { GroupId = "g1", Role = "admin" });
+        await mappings.DeleteAsync("g1", "admin");
+
+        var row = Assert.Single(await Collect(log.QueryPartitionAsync("ScimGroupRoleMappings")));
+        Assert.Equal("D", row.GetStr("op"));
+        Assert.Empty(await Collect((await T("ScimGroupRoleMappings")).QueryPartitionAsync(Live.PK("scimGroupRoleMapping"))));
+    }
+
+    /// <summary>
+    /// The grant store records the change entry BEFORE removing the row (F24e), on every path.
+    /// </summary>
+    /// <remarks>
+    /// The Azure store documents the ordering as a contract: "a crash between a data delete and its
+    /// tombstone loses the delete from every future backup (the backstop only re-scans LIVE rows), so the
+    /// tombstone goes down before the row." This store did the opposite in all four of its delete paths.
+    /// Observed by a writer that reads the live table at the moment it is called — the only way to see an
+    /// ordering rather than an outcome.
+    /// </remarks>
+    [Theory]
+    [InlineData("consume")]
+    [InlineData("remove")]
+    [InlineData("removeBySubject")]
+    public async Task GrantStore_WritesTheChangeEntryBeforeTheRowIsGone(string path)
+    {
+        var grantsTable = await T("Grants");
+        var observer = new RowPresenceObserver(grantsTable, Live.PK(SqlGrantStore.HashKey("k1")), "grant");
+        var store = new SqlGrantStore(
+            grantsTable, await T("GrantsBySubject"), await T("GrantsByExpiry"),
+            Live, NullLogger<SqlGrantStore>.Instance, observer);
+
+        await store.StoreAsync(Grant("k1"));
+
+        switch (path)
+        {
+            case "consume": Assert.True(await store.TryConsumeAsync("k1")); break;
+            case "remove": await store.RemoveAsync("k1"); break;
+            default: await store.RemoveAllBySubjectAsync("user-1"); break;
+        }
+
+        Assert.True(observer.SawGrantsEntry, "no change-log entry was written for the Grants row");
+        Assert.Empty(observer.EntriesWrittenAfterTheRowWasGone);
+    }
+
+    /// <summary>
+    /// A bulk subject removal records all three index rows it deletes, including the expiry index.
+    /// </summary>
+    /// <remarks>
+    /// It deleted the <c>GrantsByExpiry</c> row and recorded only <c>Grants</c> and
+    /// <c>GrantsBySubject</c> — so a revoked grant's expiry-index row came back from every incremental
+    /// restore, from the one path that revokes in bulk (logout, deactivation, SCIM deprovision).
+    /// </remarks>
+    [Fact]
+    public async Task GrantStore_BulkSubjectRemovalRecordsTheExpiryIndexToo()
+    {
+        var log = await T("Tombstones");
+        var writer = new SqlChangeWriter(log);
+        var store = new SqlGrantStore(
+            await T("Grants"), await T("GrantsBySubject"), await T("GrantsByExpiry"),
+            Live, NullLogger<SqlGrantStore>.Instance, writer);
+
+        await store.StoreAsync(Grant("k1"));
+        await store.RemoveAllBySubjectAsync("user-1");
+
+        Assert.Single(await Collect(log.QueryPartitionAsync("Grants")));
+        Assert.Single(await Collect(log.QueryPartitionAsync("GrantsBySubject")));
+        Assert.Single(await Collect(log.QueryPartitionAsync("GrantsByExpiry")));
+    }
+
+    /// <summary>
+    /// Records what it is asked to record, and whether the row it names still existed at the time.
+    /// </summary>
+    private sealed class RowPresenceObserver(SqlTable grants, string grantPk, string grantSk) : IChangeWriter
+    {
+        public bool SawGrantsEntry { get; private set; }
+        public List<string> EntriesWrittenAfterTheRowWasGone { get; } = [];
+
+        private async Task ObserveAsync(string tableName, CancellationToken ct)
+        {
+            if (tableName != "Grants") return;
+            SawGrantsEntry = true;
+            if (await grants.GetAsync(grantPk, grantSk, ct: ct) is null)
+                EntriesWrittenAfterTheRowWasGone.Add(tableName);
+        }
+
+        public Task WriteAsync(string tableName, string pk, string rk, CancellationToken ct = default)
+            => ObserveAsync(tableName, ct);
+
+        public Task WriteUpsertAsync(string tableName, string pk, string rk, CancellationToken ct = default)
+            => Task.CompletedTask;
+
+        public async Task WriteBatchAsync(
+            string tableName, IEnumerable<(string PartitionKey, string RowKey)> keys, CancellationToken ct = default)
+            => await ObserveAsync(tableName, ct);
+
+        public Task WriteUpsertBatchAsync(
+            string tableName, IEnumerable<(string PartitionKey, string RowKey)> keys, CancellationToken ct = default)
+            => Task.CompletedTask;
+    }
+
     [Fact]
     public async Task ExpiryReaper_RemovesOnlyRowsPastTheirTtl()
     {

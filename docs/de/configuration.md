@@ -317,7 +317,7 @@ Definieren Sie OIDC-Identitätsanbieter in der Konfiguration. Diese werden beim 
 | `MetadataLocation` | Ja | URL zum OpenID-Connect-Discovery-Dokument des IdP |
 | `ClientId` | Ja | Beim IdP registrierte OAuth2-Client-ID |
 | `ClientSecret` | Ja | OAuth2-Client-Geheimnis (beim Start über `ISecretProvider` geschützt) |
-| `RedirectUrl` | Ja | Beim IdP registrierte OAuth2-Weiterleitungs-URI |
+| `RedirectUrl` | Nein | **Wird ignoriert.** Die Weiterleitungs-URI wird pro Anfrage als `{Issuer}/oidc/callback` abgeleitet — registrieren Sie *diese* beim IdP. Ein Wert hier hat keine Wirkung und wird als ignoriert protokolliert. |
 | `AllowedDomains` | Nein | E-Mail-Domänen, die über SSO zu diesem Anbieter geleitet werden |
 
 > **Hinweis:** Anbieter können auch zur Laufzeit über die [Admin-API](admin-api) verwaltet werden. Konfigurationsinitialisierte Anbieter werden bei jedem Start per Upsert aktualisiert, sodass Konfigurationsänderungen erst nach einem Neustart wirksam werden.

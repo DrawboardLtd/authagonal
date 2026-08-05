@@ -19,6 +19,23 @@ namespace Authagonal.Server.Endpoints;
 
 public static class OidcEndpoints
 {
+    /// <summary>The single upstream-federation callback route, and the <c>redirect_uri</c> built from it.</summary>
+    /// <remarks>
+    /// One definition because there were three copies of the literal — the route registration and both
+    /// legs of the flow — and the two legs MUST agree: the upstream compares the <c>redirect_uri</c> on
+    /// the token exchange against the one on the authorize request and rejects a mismatch.
+    /// <para>
+    /// Derived per request from the issuer rather than read from configuration, which is why
+    /// <see cref="Authagonal.Core.Models.OidcProviderConfig.RedirectUrl"/> is not consulted: in a
+    /// multi-tenant host the callback has to be on the origin the browser is actually on, so no single
+    /// stored value could be correct for every tenant sharing a connection.
+    /// </para>
+    /// </remarks>
+    public const string CallbackPath = "/oidc/callback";
+
+    /// <inheritdoc cref="CallbackPath"/>
+    public static string CallbackUriFor(string issuer) => issuer.TrimEnd('/') + CallbackPath;
+
     /// <summary>
     /// Signing algorithms accepted on an upstream IdP's id_token. Asymmetric only — an HMAC algorithm
     /// here is the key-confusion shape, where the IdP's public key doubles as a shared secret the
@@ -38,7 +55,7 @@ public static class OidcEndpoints
     public static IEndpointRouteBuilder MapOidcEndpoints(this IEndpointRouteBuilder app)
     {
         app.MapGet("/oidc/{connectionId}/login", LoginAsync).AllowAnonymous();
-        app.MapGet("/oidc/callback", CallbackAsync).AllowAnonymous();
+        app.MapGet(CallbackPath, CallbackAsync).AllowAnonymous();
 
         return app;
     }
@@ -93,8 +110,7 @@ public static class OidcEndpoints
         });
 
         // Build authorization URL
-        var baseUrl = tenantContext.Issuer;
-        var redirectUri = $"{baseUrl}/oidc/callback";
+        var redirectUri = CallbackUriFor(tenantContext.Issuer);
 
         // Forward the originally-requested scopes from the downstream RP so the upstream
         // releases the same claim set. Scope rides in the /authorize URL preserved as
@@ -233,9 +249,9 @@ public static class OidcEndpoints
             return RedirectWithError(returnUrl, "oidc_error", "Failed to fetch provider configuration");
         }
 
-        // Exchange code for tokens
-        var baseUrl = tenantContext.Issuer;
-        var redirectUri = $"{baseUrl}/oidc/callback";
+        // Exchange code for tokens. The same value the authorize leg sent, from the same helper — the
+        // upstream compares them and rejects the exchange if they differ.
+        var redirectUri = CallbackUriFor(tenantContext.Issuer);
 
         // Resolve the client secret (may be a Key Vault reference)
         var clientSecret = await secretProvider.ResolveAsync(config.ClientSecret, ct);
