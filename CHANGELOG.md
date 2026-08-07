@@ -1,5 +1,87 @@
 # Changelog
 
+## [0.24.0], 2026-08-07
+
+A restore-path data defect, and three capabilities the 0.22.0/0.23.0 hardening removed and did not put back.
+
+The defect is the one to read first if you have restored anything from a backup: every integer column came
+back as a double, the restore reported success, and the rows it wrote could not be read into a typed entity
+afterwards. On the Users table that meant a restored account could not be loaded at all. Re-restoring the
+same archive on this version repairs the rows.
+
+The three capabilities are a set. Each guard was right about what it protected and wrong about the user it
+left holding the failure: two resolved the answer from this library's own lists, which say nothing about the
+deployment they run in, and the third handed an error page to someone who had done nothing but click a link.
+
+### Changed
+
+- **Fixed: a restore turned every integer column into a double, and the rows it wrote could not be read
+  back.** `RestoreService` picked the narrowest CLR type for a JSON number with a conditional chain —
+  `TryGetInt32(out var i32) ? i32 : TryGetInt64(out var i64) ? i64 : element.GetDouble()`. A conditional
+  expression takes the best common type of its branches, and the best common type of `int`, `long` and
+  `double` is `double`, so the Int32 branch was widened before it was ever boxed. Every integer column in
+  every restored row came back as `Edm.Double`.
+
+  Nothing about the restore looked wrong: the values were all correct and it reported zero errors. The
+  damage appeared the next time anything read one of those rows into a typed entity, as
+  `InvalidCastException: Unable to cast object of type 'System.Double' to type 'System.Int32'` out of the
+  Tables binder. On the Users table the int column is `AccessFailedCount`, so a restored user could not be
+  loaded at all — the restore appeared to succeed and had in fact made every account it touched unreadable,
+  at precisely the moment somebody was depending on a restore working.
+
+  Both converters carried the chain: the annotated `@v` format every current backup writes, and the legacy
+  inference path kept for older archives. Both now call one helper written as statements, so each `return`
+  converts to `object` independently and no unification can reoccur. Restoring an affected archive again
+  repairs the rows. A test already covered the column and asserted
+  `Assert.Equal(42L, Convert.ToInt64(restored["Count"]))`, with a comment calling the width difference
+  "ambient SDK/service behavior" — it is not, a boxed `int` written straight to a `TableEntity`
+  round-trips as Int32, and `Convert.ToInt64` accepts a `Double`. The assertion was tolerating the defect it
+  existed to catch; it now asserts the type.
+
+- **An IdP-initiated SAML sign-in is now restarted as SP-initiated instead of refused.** 0.22.0 made
+  `AllowUnsolicitedResponses` default to false, which is correct — an unsolicited assertion carries no
+  `InResponseTo`, so nothing ties it to the browser it arrives in, and every §4.1.4.3 rule is satisfied by an
+  assertion the attacker obtained legitimately for their own account at the same IdP. But the person who
+  meets that refusal is a user who clicked their IdP's app tile, and what they get is an error.
+
+  The assertion is still discarded, never consumed. The ACS now redirects to `/saml/{connectionId}/login`,
+  which issues a fresh AuthnRequest bound to that browser; the user is already authenticated at the IdP, so
+  it answers immediately and the round trip is invisible. Whoever ends up signed in is whoever the IdP names
+  in the NEW exchange, so nothing an attacker planted survives the bounce. The IdP's `RelayState` rides
+  across as the return URL, so the tile's deep link is not lost.
+
+  This is the same remedy the documentation already recommended configuring at the IdP (Okta's "Login
+  initiated: App Only" with a login URL, Entra's sign-on URL), performed server-side so it works without
+  every administrator finding that setting, and on the IdPs that do not have it. One-shot per browser: an IdP
+  that answers the AuthnRequest with another unsolicited response is refused with `error=saml_unsolicited`
+  rather than bounced again, so a misconfigured IdP cannot produce a redirect loop. `AllowUnsolicitedResponses`
+  is unchanged and still opts a connection into accepting the assertion as it stands.
+
+### Added
+
+- **`BackupOptions.KnownTables` / `RestoreOptions.KnownTables` — the host's table universe.** 0.22.0 made
+  backup refuse a `--tables` value outside `BackupDefaults.Tables`, and restore refuse an archive naming one,
+  so that an archive cannot choose which tables a restore writes. The set was hardcoded to this library's own
+  list, which made both unusable by any host that archives its own tables in the same sweep: Authagonal Cloud
+  carries a support desk, an audit family, billing counters and GDPR erasure queue in every per-tenant table
+  set, and an entire control plane (`Tenants`, `ShardMetadata`, the blog, the CRM) this library has never
+  heard of. Every backup it took and every archive it had already written were refused. Null still means
+  `BackupDefaults.Tables`, so nothing changes for a host that has not declared one; the set must still be
+  supplied by the caller and is never derived from the archive, which is the whole of the property. The two
+  halves have to agree — an archive written under a wider declaration restores only through a restore that
+  declares the same one.
+
+- **`IInteractiveCorsOriginPolicy` — a host may vouch for origins on `/api/auth/*`.** 0.22.0 stopped pooling
+  client-registered origins outside the protocol surface and stopped granting `AllowCredentials` on the
+  interactive auth API at all, on the reasoning that the surface is driven by the login app on the same origin
+  and needs no CORS grant. That is true of this library's own deployment shape and false for a host that lets
+  a tenant serve its OWN login screen and post to this server from it, where the cross-origin call IS the
+  feature. Implement the interface to answer for origins the host has independently established a
+  relationship with — a verified custom domain, an explicit per-tenant opt-in, a same-site check. The default
+  (`DenyInteractiveCorsOriginPolicy`) refuses everything, so the closed posture is unchanged for every host
+  that does not register one, and a grant covers only the origin that asked rather than widening the pooled
+  list.
+
 ## [0.23.0], 2026-08-05
 
 Found by a blind review pass — a different method over the same tree, asking what is MISSING rather than what

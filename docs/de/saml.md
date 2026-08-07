@@ -22,7 +22,13 @@ Authagonal enthält eine selbst entwickelte SAML 2.0 Service Provider-Implementi
 - Artifact-Bindung
 - AES-GCM-Assertion-Verschlüsselung (Einschränkung von .NET `EncryptedXml`; konfigurieren Sie AES-CBC beim IdP, siehe unten)
 
-IdP-initiiertes SSO wird **pro Verbindung unterstützt und ist standardmäßig aus**: setzen Sie `allowUnsolicitedResponses: true` auf der Verbindung, um es zu akzeptieren. Andernfalls lehnt der ACS eine Response ohne `InResponseTo` ab und leitet mit `error=saml_unsolicited` weiter. Standardmäßig aus, weil unaufgeforderte Antworten jedem mit einem Konto beim IdP erlauben, von jedem User-Agent aus eine Sitzung anzumelden — und weil das Request-Cookie auf dem SP-initiierten Pfad nichts wert ist, solange dieselbe Assertion ohne `InResponseTo` erneut eingespielt werden kann. Ist die Option aktiv, wird die Prüfung der Anfrage-ID bei unaufgeforderten Antworten übersprungen, die Einmaligkeit der Assertion-ID aber weiterhin durchgesetzt (siehe Sicherheit).
+**IdP-initiierte Anmeldung funktioniert, und die Kachel muss nicht umkonfiguriert werden** — aber die unaufgeforderte Assertion ist nicht das, was den Benutzer anmeldet. Eine Response ohne `InResponseTo` wird verworfen, und der ACS leitet den Browser auf `/saml/{connectionId}/login` um, wo ein frischer, an diesen Browser gebundener AuthnRequest ausgestellt wird. Der Benutzer ist beim IdP bereits authentifiziert, also antwortet dieses sofort und der Umweg bleibt unsichtbar; das `RelayState` des IdP wird als Rücksprung-URL mitgeführt, sodass der Benutzer weiterhin auf dem Deeplink landet, für den die Kachel konfiguriert war.
+
+Die Assertion muss verworfen werden, weil das Akzeptieren einer unaufgeforderten Assertion jedem mit einem Konto bei diesem IdP erlaubt, in einem beliebigen User-Agent eine Sitzung anzumelden — jede Regel aus §4.1.4.3 wird von einer Assertion erfüllt, die der Angreifer für sein EIGENES Konto rechtmäßig erhalten hat — und weil das Request-Cookie auf dem SP-initiierten Pfad nichts wert ist, solange dieselbe Assertion ohne `InResponseTo` erneut eingespielt werden kann. Der Neustart des Flows hält die Kachel funktionsfähig, ohne davon etwas zu akzeptieren: Wer am Ende angemeldet ist, ist derjenige, den das IdP im NEUEN Austausch nennt.
+
+Der Neustart erfolgt einmal pro Browser. Ein IdP, das den AuthnRequest mit einer weiteren unaufgeforderten Response beantwortet, wird mit `error=saml_unsolicited` abgelehnt statt erneut umgeleitet, sodass ein falsch konfiguriertes IdP keine Weiterleitungsschleife erzeugen kann.
+
+Um die unaufgeforderte Assertion stattdessen unverändert zu akzeptieren, setzen Sie `allowUnsolicitedResponses: true` auf der Verbindung — **standardmäßig aus**. Ist die Option aktiv, wird die Prüfung der Anfrage-ID bei unaufgeforderten Antworten übersprungen, die Einmaligkeit der Assertion-ID aber weiterhin durchgesetzt (siehe Sicherheit).
 
 ## Azure AD-Einrichtung
 
@@ -64,7 +70,7 @@ curl -X POST https://auth.example.com/api/v1/saml/connections \
   }'
 ```
 
-Die API generiert die `connectionId` (eine GUID) und gibt sie im `Location`-Header sowie im Antworttext zurück. Zusätzliche optionale Felder: `metadataXml` (eingefügte Metadaten, siehe unten), `nameIdFormat` (siehe unten), `signAuthnRequests` (signierte AuthnRequests erzwingen), `iconUrl` (Symbol für die Login-Schaltfläche), `disableJitProvisioning` (unbekannte Benutzer ablehnen, statt sie automatisch anzulegen), `allowUnsolicitedResponses` (IdP-initiierte Anmeldung akzeptieren — standardmäßig aus, siehe oben). Über die API erstellte Verbindungen erhalten außerdem automatisch ein generiertes SP-Schlüsselpaar (siehe SP-Schlüsselpaar unten).
+Die API generiert die `connectionId` (eine GUID) und gibt sie im `Location`-Header sowie im Antworttext zurück. Zusätzliche optionale Felder: `metadataXml` (eingefügte Metadaten, siehe unten), `nameIdFormat` (siehe unten), `signAuthnRequests` (signierte AuthnRequests erzwingen), `iconUrl` (Symbol für die Login-Schaltfläche), `disableJitProvisioning` (unbekannte Benutzer ablehnen, statt sie automatisch anzulegen), `allowUnsolicitedResponses` (eine IdP-initiierte Assertion unverändert akzeptieren, statt den Flow neu zu starten — standardmäßig aus, siehe oben). Über die API erstellte Verbindungen erhalten außerdem automatisch ein generiertes SP-Schlüsselpaar (siehe SP-Schlüsselpaar unten).
 
 Verbindungen werden über `POST` / `GET` / `PUT` / `DELETE` auf `/api/v1/saml/connections[/{connectionId}]` verwaltet. `PUT` ist eine Teilaktualisierung: Es werden nur die Felder geändert, die tatsächlich übermittelt wurden.
 

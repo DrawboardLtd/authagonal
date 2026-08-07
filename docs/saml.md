@@ -21,7 +21,13 @@ Authagonal includes a homebrew SAML 2.0 Service Provider implementation. No thir
 - Artifact binding
 - AES-GCM assertion encryption (.NET `EncryptedXml` limitation; configure AES-CBC at the IdP, see below)
 
-IdP-initiated SSO is supported **per connection, and off by default**: set `allowUnsolicitedResponses: true` on the connection to accept it. Without it the ACS refuses a Response with no `InResponseTo` and redirects with `error=saml_unsolicited`. Off by default because accepting unsolicited responses lets anyone with an account at the IdP sign a session in from any user-agent, and because requiring the request cookie on the SP-initiated path is worth nothing while the same assertion can be replayed with `InResponseTo` removed. When it is on, the request-ID check is skipped for unsolicited responses but assertion-ID single-use is still enforced (see Security).
+**IdP-initiated sign-in works, and the tile does not need reconfiguring** — but the unsolicited assertion is not what signs the user in. A Response with no `InResponseTo` is discarded, and the ACS redirects the browser to `/saml/{connectionId}/login`, which issues a fresh AuthnRequest bound to that browser. The user is already authenticated at the IdP, so it answers immediately and the round trip is invisible; the IdP's `RelayState` rides across as the return URL, so they still land on the deep link the tile was configured with.
+
+The assertion has to be discarded because accepting an unsolicited one lets anyone with an account at that IdP sign a session into any user-agent — every §4.1.4.3 rule is satisfied by an assertion the attacker obtained legitimately for their own account — and because requiring the request cookie on the SP-initiated path is worth nothing while the same assertion replays with `InResponseTo` removed. Restarting the flow keeps the tile working without accepting any of that: whoever ends up signed in is whoever the IdP names in the *new* exchange.
+
+The restart is one-shot per browser. An IdP that answers the AuthnRequest with another unsolicited Response is refused with `error=saml_unsolicited` rather than bounced again, so a misconfigured IdP cannot produce a redirect loop.
+
+To accept the unsolicited assertion as it stands instead, set `allowUnsolicitedResponses: true` on the connection — **off by default**. With it on, the request-ID check is skipped for unsolicited responses but assertion-ID single-use is still enforced (see Security).
 
 ## Azure AD Setup
 
@@ -65,7 +71,7 @@ curl -X POST https://auth.example.com/api/v1/saml/connections \
   }'
 ```
 
-The API generates the `connectionId` (a GUID) and returns it in the `Location` header and response body. Additional optional fields: `metadataXml` (pasted metadata, see below), `nameIdFormat` (see below), `signAuthnRequests` (force signed AuthnRequests), `iconUrl` (login-button icon), `disableJitProvisioning` (reject unknown users instead of auto-creating them), `allowUnsolicitedResponses` (accept IdP-initiated sign-in — off by default, see above). API-created connections also get an auto-generated SP keypair (see SP Keypair below).
+The API generates the `connectionId` (a GUID) and returns it in the `Location` header and response body. Additional optional fields: `metadataXml` (pasted metadata, see below), `nameIdFormat` (see below), `signAuthnRequests` (force signed AuthnRequests), `iconUrl` (login-button icon), `disableJitProvisioning` (reject unknown users instead of auto-creating them), `allowUnsolicitedResponses` (accept an IdP-initiated assertion as-is instead of restarting the flow — off by default, see above). API-created connections also get an auto-generated SP keypair (see SP Keypair below).
 
 Connections are managed via `POST` / `GET` / `PUT` / `DELETE` on `/api/v1/saml/connections[/{connectionId}]`. `PUT` is a partial update: only fields supplied on the wire are modified.
 

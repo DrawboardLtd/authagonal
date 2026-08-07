@@ -39,6 +39,13 @@ public static class SamlEndpoints
     /// </remarks>
     private const string RequestCookieName = "saml_request";
 
+    /// <summary>
+    /// One-shot marker that this browser's unsolicited SAML response has already been turned into an
+    /// SP-initiated login. Present on a second unsolicited response means the IdP ignored the AuthnRequest,
+    /// so the ACS refuses instead of bouncing again.
+    /// </summary>
+    private const string IdpInitiatedRetryCookieName = "saml_idp_init";
+
     /// <summary>Cookie options for <see cref="RequestCookieName"/>; also used to delete it.</summary>
     private static CookieOptions RequestCookieOptions(HttpContext httpContext) => new()
     {
@@ -247,11 +254,51 @@ public static class SamlEndpoints
         // removed. The profile permits IdP-initiated SSO, so the connection may opt in.
         if (expectedInResponseTo is null && !config.AllowUnsolicitedResponses)
         {
-            logger.LogWarning(
-                "Refusing unsolicited SAML response on connection {ConnectionId}: no InResponseTo, and "
-                + "AllowUnsolicitedResponses is off for this connection", connectionId);
-            return RedirectWithError(relayState, "saml_unsolicited",
-                "This connection does not accept IdP-initiated sign-in.");
+            // The assertion is refused — but the tile the user clicked is a legitimate thing to have
+            // clicked, so instead of handing them an error, restart the flow as the one that IS safe:
+            // redirect to this connection's own login endpoint, which issues an AuthnRequest and binds the
+            // attempt to this browser. They are already authenticated at the IdP, so it answers straight
+            // away with a solicited assertion and the round trip is invisible. The unsolicited assertion is
+            // discarded rather than consumed, so nothing an attacker planted survives the bounce — the user
+            // arrives as whoever the IdP says they are in the NEW exchange, not whoever the old one named.
+            //
+            // This is the same remedy the documentation recommends configuring at the IdP (Okta's "Login
+            // initiated: App Only" with a login URL, Entra's sign-on URL), performed here so it works
+            // without every administrator finding that setting, and on the IdPs that do not have it.
+            //
+            // Guarded by a one-shot cookie against an IdP that answers an AuthnRequest with yet another
+            // unsolicited response, which would otherwise bounce the user between the two endpoints
+            // forever. SameSite=None like the request cookie: the ACS is a cross-site form POST, so a Lax
+            // cookie would be withheld at exactly the moment the guard has to be read, and the loop it
+            // exists to stop would become the behaviour.
+            if (httpContext.Request.Cookies.ContainsKey(IdpInitiatedRetryCookieName))
+            {
+                httpContext.Response.Cookies.Delete(IdpInitiatedRetryCookieName, RequestCookieOptions(httpContext));
+                logger.LogWarning(
+                    "Refusing unsolicited SAML response on connection {ConnectionId}: it arrived again after "
+                    + "this server had already restarted the flow as SP-initiated, so the IdP is not "
+                    + "honouring the AuthnRequest. Point its app tile at this server's "
+                    + "/saml/{ConnectionId}/login URL, or set AllowUnsolicitedResponses on the connection to "
+                    + "accept the unsolicited assertion as it stands.", connectionId, connectionId);
+                return RedirectWithError(relayState, "saml_unsolicited",
+                    "This connection does not accept IdP-initiated sign-in.");
+            }
+
+            var retryCookie = RequestCookieOptions(httpContext);
+            retryCookie.Expires = DateTimeOffset.UtcNow.AddMinutes(5);
+            httpContext.Response.Cookies.Append(IdpInitiatedRetryCookieName, "1", retryCookie);
+
+            logger.LogInformation(
+                "Unsolicited SAML response on connection {ConnectionId}; restarting it as SP-initiated",
+                connectionId);
+
+            // RelayState is the IdP's configured deep link for the tile, already sanitised to a local path
+            // above, so the user still lands where the tile meant to send them.
+            var loginUrl = $"/saml/{Uri.EscapeDataString(connectionId)}/login";
+            if (!string.IsNullOrEmpty(relayState))
+                loginUrl += $"?returnUrl={Uri.EscapeDataString(relayState)}";
+
+            return Results.Redirect(loginUrl);
         }
 
         // Validate replay cache if we have an InResponseTo.
@@ -294,6 +341,12 @@ public static class SamlEndpoints
                     requestState.ConnectionId, connectionId);
                 return Results.BadRequest(new { error = "connection_mismatch" });
             }
+
+            // A solicited response got through, so whatever restart produced it is finished. Clearing the
+            // marker here rather than letting it lapse is what makes a SECOND tile click work: the guard
+            // outlives the login it protected by minutes otherwise, and the next unsolicited response in
+            // that window would be refused instead of bounced.
+            httpContext.Response.Cookies.Delete(IdpInitiatedRetryCookieName, RequestCookieOptions(httpContext));
 
             // F56: the SP-initiated return URL comes from the stored request row, not RelayState.
             if (!string.IsNullOrEmpty(requestState.ReturnUrl))

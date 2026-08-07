@@ -22,7 +22,13 @@ Authagonal incluye una implementación propia de proveedor de servicios SAML 2.0
 - Binding Artifact
 - Cifrado de aserciones AES-GCM (limitación de `EncryptedXml` de .NET; configure AES-CBC en el IdP, ver más abajo)
 
-El SSO iniciado por el IdP está soportado **por conexión y desactivado por defecto**: establezca `allowUnsolicitedResponses: true` en la conexión para aceptarlo. Sin él, el ACS rechaza una Response sin `InResponseTo` y redirige con `error=saml_unsolicited`. Desactivado por defecto porque aceptar respuestas no solicitadas permite que cualquiera con una cuenta en el IdP inicie una sesión desde cualquier user-agent, y porque exigir la cookie de solicitud en la ruta iniciada por el SP no vale nada mientras la misma aserción pueda reproducirse sin `InResponseTo`. Cuando está activo, se omite la comprobación del ID de solicitud para las respuestas no solicitadas, pero el uso único del ID de aserción se sigue aplicando (ver Seguridad).
+**El inicio de sesión iniciado por el IdP funciona, y no hace falta reconfigurar el mosaico**, pero la aserción no solicitada no es lo que autentica al usuario. Una Response sin `InResponseTo` se descarta y el ACS redirige el navegador a `/saml/{connectionId}/login`, que emite un AuthnRequest nuevo vinculado a ese navegador. El usuario ya está autenticado en el IdP, así que este responde de inmediato y el rodeo resulta invisible; el `RelayState` del IdP viaja como URL de retorno, de modo que el usuario sigue llegando al enlace profundo para el que se configuró el mosaico.
+
+La aserción debe descartarse porque aceptar una no solicitada permite que cualquiera con una cuenta en ese IdP inicie una sesión en cualquier user-agent: todas las reglas del §4.1.4.3 las cumple una aserción que el atacante obtuvo legítimamente para su PROPIA cuenta. Y porque exigir la cookie de solicitud en la ruta iniciada por el SP no vale nada mientras la misma aserción pueda reproducirse sin `InResponseTo`. Reiniciar el flujo mantiene el mosaico operativo sin aceptar nada de eso: quien acabe con la sesión iniciada es quien el IdP nombre en el NUEVO intercambio.
+
+El reinicio es de un solo uso por navegador. Un IdP que responda al AuthnRequest con otra Response no solicitada se rechaza con `error=saml_unsolicited` en lugar de redirigirse otra vez, de modo que un IdP mal configurado no puede producir un bucle de redirecciones.
+
+Para aceptar en su lugar la aserción no solicitada tal cual, establezca `allowUnsolicitedResponses: true` en la conexión — **desactivado por defecto**. Cuando está activo, se omite la comprobación del ID de solicitud para las respuestas no solicitadas, pero el uso único del ID de aserción se sigue aplicando (ver Seguridad).
 
 ## Configuración de Azure AD
 
@@ -64,7 +70,7 @@ curl -X POST https://auth.example.com/api/v1/saml/connections \
   }'
 ```
 
-La API genera el `connectionId` (un GUID) y lo devuelve en la cabecera `Location` y en el cuerpo de la respuesta. Campos opcionales adicionales: `metadataXml` (metadatos pegados, ver más abajo), `nameIdFormat` (ver más abajo), `signAuthnRequests` (forzar AuthnRequests firmados), `iconUrl` (icono del botón de inicio de sesión), `disableJitProvisioning` (rechazar usuarios desconocidos en lugar de crearlos automáticamente), `allowUnsolicitedResponses` (aceptar el inicio de sesión iniciado por el IdP: desactivado por defecto, ver más arriba). Las conexiones creadas mediante la API también obtienen un par de claves de SP autogenerado (ver Par de claves de SP más abajo).
+La API genera el `connectionId` (un GUID) y lo devuelve en la cabecera `Location` y en el cuerpo de la respuesta. Campos opcionales adicionales: `metadataXml` (metadatos pegados, ver más abajo), `nameIdFormat` (ver más abajo), `signAuthnRequests` (forzar AuthnRequests firmados), `iconUrl` (icono del botón de inicio de sesión), `disableJitProvisioning` (rechazar usuarios desconocidos en lugar de crearlos automáticamente), `allowUnsolicitedResponses` (aceptar una aserción iniciada por el IdP tal cual, en lugar de reiniciar el flujo: desactivado por defecto, ver más arriba). Las conexiones creadas mediante la API también obtienen un par de claves de SP autogenerado (ver Par de claves de SP más abajo).
 
 Las conexiones se gestionan mediante `POST` / `GET` / `PUT` / `DELETE` en `/api/v1/saml/connections[/{connectionId}]`. `PUT` es una actualización parcial: solo se modifican los campos suministrados en la petición.
 

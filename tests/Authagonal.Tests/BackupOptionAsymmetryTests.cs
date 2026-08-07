@@ -135,6 +135,116 @@ public class BackupOptionAsymmetryTests(AzuriteFixture azurite)
         Assert.False(Directory.Exists(dir) && Directory.GetDirectories(dir).Length > 0);
     }
 
+    /// <summary>
+    /// A host that keeps its own tables beside Authagonal's declares them, and both halves accept them.
+    /// </summary>
+    /// <remarks>
+    /// The guard's rule is that the table set is declared ahead of time rather than taken from the archive.
+    /// Pinning that declaration to <c>BackupDefaults.Tables</c> made it "whatever this library ships", which
+    /// is a different rule and a wrong one for the library's own principal consumer: Authagonal Cloud carries
+    /// a support desk, an audit family and billing counters in the same per-tenant table set, so the
+    /// hardcoded list refused every backup it took and every archive it had already written. Declaring a
+    /// wider universe keeps the property — the set is still fixed, still the caller's, still never the
+    /// archive's.
+    /// </remarks>
+    [Fact]
+    public async Task AHostDeclaresItsOwnTableUniverse()
+    {
+        var dir = NewDir();
+        string[] hostTables = [.. BackupDefaults.Tables, "SupportTickets", "AuditLog"];
+
+        // Refused without the declaration...
+        var undeclared = new BackupOptions
+        {
+            Tables = ["Users", "SupportTickets"],
+            TablePrefix = $"bk{Guid.NewGuid():N}"[..12],
+            Gzip = false,
+        };
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => new BackupService(_svc, new FileSystemBackupTarget(dir), undeclared).RunAsync());
+        Assert.Contains("SupportTickets", ex.Message, StringComparison.Ordinal);
+
+        // ...accepted with it.
+        var declared = new BackupOptions
+        {
+            Tables = ["Users", "SupportTickets"],
+            KnownTables = hostTables,
+            TablePrefix = $"bk{Guid.NewGuid():N}"[..12],
+            Gzip = false,
+        };
+        var manifest = await new BackupService(_svc, new FileSystemBackupTarget(dir), declared).RunAsync();
+        Assert.NotNull(manifest);
+
+        // And a table outside even the widened set is still refused, so the declaration is a bound and not
+        // an escape hatch.
+        var beyond = new BackupOptions
+        {
+            Tables = ["Users", "RevokedTokens"],
+            KnownTables = hostTables,
+            TablePrefix = $"bk{Guid.NewGuid():N}"[..12],
+            Gzip = false,
+        };
+        var stillRefused = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => new BackupService(_svc, new FileSystemBackupTarget(NewDir()), beyond).RunAsync());
+        Assert.Contains("RevokedTokens", stillRefused.Message, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Restore holds the archive to the host's declared set, not to this library's.
+    /// </summary>
+    /// <remarks>
+    /// The two halves have to agree: a backup written under a wider declaration is only restorable through a
+    /// restore that declares the same universe, and an archive naming a table outside it is still refused
+    /// rather than creating the table.
+    /// </remarks>
+    [Fact]
+    public async Task RestoreHoldsTheArchiveToTheHostsDeclaredSet()
+    {
+        var dir = NewDir();
+        var prefix = $"bk{Guid.NewGuid():N}"[..12];
+        string[] hostTables = [.. BackupDefaults.Tables, "SupportTickets"];
+
+        // A tenant row in a host-owned table, backed up under the host's declaration.
+        var supportTable = _svc.GetTableClient(prefix + "SupportTickets");
+        await supportTable.CreateIfNotExistsAsync();
+        await supportTable.UpsertEntityAsync(new TableEntity("t1", "ticket") { ["Subject"] = "printer on fire" });
+
+        var target = new FileSystemBackupTarget(dir);
+        var manifest = await new BackupService(_svc, target, new BackupOptions
+        {
+            Tables = ["SupportTickets"],
+            KnownTables = hostTables,
+            TablePrefix = prefix,
+            Gzip = false,
+        }).RunAsync();
+
+        var source = new FileSystemBackupSource(dir);
+
+        // Undeclared: the archive is refused rather than restored. (AllowUnauthenticatedManifest only gets
+        // past the manifest-key guard, which would otherwise refuse first and hide what is being tested.)
+        var refused = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => new RestoreService(_svc, source, new RestoreOptions
+            {
+                TablePrefix = $"rs{Guid.NewGuid():N}"[..12],
+                AllowUnauthenticatedManifest = true,
+            }).RunAsync(manifest.BackupId));
+        Assert.Contains("SupportTickets", refused.Message, StringComparison.Ordinal);
+
+        // Declared: it restores.
+        var restorePrefix = $"rs{Guid.NewGuid():N}"[..12];
+        var result = await new RestoreService(_svc, source, new RestoreOptions
+        {
+            TablePrefix = restorePrefix,
+            KnownTables = hostTables,
+            AllowUnauthenticatedManifest = true,
+        }).RunAsync(manifest.BackupId);
+
+        Assert.Equal(0, result.TotalErrors);
+        var restored = await _svc.GetTableClient(restorePrefix + "SupportTickets")
+            .GetEntityAsync<TableEntity>("t1", "ticket");
+        Assert.Equal("printer on fire", restored.Value["Subject"]);
+    }
+
     /// <summary>The control: the real table set is accepted.</summary>
     [Fact]
     public async Task BackingUpKnownTablesIsAccepted()

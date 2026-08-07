@@ -8,6 +8,19 @@ public sealed class RestoreOptions
     public string[]? Tables { get; set; }
 
     /// <summary>
+    /// The host's own table universe — every table it is legitimate for an archive of this deployment to
+    /// name. Null means <see cref="BackupDefaults.Tables"/>, which is this library's own set.
+    /// </summary>
+    /// <remarks>
+    /// This is the set the archive is held to: a file naming anything outside it is refused rather than
+    /// creating a table. What matters is that the set is declared by the HOST in advance and never derived
+    /// from the archive — see <see cref="BackupOptions.KnownTables"/> for why it cannot be this library's own
+    /// list, and note that a backup taken with a wider set restores only through a restore declaring the same
+    /// one.
+    /// </remarks>
+    public string[]? KnownTables { get; set; }
+
+    /// <summary>
     /// Table name prefix for multi-tenant storage (e.g. "acmecorp").
     /// </summary>
     public string? TablePrefix { get; set; }

@@ -827,6 +827,8 @@ public static class AuthagonalExtensions
         // ---------------------------------------------------------------------------
         services.AddCors();
         services.AddSingleton<ICorsPolicyProvider, DynamicCorsPolicyProvider>();
+        // TryAdd: a host that lets tenants serve their own login screens registers its own before this runs.
+        services.TryAddSingleton<IInteractiveCorsOriginPolicy, DenyInteractiveCorsOriginPolicy>();
 
         // ---------------------------------------------------------------------------
         // Cluster — leader election + cross-node event bus (pluggable backend).

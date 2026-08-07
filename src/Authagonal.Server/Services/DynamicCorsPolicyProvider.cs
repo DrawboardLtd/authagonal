@@ -148,14 +148,36 @@ public sealed class DynamicCorsPolicyProvider : ICorsPolicyProvider
 
         var origins = await GetAllowedOriginsAsync(context, includeClientOrigins: clientOriginsAllowed);
 
-        if (origins.Length == 0)
-            return null;
-
         // Whether this path may carry credentials at all. See NeverCredentialedPathPrefixes.
         var allowCredentials = !NeverCredentialedPathPrefixes.Any(
             p => path.StartsWith(p, StringComparison.OrdinalIgnoreCase));
 
         var requestOrigin = context.Request.Headers.Origin.ToString();
+
+        // A host that serves tenant-built login screens vouches for the origins they are served from, which
+        // is knowledge this library does not have — see IInteractiveCorsOriginPolicy. Consulted only for the
+        // interactive prefixes, only when the closed default would otherwise refuse, and it decides BOTH
+        // halves: without membership in the origin set the request is refused before credentials matter.
+        //
+        // The grant covers THIS origin and no other. Adding it to the pooled list instead would hand
+        // AllowCredentials on this surface to every statically configured origin as well, which is the hole
+        // NeverCredentialedPathPrefixes exists to close.
+        if (!allowCredentials && IsValidOrigin(requestOrigin))
+        {
+            var hostPolicy = context.RequestServices.GetService<IInteractiveCorsOriginPolicy>();
+            if (hostPolicy is not null && await hostPolicy.IsAllowedAsync(context, requestOrigin, path))
+            {
+                return new CorsPolicyBuilder()
+                    .WithOrigins(requestOrigin)
+                    .AllowAnyHeader()
+                    .AllowAnyMethod()
+                    .AllowCredentials()
+                    .Build();
+            }
+        }
+
+        if (origins.Length == 0)
+            return null;
 
         if (string.IsNullOrEmpty(requestOrigin) ||
             !origins.Contains(requestOrigin, StringComparer.OrdinalIgnoreCase))

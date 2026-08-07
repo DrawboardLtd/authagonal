@@ -8,6 +8,29 @@ public sealed class BackupOptions
     public string[]? Tables { get; set; }
 
     /// <summary>
+    /// The host's own table universe — every table it is legitimate for an archive of this deployment to
+    /// name. Null means <see cref="BackupDefaults.Tables"/>, which is this library's own set.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The rule <see cref="Tables"/> is checked against is "a table the restore path will refuse is not a
+    /// table worth backing up", and the restore path's rule is that an archive does not get to choose which
+    /// tables a restore writes. Both are about who declares the set: the HOST, ahead of time, rather than
+    /// whatever file names turn up in the archive. Pinning that declaration to
+    /// <see cref="BackupDefaults.Tables"/> silently narrowed it to "whatever this library ships", which is
+    /// wrong for any host that stores its own data alongside Authagonal's and backs the two up as one
+    /// archive — Authagonal Cloud carries a support desk, an audit family and billing counters in the same
+    /// per-tenant table set, so the hardcoded list refused every backup and every restore it had ever taken.
+    /// </para>
+    /// <para>
+    /// It must still be a fixed set supplied by the caller, never derived from the archive: that is the whole
+    /// of the security property. And <see cref="RestoreOptions.KnownTables"/> has to be given the same set —
+    /// a wider backup restores only through a restore that declares the same universe.
+    /// </para>
+    /// </remarks>
+    public string[]? KnownTables { get; set; }
+
+    /// <summary>
     /// Table name prefix for multi-tenant storage (e.g. "acmecorp").
     /// </summary>
     public string? TablePrefix { get; set; }

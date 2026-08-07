@@ -22,7 +22,13 @@ Authagonal bao gồm triển khai SAML 2.0 Service Provider tự phát triển. 
 - Artifact binding
 - Mã hóa assertion bằng AES-GCM (hạn chế của `EncryptedXml` trong .NET; hãy cấu hình AES-CBC tại IdP, xem bên dưới)
 
-SSO khởi tạo từ IdP được hỗ trợ **theo từng kết nối và mặc định bị tắt**: đặt `allowUnsolicitedResponses: true` trên kết nối để chấp nhận. Nếu không, ACS sẽ từ chối Response không có `InResponseTo` và chuyển hướng kèm `error=saml_unsolicited`. Mặc định tắt vì việc chấp nhận phản hồi không được yêu cầu cho phép bất kỳ ai có tài khoản tại IdP đăng nhập một phiên từ bất kỳ user-agent nào, và vì việc yêu cầu cookie request trên luồng do SP khởi tạo là vô nghĩa khi cùng assertion đó có thể được phát lại sau khi bỏ `InResponseTo`. Khi bật, kiểm tra request-ID sẽ bị bỏ qua cho các phản hồi không được yêu cầu, nhưng assertion-ID chỉ dùng một lần vẫn được thực thi (xem phần Bảo mật).
+**Đăng nhập do IdP khởi tạo vẫn hoạt động và không cần cấu hình lại ô ứng dụng** — nhưng thứ đăng nhập người dùng không phải là assertion không được yêu cầu. Response không có `InResponseTo` sẽ bị loại bỏ, và ACS chuyển hướng trình duyệt tới `/saml/{connectionId}/login`, nơi phát hành một AuthnRequest mới gắn với chính trình duyệt đó. Người dùng đã xác thực tại IdP nên IdP trả lời ngay lập tức và vòng đi này là vô hình; `RelayState` của IdP được mang theo làm URL quay lại, nên người dùng vẫn đến đúng liên kết mà ô ứng dụng được cấu hình.
+
+Assertion phải bị loại bỏ vì chấp nhận một assertion không được yêu cầu sẽ cho phép bất kỳ ai có tài khoản tại IdP đó tạo phiên đăng nhập trong bất kỳ user-agent nào: mọi quy tắc trong §4.1.4.3 đều được thỏa mãn bởi một assertion mà kẻ tấn công lấy hợp lệ cho tài khoản của CHÍNH HỌ. Và vì việc yêu cầu cookie request trên luồng do SP khởi tạo là vô nghĩa khi cùng assertion đó có thể được phát lại sau khi bỏ `InResponseTo`. Khởi động lại luồng giữ cho ô ứng dụng hoạt động mà không chấp nhận bất kỳ điều nào ở trên: người cuối cùng đăng nhập là người mà IdP nêu tên trong lượt trao đổi MỚI.
+
+Việc khởi động lại chỉ diễn ra một lần cho mỗi trình duyệt. Một IdP trả lời AuthnRequest bằng một Response không được yêu cầu nữa sẽ bị từ chối với `error=saml_unsolicited` thay vì bị chuyển hướng lại, nên một IdP cấu hình sai không thể tạo ra vòng lặp chuyển hướng.
+
+Nếu muốn chấp nhận nguyên trạng assertion không được yêu cầu, hãy đặt `allowUnsolicitedResponses: true` trên kết nối — **mặc định tắt**. Khi bật, kiểm tra request-ID sẽ bị bỏ qua cho các phản hồi không được yêu cầu, nhưng assertion-ID chỉ dùng một lần vẫn được thực thi (xem phần Bảo mật).
 
 ## Thiết lập Azure AD
 
@@ -64,7 +70,7 @@ curl -X POST https://auth.example.com/api/v1/saml/connections \
   }'
 ```
 
-API tạo ra `connectionId` (một GUID) và trả về nó trong header `Location` cùng phần thân phản hồi. Các trường tùy chọn bổ sung: `metadataXml` (metadata dán vào, xem bên dưới), `nameIdFormat` (xem bên dưới), `signAuthnRequests` (buộc ký AuthnRequest), `iconUrl` (biểu tượng nút đăng nhập), `disableJitProvisioning` (từ chối người dùng lạ thay vì tự động tạo), `allowUnsolicitedResponses` (chấp nhận đăng nhập do IdP khởi tạo — mặc định tắt, xem ở trên). Các kết nối tạo qua API cũng nhận một cặp khóa SP được tạo tự động (xem phần Cặp khóa SP bên dưới).
+API tạo ra `connectionId` (một GUID) và trả về nó trong header `Location` cùng phần thân phản hồi. Các trường tùy chọn bổ sung: `metadataXml` (metadata dán vào, xem bên dưới), `nameIdFormat` (xem bên dưới), `signAuthnRequests` (buộc ký AuthnRequest), `iconUrl` (biểu tượng nút đăng nhập), `disableJitProvisioning` (từ chối người dùng lạ thay vì tự động tạo), `allowUnsolicitedResponses` (chấp nhận nguyên trạng assertion do IdP khởi tạo, thay vì khởi động lại luồng — mặc định tắt, xem ở trên). Các kết nối tạo qua API cũng nhận một cặp khóa SP được tạo tự động (xem phần Cặp khóa SP bên dưới).
 
 Các kết nối được quản lý qua `POST` / `GET` / `PUT` / `DELETE` trên `/api/v1/saml/connections[/{connectionId}]`. `PUT` là cập nhật một phần: chỉ các trường được gửi trên đường truyền mới bị thay đổi.
 

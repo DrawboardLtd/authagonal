@@ -35,23 +35,29 @@ public sealed class BackupService(TableServiceClient serviceClient, IBackupTarge
         // A table the restore path will refuse is not a table worth backing up.
         //
         // Backup accepted any --tables value and wrote, hashed and manifest-signed the result, while
-        // RestoreService's allowlist is BackupDefaults.Tables — and it throws before the --tables filter,
-        // mid-loop. So `--tables Users,Clients,RevokedTokens` produced a complete, signed archive that could
-        // never be restored, and the failure surfaced during the restore, which is the worst possible moment
-        // to discover it. Refused here instead, where the operator is standing at the terminal.
+        // RestoreService's allowlist rejected it — and it throws before the --tables filter, mid-loop. So
+        // `--tables Users,Clients,RevokedTokens` produced a complete, signed archive that could never be
+        // restored, and the failure surfaced during the restore, which is the worst possible moment to
+        // discover it. Refused here instead, where the operator is standing at the terminal.
+        //
+        // Checked against the HOST's declared universe, not this library's own set: a host that keeps its own
+        // tables beside Authagonal's backs the two up as one archive, and BackupDefaults.Tables is not a
+        // statement about that deployment. See BackupOptions.KnownTables.
         if (options.Tables is { Length: > 0 })
         {
+            var known = options.KnownTables ?? BackupDefaults.Tables;
             var unknown = options.Tables
-                .Where(t => !BackupDefaults.Tables.Contains(t, StringComparer.OrdinalIgnoreCase))
+                .Where(t => !known.Contains(t, StringComparer.OrdinalIgnoreCase))
                 .ToList();
 
             if (unknown.Count > 0)
                 throw new InvalidOperationException(
                     $"Not part of the backup set: {string.Join(", ", unknown)}. An archive naming a table "
-                    + "outside BackupDefaults.Tables is refused by restore, so backing it up would produce an "
-                    + "archive that cannot be restored. Transient tables (revoked-token entries, rate-limit "
-                    + "counters) are excluded deliberately — they expire on their own and restoring stale rows "
-                    + "achieves nothing.");
+                    + "outside the declared table set is refused by restore, so backing it up would produce "
+                    + "an archive that cannot be restored. Transient tables (revoked-token entries, "
+                    + "rate-limit counters) are excluded deliberately — they expire on their own and "
+                    + "restoring stale rows achieves nothing. A host with tables of its own declares them in "
+                    + "BackupOptions.KnownTables, and must pass the same set to RestoreOptions.KnownTables.");
         }
 
         DateTimeOffset? watermark = null;

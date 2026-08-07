@@ -102,22 +102,72 @@ public sealed class SamlLoginCsrfTests(AzuriteFixture azurite) : IAsyncLifetime,
     }
 
     /// <summary>
-    /// An unsolicited (IdP-initiated) response is refused unless the connection opts in.
+    /// An unsolicited (IdP-initiated) response is not consumed — the flow restarts as SP-initiated.
     /// </summary>
     /// <remarks>
-    /// Without this the browser binding above is decorative: the same assertion replays with
-    /// <c>InResponseTo</c> simply removed, and the ACS accepted that unconditionally.
+    /// <para>
+    /// Without the refusal the browser binding above is decorative: the same assertion replays with
+    /// <c>InResponseTo</c> simply removed, and the ACS accepted that unconditionally. But refusing outright
+    /// showed an error to a user who did nothing wrong — they clicked their IdP's app tile. So the assertion
+    /// is discarded and the user is redirected to this connection's login endpoint, which issues an
+    /// AuthnRequest bound to their browser; the IdP, where they are already signed in, answers immediately
+    /// and the bounce is invisible. What an attacker planted is thrown away either way, which is the point:
+    /// the session that results is established by the NEW exchange.
+    /// </para>
+    /// <para>
+    /// The IdP's RelayState — the deep link its tile is configured with — rides across as the return URL, so
+    /// the redirect does not cost the user the destination they were headed for.
+    /// </para>
     /// </remarks>
     [Fact]
-    public async Task AnUnsolicitedResponseIsRefusedByDefaultAndAcceptedOnlyWhenEnabled()
+    public async Task AnUnsolicitedResponseIsRestartedAsSpInitiatedRatherThanRefused()
     {
         var connectionId = await CreateConnectionAsync();
 
-        var unsolicited = Form(SignedResponse(connectionId, inResponseTo: null));
-        var refused = await _client.PostAsync($"/saml/{connectionId}/acs", unsolicited);
+        var bounced = await _client.PostAsync($"/saml/{connectionId}/acs", new FormUrlEncodedContent(
+            new Dictionary<string, string>
+            {
+                ["SAMLResponse"] = SignedResponse(connectionId, inResponseTo: null),
+                ["RelayState"] = "/dashboard",
+            }));
 
-        Assert.Equal(HttpStatusCode.Redirect, refused.StatusCode);
-        Assert.Contains("error=saml_unsolicited", refused.Headers.Location!.ToString(), StringComparison.Ordinal);
+        Assert.Equal(HttpStatusCode.Redirect, bounced.StatusCode);
+        var location = bounced.Headers.Location!.ToString();
+        Assert.StartsWith($"/saml/{connectionId}/login", location, StringComparison.Ordinal);
+        Assert.Contains("returnUrl=%2Fdashboard", location, StringComparison.Ordinal);
+        Assert.DoesNotContain("error=", location, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// An IdP that answers the AuthnRequest with another unsolicited response is refused, not bounced again.
+    /// </summary>
+    /// <remarks>
+    /// The restart above is only safe because it cannot repeat: an IdP that does not honour an AuthnRequest
+    /// would otherwise send the user round the same two endpoints forever. The one-shot marker is a cookie,
+    /// which is why it has to survive a cross-site form POST back to the ACS.
+    /// </remarks>
+    [Fact]
+    public async Task AnIdpThatKeepsSendingUnsolicitedResponsesIsRefusedOnTheSecond()
+    {
+        var connectionId = await CreateConnectionAsync();
+
+        var first = await _client.PostAsync($"/saml/{connectionId}/acs",
+            Form(SignedResponse(connectionId, inResponseTo: null)));
+        Assert.StartsWith($"/saml/{connectionId}/login", first.Headers.Location!.ToString(), StringComparison.Ordinal);
+
+        // Same browser, so it carries the marker the first bounce set.
+        var second = await _client.PostAsync($"/saml/{connectionId}/acs",
+            Form(SignedResponse(connectionId, inResponseTo: null, subject: "again@example.com")));
+
+        Assert.Equal(HttpStatusCode.Redirect, second.StatusCode);
+        Assert.Contains("error=saml_unsolicited", second.Headers.Location!.ToString(), StringComparison.Ordinal);
+    }
+
+    /// <summary>An opted-in connection still accepts the unsolicited assertion as it stands.</summary>
+    [Fact]
+    public async Task AnUnsolicitedResponseIsAcceptedWhenTheConnectionOptsIn()
+    {
+        var connectionId = await CreateConnectionAsync();
 
         // The operator turns IdP-initiated sign-in on for this connection. The profile permits it; the
         // point is that it is a deliberate decision rather than the default.

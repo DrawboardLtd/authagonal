@@ -22,7 +22,13 @@ Authagonal inclut une implémentation maison de fournisseur de services (SP) SAM
 - Binding Artifact
 - Chiffrement d'assertion AES-GCM (limitation de `EncryptedXml` de .NET ; configurez AES-CBC au niveau de l'IdP, voir plus bas)
 
-Le SSO initié par l'IdP est pris en charge **par connexion, et désactivé par défaut** : définissez `allowUnsolicitedResponses: true` sur la connexion pour l'accepter. Sans cela, l'ACS refuse une Response sans `InResponseTo` et redirige avec `error=saml_unsolicited`. Désactivé par défaut parce qu'accepter les réponses non sollicitées permet à quiconque possède un compte chez l'IdP d'ouvrir une session depuis n'importe quel user-agent, et parce qu'exiger le cookie de requête sur le chemin initié par le SP ne vaut rien tant que la même assertion peut être rejouée sans `InResponseTo`. Lorsque l'option est active, la vérification de l'identifiant de requête est ignorée pour les réponses non sollicitées, mais l'usage unique de l'identifiant d'assertion reste appliqué (voir Sécurité).
+**La connexion initiée par l'IdP fonctionne, et la tuile n'a pas besoin d'être reconfigurée** : simplement, ce n'est pas l'assertion non sollicitée qui authentifie l'utilisateur. Une Response sans `InResponseTo` est écartée et l'ACS redirige le navigateur vers `/saml/{connectionId}/login`, qui émet une nouvelle AuthnRequest liée à ce navigateur. L'utilisateur est déjà authentifié auprès de l'IdP, qui répond donc immédiatement : le détour reste invisible. Le `RelayState` de l'IdP est transmis comme URL de retour, si bien que l'utilisateur arrive toujours sur le lien profond pour lequel la tuile a été configurée.
+
+L'assertion doit être écartée parce qu'en accepter une non sollicitée permet à quiconque possède un compte chez cet IdP d'ouvrir une session dans n'importe quel user-agent : toutes les règles du §4.1.4.3 sont satisfaites par une assertion que l'attaquant a obtenue légitimement pour son PROPRE compte. Et parce qu'exiger le cookie de requête sur le chemin initié par le SP ne vaut rien tant que la même assertion peut être rejouée sans `InResponseTo`. Relancer le flux garde la tuile fonctionnelle sans rien accepter de tout cela : la personne finalement connectée est celle que l'IdP nomme dans le NOUVEL échange.
+
+La relance a lieu une seule fois par navigateur. Un IdP qui répond à l'AuthnRequest par une nouvelle Response non sollicitée est refusé avec `error=saml_unsolicited` au lieu d'être redirigé de nouveau : un IdP mal configuré ne peut donc pas provoquer de boucle de redirection.
+
+Pour accepter l'assertion non sollicitée telle quelle, définissez `allowUnsolicitedResponses: true` sur la connexion — **désactivé par défaut**. Lorsque l'option est active, la vérification de l'identifiant de requête est ignorée pour les réponses non sollicitées, mais l'usage unique de l'identifiant d'assertion reste appliqué (voir Sécurité).
 
 ## Configuration Azure AD
 
@@ -64,7 +70,7 @@ curl -X POST https://auth.example.com/api/v1/saml/connections \
   }'
 ```
 
-L'API génère le `connectionId` (un GUID) et le renvoie dans l'en-tête `Location` et le corps de la réponse. Champs optionnels supplémentaires : `metadataXml` (métadonnées collées, voir plus bas), `nameIdFormat` (voir plus bas), `signAuthnRequests` (forcer les AuthnRequests signées), `iconUrl` (icône du bouton de connexion), `disableJitProvisioning` (rejeter les utilisateurs inconnus au lieu de les créer automatiquement), `allowUnsolicitedResponses` (accepter la connexion initiée par l'IdP — désactivé par défaut, voir plus haut). Les connexions créées via l'API obtiennent aussi une paire de clés SP générée automatiquement (voir Paire de clés SP plus bas).
+L'API génère le `connectionId` (un GUID) et le renvoie dans l'en-tête `Location` et le corps de la réponse. Champs optionnels supplémentaires : `metadataXml` (métadonnées collées, voir plus bas), `nameIdFormat` (voir plus bas), `signAuthnRequests` (forcer les AuthnRequests signées), `iconUrl` (icône du bouton de connexion), `disableJitProvisioning` (rejeter les utilisateurs inconnus au lieu de les créer automatiquement), `allowUnsolicitedResponses` (accepter une assertion initiée par l'IdP telle quelle, au lieu de relancer le flux — désactivé par défaut, voir plus haut). Les connexions créées via l'API obtiennent aussi une paire de clés SP générée automatiquement (voir Paire de clés SP plus bas).
 
 Les connexions se gèrent via `POST` / `GET` / `PUT` / `DELETE` sur `/api/v1/saml/connections[/{connectionId}]`. `PUT` est une mise à jour partielle : seuls les champs fournis sur le fil sont modifiés.
 

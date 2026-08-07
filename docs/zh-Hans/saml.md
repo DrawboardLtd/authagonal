@@ -22,7 +22,13 @@ Authagonal 包含一个自研的 SAML 2.0 服务提供者实现。不依赖第�
 - Artifact 绑定
 - AES-GCM 断言加密（.NET `EncryptedXml` 限制；请在 IdP 端配置 AES-CBC，见下文）
 
-IdP 发起的 SSO **按连接支持，且默认关闭**：在连接上设置 `allowUnsolicitedResponses: true` 才会接受。否则 ACS 会拒绝不含 `InResponseTo` 的 Response，并带 `error=saml_unsolicited` 重定向。默认关闭的原因是：接受非请求响应会让任何在该 IdP 有账户的人从任意 user-agent 登入一个会话；而且只要同一断言可以在移除 `InResponseTo` 后重放，在 SP 发起路径上要求 request cookie 就毫无意义。启用后，对非请求响应会跳过请求 ID 检查，但仍强制断言 ID 的一次性使用（参见安全性）。
+**IdP 发起的登录可以正常使用，磁贴无需重新配置** —— 但让用户登录的并不是那条非请求断言。不含 `InResponseTo` 的 Response 会被丢弃，ACS 将浏览器重定向到 `/saml/{connectionId}/login`，在那里签发一个绑定到该浏览器的新 AuthnRequest。用户在 IdP 上已经通过认证，因此 IdP 会立即响应，这一次往返是无感的；IdP 的 `RelayState` 会作为返回 URL 一并带上，用户仍会落到磁贴所配置的深层链接。
+
+断言必须被丢弃，因为接受一条非请求断言会让任何在该 IdP 拥有账户的人在任意 user-agent 中建立会话：§4.1.4.3 的每一条规则，攻击者用自己账户合法取得的断言都能满足。而且只要同一断言可以在移除 `InResponseTo` 后重放，在 SP 发起路径上要求 request cookie 就毫无意义。重启流程让磁贴照常可用，同时不接受上述任何一点：最终登录的人，是 IdP 在这次**新的**交换中所指认的人。
+
+每个浏览器只会重启一次。若某个 IdP 对 AuthnRequest 仍以非请求 Response 作答，则会以 `error=saml_unsolicited` 拒绝，而不是再次重定向，因此配置错误的 IdP 不会造成重定向循环。
+
+若希望原样接受该非请求断言，请在连接上设置 `allowUnsolicitedResponses: true` —— **默认关闭**。启用后，对非请求响应会跳过请求 ID 检查，但仍强制断言 ID 的一次性使用（参见安全性）。
 
 ## Azure AD 设置
 
@@ -64,7 +70,7 @@ curl -X POST https://auth.example.com/api/v1/saml/connections \
   }'
 ```
 
-该 API 会生成 `connectionId`（一个 GUID），并在 `Location` 头和响应正文中返回它。其他可选字段：`metadataXml`（粘贴的元数据，见下文）、`nameIdFormat`（见下文）、`signAuthnRequests`（强制签名 AuthnRequest）、`iconUrl`（登录按钮图标）、`disableJitProvisioning`（拒绝未知用户而不是自动创建它们）、`allowUnsolicitedResponses`（接受 IdP 发起的登录——默认关闭，见上文）。通过 API 创建的连接还会获得一个自动生成的 SP 密钥对（参见下文的 SP 密钥对）。
+该 API 会生成 `connectionId`（一个 GUID），并在 `Location` 头和响应正文中返回它。其他可选字段：`metadataXml`（粘贴的元数据，见下文）、`nameIdFormat`（见下文）、`signAuthnRequests`（强制签名 AuthnRequest）、`iconUrl`（登录按钮图标）、`disableJitProvisioning`（拒绝未知用户而不是自动创建它们）、`allowUnsolicitedResponses`（原样接受 IdP 发起的断言，而不是重启流程——默认关闭，见上文）。通过 API 创建的连接还会获得一个自动生成的 SP 密钥对（参见下文的 SP 密钥对）。
 
 连接通过对 `/api/v1/saml/connections[/{connectionId}]` 的 `POST` / `GET` / `PUT` / `DELETE` 进行管理。`PUT` 是部分更新：只有在请求中提供的字段才会被修改。
 
