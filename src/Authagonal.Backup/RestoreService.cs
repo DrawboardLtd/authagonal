@@ -8,6 +8,14 @@ namespace Authagonal.Backup;
 
 public sealed class RestoreService(TableServiceClient serviceClient, IBackupSource source, RestoreOptions options)
 {
+    /// <summary>
+    /// The set the archive is held to. The host declares it; this library's own list is only the default,
+    /// because a host that stores its own tables beside Authagonal's archives the two together and
+    /// <see cref="BackupDefaults.Tables"/> says nothing about that deployment. See
+    /// <see cref="RestoreOptions.KnownTables"/>.
+    /// </summary>
+    private string[] KnownTables => options.KnownTables ?? BackupDefaults.Tables;
+
     public async Task<RestoreResult> RunAsync(string backupId, CancellationToken ct = default)
     {
         var prefix = options.TablePrefix ?? "";
@@ -156,10 +164,11 @@ public sealed class RestoreService(TableServiceClient serviceClient, IBackupSour
             // default (the CLI leaves it unset), so the set of tables written was whatever the archive named
             // — with GetTableClient(prefix + name) + CreateIfNotExists behind it. A hand-made or tampered
             // archive could therefore create and populate any table it liked in the target account.
-            if (!BackupDefaults.Tables.Contains(tableName, StringComparer.OrdinalIgnoreCase))
+            if (!KnownTables.Contains(tableName, StringComparer.OrdinalIgnoreCase))
                 throw new InvalidOperationException(
                     $"Backup integrity check failed: '{fileName}' names table '{tableName}', which is not part "
-                    + "of the backup set. An archive does not get to choose which tables a restore writes.");
+                    + "of the backup set. An archive does not get to choose which tables a restore writes. "
+                    + "A host with tables of its own declares them in RestoreOptions.KnownTables.");
 
             // And it does not get to overturn the backup's own decision about signing keys. BackupOptions
             // .IncludeSigningKeys is off by default and BackupService refuses to write them; restoring one
@@ -318,7 +327,7 @@ public sealed class RestoreService(TableServiceClient serviceClient, IBackupSour
 
                 // Same allowlist as the data path. A tombstone line names its own table, so without this the
                 // delete half chose its destination from the archive exactly as the write half did.
-                if (!BackupDefaults.Tables.Contains(tableName, StringComparer.OrdinalIgnoreCase))
+                if (!KnownTables.Contains(tableName, StringComparer.OrdinalIgnoreCase))
                     throw new InvalidOperationException(
                         $"Backup integrity check failed: a tombstone names table '{tableName}', which is not "
                         + "part of the backup set.");
@@ -468,9 +477,7 @@ public sealed class RestoreService(TableServiceClient serviceClient, IBackupSour
     private static object? ConvertPlainValue(JsonElement element) => element.ValueKind switch
     {
         JsonValueKind.String => element.GetString(),
-        JsonValueKind.Number => element.TryGetInt32(out var i32) ? i32
-            : element.TryGetInt64(out var i64) ? i64
-            : element.GetDouble(),
+        JsonValueKind.Number => NumberValue(element),
         JsonValueKind.True => true,
         JsonValueKind.False => false,
         JsonValueKind.Null => null,
@@ -482,14 +489,34 @@ public sealed class RestoreService(TableServiceClient serviceClient, IBackupSour
     internal static object? ConvertJsonValue(JsonElement element) => element.ValueKind switch
     {
         JsonValueKind.String => TryParseTypedString(element.GetString()!),
-        JsonValueKind.Number => element.TryGetInt32(out var i32) ? i32
-            : element.TryGetInt64(out var i64) ? i64
-            : element.GetDouble(),
+        JsonValueKind.Number => NumberValue(element),
         JsonValueKind.True => true,
         JsonValueKind.False => false,
         JsonValueKind.Null => null,
         _ => element.GetRawText(),
     };
+
+    /// <summary>Narrowest CLR type that holds the JSON number: Int32, then Int64, then Double.</summary>
+    /// <remarks>
+    /// Statements, deliberately, and not the conditional chain this replaced:
+    /// <code>element.TryGetInt32(out var i32) ? i32 : element.TryGetInt64(out var i64) ? i64 : element.GetDouble()</code>
+    /// A conditional expression takes the best common type of its branches, and the best common type of
+    /// <c>int</c>, <c>long</c> and <c>double</c> is <c>double</c> — so the Int32 branch was widened before
+    /// it was ever boxed, and EVERY integer column in EVERY restored row came back as <c>Edm.Double</c>.
+    /// It compiled, it read correctly, and the restore reported zero errors; the damage only appeared the
+    /// next time something read the row into a typed model, as an <c>InvalidCastException</c> from the
+    /// Tables binder ("Unable to cast object of type 'System.Double' to type 'System.Int32'"). On Users
+    /// that is <c>AccessFailedCount</c>, which means a restored user could not be loaded at all — so the
+    /// restore looked like it had worked and had in fact locked every account it touched.
+    ///
+    /// Each <c>return</c> converts to <c>object</c> on its own, so no unification can happen here again.
+    /// </remarks>
+    private static object NumberValue(JsonElement element)
+    {
+        if (element.TryGetInt32(out var i32)) return i32;
+        if (element.TryGetInt64(out var i64)) return i64;
+        return element.GetDouble();
+    }
 
     private static object TryParseTypedString(string value)
     {

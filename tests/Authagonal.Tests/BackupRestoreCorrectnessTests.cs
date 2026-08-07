@@ -69,10 +69,151 @@ public class BackupRestoreCorrectnessTests(AzuriteFixture azurite)
             Assert.Equal(when, Assert.IsType<DateTimeOffset>(restored["RealDate"]));
             Assert.Equal(5_000_000_000L, restored["Big"]);
             Assert.Equal(0.5d, restored["Ratio"]);
-            // Unannotated integer width (int vs long) is ambient SDK/service behavior, not F24a's
-            // concern — assert the value and that it stayed numeric.
-            Assert.Equal(42L, Convert.ToInt64(restored["Count"]));
+            // Was `Assert.Equal(42L, Convert.ToInt64(restored["Count"]))`, with a comment calling the
+            // int-vs-long width "ambient SDK/service behavior". It was not ambient: a boxed int written
+            // straight to a TableEntity round-trips as Int32 against both Azurite and the service. The
+            // width was being lost by ConvertPlainValue's conditional chain, and Convert.ToInt64 accepts a
+            // Double, so the assertion was tolerating exactly the defect the test was there to catch. Type
+            // asserted now, because the value surviving is not the property that matters.
+            Assert.Equal(42, Assert.IsType<int>(restored["Count"]));
             Assert.Equal(new byte[] { 1, 2, 3 }, restored["Blob"]);
+        }
+        finally
+        {
+            if (Directory.Exists(dir)) Directory.Delete(dir, true);
+        }
+    }
+
+    /// <summary>
+    /// A restored integer column is still an integer, so the row can still be read into a typed model.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The failure this pins was silent in the worst way. <c>ConvertPlainValue</c> chose the narrowest CLR
+    /// type for a JSON number with a conditional chain — <c>TryGetInt32 ? i32 : TryGetInt64 ? i64 :
+    /// GetDouble()</c> — and a conditional expression takes the best common type of its branches, which for
+    /// <c>int</c>, <c>long</c> and <c>double</c> is <c>double</c>. So the Int32 branch was widened before it
+    /// was boxed and every integer column in every restored row came back as <c>Edm.Double</c>.
+    /// </para>
+    /// <para>
+    /// The restore reported zero errors and the values were all correct, so nothing about the operation
+    /// looked wrong. The damage appeared the next time anything read one of those rows into a typed entity,
+    /// as <c>InvalidCastException: Unable to cast object of type 'System.Double' to type 'System.Int32'</c>
+    /// from the Tables binder. On the Users table the int column is <c>AccessFailedCount</c>, which means a
+    /// restored user could not be loaded at all — the restore appeared to succeed and had in fact made
+    /// every account it touched unreadable, at exactly the moment somebody was relying on a restore.
+    /// </para>
+    /// <para>
+    /// Both formats are covered: the annotated "@v" format every current backup writes, and the legacy
+    /// inference path kept for archives predating it. The chain was duplicated in both.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task Restore_keeps_an_integer_column_an_integer()
+    {
+        var prefix = $"num{Guid.NewGuid():N}";
+        await Table($"{prefix}Users").AddEntityAsync(new TableEntity("u1", "profile")
+        {
+            ["Small"] = 0,                 // the AccessFailedCount shape: an int that is usually zero
+            ["Negative"] = -7,
+            ["AtInt32Max"] = int.MaxValue,
+            ["BeyondInt32"] = (long)int.MaxValue + 1,
+            ["Real"] = 1.5d,
+        });
+
+        var dir = Path.Combine(Path.GetTempPath(), $"num{Guid.NewGuid():N}");
+        try
+        {
+            var target = new FileSystemBackupTarget(dir);
+            var full = await new BackupService(_svc, target,
+                new BackupOptions { TablePrefix = prefix, Gzip = false }).RunAsync();
+
+            var restorePrefix = $"numr{Guid.NewGuid():N}";
+            await new RestoreService(_svc, new FileSystemBackupSource(dir),
+                new RestoreOptions { TablePrefix = restorePrefix, AllowUnauthenticatedManifest = true })
+                .RunAsync(full.BackupId);
+
+            var restored = (await Table($"{restorePrefix}Users")
+                .GetEntityAsync<TableEntity>("u1", "profile")).Value;
+
+            Assert.Equal(0, Assert.IsType<int>(restored["Small"]));
+            Assert.Equal(-7, Assert.IsType<int>(restored["Negative"]));
+            Assert.Equal(int.MaxValue, Assert.IsType<int>(restored["AtInt32Max"]));
+            Assert.Equal((long)int.MaxValue + 1, Assert.IsType<long>(restored["BeyondInt32"]));
+            Assert.Equal(1.5d, Assert.IsType<double>(restored["Real"]));
+
+            // And the point of it: the row binds to a typed model, which is what actually broke.
+            var typed = (await Table($"{restorePrefix}Users")
+                .GetEntityAsync<NumericProbe>("u1", "profile")).Value;
+            Assert.Equal(0, typed.Small);
+            Assert.Equal(int.MaxValue, typed.AtInt32Max);
+        }
+        finally
+        {
+            if (Directory.Exists(dir)) Directory.Delete(dir, true);
+        }
+    }
+
+    /// <summary>The typed read that a Double-ised integer column makes throw.</summary>
+    private sealed class NumericProbe : ITableEntity
+    {
+        public string PartitionKey { get; set; } = "";
+        public string RowKey { get; set; } = "";
+        public DateTimeOffset? Timestamp { get; set; }
+        public Azure.ETag ETag { get; set; }
+        public int Small { get; set; }
+        public int AtInt32Max { get; set; }
+    }
+
+    /// <summary>
+    /// The legacy inference path keeps integers too, so old archives restore readable rows.
+    /// </summary>
+    /// <remarks>
+    /// Archives written before the "@v" marker take a different converter, which carried a duplicate of
+    /// the same conditional chain. They are also the archives most likely to be restored under pressure,
+    /// being the oldest ones anybody still has. Simulated by stripping the marker from a real archive,
+    /// which is exactly what an old one looks like on disk; integrity verification is off for the same
+    /// reason it would be off for a genuine one.
+    /// </remarks>
+    [Fact]
+    public async Task Legacy_unmarked_rows_keep_an_integer_column_an_integer()
+    {
+        var prefix = $"leg{Guid.NewGuid():N}";
+        await Table($"{prefix}Users").AddEntityAsync(new TableEntity("u1", "profile")
+        {
+            ["Small"] = 0,
+            ["BeyondInt32"] = (long)int.MaxValue + 1,
+            ["Real"] = 1.5d,
+        });
+
+        var dir = Path.Combine(Path.GetTempPath(), $"leg{Guid.NewGuid():N}");
+        try
+        {
+            var full = await new BackupService(_svc, new FileSystemBackupTarget(dir),
+                new BackupOptions { TablePrefix = prefix, Gzip = false }).RunAsync();
+
+            // Age the archive: drop the format marker so restore takes the inference path.
+            // Archive files are named by the LOGICAL table, without the deployment's table prefix.
+            var jsonl = Directory.EnumerateFiles(Path.Combine(dir, full.BackupId), "*.jsonl")
+                .Single(f => File.ReadAllText(f).Contains("BeyondInt32", StringComparison.Ordinal));
+            var aged = File.ReadAllText(jsonl).Replace("\"@v\":2,", "");
+            Assert.DoesNotContain("\"@v\"", aged);
+            File.WriteAllText(jsonl, aged);
+
+            var restorePrefix = $"legr{Guid.NewGuid():N}";
+            await new RestoreService(_svc, new FileSystemBackupSource(dir), new RestoreOptions
+            {
+                TablePrefix = restorePrefix,
+                VerifyIntegrity = false,
+                AllowUnauthenticatedManifest = true,
+            }).RunAsync(full.BackupId);
+
+            var restored = (await Table($"{restorePrefix}Users")
+                .GetEntityAsync<TableEntity>("u1", "profile")).Value;
+
+            Assert.Equal(0, Assert.IsType<int>(restored["Small"]));
+            Assert.Equal((long)int.MaxValue + 1, Assert.IsType<long>(restored["BeyondInt32"]));
+            Assert.Equal(1.5d, Assert.IsType<double>(restored["Real"]));
         }
         finally
         {
