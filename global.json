@@ -1,0 +1,7 @@
+{
+  "//": "Pinned exactly, because packages.lock.json and a floating SDK cannot both be true. The SDK injects Microsoft.NET.ILLink.Tasks into every IsTrimmable project and its version tracks the SDK patch, so a runner that installed a newer 10.0.x than the lock files were written against fails restore with NU1004 under RestoreLockedMode — which CI turns on for every build. That is not a dependency change anyone made; it is the runner drifting away from the committed graph, and it broke the v0.25.0 release with no code involved. Bump this deliberately, run `dotnet restore --force-evaluate` to refresh the lock files, and commit the two together. The workflows pass the same version to actions/setup-dotnet.",
+  "sdk": {
+    "version": "10.0.110",
+    "rollForward": "disable"
+  }
+}
