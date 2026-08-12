@@ -230,10 +230,22 @@ export default function MfaChallengePage() {
               type="text"
               value={code}
               onChange={(e) => handleCodeChange(e.target.value)}
-              placeholder={method === 'totp' ? '000000' : 'XXXX-XXXX'}
+              placeholder={method === 'totp' ? '000000' : 'XXXXX-XXXXX'}
               autoComplete="one-time-code"
               autoFocus
-              maxLength={method === 'totp' ? 6 : 9}
+              // No maxLength for a recovery code. It was 9, against a code the server presents as
+              // `XXXXX-XXXXX`: RecoveryCodeService generates 10 alphanumerics and renders them
+              // `$"{code[..5]}-{code[5..]}"`, so 11 characters. The browser truncated every code to 9,
+              // and the verify then failed as "Invalid code. Please try again." — which reads as a
+              // mistyped code rather than a field that refused to hold the right one. Recovery codes
+              // are the way back in after a lost authenticator, so they were unusable here while
+              // looking like user error. The placeholder advertised the same wrong 4-4 shape.
+              //
+              // Left unbounded rather than raised to 11: the server normalises by stripping dashes and
+              // spaces before verifying, so a paste carrying either still has to work, and a length cap
+              // on this input buys nothing it has not already cost. TOTP keeps 6 — that drives its
+              // auto-submit.
+              maxLength={method === 'totp' ? 6 : undefined}
               inputMode={method === 'totp' ? 'numeric' : 'text'}
               pattern={method === 'totp' ? '[0-9]{6}' : undefined}
               required
