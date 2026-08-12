@@ -184,6 +184,16 @@ public class ScanBackstopTests(AzuriteFixture azurite)
             var full = await new BackupService(_svc, target, Opt(false)).RunAsync();
 
             // Window event 1: delete both users (tombstones with DeletedAt).
+            //
+            // The delay is the guarantee below in the other direction, and it is needed for the same
+            // reason: IsDeleted compares two DIFFERENT clocks — a row's Timestamp is stamped by the
+            // storage service, a tombstone's DeletedAt by this process. Only one backup separates
+            // the creates from these deletes, so on a loaded machine the two stamps land close
+            // enough together that the storage clock's offset from ours can invert them. u2 then
+            // reads as "recreated after delete" and survives the merge, which is the exact thing
+            // this test exists to catch — so it failed intermittently, and it gates every release.
+            await Task.Delay(250);
+
             await store.DeleteAsync("u1");
             await store.DeleteAsync("u2");
             var incr1 = await new BackupService(_svc, target, Opt(true)).RunAsync();
