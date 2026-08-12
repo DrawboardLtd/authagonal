@@ -72,24 +72,46 @@ cache (e.g. Redis) before `AddAuthagonalBff` when you run more than one instance
 builder.Services.AddStackExchangeRedisCache(o => o.Configuration = "...");
 ```
 
-**A shared cache is not sufficient on its own — register an `ILeaseProvider` too.** The refresh
-single-flight is otherwise process-local, while the session and its rotating refresh token live in the
-cache every replica shares. Two replicas can read the same session, both see it needs refreshing, and
-both redeem the same refresh token; that is indistinguishable from a stolen-token replay, and the IdP's
-answer to replay is to revoke the whole grant family — so a multi-instance BFF can sign a user out
-everywhere as a matter of routine. `BffRefreshCoordinator` documents this in its own remarks and the
-requirement was missing here.
+**A shared cache is not sufficient on its own — you also need a cross-replica refresh lock.** The
+refresh single-flight is otherwise process-local, while the session and its rotating refresh token live
+in the cache every replica shares. Two replicas can read the same session, both see it needs refreshing,
+and both redeem the same refresh token; that is indistinguishable from a stolen-token replay, and the
+IdP's answer to replay is to revoke the whole grant family — so a multi-instance BFF can sign a user out
+everywhere as a matter of routine.
 
-Any backend works, because all the coordinator needs is "at most one holder": the Azure, AWS and SQL
-providers each ship one through `AddAuthagonalClustering`.
+Supply the lock by either route. **Register an `ILeaseProvider`** — any backend works, because all the
+coordinator needs is "at most one holder for a short time", and the Azure, AWS and SQL providers each
+ship one:
 
 ```csharp
 builder.Services.AddAuthagonalClustering(/* … */);   // supplies ILeaseProvider
 ```
 
-With no lease provider registered, a multi-instance deployment depends on the IdP's refresh-reuse grace
-window (`Auth:RefreshTokenReuseGraceSeconds`) to absorb the double redemption — and in Authagonal's own
-server host that defaults to **0, strict**.
+**Or implement `IBffRefreshLockStore` on the session store**, which is the shorter route when you have
+Redis and no clustering. It is a conditional write with a TTL, and it puts the lock in the backend the
+sessions already live in:
+
+```csharp
+sealed class RedisBffSessionStore : IBffSessionStore, IBffRefreshLockStore
+{
+    // …the IBffSessionStore members…
+
+    public async Task<bool> TryAcquireRefreshLockAsync(string sessionId, TimeSpan ttl, CancellationToken ct = default) =>
+        await _db.StringSetAsync($"agbff:lock:{sessionId}", "1", ttl, When.NotExists);
+
+    public Task ReleaseRefreshLockAsync(string sessionId, CancellationToken ct = default) =>
+        _db.KeyDeleteAsync($"agbff:lock:{sessionId}");
+}
+```
+
+The default store cannot offer this itself: `IDistributedCache` has no set-if-absent, so there is no
+conditional write to build a lock on. That is why this is a seam rather than something the library just
+does. The TypeScript package's own session store carries the same two methods.
+
+With neither supplied, a multi-instance deployment depends on the IdP's refresh-reuse grace window
+(`Auth:RefreshTokenReuseGraceSeconds`) to absorb the double redemption — and in Authagonal's own server
+host that defaults to **0, strict**. A BFF whose session store looks shared and has no lock now says so
+in a warning at startup, so this is not something you find out from a support ticket.
 
 ## Extension points (the hosted seam)
 

@@ -83,6 +83,84 @@ public sealed class BffRefreshSingleFlightTests
         Assert.True(a is null || b is null);
     }
 
+    [Fact]
+    public async Task TwoReplicas_WithAStoreLevelLock_RedeemTheRefreshTokenOnce()
+    {
+        // The same guarantee as the lease test, taken from the store instead of the container. This is
+        // the route a host on Redis has without registering clustering, and the one the default
+        // IDistributedCache store cannot offer because that interface has no set-if-absent.
+        var store = new LockingSharedSessionStore();
+        var tokens = new ReplayingTokenClient();
+
+        var replicaA = Coordinator(store, tokens, leases: null);
+        var replicaB = Coordinator(store, tokens, leases: null);
+
+        var session = await SeedNearExpirySessionAsync(store);
+
+        var first = replicaA.EnsureFreshAsync(session);
+        await tokens.FirstEntered.Task;
+        var second = replicaB.EnsureFreshAsync(session);
+
+        tokens.ReleaseRefresh();
+
+        var a = await first;
+        var b = await second;
+
+        Assert.Equal(1, tokens.Redemptions);
+        Assert.NotNull(a);
+        Assert.NotNull(b);
+        Assert.Equal("access-2", a!.AccessToken);
+        Assert.Equal("access-2", b!.AccessToken);
+        // The loser waited for the holder's result rather than redeeming, so the lock was taken twice
+        // (once successfully) and handed back — not leaked, which would park the session for the TTL.
+        Assert.False(store.IsHeld);
+    }
+
+    [Fact]
+    public async Task WithBothLocksPresent_TheLeaseProviderIsTheOneUsed()
+    {
+        // Precedence matters only for not surprising anyone: either lock satisfies the requirement, so
+        // the rule is that a host which already registered an ILeaseProvider keeps running on it rather
+        // than being moved onto a different backend by an upgrade.
+        var store = new LockingSharedSessionStore();
+        var tokens = new ReplayingTokenClient();
+        var leases = new ExclusiveLeaseProvider();
+
+        var replica = Coordinator(store, tokens, leases);
+        var session = await SeedNearExpirySessionAsync(store);
+
+        var refresh = replica.EnsureFreshAsync(session);
+        await tokens.FirstEntered.Task;
+        tokens.ReleaseRefresh();
+        Assert.NotNull(await refresh);
+
+        Assert.True(leases.Acquisitions > 0);
+        Assert.Equal(0, store.Acquisitions);
+    }
+
+    [Fact]
+    public async Task AStoreLockThatThrowsOnRelease_DoesNotFailTheRefreshItAlreadyCompleted()
+    {
+        // Release runs after the redemption succeeded and the session was stored. A store whose backend
+        // blips at that moment must not turn a good refresh into a logged-out user; the lock's TTL is
+        // what makes dropping it safe.
+        var store = new ThrowingReleaseSessionStore();
+        var tokens = new ReplayingTokenClient();
+
+        var replica = Coordinator(store, tokens, leases: null);
+        var session = await SeedNearExpirySessionAsync(store);
+
+        var refresh = replica.EnsureFreshAsync(session);
+        await tokens.FirstEntered.Task;
+        tokens.ReleaseRefresh();
+
+        var refreshed = await refresh;
+
+        Assert.NotNull(refreshed);
+        Assert.Equal("access-2", refreshed!.AccessToken);
+        Assert.True(store.ReleaseAttempted);
+    }
+
     // -----------------------------------------------------------------------
 
     private static BffRefreshCoordinator Coordinator(
@@ -120,7 +198,7 @@ public sealed class BffRefreshSingleFlightTests
     }
 
     /// <summary>Stands in for the shared IDistributedCache every replica reads the session from.</summary>
-    private sealed class SharedSessionStore : IBffSessionStore
+    private class SharedSessionStore : IBffSessionStore
     {
         private readonly ConcurrentDictionary<string, BffSession> _sessions = new();
 
@@ -160,6 +238,46 @@ public sealed class BffRefreshSingleFlightTests
             CreatedAt = s.CreatedAt,
             Claims = new Dictionary<string, string>(s.Claims),
         };
+    }
+
+    /// <summary>
+    /// The store shared by every replica, offering the refresh lock itself — what a Redis-backed store
+    /// gives with <c>SET NX PX</c>. One instance serves both coordinators, which is what makes the lock
+    /// cross-replica rather than per-process.
+    /// </summary>
+    private class LockingSharedSessionStore : SharedSessionStore, IBffRefreshLockStore
+    {
+        private readonly ConcurrentDictionary<string, byte> _held = new();
+        private int _acquisitions;
+
+        /// <summary>How many times a coordinator asked this store for the lock.</summary>
+        public int Acquisitions => Volatile.Read(ref _acquisitions);
+
+        public bool IsHeld => !_held.IsEmpty;
+
+        public Task<bool> TryAcquireRefreshLockAsync(string sessionId, TimeSpan ttl, CancellationToken ct = default)
+        {
+            Interlocked.Increment(ref _acquisitions);
+            return Task.FromResult(_held.TryAdd(sessionId, 0));
+        }
+
+        public virtual Task ReleaseRefreshLockAsync(string sessionId, CancellationToken ct = default)
+        {
+            _held.TryRemove(sessionId, out _);
+            return Task.CompletedTask;
+        }
+    }
+
+    /// <summary>A store whose backend is unreachable at exactly the moment the lock is handed back.</summary>
+    private sealed class ThrowingReleaseSessionStore : LockingSharedSessionStore
+    {
+        public bool ReleaseAttempted { get; private set; }
+
+        public override Task ReleaseRefreshLockAsync(string sessionId, CancellationToken ct = default)
+        {
+            ReleaseAttempted = true;
+            throw new InvalidOperationException("the lock store is unreachable");
+        }
     }
 
     /// <summary>
@@ -216,9 +334,16 @@ public sealed class BffRefreshSingleFlightTests
     private sealed class ExclusiveLeaseProvider : ILeaseProvider
     {
         private readonly ConcurrentDictionary<string, string> _holders = new();
+        private int _acquisitions;
+
+        /// <summary>How many times a coordinator asked the lease provider for the lock.</summary>
+        public int Acquisitions => Volatile.Read(ref _acquisitions);
 
         public Task<bool> TryAcquireOrRenewAsync(string resource, string nodeId, TimeSpan ttl, CancellationToken ct = default)
-            => Task.FromResult(_holders.GetOrAdd(resource, nodeId) == nodeId);
+        {
+            Interlocked.Increment(ref _acquisitions);
+            return Task.FromResult(_holders.GetOrAdd(resource, nodeId) == nodeId);
+        }
 
         public Task ReleaseAsync(string resource, string nodeId, CancellationToken ct = default)
         {

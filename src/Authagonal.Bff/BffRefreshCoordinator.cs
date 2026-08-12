@@ -18,18 +18,25 @@ namespace Authagonal.Bff;
 /// is to revoke the whole grant family — so the documented multi-instance deployment could sign a user
 /// out everywhere as a matter of routine.
 /// <para>
-/// So the gate extends across replicas when the host registers an <see cref="ILeaseProvider"/>: the
-/// redemption happens under a lease named for the session, and a replica that cannot take the lease
-/// waits for the holder's result and uses the session IT stored instead of redeeming anything. Any
-/// backend works — the Azure/AWS/SQL providers each ship one (AddAuthagonalClustering) — because all
-/// this needs is "at most one holder", which is what the leader-election lease already guarantees.
+/// So the gate extends across replicas when the host supplies a cross-process lock, by EITHER route: an
+/// <see cref="ILeaseProvider"/> registered in the container, or an <see cref="IBffRefreshLockStore"/>
+/// implemented on the session store. The redemption happens under a lock named for the session, and a
+/// replica that cannot take it waits for the holder's result and uses the session IT stored instead of
+/// redeeming anything. Any backend works — the Azure/AWS/SQL providers each ship a lease provider
+/// (AddAuthagonalClustering), and a store over Redis implements the other in about as many lines as
+/// <c>SET NX PX</c> takes — because all this needs is "at most one holder for a short time".
 /// </para>
 /// <para>
-/// With NO lease provider registered the single-flight is process-local, exactly as before. A
-/// multi-instance BFF in that configuration still needs the IdP's refresh-reuse grace window
+/// The lease provider is preferred when both are present. Not because it is better — either satisfies
+/// the requirement — but because it is the route that already existed, so a host that registered one
+/// keeps the behaviour it has been running rather than silently moving onto a different backend.
+/// </para>
+/// <para>
+/// With NEITHER supplied the single-flight is process-local, exactly as before. A multi-instance BFF in
+/// that configuration still needs the IdP's refresh-reuse grace window
 /// (<c>Auth:RefreshTokenReuseGraceSeconds</c>, 30 in the protocol layer, 0 — strict — in the Server
 /// host's own default) to absorb the double redemption, or it will sign users out under ordinary
-/// concurrent load.
+/// concurrent load. <see cref="BffRefreshGateWarning"/> reports that configuration at startup.
 /// </para>
 /// </remarks>
 internal sealed class BffRefreshCoordinator(
@@ -42,6 +49,12 @@ internal sealed class BffRefreshCoordinator(
 {
     private readonly AuthagonalBffOptions _o = options.Value;
     private readonly ConcurrentDictionary<string, SemaphoreSlim> _gates = new();
+
+    /// <summary>The session store's own lock, when it offers one. See <see cref="IBffRefreshLockStore"/>.</summary>
+    private readonly IBffRefreshLockStore? _lockStore = store as IBffRefreshLockStore;
+
+    /// <summary>Whether anything can serialise a session's refresh ACROSS replicas.</summary>
+    private bool HasCrossReplicaGate => leases is not null || _lockStore is not null;
 
     /// <summary>
     /// Identifies this coordinator to the lease provider, so a renewal is distinguishable from a
@@ -81,7 +94,7 @@ internal sealed class BffRefreshCoordinator(
         var holdsLease = false;
         try
         {
-            if (leases is not null)
+            if (HasCrossReplicaGate)
             {
                 var (acquired, peerResult) = await AcquireOrFollowAsync(session, leaseKey, ct);
                 if (!acquired)
@@ -132,7 +145,7 @@ internal sealed class BffRefreshCoordinator(
             // Released before the semaphore, and with CancellationToken.None: a cancelled request that
             // kept the lease would park every other replica on this session until the TTL ran out.
             if (holdsLease)
-                await leases!.ReleaseAsync(leaseKey, _nodeId, CancellationToken.None);
+                await ReleaseGateAsync(leaseKey, session.SessionId);
 
             gate.Release();
             // Dropped once nobody is waiting on it. Retaining one semaphore per session id for the
@@ -148,13 +161,13 @@ internal sealed class BffRefreshCoordinator(
     }
 
     /// <summary>
-    /// Takes the session's refresh lease, or — if another replica holds it — waits for that replica's
+    /// Takes the session's refresh lock, or — if another replica holds it — waits for that replica's
     /// result and returns the session IT stored. Returns (true, null) when this node may redeem.
     /// </summary>
     /// <remarks>
     /// The waiting side must never fall through to its own redemption: redeeming the same rotating
     /// token the holder is redeeming is precisely the "replay" the IdP answers by revoking the whole
-    /// grant family. So when the wait runs out (a holder that is alive but stuck — a dead one's lease
+    /// grant family. So when the wait runs out (a holder that is alive but stuck — a dead one's lock
     /// expires and we acquire) the answer is the session as it stands, not a second redemption. The
     /// token is normally still valid at that point, because the refresh threshold fires well before
     /// expiry; if it is not, the session is treated as logged out.
@@ -164,7 +177,7 @@ internal sealed class BffRefreshCoordinator(
     {
         var deadline = DateTimeOffset.UtcNow + LeaseWait;
 
-        while (!await leases!.TryAcquireOrRenewAsync(leaseKey, _nodeId, LeaseTtl, ct))
+        while (!await TryTakeGateAsync(leaseKey, session.SessionId, ct))
         {
             var peer = await store.GetAsync(session.SessionId, ct);
             if (peer is null)
@@ -175,7 +188,7 @@ internal sealed class BffRefreshCoordinator(
             if (DateTimeOffset.UtcNow >= deadline)
             {
                 logger.LogWarning(
-                    "BFF refresh: another instance has held the refresh lease for session {SessionId} " +
+                    "BFF refresh: another instance has held the refresh lock for session {SessionId} " +
                     "longer than {Seconds}s. Serving the session unrefreshed rather than redeeming the " +
                     "same refresh token, which the IdP would read as replay.",
                     session.SessionId, LeaseWait.TotalSeconds);
@@ -186,6 +199,40 @@ internal sealed class BffRefreshCoordinator(
         }
 
         return (true, null);
+    }
+
+    /// <summary>Takes whichever cross-replica lock the host supplied. Only called when one exists.</summary>
+    private Task<bool> TryTakeGateAsync(string leaseKey, string sessionId, CancellationToken ct) =>
+        leases is not null
+            ? leases.TryAcquireOrRenewAsync(leaseKey, _nodeId, LeaseTtl, ct)
+            : _lockStore!.TryAcquireRefreshLockAsync(sessionId, LeaseTtl, ct);
+
+    /// <summary>
+    /// Hands the lock back, and never lets that failure reach the caller.
+    /// </summary>
+    /// <remarks>
+    /// The refresh has already succeeded by the time this runs, so throwing here would replace a good
+    /// session with an error over bookkeeping. Both locks carry a TTL precisely so an unreleased one
+    /// costs this session one <see cref="LeaseTtl"/> and nothing more — <c>ILeaseProvider.ReleaseAsync</c>
+    /// documents itself as never throwing, but <see cref="IBffRefreshLockStore"/> is implemented by hosts,
+    /// and a store whose backend is momentarily unreachable must not be able to fail a refresh that is
+    /// already done.
+    /// </remarks>
+    private async Task ReleaseGateAsync(string leaseKey, string sessionId)
+    {
+        try
+        {
+            if (leases is not null)
+                await leases.ReleaseAsync(leaseKey, _nodeId, CancellationToken.None);
+            else
+                await _lockStore!.ReleaseRefreshLockAsync(sessionId, CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            logger.LogDebug(
+                ex, "BFF refresh: releasing the refresh lock for session {SessionId} failed; it expires on " +
+                "its own in {Seconds}s.", sessionId, LeaseTtl.TotalSeconds);
+        }
     }
 
     private bool NeedsRefresh(BffSession session)

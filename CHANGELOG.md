@@ -1,5 +1,54 @@
 # Changelog
 
+## [0.25.0], 2026-08-12
+
+### Added
+
+- **`IBffRefreshLockStore` — a session store may supply the BFF's cross-replica refresh lock itself, and a
+  deployment that has no lock at all is now reported at startup.** 0.23.0 gave the TypeScript BFF
+  `acquireRefreshLock` / `releaseRefreshLock` on its session store and left .NET with the route it already
+  had, `ILeaseProvider`. That left the two BFFs in one product disagreeing about where the lock lives, and
+  left the .NET side with no answer for the host this actually affects: the default store is backed by
+  `IDistributedCache`, which has **no set-if-absent**, so the library cannot build the lock out of the one
+  primitive a multi-instance BFF is already required to have. A host on Redis can, in about as many lines
+  as `SET NX PX` takes, and now has somewhere to put it. `BffRefreshCoordinator` accepts either route and
+  prefers `ILeaseProvider` when both are present — not because it is better, but so a host that registered
+  one keeps running on the backend it has been running on.
+
+  A separate interface rather than optional members on `IBffSessionStore`, because a default interface
+  method is indistinguishable from an override at runtime and the difference here is between a real lock
+  and a silent no-lock. Implement it on the same class (`class MyStore : IBffSessionStore,
+  IBffRefreshLockStore`) and a type test finds it. Not breaking: a store that does not implement it behaves
+  exactly as before.
+
+  The diagnostic is the other half, and the more important one. The hazard — two replicas redeeming the
+  same rotating refresh token, the IdP reading the second redemption as replay, the whole grant family
+  revoked, the user signed out everywhere under ordinary concurrent load — was already documented in
+  detail, in XML remarks on `AddAuthagonalBff` and on the coordinator, and 0.23.0 added it to both READMEs.
+  That is the wrong medium: a remark reaches whoever reads the source and the failure belongs to whoever
+  ships the deployment, who is following the README's multi-instance advice precisely when they hit it.
+  `BffRefreshGateWarning` says it at boot when the session store looks shared and no lock is supplied —
+  the same treatment this project has given every other guarantee the code describes and the configuration
+  does not provide (the plaintext-signing-key, null-audit-logger, publish-ahead and undeclared-proxy
+  warnings). The BFF refresh gate was the one that kept the silent degrade.
+
+  "Looks shared" is an inference and is deliberately biased: the default store over an `IDistributedCache`
+  that is not the in-memory one (swapping that cache is the documented way to go multi-instance), or any
+  custom `IBffSessionStore` at all (nobody writes one to run a single process). A false positive is one log
+  line on a host that can ignore it; a false negative is silence in front of the failure. The store is
+  resolved inside a scope, not through constructor injection, because a hosted service is built from the
+  root provider — the shape that once stopped every tenant-scoped host from starting at all.
+
+  The third remedy stays named rather than tested for, since it is configuration on an identity provider
+  that need not be this process: a non-zero `Auth:RefreshTokenReuseGraceSeconds`, which serves the
+  successor idempotently instead of revoking. Worth restating that it is off in the pairing this repository
+  ships — `AuthOptions.RefreshTokenReuseGraceSeconds` is `0`, strict — so a host that reads the README,
+  registers a shared cache and stops there has neither of the two things standing between it and this.
+
+  Nine tests. Non-vacuity checked by reverting: dropping the store lock from the coordinator's gate fails
+  two, and bypassing the shared-store detection fails the one that keeps the warning off a single-process
+  host — which is the test that stops it becoming noise.
+
 ## [0.24.0], 2026-08-07
 
 A restore-path data defect, and three capabilities the 0.22.0/0.23.0 hardening removed and did not put back.

@@ -20,7 +20,8 @@ public static class AuthagonalBffExtensions
     /// stolen-token replay and revokes the whole grant family — signing the user out everywhere, from
     /// an entirely ordinary event.
     /// <para>
-    /// Running more than one instance therefore needs ONE of these two, and preferably both:
+    /// Running more than one instance therefore needs ONE of these three, and preferably a lock plus
+    /// the grace window:
     /// </para>
     /// <list type="number">
     /// <item>
@@ -31,12 +32,22 @@ public static class AuthagonalBffExtensions
     /// identity server can register a provider directly.
     /// </item>
     /// <item>
+    /// <see cref="IBffRefreshLockStore"/> implemented on the session store — the same guarantee, taken
+    /// from the backend the sessions already live in. This is the shorter route for a host that has
+    /// Redis and no clustering: it is a conditional write with a TTL. The default store cannot offer it,
+    /// because <c>IDistributedCache</c> has no set-if-absent.
+    /// </item>
+    /// <item>
     /// A non-zero <c>Auth:RefreshTokenReuseGraceSeconds</c> on the identity provider (30 is the
     /// protocol layer's own default; the Server host's own default is 0, i.e. strict), which serves
     /// the successor idempotently inside that window instead of revoking. This one also covers
     /// clients outside the BFF that can refresh concurrently.
     /// </item>
     /// </list>
+    /// <para>
+    /// A deployment that looks shared and supplies none of the locks is reported at startup by
+    /// <see cref="BffRefreshGateWarning"/>, because this remark is not where an operator finds out.
+    /// </para>
     /// </remarks>
     public static IServiceCollection AddAuthagonalBff(this IServiceCollection services, Action<AuthagonalBffOptions> configure)
     {
@@ -90,6 +101,10 @@ public static class AuthagonalBffExtensions
         services.TryAddSingleton<IBffTenantResolver, StaticBffTenantResolver>();
         services.TryAddSingleton<BffRefreshCoordinator>();
         services.TryAddSingleton<BffExchangedTokens>();
+
+        // Reports a shared session store with no cross-replica refresh lock. AddHostedService is
+        // TryAddEnumerable inside, so calling AddAuthagonalBff twice does not warn twice.
+        services.AddHostedService<BffRefreshGateWarning>();
 
         return services;
     }
