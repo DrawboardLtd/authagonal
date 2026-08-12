@@ -1,5 +1,41 @@
 # Changelog
 
+## [0.25.3], 2026-08-12
+
+Two login-path defects, both found by driving the deployed reference integration rather than by a unit
+suite, and both of a kind that reads as user error from the outside.
+
+### Fixed
+
+- **The recovery-code field could not hold a recovery code.** `RecoveryCodeService` generates 10
+  alphanumerics and presents them as `$"{code[..5]}-{code[5..]}"` — `XXXXX-XXXXX`, eleven characters. The MFA
+  challenge input carried `maxLength={9}`, and a placeholder advertising `XXXX-XXXX`, a 4-4 shape the server
+  has never produced. So the browser silently truncated every code to nine characters, the server rejected
+  the remainder, and the page answered "Invalid code. Please try again."
+
+  A correct code, pasted correctly, failing as though the user had mistyped it — and the one place this
+  matters is the path back in after a lost authenticator, where there is no other factor to fall back on and
+  no reason to doubt the code you were told to keep. Recovery codes were unusable in the hosted UI.
+
+  `maxLength` is now unset for recovery rather than raised to 11: the server normalises by stripping dashes
+  and spaces before verifying, so a paste carrying either has to work, and a length cap on this input buys
+  nothing it has not already cost. TOTP keeps 6, which drives its auto-submit.
+
+- **`RecordSuccessfulLoginAsync` now re-reads and retries when the concurrency guard refuses the write.**
+  Its default implementation is a read-modify-write through `UpdateAsync`, which refuses a write whose
+  `ConcurrencyToken` has gone stale. That refusal is right in general — the store cannot know which of two
+  conflicting intents should win — but it does not reach this method: everything the stamp writes is
+  last-writer-wins login state, so re-reading and reapplying is the same answer against a fresher record,
+  not a guess.
+
+  Without the retry the refusal escaped as an unhandled exception on a login that had ALREADY SUCCEEDED,
+  observed as `server_error` at the MFA challenge with the second factor already verified. Bounded at three
+  attempts and then rethrown, because a persistent refusal means something is genuinely contending for the
+  record and swallowing it would trade a visible failure for a silently unrecorded login.
+
+  `TableUserStore` already overrides this with its own If-Match retry, so a host reaching the default is
+  usually a host whose decorator forgot to forward the member. This makes the default safe regardless.
+
 ## [0.25.2], 2026-08-12
 
 ### Added
