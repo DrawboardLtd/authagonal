@@ -45,16 +45,47 @@ public interface IUserStore
     /// field (which a full update does) just to write a timestamp on the hottest path. The default is the
     /// straightforward read-modify-write; encrypting backends override it to skip the crypto round-trips.
     /// </summary>
+    /// <remarks>
+    /// Re-reads and retries when the write is refused for concurrency. <see cref="UpdateAsync"/> refuses a
+    /// write whose <c>ConcurrencyToken</c> no longer matches the stored record, deliberately: it cannot know
+    /// which of two conflicting intents should win, and merging an admin's edit with a login would be a
+    /// guess. That reasoning does not reach this method. Everything it writes is login state with
+    /// last-writer-wins semantics — the failure counter goes to zero, the lockout clears, the timestamps
+    /// move forward — so re-reading and reapplying is not a guess, it is the same answer against a fresher
+    /// record.
+    ///
+    /// Without the retry the refusal escapes as an unhandled exception on a login that has ALREADY
+    /// SUCCEEDED. Observed on <c>POST /api/auth/mfa/verify</c>: the second factor verified, this threw while
+    /// stamping the login, and the user was returned to the challenge screen with <c>server_error</c> — a
+    /// correct code, rejected, on the step that exists to let them in. The password path races less and so
+    /// hid it.
+    ///
+    /// Bounded at three attempts and then rethrown: a persistent refusal means something is genuinely
+    /// contending for the record, and swallowing it would trade a visible failure for a silently unrecorded
+    /// login.
+    /// </remarks>
     async Task RecordSuccessfulLoginAsync(string userId, string? rehashedPassword = null, CancellationToken ct = default)
     {
-        var user = await GetAsync(userId, ct);
-        if (user is null) return;
-        user.AccessFailedCount = 0;
-        user.LockoutEnd = null;
-        user.LastLoginAt = DateTimeOffset.UtcNow;
-        user.UpdatedAt = DateTimeOffset.UtcNow;
-        if (rehashedPassword is not null) user.PasswordHash = rehashedPassword;
-        await UpdateAsync(user, ct);
+        for (var attempt = 0; ; attempt++)
+        {
+            var user = await GetAsync(userId, ct);
+            if (user is null) return;
+            user.AccessFailedCount = 0;
+            user.LockoutEnd = null;
+            user.LastLoginAt = DateTimeOffset.UtcNow;
+            user.UpdatedAt = DateTimeOffset.UtcNow;
+            if (rehashedPassword is not null) user.PasswordHash = rehashedPassword;
+
+            try
+            {
+                await UpdateAsync(user, ct);
+                return;
+            }
+            catch (InvalidOperationException) when (attempt < 2)
+            {
+                // The next pass re-reads, picking up the token the winning writer left behind.
+            }
+        }
     }
 
     Task<bool> ExistsAsync(string userId, CancellationToken ct = default);
