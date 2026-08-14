@@ -24,7 +24,7 @@ COPY tools/ tools/
 RUN dotnet publish tools/Authagonal.Migration.Cli/ -c Release -o /app/publish --no-restore
 
 # aspnet (not runtime): the engine references Authagonal.Server, which needs the ASP.NET shared framework.
-FROM mcr.microsoft.com/dotnet/aspnet:10.0@sha256:f1126d438ccc359f51cc6d4701a8deae513856cf10f5fe645d29ea6403dcac6b
+FROM mcr.microsoft.com/dotnet/aspnet:10.0@sha256:207cc51496778557731c81ff670333d8ade4a4fec22768fd1be8e78474a84ecf
 WORKDIR /app
 COPY --from=build /app/publish .
 # Runs as a non-root user. The image ran as root, so a remote-code-execution bug anywhere in the
