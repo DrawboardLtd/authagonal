@@ -1,4 +1,4 @@
-FROM mcr.microsoft.com/dotnet/sdk:10.0-alpine@sha256:d8ee39817ca03a3757288e83c37ed73cc969a286c603b827c7cbe33add1c2d1c AS build
+FROM mcr.microsoft.com/dotnet/sdk:10.0-alpine@sha256:620e765fe18186c08399f7aa978f79f04b6bbf0ee1b3b8a91e2d5c9619e59da1 AS build
 WORKDIR /src
 COPY tools/Authagonal.Backup/Authagonal.Backup.csproj tools/Authagonal.Backup/
 RUN dotnet restore tools/Authagonal.Backup/Authagonal.Backup.csproj
