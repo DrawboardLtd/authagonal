@@ -354,11 +354,12 @@ public static class ClientRegistrationEndpoint
             FrontChannelLogoutUri = request.FrontchannelLogoutUri,
             FrontChannelLogoutSessionRequired = request.FrontchannelLogoutSessionRequired ?? true,
             Audiences = request.Audiences ?? [],
-            // The registrant had the field, so its answer counts — including "none". Without this flag an
-            // empty list was indistinguishable from a client that was never offered the choice, and every
-            // DCR client therefore kept the permissive reading that let it name any absolute URI as a
-            // resource and receive a tenant-signed token aimed at it.
-            AudiencesDeclared = true,
+            // The registrant's answer counts only when it actually answered. `audiences` is our extension —
+            // RFC 7591 has no such field — so a stock registrant (every MCP client) omits it entirely, and
+            // omission means "never asked", which keeps the permissive reading RFC 8707 needs: the client
+            // may name any absolute URI as a resource. Sending the field, even as [], is an answer, and an
+            // explicit "none" pins the client to naming no resource at all.
+            AudiencesDeclared = request.Audiences is not null,
             AllowedScopes = requestedScopes,
             // Restricted to the origins of the registrant's OWN already-validated https redirect URIs.
             // An arbitrary list here landed in a server-wide credentialed CORS allowlist that (before it was

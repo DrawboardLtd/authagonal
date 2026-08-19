@@ -279,4 +279,73 @@ public sealed class ClientRegistrationEndpointTests : IAsyncLifetime
         var json = await limited.Content.ReadFromJsonAsync<JsonElement>();
         Assert.Equal("rate_limited", json.GetProperty("error").GetString());
     }
+    // -----------------------------------------------------------------------
+    // Resource indicators (RFC 8707) for registered clients
+    // -----------------------------------------------------------------------
+
+    /// <summary>
+    /// A stock RFC 7591 registration omits `audiences` (the field is our extension), so the client
+    /// was never asked and keeps the permissive reading: it may name any absolute URI as a resource.
+    /// This is the path every MCP client takes — the MCP authorization spec requires the client to
+    /// name the MCP server as its resource.
+    /// </summary>
+    [Fact]
+    public async Task Register_WithoutAudiencesField_MayRequestAnyResource()
+    {
+        var registered = await _client.PostAsJsonAsync("/connect/register", new
+        {
+            client_name = "MCP Connector",
+            redirect_uris = new[] { "https://connector.example/callback" },
+            token_endpoint_auth_method = "none",
+            scope = "openid"
+        });
+        Assert.Equal(HttpStatusCode.Created, registered.StatusCode);
+        var clientId = (await registered.Content.ReadFromJsonAsync<JsonElement>())
+            .GetProperty("client_id").GetString()!;
+
+        var location = await AuthorizeWithResourceAsync(clientId, "https://connector.example/callback");
+
+        // Not an error redirect: the request proceeds into the flow (login or consent, per session state).
+        Assert.DoesNotContain("invalid_target", location);
+        Assert.DoesNotContain("error=", location);
+    }
+
+    /// <summary>
+    /// Explicitly sending `audiences: []` is an answer — "none" — and pins the client to naming no
+    /// resource at all. Only omission keeps the permissive reading.
+    /// </summary>
+    [Fact]
+    public async Task Register_WithExplicitlyEmptyAudiences_MayNotRequestAResource()
+    {
+        var registered = await _client.PostAsJsonAsync("/connect/register", new
+        {
+            client_name = "Declared None",
+            redirect_uris = new[] { "https://declared-none.example/callback" },
+            token_endpoint_auth_method = "none",
+            scope = "openid",
+            audiences = Array.Empty<string>()
+        });
+        Assert.Equal(HttpStatusCode.Created, registered.StatusCode);
+        var clientId = (await registered.Content.ReadFromJsonAsync<JsonElement>())
+            .GetProperty("client_id").GetString()!;
+
+        var location = await AuthorizeWithResourceAsync(clientId, "https://declared-none.example/callback");
+
+        Assert.Contains("invalid_target", location);
+    }
+
+    private async Task<string> AuthorizeWithResourceAsync(string clientId, string redirectUri)
+    {
+        var challenge = Convert.ToBase64String(
+                System.Security.Cryptography.SHA256.HashData("0123456789012345678901234567890123456789012"u8))
+            .TrimEnd('=').Replace('+', '-').Replace('/', '_');
+        var url = $"/connect/authorize?client_id={clientId}" +
+                  $"&redirect_uri={Uri.EscapeDataString(redirectUri)}" +
+                  "&response_type=code&scope=openid&state=s" +
+                  $"&code_challenge={challenge}&code_challenge_method=S256" +
+                  $"&resource={Uri.EscapeDataString("https://mcp.example/server")}";
+        var response = await _client.GetAsync(url);
+        Assert.Equal(HttpStatusCode.Redirect, response.StatusCode);
+        return response.Headers.Location!.ToString();
+    }
 }

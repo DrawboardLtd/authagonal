@@ -1,5 +1,26 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+
+- **Dynamically registered clients may name a `resource` again — every MCP client was locked out.**
+  `AudiencesDeclared` was set unconditionally on registration, so a stock RFC 7591 registrant — which
+  cannot send `audiences`, the field is an Authagonal extension — was treated as having declared "none"
+  and every `resource` parameter it sent died at authorize with `invalid_target`. The MCP authorization
+  spec requires clients to name the MCP server as their resource, so a connector could register, log in,
+  and then fail on the very next redirect. The flag now records whether the registrant actually answered:
+  omitting `audiences` keeps the permissive reading RFC 8707 needs, sending it — even as `[]` — pins the
+  client to its answer. The admin API and seed paths are unchanged (their requests carry the whole
+  record, so their answer always counts). `docs/client-registration.md` and `docs/configuration.md`
+  described the two different behaviours; both now describe this one, and the DCR path is covered
+  end-to-end in `ClientRegistrationEndpointTests` rather than by a store-built stand-in.
+
+- **`GET /consent/grants` now carries the interactive origin guard.** Its three siblings had it (the
+  DELETE gained it when a live cross-origin revocation was demonstrated); the listing authenticated by
+  reading the cookie subject inline and was missed by the same sweep. Reading is not revoking, but the
+  grants list names every application the user has consented to.
+
 ## [0.25.3], 2026-08-12
 
 Two login-path defects, both found by driving the deployed reference integration rather than by a unit

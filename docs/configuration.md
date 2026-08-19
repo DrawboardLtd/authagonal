@@ -173,13 +173,14 @@ Clients are defined in the `Clients` array and seeded on startup. Each client ca
 
 `Audiences` is the client's allowlist for the `resource` parameter (RFC 8707) and the `audience` parameter of a token exchange (RFC 8693). Whatever survives that check becomes the `aud` claim of the issued access token; with no `resource` on the request, `aud` falls back to `Audiences`, and with neither it is the `client_id`.
 
-An empty `Audiences` list means **"none"** for any client created through a surface that accepts audiences — dynamic registration (the `audiences` metadata field), the admin API, or seed configuration. Such a client may not name a `resource` at all, on any path: authorize, `client_credentials` and token exchange agree.
+An empty `Audiences` list means **"none"** for any client that actually answered the question — one whose creating request carried the `audiences` field, whether through dynamic registration (where the field is an Authagonal extension to RFC 7591), the admin API, or seed configuration. Such a client may not name a `resource` at all, on any path: authorize, `client_credentials` and token exchange agree.
 
-The one exception is a client stored **before** this rule existed. Those rows carry `AudiencesDeclared: false`, and for them an empty list still reads as "unset, so any absolute URI is accepted as `resource`" — because tightening every stored client on upgrade would break flows that work today.
+A dynamic registration that **omits** `audiences` — every stock RFC 7591 client, which is to say every MCP client — was never asked. Its list is "unset" and it may name any absolute URI as `resource`; the MCP authorization spec depends on this. The same reading applies to clients stored before `AudiencesDeclared` existed, because tightening every stored client on upgrade would break flows that work today.
 
 | Client | Empty `Audiences` means |
 |---|---|
-| Created through DCR or the admin API | **deny** — no `resource` may be named |
+| Creating request carried `audiences` (DCR extension field, admin API, seed) | **deny** — no `resource` may be named |
+| DCR registration that omitted `audiences` | **"unset"** — any absolute URI is accepted as `resource` |
 | Stored before `AudiencesDeclared` existed | **"unset"** — any absolute URI is accepted as `resource` |
 
 **Retrofitting a legacy client** is a `PUT` to the admin client API with `audiencesDeclared: true` (and whatever `audiences` it should be pinned to). The flag only ever tightens: an update can set it and cannot clear it, so an unrelated edit will never silently return a client to the permissive reading.

@@ -234,6 +234,12 @@ public static class ConsentEndpoint
             IGrantStore grantStore,
             CancellationToken ct) =>
         {
+            // Same shape as the DELETE below: cookie-authenticated with no .RequireAuthorization(), so the
+            // origin guard is applied inline. Reading is not revoking, but the grants list names every
+            // application the user has consented to — not something a cross-origin page gets to enumerate.
+            if (Services.InteractiveOriginGuard.Check(httpContext) is { } originError)
+                return originError;
+
             var subjectId = httpContext.User.FindFirstValue(ClaimTypes.NameIdentifier)
                 ?? httpContext.User.FindFirstValue("sub");
             if (string.IsNullOrWhiteSpace(subjectId))

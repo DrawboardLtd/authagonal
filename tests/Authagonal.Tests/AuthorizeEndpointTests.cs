@@ -112,11 +112,10 @@ public sealed class AuthorizeEndpointTests : IAsyncLifetime
     /// deny-everything.
     /// </summary>
     /// <remarks>
-    /// This is what makes RFC 8707 usable by dynamically registered clients, which cannot declare
-    /// audiences because RFC 7591 has no field for them — and therefore by every MCP client, since the
-    /// MCP authorization spec requires them to name the MCP server as the resource. Naming a resource
-    /// is not access to it: the value only narrows `aud`, and the resource server still checks that
-    /// `aud` addresses itself.
+    /// This client is stored directly without <c>AudiencesDeclared</c> — the legacy shape, rows that
+    /// predate the flag — and the permissive reading is what upgrade-safety promises them. The DCR
+    /// path (every MCP client) is covered end-to-end in <c>ClientRegistrationEndpointTests</c>:
+    /// omitting `audiences` keeps this permissive reading, explicitly sending `[]` forfeits it.
     ///
     /// The paired restriction is <see cref="Authorize_ResourceNotRegistered_RedirectsWithInvalidTarget"/>,
     /// which uses the default client (it DOES declare audiences) and must keep rejecting.
