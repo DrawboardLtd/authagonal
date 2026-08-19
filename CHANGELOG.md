@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+### Added
+
+- **`ITenantContext.DynamicClientRegistrationEnabled`** — a per-tenant answer to whether anonymous
+  dynamic client registration is open. `null` (the interface default) defers to the host-wide
+  `Auth:DynamicClientRegistrationEnabled`; multi-tenant hosts override from tenant settings so one
+  tenant opting in — to let MCP connectors and other agentic clients start an OAuth flow — does not
+  open anonymous registration on every other. Honoured by both the `/connect/register` gate and the
+  discovery document's `registration_endpoint` advertisement.
+
 ### Fixed
 
 - **Dynamically registered clients may name a `resource` again — every MCP client was locked out.**

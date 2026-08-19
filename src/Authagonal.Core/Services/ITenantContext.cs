@@ -29,4 +29,13 @@ public interface ITenantContext
     /// inside the portal (the in-app verify banner, not a login wall).
     /// </summary>
     bool RequireConfirmedEmailForLogin => true;
+
+    /// <summary>
+    /// Per-tenant answer to whether anonymous dynamic client registration (RFC 7591) is open —
+    /// what an MCP connector needs before it can start its OAuth flow. <c>null</c> (the default)
+    /// means the tenant has no say and the host-wide <c>Auth:DynamicClientRegistrationEnabled</c>
+    /// decides; multi-tenant hosts override from tenant settings so one tenant opting in does not
+    /// open anonymous registration on every other.
+    /// </summary>
+    bool? DynamicClientRegistrationEnabled => null;
 }

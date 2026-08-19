@@ -42,7 +42,7 @@ public static class DiscoveryEndpoint
                 IntrospectionEndpoint = $"{issuer}/connect/introspect",
                 EndSessionEndpoint = $"{issuer}/connect/endsession",
                 DeviceAuthorizationEndpoint = $"{issuer}/connect/deviceauthorization",
-                RegistrationEndpoint = authOptions.Value.DynamicClientRegistrationEnabled ? $"{issuer}/connect/register" : null,
+                RegistrationEndpoint = (tenantContext.DynamicClientRegistrationEnabled ?? authOptions.Value.DynamicClientRegistrationEnabled) ? $"{issuer}/connect/register" : null,
                 PushedAuthorizationRequestEndpoint = $"{issuer}/connect/par",
                 ScopesSupported = scopesSupported,
                 ResponseTypesSupported = ["code"],

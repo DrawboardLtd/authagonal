@@ -76,7 +76,11 @@ public static class ClientRegistrationEndpoint
         IOptions<AuthOptions> authOptions,
         CancellationToken ct)
     {
-        if (!authOptions.Value.DynamicClientRegistrationEnabled)
+        // The tenant's answer wins when it has one; the host-wide option is the fallback. Resolved via
+        // GetService because single-tenant hosts may not register an ITenantContext at all.
+        var tenantAnswer = httpContext.RequestServices
+            .GetService<Authagonal.Core.Services.ITenantContext>()?.DynamicClientRegistrationEnabled;
+        if (!(tenantAnswer ?? authOptions.Value.DynamicClientRegistrationEnabled))
             return TypedResults.Json(
                 new ErrorInfoResponse { Error = "not_supported", ErrorDescription = "Dynamic client registration is not enabled" },
                 AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 403);
