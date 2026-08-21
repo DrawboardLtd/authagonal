@@ -75,6 +75,19 @@ public sealed class PromptAndRichAuthorizationTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task PromptCreate_SendsUnauthenticatedUserToRegister()
+    {
+        // "Initiating User Registration via OpenID Connect": prompt=create routes a new user to
+        // the register page (not login), the authorize URL carried as returnUrl.
+        var response = await _client.GetAsync(AuthorizeUrl(prompt: "create"));
+
+        Assert.Equal(HttpStatusCode.Redirect, response.StatusCode);
+        var location = response.Headers.Location!.ToString();
+        Assert.StartsWith("/login/register", location, StringComparison.Ordinal);
+        Assert.Contains("returnUrl=", location, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task PromptSelectAccount_ForcesFreshAuthentication()
     {
         await SignInAsync();

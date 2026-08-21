@@ -259,7 +259,9 @@ internal static class AuthorizeRequestSupport
         // silent non-compliance max_age had.
         foreach (var prompt in request.Prompts)
         {
-            if (prompt is not ("none" or "login" or "consent" or "select_account"))
+            // "create" is the "Initiating User Registration via OpenID Connect" value (routes to
+            // the register page); the other four are OIDC Core §3.1.2.1.
+            if (prompt is not ("none" or "login" or "consent" or "select_account" or "create"))
                 return BuildErrorRedirect(redirectUri, "invalid_request",
                     $"Unsupported prompt value '{prompt}'", state, issuer);
         }
