@@ -241,7 +241,10 @@ public static class AuthorizeEndpoint
                 }
 
                 var loginAppUrl = configuration["LoginAppUrl"] ?? "/login";
-                var loginUrl = $"{loginAppUrl}?returnUrl={Uri.EscapeDataString(authorizeRelativeUrl)}";
+                // prompt=create sends a new, unauthenticated user straight to registration; the
+                // authorize URL rides along as returnUrl so finishing sign-up completes the flow.
+                var interactionPath = request.WantsRegistration ? $"{loginAppUrl}/register" : loginAppUrl;
+                var loginUrl = $"{interactionPath}?returnUrl={Uri.EscapeDataString(authorizeRelativeUrl)}";
 
                 if (!string.IsNullOrWhiteSpace(loginHint))
                     loginUrl += $"&login_hint={Uri.EscapeDataString(loginHint)}";

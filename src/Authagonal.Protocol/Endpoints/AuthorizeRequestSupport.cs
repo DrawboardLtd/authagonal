@@ -179,6 +179,11 @@ internal sealed class AuthorizeRequest
     /// <summary><c>prompt=consent</c>: the RP demands the consent screen even where a stored grant
     /// would otherwise satisfy the request.</summary>
     public bool DemandsConsent => Prompts.Contains("consent", StringComparer.Ordinal);
+
+    /// <summary><c>prompt=create</c> ("Initiating User Registration via OpenID Connect"): the RP
+    /// wants the end-user sent to account creation rather than sign-in. Honoured only for an
+    /// unauthenticated request — an existing session just proceeds.</summary>
+    public bool WantsRegistration => Prompts.Contains("create", StringComparer.Ordinal);
 }
 
 /// <summary>
