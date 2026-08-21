@@ -127,18 +127,23 @@ jobs:
 
       - name: Wait for npm indexing
         run: |
+          # The publish above already succeeded — this only waits for npm's read side to catch up
+          # so downstream sees the version. npm's read-after-publish propagation now routinely
+          # exceeds a couple of minutes, and a timeout here was failing the whole release (and
+          # skipping publish-npm-bff, which needs this job) for a package that IS published. Warn,
+          # never fail.
           VERSION="${GITHUB_REF_NAME#v}"
           echo "Waiting for @authagonal/login@$VERSION on npm..."
-          for i in $(seq 1 20); do
+          for i in $(seq 1 36); do
             if npm view "@authagonal/login@$VERSION" version 2>/dev/null | grep -q "$VERSION"; then
               echo "Package indexed after ~$(( i * 5 )) seconds"
               exit 0
             fi
-            echo "  attempt $i/20 — not yet indexed, waiting 5s..."
+            echo "  attempt $i/36 — not yet indexed, waiting 5s..."
             sleep 5
           done
-          echo "::error::Timed out waiting for npm indexing"
-          exit 1
+          echo "::warning::npm indexing not confirmed in 180s — the package published fine, continuing"
+          exit 0
 
   publish-npm-bff:
     needs: [audit, test]
