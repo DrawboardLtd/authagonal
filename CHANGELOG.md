@@ -10,6 +10,12 @@
   tenant opting in — to let MCP connectors and other agentic clients start an OAuth flow — does not
   open anonymous registration on every other. Honoured by both the `/connect/register` gate and the
   discovery document's `registration_endpoint` advertisement.
+- **`AuthagonalBffOptions.PersistentCookie`** — opt-in (default false). When true the BFF session
+  cookie is written with a `Max-Age` bounded to `SessionLifetime`, so it survives the browser being
+  closed and reopened instead of being discarded as a session cookie. For hosts whose IdP issues
+  long-lived (sliding) refresh tokens and want "stay signed in" behaviour: a returning user whose
+  refresh token is still valid is silently kept in rather than bounced to login. Still
+  HttpOnly/Secure/SameSite=Lax, and back-channel logout still terminates the session server-side.
 
 ### Fixed
 

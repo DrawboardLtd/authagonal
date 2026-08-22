@@ -80,6 +80,18 @@ public sealed class AuthagonalBffOptions
     /// <summary>Maximum lifetime of a BFF session regardless of token refreshes.</summary>
     public TimeSpan SessionLifetime { get; set; } = TimeSpan.FromHours(8);
 
+    /// <summary>
+    /// When true, the session cookie is written with a <c>Max-Age</c> (bounded to
+    /// <see cref="SessionLifetime"/>) so it survives the browser being closed and reopened, rather
+    /// than being a session cookie discarded on close. Use it when the IdP issues long-lived
+    /// (sliding) refresh tokens and you want "stay signed in" behaviour: a returning user whose
+    /// refresh token is still valid is silently kept in instead of bounced to login. Default false
+    /// (session cookie), the safer posture for shared machines. The cookie is still
+    /// HttpOnly/Secure/SameSite=Lax either way, and back-channel logout still terminates the session
+    /// server-side regardless of the cookie's lifetime.
+    /// </summary>
+    public bool PersistentCookie { get; set; }
+
     /// <summary>Enables <c>GET {BasePath}/ws-ticket</c>: mints a short-lived, single-use ticket the SPA can
     /// put on a websocket connect URL (a websocket handshake cannot carry custom headers or a bearer). The
     /// API host exchanges the ticket for the session's access token via the SHARED distributed cache — the

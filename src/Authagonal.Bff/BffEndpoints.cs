@@ -209,7 +209,15 @@ internal static class BffEndpoints
             Claims = ExtractClaims(jwt),
         };
         await store.SetAsync(session, ct);
-        ctx.Response.Cookies.Append(o.CookieName, session.SessionId, SessionCookieOptions(ctx, o));
+        // Persistent cookie (opt-in): survives browser close so a session whose refresh token is
+        // still valid isn't thrown away on the next launch. Bounded to the session's own expiry, so
+        // cookie and server session lapse together. Default stays a session cookie. Never set MaxAge
+        // on the delete path (SessionCookieOptions) — MaxAge would win over the epoch Expires and the
+        // cookie would refuse to clear.
+        var sessionCookie = SessionCookieOptions(ctx, o);
+        if (o.PersistentCookie)
+            sessionCookie.MaxAge = session.ExpiresAt - DateTimeOffset.UtcNow;
+        ctx.Response.Cookies.Append(o.CookieName, session.SessionId, sessionCookie);
 
         return Results.Redirect(correlation.ReturnUrl);
     }
