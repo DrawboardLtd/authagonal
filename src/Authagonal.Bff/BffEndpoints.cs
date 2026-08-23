@@ -131,10 +131,10 @@ internal static class BffEndpoints
         {
             usedLegacyCookie = true;
             if (!ctx.Request.Cookies.TryGetValue(o.CorrelationCookieName, out protectedCorr))
-                return Fail("invalid_correlation");
+                return RestartLoginOrFail(ctx, o, "invalid_correlation", log, "no correlation cookie for this state");
         }
         if (!protector.TryUnprotect(protectedCorr, CorrelationPurpose, out var corrJson))
-            return Fail("invalid_correlation");
+            return RestartLoginOrFail(ctx, o, "invalid_correlation", log, "correlation cookie could not be unprotected");
 
         ctx.Response.Cookies.Delete(usedLegacyCookie ? o.CorrelationCookieName : perLoginCookie, TransientCookieOptions(ctx, o));
 
@@ -209,6 +209,9 @@ internal static class BffEndpoints
             Claims = ExtractClaims(jwt),
         };
         await store.SetAsync(session, ct);
+        // This login completed, so the one-shot restart marker has done its job; leaving it would
+        // deny the NEXT interrupted login its retry.
+        ctx.Response.Cookies.Delete(o.CookieName + RetrySuffix, TransientCookieOptions(ctx, o));
         // Persistent cookie (opt-in): survives browser close so a session whose refresh token is
         // still valid isn't thrown away on the next launch. Bounded to the session's own expiry, so
         // cookie and server session lapse together. Default stays a session cookie. Never set MaxAge
@@ -551,6 +554,47 @@ internal static class BffEndpoints
 
     private static IResult Fail(string code) => Results.Text(code, "text/plain", null, StatusCodes.Status400BadRequest);
 
+    /// <summary>Marks that this browser has already been sent back through the login leg once.</summary>
+    private const string RetrySuffix = ".retry";
+
+    /// <summary>
+    /// A callback with no usable correlation cookie is usually not an attack and not a dead end: the
+    /// login simply took longer than the cookie lived, most often because it spanned an email
+    /// verification. The user is authenticated at the provider by now, so starting a fresh login leg
+    /// completes silently through SSO and lands them signed in — where returning
+    /// <c>invalid_correlation</c> as plain text shows them a broken page for something they did
+    /// nothing wrong to cause.
+    /// </summary>
+    /// <remarks>
+    /// Restarting mints a new state, nonce and PKCE verifier, so it is not a weakening — the old
+    /// correlation is discarded, not trusted. Exactly one retry, tracked by a short-lived cookie, so
+    /// a browser that cannot keep cookies at all fails visibly instead of bouncing forever.
+    /// </remarks>
+    private static IResult RestartLoginOrFail(
+        HttpContext ctx, AuthagonalBffOptions o, string code, ILogger log, string reason)
+    {
+        var retryCookie = o.CookieName + RetrySuffix;
+        // What distinguishes the causes is how many correlation cookies the browser still holds:
+        // none at all points at a browser that never ran the login leg (a different browser, or
+        // cookies cleared); several points at eviction by PruneCorrelationCookies after repeated
+        // login attempts; exactly the expected one missing while others remain points at a callback
+        // replayed after its cookie was consumed. Guessing between them cost a round of theories.
+        var outstanding = ctx.Request.Cookies.Keys.Count(k => k.StartsWith(o.CorrelationCookieName, StringComparison.Ordinal));
+        if (ctx.Request.Cookies.ContainsKey(retryCookie))
+        {
+            log.LogWarning(
+                "BFF callback failed again after a restart ({Reason}); {Outstanding} correlation cookie(s) present. "
+                + "Giving up rather than looping — this browser is not keeping the cookie.", reason, outstanding);
+            ctx.Response.Cookies.Delete(retryCookie, TransientCookieOptions(ctx, o));
+            return Fail(code);
+        }
+        log.LogInformation(
+            "BFF callback has no usable correlation ({Reason}); {Outstanding} correlation cookie(s) present. "
+            + "Restarting the login once — the provider session should complete it silently.", reason, outstanding);
+        ctx.Response.Cookies.Append(retryCookie, "1", TransientCookieOptions(ctx, o));
+        return Results.Redirect($"{o.BasePath}/login");
+    }
+
     private static bool HasAntiForgeryHeader(HttpContext ctx, AuthagonalBffOptions o)
         => ctx.Request.Headers.ContainsKey(o.AntiForgeryHeader);
 
@@ -632,7 +676,7 @@ internal static class BffEndpoints
         SameSite = SameSiteMode.Lax,
         Path = "/",
         IsEssential = true,
-        Expires = DateTimeOffset.UtcNow.AddMinutes(15),
+        Expires = DateTimeOffset.UtcNow.Add(o.CorrelationLifetime),
     };
 
     private static bool IsSecure(HttpContext ctx, string cookieName)

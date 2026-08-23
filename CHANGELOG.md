@@ -2,6 +2,24 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **A login that spans an email verification no longer dead-ends on `invalid_correlation`.** The
+  callback treated a missing or unusable correlation cookie as fatal and returned the bare error
+  code as plain text — a broken page, shown to a user who did nothing wrong, at the worst possible
+  moment: immediately after they verified their address. It now restarts the login leg exactly once
+  (tracked by a short-lived marker cookie, so a browser that cannot keep cookies fails visibly
+  rather than looping). The user is already authenticated at the provider by then, so the restart
+  completes silently through SSO and lands them signed in. Restarting mints a fresh state, nonce
+  and PKCE verifier, so nothing about the old correlation is trusted.
+- **`AuthagonalBffOptions.CorrelationLifetime`** (default 30 minutes, was a hard-coded 15) — the
+  window a login may take between `{BasePath}/login` and the callback. Fifteen minutes cannot span
+  sign up → wait for email → click → sign in.
+- The callback now **logs why** a correlation was unusable, with the number of correlation cookies
+  the browser still holds — which is what distinguishes a browser that never ran the login leg
+  (none) from eviction after repeated attempts (several) from a replayed callback (the expected one
+  missing while others remain). Diagnosing this by hypothesis cost a round of wrong theories.
+
 ### Added
 
 - **`ITenantContext.DynamicClientRegistrationEnabled`** — a per-tenant answer to whether anonymous

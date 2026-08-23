@@ -77,6 +77,19 @@ public sealed class AuthagonalBffOptions
     /// <c>X-Authagonal-Bff</c>; any value is accepted, only presence is checked.</summary>
     public string AntiForgeryHeader { get; set; } = "X-Authagonal-Bff";
 
+    /// <summary>
+    /// How long a login may take between <c>{BasePath}/login</c> and the callback. It bounds the
+    /// per-login correlation cookie, which carries the state, nonce and PKCE verifier.
+    /// </summary>
+    /// <remarks>
+    /// Fifteen minutes was too short for the flow that actually matters on a new account: sign up,
+    /// wait for a verification email, click it, sign in. The authorize request resumes at the
+    /// identity provider long after the login leg started here, and the callback then arrives
+    /// against a cookie that has already expired. Thirty minutes covers a normal email round trip;
+    /// anything longer is handled by restarting the login rather than by widening this further.
+    /// </remarks>
+    public TimeSpan CorrelationLifetime { get; set; } = TimeSpan.FromMinutes(30);
+
     /// <summary>Maximum lifetime of a BFF session regardless of token refreshes.</summary>
     public TimeSpan SessionLifetime { get; set; } = TimeSpan.FromHours(8);
 
