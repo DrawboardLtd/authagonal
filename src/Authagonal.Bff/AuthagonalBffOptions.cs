@@ -117,6 +117,27 @@ public sealed class AuthagonalBffOptions
     public TimeSpan WsTicketLifetime { get; set; } = TimeSpan.FromSeconds(30);
 
     /// <summary>
+    /// Enables <c>GET {BasePath}/token?resource=…</c>: hands the browser an RFC 8693 EXCHANGED access
+    /// token — the session's token downscoped to one of <see cref="TokenEndpointResources"/> (the
+    /// <c>resource</c> the token is addressed to) and, when a <see cref="TokenEndpointExchangeParams"/>
+    /// value rides the query, bound to that context. For the one case the cookie model cannot cover:
+    /// a resource server on ANOTHER origin (an embedded iframe app, say) that the browser must call
+    /// with a bearer, where the BFF cookie cannot reach. The browser never sees the session's primary
+    /// token; what it gets is short-lived, audience-restricted and context-bound, and must be held in
+    /// memory only. Off by default. Requires the tenant client to hold the token-exchange grant and to
+    /// declare the resources as its audiences.
+    /// </summary>
+    public bool TokenEndpointEnabled { get; set; }
+
+    /// <summary>The <c>resource</c> values the token endpoint may address a token to. A request naming
+    /// anything else is refused — the allow-list is what keeps this from being a general-purpose mint.</summary>
+    public IList<string> TokenEndpointResources { get; set; } = new List<string>();
+
+    /// <summary>Query parameters the token endpoint forwards into the exchange as context bindings
+    /// (e.g. <c>["project_id"]</c>), validated by the tenant's transformer like <see cref="TicketExchangeParams"/>.</summary>
+    public IList<string> TokenEndpointExchangeParams { get; set; } = new List<string>();
+
+    /// <summary>
     /// When true, a proxy request (<c>{BasePath}/api/**</c>) with no session — or a session that can no
     /// longer be refreshed — is forwarded to the upstream WITHOUT an <c>Authorization</c> header instead
     /// of being rejected with 401. This reproduces classic SPA semantics where anonymous calls reach the
@@ -154,6 +175,10 @@ public sealed class AuthagonalBffOptions
 
     internal void Validate()
     {
+        if (TokenEndpointEnabled && TokenEndpointResources.Count == 0)
+            throw new InvalidOperationException(
+                "AuthagonalBffOptions.TokenEndpointEnabled requires at least one TokenEndpointResources entry — the endpoint only mints audience-restricted tokens.");
+
         // In multi-tenant mode a registered IBffTenantResolver supplies Authority/ClientId/ClientSecret per
         // tenant, so the static single-tenant fields are not required (and are ignored if set).
         if (!IsMultiTenant)

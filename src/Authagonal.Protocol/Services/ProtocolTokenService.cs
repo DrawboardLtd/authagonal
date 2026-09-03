@@ -36,7 +36,10 @@ public sealed class ProtocolTokenService(
     // Throttles the approval poll (RFC 8628-style slow_down). AddAuthagonalProtocol registers one, so
     // this is present in every composed host; optional only so a hand-constructed service still works,
     // and a host that registers its own gets that one's scoping (the Server's is per tenant).
-    IRateLimiter? rateLimiter = null) : IProtocolTokenService
+    IRateLimiter? rateLimiter = null,
+    // Client-credentials host seam (see IClientCredentialsClaimsTransformer). Optional for the same
+    // reason as the seams above; AddAuthagonalProtocol registers the no-op default.
+    IClientCredentialsClaimsTransformer? clientCredentialsTransformer = null) : IProtocolTokenService
 {
     /// <summary>
     /// Process-wide fallback for the approval-poll throttle when the host registers no
@@ -113,7 +116,12 @@ public sealed class ProtocolTokenService(
         string? authorizationDetailsJson = null,
         string? actorJson = null,
         DateTimeOffset? notAfter = null,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        // Claims a host seam forced onto a SUBJECT-LESS token (the client-credentials transformer).
+        // A subject carries its own forced claims in OidcSubject.AdditionalClaims; this is the same
+        // mechanism for a mint that has no subject to hang them on. Trailing so the positional
+        // callers above stay as they are.
+        IReadOnlyDictionary<string, string>? forcedClaims = null)
     {
         var now = DateTimeOffset.UtcNow;
         var scopeList = scopes.ToList();
@@ -199,6 +207,18 @@ public sealed class ProtocolTokenService(
         if (subject?.AdditionalClaims is not null)
         {
             foreach (var (key, value) in subject.AdditionalClaims)
+            {
+                if (string.IsNullOrEmpty(key)) continue;
+                if (ReservedClaimNames.Contains(key)) continue;
+                claims[key] = value;
+            }
+        }
+
+        // The same, for a mint with no subject: what the client-credentials transformer forced. Same
+        // reserved-name gate — a host seam asserts context, never protocol.
+        if (forcedClaims is not null)
+        {
+            foreach (var (key, value) in forcedClaims)
             {
                 if (string.IsNullOrEmpty(key)) continue;
                 if (ReservedClaimNames.Contains(key)) continue;
@@ -1053,6 +1073,7 @@ public sealed class ProtocolTokenService(
         string clientId,
         IEnumerable<string> scopes,
         IEnumerable<string>? resources = null,
+        IReadOnlyDictionary<string, string>? extraParameters = null,
         CancellationToken ct = default)
     {
         var client = await clientStore.GetAsync(clientId, ct)
@@ -1131,8 +1152,28 @@ public sealed class ProtocolTokenService(
                 }, ct);
         }
 
-        var accessToken = await CreateAccessTokenAsync(
-            null, client, scopeList, resourceList, authorityJson, null, notAfter, ct);
+        // Host seam: a first-party service client may name the context its token acts in (an
+        // organization_id, say) through non-protocol parameters, and the host decides whether that
+        // binding stands and what claims it becomes. Runs after every protocol check above, so a
+        // transformer only ever sees a client that is allowed the grant, the scopes and the resources.
+        IReadOnlyDictionary<string, string>? forcedClaims = null;
+        if (clientCredentialsTransformer is not null)
+        {
+            var transformed = await clientCredentialsTransformer.TransformAsync(
+                client, scopeList, extraParameters ?? EmptyExtraParameters, ct);
+            switch (transformed)
+            {
+                case ClientCredentialsClaimsResult.Rejected rejected:
+                    throw new ProtocolTokenException(rejected.Error, rejected.Description);
+                case ClientCredentialsClaimsResult.Allowed { Claims.Count: > 0 } allowed:
+                    forcedClaims = allowed.Claims;
+                    break;
+            }
+        }
+
+        var minted = await MintAccessTokenAsync(
+            null, client, scopeList, resourceList, authorityJson, null, notAfter, ct, forcedClaims);
+        var accessToken = minted.Token;
 
         logger.LogInformation("Client credentials token issued for client {ClientId}", clientId);
 

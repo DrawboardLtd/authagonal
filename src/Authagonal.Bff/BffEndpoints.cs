@@ -325,6 +325,75 @@ internal static class BffEndpoints
         }, BffJsonContext.Default.WsTicketResponse);
     }
 
+    /// <summary>GET <c>{BasePath}/token?resource=…[&amp;project_id=…]</c> (opt-in via
+    /// <see cref="AuthagonalBffOptions.TokenEndpointEnabled"/>). Exchanges the session's (refreshed) access
+    /// token for one addressed to the named <c>resource</c> — which must be on
+    /// <see cref="AuthagonalBffOptions.TokenEndpointResources"/> — bound to any allow-listed context
+    /// parameter on the query, and hands THAT token to the browser. This is the one deliberate exception to
+    /// "the browser holds no token": a resource server on another origin (an iframe app the SPA embeds) can
+    /// be reached with neither the BFF cookie nor the proxy, so it is given the narrowest credential that
+    /// works — short-lived, single-audience, single-context — never the session's primary token.
+    /// The SPA must keep it in memory and re-fetch on expiry.</summary>
+    public static async Task<IResult> TokenAsync(
+        HttpContext ctx,
+        IOptions<AuthagonalBffOptions> options,
+        IBffSessionStore store,
+        BffRefreshCoordinator refresher,
+        BffExchangedTokens exchangedTokens,
+        CancellationToken ct)
+    {
+        var o = options.Value;
+        if (!HasAntiForgeryHeader(ctx, o))
+            return Results.StatusCode(StatusCodes.Status401Unauthorized);
+        if (!ctx.Request.Cookies.TryGetValue(o.CookieName, out var sessionId) || string.IsNullOrEmpty(sessionId))
+            return Results.StatusCode(StatusCodes.Status401Unauthorized);
+
+        // The audience is the caller's to name but the BFF's to allow: a token for an unlisted resource is
+        // refused before any session work, so the endpoint cannot be turned into a general-purpose mint.
+        var resource = ctx.Request.Query["resource"].FirstOrDefault();
+        if (string.IsNullOrEmpty(resource) || !o.TokenEndpointResources.Contains(resource, StringComparer.Ordinal))
+            return Results.BadRequest(new { error = "resource_not_allowed" });
+
+        var session = await store.GetAsync(sessionId, ct);
+        if (session is null || session.ExpiresAt <= DateTimeOffset.UtcNow)
+            return Results.StatusCode(StatusCodes.Status401Unauthorized);
+        var fresh = await refresher.EnsureFreshAsync(session, ct);
+        if (fresh is null)
+            return Results.StatusCode(StatusCodes.Status401Unauthorized);
+
+        // `resource` rides the exchange as an RFC 8707 resource indicator (it is not a protocol field the
+        // token client sets itself, so it passes through as an extension parameter), and the context
+        // bindings exactly as the ws-ticket forwards them. Both are part of the cache key.
+        var exchangeParams = new Dictionary<string, string>(StringComparer.Ordinal) { ["resource"] = resource };
+        foreach (var param in o.TokenEndpointExchangeParams)
+            if (ctx.Request.Query.TryGetValue(param, out var values) && values.FirstOrDefault() is { Length: > 0 } value)
+                exchangeParams[param] = value;
+
+        var exchanged = await exchangedTokens.GetOrExchangeAsync(fresh, fresh.AccessToken, exchangeParams, ct);
+        if (exchanged is null)
+            return Results.StatusCode(StatusCodes.Status403Forbidden);
+
+        // Remaining lifetime read off the token itself, so a cached exchange reports what is left of it
+        // rather than a full lifetime it no longer has.
+        var expiresIn = 0;
+        try
+        {
+            var validTo = new JsonWebToken(exchanged).ValidTo;
+            expiresIn = Math.Max(0, (int)(validTo - DateTime.UtcNow).TotalSeconds);
+        }
+        catch (ArgumentException)
+        {
+            // An opaque token reports no lifetime; the SPA re-fetches on the first 401.
+        }
+
+        ctx.Response.Headers.CacheControl = "no-store";
+        return Results.Json(new BrowserTokenResponse
+        {
+            AccessToken = exchanged,
+            ExpiresInSeconds = expiresIn,
+        }, BffJsonContext.Default.BrowserTokenResponse);
+    }
+
     /// <summary>Cache key a websocket ticket is stored under — the contract the resolving API host reads.
     /// Public so a host in a separate assembly can build it without hardcoding the <c>agbff:wst:</c> prefix.</summary>
     public static string WsTicketKey(string ticket) => $"agbff:wst:{ticket}";

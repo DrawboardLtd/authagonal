@@ -23,6 +23,14 @@ internal sealed class WsTicketResponse
     public int ExpiresInSeconds { get; set; }
 }
 
+/// <summary>The <c>/bff/token</c> response shape: an exchanged, audience-restricted access token for a
+/// resource server the BFF cookie cannot reach. Hold it in memory only; re-fetch when it expires.</summary>
+internal sealed class BrowserTokenResponse
+{
+    public string AccessToken { get; set; } = default!;
+    public int ExpiresInSeconds { get; set; }
+}
+
 // Source-generated (trim-safe) JSON for everything the BFF serializes itself.
 [JsonSourceGenerationOptions(
     PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase,
@@ -31,6 +39,7 @@ internal sealed class WsTicketResponse
 [JsonSerializable(typeof(CorrelationState))]
 [JsonSerializable(typeof(UserResponse))]
 [JsonSerializable(typeof(WsTicketResponse))]
+[JsonSerializable(typeof(BrowserTokenResponse))]
 [JsonSerializable(typeof(List<string>))]
 [JsonSerializable(typeof(Dictionary<string, string>))]
 internal sealed partial class BffJsonContext : JsonSerializerContext;

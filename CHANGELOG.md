@@ -1,5 +1,28 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- **`IClientCredentialsClaimsTransformer` — a host seam on the `client_credentials` grant.** The
+  machine-caller counterpart of `ITokenExchangeSubjectTransformer`: non-protocol form parameters on a
+  client-credentials request (an `organization_id`, say) are forwarded to the registered transformer,
+  which validates the binding against the host's own authority and forces the resulting claims onto
+  the token, or rejects the issuance with an OAuth error. A client-credentials token has no `sub`, so
+  the exchange seam could never reach it and a first-party service had no way to name the context it
+  was acting in — the one thing a resource server partitioned by organization needs from it. Reserved
+  protocol claim names are blocked at mint exactly as they are for `OidcSubject.AdditionalClaims`.
+  `AddAuthagonalProtocol` registers a no-op default; `IProtocolTokenService.HandleClientCredentialsAsync`
+  gains an optional `extraParameters` argument.
+- **BFF: `GET {BasePath}/token` (opt-in, `TokenEndpointEnabled`).** Hands the browser an EXCHANGED access
+  token — the session's token downscoped to an allow-listed `resource` (`TokenEndpointResources`) and
+  bound to any allow-listed context parameter on the query (`TokenEndpointExchangeParams`, e.g.
+  `project_id`) — for the one case the cookie model cannot cover: a resource server on another origin,
+  such as an iframe app the SPA embeds, that must be called with a bearer. The browser never sees the
+  session's primary token; what it gets is short-lived, single-audience and single-context, cached per
+  (session, resource, binding) like the proxy's exchanged tokens, and reported with its remaining
+  lifetime. A request naming an unlisted resource is refused before any session work.
+
 ## [0.25.10], 2026-09-03
 
 ### Security

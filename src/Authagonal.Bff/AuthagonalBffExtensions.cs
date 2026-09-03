@@ -111,7 +111,8 @@ public static class AuthagonalBffExtensions
     }
 
     /// <summary>Maps the BFF endpoints: <c>{BasePath}/login</c>, <c>{BasePath}/user</c>,
-    /// <c>{BasePath}/logout</c>, and the callback at <c>CallbackPath</c>.</summary>
+    /// <c>{BasePath}/logout</c>, the callback at <c>CallbackPath</c>, and the opt-in
+    /// <c>{BasePath}/ws-ticket</c>, <c>{BasePath}/token</c> and <c>{BasePath}/api/**</c>.</summary>
     public static IEndpointRouteBuilder MapAuthagonalBff(this IEndpointRouteBuilder endpoints)
     {
         var options = endpoints.ServiceProvider.GetRequiredService<IOptions<AuthagonalBffOptions>>().Value;
@@ -131,6 +132,11 @@ public static class AuthagonalBffExtensions
         // SHARED distributed cache (Redis) — see AuthagonalBffOptions.WsTicketsEnabled.
         if (options.WsTicketsEnabled)
             group.MapGet("/ws-ticket", BffEndpoints.WsTicketAsync);
+
+        // Exchanged-token hand-off to the browser (opt-in): for a resource server on another origin that
+        // the SPA must call with a bearer. Audience allow-listed, context-bound, short-lived.
+        if (options.TokenEndpointEnabled)
+            group.MapGet("/token", BffEndpoints.TokenAsync);
 
         // Token-injecting proxy (only if upstreams are configured). It does its own anti-forgery-header
         // check and forwards arbitrary content, so the framework antiforgery filter is disabled here.

@@ -72,10 +72,17 @@ public interface IProtocolTokenService
         IEnumerable<string>? resources = null,
         CancellationToken ct = default);
 
+    /// <summary>
+    /// OAuth 2.0 client_credentials grant. <paramref name="extraParameters"/> are the request's
+    /// non-protocol form parameters, forwarded to the registered
+    /// <see cref="IClientCredentialsClaimsTransformer"/> — the host seam that lets a first-party
+    /// service client name the context (an organization, say) its token is acting in.
+    /// </summary>
     Task<TokenResponse> HandleClientCredentialsAsync(
         string clientId,
         IEnumerable<string> scopes,
         IEnumerable<string>? resources = null,
+        IReadOnlyDictionary<string, string>? extraParameters = null,
         CancellationToken ct = default);
 
     /// <summary>

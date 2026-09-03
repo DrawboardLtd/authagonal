@@ -63,6 +63,14 @@ internal static class TokenGrantHandlers
         }
     }
 
+    // OAuth protocol fields on a client_credentials request; anything else is a host extension
+    // parameter forwarded to IClientCredentialsClaimsTransformer (context bindings like organization_id).
+    private static readonly HashSet<string> ClientCredentialsProtocolParameters = new(StringComparer.Ordinal)
+    {
+        "grant_type", "client_id", "client_secret", "client_assertion", "client_assertion_type",
+        "scope", "resource", "audience",
+    };
+
     public static async Task<IResult> HandleClientCredentials(
         IFormCollection form, IProtocolTokenService tokenService, string clientId, CancellationToken ct)
     {
@@ -70,10 +78,15 @@ internal static class TokenGrantHandlers
         var scopes = scope.Split(' ', StringSplitOptions.RemoveEmptyEntries);
         var resources = form["resource"].Where(r => !string.IsNullOrWhiteSpace(r)).Cast<string>().ToArray();
 
+        var extraParameters = form
+            .Where(kv => !ClientCredentialsProtocolParameters.Contains(kv.Key))
+            .ToDictionary(kv => kv.Key, kv => kv.Value.FirstOrDefault() ?? string.Empty, StringComparer.Ordinal);
+
         try
         {
             var response = await tokenService.HandleClientCredentialsAsync(
-                clientId, scopes, resources.Length > 0 ? resources : null, ct);
+                clientId, scopes, resources.Length > 0 ? resources : null,
+                extraParameters.Count > 0 ? extraParameters : null, ct);
             return TokenSuccess(response);
         }
         catch (ProtocolTokenException ex)

@@ -98,6 +98,7 @@ public sealed class AuthagonalTestFactory : IAsyncDisposable
     /// <summary>Every log record the host wrote — for asserting that a secret is absent from it.</summary>
     public RecordingLoggerProvider LogSink { get; } = new();
     public TestTokenExchangeSubjectTransformer ExchangeTransformer { get; } = new();
+    public TestClientCredentialsClaimsTransformer ClientCredentialsTransformer { get; } = new();
     public TestProvisioningOrchestrator Provisioning { get; } = new();
 
     /// <summary>Set before starting the factory to inject a mock HTTP handler for OIDC/SAML metadata.</summary>
@@ -358,6 +359,7 @@ public sealed class AuthagonalTestFactory : IAsyncDisposable
         // can be asserted to leave an attributable trail.
         services.AddSingleton<IAuditLogger>(AuditLog);
         services.AddSingleton<Authagonal.Protocol.ITokenExchangeSubjectTransformer>(ExchangeTransformer);
+        services.AddSingleton<Authagonal.Protocol.IClientCredentialsClaimsTransformer>(ClientCredentialsTransformer);
         services.AddSingleton<IProvisioningOrchestrator>(Provisioning);
         services.AddSingleton<ISecretProvider>(new PlaintextSecretProvider());
 

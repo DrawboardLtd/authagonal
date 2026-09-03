@@ -27,6 +27,28 @@ public sealed class TestEmailService : IEmailService
     }
 }
 
+/// <summary>
+/// Scriptable client-credentials seam. Default: pass-through. Set <see cref="Handler"/> to force claims or
+/// reject; every call is recorded so a test can assert what the endpoint forwarded.
+/// </summary>
+public sealed class TestClientCredentialsClaimsTransformer : Authagonal.Protocol.IClientCredentialsClaimsTransformer
+{
+    public List<(string ClientId, IReadOnlyList<string> Scopes, IReadOnlyDictionary<string, string> ExtraParameters)> Calls { get; } = [];
+
+    public Func<OAuthClient, IReadOnlyList<string>, IReadOnlyDictionary<string, string>, Authagonal.Protocol.ClientCredentialsClaimsResult>? Handler { get; set; }
+
+    public Task<Authagonal.Protocol.ClientCredentialsClaimsResult> TransformAsync(
+        OAuthClient client,
+        IReadOnlyList<string> grantedScopes,
+        IReadOnlyDictionary<string, string> extraParameters,
+        CancellationToken ct = default)
+    {
+        Calls.Add((client.ClientId, grantedScopes, extraParameters));
+        return Task.FromResult(Handler?.Invoke(client, grantedScopes, extraParameters)
+            ?? Authagonal.Protocol.ClientCredentialsClaimsResult.Allow());
+    }
+}
+
 public sealed class TestAuthHook : IAuthHook
 {
     public List<(string UserId, string Email, string Method)> Authentications { get; } = [];

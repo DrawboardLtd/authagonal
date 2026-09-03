@@ -96,6 +96,11 @@ public static class AuthagonalProtocolExtensions
         // of this call (context-bound tokens: validate extra params, force binding claims).
         services.TryAddSingleton<ITokenExchangeSubjectTransformer, NullTokenExchangeSubjectTransformer>();
 
+        // Client-credentials host seam — the machine-caller counterpart of the exchange transformer:
+        // a first-party service client can name the context it acts in (e.g. organization_id) and the
+        // host forces the validated claims onto the token. No-op unless the host registers its own.
+        services.TryAddSingleton<IClientCredentialsClaimsTransformer, NullClientCredentialsClaimsTransformer>();
+
         // Per-user scope entitlement (Scope.AllowedRoles). Registered here rather than only in
         // AddAuthagonal so every host embedding the protocol surface gets it — the authorize
         // endpoint takes it as a service, and an unregistered service on a GET binds as a BODY
