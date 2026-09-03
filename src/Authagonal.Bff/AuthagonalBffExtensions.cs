@@ -99,6 +99,7 @@ public static class AuthagonalBffExtensions
         // (AddSingleton) before or after this call — TryAdd keeps the custom one — and sets
         // AuthagonalBffOptions.TenantQueryParam so /bff/login reads the tenant key.
         services.TryAddSingleton<IBffTenantResolver, StaticBffTenantResolver>();
+        services.TryAddSingleton<IBffIdTokenReader, BffIdTokenReader>();
         services.TryAddSingleton<BffRefreshCoordinator>();
         services.TryAddSingleton<BffExchangedTokens>();
 

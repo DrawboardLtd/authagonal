@@ -16,11 +16,6 @@ internal static class BffEndpoints
     private const string CorrelationPurpose = "agbff-correlation-v1";
 
     // id_token claims that are protocol machinery, not user profile — never surfaced to the SPA.
-    private static readonly HashSet<string> ProtocolClaims = new(StringComparer.Ordinal)
-    {
-        "iss", "aud", "exp", "iat", "nbf", "nonce", "at_hash", "c_hash", "s_hash",
-        "azp", "jti", "sid", "auth_time", "acr", "amr", "typ",
-    };
 
     public static async Task<IResult> LoginAsync(
         HttpContext ctx,
@@ -181,7 +176,7 @@ internal static class BffEndpoints
             // id_tokens, the logout consumer below, token exchange — and missed this one, which is
             // the same class of token. OIDC Core §3.1.3.7 step 7 expects the client to know the
             // algorithm it registered for rather than take it from the token header.
-            ValidAlgorithms = AsymmetricSigningAlgorithms,
+            ValidAlgorithms = BffClaims.AsymmetricSigningAlgorithms,
             RequireSignedTokens = true,
             ValidateIssuerSigningKey = true,
         });
@@ -206,7 +201,7 @@ internal static class BffEndpoints
             RefreshToken = tokenResult.RefreshToken,
             AccessTokenExpiresAt = DateTimeOffset.UtcNow.AddSeconds(tokenResult.ExpiresIn),
             ExpiresAt = DateTimeOffset.UtcNow.Add(o.SessionLifetime),
-            Claims = ExtractClaims(jwt),
+            Claims = BffClaims.Extract(jwt),
         };
         await store.SetAsync(session, ct);
         // This login completed, so the one-shot restart marker has done its job; leaving it would
@@ -484,7 +479,7 @@ internal static class BffEndpoints
             IssuerSigningKeys = config.SigningKeys,
             ValidateLifetime = false,      // a logout token carries no exp
             RequireExpirationTime = false,
-            ValidAlgorithms = AsymmetricSigningAlgorithms,
+            ValidAlgorithms = BffClaims.AsymmetricSigningAlgorithms,
             // Both default to something weaker than the callback path sets: IdentityModel 8.17.0
             // defaults ValidateIssuerSigningKey to false, so the callback checked signing-key validity
             // periods and this consumer did not. Set explicitly rather than inherited, so the two
@@ -622,22 +617,6 @@ internal static class BffEndpoints
         return "/";
     }
 
-    private static Dictionary<string, string> ExtractClaims(JsonWebToken jwt)
-    {
-        var claims = new Dictionary<string, string>(StringComparer.Ordinal);
-        foreach (var claim in jwt.Claims)
-        {
-            if (ProtocolClaims.Contains(claim.Type)) continue;
-            // Array claims (roles, groups) arrive as repeated claim types — space-join so the SPA
-            // sees the full set (previously only the first value survived). NOTE: this assumes individual
-            // values contain no spaces (true for roles/groups); a value with an embedded space would be
-            // indistinguishable from two separate values downstream.
-            claims[claim.Type] = claims.TryGetValue(claim.Type, out var existing)
-                ? $"{existing} {claim.Value}"
-                : claim.Value;
-        }
-        return claims;
-    }
 
     private static string Base64Url(byte[] bytes) => WebEncoders.Base64UrlEncode(bytes);
 
@@ -650,12 +629,6 @@ internal static class BffEndpoints
     /// one cannot be injected, but pinning keeps the accepted set a property of this code rather than
     /// of a library default, and excludes the symmetric algorithms that make key confusion possible.
     /// </remarks>
-    private static readonly string[] AsymmetricSigningAlgorithms =
-    [
-        SecurityAlgorithms.RsaSha256, SecurityAlgorithms.RsaSha384, SecurityAlgorithms.RsaSha512,
-        SecurityAlgorithms.RsaSsaPssSha256, SecurityAlgorithms.RsaSsaPssSha384, SecurityAlgorithms.RsaSsaPssSha512,
-        SecurityAlgorithms.EcdsaSha256, SecurityAlgorithms.EcdsaSha384, SecurityAlgorithms.EcdsaSha512,
-    ];
 
     private static bool FixedTimeEquals(string a, string b)
         => CryptographicOperations.FixedTimeEquals(Encoding.UTF8.GetBytes(a), Encoding.UTF8.GetBytes(b));

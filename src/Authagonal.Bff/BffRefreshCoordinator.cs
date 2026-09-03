@@ -45,7 +45,8 @@ internal sealed class BffRefreshCoordinator(
     IBffTenantResolver tenants,
     IOptions<AuthagonalBffOptions> options,
     ILogger<BffRefreshCoordinator> logger,
-    ILeaseProvider? leases = null)
+    ILeaseProvider? leases = null,
+    IBffIdTokenReader? idTokens = null)
 {
     private readonly AuthagonalBffOptions _o = options.Value;
     private readonly ConcurrentDictionary<string, SemaphoreSlim> _gates = new();
@@ -128,7 +129,19 @@ internal sealed class BffRefreshCoordinator(
                 current.AccessToken = result.AccessToken;
                 current.RefreshToken = result.RefreshToken ?? current.RefreshToken;
                 if (result.IdToken is not null)
+                {
                     current.IdToken = result.IdToken;
+                    // The refreshed id_token carries the user's CURRENT claims — a role granted since
+                    // login arrives here, not at the next login. Validated like the login token, and
+                    // it must be the session's own subject; on any failure the claims held stand.
+                    if (idTokens is not null && await idTokens.TryReadAsync(tenant, result.IdToken, ct) is { } refreshed)
+                    {
+                        if (string.Equals(refreshed.Subject, current.Subject, StringComparison.Ordinal))
+                            current.Claims = BffClaims.Extract(refreshed);
+                        else
+                            logger.LogWarning("BFF refresh: id_token subject differs from session {SessionId}; claims kept.", current.SessionId);
+                    }
+                }
                 current.AccessTokenExpiresAt = DateTimeOffset.UtcNow.AddSeconds(result.ExpiresIn);
                 await store.SetAsync(current, ct);
                 return current;
