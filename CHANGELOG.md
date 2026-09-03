@@ -1,6 +1,18 @@
 # Changelog
 
-## [Unreleased]
+## [0.25.9], 2026-09-03
+
+### Fixed
+
+- **A session's claims now follow the refreshed id_token.** The BFF refresh coordinator swapped in
+  the new id_token and never read it, so `session.Claims` stayed exactly what the login handshake
+  extracted: a role granted after login (a `ca:tier2` seat, a new admin) was invisible for the
+  session's whole life — 30 days on a persistent cookie — unless the user logged out and in. The
+  refreshed id_token is validated the way the login token is (issuer, audience, signing keys,
+  lifetime, asymmetric algorithms only), must name the session's own subject, and its claims replace
+  the session's; on any failure the claims already held stand. `IBffIdTokenReader` is the seam.
+
+## [0.25.8], 2026-08-23
 
 ### Fixed
 
