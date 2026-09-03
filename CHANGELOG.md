@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.25.10], 2026-09-03
+
+### Security
+
+- **.NET runtime 10.0.11 / SDK 10.0.111** — the v0.25.9 server image failed its release scan on
+  CVE-2026-62901 (HIGH) in `Microsoft.NETCore.App.Runtime.linux-x64` 10.0.10. The SDK pin,
+  both workflows, every `packages.lock.json` (re-evaluated together, as the global.json note
+  prescribes) and the `sdk:10.0` / `aspnet:10.0` base-image digests move to the patched builds.
+  No code change; the 0.25.9 packages are unaffected — only the server image never published.
+
 ## [0.25.9], 2026-09-03
 
 ### Fixed
