@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.26.1], 2026-09-04
+
+### Added
+
+- **`ITurnstileKeyProvider` — the Turnstile key pair now follows the requesting HOST.** A sitekey names
+  a widget record at Cloudflare carrying an allowlist of hostnames, and the widget issues no token on
+  any host outside it — a client-side error 110200, so the form's submit never enables and nothing
+  reaches siteverify to explain why. A host serving ONE domain is unaffected and unchanged:
+  `OptionsTurnstileKeyProvider` reads both keys from `TurnstileOptions` exactly as before, registered
+  with `TryAddScoped` so every existing consumer keeps it without touching anything. A host serving
+  customer-supplied domains substitutes its own scoped implementation, because Cloudflare caps a widget
+  at 10 hostnames and an account at 20 widgets, so past ten customer domains they must be spread over
+  several widgets and the key pair depends on which one the requesting host was allocated to.
+  Both keys come from one object deliberately: resolved independently, the browser can render widget A
+  while the server verifies against widget B, and Cloudflare reports that mismatch as an ordinary
+  failed verification — indistinguishable from a forged token, and silent.
+  `TurnstileVerifier.Enabled` now reflects the request's own secret rather than the configured one.
+
 ## [0.26.0], 2026-09-03
 
 ### Added
