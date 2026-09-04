@@ -37,6 +37,7 @@ Content-Type: application/json
   "clientId": "your-client-id",
   "description": "Entra ID SCIM token",
   "expiresInDays": 365,
+  "organizationId": "org_acme",
   "allowedEmailDomains": ["acme.example", "acme-eu.example"]
 }
 ```
@@ -51,11 +52,35 @@ The response includes the raw token **once**. It is stored as a SHA-256 hash and
   "description": "Entra ID SCIM token",
   "createdAt": "2024-01-01T00:00:00Z",
   "expiresAt": "2025-01-01T00:00:00Z",
+  "organizationId": "org_acme",
   "allowedEmailDomains": ["acme.example", "acme-eu.example"]
 }
 ```
 
 Omit `expiresInDays` (or pass `0`) for a non-expiring token.
+
+### Tagging a connector's users with an organization
+
+`organizationId` is optional. When set, every user provisioned through that token is written with that
+`OrganizationId`, which is emitted as the `org_id` claim on their tokens. SCIM has no way for a connector
+to say which of your customers it is syncing: core SCIM defines no organization attribute, and the
+enterprise extension is not implemented (see *Schema support* below). Binding it to the credential
+answers the question without one OAuth client per customer.
+
+Omit it and users are untagged, which is how every token behaved before this existed. Nothing is ever
+derived from the client id.
+
+Two rules:
+
+- **Creation only.** A later sync through a differently tagged token does not re-tag a live account.
+- **It precedes provisioning.** A TCC `/try` response only fills an organization that is still empty
+  (see [Provisioning](provisioning.md)), so an explicit credential binding wins, and the `/try` payload
+  carries the bound value so a downstream app can see which customer the sync came from.
+
+> **Tagging is not isolation.** Ownership is enforced per **client**, not per token. Two tokens issued
+> against the same client are one identity with two secrets, and each can read, rename, deactivate and
+> delete what the other created. That is fine when one party holds them all. If mutually untrusted
+> connectors each hold their own, give them a client each.
 
 ### Bounding which identities a connector may create
 
@@ -191,6 +216,24 @@ User and group endpoints are rate-limited to 200 requests per minute per SCIM cl
 | `displayName` | `DisplayName` |
 | `externalId` | `ExternalId` |
 | `members` | `MemberUserIds` |
+
+### Schema support
+
+Core SCIM 2.0 `User` and `Group` (RFC 7643) only. The tables above are the complete supported set.
+
+The **enterprise user extension is not implemented**, so `employeeNumber`, `costCenter`, `organization`,
+`division`, `department` and `manager` are accepted and ignored rather than stored, on create, replace and
+PATCH alike. Entra and Okta map several of these in their default attribute mappings, so a stock connector
+does not need them removed. (Before 0.27.0 a PATCH carrying one was rejected WHOLE with
+`400 invalidPath`, which failed every incremental sync while creates succeeded, and could strand an
+`active: false` deprovision behind an unrelated attribute.)
+
+The relaxation is narrow: a misspelled CORE path such as `name.givenNam` still answers `400`, and
+read-only attributes (`id`, `meta`, `groups`) keep their `mutability` refusal.
+
+Note that the enterprise `organization` attribute does **not** become the user's `org_id`. That value is
+asserted by the customer's own identity provider, whereas the credential binding above is set by the
+operator; use `organizationId` on the token instead.
 
 ## Behavior Details
 
