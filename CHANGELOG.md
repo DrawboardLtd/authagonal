@@ -1,5 +1,55 @@
 # Changelog
 
+## [0.27.0], 2026-09-05
+
+### Added
+
+- **`ScimToken.OrganizationId`: a SCIM credential can name the organization it provisions into.** Core
+  SCIM has no organization attribute and this provider does not implement the enterprise extension, so a
+  connector had no way to say which customer it was syncing. The only lever was
+  `ScimProvisionedByClientId`, which forced one OAuth client per customer to express something that is
+  not about authorization at all. The binding lives on the TOKEN, mirroring `AllowedEmailDomains`, so one
+  client can hand out a credential per customer: the authentication handler carries it as the
+  `scim_organization_id` claim and `POST /scim/v2/Users` stamps it on the new user, which surfaces as
+  `org_id` on every token they are issued. Applied at creation only, so a routine incremental sync never
+  silently re-tags a live account, and it precedes provisioning so a `/try` response, which only fills an
+  EMPTY organization, cannot override an explicit binding. An unbound token leaves users untagged, which
+  is what every existing token does; nothing is ever derived from the client id. **This is not an
+  isolation boundary.** Every SCIM ownership check keys on the client id, so two tokens on one client
+  still see each other's users. It decides how users are tagged, not who may touch them.
+  `POST /api/v1/scim/tokens` accepts `organizationId` and returns it on the list.
+- **An organization membership index, so "who is in this organization" is a single partition read.**
+  `OrganizationId` was a column on the user profile, which answers the opposite question, so
+  `IUserStore.ListAsync`/`ListPageAsync` filtered an organization by paging the whole tenant and
+  discarding non-matches. That is slow, and past the scan's page cap it is also WRONG: a sparse
+  organization came back short with nothing to say the answer had been truncated. `UserOrganizations`
+  holds one row per membership, partitioned by a SHA-256 of the id. The id is customer free text and
+  Azure Table forbids `/`, `\`, `#` and `?` in a key, and the index is written inside user creation, so a
+  raw key would have turned a downstream app's choice of id format into "this user cannot be created".
+  Matching stays ordinal, as the scan it replaces was. Maintained on create, update, delete and reindex,
+  write-before-delete like every other index here, and change-logged.
+  **Reads are gated on a coverage marker:** an empty partition is ambiguous between "no members" and "not
+  yet backfilled", and answering "nobody" to the second is the silent truncation the index exists to
+  remove, so until a completed `IUserStore.MigrateOrganizationIndexAsync` writes the marker, lookups keep
+  taking the correct scan path. `MarkOrganizationIndexCompleteAsync` asserts coverage without a scan, for
+  a store whose users all postdate the index.
+
+### Fixed
+
+- **SCIM PATCH no longer rejects an attribute from a schema extension it does not implement.**
+  `NormalizePath` strips only the two CORE schema URNs, so an enterprise-extension path stayed
+  unrecognised, landed in the unsupported list and answered 400 `invalidPath`. A PATCH is refused WHOLE,
+  so one unsupported attribute discarded every other operation in the same request. Entra and Okta both
+  map `department` and `manager` through that extension in their DEFAULT attribute mappings, so a stock
+  connector CREATED users happily and then FAILED every incremental sync, and a payload carrying
+  `department` alongside `active: false` left the leaver ACTIVE. POST and PUT had always ignored the
+  block, because nothing binds those JSON members, so only PATCH objected. Now any path still carrying a
+  schema URN after core stripping is ignored, on both the user and group loops, matching what the create
+  path already did. Deliberately narrow: a misspelled CORE path such as `name.givenNam` still answers
+  400, and read-only attributes keep their `mutability` refusal. A path that is the bare core schema URN
+  with no attribute now normalizes to pathless and applies the whole object, rather than being swallowed
+  by the new rule.
+
 ## [0.26.1], 2026-09-04
 
 ### Added

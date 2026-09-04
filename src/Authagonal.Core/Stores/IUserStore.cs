@@ -181,6 +181,29 @@ public interface IUserStore
     /// </summary>
     Task<int> MigrateUserLoginsAsync(bool dryRun, CancellationToken ct = default) => Task.FromResult(0);
 
+    /// <summary>
+    /// Write the organization-membership index rows for users that predate the index, then mark it
+    /// authoritative so <see cref="ListAsync"/> and <see cref="ListPageAsync"/> answer an
+    /// organization filter from the index instead of scanning and filtering every user.
+    /// </summary>
+    /// <remarks>
+    /// Returns the number of organization members written (or, on <paramref name="dryRun"/>, that would
+    /// be). Idempotent, so re-runs are safe and a partial run resumes by running again. Until a live run
+    /// completes, an organization filter keeps taking the correct-but-slow scan path — the index is
+    /// maintained from the moment it is configured, but it is not TRUSTED until something has confirmed
+    /// it covers accounts created before then. Default: no-op for stores with no such index, which
+    /// leaves them permanently on their existing filter and is the right answer for them.
+    /// </remarks>
+    Task<int> MigrateOrganizationIndexAsync(bool dryRun, CancellationToken ct = default) => Task.FromResult(0);
+
+    /// <summary>
+    /// Assert that the organization index already covers every user, without scanning. For a store
+    /// whose users were all created after the index existed — a freshly provisioned tenant — the index
+    /// is complete by construction, and this is what stops it taking the scan path until someone runs a
+    /// backfill it never needed. Default: no-op.
+    /// </summary>
+    Task MarkOrganizationIndexCompleteAsync(CancellationToken ct = default) => Task.CompletedTask;
+
     Task SetExternalIdAsync(string userId, string clientId, string externalId, CancellationToken ct = default);
     Task RemoveExternalIdAsync(string userId, string clientId, string externalId, CancellationToken ct = default);
 

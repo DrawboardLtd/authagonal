@@ -25,7 +25,8 @@ public sealed class TableUserStore(
     IIndexTokenizer? indexTokenizer = null,
     TableClient? userEmailDomainsTable = null,
     TableClient? userEmailLocalPrefixesTable = null,
-    TableClient? userRolesTable = null) : IUserStore
+    TableClient? userRolesTable = null,
+    TableClient? userOrganizationsTable = null) : IUserStore
 {
     private readonly EnvPartitioner _partitioner = partitioner; // Phase B2 will wrap PartitionKeys with _partitioner.PK
 
@@ -63,6 +64,11 @@ public sealed class TableUserStore(
     // uniform; _indexTokenized gates the migration-window read fallback (tokenized miss → legacy plaintext).
     private readonly IIndexTokenizer _tokenizer = indexTokenizer ?? NullIndexTokenizer.Instance;
     private readonly bool _indexTokenized = indexTokenizer is not null;
+
+    // Latches true once the organization index is known to cover the whole user table. Only ever
+    // false→true (the marker is never removed), so caching the positive cannot go stale; the negative
+    // is deliberately not cached, or a store built before the backfill would never notice it ran.
+    private volatile bool _organizationIndexComplete;
 
     // Collects every blind-index token one store operation needs (the email lookup key, domain key, and
     // the name / email-local-part prefix sets) and computes them in a single TokenizeBatchAsync call —
@@ -456,6 +462,47 @@ public sealed class TableUserStore(
             userRolesTable, _partitioner.PK(UserRoleEntity.Normalize(role)), userId, "UserRoles", ct);
     }
 
+    /// <summary>
+    /// Move a user's organization-membership row from <paramref name="previous"/> to
+    /// <paramref name="current"/>. Both may be null (no organization); a no-op when they match.
+    /// </summary>
+    /// <remarks>
+    /// Write-before-delete, for the same reason every other index here is: a throw between the two
+    /// calls must leave the user listed under one organization or both, never neither. Old and new
+    /// hash to different partitions, so the write cannot collide with the row about to be dropped.
+    /// </remarks>
+    private async Task SyncOrganizationIndexAsync(
+        string? previous, string? current, string userId, CancellationToken ct)
+    {
+        if (userOrganizationsTable is null) return;
+
+        var from = string.IsNullOrWhiteSpace(previous) ? null : previous;
+        var to = string.IsNullOrWhiteSpace(current) ? null : current;
+        if (string.Equals(from, to, StringComparison.Ordinal)) return;
+
+        if (to is not null) await WriteOrganizationIndexAsync(to, userId, ct);
+        if (from is not null) await DeleteOrganizationIndexAsync(from, userId, ct);
+    }
+
+    private async Task WriteOrganizationIndexAsync(string organizationId, string userId, CancellationToken ct)
+    {
+        if (userOrganizationsTable is null || string.IsNullOrWhiteSpace(organizationId)) return;
+
+        var entity = UserOrganizationEntity.Create(organizationId, userId);
+        entity.PartitionKey = _partitioner.PK(entity.PartitionKey);
+        await userOrganizationsTable.UpsertEntityAsync(entity, TableUpdateMode.Replace, ct);
+        await LogUpsertAsync("UserOrganizations", entity.PartitionKey, entity.RowKey, ct);
+    }
+
+    private Task DeleteOrganizationIndexAsync(string organizationId, string userId, CancellationToken ct)
+    {
+        if (userOrganizationsTable is null || string.IsNullOrWhiteSpace(organizationId)) return Task.CompletedTask;
+
+        return TryDeleteRowAsync(
+            userOrganizationsTable, _partitioner.PK(UserOrganizationEntity.KeyFor(organizationId)),
+            userId, "UserOrganizations", ct);
+    }
+
     private async Task TryDeleteRowAsync(TableClient table, string pk, string rk, string tombstoneTable, CancellationToken ct)
     {
         if (tombstoneWriter is not null)
@@ -755,6 +802,7 @@ public sealed class TableUserStore(
         {
             await WriteProfileIndexesAsync(user.NormalizedEmail, Normalize(user.FirstName), Normalize(user.LastName), user.Id, dropLegacy: false, ct);
             await SyncRoleIndexAsync(previousRoles: null, user.Roles, user.Id, ct);
+            await SyncOrganizationIndexAsync(previous: null, user.OrganizationId, user.Id, ct);
         }
         catch
         {
@@ -1086,6 +1134,9 @@ public sealed class TableUserStore(
             }
 
             await SyncRoleIndexAsync(oldRoles, user.Roles, user.Id, ct);
+            // Read the old value from the STORED entity for the same reason oldRoles is: the caller may
+            // have mutated the instance it read, so the incoming model can already hold the new value.
+            await SyncOrganizationIndexAsync(storedModel.OrganizationId, user.OrganizationId, user.Id, ct);
         }
         catch (RequestFailedException ex) when (ex.Status == 404)
         {
@@ -1135,6 +1186,11 @@ public sealed class TableUserStore(
             // "who administers this", which is the one question the index exists to answer.
             await SyncRoleIndexAsync(existing.Value.ToModel(_partitioner).Roles, roles: null, userId, ct);
 
+            // Drop the organization membership too, or a deleted account keeps being returned by
+            // "who is in this organization" — the same defect as a stale role membership, and the
+            // listing is what an operator reads to decide who still has access.
+            await SyncOrganizationIndexAsync(existing.Value.OrganizationId, current: null, userId, ct);
+
             // Delete all external login entries for this user — independent row pairs, so remove them
             // concurrently instead of one blocking round-trip each.
             var logins = await GetLoginsAsync(userId, ct);
@@ -1182,6 +1238,12 @@ public sealed class TableUserStore(
         {
             await WriteRoleIndexAsync(role, userId, ct);
         }
+
+        // 6. Organization membership, on the same upsert-only terms and for the same reason: the index
+        //    would otherwise describe only accounts touched since it shipped. OrganizationId is stored
+        //    in the clear, so this needs nothing from the decrypt above.
+        if (!string.IsNullOrWhiteSpace(entity.OrganizationId))
+            await WriteOrganizationIndexAsync(entity.OrganizationId, userId, ct);
     }
 
     /// <summary>
@@ -1310,6 +1372,9 @@ public sealed class TableUserStore(
     public async Task<(IReadOnlyList<AuthUser> Users, bool HasMore)> ListAsync(
         string? organizationId, int startIndex, int count, CancellationToken ct = default)
     {
+        if (organizationId is not null && await OrganizationIndexIsAuthoritativeAsync(ct))
+            return await ListByOrganizationOffsetAsync(organizationId, startIndex, count, ct);
+
         var results = new List<AuthUser>();
         var skipped = 0;
         var start = Math.Max(0, startIndex);
@@ -1427,6 +1492,9 @@ public sealed class TableUserStore(
 
     public async Task<UserPage> ListPageAsync(string? organizationId, int count, string? continuationToken, CancellationToken ct = default)
     {
+        if (organizationId is not null && await OrganizationIndexIsAuthoritativeAsync(ct))
+            return await ListByOrganizationPageAsync(organizationId, count, continuationToken, ct);
+
         var range = _partitioner.RangeForEnv();
         var query = range is null
             ? usersTable.QueryAsync<UserEntity>(
@@ -1454,6 +1522,192 @@ public sealed class TableUserStore(
                      && e.ScimProvisionedByClientId == scimClientId,
                 maxPerPage: count, cancellationToken: ct);
         return await ReadPageAsync(query, organizationId: null, count, continuationToken, ct);
+    }
+
+    /// <summary>
+    /// True when the organization index may be used to ANSWER a query rather than merely maintained.
+    /// </summary>
+    /// <remarks>
+    /// Gated on the coverage marker (see <see cref="UserOrganizationEntity.CoverageMarkerKey"/>), because
+    /// an index that only describes accounts touched since it shipped would turn a slow-but-correct
+    /// listing into a fast and quietly incomplete one. Until the backfill has run, callers keep the scan.
+    /// The marker never clears, so the positive is cached; the negative is re-read, which costs one point
+    /// read per listing on tenants that have not been backfilled yet.
+    /// </remarks>
+    private async Task<bool> OrganizationIndexIsAuthoritativeAsync(CancellationToken ct)
+    {
+        if (userOrganizationsTable is null) return false;
+        if (_organizationIndexComplete) return true;
+
+        try
+        {
+            await userOrganizationsTable.GetEntityAsync<TableEntity>(
+                _partitioner.PK(UserOrganizationEntity.CoverageMarkerKey),
+                UserOrganizationEntity.CoverageMarkerRowKey, cancellationToken: ct);
+            _organizationIndexComplete = true;
+            return true;
+        }
+        catch (RequestFailedException ex) when (ex.Status == 404)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Cursor page of one organization's members, read from the index: a single-partition query that
+    /// touches exactly the rows it returns, then a point read per user.
+    /// </summary>
+    /// <remarks>
+    /// The continuation token is the INDEX query's token, not the user table's. Both are opaque to the
+    /// caller and both come back through the same <see cref="UserPage"/>, so a caller cannot tell them
+    /// apart — but a token minted while the index was authoritative and fed back after it was not (or
+    /// the reverse) would be handed to the wrong query. That cannot happen here: the marker never
+    /// clears, so a listing cannot cross from the index path to the scan path mid-pagination.
+    /// <para>
+    /// A membership row whose user has since vanished is skipped rather than erroring, on the same terms
+    /// as the role index: the index is a convenience over the user store, never the authority on who
+    /// exists.
+    /// </para>
+    /// </remarks>
+    private async Task<UserPage> ListByOrganizationPageAsync(
+        string organizationId, int count, string? continuationToken, CancellationToken ct)
+    {
+        var pk = _partitioner.PK(UserOrganizationEntity.KeyFor(organizationId));
+        var query = userOrganizationsTable!.QueryAsync<UserOrganizationEntity>(
+            e => e.PartitionKey == pk, maxPerPage: count, cancellationToken: ct);
+
+        var results = new List<AuthUser>();
+        string? nextToken = null;
+
+        await foreach (var page in query.AsPages(continuationToken))
+        {
+            foreach (var row in page.Values)
+            {
+                var user = await GetAsync(row.UserId, ct);
+                if (user is not null) results.Add(user);
+            }
+
+            nextToken = page.ContinuationToken;
+            // Tokens are only valid at page boundaries, so pages are never split and count is a hint.
+            // Keep consuming while a page yields nothing but the listing continues — an organization
+            // whose members were all deleted would otherwise return an empty page with a token and look
+            // exhausted to a caller that stops on an empty result.
+            if (results.Count >= count || nextToken is null) break;
+        }
+
+        return new UserPage(results, nextToken);
+    }
+
+    /// <summary>Offset-paged variant for the legacy <see cref="ListAsync"/> contract.</summary>
+    private async Task<(IReadOnlyList<AuthUser> Users, bool HasMore)> ListByOrganizationOffsetAsync(
+        string organizationId, int startIndex, int count, CancellationToken ct)
+    {
+        var pk = _partitioner.PK(UserOrganizationEntity.KeyFor(organizationId));
+        var query = userOrganizationsTable!.QueryAsync<UserOrganizationEntity>(
+            e => e.PartitionKey == pk, cancellationToken: ct);
+
+        var results = new List<AuthUser>();
+        var skipped = 0;
+        var start = Math.Max(0, startIndex);
+
+        await foreach (var row in query.WithCancellation(ct))
+        {
+            // Skip on the INDEX row, before the point read: the whole gain over the scan is not
+            // fetching (and not decrypting) the users being paged past.
+            if (skipped < start) { skipped++; continue; }
+
+            var user = await GetAsync(row.UserId, ct);
+            if (user is null) continue;
+
+            results.Add(user);
+            if (results.Count > count) break;
+        }
+
+        var hasMore = results.Count > count;
+        if (hasMore) results.RemoveAt(results.Count - 1);
+        return (results, hasMore);
+    }
+
+    /// <summary>
+    /// Write the organization-index rows for users that predate the index, and mark it authoritative.
+    /// </summary>
+    /// <remarks>
+    /// A table scan, like <see cref="MigrateExternalIdIndexAsync"/> and for a related reason: the rows
+    /// are derivable per user, but nothing knows WHICH users are missing one without looking at them
+    /// all. Idempotent — an already-indexed user is re-upserted to the same row — so re-runs are free
+    /// and a partial run resumes simply by running again.
+    /// <para>
+    /// Returns the number of users carrying an organization id that were (or, on
+    /// <paramref name="dryRun"/>, would be) written. A dry run is a preflight count and NOT an
+    /// "outstanding work" figure: it counts every organization member, indexed or not, because
+    /// establishing which rows already exist would cost the same reads as writing them. The completion
+    /// signal is the marker, not a zero.
+    /// </para>
+    /// <para>
+    /// The marker is written only by a live run that reached the end of the scan. A run that throws
+    /// part-way leaves it absent, so reads keep taking the correct scan path rather than trusting a
+    /// half-built index.
+    /// </para>
+    /// </remarks>
+    public async Task<int> MigrateOrganizationIndexAsync(bool dryRun, CancellationToken ct = default)
+    {
+        if (userOrganizationsTable is null) return 0;
+
+        // Env-scoped, same shape as EnumerateUserIdsAsync: live has no range filter; a sandbox env
+        // restricts to its "{env}|" PartitionKey range so the sweep never crosses env isolation.
+        // Project the two columns this needs and read them off a raw TableEntity, exactly as
+        // EnumerateUserIdsAsync does: a projected UserEntity would have to satisfy its required members
+        // from columns deliberately not selected.
+        string[] columns = ["PartitionKey", "RowKey", "OrganizationId"];
+        var range = _partitioner.RangeForEnv();
+        var query = range is null
+            ? usersTable.QueryAsync<TableEntity>(
+                e => e.RowKey == UserEntity.ProfileRowKey,
+                select: columns, cancellationToken: ct)
+            : usersTable.QueryAsync<TableEntity>(
+                e => e.PartitionKey.CompareTo(range.Value.Low) >= 0
+                     && e.PartitionKey.CompareTo(range.Value.High) < 0
+                     && e.RowKey == UserEntity.ProfileRowKey,
+                select: columns, cancellationToken: ct);
+
+        var written = 0;
+        await foreach (var entity in query.WithCancellation(ct))
+        {
+            // OrganizationId is stored in the clear, so the projection is enough — no profile decrypt,
+            // which is what keeps this affordable on a large tenant.
+            var organizationId = entity.GetString("OrganizationId");
+            if (string.IsNullOrWhiteSpace(organizationId)) continue;
+
+            var userId = _partitioner.Strip(entity.PartitionKey);
+            if (!dryRun) await WriteOrganizationIndexAsync(organizationId, userId, ct);
+            written++;
+        }
+
+        if (!dryRun) await MarkOrganizationIndexCompleteAsync(ct);
+        return written;
+    }
+
+    /// <summary>
+    /// Assert that the organization index covers every user, so reads may trust it.
+    /// </summary>
+    /// <remarks>
+    /// Called at the end of a completed backfill, and directly at tenant creation — a tenant with no
+    /// users has a complete index by construction, and without this it would take the scan path until
+    /// someone ran a sweep it never needed.
+    /// </remarks>
+    public async Task MarkOrganizationIndexCompleteAsync(CancellationToken ct = default)
+    {
+        if (userOrganizationsTable is null) return;
+
+        var marker = new TableEntity(
+            _partitioner.PK(UserOrganizationEntity.CoverageMarkerKey),
+            UserOrganizationEntity.CoverageMarkerRowKey)
+        {
+            ["CompletedAt"] = DateTimeOffset.UtcNow,
+        };
+        await userOrganizationsTable.UpsertEntityAsync(marker, TableUpdateMode.Replace, ct);
+        await LogUpsertAsync("UserOrganizations", marker.PartitionKey, marker.RowKey, ct);
+        _organizationIndexComplete = true;
     }
 
     /// <summary>

@@ -67,6 +67,18 @@ public static class ScimTokenEndpoints
                 }, AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 400);
         }
 
+        // Bounded like every other caller-supplied identifier here. It is written onto every user this
+        // credential creates and then emitted as a token claim, so an unbounded value would travel a long
+        // way from where it was accepted.
+        const int MaxOrganizationIdLength = 200;
+        var organizationId = string.IsNullOrWhiteSpace(request.OrganizationId) ? null : request.OrganizationId.Trim();
+        if (organizationId is { Length: > MaxOrganizationIdLength })
+            return TypedResults.Json(new ErrorInfoResponse
+            {
+                Error = "invalid_request",
+                ErrorDescription = $"organizationId must be {MaxOrganizationIdLength} characters or fewer.",
+            }, AuthagonalJsonContext.Default.ErrorInfoResponse, statusCode: 400);
+
         // Generate a cryptographically secure token
         var rawTokenBytes = RandomNumberGenerator.GetBytes(32);
         var rawToken = Convert.ToBase64String(rawTokenBytes);
@@ -85,6 +97,7 @@ public static class ScimTokenEndpoints
                 ? DateTimeOffset.UtcNow.AddDays(request.ExpiresInDays.Value)
                 : null,
             AllowedEmailDomains = allowedDomains,
+            OrganizationId = organizationId,
         };
 
         await scimTokenStore.StoreAsync(token, ct);
@@ -175,6 +188,12 @@ public sealed class GenerateScimTokenRequest
     public string? ClientId { get; set; }
     public string? Description { get; set; }
     public int? ExpiresInDays { get; set; }
+
+    /// <summary>
+    /// The organization to tag every user this credential provisions with. Omit to leave users untagged.
+    /// Surfaces on their tokens as the <c>org_id</c> claim.
+    /// </summary>
+    public string? OrganizationId { get; set; }
 
     /// <summary>
     /// Email domains this credential may provision into. Omit or leave empty for unrestricted.

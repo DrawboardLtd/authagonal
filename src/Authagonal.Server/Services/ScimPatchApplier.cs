@@ -48,6 +48,10 @@ public static partial class ScimPatchApplier
             var normalizedOp = op.Op.ToLowerInvariant();
             var path = NormalizePath(op.Path);
 
+            // An attribute belonging to a schema extension this provider does not implement is IGNORED,
+            // not refused. See IsUnimplementedSchemaExtension.
+            if (IsUnimplementedSchemaExtension(path)) continue;
+
             RefuseUnwritablePath(normalizedOp, path);
 
             switch (normalizedOp)
@@ -126,6 +130,10 @@ public static partial class ScimPatchApplier
         {
             var normalizedOp = op.Op.ToLowerInvariant();
             var path = NormalizePath(op.Path);
+
+            // An attribute belonging to a schema extension this provider does not implement is IGNORED,
+            // not refused. See IsUnimplementedSchemaExtension.
+            if (IsUnimplementedSchemaExtension(path)) continue;
 
             RefuseUnwritablePath(normalizedOp, path);
 
@@ -459,6 +467,34 @@ public static partial class ScimPatchApplier
         return null;
     }
 
+    /// <summary>
+    /// True when the path names an attribute in a schema EXTENSION this provider does not implement, in
+    /// which case the operation is ignored instead of refused.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="NormalizePath"/> has already stripped the two core URN prefixes, so a path still
+    /// carrying one belongs to a schema we do not serve. The enterprise user extension
+    /// (<c>urn:ietf:params:scim:schemas:extension:enterprise:2.0:User</c>) is the case that matters:
+    /// Entra and Okta map <c>department</c> and <c>manager</c> through it in their DEFAULT attribute
+    /// mappings, and this provider implements core only.
+    /// <para>
+    /// Refusing was both inconsistent and dangerous. POST and PUT already ignore an enterprise block
+    /// silently, because nothing binds those JSON members, so only PATCH objected, and a connector that
+    /// created users happily then failed every incremental sync with 400 <c>invalidPath</c>. Worse, a
+    /// PATCH is refused WHOLE: one unsupported attribute discarded every other operation in the same
+    /// request, so a request carrying both <c>department</c> and <c>active: false</c> left a LEAVER
+    /// ACTIVE. Deprovisioning stuck behind an attribute we were never going to store is the failure this
+    /// prevents.
+    /// </para>
+    /// <para>
+    /// Deliberately narrow: it only relaxes URN-qualified extension attributes. A misspelled CORE path
+    /// (<c>name.givenNam</c>) still returns 400, because that is a mapping mistake the operator needs to
+    /// see, and silent success on a write is the failure mode this file exists to avoid.
+    /// </para>
+    /// </remarks>
+    private static bool IsUnimplementedSchemaExtension(string? path) =>
+        path is not null && path.StartsWith("urn:", StringComparison.OrdinalIgnoreCase);
+
     private static string? NormalizePath(string? path)
     {
         if (string.IsNullOrWhiteSpace(path))
@@ -467,11 +503,24 @@ public static partial class ScimPatchApplier
         // Remove "urn:ietf:params:scim:schemas:core:2.0:User:" prefix if present
         const string userSchemaPrefix = "urn:ietf:params:scim:schemas:core:2.0:User:";
         if (path.StartsWith(userSchemaPrefix, StringComparison.OrdinalIgnoreCase))
-            path = path[userSchemaPrefix.Length..];
+            return path[userSchemaPrefix.Length..];
 
         const string groupSchemaPrefix = "urn:ietf:params:scim:schemas:core:2.0:Group:";
         if (path.StartsWith(groupSchemaPrefix, StringComparison.OrdinalIgnoreCase))
-            path = path[groupSchemaPrefix.Length..];
+            return path[groupSchemaPrefix.Length..];
+
+        // A path that is the bare core schema URN, with no attribute after it, addresses the whole
+        // resource — the same thing a client says by omitting the path. Normalizing it to null routes it
+        // to the whole-object handler.
+        //
+        // It matters because of the extension rule in IsUnimplementedSchemaExtension: without this, a
+        // path still starting with "urn:" is ignored, and this one would be silently DROPPED rather than
+        // applied. That is the one outcome this file refuses to produce — a directory told 200 for a
+        // write that did not happen never retries it. It used to answer 400, which was wrong but safe;
+        // ignoring it would have been wrong and dangerous.
+        if (path.Equals(userSchemaPrefix[..^1], StringComparison.OrdinalIgnoreCase) ||
+            path.Equals(groupSchemaPrefix[..^1], StringComparison.OrdinalIgnoreCase))
+            return null;
 
         return path;
     }

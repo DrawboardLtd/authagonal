@@ -94,9 +94,14 @@ public sealed class ScimBearerAuthenticationHandler(
         foreach (var domain in scimToken.AllowedEmailDomains)
             claims.Add(new Claim(ScimClaims.AllowedEmailDomain, domain));
 
-        // For org scoping, we need a convention to derive org from client.
-        // Use a claim if available, or fall back to clientId as the org scope.
-        // The SCIM endpoints will use client_id for scoping.
+        // The organization this credential provisions into, when it was minted with one. Carried as a
+        // claim for the same reason as the domain bound: the create path needs it without a second store
+        // read. Absent means untagged, never "derive something from the client id" — a client id is an
+        // authorization subject, and quietly reusing it as an organization would put an internal
+        // identifier on customer tokens.
+        if (!string.IsNullOrWhiteSpace(scimToken.OrganizationId))
+            claims.Add(new Claim(ScimClaims.OrganizationId, scimToken.OrganizationId));
+
         var identity = new ClaimsIdentity(claims, Scheme.Name);
         var principal = new ClaimsPrincipal(identity);
         var ticket = new AuthenticationTicket(principal, Scheme.Name);

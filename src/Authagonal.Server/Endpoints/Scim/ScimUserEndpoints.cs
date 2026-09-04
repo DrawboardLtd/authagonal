@@ -408,6 +408,13 @@ public static class ScimUserEndpoints
             IsActive = request.ActiveOnCreate,
             Locale = Locales.Normalize(request.PreferredLanguageOrLocale),
             ScimProvisionedByClientId = clientId,
+            // The organization the authenticating CREDENTIAL was minted for, so a connector can say which
+            // customer it is syncing. SCIM itself cannot: core has no organization attribute and the
+            // enterprise extension is not implemented here. Absent claim leaves this null, which is what
+            // every existing token does. Set only at creation, so a later sync never silently re-tags an
+            // account, and it precedes provisioning so a /try response (which only fills an EMPTY
+            // organization) cannot override an explicit binding.
+            OrganizationId = httpContext.User.FindFirst(ScimClaims.OrganizationId)?.Value,
             ScimDeletedAt = null,
             LockoutEnabled = true,
             SecurityStamp = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32)),

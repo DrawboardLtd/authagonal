@@ -40,7 +40,7 @@ public static class BackupDefaults
     public static readonly string[] Tables =
     [
         "Users", "UserEmails", "UserFirstNames", "UserLastNames", "UserLogins", "UserExternalIds",
-        "UserEmailDomains", "UserEmailLocalPrefixes",
+        "UserEmailDomains", "UserEmailLocalPrefixes", "UserOrganizations",
         "Clients",
         "Grants", "GrantsBySubject", "GrantsByExpiry",
         "SigningKeys",
@@ -67,7 +67,7 @@ public static class BackupDefaults
     public static readonly IReadOnlySet<string> ChangeLoggedTables = new HashSet<string>(StringComparer.Ordinal)
     {
         "UserEmails", "UserFirstNames", "UserLastNames", "UserLogins", "UserExternalIds",
-        "UserEmailDomains", "UserEmailLocalPrefixes",
+        "UserEmailDomains", "UserEmailLocalPrefixes", "UserOrganizations",
         "ScimGroupRoleMappings", "ProvisioningApps",
     };
 

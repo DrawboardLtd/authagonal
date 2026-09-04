@@ -29,6 +29,10 @@ public sealed class ScimTokenEntity : ITableEntity
     /// </summary>
     public string? AllowedEmailDomains { get; set; }
 
+    /// <summary><see cref="ScimToken.OrganizationId"/>. Null on rows written before this column, which
+    /// reads back as "untagged" — the previous behaviour.</summary>
+    public string? OrganizationId { get; set; }
+
     private static string? Pack(List<string> domains) =>
         domains.Count == 0 ? null : string.Join(' ', domains);
 
@@ -50,6 +54,7 @@ public sealed class ScimTokenEntity : ITableEntity
         ExpiresAt = token.ExpiresAt,
         IsRevoked = token.IsRevoked,
         AllowedEmailDomains = Pack(token.AllowedEmailDomains),
+        OrganizationId = token.OrganizationId,
     };
 
     /// <summary>Reverse index: PK=clientId, RK="scimtoken|{tokenId}" — list by client.</summary>
@@ -65,6 +70,7 @@ public sealed class ScimTokenEntity : ITableEntity
         ExpiresAt = token.ExpiresAt,
         IsRevoked = token.IsRevoked,
         AllowedEmailDomains = Pack(token.AllowedEmailDomains),
+        OrganizationId = token.OrganizationId,
     };
 
     public ScimToken ToModel() => new()
@@ -77,5 +83,6 @@ public sealed class ScimTokenEntity : ITableEntity
         ExpiresAt = ExpiresAt,
         IsRevoked = IsRevoked,
         AllowedEmailDomains = Unpack(AllowedEmailDomains),
+        OrganizationId = OrganizationId,
     };
 }

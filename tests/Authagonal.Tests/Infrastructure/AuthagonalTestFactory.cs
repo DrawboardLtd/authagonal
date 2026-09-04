@@ -242,6 +242,9 @@ public sealed class AuthagonalTestFactory : IAsyncDisposable
             Description = "Test SCIM token",
             CreatedAt = DateTimeOffset.UtcNow,
             AllowedEmailDomains = [.. allowedEmailDomains ?? []],
+            // Was accepted and silently dropped; it now binds the credential to an organization, which is
+            // what every user it provisions gets tagged with.
+            OrganizationId = orgId,
         };
 
         await ScimTokenStore.StoreAsync(scimToken);

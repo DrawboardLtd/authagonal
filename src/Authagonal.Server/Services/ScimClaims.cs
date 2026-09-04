@@ -13,4 +13,10 @@ internal static class ScimClaims
 {
     /// <summary>One per email domain the authenticating token may provision into.</summary>
     internal const string AllowedEmailDomain = "scim_allowed_email_domain";
+
+    /// <summary>
+    /// The organization users provisioned through the authenticating token belong to. Absent when the
+    /// token carries no binding, which leaves created users untagged.
+    /// </summary>
+    internal const string OrganizationId = "scim_organization_id";
 }

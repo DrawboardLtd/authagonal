@@ -52,7 +52,11 @@ public class ChangeLogBackupEquivalenceTests(AzuriteFixture azurite)
             T("Users"), T("UserEmails"), T("UserLogins"), T("UserExternalIds"), T("UserFirstNames"), T("UserLastNames"),
             env ?? EnvPartitioner.Live, tombstoneWriter: new TableChangeWriter(T("Tombstones")),
             fieldCipher: new FakeCipher(), indexTokenizer: new FakeTokenizer(),
-            userEmailDomainsTable: T("UserEmailDomains"), userEmailLocalPrefixesTable: T("UserEmailLocalPrefixes"));
+            userEmailDomainsTable: T("UserEmailDomains"), userEmailLocalPrefixesTable: T("UserEmailLocalPrefixes"),
+            // In the eligible set, so the equivalence sweep below covers it. Without the table configured
+            // the store skips the index entirely and the sweep's "this table actually captured something"
+            // sanity check has nothing to find.
+            userOrganizationsTable: T("UserOrganizations"));
     }
 
     // The other two change-logged stores (same prefix + partitioner + change-log table as the user store).
@@ -77,6 +81,9 @@ public class ChangeLogBackupEquivalenceTests(AzuriteFixture azurite)
         NormalizedEmail = email.ToUpperInvariant(),
         FirstName = first,
         LastName = last,
+        // Every user carries an organization so the UserOrganizations index has captured changes to
+        // compare across the two read paths.
+        OrganizationId = "org-" + id,
     };
 
     private static async Task<HashSet<string>> KeysAsync(IBackupSource src, string backupId, string fileBase)
