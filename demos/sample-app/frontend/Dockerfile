@@ -7,7 +7,7 @@ COPY demos/sample-app/frontend/ ./
 RUN npm run build
 
 # Stage 2: Serve with nginx
-FROM nginx:alpine@sha256:4a73073bd557c65b759505da037898b61f1be6cbcc3c2c3aeac22d2a470c1752
+FROM nginx:alpine@sha256:72ba65eb42c10344912a84ff42408db7d34f2feb642204570ab8fc5ffd29f1d3
 RUN apk add --no-cache gettext
 COPY --from=build /app/dist /usr/share/nginx/html
 RUN rm -rf /etc/nginx/templates
