@@ -1791,10 +1791,12 @@ public static class AuthEndpoints
     private static async Task<IResult> GetProvidersAsync(
         IOidcProviderStore oidcStore,
         ISamlProviderStore samlStore,
-        IOptions<TurnstileOptions> turnstileOptions,
+        ITurnstileKeyProvider turnstileKeys,
         CancellationToken ct)
     {
-        var response = await BuildProvidersResponseAsync(oidcStore, samlStore, turnstileOptions.Value.SiteKey, ct);
+        // The sitekey the browser renders must be the one paired with the secret this request will verify
+        // against — on a multi-tenant host that is per-hostname, so both come from the same provider.
+        var response = await BuildProvidersResponseAsync(oidcStore, samlStore, turnstileKeys.SiteKey, ct);
         return TypedResults.Json(response, AuthagonalJsonContext.Default.SsoProviderListResponse);
     }
 

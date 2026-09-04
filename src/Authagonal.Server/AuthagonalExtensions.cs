@@ -296,6 +296,9 @@ public static class AuthagonalExtensions
         // Cloudflare Turnstile — opt-in: verification on /login and /register is enforced
         // only when Turnstile:SecretKey is configured; otherwise the flow is unchanged.
         services.Configure<TurnstileOptions>(configuration.GetSection("Turnstile"));
+        // Scoped + TryAdd: a multi-tenant host whose widget depends on the requesting hostname registers
+        // its own before this runs and keeps it. See ITurnstileKeyProvider.
+        services.TryAddScoped<ITurnstileKeyProvider, OptionsTurnstileKeyProvider>();
         // The same handler policy as every other outbound client, which this one was missing: it took the
         // framework default — 100-second timeout and up to 50 automatic redirects. VerifyAsync runs on
         // anonymous POST /login and /register and fails CLOSED, so a stalled connection to Cloudflare held a
